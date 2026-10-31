@@ -5,7 +5,7 @@ The product files are new in this package, so `mutating_sources` refuses until
 the branch is committed (the source baseline must equal HEAD). After the
 coordinator commits:
 
-    CARGO_TARGET_DIR=<worktree>/_build/cargo-target \
+    CARGO_TARGET_DIR=<caller-owned cargo target directory> \
     PDRS_BASELINE=/path/to/PilotDeck \
       python3 src/pilotdeck-gateway/tests/fixtures/manager-gateway/negative_controls.py <out-dir>
 

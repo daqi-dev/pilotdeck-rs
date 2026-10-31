@@ -21,8 +21,9 @@ matrix cell, plus public media-path recovery and context-isolation controls.
 The Rust behavior intentionally differs in the defective TS cells; registration:
 `specs/gateway-parity/diffs/A7.4-TOOLBUDGET-CONTEXT-ISOLATION-001.md` (unapproved).
 
-From a committed candidate, set `CARGO_TARGET_DIR` to this worktree's
-`_build/cargo-target`, then run `python3 .../negative_controls.py /fresh/logs`.
+From a committed candidate, run `python3 .../negative_controls.py /fresh/logs`.
+The Cargo target goes through the shared admission (unset defaults to this worktree's
+`_build/cargo-target`; a dedicated out-of-tree target is equally admissible).
 It uses the shared `mutating_sources`, `wait_for_slot`, and `run_owned` owners,
 requires assertion failures (not compile failures), and restores checked bytes.
 An uncommitted sandbox candidate can supply `PDRS_NEGATIVE_BASELINE` with its

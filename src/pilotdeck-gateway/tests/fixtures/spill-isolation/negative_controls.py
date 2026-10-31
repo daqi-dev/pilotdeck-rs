@@ -6,15 +6,14 @@ import os
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
-env = dict(os.environ)
-assert Path(env['CARGO_TARGET_DIR']).resolve() == root / '_build/cargo-target'
+env = target_environment(root)
 
 def mutate(text, name):
     if name == 'namespace':

@@ -9,20 +9,18 @@ process, after an unmutated baseline for each selected target test.
 """
 import hashlib
 import json
-import os
 from pathlib import Path
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 from negative_selection import baseline_passed, select
 
 ROOT = Path(__file__).resolve().parents[5]
-TARGET = ROOT / '_build/cargo-target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
-ENV = dict(os.environ, CARGO_TARGET_DIR=str(TARGET), RUSTC_WRAPPER='', CARGO_BUILD_JOBS='4')
+ENV = target_environment(ROOT)
+ENV.update(RUSTC_WRAPPER='', CARGO_BUILD_JOBS='4')
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
 OUT = Path(sys.argv[1]).resolve()
 OUT.mkdir(parents=True, exist_ok=False)

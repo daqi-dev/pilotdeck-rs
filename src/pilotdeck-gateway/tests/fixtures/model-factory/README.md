@@ -34,7 +34,7 @@ registry adapter 与 TS 一样始终暴露 `complete()` 分派端口，混合注
 
 上述命令的 PDRS_BASELINE 必须保留到 Rust replay；仅在设置该环境变量时，common/baseline.rs 才逐项比对真实源文件与 Git blob，默认未设置时只校验 fixture 的 commit 和哈希格式。
 
-负控脚本只修改本树，SHA-256 校验恢复，复用唯一 CARGO_TARGET_DIR；逐个 cargo 先查 slots、每个最多 100 秒，外围仍须 timeout 600。只接受已编译测试的断言失败，不把编译错误当转红。
+负控脚本只修改本树，SHA-256 校验恢复，目标目录经共享准入（树内 `_build` 或树外专用 target 均可）；逐个 cargo 先查 slots、每个最多 100 秒，外围仍须 timeout 600。只接受已编译测试的断言失败，不把编译错误当转红。
 
 ```sh
 CARGO_BUILD_JOBS=4 timeout 600 python3 \
@@ -44,7 +44,7 @@ CARGO_BUILD_JOBS=4 timeout 600 python3 \
 
 15 个变异：新调用误拿旧代、drain 前释放、HTTP 不接取消、旧 registration 误删新代、替换改变 Map 清理次序、complete 提前释放 lease、factory 跳过 recorder、漏校验 JS BOM 空白、原生族不注册 provider、忽略项目 router 默认值。各项的测试名与精确变异锚点直接见脚本。
 
-本轮增加 5 项：混合表错误要求全 provider complete、全 native staging 错误拒绝、空表 staging 错误拒绝、complete 忽略请求 provider、model staging 在无 Tokio 线程 panic。构建复用启动器的 CARGO_TARGET_DIR（本树 _build/cargo-target）；缺失时只补此同一路径，不另建 target。
+本轮增加 5 项：混合表错误要求全 provider complete、全 native staging 错误拒绝、空表 staging 错误拒绝、complete 忽略请求 provider、model staging 在无 Tokio 线程 panic。构建复用启动器经共享准入的 CARGO_TARGET_DIR；未设置时默认本树 _build/cargo-target，不另建 target。
 
 修复轮 2 再增 2 项（合计 17 项）：native provider 错报支持 complete，以及无 provider 的 complete 错报 `Provider null`。分别要求原生能力契约测试与新增无 provider 金样测试断言失败。registry 的混合 / 全 native / 空表暴露语义继续由既有三项负控守护。
 

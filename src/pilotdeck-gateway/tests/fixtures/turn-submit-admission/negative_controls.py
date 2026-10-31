@@ -15,12 +15,11 @@ busy mapping, task-budget absent-port copy, compaction timeout reason, the
 compaction overflow-delay clamp, and the sdk config absent-port copy.
 """
 import hashlib
-import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
@@ -79,7 +78,7 @@ mutations = [mutation for mutation in mutations
 assert len({name for name, *_ in mutations}) == len(mutations), 'duplicate mutation name'
 assert not selected or len(mutations) == len(selected), 'unknown mutation name'
 paths = sorted({path for _name, path, _old, _new in mutations}, key=str)
-env = dict(os.environ, CARGO_TARGET_DIR=str(root / '_build/cargo-target'))
+env = target_environment(root)
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','runtime::turn::admission','--','--nocapture']
 
 with mutating_sources(root, paths) as snapshots:

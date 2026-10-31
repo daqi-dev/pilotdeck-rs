@@ -15,7 +15,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-owner-hooks/negative.py \
   _tmp/20261025-issue-414/negative-replay
 ```
 
-每个输出目录须是新目录。生成器以 wx 独占创建 oracle；负控脚本独占创建证据目录。负控只临时修改 owner.rs，逐个成功编译并要求指定测试行为失败，finally 恢复字节，最后原实现重跑；同树不可有另一写入者或 cargo。构建固定为本树 `_build/cargo-target`。运行前确保全局 cargo 名额；沙箱无法 ps 时脚本提示不代表已验证全局进程数。
+每个输出目录须是新目录。生成器以 wx 独占创建 oracle；负控脚本独占创建证据目录。负控只临时修改 owner.rs，逐个成功编译并要求指定测试行为失败，finally 恢复字节，最后原实现重跑；同树不可有另一写入者或 cargo。构建目标经共享准入裁定（未设置时默认本树 `_build/cargo-target`，树外专用 target 同样可用）。运行前确保全局 cargo 名额；沙箱无法 ps 时脚本提示不代表已验证全局进程数。
 
 11 项独立项目/前缀/预约判定；11 种 idle 场景覆盖严格超时、已接纳轮保护、结束刷新 lastUsedAt、驱逐后孤立预约与结束、dispose 闸门、失败排空、快照异常/缺失/动态 length、禁用回调；3 种非 idle 路径验证静默。Rust 额外验证 maintenance/handle activity/completion 组合存在但无 admission 时不构成用户轮。并发证据是受控异步交错，不声称 OS 线程压力测试。
 

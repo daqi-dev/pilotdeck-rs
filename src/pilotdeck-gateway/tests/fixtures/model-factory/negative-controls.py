@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """Serial, bounded source mutations; restore bytes even on failure. No scratch target."""
 import hashlib
-import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, target_environment
 
 root = Path(__file__).resolve().parents[5]
-TARGET = root / '_build/cargo-target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
-env = dict(os.environ, CARGO_TARGET_DIR=str(TARGET))
+env = target_environment(root)
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 registry = root / 'src/pilotdeck-gateway/src/runtime/model/provider_registry.rs'

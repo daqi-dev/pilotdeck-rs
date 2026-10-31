@@ -2,12 +2,11 @@
 """PR #537 round 7: strip each IO wrapper, require runtime assertion failure."""
 import hashlib
 import json
-import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
@@ -30,10 +29,7 @@ mutations = [
     ('rename', 'Err(e) => Err(pair_error(e, "rename", src, dst).into()),',
      'Err(e) => Err(e.into()),', 'round7_rename_matches_real_ts_non_permission_error'),
 ]
-env = os.environ.copy()
-target = root/'_build/cargo-target'
-assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), '#1166 use this worktree _build/cargo-target only'
-env['CARGO_TARGET_DIR'] = str(target)
+env = target_environment(root)
 rows = []
 # Read the pristine bytes only under the same flock as every other in-place
 # negative runner, and reserve the Cargo slot before exposing each mutation.

@@ -15,12 +15,14 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from unittest.mock import patch
+import uuid
 
 FIXTURES = Path(__file__).resolve().parents[1]
 ROOT = FIXTURES.parents[3]
@@ -51,6 +53,27 @@ INPUTS = (
     'src/pilotdeck-cli/tests/space and\nnewline.json',
     'src/pilotdeck-agent/target/tracked.rs', 'src/pilotdeck-agent/tests/tracked.pyc',
 )
+
+# The one audited set of fixture scripts allowed to mention a build-target
+# directory literal: the shared admission and its unset default, this suite's
+# own admission/mutation text, #994's inverse forbid-list (it *rejects* the
+# product target and requires a separate persistent one), and the
+# session-admission scratch copy (its target belongs to the disposable /tmp
+# copy tree, not to this checkout).
+TARGET_LITERAL_EXEMPT = {
+    'src/pilotdeck-gateway/tests/fixtures/negative_process.py':
+        'the shared target admission and its unset default live here',
+    'src/pilotdeck-gateway/tests/fixtures/workspace-pristine/negative_controls.py':
+        'mutation rows quote the sibling lines they replace',
+    'src/pilotdeck-gateway/tests/fixtures/workspace-pristine/test_controls.py':
+        'admission probes and this literal scan itself',
+    'src/pilotdeck-gateway/tests/fixtures/_shared/negative_control.py':
+        '#994 inverse forbid-list rejects the product target',
+    'src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive.py':
+        '#994 forbid-list unit test',
+    'src/pilotdeck-gateway/tests/fixtures/session-admission/negative.py':
+        'the scratch copy tree carries its own disposable target',
+}
 
 
 class WorkspacePristine(unittest.TestCase):
@@ -599,9 +622,15 @@ except SourceBaselineError: print('REFUSED')
 
 
 class RunnerTargets(unittest.TestCase):
-    def check_runner(self, relative, env_name, arguments, marker, *, skills_copy=False, cargo_call=False):
+    # #1166 redesign: every runner admits its Cargo target through the one
+    # shared rule in negative_process. Four cells per runner: an explicit
+    # in-tree target, an unset variable (the shared default), a target inside
+    # src (refused by the shared rule before any observation) and a dedicated
+    # out-of-tree target (the host chains' configuration, accepted).
+    def check_runner(self, relative, env_name, arguments, marker, *, skills_copy=False,
+                     cargo_call=False, hook='mutating_sources', fresh_out=False):
         # Execute the real script up to its first source lease. Stop before any
-        # product mutation, but use the real shared target normalization.
+        # product mutation, but use the real shared target admission.
         class Admitted(Exception):
             pass
 
@@ -615,14 +644,29 @@ class RunnerTargets(unittest.TestCase):
                      and node.func.id == 'run_owned']
             self.assertTrue(len(calls) == 1, marker)
             call_code = compile(ast.Expression(calls[0]), str(script), 'eval')
-        target = str(ROOT / '_build/cargo-target')
-        for supplied in (target, None, str(ROOT / 'src/target'), str(ROOT.parent / 'other-target')):
-            with self.subTest(target=supplied), tempfile.TemporaryDirectory(prefix='pdrs1166-runner-') as out:
-                namespace = dict(__file__=str(script), __name__='admission_probe' if skills_copy else '__main__')
+        tree_target = str(ROOT / '_build/cargo-target')
+        for supplied in (tree_target, None, str(ROOT / 'src/target'),
+                         str(ROOT.parent / 'other-target')):
+            with self.subTest(target=supplied), tempfile.TemporaryDirectory(
+                    prefix='pdrs1166-runner-') as holder:
+                if fresh_out:
+                    # This runner refuses an existing output directory and
+                    # requires it inside this tree's evidence area: hand it a
+                    # unique not-yet-created path and remove it afterwards.
+                    (ROOT / '_tmp').mkdir(exist_ok=True)
+                    out = ROOT / '_tmp' / ('pdrs1166-admission-' + uuid.uuid4().hex)
+                    self.addCleanup(shutil.rmtree, out, True)
+                elif skills_copy:
+                    out = Path(holder)
+                else:
+                    # mkdir(exist_ok=False) runners refuse an existing
+                    # directory; exist_ok=True runners create this one.
+                    out = Path(holder) / 'out'
+                namespace = dict(__file__=str(script),
+                                 __name__='admission_probe' if skills_copy else '__main__')
                 observed = []
 
-                def admission(root, paths, cargo_env=None):
-                    cargo_env = namespace[env_name] if cargo_env is None else cargo_env
+                def observe(root, cargo_env):
                     if cargo_call:
                         cargo_env = eval(call_code, dict(namespace, target=['--lib'], test='admission',
                                                         run_owned=lambda *args, **kwargs: kwargs.get('env', os.environ)))
@@ -631,6 +675,23 @@ class RunnerTargets(unittest.TestCase):
                                      api._target_environment(root, cargo_env)['CARGO_TARGET_DIR']))
                     raise Admitted()
 
+                def admission(*call_args, **call_kwargs):
+                    cargo_env = call_kwargs.get('cargo_env')
+                    observe(call_args[0], namespace[env_name] if cargo_env is None else cargo_env)
+
+                def owned(*call_args, **call_kwargs):
+                    observe(call_kwargs['cwd'], call_kwargs['env'])
+
+                # run_owned runners would first take the real tree lock and a
+                # real cargo slot; neither is needed to observe the admission.
+                hook_patches = {
+                    'mutating_sources': [patch.object(api, 'mutating_sources', side_effect=admission)],
+                    'tree_lock': [patch.object(api, 'tree_lock', side_effect=admission)],
+                    'run_owned': [patch.object(api, 'run_owned', side_effect=owned),
+                                  patch.object(api, 'tree_lock'),
+                                  patch.object(api, 'wait_for_slot',
+                                               return_value=subprocess.CompletedProcess([], 0, stdout='', stderr=''))],
+                }[hook]
                 env = dict(os.environ)
                 env['PDRS_BASELINE'] = str(ROOT / 'resources/PilotDeck')
                 env.pop('CARGO_TARGET_DIR', None)
@@ -639,7 +700,9 @@ class RunnerTargets(unittest.TestCase):
                 admitted, error = False, None
                 with patch.dict(os.environ, env, clear=True), \
                         patch.object(sys, 'argv', [str(script), *[arg.format(out=out) for arg in arguments]]), \
-                        patch.object(api, 'mutating_sources', side_effect=admission):
+                        contextlib.ExitStack() as stack:
+                    for pending in hook_patches:
+                        stack.enter_context(pending)
                     try:
                         exec(code, namespace)
                         if skills_copy:
@@ -654,12 +717,13 @@ class RunnerTargets(unittest.TestCase):
                         admitted = True
                     except (AssertionError, RuntimeError, KeyError) as caught:
                         error = caught
-                if supplied in (target, None):
-                    self.assertTrue(admitted and error is None, marker)
-                    self.assertTrue(observed == [(ROOT, target, target, target)], marker)
+                if supplied == str(ROOT / 'src/target'):
+                    self.assertTrue(not admitted and not observed and isinstance(error, RuntimeError)
+                                    and '#1166 target cannot be inside src' in str(error), marker)
                 else:
-                    self.assertTrue(not admitted and not observed and isinstance(error, AssertionError)
-                                    and '#1166 use this worktree _build/cargo-target only' in str(error), marker)
+                    expected = tree_target if supplied is None else str(Path(supplied).resolve())
+                    self.assertTrue(admitted and error is None, marker)
+                    self.assertTrue(observed == [(ROOT, expected, expected, expected)], marker)
 
     def test_tool_budget_target_admission(self):
         self.check_runner('tool-budget/negative_project.py', 'ENV', [],
@@ -696,6 +760,54 @@ class RunnerTargets(unittest.TestCase):
     def test_skills_tree_target_admission(self):
         self.check_runner('skills-tree-files/negative.py', 'ENV', [],
                           '#1166 skills-tree runner shares the admissible target', skills_copy=True)
+
+    def test_spill_isolation_target_admission(self):
+        self.check_runner('spill-isolation/negative_controls.py', 'env', ['{out}'],
+                          '#1166 spill-isolation runner shares the admissible target')
+
+    def test_session_owner_hooks_target_admission(self):
+        self.check_runner('session-owner-hooks/negative.py', 'env', ['{out}'],
+                          '#1166 session-owner-hooks runner shares the admissible target')
+
+    def test_hooks_output_target_admission(self):
+        self.check_runner('hooks-output/negative.py', 'env',
+                          ['{out}', '0' * 64],
+                          '#1166 hooks-output runner shares the admissible target',
+                          hook='tree_lock')
+
+    def test_turn_submit_admission_target_admission(self):
+        self.check_runner('turn-submit-admission/negative_controls.py', 'env', ['{out}'],
+                          '#1166 turn-submit-admission runner shares the admissible target')
+
+    def test_interaction_values_target_admission(self):
+        self.check_runner('interaction-values/negative_controls.py', 'env', ['{out}'],
+                          '#1166 interaction-values runner shares the admissible target')
+
+    def test_skills_target_admission(self):
+        self.check_runner('skills/negative_controls.py', 'env', ['--out', '{out}'],
+                          '#1166 skills runner shares the admissible target',
+                          hook='run_owned', fresh_out=True)
+
+    def test_sibling_scripts_have_no_local_target_allowlist(self):
+        # The shared admission is the only place a target directory may be
+        # named; a sibling script that grows its own allow-list (r5/r6
+        # regression) breaks host chains that use a dedicated out-of-tree
+        # target. Tracked and unignored untracked python under any
+        # tests/fixtures directory are scanned.
+        listing = git(ROOT, 'ls-files', '-z', '--cached', '--others',
+                      '--exclude-standard')
+        offenders = []
+        for raw in listing.stdout.split(b'\0'):
+            name = os.fsdecode(raw) if raw else ''
+            if '/tests/fixtures/' not in name or not name.endswith('.py'):
+                continue
+            if name in TARGET_LITERAL_EXEMPT:
+                continue
+            text = (ROOT / name).read_text(encoding='utf-8', errors='replace')
+            if 'src/target' in text or '_build/cargo-target' in text:
+                offenders.append(name)
+        self.assertTrue(not offenders,
+                        '#1166 sibling scripts must share the one target admission rule')
 
     def test_source_identity_target_admission(self):
         name = '#1166 build evidence target precedence keeps default outside src'
@@ -828,7 +940,7 @@ class SnapshotControls(unittest.TestCase):
 
     @contextmanager
     def dependencies(self, *, failed=False, missing=False, distractor=False, kind='test',
-                     copy_hook=None, before_copy=None, stale=False):
+                     copy_hook=None, before_copy=None, warm=False):
         @contextmanager
         def lock(*args, **kwargs):
             self.events.append('lock')
@@ -852,7 +964,9 @@ class SnapshotControls(unittest.TestCase):
                             '#1166 cargo build must retain bounded progress deadlines')
             self.assertTrue(command[1] == ('test' if kind == 'test' else 'build'),
                             '#1166 select cargo command for target kind')
-            stamp = 1 if stale else time.time_ns()
+            # A warm target reuses an artifact written long before this build
+            # started; cargo legitimately skips recompilation (#1166 redesign).
+            stamp = 1 if warm else time.time_ns()
             os.utime(self.source, ns=(stamp, stamp))
             row = dict(reason='compiler-artifact', target={'name': 'probe', 'kind': [kind]},
                        executable=str(self.source))
@@ -1013,9 +1127,9 @@ class SnapshotControls(unittest.TestCase):
         self.assertTrue(failure is None and valid,
                         '#1166 build owner atomically binds root HEAD and fresh nonce')
 
-    def reject_provenance(self, hook, message, *, stale=False):
+    def reject_provenance(self, hook, message):
         failure = None
-        with self.dependencies(copy_hook=hook, stale=stale):
+        with self.dependencies(copy_hook=hook):
             try:
                 self.build()
             except Exception as error:
@@ -1067,8 +1181,21 @@ class SnapshotControls(unittest.TestCase):
             other.replace(self.source)
         self.reject_provenance(takeover, '#1166 build artifact changed during snapshot')
 
-    def test_stale_artifact_is_refused(self):
-        self.reject_provenance(None, '#1166 build artifact predates this build', stale=True)
+    def test_warm_artifact_is_accepted(self):
+        # The r4 mtime lower bound rejected every warm target as a false FAIL
+        # on host chains (#1166 redesign): ownership is provenance, not age.
+        # The lock-internal owner marker plus the post-copy re-verify carry
+        # the guard; adversarial writers are a separate known boundary.
+        failure = None
+        with self.dependencies(warm=True):
+            try:
+                binary = self.build()
+            except Exception as error:
+                failure, binary = error, ''
+        self.assertTrue(failure is None
+                        and self.events == ['lock', 'preflight', 'prepare', 'clean', 'slot', 'build', 'copy', 'unlock']
+                        and Path(binary).is_file(),
+                        '#1166 reused artifact predating this build is admitted')
 
     def test_missing_owner_after_copy_is_refused(self):
         def remove():

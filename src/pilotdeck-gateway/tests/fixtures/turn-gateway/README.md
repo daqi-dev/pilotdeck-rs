@@ -29,7 +29,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/turn-gateway/negative.py \
 
 生产构造入口为 `TurnGateway::start` → `connect` → `HostedConnection::{receive,closed,notify}`。宿主 builder 使用注入的 coordinator 构造 `TurnSubmitter`，已有 FileRegistry / SessionOwner / projector 等依赖继续复用；外部事件走 `TurnGateway::emit`。原始 `ConnectionTurnGateway` 不对外暴露，避免连接 future 被别的执行器 poll。`GatewayRequests` 留给既有宿主方法/读面实现，不提供 TS fallback；pr6 补真实 LiveSession/HostClient 与宿主策略服务。
 
-修复轮 1 的针对性负控（仍使用启动器的本树 `_build/cargo-target`）：
+修复轮 1 的针对性负控（目标目录经共享准入，未设置时默认本树 `_build/cargo-target`）：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/turn-gateway/negative-fence.py \

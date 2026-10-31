@@ -6,13 +6,12 @@ from contextlib import contextmanager
 import copy
 import hashlib
 import json
-import os
 from pathlib import Path
 import signal
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, tree_lock, wait_for_slot
+from negative_process import run_owned, target_environment, tree_lock, wait_for_slot
 
 
 @contextmanager
@@ -48,8 +47,7 @@ def main():
     out = args.out.resolve()
     assert out.is_relative_to(root / "_tmp"), "evidence must stay in this tree's _tmp"
     out.mkdir(parents=True, exist_ok=False)
-    env = os.environ.copy()
-    env["CARGO_TARGET_DIR"] = str(root / "_build/cargo-target")
+    env = target_environment(root)
     env["LANG"] = "en_US.UTF-8"
     env.pop("LC_ALL", None)
     env.pop("LC_MESSAGES", None)

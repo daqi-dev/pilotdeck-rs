@@ -30,7 +30,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/plugin-runtime/negative-controls.py
   _tmp/20261023-issue-543-dispose-order/negative
 ```
 
-脚本通过 `mutating_sources` 验证产品源码等于 HEAD，并在退出时恢复、复核原始字节。每个变异依次跑正控、变异编译、绑定负控与恢复正控；编译错误及过期锚点均为 INVALID，不算判杀。逐项跑完后汇总，任一非 KILLED 即非零退出。每次 cargo 调用与名额等待各有 900 秒上限，只跑一个测试进程、`--test-threads=1`；必须由调用方设置本树的 `CARGO_TARGET_DIR`，脚本不创建第二份构建目录。可在输出目录后追加 `reverse-mixed-lease-release` 单跑本单变异，或加 `--compile-only` 只核变异编译。已有 `runtime-replay-generation` 负控仍位于 plugin-loader 的负控脚本。
+脚本通过 `mutating_sources` 验证产品源码等于 HEAD，并在退出时恢复、复核原始字节。每个变异依次跑正控、变异编译、绑定负控与恢复正控；编译错误及过期锚点均为 INVALID，不算判杀。逐项跑完后汇总，任一非 KILLED 即非零退出。每次 cargo 调用与名额等待各有 900 秒上限，只跑一个测试进程、`--test-threads=1`；目标目录经共享准入（`negative_process.target_environment`）裁定：未设置时默认本树 `_build/cargo-target`，树外专用 target 同样可用，脚本不创建第二份构建目录。可在输出目录后追加 `reverse-mixed-lease-release` 单跑本单变异，或加 `--compile-only` 只核变异编译。已有 `runtime-replay-generation` 负控仍位于 plugin-loader 的负控脚本。
 
 原 `restore-old-order`（整文件恢复修复前提交 `dbaa207c…` 的实现）已于 #1010 删除：#1010 给 lease 结构新增字段与参数后，旧实现整体不能再编译；其「旧等待者排在新等待者之前」的顺序语义由 `old-waiters-before-new` 覆盖（同一锚点同一替换，不再保留重复行）。启动测试前逐条断言变异字节与当前源码不同，结果记录各变异 SHA-256，避免提交或合入后出现空变异。
 
