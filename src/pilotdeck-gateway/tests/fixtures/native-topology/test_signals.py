@@ -9,6 +9,9 @@ throwaway directory; the lifecycle logic under test is the fixture's own code.
 The companion negative_signals.py removes one guarantee at a time and
 requires the targeted cell below to fail with its own #1168 message, per
 signal (PDRS_1168_ONLY_SIG narrows the grid to one signal per run).
+CancellationBackstopTests (fix-r2) additionally exercises the states a real
+signal cannot reach deterministically: a torn old report, a directory run()
+never created, and an interrupt inside a write.
 """
 import sys
 if not sys.flags.isolated:
@@ -37,7 +40,7 @@ spec.loader.exec_module(matrix)
 common = matrix.common  # run.py's bootstrap loaded it; LIVE_GROUPS is one identity.
 
 PHASES = ('lease-wait', 'probe-pending', 'probe-spawn-window', 'probe-spawn-window-mixed',
-          'probe-running', 'probe-cleanup',
+          'probe-running', 'probe-cleanup', 'cleanup-interrupted',
           'provider-preflight', 'provider-bound', 'provider-thread-started', 'rounds-running',
           'cleanup-shutdown', 'cleanup-join', 'cleanup-close', 'release',
           'cleanup-residue', 'window-residue')
@@ -177,6 +180,15 @@ def signal_child(folder, phase, signum):
             # A cleanup that never proves absence is the honest residue shape:
             # the group must stay registered and the lease marked.
             raise ValueError('CLEANUP: simulated residue #1168')
+        if phase == 'cleanup-interrupted':
+            # fix-r2: the real signal stays pending behind the shield (hit
+            # fires it); this raise is the in-window interrupt itself — the
+            # shape a compromised shield or any BaseException produces. The
+            # pending delivery is suppressed by the once-only guard while
+            # this KeyboardInterrupt unwinds, so the audit below is the only
+            # thing that can still lie.
+            hit('cleanup-interrupted')
+            raise KeyboardInterrupt('#1168 synthetic in-window cleanup interrupt')
         return real_cleanup_owned(child, owned)
 
     real_run_probe = matrix.run_probe
@@ -294,17 +306,22 @@ def signal_child(folder, phase, signum):
     mask_blocked = json.loads(observer.read_text())['blocked'] if observer is not None else None
     first_launch = out / 'Rust-sidecar-ts' / '0' / 'model-stream' / 'launch.json'
     first_launch_status = None
+    first_launch_error = None
     if first_launch.is_file():
-        first_launch_status = json.loads(first_launch.read_text()).get('cleanupStatus')
+        loaded_launch = json.loads(first_launch.read_text())
+        first_launch_status = loaded_launch.get('cleanupStatus')
+        first_launch_error = loaded_launch.get('cleanupError')
     # fix-r1 P1-2: the published report is part of the cell's contract; a
     # cancellation that only surfaced after run() saved its report must not
-    # leave a PASS one behind.
+    # leave a PASS one behind. fix-r2: moduleMatrixStatus is asserted too —
+    # it is the exact field the P1-2 symptom falsely kept at PASS.
     report = None
     report_path = out / 'report.json'
     if report_path.is_file():
         try:
             loaded = json.loads(report_path.read_text())
-            report = {'status': loaded.get('status'), 'failure': loaded.get('failure')} \
+            report = {'status': loaded.get('status'), 'moduleMatrixStatus': loaded.get('moduleMatrixStatus'),
+                      'failure': loaded.get('failure')} \
                 if isinstance(loaded, dict) else 'unreadable'
         except (OSError, ValueError):
             report = 'unreadable'
@@ -316,8 +333,10 @@ def signal_child(folder, phase, signum):
                       'probePid': probe_pid, 'probeAlive': probe_alive,
                       'probeMaskBlocked': mask_blocked,
                       'serveWindow': serve_window[0],
+                      'outputExists': out.is_dir(),
                       'report': report,
-                      'firstLaunchCleanupStatus': first_launch_status}, ensure_ascii=False))
+                      'firstLaunchCleanupStatus': first_launch_status,
+                      'firstLaunchCleanupError': first_launch_error}, ensure_ascii=False))
     # Harness hygiene (fix-r1): a cut cleanup under a mutant can leave the
     # probe running in its isolation directory; kill it only after the
     # evidence above is published so it cannot race the caller's teardown
@@ -350,13 +369,18 @@ class NativeTopologySignalTests(unittest.TestCase):
                         f'#1168 signal child publishes its result: {phase}/{sig}')
         return json.loads(result.stdout)
 
-    def check_cancelled(self, value, phase, sig):
+    def check_cancelled(self, value, phase, sig, published=True):
         self.assertTrue(value['fired'], f'#1168 the hook reached the target phase: {phase}/{sig}')
-        report = value['report'] if isinstance(value['report'], dict) else None
-        self.assertTrue(report is not None and report.get('status') == 'FAIL'
-                        and 'cancelled by signal' in str(report.get('failure')),
-                        f'#1168 a cancelled capture publishes a FAIL report naming the signal: '
-                        f'{phase}/{sig}: {value["report"]!r}')
+        if published:
+            # fix-r2: moduleMatrixStatus is asserted alongside status — the
+            # P1-2 symptom was exactly a matrix-PASS report left behind.
+            report = value['report'] if isinstance(value['report'], dict) else None
+            self.assertTrue(report is not None and report.get('status') == 'FAIL'
+                            and report.get('moduleMatrixStatus') == 'FAIL'
+                            and 'cancelled by signal' in str(report.get('failure')),
+                            f'#1168 a cancelled capture publishes a report with status and '
+                            f'moduleMatrixStatus FAIL naming the signal: '
+                            f'{phase}/{sig}: {value["report"]!r}')
         self.assertTrue(value['error'] is None,
                         f'#1168 cancellation unwinds through main: {phase}/{sig}: {value["error"]}')
         self.assertTrue(value['exitCode'] == 1,
@@ -391,7 +415,15 @@ class NativeTopologySignalTests(unittest.TestCase):
         for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('lease-wait', sig)
-                self.check_cancelled(value, 'lease-wait', sig)
+                # fix-r2: run() never created the output directory while this
+                # process was still waiting for the lease, so publish_cancelled
+                # must publish nothing: no directory is created (the same
+                # --output stays retryable) and no foreign evidence is read.
+                self.check_cancelled(value, 'lease-wait', sig, published=False)
+                self.assertTrue(value['outputExists'] is False and value['report'] is None,
+                                f'#1168 a cancelled lease-waiter never creates the output '
+                                f'directory: lease-wait/{sig}: outputExists={value["outputExists"]!r} '
+                                f'report={value["report"]!r}')
                 self.assertTrue(value['predecessorUnchanged'],
                                 '#1168 a cancelled waiter leaves the predecessor lease untouched: lease-wait')
                 self.assertTrue(value['lease'] is not None,
@@ -443,6 +475,37 @@ class NativeTopologySignalTests(unittest.TestCase):
                                 f'#1168 cleanup is not interruptible, the audit is published and the '
                                 f'lease released: probe-cleanup/{sig}: '
                                 f'audit={value["firstLaunchCleanupStatus"]} lease={value["lease"]!r}')
+
+    def test_cleanup_interrupted(self):
+        """fix-r2: an interrupt landing inside the cleanup window itself.
+
+        The shield keeps real signals pending past the audit, so this phase
+        injects the interrupt directly inside cleanup_owned (the shape a
+        compromised shield or any BaseException produces) with the real
+        signal still piling up behind the shield. The launch audit must
+        record the interrupt instead of claiming PASS.
+        """
+        for sig in tested_signals():
+            with self.subTest(sig=sig):
+                value = self.cell('cleanup-interrupted', sig)
+                self.assertTrue(value['firstLaunchCleanupStatus'] == 'FAIL',
+                                f'#1168 an interrupted cleanup never audits PASS: '
+                                f'cleanup-interrupted/{sig}: '
+                                f'status={value["firstLaunchCleanupStatus"]!r} '
+                                f'error={value["firstLaunchCleanupError"]!r}')
+                self.assertTrue(value['exitCode'] == 1 and value['error'] is None,
+                                f'#1168 the in-window interrupt still unwinds through main: '
+                                f'cleanup-interrupted/{sig}: exitCode={value["exitCode"]} '
+                                f'error={value["error"]}')
+                report = value['report'] if isinstance(value['report'], dict) else None
+                self.assertTrue(report is not None and report.get('status') == 'FAIL'
+                                and report.get('moduleMatrixStatus') == 'FAIL',
+                                f'#1168 the interrupted capture still publishes a FAIL report: '
+                                f'cleanup-interrupted/{sig}: {value["report"]!r}')
+                pending = (value['lease'] or {}).get('cleanupPending') if isinstance(value['lease'], dict) else None
+                self.assertTrue(bool(pending) and value['probePid'] in pending,
+                                f'#1168 the interrupted cleanup keeps the lease honestly '
+                                f'cleanupPending: cleanup-interrupted/{sig}: {pending!r}')
 
     def test_probe_spawn_window_mixed(self):
         """fix-r1 P1-1: INT and TERM pile up inside one publish window.
@@ -561,6 +624,114 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_cancelled(value, 'window-residue', sig)
                 self.check_residue_marked(value, 'window-residue', sig)
                 self.check_provider_cleaned(value, 'window-residue', sig)
+
+
+class CancellationBackstopTests(unittest.TestCase):
+    """fix-r2 unit cells for publish_cancelled and save's own contracts.
+
+    The signal matrix above covers the integration path; these exercise the
+    states a real signal cannot reach deterministically (a torn report, a
+    directory run() never created, an interrupt inside a write).
+    negative_signals.py binds one mutation to each assertion below.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='pdrs-1168-unit-')
+        self.addCleanup(self.temp.cleanup)
+        self.folder = Path(self.temp.name)
+
+    def owned(self, name):
+        """A directory run() would have created; register its ownership."""
+        out = self.folder / name
+        out.mkdir()
+        matrix.owned_output.append(out)
+        self.addCleanup(matrix.owned_output.remove, out)
+        return out
+
+    def test_save_atomic_under_interrupt(self):
+        """A cancellation landing mid-write must not tear the published file."""
+        path = self.folder / 'report.json'
+        matrix.save(path, {'status': 'PASS', 'payload': 'x' * 4096})
+        before = path.read_bytes()
+        escaped = None
+
+        def torn_write(self, data, **_kwargs):
+            # The interrupt lands between the open and the full write: half
+            # the bytes reach the disk, then the cancellation raises.
+            with self.open('w', encoding='utf-8') as stream:
+                stream.write(data[:len(data) // 2])
+            raise KeyboardInterrupt('#1168 mid-write cancel')
+
+        with mock.patch.object(Path, 'write_text', torn_write):
+            try:
+                matrix.save(path, {'status': 'FAIL', 'payload': 'y' * 4096})
+            except KeyboardInterrupt as error:
+                escaped = error
+        self.assertTrue(escaped is not None and path.read_bytes() == before,
+                        f'#1168 a mid-write cancellation never tears the published file: '
+                        f'escaped={type(escaped).__name__ if escaped else None} '
+                        f'intact={path.read_bytes() == before}')
+
+    def test_publish_cancelled_flips_matrix_status(self):
+        """The P1-2 backstop flips moduleMatrixStatus, not only status."""
+        out = self.owned('flip')
+        matrix.save(out / 'report.json', {'status': 'NOT_RUN', 'moduleMatrixStatus': 'PASS'})
+        matrix.publish_cancelled(out, KeyboardInterrupt('#1168 unit cancel'))
+        published = json.loads((out / 'report.json').read_text())
+        self.assertTrue(published.get('status') == 'FAIL'
+                        and published.get('moduleMatrixStatus') == 'FAIL'
+                        and published.get('failure') == '#1168 unit cancel',
+                        f'#1168 the cancellation report flips status and moduleMatrixStatus '
+                        f'to FAIL with the reason: {published!r}')
+
+    def test_publish_cancelled_torn_report(self):
+        """A torn or undecodable old report is replaced, never propagated."""
+        observed = []
+        for name, content in (('torn', '{"status": "PASS", "moduleMatr'.encode()),
+                              ('undecodable', b'\xff\xfe{"status": "PASS"}')):
+            out = self.owned(name)
+            (out / 'report.json').write_bytes(content)
+            escaped = None
+            try:
+                matrix.publish_cancelled(out, KeyboardInterrupt('#1168 torn-report cancel'))
+            except BaseException as error:
+                escaped = error
+            published = None
+            try:
+                published = json.loads((out / 'report.json').read_text())
+            except (OSError, ValueError):
+                pass
+            observed.append((name, escaped, published))
+        # One aggregate assertion on purpose: both cases are the same
+        # guarantee, and the negative-control judgment accepts exactly one
+        # failing assertion line per cell.
+        summary = [(name, type(escaped).__name__ if escaped is not None else None,
+                    published if isinstance(published, dict) else None)
+                   for name, escaped, published in observed]
+        self.assertTrue(all(escaped is None and isinstance(published, dict)
+                            and published.get('status') == 'FAIL'
+                            and published.get('moduleMatrixStatus') == 'FAIL'
+                            and published.get('failure') == '#1168 torn-report cancel'
+                            for _name, escaped, published in observed),
+                        f'#1168 a torn report.json is replaced, never trusted nor '
+                        f'escaped: {summary!r}')
+
+    def test_publish_cancelled_respects_ownership(self):
+        """Only a directory run() created may be written by the backstop."""
+        absent = self.folder / 'absent'
+        foreign = self.folder / 'foreign'
+        foreign.mkdir()
+        matrix.save(foreign / 'report.json', {'status': 'PASS', 'moduleMatrixStatus': 'PASS'})
+        matrix.publish_cancelled(absent, KeyboardInterrupt('#1168 unit cancel'))
+        matrix.publish_cancelled(foreign, KeyboardInterrupt('#1168 unit cancel'))
+        self.assertTrue(not absent.exists(),
+                        f'#1168 the cancellation backstop never creates the output '
+                        f'directory: {absent!r} exists')
+        published = json.loads((foreign / 'report.json').read_text())
+        self.assertTrue(published.get('status') == 'PASS'
+                        and published.get('moduleMatrixStatus') == 'PASS',
+                        f'#1168 the cancellation backstop never overwrites a directory '
+                        f'run() does not own: {published!r}')
 
 
 def main():
