@@ -85,12 +85,9 @@ impl GatewayRequests for Requests {
             // project for nullish keys. Fill it before isolated admission, while
             // leaving Metadata's cwd lazy for explicit paths and other RPCs.
             let mut params = params;
-            if matches!(
-                method.to_utf8().as_deref(),
-                Ok("native_archive_manifest"
-                    | "native_archive_entries"
-                    | "native_archive_artifact")
-            ) {
+            if let Ok(name) = method.to_utf8()
+                && crate::native_archive::ARCHIVE_METHODS.contains(&name.as_str())
+            {
                 crate::native_archive::fill_default_project_key(&mut params, &self.options.project);
             }
             if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())

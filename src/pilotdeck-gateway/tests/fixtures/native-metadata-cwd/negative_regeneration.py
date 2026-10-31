@@ -48,6 +48,8 @@ if __name__ == '__main__':
     # #280 verdict itself lives in tests/common/baseline.rs (compiled into the
     # lib by src/lib.rs's #[path]), with regeneration_masks.rs and the shared
     # mask table outside the src/pilotdeck-gateway/src pristine scan.
+    # fix-r3 (review P2-4): the ignored test body, this fixture's generator,
+    # and the shared baseline.mts are judges as well.
     fixture_root = Path(__file__).resolve().parents[1]
     guarded = [Path(__file__).resolve(), *[
         fixture_root / name for name in (
@@ -57,9 +59,12 @@ if __name__ == '__main__':
     ], *[
         ROOT / name for name in (
             'src/pilotdeck-gateway/src/lib.rs',
+            'src/pilotdeck-gateway/src/native_process/metadata_cwd_tests.rs',
             'src/pilotdeck-gateway/tests/common/baseline.rs',
             'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
             'src/pilotdeck-gateway/tests/fixtures/_shared/regeneration-masks.tsv',
+            'src/pilotdeck-gateway/tests/fixtures/_shared/baseline.mts',
+            'src/pilotdeck-gateway/tests/fixtures/native-metadata-cwd/generate.mts',
         )
     ]]
     with mutating_sources(ROOT, guarded):

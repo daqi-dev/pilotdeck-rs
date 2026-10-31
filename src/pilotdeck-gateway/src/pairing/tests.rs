@@ -1689,38 +1689,58 @@ async fn metadata_io_native_retained_pairs_have_no_upstream_request() {
 // archive_nullish_project_key_uses_the_proxy_boot_fallback and
 // tests/fixtures/native-archive-cwd/negative_proxy.py). The default-boot
 // wire replay stays pinned in native_archive::tests.
-fn archive_server_boot_response(request: &str) -> Option<String> {
-    // Mirror the production admission in
-    // native_archive::fill_request_default_project_key: only the three archive
-    // methods with an object params and a nullish projectKey get the fill.
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(request) else {
-        return None;
-    };
-    if !matches!(
-        parsed.get("method").and_then(serde_json::Value::as_str),
-        Some("native_archive_manifest" | "native_archive_entries" | "native_archive_artifact")
-    ) {
-        return None;
-    }
-    let params = parsed.get("params")?;
-    if !params.is_object()
-        || !matches!(
-            params.get("projectKey"),
-            None | Some(serde_json::Value::Null)
-        )
-    {
+fn archive_server_boot_response(request: &str, fallback: &std::path::Path) -> Option<String> {
+    // fix-r3 (review P2-6): eligibility is decided by the production fill the
+    // proxy itself calls (pairing.rs), not by a mirrored predicate — the
+    // expectation below only applies when that fill actually retargeted the
+    // request's nullish projectKey at the boot fallback. The response is built
+    // as a JsObject and serialized with the production stringify, so id and
+    // sessionKey escaping cannot drift from the real wire bytes.
+    let mut parsed = pilotdeck_protocol::parse_json(request).ok()?;
+    crate::native_archive::fill_request_default_project_key(&mut parsed, fallback);
+    let retargeted = parsed
+        .get("params")?
+        .get("projectKey")
+        .and_then(pilotdeck_protocol::JsValue::as_string)
+        .and_then(|key| key.to_utf8().ok())
+        .is_some_and(|key| key == fallback.to_string_lossy());
+    if !retargeted {
         return None;
     }
-    let id = parsed.get("id")?.as_str()?;
-    let session = params.get("sessionKey")?.as_str()?;
-    Some(format!(
-        "{{\"type\":\"response\",\"id\":\"{id}\",\"ok\":false,\"error\":{{\"code\":\"SESSION_NOT_FOUND\",\"message\":\"Session not found: {session}\"}}}}"
-    ))
+    let id = parsed.get("id")?.as_string()?.clone();
+    let session = parsed
+        .get("params")?
+        .get("sessionKey")?
+        .as_string()?
+        .to_utf8()
+        .ok()?;
+    if crate::metadata::js_trim(&session).is_empty() {
+        // Production validates sessionKey before the not-found lookup, so the
+        // fixture's own recorded response stays authoritative for such cases.
+        return None;
+    }
+    let mut error = pilotdeck_protocol::JsObject::new();
+    error.insert("code".into(), "SESSION_NOT_FOUND".into());
+    error.insert(
+        "message".into(),
+        pilotdeck_protocol::JsValue::String(format!("Session not found: {session}").into()),
+    );
+    let mut response = pilotdeck_protocol::JsObject::new();
+    response.insert("type".into(), "response".into());
+    response.insert("id".into(), pilotdeck_protocol::JsValue::String(id));
+    response.insert("ok".into(), pilotdeck_protocol::JsValue::Bool(false));
+    response.insert("error".into(), pilotdeck_protocol::JsValue::Object(error));
+    Some(
+        pilotdeck_protocol::stringify_json(&pilotdeck_protocol::JsValue::Object(response))
+            .expect("#1154 server boot response serializes")
+            .expect("#1154 server boot response is defined"),
+    )
 }
 
 #[tokio::test]
 async fn native_archives_match_production_wire_and_do_not_reach_upstream() {
     let (metadata, fixture) = crate::native_archive::tests::fixture();
+    let home = metadata.home.clone();
     let (client, downstream) = tokio::io::duplex(1024 * 1024);
     let (upstream, server) = tokio::io::duplex(1024 * 1024);
     let mut pair = Pair {
@@ -1733,7 +1753,7 @@ async fn native_archives_match_production_wire_and_do_not_reach_upstream() {
     for case in fixture["cases"].as_array().unwrap() {
         let request = case["request"].as_str().unwrap();
         let response = case["response"].as_str().unwrap();
-        let server_boot = archive_server_boot_response(request);
+        let server_boot = archive_server_boot_response(request, &home);
         let expected = server_boot.as_deref().unwrap_or(response);
         let wire = client_frame(0x81, 126, request.as_bytes());
         write(&mut pair.client, &wire).await;
@@ -1885,6 +1905,7 @@ async fn archive_io_twelve_rpc_pairs_do_not_reach_upstream() {
 #[tokio::test]
 async fn archive_native_materialized_138_pairs_are_local() {
     let (metadata, data, root) = crate::native_archive::tests::native_fixture();
+    let home = metadata.home.clone();
     let (client, downstream) = tokio::io::duplex(1024 * 1024);
     let (upstream, server) = tokio::io::duplex(1024 * 1024);
     let mut pair = Pair {
@@ -1900,7 +1921,7 @@ async fn archive_native_materialized_138_pairs_are_local() {
         // Same server-boot retarget as the wire replay above: the materialized
         // home ships no General chat dir either, so the two nullish-key
         // object-params cases answer the session-not-found diagnostic.
-        let server_boot = archive_server_boot_response(request);
+        let server_boot = archive_server_boot_response(request, &home);
         let expected = server_boot.as_deref().unwrap_or(response);
         let wire = client_frame(0x81, 126, request.as_bytes());
         write(&mut pair.client, &wire).await;

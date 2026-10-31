@@ -15,6 +15,11 @@ METADATA = ROOT / 'src/pilotdeck-gateway/src/metadata.rs'
 PROJECT_FILES = ROOT / 'src/pilotdeck-gateway/src/project_files.rs'
 REGRESSION = ROOT / 'src/pilotdeck-gateway/src/native_process/metadata_cwd_tests.rs'
 ORACLE = Path(__file__).resolve().parent / 'oracle.json'
+# fix-r3 (review P2-5): the oracle_bounded precheck's baseline module and the
+# shared mask table are judges and stay guarded.
+BASELINE = ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs'
+MASKS = ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs'
+MASK_TABLE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/_shared/regeneration-masks.tsv'
 PREFIX = 'native_process::tests::metadata_cwd::'
 # Forwarded child receipts use the parent name, not the ignored worker name.
 MUTATIONS = [
@@ -93,4 +98,5 @@ MUTATIONS = [
 if __name__ == '__main__':
     raise SystemExit(matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
         passed_count=1, child_count=8, exact=True,
-        paths=[REQUESTS, SERVICES, METADATA, PROJECT_FILES, REGRESSION, ORACLE]))
+        paths=[REQUESTS, SERVICES, METADATA, PROJECT_FILES, REGRESSION, ORACLE,
+               BASELINE, MASKS, MASK_TABLE]))

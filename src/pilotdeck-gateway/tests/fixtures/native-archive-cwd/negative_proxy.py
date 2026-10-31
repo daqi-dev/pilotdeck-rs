@@ -10,6 +10,8 @@ from negative_suite import matrix_main
 
 ROOT = Path(__file__).resolve().parents[5]
 PAIRING = ROOT / 'src/pilotdeck-gateway/src/pairing.rs'
+PAIRING_TESTS = ROOT / 'src/pilotdeck-gateway/src/pairing/tests.rs'
+DISPATCH = ROOT / 'src/pilotdeck-gateway/src/dispatch.rs'
 NATIVE_ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_archive.rs'
 PREFIX = 'pairing::tests::'
 TEST = 'archive_nullish_project_key_uses_the_proxy_boot_fallback'
@@ -44,6 +46,8 @@ MUTATIONS = [
 ]
 
 if __name__ == '__main__':
+    # fix-r3 (review P1-2): the bound test itself (pairing/tests.rs) and the
+    # local-admission gate (dispatch.rs) are judges and stay guarded.
     raise SystemExit(matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
         passed_count=1, child_count=0, exact=True,
-        paths=[PAIRING, NATIVE_ARCHIVE]))
+        paths=[PAIRING, PAIRING_TESTS, DISPATCH, NATIVE_ARCHIVE]))

@@ -2,6 +2,9 @@
 use crate::metadata::{Files, Metadata, object, text_field};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 
+// The three native_archive names in this list and in `needs_files` mirror
+// native_archive::ARCHIVE_METHODS by hand: they sit alongside other methods
+// here, so the shared const cannot be embedded directly.
 const LOCAL_METHODS: &[&str] = &[
     "supported_agents",
     "list_projects",
@@ -84,6 +87,10 @@ pub(crate) fn route_with_environment<F: Files>(
     if !LOCAL_METHODS.contains(&method.as_str()) {
         return Route::Forward;
     }
+    // Spelled out rather than native_archive::ARCHIVE_METHODS: mutating the
+    // shared list must not break this routing invariant (the whitelist check
+    // below relies on every local method being routed). Keep in sync by hand
+    // with the shared list and LOCAL_METHODS/needs_files above.
     if matches!(
         method.as_str(),
         "native_archive_manifest" | "native_archive_entries" | "native_archive_artifact"

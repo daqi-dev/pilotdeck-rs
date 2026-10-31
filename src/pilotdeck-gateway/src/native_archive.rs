@@ -54,14 +54,25 @@ pub(crate) fn fill_default_project_key(params: &mut JsValue, fallback: &Path) {
         );
     }
 }
+/// The three archive RPC names. `fill_request_default_project_key` below and
+/// the isolated entry gate in `native_process/requests.rs` both branch on this
+/// one list, so a fourth archive method cannot be wired into only one of the
+/// two entry points. `dispatch.rs` spells the same three names alongside other
+/// methods in `LOCAL_METHODS`, `needs_files` and the archive route, and stays
+/// in sync by hand (see the comments there).
+pub(crate) const ARCHIVE_METHODS: [&str; 3] = [
+    "native_archive_manifest",
+    "native_archive_entries",
+    "native_archive_artifact",
+];
+
 /// Request-level adapter for the proxy path, reusing the same params fill.
 /// `JsValue` has no nested mutation, so params is swapped out and back; a
 /// non-object params keeps TS's own read-error shape and is left untouched.
 pub(crate) fn fill_request_default_project_key(request: &mut JsValue, fallback: &Path) {
-    if !matches!(
-        text_field(request, "method").as_deref(),
-        Some("native_archive_manifest" | "native_archive_entries" | "native_archive_artifact")
-    ) {
+    if !text_field(request, "method")
+        .is_some_and(|method| ARCHIVE_METHODS.contains(&method.as_str()))
+    {
         return;
     }
     let JsValue::Object(fields) = request else {
