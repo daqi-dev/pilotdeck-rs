@@ -841,16 +841,24 @@ fn local_result(result: Result<JsValue>) -> Option<Result<JsValue>> {
     }
 }
 fn registered<F: Files>(metadata: &Metadata<F>, project: &str, general: bool) -> Result<PathBuf> {
-    let requested = resolve(&metadata.cwd, project);
+    let requested = crate::metadata::resolve_process_path(&metadata.cwd, Path::new(project))
+        .map_err(|e| crate::metadata::process_cwd_diagnostic(&e))?;
     if general && requested == metadata.home {
         return Ok(requested);
     }
-    if let Some(JsValue::Array(projects)) = metadata.list_projects().get("projects") {
+    // File RPCs enumerate the full web project list; unlike model/archive
+    // registration they must not short-circuit at the requested direct id.
+    let listed = metadata
+        .list_projects()
+        .map_err(|e| crate::metadata::process_cwd_diagnostic(&e))?;
+    if let Some(JsValue::Array(projects)) = listed.get("projects") {
         for item in projects {
-            if let Some(key) = text_field(item, "projectKey")
-                && resolve(&metadata.cwd, &key) == requested
-            {
-                return Ok(resolve(&metadata.cwd, &key));
+            if let Some(key) = text_field(item, "projectKey") {
+                let key = crate::metadata::resolve_process_path(&metadata.cwd, Path::new(&key))
+                    .map_err(|e| crate::metadata::process_cwd_diagnostic(&e))?;
+                if key == requested {
+                    return Ok(key);
+                }
             }
         }
     }

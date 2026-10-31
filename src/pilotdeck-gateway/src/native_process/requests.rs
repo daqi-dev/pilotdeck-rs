@@ -133,7 +133,7 @@ impl GatewayRequests for Requests {
             }
             let metadata = Metadata {
                 home: self.options.home.clone(),
-                cwd: self.options.project.clone(),
+                cwd: std::path::PathBuf::new(),
                 files: NativeFiles,
             };
             let request = object([

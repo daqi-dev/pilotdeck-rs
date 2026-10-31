@@ -494,7 +494,7 @@ fn tied_projects_use_byte_order_regardless_of_injected_order() {
         [2, 1, 0],
     ] {
         let metadata = ordered_projects(&order.map(|index| entries[index]));
-        let result = metadata.list_projects();
+        let result = metadata.list_projects().expect("metadata project catalog");
         let JsValue::Array(projects) = result.get("projects").unwrap() else {
             panic!("projects array")
         };
@@ -545,7 +545,9 @@ fn duplicate_markers_use_first_byte_order_match_for_storage_and_chats() {
                 mtime_ms: 1234.0,
             },
         );
-        let summary = metadata.describe_project(&"/projects/shared".into());
+        let summary = metadata
+            .describe_project(&"/projects/shared".into())
+            .expect("metadata project description");
         assert_eq!(
             summary.get("createdAt").and_then(JsValue::as_number),
             Some(42.0)

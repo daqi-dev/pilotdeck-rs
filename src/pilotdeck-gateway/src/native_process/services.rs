@@ -160,7 +160,7 @@ impl SubmitHostServices for Services {
         Box::pin(async move {
             let metadata = crate::metadata::Metadata {
                 home: self.options.home.clone(),
-                cwd: self.options.project.clone(),
+                cwd: std::path::PathBuf::new(),
                 files: crate::metadata::NativeFiles,
             };
             let params = object([
