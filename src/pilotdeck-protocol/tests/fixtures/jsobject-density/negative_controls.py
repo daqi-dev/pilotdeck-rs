@@ -3,9 +3,13 @@
 
 Mutations anchor the #1128 object-density harness (the workload builders,
 the pretty reindentation copy, and the FNV digest) to its own self-check
-`object_density_harness_selfcheck` in `src/pilotdeck-protocol/tests/object_density.rs`.
-Every row is judged from that named test's own panic payload (plain libtest
-messages, like the protocol rows of sdk-decode-budget; no receipts).
+`object_density_harness_selfcheck` in `src/pilotdeck-protocol/tests/object_density.rs`,
+and anchor the copy to the CLI implementation it mirrors through
+`object_density_pretty_copy_tracks_cli_implementation` (a mutation of the
+CLI's `write_json_pretty_into` must fail that test, so the copy cannot
+outlive a changed product pipeline). Every row is judged from the named
+test's own panic payload (plain libtest messages, like the protocol rows of
+sdk-decode-budget; no receipts).
 
 Commit the patch before running mutants. CARGO_TARGET_DIR must be supplied by
 the caller; each mutant compiles, runs the bound test, restores and rechecks
@@ -29,6 +33,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, classify, passed
 
 harness = root / 'src/pilotdeck-protocol/tests/object_density.rs'
+cli_main = root / 'src/pilotdeck-cli/src/main.rs'
 # The mutated source and the cargo test target are separate bindings: the
 # mutated harness file's stem is the test target (#983 fix-r1 lesson).
 Mutation = namedtuple('Mutation', 'name path package target old new test assertion')
@@ -45,27 +50,71 @@ mutations = [
              "':' => out.extend_from_slice(b\": \"),",
              "':' => out.extend_from_slice(b\":\"),",
              'object_density_harness_selfcheck', '#1128 deep-spine pretty bytes'),
-    # An empty container must stay inline: `[]`/`{}` never gain a newline.
+    # An empty container must stay inline: `[]`/`{}` never gain a newline. The
+    # anchor carries the preceding extend_from_slice line because the pinned
+    # CLI function text below re-spells the bare `let close` line verbatim.
     Mutation('pretty-empty-close', harness, 'pilotdeck-protocol', 'object_density',
-             "let close = if value == '{' { '}' } else { ']' };",
-             "let close = '}';",
+             '                out.extend_from_slice(value.encode_utf8(&mut utf8).as_bytes());\n'
+             "                let close = if value == '{' { '}' } else { ']' };",
+             '                out.extend_from_slice(value.encode_utf8(&mut utf8).as_bytes());\n'
+             "                let close = '}';",
              'object_density_harness_selfcheck',
              '#1128 empty containers stay inline in pretty output'),
-    # The small-object grid is one `{"a":1}` per 8 wire bytes.
+    # The small-object grid is one `{"a":1}` per 8 wire bytes...
     Mutation('workload-small-element', harness, 'pilotdeck-protocol', 'object_density',
              'const SMALL_ELEMENT: &str = "{\\"a\\":1}";',
              'const SMALL_ELEMENT: &str = "{\\"a\\":2}";',
              'object_density_harness_selfcheck', '#1128 small-object builder exact bytes'),
-    # The deep spine pads each of the 10^4 levels through key "p".
+    # ... and the self-check fixture (23 bytes) sits on the divisor boundary:
+    # 23/8 = 2 elements but 23/7 = 3, so dropping the `+ 1` separator byte
+    # changes the golden bytes (#1128 fix-r1, review opus #1).
+    Mutation('workload-small-divisor', harness, 'pilotdeck-protocol', 'object_density',
+             'let count = target_bytes / (SMALL_ELEMENT.len() + 1);',
+             'let count = target_bytes / SMALL_ELEMENT.len();',
+             'object_density_harness_selfcheck', '#1128 small-object builder exact bytes'),
+    # The empty-object grid is one `{}` per 3 wire bytes, isolating the
+    # per-object Box allocation from key/value/hash costs.
+    Mutation('workload-empty-element', harness, 'pilotdeck-protocol', 'object_density',
+             'const EMPTY_ELEMENT: &str = "{}";',
+             'const EMPTY_ELEMENT: &str = "[]";',
+             'object_density_harness_selfcheck', '#1128 empty-object builder exact bytes'),
+    # Its fixture (23 bytes) is likewise on the divisor boundary: 23/3 = 7
+    # elements but 23/2 = 11.
+    Mutation('workload-empty-divisor', harness, 'pilotdeck-protocol', 'object_density',
+             'let count = target_bytes / (EMPTY_ELEMENT.len() + 1);',
+             'let count = target_bytes / EMPTY_ELEMENT.len();',
+             'object_density_harness_selfcheck', '#1128 empty-object builder exact bytes'),
+    # The deep spine pads each of the 10^4 levels through key "p"...
     Mutation('workload-deep-pad', harness, 'pilotdeck-protocol', 'object_density',
              'const DEEP_PAD_KEY: &str = "p";',
              'const DEEP_PAD_KEY: &str = "q";',
              'object_density_harness_selfcheck', '#1128 deep-spine builder exact bytes'),
+    # ... and the self-check fixture (48 bytes at depth 2) distinguishes the
+    # `- 1` in the pad math: 47/2 and 46/2 both pad 10, 48/2 pads 11
+    # (#1128 fix-r1, review opus #6).
+    Mutation('workload-deep-pad-boundary', harness, 'pilotdeck-protocol', 'object_density',
+             'let pad = (target_bytes.saturating_sub(1) / depth).saturating_sub(13);',
+             'let pad = (target_bytes / depth).saturating_sub(13);',
+             'object_density_harness_selfcheck', '#1128 deep-spine builder exact bytes'),
+    # The wide grid's key width is fixed at six digits; a different width
+    # changes the exact golden bytes.
+    Mutation('workload-wide-digits', harness, 'pilotdeck-protocol', 'object_density',
+             'const WIDE_KEY_DIGITS: usize = 6;',
+             'const WIDE_KEY_DIGITS: usize = 7;',
+             'object_density_harness_selfcheck', '#1128 wide-object builder exact bytes'),
     # The cross-rep stability digest is FNV-1a 64 with the standard prime.
     Mutation('digest-fnv-prime', harness, 'pilotdeck-protocol', 'object_density',
              'hash = hash.wrapping_mul(0x0000_0100_0000_01b3);',
              'hash = hash.wrapping_mul(0x0000_0100_0000_01b5);',
              'object_density_harness_selfcheck', '#1128 pinned compact FNV digest'),
+    # The pretty copy must track the CLI's own write_json_pretty_into: the
+    # binding test pins that function's exact text, so any change to the
+    # product pipeline fails the harness (#1128 fix-r1, review P2).
+    Mutation('cli-pretty-indent', cli_main, 'pilotdeck-protocol', 'object_density',
+             'out.write_all(b"  ")?;',
+             'out.write_all(b" ")?;',
+             'object_density_pretty_copy_tracks_cli_implementation',
+             '#1128 CLI write_json_pretty_into changed; re-derive the harness pretty copy'),
 ]
 
 
@@ -148,6 +197,9 @@ def main():
                # Close the class instead of one file per round — every tracked
                # file of the crate the bound test compiles (#983 r5).
                *crate_files('src/pilotdeck-protocol'),
+               # The binding test reads the CLI's main.rs at compile time, so a
+               # mutated or drifted main.rs is a build input of this suite.
+               cli_main,
                root / 'src/Cargo.lock', shared / 'negative_process.py',
                shared / 'negative_suite.py', shared / 'negative_panic.py',
                shared / 'pending_reanchor.py',
