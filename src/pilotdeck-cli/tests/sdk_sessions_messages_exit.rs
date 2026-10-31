@@ -1,6 +1,6 @@
 //! #1028: replay 39 D1 and 13 supplemental real Node v22.22.0 captures.
 //! Runtime, wire replay, and bounded parity lease reuse the P02 test helpers.
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -136,12 +136,26 @@ impl Drop for Runtime {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-struct OwnedChild(Option<Child>);
+type Writers = std::sync::Arc<std::sync::Mutex<Vec<StdinWriter>>>;
+struct OwnedChild(Option<Child>, Writers);
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let Some(child) = &mut self.0 {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        // The child owns every early/delayed writer. Kill/reap happens first,
+        // including when collect or the mock future is cancelled or panics.
+        for writer in self.1.lock().expect("#1136 owned stdin writers").drain(..) {
+            let finished =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| writer.finish()));
+            if let Err(payload) = finished {
+                if std::thread::panicking() {
+                    eprintln!("#1136 stdin cleanup failed during unwinding");
+                } else {
+                    std::panic::resume_unwind(payload);
+                }
+            }
         }
     }
 }
@@ -154,17 +168,62 @@ fn write_fixture_stdin(stdin: &mut impl Write, data: &[u8]) {
     }
 }
 
+// Writers run independently of the current-thread Tokio mock. Completion is
+// bounded and owned by OwnedChild, which closes the reader before joining.
+struct StdinWriter {
+    handle: std::thread::JoinHandle<()>,
+    done: std::sync::mpsc::Receiver<std::thread::Result<()>>,
+    joined: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl StdinWriter {
+    fn start(mut stdin: std::process::ChildStdin, data: Vec<u8>) -> Self {
+        let (finished, done) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                write_fixture_stdin(&mut stdin, &data)
+            }));
+            drop(stdin);
+            let _ = finished.send(result);
+        });
+        Self {
+            handle,
+            done,
+            joined: Default::default(),
+        }
+    }
+    fn finish(self) {
+        let result = self
+            .done
+            .recv_timeout(BOUND)
+            .expect("#1136 bounded stdin cleanup");
+        self.handle.join().expect("#1136 owned stdin thread");
+        self.joined
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+
 fn spawn(command: &mut Command, input: &Value) -> OwnedChild {
-    let mut owned = OwnedChild(Some(command.spawn().expect("#1028 spawn CLI")));
+    let mut owned = OwnedChild(
+        Some(command.spawn().expect("#1028 spawn CLI")),
+        Writers::default(),
+    );
     let child = owned.0.as_mut().expect("#1028 immediately owned child");
     let hex = input["stdinHex"].as_str().unwrap_or("");
     let data: Vec<u8> = (0..hex.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("#1028 stdin hex"))
         .collect();
-    let mut stdin = child.stdin.take().expect("#1028 stdin pipe");
-    write_fixture_stdin(&mut stdin, &data);
-    drop(stdin);
+    owned
+        .1
+        .lock()
+        .expect("#1136 register early stdin")
+        .push(StdinWriter::start(
+            child.stdin.take().expect("#1028 stdin pipe"),
+            data,
+        ));
     owned
 }
 #[test]
@@ -197,21 +256,94 @@ async fn fixture_stdin_broken_pipe_preserves_output() {
     // Larger than the pipe capacity: a child that never reads must close the
     // reader before write_all can finish, independently of scheduler order.
     let input = json!({"stdinHex": "61".repeat(2 * 1024 * 1024)});
-    let child =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| spawn(&mut command, &input)));
-    let child = child.unwrap_or_else(|error| {
-        // Only a write-side EPIPE is this regression. Setup/collection failures
-        // must not publish the negative control's assertion receipt.
-        let broken_pipe = error.downcast_ref::<String>().is_some_and(|message| {
-            message.starts_with("#1075 fixture stdin:") && message.contains("kind: BrokenPipe")
+    let child = spawn(&mut command, &input);
+    let output = std::panic::AssertUnwindSafe(collect(child))
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|error| {
+            // Only a write-side EPIPE is this regression. Setup/collection failures
+            // must not publish the negative control's assertion receipt.
+            let broken_pipe = error.downcast_ref::<String>().is_some_and(|message| {
+                message.starts_with("#1075 fixture stdin:") && message.contains("kind: BrokenPipe")
+            });
+            verify(!broken_pipe, "#1075 broken pipe must not panic");
+            std::panic::resume_unwind(error)
         });
-        verify(!broken_pipe, "#1075 broken pipe must not panic");
-        std::panic::resume_unwind(error)
-    });
-    let output = collect(child).await;
     verify(output.status.code() == Some(23), "#1075 preserve exit code");
     verify(output.stdout == b"fixture-out", "#1075 preserve stdout");
     verify(output.stderr == b"fixture-err", "#1075 preserve stderr");
+}
+
+#[tokio::test]
+async fn fixture_stdin_writer_yields_before_child_reads() {
+    let runtime = Runtime::new();
+    let release = runtime.0.join("release");
+    let mut command = Command::new("/bin/sh");
+    command
+        .env_clear()
+        .args([
+            "-c",
+            "while [ ! -f \"$1\" ]; do /bin/sleep 0.01; done; exit 23",
+            "fixture",
+        ])
+        .arg(&release)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let input = json!({"stdinHex": "61".repeat(2 * 1024 * 1024)});
+    let (ready, observed) = std::sync::mpsc::channel();
+    let starter = std::thread::spawn(move || {
+        ready
+            .send(spawn(&mut command, &input))
+            .unwrap_or_else(|_| panic!("#1136 publish owned child"));
+    });
+    // Always release the child before checking: a synchronous-writer mutant
+    // fails this assertion without leaking a blocked writer or timing out.
+    let early = observed.recv_timeout(Duration::from_secs(3));
+    let yielded = early.is_ok();
+    let temporary = release.with_extension("tmp");
+    fs::write(&temporary, b"release").expect("#1136 release bytes");
+    fs::rename(temporary, &release).expect("#1136 atomic child release");
+    let child =
+        early.unwrap_or_else(|_| observed.recv_timeout(BOUND).expect("#1136 released child"));
+    starter.join().expect("#1136 starter joined");
+    let output = collect(child).await;
+    verify(yielded, "#1136 stdin writer yields before child reads");
+    verify(
+        output.status.code() == Some(23),
+        "#1136 blocked reader exit preserved",
+    );
+}
+
+#[test]
+fn fixture_stdin_cancel_reaps_writer() {
+    let mut command = Command::new("/bin/sleep");
+    command
+        .env_clear()
+        .arg("30")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = spawn(
+        &mut command,
+        &json!({"stdinHex": "61".repeat(2 * 1024 * 1024)}),
+    );
+    let writers = child.1.clone();
+    verify(
+        writers.lock().expect("#1136 writer ownership").len() == 1,
+        "#1136 writer registered",
+    );
+    let joined = writers.lock().expect("#1136 observe writer join")[0]
+        .joined
+        .clone();
+    // This child never consumes stdin. Cancelling its owner must close the
+    // read end, finish the blocked write, and join the registered thread.
+    drop(child);
+    verify(
+        writers.lock().expect("#1136 joined writers").is_empty()
+            && joined.load(std::sync::atomic::Ordering::Acquire),
+        "#1136 cancellation joins stdin writer",
+    );
 }
 
 async fn collect(child: OwnedChild) -> std::process::Output {
@@ -242,6 +374,15 @@ async fn collect_bounded(mut child: OwnedChild, bound: Duration) -> std::process
         .wait_with_output()
         .expect("#1028 collect output")
 }
+// After child exit every unobserved connection is in the retained backlog.
+async fn verify_no_pending_connections(listener: &TcpListener, reason: &str) {
+    if let Ok(accepted) = timeout(Duration::from_millis(20), listener.accept()).await {
+        let (_, peer) = accepted.expect("#1136 owned extra accept");
+        eprintln!("#1136 extra connection after captured wire: {peer}");
+        verify(false, reason);
+    }
+}
+
 fn snapshot(root: &Path) -> Value {
     fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<String, Value>) {
         let metadata = fs::symlink_metadata(path).expect("#1028 snapshot metadata");
@@ -274,7 +415,7 @@ fn snapshot(root: &Path) -> Value {
     serde_json::to_value(entries).expect("#1028 snapshot JSON")
 }
 
-async fn replay(listener: TcpListener, case: &Value, pid: u32) {
+async fn replay(listener: &TcpListener, case: &Value, pid: u32) {
     let (stream, _) = listener.accept().await.expect("#1028 owned mock accept");
     let mut socket = accept_async(stream).await.expect("#1028 WS upgrade");
     let mut id = String::new();
@@ -368,16 +509,6 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
         signal.is_some() || closed,
         &format!(
             "#1028 terminal connection closed {}",
-            case["input"]["id"].as_str().expect("#1028 cell id")
-        ),
-    );
-    // The listener remains owned throughout: any extra connection is a failure.
-    verify(
-        timeout(Duration::from_millis(20), listener.accept())
-            .await
-            .is_err(),
-        &format!(
-            "#1028 no reconnect {}",
             case["input"]["id"].as_str().expect("#1028 cell id")
         ),
     );
@@ -556,7 +687,7 @@ async fn sessions_messages_matches_ts_matrix() {
         let child = spawn(&mut command, &case["input"]);
         let pid = child.0.as_ref().expect("#1028 child PID").id();
         let output = if case["connections"] == 1 {
-            let mock = replay(listener.expect("#1028 observed mock"), case, pid);
+            let mock = replay(listener.as_ref().expect("#1028 observed mock"), case, pid);
             let ((), output) = tokio::join!(
                 async {
                     verify(
@@ -571,20 +702,22 @@ async fn sessions_messages_matches_ts_matrix() {
             );
             output
         } else {
-            let output = collect(child).await;
-            if let Some(listener) = listener {
-                verify(
-                    timeout(Duration::from_millis(20), listener.accept())
-                        .await
-                        .is_err(),
-                    &format!(
-                        "#1028 preflight never connects {}",
-                        case["input"]["id"].as_str().expect("#1028 cell id")
-                    ),
-                );
-            }
-            output
+            collect(child).await
         };
+        if let Some(listener) = listener.as_ref() {
+            let reason = if case["connections"] == 1 {
+                format!(
+                    "#1028 no reconnect {}",
+                    case["input"]["id"].as_str().expect("#1136 cell id")
+                )
+            } else {
+                format!(
+                    "#1028 preflight never connects {}",
+                    case["input"]["id"].as_str().expect("#1136 cell id")
+                )
+            };
+            verify_no_pending_connections(listener, &reason).await;
+        }
         let matches = output.stdout == case["stdout"].as_str().expect("#1028 TS stdout").as_bytes()
             && output.stderr == case["stderr"].as_str().expect("#1028 TS stderr").as_bytes()
             && output.status.code().map(i64::from) == case["exit"].as_i64()
