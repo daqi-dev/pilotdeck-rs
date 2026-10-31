@@ -12,7 +12,8 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              target_environment, published_module)
 
 p = argparse.ArgumentParser()
 p.add_argument('--out', required=True)
@@ -81,12 +82,35 @@ for path, test, run_anchor, slot_anchor in [
 ]:
     runner_mutations.extend([
         (path.stem+'-unowned', path, run_anchor,
-         run_anchor.replace('run_owned(', '__import__("subprocess").run('), test),
+         run_anchor.replace('run_owned(', '__import__("subprocess").run('), test,
+         'unowned subprocess.run'),
         (path.stem+'-slot', path, slot_anchor,
          slot_anchor.replace("wait_for_slot(root/'scripts/cargo-slots.sh')",
                              "__import__('subprocess').run([str(root/'scripts/cargo-slots.sh')])"),
-         test),
+         test, 'unowned subprocess.run'),
     ])
+# #1166: mutating_sources itself runs the prebuilt workspace scanner through
+# run_owned before the runner reserves a slot or launches cargo. The scanner
+# admission is negative-controlled against the same runner meta-test from
+# in-memory negative_process bytes: the disk copy stays at HEAD (a nested
+# workspace guard never accepts dirty inputs), and a valid __pycache__ entry
+# would bypass any import loader patch, so the candidate is compiled and
+# published as the module object instead (see runner_control).
+# The scanner-unowned candidate keeps stdout capture: the meta-test arms its
+# subprocess.run poison only after its own (unpatched) mutating_sources
+# admission, so the candidate must still complete that admission — only the
+# scanner's ownership (raw subprocess.run instead of the owned runner) differs.
+np = Path(__file__).resolve().parents[1]/'negative_process.py'
+runner_mutations.extend([
+    ('scanner-unowned', np,
+     '        result = run_owned([str(executable), str(root), expected_head], timeout=60, cwd=root)',
+     '        result = __import__("subprocess").run([str(executable), str(root), expected_head], timeout=60, cwd=root, capture_output=True, text=True)',
+     'test_negative', 'unowned subprocess.run'),
+    ('scanner-skipped', np,
+     '    literal_inputs = _workspace_literal_inputs(root, baseline, env=env)',
+     '    literal_inputs = ()',
+     'test_negative', '#1166 the workspace scanner must run before slot reservation and cargo'),
+])
 rows = []
 env = target_environment(root)
 originals = {}
@@ -103,7 +127,7 @@ def record(name, run, log):
           flush=True)
 
 
-def runner_control(test, path, candidate):
+def runner_control(test, path, candidate, module_name=None):
     # #1166 runpy reads its code through io.open_code. Override only that
     # runner's execution stream; Path.read_bytes/Git still observe real HEAD.
     compile(candidate, str(path), 'exec')
@@ -119,7 +143,14 @@ def runner_control(test, path, candidate):
     stream = io.StringIO()
     previous = sys.argv
     code = 0
-    with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream), \
+    # A negative_process candidate must reach the meta-test through its
+    # import, but a valid __pycache__ entry bypasses every loader patch.
+    # The shared executor publishes the compiled module object (the same
+    # publication _parity_mutation_lock uses for its ruler module) and
+    # restores the pristine module on exit.
+    holder = (published_module(module_name, path, candidate) if module_name is not None
+              else contextlib.nullcontext(None))
+    with holder, contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream), \
             patch.object(io, 'open_code', side_effect=code_reader):
         sys.argv = argv
         try:
@@ -136,7 +167,8 @@ def runner_control(test, path, candidate):
 # The runner takes the same lock
 # reentrantly in this process (see runner_control), so holding the outer
 # snapshot cannot deadlock the inner runner.
-selected_runner_paths = [n, n1, n2] if not args.only or any(m[0] == args.only for m in runner_mutations) else []
+selected_runner_paths = ([n, n1, n2, np] if not args.only or any(m[0] == args.only for m in runner_mutations)
+                         else [])
 with mutating_sources(root, [e, a, f, s, o] + selected_runner_paths) as originals:
     for name, path, old, new, test in mutations:
         if args.only and args.only != name:
@@ -155,14 +187,15 @@ with mutating_sources(root, [e, a, f, s, o] + selected_runner_paths) as original
             record(name, run, log)
         finally:
             path.write_bytes(originals[path])
-    for name, path, old, new, test in runner_mutations:
+    for name, path, old, new, test, marker in runner_mutations:
         if args.only and args.only != name:
             continue
         text = originals[path].decode()
         assert text.count(old) == 1, (name, text.count(old))
-        run = runner_control(test, path, text.replace(old, new, 1))
+        run = runner_control(test, path, text.replace(old, new, 1),
+                             'negative_process' if path == np else None)
         log = run.stdout + run.stderr
-        assert run.returncode and 'unowned subprocess.run' in log and 'FAILED (failures=1)' in log, log[-2000:]
+        assert run.returncode and marker in log and 'FAILED (failures=1)' in log, log[-2000:]
         record(name, run, log)
     (out/'summary.json').write_text(json.dumps({'results': rows, 'restoredSha256': {
         str(path.relative_to(root)): hashlib.sha256(content).hexdigest()

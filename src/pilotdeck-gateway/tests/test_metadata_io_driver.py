@@ -1282,9 +1282,26 @@ class AggregationAudit(unittest.TestCase):
                 def git(_root, *args):
                     return raw_read(self.root / args[1].split(':', 1)[1]) if args[0] == 'show' else b''
 
+                write_text = Path.write_text
+
+                def evidence_only(path, *a, **k):
+                    self.assertTrue(path.is_relative_to(Path(temp).resolve()),
+                                    '#166 busy lock must never write source')
+                    return write_text(path, *a, **k)
+
+                # #1166: the pristine admission now runs a real external
+                # scanner that needs genuine git; these #166 wiring probes
+                # mock _git, so the scanner admission is pinned out here
+                # (its own coverage lives in workspace-pristine). The write
+                # paths are pinned symmetrically: a mutant that skips the busy
+                # lock reaches the suite's on-disk mutation application, and
+                # only pinning both leaves no residue on production source.
                 with patch.object(guard, '_parity_mutation_lock', busy), \
                         patch.object(guard, '_git', git), \
+                        patch.object(guard, '_workspace_literal_inputs', return_value=()), \
+                        patch.object(guard, '_ensure_workspace_scanner'), \
                         patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
+                        patch.object(Path, 'write_text', evidence_only), \
                         patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 busy lock must not write source')), \
                         patch.object(module.sys, 'argv', argv), \
                         patch.object(module, 'run_owned', side_effect=AssertionError('#166 busy lock must not launch a test')):
@@ -1351,7 +1368,12 @@ class AggregationAudit(unittest.TestCase):
                     argv = ['negative_controls.py', '--output', str(Path(temp) / 'out'), '--only', row[0]]
                     caught = None
                     code = None
+                    # #1166: same scanner pin-out as the busy-lock probe
+                    # above; the residue assertion must be the first
+                    # baseline failure this wiring test observes.
                     with patch.object(guard, '_git', git), \
+                            patch.object(guard, '_workspace_literal_inputs', return_value=()), \
+                            patch.object(guard, '_ensure_workspace_scanner'), \
                             patch.object(module, 'mutating_sources', observed_guard), \
                             patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
                             patch.object(Path, 'read_bytes', lambda p: residue if p == common_path else raw_read(p)), \

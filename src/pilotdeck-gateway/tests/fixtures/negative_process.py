@@ -661,6 +661,30 @@ def _parity_mutation_lock(root, snapshot, timeout):
 
 
 @contextmanager
+def published_module(name, path, source):
+    """Compile and publish ``source`` as module ``name`` for the with-body.
+
+    A valid __pycache__ entry bypasses every import loader patch, so an
+    in-memory negative control must compile its candidate and publish the
+    module object directly — the same publication this module uses for the
+    pristine ruler module above. The disk copy stays untouched; the previous
+    ``sys.modules`` entry is restored on exit.
+    """
+    module = ModuleType(name)
+    module.__file__ = str(path)
+    exec(compile(source, str(path), "exec"), module.__dict__)
+    replaced = sys.modules.get(name)
+    sys.modules[name] = module
+    try:
+        yield module
+    finally:
+        if replaced is not None:
+            sys.modules[name] = replaced
+        else:
+            sys.modules.pop(name, None)
+
+
+@contextmanager
 def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     """Lock the tree, prove ``paths`` are pristine, snapshot, mutate, restore.
 
