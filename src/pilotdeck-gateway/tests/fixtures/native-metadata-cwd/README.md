@@ -9,3 +9,5 @@ Rust：`native_process::tests::metadata_cwd::matrix_matches_ts` 有界驱动八�
 `negative_regeneration.py` 用同一个 `oracle-node-version` 变异绑定实际 ignored 重生成守卫；先由主负控脚本 compile-only 验证该变异能编译，再运行此脚本的正/负/恢复三步，使用共享 negative_suite.run_cases。PDRS_BASELINE 必须显式指向固定 TS 基线。
 
 本装置使用明确的 lib ignored 守卫及独立负控，没有登记到 generator_provenance integration-test 集中清单；仅跑该清单不会覆盖本装置。`--check` 与变异执行串行运行。重生成负控外层同时守卫 runner 与共享执行器字节须等于 HEAD。
+
+fix-r1：chat scanner 重构后的两个锚点已同步；matrix_main 使用 exact=True，只运行绑定的 matrix_matches_ts，避免同模块新增 archive 矩阵改变旧套件的正控计数。empty-matrix 直接注入空 cases 验证拒绝，不只改期望数量。

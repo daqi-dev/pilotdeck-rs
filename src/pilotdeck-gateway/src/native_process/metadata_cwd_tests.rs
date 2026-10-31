@@ -336,3 +336,221 @@ case!(relative_deleted);
 case!(symlink_scan);
 case!(collision_deleted);
 case!(collision_other);
+
+fn archive_fixture() -> Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/native-archive-cwd/oracle.json"
+    ))
+    .expect("#1154 archive valid oracle JSON")
+}
+
+#[test]
+fn archive_matrix_matches_ts() {
+    crate::test_baseline::oracle_bounded(include_str!(
+        "../../tests/fixtures/native-archive-cwd/oracle.json"
+    ));
+    let oracle = archive_fixture();
+    negative_assert_eq!(oracle["node"], "v22.22.0", "#1154 archive pinned TS Node");
+    negative_assert_eq!(
+        oracle["cases"]
+            .as_array()
+            .expect("#1154 archive TS cases")
+            .len(),
+        36,
+        "#1154 archive matrix cardinality"
+    );
+    for method in ["manifest", "entries", "artifact"] {
+        for key in ["missing", "null", "empty", "absolute"] {
+            for cwd in ["project", "other", "deleted"] {
+                let name = format!("archive_{method}_{key}_{cwd}");
+                crate::test_process::run_cases(
+                    &format!("native_process::tests::metadata_cwd::{name}"),
+                    vec![(name, vec![])],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires pinned Node and explicit PDRS_BASELINE"]
+fn archive_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("native-archive-cwd");
+}
+
+async fn observe_archive(name: &str) {
+    let oracle = archive_fixture();
+    let parts: Vec<_> = name.split('_').collect();
+    assert_eq!(parts.len(), 4, "#1154 archive case dimensions");
+    let (method, key, cwd) = (parts[1], parts[2], parts[3]);
+    let row = oracle["cases"]
+        .as_array()
+        .expect("#1154 archive cases array")
+        .iter()
+        .find(|r| {
+            r["name"]
+                == name
+                    .strip_prefix("archive_")
+                    .expect("#1154 archive case prefix")
+        })
+        .expect("#1154 archive named case");
+    negative_assert_eq!(row["method"], method, "#1154 archive method dimension");
+    negative_assert_eq!(row["key"], key, "#1154 archive key dimension");
+    negative_assert_eq!(row["cwd"], cwd, "#1154 archive cwd dimension");
+    negative_assert_eq!(
+        row["cwdReadable"],
+        cwd != "deleted",
+        "#1154 archive cwd state dimension"
+    );
+    let path = std::env::temp_dir().join(format!("pdrs-1154-archive-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&path).expect("#1154 archive isolated root");
+    let work = Work(path.canonicalize().expect("#1154 archive canonical root"));
+    for dir in ["home", "project", "other", "deleted"] {
+        std::fs::create_dir_all(work.0.join(dir)).expect("#1154 archive directory");
+    }
+    for file in ["token", "sidecar"] {
+        std::fs::write(work.0.join(file), "fixture").expect("#1154 archive file");
+    }
+    let options = Options::parse([
+        OsString::from("--home"),
+        work.0.join("home").into_os_string(),
+        OsString::from("--project"),
+        work.0.join("project").into_os_string(),
+        OsString::from("--listen"),
+        OsString::from("127.0.0.1:0"),
+        OsString::from("--token-file"),
+        work.0.join("token").into_os_string(),
+        OsString::from("--sidecar"),
+        work.0.join("sidecar").into_os_string(),
+    ])
+    .expect("#1154 archive options");
+    std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG).expect("#1154 archive config");
+    let storage = options
+        .home
+        .join("projects")
+        .join(crate::metadata::project_id(&options.project));
+    let chat = storage.join("chats");
+    let artifacts = options.project.join(".pilotdeck/tool-results/fixture");
+    std::fs::create_dir_all(&chat).expect("#1154 archive chats directory");
+    std::fs::create_dir_all(&artifacts).expect("#1154 archive artifacts directory");
+    std::fs::write(
+        storage.join(".cwd"),
+        options.project.to_string_lossy().as_bytes(),
+    )
+    .expect("#1154 archive marker");
+    std::fs::write(chat.join("fixture.jsonl"), json!({"type":"message","sessionId":"fixture","turnId":"","sequence":0,"createdAt":"2026-10-15T00:00:00Z","payload":{"text":"hello"}}).to_string() + "\n").expect("#1154 archive transcript");
+    std::fs::write(artifacts.join("fixture.txt"), "fixture artifact")
+        .expect("#1154 archive artifact");
+    let mut owner_options = SessionOwnerOptions::new(Arc::new(NoResources));
+    owner_options.idle_sweep_interval_ms = 0;
+    let requests = requests::Requests {
+        options: options.clone(),
+        env: options.environment(Env::new()),
+        coordinator: Arc::default(),
+        runs: Arc::new(
+            crate::runtime::turn::publish::FileRegistry::new(
+                crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
+                    .expect("#1154 archive run file"),
+            )
+            .expect("#1154 archive run registry"),
+        ),
+        owner: SessionOwner::new(owner_options),
+    };
+    let mut params = json!({"sessionKey":"fixture"});
+    match key {
+        "missing" => {}
+        "null" => params["projectKey"] = Value::Null,
+        "empty" => params["projectKey"] = json!(""),
+        "absolute" => params["projectKey"] = json!(options.project),
+        _ => panic!("#1154 archive unknown key kind"),
+    }
+    if method == "artifact" {
+        params["artifactName"] = json!("fixture.txt");
+    }
+    let params =
+        pilotdeck_protocol::parse_json(&params.to_string()).expect("#1154 archive wire params");
+    std::env::set_current_dir(work.0.join(cwd)).expect("#1154 archive enter cwd");
+    if cwd == "deleted" {
+        std::fs::remove_dir(work.0.join(cwd)).expect("#1154 archive delete cwd");
+    }
+    assert_eq!(
+        std::env::current_dir().is_ok(),
+        row["cwdReadable"]
+            .as_bool()
+            .expect("#1154 archive TS cwd readability"),
+        "#1154 archive actual cwd state"
+    );
+    let result = requests
+        .request(format!("native_archive_{method}").into(), params)
+        .await;
+    std::env::set_current_dir(&work.0).expect("#1154 archive restore cwd");
+    let actual = match result {
+        Ok(value) => {
+            json!({"ok":true,"result":serde_json::from_str::<Value>(&pilotdeck_protocol::stringify_json(&value).expect("#1154 archive serializable result").expect("#1154 archive defined result")).expect("#1154 archive result JSON")})
+        }
+        Err(error) => {
+            json!({"ok":false,"code":error.code,"message":error.message.to_utf8().expect("#1154 archive UTF8 error")})
+        }
+    };
+    let expected = if key == "empty" && cwd != "project" {
+        // Existing isolated admission policy, recorded separately from TS parity.
+        // specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001.md
+        json!({"ok":false,"code":"gateway_request_failed","message":"The isolated native process serves only its configured project."})
+    } else if row["ok"] == true {
+        json!({"ok":true,"result":row["result"]})
+    } else {
+        json!({"ok":false,"code":row["code"],"message":row["message"]})
+    };
+    negative_assert_eq!(
+        actual,
+        expected,
+        "#1154 archive configured fallback and explicit key boundary"
+    );
+    crate::test_process::receipt(name);
+}
+
+macro_rules! archive_case {
+    ($name:ident) => {
+        #[tokio::test]
+        #[ignore = "isolated cwd worker launched by archive_matrix_matches_ts"]
+        async fn $name() {
+            observe_archive(stringify!($name)).await;
+        }
+    };
+}
+archive_case!(archive_manifest_missing_project);
+archive_case!(archive_manifest_missing_other);
+archive_case!(archive_manifest_missing_deleted);
+archive_case!(archive_manifest_null_project);
+archive_case!(archive_manifest_null_other);
+archive_case!(archive_manifest_null_deleted);
+archive_case!(archive_manifest_empty_project);
+archive_case!(archive_manifest_empty_other);
+archive_case!(archive_manifest_empty_deleted);
+archive_case!(archive_manifest_absolute_project);
+archive_case!(archive_manifest_absolute_other);
+archive_case!(archive_manifest_absolute_deleted);
+archive_case!(archive_entries_missing_project);
+archive_case!(archive_entries_missing_other);
+archive_case!(archive_entries_missing_deleted);
+archive_case!(archive_entries_null_project);
+archive_case!(archive_entries_null_other);
+archive_case!(archive_entries_null_deleted);
+archive_case!(archive_entries_empty_project);
+archive_case!(archive_entries_empty_other);
+archive_case!(archive_entries_empty_deleted);
+archive_case!(archive_entries_absolute_project);
+archive_case!(archive_entries_absolute_other);
+archive_case!(archive_entries_absolute_deleted);
+archive_case!(archive_artifact_missing_project);
+archive_case!(archive_artifact_missing_other);
+archive_case!(archive_artifact_missing_deleted);
+archive_case!(archive_artifact_null_project);
+archive_case!(archive_artifact_null_other);
+archive_case!(archive_artifact_null_deleted);
+archive_case!(archive_artifact_empty_project);
+archive_case!(archive_artifact_empty_other);
+archive_case!(archive_artifact_empty_deleted);
+archive_case!(archive_artifact_absolute_project);
+archive_case!(archive_artifact_absolute_other);
+archive_case!(archive_artifact_absolute_deleted);

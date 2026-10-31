@@ -791,12 +791,15 @@ impl<F: Files> Metadata<F> {
         let storage = self.describe_storage(&path, identity.as_deref())?;
         Ok(self.summary(&path, identity.as_deref(), storage.as_deref(), root.clone()))
     }
-    // Explicit-base legacy API used by session_chat_dir. Native Metadata RPCs
-    // use process_chat_dir below, which preserves lazy cwd errors. The native
-    // assembly callers still pass their configured project; see #1154 review
-    // follow-up before A7.2 for that separate storage/registration path.
+    /// Explicit-base storage API used by session_chat_dir. The caller supplies
+    /// its base; this path never consults process cwd and retains normalized
+    /// marker stat paths. Process RPCs instead probe the raw marker spelling.
     pub(crate) fn chat_dir(&self, root: &str) -> PathBuf {
-        self.chat_dir_with_identity(root, Some(root))
+        self.chat_dir_with_identity(root, Some(root), |path| {
+            let path = resolve(&self.cwd, path);
+            Ok::<_, std::convert::Infallible>((path.clone(), path))
+        })
+        .unwrap_or_else(|never| match never {})
     }
     pub(crate) fn process_chat_dir(&self, root: &str) -> io::Result<PathBuf> {
         self.process_chat_dir_with_identity(root, Some(root))
@@ -806,10 +809,24 @@ impl<F: Files> Metadata<F> {
         root: &str,
         identity: Option<&str>,
     ) -> io::Result<PathBuf> {
-        let target = resolve_process_path(&self.cwd, Path::new(root))?;
+        self.chat_dir_with_identity(root, identity, |path| {
+            Ok((
+                resolve_process_path(&self.cwd, Path::new(path))?,
+                self.cwd.join(path),
+            ))
+        })
+    }
+    fn chat_dir_with_identity<E>(
+        &self,
+        root: &str,
+        identity: Option<&str>,
+        paths: impl Fn(&str) -> Result<(PathBuf, PathBuf), E>,
+    ) -> Result<PathBuf, E> {
+        let (target, _) = paths(root)?;
         let projects_dir = self.home.join("projects");
         // findStoredProjectId catches lookup/marker resolution errors and falls
-        // back to the lexical id (paths.ts:127-155).
+        // back to the lexical id (paths.ts:127-155). The explicit-base resolver
+        // is infallible; the process resolver preserves lazy cwd failures.
         for (id, directory) in self.files.entries(&projects_dir).unwrap_or_default() {
             if !directory {
                 continue;
@@ -820,42 +837,17 @@ impl<F: Files> Metadata<F> {
             else {
                 continue;
             };
-            let Ok(marker_path) = resolve_process_path(&self.cwd, Path::new(&marker)) else {
+            let Ok((marker_path, marker_on_disk)) = paths(&marker) else {
                 break;
             };
             if identity.is_some()
                 && marker_path == target
-                && self
-                    .files
-                    .stat(&self.cwd.join(&marker))
-                    .is_ok_and(|s| s.directory)
+                && self.files.stat(&marker_on_disk).is_ok_and(|s| s.directory)
             {
                 return Ok(projects_dir.join(id).join("chats"));
             }
         }
         Ok(projects_dir.join(project_id(&target)).join("chats"))
-    }
-    fn chat_dir_with_identity(&self, root: &str, identity: Option<&str>) -> PathBuf {
-        let target = resolve(&self.cwd, root);
-        let projects_dir = self.home.join("projects");
-        for (id, directory) in self.files.entries(&projects_dir).unwrap_or_default() {
-            if !directory {
-                continue;
-            }
-            if let Some(marker) = self.marker(&projects_dir.join(&id))
-                && !marker.is_empty()
-                && identity.is_some_and(|identity| {
-                    resolve(&self.cwd, &marker) == resolve(&self.cwd, identity)
-                })
-                && self
-                    .files
-                    .stat(&resolve(&self.cwd, &marker))
-                    .is_ok_and(|stat| stat.directory)
-            {
-                return projects_dir.join(id).join("chats");
-            }
-        }
-        projects_dir.join(project_id(&target)).join("chats")
     }
     fn summary(
         &self,

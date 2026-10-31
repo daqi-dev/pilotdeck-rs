@@ -41,8 +41,8 @@ MUTATIONS = [
      'let root = resolve(&self.cwd, &root);',
      'matrix_matches_ts', '#1154 request metadata uses process cwd'),
     ('empty-matrix', REGRESSION,
-     '8,\n        "#1154 matrix cardinality"',
-     '0,\n        "#1154 matrix cardinality"',
+     'let oracle = fixture();\n    negative_assert_eq!(oracle["node"]',
+     'let mut oracle = fixture();\n    oracle["cases"] = serde_json::json!([]);\n    negative_assert_eq!(oracle["node"]',
      'matrix_matches_ts', '#1154 matrix cardinality'),
     ('direct-project-not-first', METADATA,
      'if matches(&direct_id)? {', 'if false && matches(&direct_id)? {',
@@ -74,8 +74,8 @@ MUTATIONS = [
      '.is_ok_and(|cwd| !cwd.is_empty())',
      'matrix_matches_ts', '#1154 isolated project switch remains refused'),
     ('chat-continues-after-cwd-error', METADATA,
-     'let Ok(marker_path) = resolve_process_path(&self.cwd, Path::new(&marker)) else {\n                break;',
-     'let Ok(marker_path) = resolve_process_path(&self.cwd, Path::new(&marker)) else {\n                continue;',
+     'let Ok((marker_path, marker_on_disk)) = paths(&marker) else {\n                break;',
+     'let Ok((marker_path, marker_on_disk)) = paths(&marker) else {\n                continue;',
      'matrix_matches_ts', '#1154 chat lookup stops on cwd error'),
     ('chat-never-selects-collision', METADATA,
      'if identity.is_some()\n                && marker_path == target',
@@ -92,5 +92,5 @@ MUTATIONS = [
 
 if __name__ == '__main__':
     raise SystemExit(matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
-        passed_count=1, child_count=8,
+        passed_count=1, child_count=8, exact=True,
         paths=[REQUESTS, SERVICES, METADATA, PROJECT_FILES, REGRESSION, ORACLE]))
