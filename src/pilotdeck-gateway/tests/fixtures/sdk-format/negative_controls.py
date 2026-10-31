@@ -119,7 +119,7 @@ mutations = [
     ('spread-object', output, 'for (key, value) in value.entries() {', 'for (key, value) in value.entries().iter().take(0) {', 'format_cases::run_format_jsonl', '#1097 output bytes and exit: run--format-jsonl'),
     ('spread-array', output, 'for (index, value) in values.iter().enumerate() {', 'for (index, value) in values.iter().enumerate().skip(1) {', 'format_cases::run_jsonl_spread_array', '#1097 output bytes and exit: format-probe--run-jsonl-spread-array'),
     ('spread-utf16', output, 'JsString::from_utf16(vec![*unit])', 'JsString::from_utf16(vec![0xfffd])', 'format_cases::run_jsonl_spread_string', '#1097 output bytes and exit: format-probe--run-jsonl-spread-string'),
-    ('sequence-duplicate', transport, 'if sequence <= previous {', 'if false && sequence <= previous {', 'format_cases::run_jsonl_duplicate_frame', '#1097 output bytes and exit: format-probe--run-jsonl-duplicate-frame'),
+    ('sequence-duplicate', transport, 'if sequence <= previous {\n        return Ok(None);\n    }', 'if sequence <= previous {\n        return Ok(Some(sequence));\n    }', 'format_cases::run_jsonl_duplicate_frame', '#1097 output bytes and exit: format-probe--run-jsonl-duplicate-frame'),
     ('bind-public-id', tests, 'if jsonl\n', 'if false && jsonl\n', 'format_cases::run_format_jsonl', '#1097 output bytes and exit: run--format-jsonl'),
     ('bind-recovery-id', tests, 'if let Some(index) = expected.rfind(marker)', 'if let Some(index) = expected.rfind("disabled-envelope-marker")', 'format_cases::run_unknown_empty_json', '#1097 output bytes and exit: format-probe--run-unknown-empty-json'),
     ('oracle-empty', oracle, '  "cases": [', '  "cases": [],\n  "discardedCases": [', 'format_matches_ts_matrix', '#1097 registered 90 cells'),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#1145 HEAD-only product controls: [--check] | NEW_OUTPUT_DIR [mutation ...].
 
-The catalog has exactly nine controls. Each selected control runs its named
+The catalog has exactly twenty-three controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -36,8 +36,12 @@ root = Path(__file__).resolve().parents[5]
 turn = root / "src/pilotdeck-cli/src/sdk/turn.rs"
 signals = root / "src/pilotdeck-cli/src/sdk/signals.rs"
 output = root / "src/pilotdeck-cli/src/sdk/output.rs"
+replay = root / "src/pilotdeck-cli/tests/common/signal_replay.rs"
+skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
+migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
+wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 9
+EXPECTED_TOTAL = 23
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
@@ -105,6 +109,23 @@ mutations = [
     ('consumer-error-retains-query', output, 'return Err(EventError::Consumer(Failure::Error(\n                "event.type.includes is not a function".into(),', 'return Err(EventError::Iterator(Failure::Error(\n                "event.type.includes is not a function".into(),', 'product::sdk::turn::tests::output_failure_preserves_iterator_vs_consumer_lifetime', '#1145 event error matches TS iterator or consumer lifetime'),
     ('pending-abort-reader-finishes-early', turn, ') -> Result<(), Failure> {\n    loop {\n        match timeout_at(deadline, query.query_frame(None, abort_ids)).await {', ') -> Result<(), Failure> {\n    if abort_ids.len() == 1 { return Ok(()); }\n    loop {\n        match timeout_at(deadline, query.query_frame(None, abort_ids)).await {', 'product::sdk::turn::tests::pending_abort_keeps_query_until_reply', '#1145 abort cannot finish before its reply'),
     ('abort-send-extends-predecessor-deadline', turn, 'timeout_at(deadline, request)', 'timeout_at(deadline + transport::REQUEST_TIMEOUT, request)', 'product::sdk::turn::tests::abort_send_respects_predecessor_deadline', '#1145 blocked second abort cannot extend first deadline'),
+    ('node-version-required', replay, 'r"\\}\\n\\nNode\\.js v22\\.22\\.0\\n\\z",', 'r"\\}\\n\\n(?:Node\\.js v22\\.22\\.0\\n)?\\z",', 'signal_replay::comparison_tests::stderr_missing_node_version_is_not_normalized', '#1145 incomplete Node version cannot pass'),
+    ('node-frames-required', replay, 'r"(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n",', 'r"(?:(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n)?",', 'signal_replay::comparison_tests::stderr_missing_stack_frames_is_not_normalized', '#1145 missing stack frames cannot pass'),
+    ('node-business-message-consistent', replay, "if business.strip_suffix('\\n') == Some(message) {", 'if !message.is_empty() {', 'signal_replay::comparison_tests::stderr_changed_business_line_is_not_hidden', '#1145 mismatched business and exception remain literal'),
+    ('rust-stderr-never-normalized', replay, 'ts_stderr(ts).as_bytes() == rust', 'ts_stderr(ts) == ts_stderr(std::str::from_utf8(rust).expect("#1145 mutant Rust UTF8"))', 'signal_replay::comparison_tests::stderr_rust_node_stack_is_not_normalized', '#1145 Rust Node stack cannot pass'),
+    ('close-exception-scoped', replay, 'let approved = matches!(', 'let approved = true || matches!(', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 unregistered close case cannot pass'),
+    ('close-code-scoped', replay, '&& row["code"] == 4003', '&& !row["code"].is_null()', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 close exception requires TS code'),
+    ('close-connection-scoped', replay, 'if row["connection"] == 2', 'if !row["connection"].is_null()', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 close exception requires TS connection'),
+    ('close-cleanup-scoped', replay, '&& row["cleanup"] == false', '&& !row["cleanup"].is_null()', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 close exception requires TS cleanup'),
+    ('close-ts-reason-scoped', replay, '&& row["reason"] == ""', '&& row["reason"].is_string()', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 close exception requires TS reason'),
+    ('sigint-wrapper-resets-ignore', wrapper_source, 'signal.signal(signal.SIGINT, signal.SIG_DFL)', '# mutant: keep inherited SIGINT disposition', 'signal_replay::comparison_tests::signal_wrapper_restores_inherited_sigint_ignore', '#1145 wrapper restores SIGINT default before exec'),
+
+    ('node-nonblank-source', replay, 'r" +[^ \\t\\r\\n][^\\r\\n]*\\n +\\^\\n\\n",', 'r" +[^\\r\\n]+\\n +\\^\\n\\n",', 'signal_replay::comparison_tests::stderr_blank_source_or_stack_body_is_not_normalized', '#1145 blank source excerpt cannot pass'),
+    ('node-nonblank-stack', replay, 'r"(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n",', 'r"(?:    at [^\\r\\n{}]+\\n)*    at [^\\r\\n{}]+ \\{\\n",', 'signal_replay::comparison_tests::stderr_blank_source_or_stack_body_is_not_normalized', '#1145 blank stack body cannot pass'),
+
+    ('nested-marker-child-name', skills_tests, '"::marker_child_over_file_size_limit"', '"::marker_child_over_file_size_limit_renamed"', 'product::skills::tests::marker_write_reports_the_write_stage_like_node', '#1145 marker child emitted no WRITE_ERROR line'),
+    ('nested-umask-child-name', migrate_tests, '"::copy_tree_preserves_modes_like_node_async_cp"', '"::copy_tree_preserves_modes_like_node_async_cp_renamed"', 'product::skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp', '#273 umask rerun matched no test'),
+
 ]
 
 
@@ -121,7 +142,7 @@ def check_catalog():
         count = path.read_text(encoding="utf-8").count(old)
         if count != 1:
             stale.append(f"{name}: expected one anchor, found {count}")
-        if not test.startswith(("signal_cases::", "product::sdk::turn::tests::")) or not assertion.startswith("#1145 "):
+        if not test.startswith(("signal_cases::", "product::sdk::turn::tests::", "product::skills::tests::", "product::skills_migrate::tests::", "signal_replay::comparison_tests::")) or not assertion.startswith(("#1145 ", "#273 ")):
             stale.append(f"{name}: invalid named-test/assertion binding")
     if stale:
         raise RuntimeError("#1145 stale product controls: " + "; ".join(stale))
@@ -166,7 +187,7 @@ def main():
     wrapper = Path(
         env.get(
             "PDRS_SIGINT_WRAPPER",
-            "/Users/da/ws/pilotdeck-rs/_tmp/20261025-claude-loop/sigint-default.py",
+            str(root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"),
         )
     ).resolve()
     if not wrapper.is_file():
@@ -197,7 +218,7 @@ def main():
     )
 
     command = [
-        sys.executable, str(wrapper),
+        sys.executable, "-I", "-B", str(wrapper),
         "cargo", "test", "--offline",
         "--manifest-path", "src/Cargo.toml",
         "-p", "pilotdeck-cli",
