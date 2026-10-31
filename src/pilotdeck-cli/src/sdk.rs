@@ -2,6 +2,7 @@
 mod output;
 mod sessions;
 mod settings;
+pub(crate) mod signals;
 mod transport;
 mod turn;
 use crate::paths::{self, Env};

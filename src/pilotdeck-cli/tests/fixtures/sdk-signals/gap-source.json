@@ -1,0 +1,4354 @@
+[
+  {
+    "id": "run--stdin-open-after-response-sigint",
+    "status": "GAP",
+    "reason": "本格真实 TS /dev/stdin 原件含 EAGAIN。Node pipe / owned FIFO 未稳定建立等待 EOF 的前提；信号抢先退出也不能计作覆盖。IO 失败原件 ID 见 evidenceIds，未按偏好改动 TS。前置于 #123 / P09。",
+    "attempts": [
+      {
+        "path": "capture/raw/run--stdin-open-after-response-sigint/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "bf24f2de335acf8ebc5dce90406db347c15658662e3963a3efb3c8f43f36bfee",
+          "hooks.mjs": "a18bf2b27e5e597f96f45bbacab3438eba8f31747af3b8165ed0dbf1397b5439",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "45b35d627ae474b08d738962a1530f41487b5643557daf504ee4e2086e8f9f5c"
+        },
+        "capture": {
+          "input": {
+            "id": "run--stdin-open-after-response-sigint",
+            "leaf": "run",
+            "axis": "stdin-open-after-response-sigint",
+            "stage": "stdin",
+            "signal": "SIGINT",
+            "action": "hold",
+            "trigger": "client:stdin-read-enter (未 EOF；listener=0)",
+            "argv": [
+              "run",
+              "--stream-json"
+            ]
+          },
+          "status": "OBSERVED_EXIT",
+          "nodeVersion": "v22.22.0",
+          "triggerReached": true,
+          "signalDelivered": true,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": null,
+            "signal": "SIGINT",
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:43863) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nEAGAIN: resource temporarily unavailable, read\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "019befd8-134b-4f1a-9f4b-6986cc878a91",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"019befd8-134b-4f1a-9f4b-6986cc878a91\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "019befd8-134b-4f1a-9f4b-6986cc878a91",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"019befd8-134b-4f1a-9f4b-6986cc878a91\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 12,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "019befd8-134b-4f1a-9f4b-6986cc878a91",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"019befd8-134b-4f1a-9f4b-6986cc878a91\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "019befd8-134b-4f1a-9f4b-6986cc878a91",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"019befd8-134b-4f1a-9f4b-6986cc878a91\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "signal-sent",
+              "signal": "SIGINT",
+              "delivered": true
+            },
+            {
+              "seq": 11,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 13,
+              "kind": "child-exit",
+              "code": null,
+              "signal": "SIGINT",
+              "cleanup": false
+            }
+          ]
+        }
+      },
+      {
+        "path": "fifo-pilot/raw/run--stdin-open-after-response-sigint/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "e3515f43a056314f662c41eba36b258e8412ef929f22533d385facd2928fd1a5",
+          "hooks.mjs": "377efb733ea563ffd90c6a62207b07749ad3ce6c349f776cbf8f1dee93b170dd",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "43afe1d4393fcfd9e27bae75bf26b591c26d2db160906eeb2e1ae3741e469410"
+        },
+        "capture": {
+          "input": {
+            "id": "run--stdin-open-after-response-sigint",
+            "leaf": "run",
+            "axis": "stdin-open-after-response-sigint",
+            "stage": "stdin",
+            "signal": "SIGINT",
+            "action": "hold",
+            "trigger": "client:stdin-read-enter (未 EOF；listener=0)",
+            "argv": [
+              "run",
+              "--stream-json"
+            ]
+          },
+          "status": "TRIGGER_NOT_REACHED",
+          "nodeVersion": "v22.22.0",
+          "stdinTransport": "owned-blocking-fifo",
+          "milestones": {
+            "observer": true,
+            "trigger": true,
+            "firstSignal": true,
+            "abortEntered": true,
+            "secondSignal": true,
+            "predecessorAction": true,
+            "terminalConsumed": true,
+            "terminalAfterAbort": true,
+            "lateAbortHandled": true,
+            "blockingStdin": false
+          },
+          "missingMilestones": [
+            "blockingStdin"
+          ],
+          "triggerReached": true,
+          "signalDelivered": true,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": null,
+            "signal": "SIGINT",
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:61108) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nEAGAIN: resource temporarily unavailable, read\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "dd57d3e0-1e0d-4ff7-9ab7-33006df51289",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"dd57d3e0-1e0d-4ff7-9ab7-33006df51289\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "dd57d3e0-1e0d-4ff7-9ab7-33006df51289",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"dd57d3e0-1e0d-4ff7-9ab7-33006df51289\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 12,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "dd57d3e0-1e0d-4ff7-9ab7-33006df51289",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"dd57d3e0-1e0d-4ff7-9ab7-33006df51289\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "dd57d3e0-1e0d-4ff7-9ab7-33006df51289",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"dd57d3e0-1e0d-4ff7-9ab7-33006df51289\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "signal-sent",
+              "signal": "SIGINT",
+              "delivered": true
+            },
+            {
+              "seq": 11,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 13,
+              "kind": "child-exit",
+              "code": null,
+              "signal": "SIGINT",
+              "cleanup": false
+            }
+          ]
+        }
+      }
+    ],
+    "evidenceIds": [
+      "run--stdin-open-after-response-sigint"
+    ]
+  },
+  {
+    "id": "run--stdin-open-after-response-sigterm",
+    "status": "GAP",
+    "reason": "本格仅确认进入 readFile 或信号先于读取结果，未证明等待 EOF；同一 stdin 机制在引用格出现 EAGAIN。Node pipe / owned FIFO 未稳定建立等待 EOF 的前提；信号抢先退出也不能计作覆盖。IO 失败原件 ID 见 evidenceIds，未按偏好改动 TS。前置于 #123 / P09。",
+    "attempts": [
+      {
+        "path": "capture/raw/run--stdin-open-after-response-sigterm/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "bf24f2de335acf8ebc5dce90406db347c15658662e3963a3efb3c8f43f36bfee",
+          "hooks.mjs": "a18bf2b27e5e597f96f45bbacab3438eba8f31747af3b8165ed0dbf1397b5439",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "45b35d627ae474b08d738962a1530f41487b5643557daf504ee4e2086e8f9f5c"
+        },
+        "capture": {
+          "input": {
+            "id": "run--stdin-open-after-response-sigterm",
+            "leaf": "run",
+            "axis": "stdin-open-after-response-sigterm",
+            "stage": "stdin",
+            "signal": "SIGTERM",
+            "action": "hold",
+            "trigger": "client:stdin-read-enter (未 EOF；listener=0)",
+            "argv": [
+              "run",
+              "--stream-json"
+            ]
+          },
+          "status": "OBSERVED_EXIT",
+          "nodeVersion": "v22.22.0",
+          "triggerReached": true,
+          "signalDelivered": true,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": null,
+            "signal": "SIGTERM",
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:46322) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "711ac2bb-7a7f-41af-bd20-0afcdadb57de",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"711ac2bb-7a7f-41af-bd20-0afcdadb57de\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "711ac2bb-7a7f-41af-bd20-0afcdadb57de",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"711ac2bb-7a7f-41af-bd20-0afcdadb57de\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "711ac2bb-7a7f-41af-bd20-0afcdadb57de",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"711ac2bb-7a7f-41af-bd20-0afcdadb57de\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "711ac2bb-7a7f-41af-bd20-0afcdadb57de",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"711ac2bb-7a7f-41af-bd20-0afcdadb57de\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "signal-sent",
+              "signal": "SIGTERM",
+              "delivered": true
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "child-exit",
+              "code": null,
+              "signal": "SIGTERM",
+              "cleanup": false
+            }
+          ]
+        }
+      },
+      {
+        "path": "fifo-pilot/raw/run--stdin-open-after-response-sigterm/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "e3515f43a056314f662c41eba36b258e8412ef929f22533d385facd2928fd1a5",
+          "hooks.mjs": "377efb733ea563ffd90c6a62207b07749ad3ce6c349f776cbf8f1dee93b170dd",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "43afe1d4393fcfd9e27bae75bf26b591c26d2db160906eeb2e1ae3741e469410"
+        },
+        "capture": {
+          "input": {
+            "id": "run--stdin-open-after-response-sigterm",
+            "leaf": "run",
+            "axis": "stdin-open-after-response-sigterm",
+            "stage": "stdin",
+            "signal": "SIGTERM",
+            "action": "hold",
+            "trigger": "client:stdin-read-enter (未 EOF；listener=0)",
+            "argv": [
+              "run",
+              "--stream-json"
+            ]
+          },
+          "status": "OBSERVED_EXIT",
+          "nodeVersion": "v22.22.0",
+          "stdinTransport": "owned-blocking-fifo",
+          "milestones": {
+            "observer": true,
+            "trigger": true,
+            "firstSignal": true,
+            "abortEntered": true,
+            "secondSignal": true,
+            "predecessorAction": true,
+            "terminalConsumed": true,
+            "terminalAfterAbort": true,
+            "lateAbortHandled": true,
+            "blockingStdin": true
+          },
+          "missingMilestones": [],
+          "triggerReached": true,
+          "signalDelivered": true,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": null,
+            "signal": "SIGTERM",
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:61120) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "008894b3-f0df-4d08-b21a-a46998806328",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"008894b3-f0df-4d08-b21a-a46998806328\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "008894b3-f0df-4d08-b21a-a46998806328",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"008894b3-f0df-4d08-b21a-a46998806328\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "008894b3-f0df-4d08-b21a-a46998806328",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"008894b3-f0df-4d08-b21a-a46998806328\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "008894b3-f0df-4d08-b21a-a46998806328",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"008894b3-f0df-4d08-b21a-a46998806328\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "signal-sent",
+              "signal": "SIGTERM",
+              "delivered": true
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "child-exit",
+              "code": null,
+              "signal": "SIGTERM",
+              "cleanup": false
+            }
+          ]
+        }
+      }
+    ],
+    "evidenceIds": [
+      "run--stdin-open-after-response-sigint",
+      "run--stdin-pending",
+      "resume--stdin-pending"
+    ]
+  },
+  {
+    "id": "run--stdin-pending",
+    "status": "GAP",
+    "reason": "本格真实 TS /dev/stdin 原件含 EAGAIN。Node pipe / owned FIFO 未稳定建立等待 EOF 的前提；信号抢先退出也不能计作覆盖。IO 失败原件 ID 见 evidenceIds，未按偏好改动 TS。前置于 #123 / P09。",
+    "attempts": [
+      {
+        "path": "capture/raw/run--stdin-pending/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "bf24f2de335acf8ebc5dce90406db347c15658662e3963a3efb3c8f43f36bfee",
+          "hooks.mjs": "a18bf2b27e5e597f96f45bbacab3438eba8f31747af3b8165ed0dbf1397b5439",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "45b35d627ae474b08d738962a1530f41487b5643557daf504ee4e2086e8f9f5c"
+        },
+        "capture": {
+          "input": {
+            "id": "run--stdin-pending",
+            "leaf": "run",
+            "axis": "stdin-pending",
+            "stage": "stdin",
+            "action": "hold",
+            "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复",
+            "argv": [
+              "run",
+              "--stream-json"
+            ]
+          },
+          "status": "OBSERVED_EXIT",
+          "nodeVersion": "v22.22.0",
+          "triggerReached": true,
+          "signalDelivered": false,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": 1,
+            "signal": null,
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:47843) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nEAGAIN: resource temporarily unavailable, read\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 10,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "process-exit",
+                "code": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "781777b4-3bb3-4372-b5ff-8b8b024db428",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"781777b4-3bb3-4372-b5ff-8b8b024db428\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "781777b4-3bb3-4372-b5ff-8b8b024db428",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"781777b4-3bb3-4372-b5ff-8b8b024db428\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "781777b4-3bb3-4372-b5ff-8b8b024db428",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"781777b4-3bb3-4372-b5ff-8b8b024db428\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "781777b4-3bb3-4372-b5ff-8b8b024db428",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"781777b4-3bb3-4372-b5ff-8b8b024db428\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "process-exit",
+                "code": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 13,
+              "kind": "child-exit",
+              "code": 1,
+              "signal": null,
+              "cleanup": false
+            }
+          ]
+        }
+      },
+      {
+        "path": "fifo-pilot/raw/run--stdin-pending/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "e3515f43a056314f662c41eba36b258e8412ef929f22533d385facd2928fd1a5",
+          "hooks.mjs": "377efb733ea563ffd90c6a62207b07749ad3ce6c349f776cbf8f1dee93b170dd",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "43afe1d4393fcfd9e27bae75bf26b591c26d2db160906eeb2e1ae3741e469410"
+        },
+        "capture": {
+          "input": {
+            "id": "run--stdin-pending",
+            "leaf": "run",
+            "axis": "stdin-pending",
+            "stage": "stdin",
+            "action": "hold",
+            "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复",
+            "argv": [
+              "run",
+              "--stream-json"
+            ]
+          },
+          "status": "TRIGGER_NOT_REACHED",
+          "nodeVersion": "v22.22.0",
+          "stdinTransport": "owned-blocking-fifo",
+          "milestones": {
+            "observer": true,
+            "trigger": true,
+            "firstSignal": true,
+            "abortEntered": true,
+            "secondSignal": true,
+            "predecessorAction": true,
+            "terminalConsumed": true,
+            "terminalAfterAbort": true,
+            "lateAbortHandled": true,
+            "blockingStdin": false
+          },
+          "missingMilestones": [
+            "blockingStdin"
+          ],
+          "triggerReached": true,
+          "signalDelivered": false,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": 1,
+            "signal": null,
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:61131) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nEAGAIN: resource temporarily unavailable, read\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 10,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "process-exit",
+                "code": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "e6c2b056-3ee9-41a7-9b70-fe61749be210",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"e6c2b056-3ee9-41a7-9b70-fe61749be210\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "e6c2b056-3ee9-41a7-9b70-fe61749be210",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"e6c2b056-3ee9-41a7-9b70-fe61749be210\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "e6c2b056-3ee9-41a7-9b70-fe61749be210",
+                "method": "new_session",
+                "params": {
+                  "channelKey": "cli"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"e6c2b056-3ee9-41a7-9b70-fe61749be210\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "e6c2b056-3ee9-41a7-9b70-fe61749be210",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"e6c2b056-3ee9-41a7-9b70-fe61749be210\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "connection": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "process-exit",
+                "code": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 13,
+              "kind": "child-exit",
+              "code": 1,
+              "signal": null,
+              "cleanup": false
+            }
+          ]
+        }
+      }
+    ],
+    "evidenceIds": [
+      "run--stdin-pending"
+    ]
+  },
+  {
+    "id": "resume--stdin-open-after-response-sigint",
+    "status": "GAP",
+    "reason": "本格仅确认进入 readFile 或信号先于读取结果，未证明等待 EOF；同一 stdin 机制在引用格出现 EAGAIN。Node pipe / owned FIFO 未稳定建立等待 EOF 的前提；信号抢先退出也不能计作覆盖。IO 失败原件 ID 见 evidenceIds，未按偏好改动 TS。前置于 #123 / P09。",
+    "attempts": [
+      {
+        "path": "capture/raw/resume--stdin-open-after-response-sigint/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "bf24f2de335acf8ebc5dce90406db347c15658662e3963a3efb3c8f43f36bfee",
+          "hooks.mjs": "a18bf2b27e5e597f96f45bbacab3438eba8f31747af3b8165ed0dbf1397b5439",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "45b35d627ae474b08d738962a1530f41487b5643557daf504ee4e2086e8f9f5c"
+        },
+        "capture": {
+          "input": {
+            "id": "resume--stdin-open-after-response-sigint",
+            "leaf": "resume",
+            "axis": "stdin-open-after-response-sigint",
+            "stage": "stdin",
+            "signal": "SIGINT",
+            "action": "hold",
+            "trigger": "client:stdin-read-enter (未 EOF；listener=0)",
+            "argv": [
+              "resume",
+              "d1-session",
+              "--stream-json"
+            ]
+          },
+          "status": "OBSERVED_EXIT",
+          "nodeVersion": "v22.22.0",
+          "triggerReached": true,
+          "signalDelivered": true,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": null,
+            "signal": "SIGINT",
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:50291) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "ec1bd803-d5bc-42ad-be5a-57dca39a5105",
+                "method": "resume_session",
+                "params": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"ec1bd803-d5bc-42ad-be5a-57dca39a5105\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "ec1bd803-d5bc-42ad-be5a-57dca39a5105",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"ec1bd803-d5bc-42ad-be5a-57dca39a5105\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "ec1bd803-d5bc-42ad-be5a-57dca39a5105",
+                "method": "resume_session",
+                "params": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"ec1bd803-d5bc-42ad-be5a-57dca39a5105\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "ec1bd803-d5bc-42ad-be5a-57dca39a5105",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"ec1bd803-d5bc-42ad-be5a-57dca39a5105\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "signal-sent",
+              "signal": "SIGINT",
+              "delivered": true
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "child-exit",
+              "code": null,
+              "signal": "SIGINT",
+              "cleanup": false
+            }
+          ]
+        }
+      }
+    ],
+    "evidenceIds": [
+      "run--stdin-open-after-response-sigint",
+      "run--stdin-pending",
+      "resume--stdin-pending"
+    ]
+  },
+  {
+    "id": "resume--stdin-open-after-response-sigterm",
+    "status": "GAP",
+    "reason": "本格仅确认进入 readFile 或信号先于读取结果，未证明等待 EOF；同一 stdin 机制在引用格出现 EAGAIN。Node pipe / owned FIFO 未稳定建立等待 EOF 的前提；信号抢先退出也不能计作覆盖。IO 失败原件 ID 见 evidenceIds，未按偏好改动 TS。前置于 #123 / P09。",
+    "attempts": [
+      {
+        "path": "capture/raw/resume--stdin-open-after-response-sigterm/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "bf24f2de335acf8ebc5dce90406db347c15658662e3963a3efb3c8f43f36bfee",
+          "hooks.mjs": "a18bf2b27e5e597f96f45bbacab3438eba8f31747af3b8165ed0dbf1397b5439",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "45b35d627ae474b08d738962a1530f41487b5643557daf504ee4e2086e8f9f5c"
+        },
+        "capture": {
+          "input": {
+            "id": "resume--stdin-open-after-response-sigterm",
+            "leaf": "resume",
+            "axis": "stdin-open-after-response-sigterm",
+            "stage": "stdin",
+            "signal": "SIGTERM",
+            "action": "hold",
+            "trigger": "client:stdin-read-enter (未 EOF；listener=0)",
+            "argv": [
+              "resume",
+              "d1-session",
+              "--stream-json"
+            ]
+          },
+          "status": "OBSERVED_EXIT",
+          "nodeVersion": "v22.22.0",
+          "triggerReached": true,
+          "signalDelivered": true,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": null,
+            "signal": "SIGTERM",
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:52731) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "67e6eb33-8a40-46d6-b05e-a96485a74b9d",
+                "method": "resume_session",
+                "params": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"67e6eb33-8a40-46d6-b05e-a96485a74b9d\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "67e6eb33-8a40-46d6-b05e-a96485a74b9d",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"67e6eb33-8a40-46d6-b05e-a96485a74b9d\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "67e6eb33-8a40-46d6-b05e-a96485a74b9d",
+                "method": "resume_session",
+                "params": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"67e6eb33-8a40-46d6-b05e-a96485a74b9d\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "67e6eb33-8a40-46d6-b05e-a96485a74b9d",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"67e6eb33-8a40-46d6-b05e-a96485a74b9d\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "signal-sent",
+              "signal": "SIGTERM",
+              "delivered": true
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1006,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "child-exit",
+              "code": null,
+              "signal": "SIGTERM",
+              "cleanup": false
+            }
+          ]
+        }
+      }
+    ],
+    "evidenceIds": [
+      "run--stdin-open-after-response-sigint",
+      "run--stdin-pending",
+      "resume--stdin-pending"
+    ]
+  },
+  {
+    "id": "resume--stdin-pending",
+    "status": "GAP",
+    "reason": "本格真实 TS /dev/stdin 原件含 EAGAIN。Node pipe / owned FIFO 未稳定建立等待 EOF 的前提；信号抢先退出也不能计作覆盖。IO 失败原件 ID 见 evidenceIds，未按偏好改动 TS。前置于 #123 / P09。",
+    "attempts": [
+      {
+        "path": "capture/raw/resume--stdin-pending/capture.json",
+        "sourceSha256": {
+          "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+          "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+          "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+          "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+          "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+          "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+          "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+        },
+        "probeSha256": {
+          "probe.mjs": "bf24f2de335acf8ebc5dce90406db347c15658662e3963a3efb3c8f43f36bfee",
+          "hooks.mjs": "a18bf2b27e5e597f96f45bbacab3438eba8f31747af3b8165ed0dbf1397b5439",
+          "cases.json": "964ae00b40f6c2e5739607fc074f1ec0c46f5d9508c0fc4963c258fa195a4206",
+          "capture.py": "45b35d627ae474b08d738962a1530f41487b5643557daf504ee4e2086e8f9f5c"
+        },
+        "capture": {
+          "input": {
+            "id": "resume--stdin-pending",
+            "leaf": "resume",
+            "axis": "stdin-pending",
+            "stage": "stdin",
+            "action": "hold",
+            "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复",
+            "argv": [
+              "resume",
+              "d1-session",
+              "--stream-json"
+            ]
+          },
+          "status": "OBSERVED_EXIT",
+          "nodeVersion": "v22.22.0",
+          "triggerReached": true,
+          "signalDelivered": false,
+          "secondDelivered": false,
+          "aborts": 0,
+          "connections": 1,
+          "activeAfterExit": 0,
+          "naturalExit": {
+            "code": 1,
+            "signal": null,
+            "cleanup": false
+          },
+          "cleanupExit": null,
+          "stdout": "",
+          "stderrRaw": "(node:56462) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nEAGAIN: resource temporarily unavailable, read\n",
+          "error": null,
+          "initial": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "final": {
+            ".": {
+              "type": "directory",
+              "mode": 448
+            },
+            "bin": {
+              "type": "directory",
+              "mode": 448
+            },
+            "home": {
+              "type": "directory",
+              "mode": 448
+            },
+            "openssl.cnf": {
+              "type": "file",
+              "mode": 384,
+              "size": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "pilot": {
+              "type": "directory",
+              "mode": 448
+            },
+            "pilot/pilotdeck.yaml": {
+              "type": "file",
+              "mode": 384,
+              "size": 17,
+              "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+            },
+            "project": {
+              "type": "directory",
+              "mode": 448
+            },
+            "project/keep.txt": {
+              "type": "file",
+              "mode": 384,
+              "size": 14,
+              "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+            },
+            "tmp": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-cache": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-config": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-data": {
+              "type": "directory",
+              "mode": 448
+            },
+            "xdg-state": {
+              "type": "directory",
+              "mode": 448
+            }
+          },
+          "hooks": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 10,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "process-exit",
+                "code": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            }
+          ],
+          "wire": [
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "2a8db543-6cb6-4d65-b898-df6064d6e8f1",
+                "method": "resume_session",
+                "params": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"2a8db543-6cb6-4d65-b898-df6064d6e8f1\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "2a8db543-6cb6-4d65-b898-df6064d6e8f1",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"2a8db543-6cb6-4d65-b898-df6064d6e8f1\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "closes": [
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            }
+          ],
+          "trace": [
+            {
+              "seq": 0,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "endpoint-denial-verified",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 1,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "hooks-ready",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 2,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-created",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 3,
+              "kind": "connection",
+              "connection": 1
+            },
+            {
+              "seq": 4,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "sdk",
+                "clientVersion": "pilotdeck-cli",
+                "token": "d1-fixture-not-a-secret"
+              },
+              "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+              "cleanup": false
+            },
+            {
+              "seq": 5,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "hello_ok",
+                "protocolVersion": "1.2",
+                "serverVersion": "0.1.0-mock",
+                "serverInfo": {
+                  "mode": "remote",
+                  "projectKey": "d1-project",
+                  "sessionCount": 1,
+                  "capabilities": []
+                }
+              },
+              "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+              "cleanup": false
+            },
+            {
+              "seq": 6,
+              "kind": "wire-receive",
+              "connection": 1,
+              "frame": {
+                "type": "request",
+                "id": "2a8db543-6cb6-4d65-b898-df6064d6e8f1",
+                "method": "resume_session",
+                "params": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"request\",\"id\":\"2a8db543-6cb6-4d65-b898-df6064d6e8f1\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 7,
+              "kind": "wire-send",
+              "connection": 1,
+              "frame": {
+                "type": "response",
+                "id": "2a8db543-6cb6-4d65-b898-df6064d6e8f1",
+                "ok": true,
+                "result": {
+                  "sessionKey": "d1-session"
+                }
+              },
+              "raw": "{\"type\":\"response\",\"id\":\"2a8db543-6cb6-4d65-b898-df6064d6e8f1\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+              "cleanup": false
+            },
+            {
+              "seq": 8,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "stdin-read-enter",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 9,
+              "kind": "trigger-reached",
+              "trigger": "client-stdin-read-enter"
+            },
+            {
+              "seq": 10,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "socket-close-called",
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 11,
+              "kind": "socket-close",
+              "connection": 1,
+              "code": 1005,
+              "reason": "",
+              "cleanup": false
+            },
+            {
+              "seq": 12,
+              "kind": "client-hook",
+              "hook": {
+                "kind": "process-exit",
+                "code": 1,
+                "listeners": {
+                  "SIGINT": 0,
+                  "SIGTERM": 0
+                }
+              },
+              "cleanup": false
+            },
+            {
+              "seq": 13,
+              "kind": "child-exit",
+              "code": 1,
+              "signal": null,
+              "cleanup": false
+            }
+          ]
+        }
+      }
+    ],
+    "evidenceIds": [
+      "resume--stdin-pending"
+    ]
+  }
+]
