@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#1145 HEAD-only product controls: [--check] | NEW_OUTPUT_DIR [mutation ...].
 
-The catalog has exactly twenty-three controls. Each selected control runs its named
+The catalog has exactly twenty-nine controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -41,7 +41,7 @@ skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 23
+EXPECTED_TOTAL = 29
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
@@ -122,6 +122,13 @@ mutations = [
 
     ('node-nonblank-source', replay, 'r" +[^ \\t\\r\\n][^\\r\\n]*\\n +\\^\\n\\n",', 'r" +[^\\r\\n]+\\n +\\^\\n\\n",', 'signal_replay::comparison_tests::stderr_blank_source_or_stack_body_is_not_normalized', '#1145 blank source excerpt cannot pass'),
     ('node-nonblank-stack', replay, 'r"(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n",', 'r"(?:    at [^\\r\\n{}]+\\n)*    at [^\\r\\n{}]+ \\{\\n",', 'signal_replay::comparison_tests::stderr_blank_source_or_stack_body_is_not_normalized', '#1145 blank stack body cannot pass'),
+
+    ('rejection-exception-ninth-cell', replay, '        _ => None,\n    }\n}\n\nfn stderr_matches_for_case', '        "run--terminal-during-abort-open-sigint" => Some(b"d1 fixture rejected\\n"),\n        _ => None,\n    }\n}\n\nfn stderr_matches_for_case', 'signal_replay::comparison_tests::unhandled_rejection_stderr_is_exact_and_scoped', '#1145 unregistered unhandled rejection cannot pass'),
+    ('rejection-exact-rust-line', replay, 'Some(expected) => expected == rust,', 'Some(_expected) => true,', 'signal_replay::comparison_tests::unhandled_rejection_stderr_is_exact_and_scoped', '#1145 unhandled rejection requires exact Rust line'),
+    ('rejection-abort-error-line', replay, '| "resume--abort-error-sigterm" => Some(b"d1 fixture rejected\\n"),', '| "resume--abort-error-sigterm" => Some(b"wrong error\\n"),', 'signal_replay::comparison_tests::unhandled_rejection_stderr_is_exact_and_scoped', '#1145 approved unhandled rejection line must pass'),
+    ('rejection-terminal-error-line', replay, '| "resume--terminal-during-abort-final-sigterm" => Some(b"Gateway client closed.\\n"),', '| "resume--terminal-during-abort-final-sigterm" => Some(b"wrong error\\n"),', 'signal_replay::comparison_tests::unhandled_rejection_stderr_is_exact_and_scoped', '#1145 approved unhandled rejection line must pass'),
+    ('rejection-exit-remains-strict', replay, 'if actual[field] != expected[field] {', 'if field != "naturalExit" && actual[field] != expected[field] {', 'signal_replay::comparison_tests::unhandled_rejection_preserves_other_surfaces', '#1145 rejection exception cannot hide naturalExit'),
+    ('rejection-stdout-remains-strict', replay, 'if stdout != expected_stdout.as_bytes() {', 'if approved_signal_stderr(id).is_none() && stdout != expected_stdout.as_bytes() {', 'signal_replay::comparison_tests::unhandled_rejection_preserves_other_surfaces', '#1145 rejection exception cannot hide stdout'),
 
     ('nested-marker-child-name', skills_tests, '"::marker_child_over_file_size_limit"', '"::marker_child_over_file_size_limit_renamed"', 'product::skills::tests::marker_write_reports_the_write_stage_like_node', '#1145 marker child emitted no WRITE_ERROR line'),
     ('nested-umask-child-name', migrate_tests, '"::copy_tree_preserves_modes_like_node_async_cp"', '"::copy_tree_preserves_modes_like_node_async_cp_renamed"', 'product::skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp', '#273 umask rerun matched no test'),
