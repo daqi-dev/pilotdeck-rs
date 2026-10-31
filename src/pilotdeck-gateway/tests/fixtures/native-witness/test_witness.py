@@ -10,7 +10,7 @@ if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
 import copy
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
 import errno
 import io
 import importlib.util
@@ -18,8 +18,10 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -31,6 +33,102 @@ spec.loader.exec_module(w)
 spec = importlib.util.spec_from_file_location('witness_collector', ROOT / 'scripts/native-witness/collect.py')
 c = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c)
+
+
+def signal_lease_child(folder, phase, signum):
+    """Real signals in a disposable process; never touch the global lease/ports."""
+    folder = Path(folder)
+    lock = folder / 'parity.lock'
+    original_lock, original_save = c.parity_lock, c.common.save
+    original_remove = c.common.shutil.rmtree
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    predecessor = {'pid': os.getpid(), 'timestamp': time.time(), 'token': 'predecessor', 'cleanupPending': True}
+    if phase == 'waiting':
+        lock.mkdir()
+        original_save(lock / 'owner.json', predecessor)
+    server, worker = mock.Mock(), mock.Mock()
+    worker.is_alive.return_value = phase == 'cleanup-failed'
+    events = []
+    fired = False
+
+    def hit(name):
+        nonlocal fired
+        events.append(name)
+        if name == phase and not fired:
+            fired = True
+            os.kill(os.getpid(), signum)
+            if name.startswith('cleanup-'):
+                os.kill(os.getpid(), signum)
+
+    def publish(path, value):
+        original_save(path, value)
+        hit('acquire')
+
+    def remove(path, *args, **kwargs):
+        hit('release')
+        return original_remove(path, *args, **kwargs)
+
+    def bind(address):
+        hit('preflight-gateway' if address[1] == 28999 else 'preflight-provider')
+
+    def start():
+        hit('provider-start')
+        events.append('started')
+
+    def identity(*_):
+        hit('identity')
+        if phase.startswith('cleanup-'):
+            raise ValueError('deterministic pre-capture failure')
+        return {}
+
+    def capture(*_, **__):
+        # Exercise the real nested capture handler with an owned mock tracer.
+        hit('capture-entry')
+        tracer = mock.Mock(pid=123)
+        tracer.poll.return_value = None
+        tracer.wait.return_value = -signal.SIGKILL
+        def spawn(*args, **kwargs):
+            hit('capture-spawn')
+            return tracer
+        def exercise(*args):
+            hit('capture-running')
+            raise ValueError('deterministic capture failure')
+        with mock.patch.object(c.w.shutil, 'which', return_value='/strace'), \
+                mock.patch.object(c.w.subprocess, 'run', return_value=mock.Mock(stdout='--kill-on-exit')), \
+                mock.patch.object(c.w.subprocess, 'Popen', side_effect=spawn):
+            try:
+                binary = {'path': str(SOURCE), 'sha256': c.w.sha(SOURCE), 'argv': [str(SOURCE)]}
+                real_capture({'project': str(folder), 'binaries': {'host': binary}}, folder / 'capture', {}, exercise=exercise)
+            finally:
+                if tracer.kill.called:
+                    events.append('tracer-killed')
+
+    real_capture = c.w.capture
+    server.shutdown.side_effect = lambda: hit('cleanup-shutdown')
+    server.server_close.side_effect = lambda: hit('cleanup-close')
+    worker.start.side_effect = start
+    worker.join.side_effect = lambda **_: hit('cleanup-failed' if phase == 'cleanup-failed' else 'cleanup-join')
+    caught = None
+    with mock.patch.object(c, 'parity_lock', side_effect=lambda **_: original_lock(lock=lock)), \
+            mock.patch.object(c.common, 'save', side_effect=publish), \
+            mock.patch.object(c.common.shutil, 'rmtree', side_effect=remove), \
+            mock.patch.object(c.common.time, 'sleep', side_effect=lambda _: hit('waiting')), \
+            mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
+            mock.patch.object(c, 'BoundedHTTPServer', return_value=server), \
+            mock.patch.object(c.threading, 'Thread', return_value=worker), \
+            mock.patch.object(c.w, 'identity', side_effect=identity), \
+            mock.patch.object(c.w, 'capture', side_effect=capture):
+        sockets.return_value.__enter__.return_value.bind.side_effect = bind
+        try:
+            c.native_run('', '', folder / 'native')
+        except BaseException as error:
+            caught = type(error).__name__
+    owner = json.loads((lock / 'owner.json').read_text()) if lock.exists() else None
+    print(json.dumps({'phase': phase, 'fired': fired, 'error': caught, 'events': events,
+                      'lease': owner, 'closed': server.server_close.call_count,
+                      'predecessorUnchanged': owner == predecessor,
+                      'joined': worker.join.call_count,
+                      'restored': all(signal.getsignal(sig) == handler for sig, handler in previous.items())}))
 
 
 def hx(text):
@@ -98,6 +196,106 @@ class WitnessTests(unittest.TestCase):
                 c.native_run('', '', self.folder / 'blocked')
             self.assertTrue((lock / 'owner.json').read_bytes() == original, '#1140 predecessor lease unchanged')
             self.assertTrue(bind.call_count == run.call_count == 0, '#1140 busy lease never touches ports or process')
+
+    def test_signal_lease_phases(self):
+        phases = ('waiting', 'acquire', 'preflight-gateway', 'preflight-provider', 'provider-start',
+                  'identity', 'capture-entry', 'capture-spawn', 'capture-running',
+                  'cleanup-shutdown', 'cleanup-close', 'cleanup-join', 'release')
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            for phase in phases:
+                folder = self.folder / (phase + '-' + str(sig))
+                folder.mkdir()
+                result = subprocess.run([sys.executable, '-I', str(Path(__file__).resolve()),
+                                         '--signal-lease-child', str(folder), phase, str(sig)],
+                                        capture_output=True, text=True, timeout=15)
+                self.assertTrue(result.returncode == 0, '#1140 signal lease child survives cancellation: ' + phase + result.stderr)
+                self.assertTrue(bool(result.stdout.strip()), '#1140 signal lease child publishes result: ' + phase)
+                value = json.loads(result.stdout)
+                self.assertTrue(value['fired'] and value['error'] == 'KeyboardInterrupt', '#1140 signal reaches lease cleanup: ' + phase)
+                if phase == 'waiting':
+                    self.assertTrue(value['predecessorUnchanged'], '#1140 cancelled waiter leaves predecessor untouched')
+                else:
+                    self.assertTrue(value['lease'] is None, '#1140 signal releases cleaned lease: ' + phase)
+                self.assertTrue(value['restored'], '#1140 lease signal handlers restored: ' + phase)
+                if phase not in ('waiting', 'acquire', 'preflight-gateway', 'preflight-provider'):
+                    self.assertTrue(value['closed'] == value['joined'] == 1, '#1140 signals cannot interrupt provider cleanup: ' + phase)
+                if phase in ('capture-spawn', 'capture-running'):
+                    self.assertTrue('tracer-killed' in value['events'], '#1140 signal capture kills owned tracer: ' + phase)
+
+    def test_provider_cleanup_pending(self):
+        result = subprocess.run([sys.executable, '-I', str(Path(__file__).resolve()),
+                                 '--signal-lease-child', str(self.folder), 'cleanup-failed', str(signal.SIGTERM)],
+                                capture_output=True, text=True, timeout=15)
+        self.assertTrue(result.returncode == 0, '#1140 pending cleanup child completes: ' + result.stderr)
+        self.assertTrue(bool(result.stdout.strip()), '#1140 pending cleanup child publishes result')
+        value = json.loads(result.stdout)
+        self.assertTrue(value['lease'] is not None and bool(value['lease'].get('cleanupPending')), '#1140 failed provider cleanup retains lease')
+        self.assertTrue(value['fired'] and value['error'] == 'KeyboardInterrupt' and value['closed'] == value['joined'] == 1, '#1140 cancelled provider cleanup remains incomplete')
+        self.assertTrue(value['restored'], '#1140 failed cleanup restores signal handlers')
+
+    def test_provider_start_failure(self):
+        server, worker = mock.Mock(), mock.Mock()
+        worker.start.side_effect = RuntimeError('deterministic thread start failure')
+        with mock.patch.object(c, 'BoundedHTTPServer', return_value=server), \
+                mock.patch.object(c.threading, 'Thread', return_value=worker):
+            with self.assertRaises(RuntimeError, msg='#1140 provider start failure propagates'):
+                c._native_run('', '', self.folder / 'start-failure', 28999)
+        self.assertTrue(server.server_close.call_count == 1, '#1140 unstarted provider socket is closed')
+        self.assertTrue(server.shutdown.call_count == worker.join.call_count == 0, '#1140 unstarted provider never waits for serving thread')
+        self.assertTrue(not c.common.LIVE_GROUPS, '#1140 failed start leaves no owned provider')
+
+    def test_preflight_reuses_ports(self):
+        from contextlib import nullcontext
+        with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
+                mock.patch.object(c, '_native_run', return_value='done'), redirect_stdout(io.StringIO()):
+            probe = sockets.return_value.__enter__.return_value
+            def bind(_):
+                self.assertTrue(probe.setsockopt.call_count == probe.bind.call_count and probe.setsockopt.call_args == mock.call(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1), '#1140 preflight reuses TIME_WAIT ports')
+            probe.bind.side_effect = bind
+            c.native_run('', '', self.folder / 'unused')
+        self.assertTrue(probe.bind.call_count == 2, '#1140 reusable preflight checks both ports')
+
+    def test_wait_ready_reuses_port(self):
+        tracer = mock.Mock()
+        tracer.poll.return_value = 1
+        with mock.patch.object(c.socket, 'socket') as sockets:
+            probe = sockets.return_value.__enter__.return_value
+            def bind(_):
+                self.assertTrue(probe.setsockopt.call_args == mock.call(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1), '#1140 readiness reuses TIME_WAIT port')
+            probe.bind.side_effect = bind
+            with self.assertRaises(c.w.Incomplete, msg='#1140 reusable readiness reports original failure'):
+                c.wait_ready(tracer, self.folder, 28999, 0)
+
+    def test_real_probe_time_wait_and_listener(self):
+        # Server actively closes first: recv EOF orders FIN before client close.
+        with socket.socket() as listener:
+            listener.settimeout(2)
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(('127.0.0.1', 0))
+            port = listener.getsockname()[1]
+            listener.listen()
+            with self.assertRaises(OSError, msg='#1140 reusable probe rejects real listener') as busy:
+                c.probe_bind(port)
+            self.assertTrue(busy.exception.errno == errno.EADDRINUSE, '#1140 real listener is address in use')
+            with socket.create_connection(('127.0.0.1', port), timeout=2) as client:
+                connection, _ = listener.accept()
+                with connection:
+                    connection.settimeout(2)
+                    connection.shutdown(socket.SHUT_WR)
+                    self.assertTrue(client.recv(1) == b'', '#1140 server FIN precedes client close')
+                    client.shutdown(socket.SHUT_WR)
+                    self.assertTrue(connection.recv(1) == b'', '#1140 client FIN completes TIME_WAIT setup')
+        with socket.socket() as bare:
+            with self.assertRaises(OSError, msg='#1140 TIME_WAIT fixture rejects bare bind') as waiting:
+                bare.bind(('127.0.0.1', port))
+        self.assertTrue(waiting.exception.errno == errno.EADDRINUSE, '#1140 TIME_WAIT occupies bare bind')
+        error = None
+        try:
+            c.probe_bind(port)
+        except OSError as caught:
+            error = caught
+        self.assertTrue(error is None, '#1140 reusable probe accepts real TIME_WAIT')
 
     def test_parity_lock_lifetime(self):
         lock = self.folder / 'parity.lock'
@@ -177,11 +375,22 @@ class WitnessTests(unittest.TestCase):
                 c.wait_ready(tracer, self.folder, 28999, 0)
 
     def test_blocked_cli_status(self):
-        from contextlib import redirect_stderr
         with mock.patch.object(sys, 'argv', ['collect.py', '--gateway', 'host', '--sidecar', 'child', '--output', 'unused']), \
-                mock.patch.object(c, 'native_run', side_effect=c.Blocked('#1140 busy')), redirect_stderr(io.StringIO()) as stderr:
+                mock.patch.object(c, 'native_run', side_effect=c.Blocked('#1140 busy')), \
+                redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()) as stderr:
             self.assertTrue(c.main() == 2, '#1140 BLOCKED CLI has exit two')
-        self.assertTrue(json.loads(stderr.getvalue())['status'] == 'BLOCKED', '#1140 BLOCKED CLI emits explicit status')
+        self.assertTrue(bool(stdout.getvalue().strip()), '#1140 BLOCKED CLI status is on stdout')
+        self.assertTrue(json.loads(stdout.getvalue())['status'] == 'BLOCKED', '#1140 BLOCKED CLI emits explicit status')
+        self.assertTrue(stderr.getvalue() == '', '#1140 BLOCKED CLI keeps diagnostics separate')
+
+    def test_cli_usage_is_not_blocked(self):
+        for args in ([], ['--gateway', 'host', '--sidecar', 'child', '--output', 'unused', '--port', 'abc']):
+            with mock.patch.object(sys, 'argv', ['collect.py', *args]), redirect_stdout(io.StringIO()) as stdout, \
+                    redirect_stderr(io.StringIO()) as stderr, mock.patch.object(c, 'native_run') as run:
+                with self.assertRaises(SystemExit, msg='#1140 bad CLI arguments terminate') as error:
+                    c.main()
+            self.assertTrue(error.exception.code == 2 and 'usage:' in stderr.getvalue(), '#1140 argparse retains usage error')
+            self.assertTrue(stdout.getvalue() == '' and run.call_count == 0, '#1140 usage error cannot claim BLOCKED')
 
     def capture_fixture(self, folder, validate, *, result=0):
         tracer = mock.Mock(pid=99)
@@ -272,6 +481,46 @@ class WitnessTests(unittest.TestCase):
         with mock.patch.object(collector.http.server.HTTPServer, 'get_request', return_value=(left, ('local', 0))):
             connection, _ = server.get_request()
         self.assertTrue(connection.gettimeout() == 5, '#1140 provider headers have a read deadline')
+
+    def test_provider_shutdown_deadline(self):
+        server = c.BoundedHTTPServer.__new__(c.BoundedHTTPServer)
+        server.shutdown_timeout = 0.05
+        release, finished = c.threading.Event(), c.threading.Event()
+        def never_finishes():
+            try:
+                release.wait(5)
+            finally:
+                finished.set()
+        try:
+            with mock.patch.object(c.http.server.HTTPServer, 'shutdown', side_effect=never_finishes):
+                with self.assertRaises(c.w.Incomplete, msg='#1140 provider shutdown cannot wait forever'):
+                    server.shutdown()
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(2), '#1140 shutdown test releases owned waiter')
+        server.shutdown_timeout = 2
+        with mock.patch.object(c.http.server.HTTPServer, 'shutdown') as stopped:
+            server.shutdown()
+        self.assertTrue(stopped.call_count == 1, '#1140 bounded shutdown accepts stopped provider')
+
+    def test_provider_thread_signal_mask(self):
+        # Real provider and shutdown threads, ephemeral loopback socket only.
+        observed = []
+        ready = c.threading.Event()
+        def serve(server, **_):
+            observed.append(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+            ready.set()
+        def capture(*_, **__):
+            self.assertTrue(ready.wait(2), '#1140 provider thread publishes signal mask')
+            observed.append(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+            return 'captured'
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+        with mock.patch.object(c.BoundedHTTPServer, 'serve_forever', serve), \
+                mock.patch.object(c.http.server.HTTPServer, 'shutdown'), \
+                mock.patch.object(c.w, 'identity', return_value={}), mock.patch.object(c.w, 'capture', side_effect=capture):
+            c._native_run('', '', self.folder / 'mask', -1)
+        self.assertTrue(observed[0] >= {signal.SIGINT, signal.SIGTERM}, '#1140 provider thread defers cancellation delivery')
+        self.assertTrue(observed[1] == before and signal.pthread_sigmask(signal.SIG_BLOCK, []) == before, '#1140 capture inherits original signal mask')
 
     def test_exec_argv_hex_roundtrip(self):
         args = [str(self.host), '--native', 'comma, space', '', '中文', 'line\nquote"']
@@ -511,6 +760,9 @@ def real_capture(folder):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) == 5 and sys.argv[1] == '--signal-lease-child':
+        signal_lease_child(sys.argv[2], sys.argv[3], int(sys.argv[4]))
+        raise SystemExit(0)
     if len(sys.argv) == 3 and sys.argv[1] == '--capture':
         raise SystemExit(real_capture(sys.argv[2]))
     unittest.main(verbosity=2)

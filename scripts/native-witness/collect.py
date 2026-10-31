@@ -6,7 +6,7 @@ if not sys.flags.isolated:
 sys.dont_write_bytecode = True
 import argparse
 import base64
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import errno
 import hashlib
 import http.server
@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import socket
 import threading
 import time
@@ -37,12 +38,44 @@ class Blocked(w.Incomplete):
     """A shared lease or fixed port is unavailable; no fallback endpoint."""
 
 
+@contextmanager
+def lease_signals():
+    """Install before acquiring the lease; restore only after its cleanup."""
+    def cancel(signum, _frame):
+        raise KeyboardInterrupt(f'#1140 collection cancelled by signal {signum}')
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        for sig in previous:
+            signal.signal(sig, cancel)
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def probe_bind(port):
+    # Match the real listener's reuse policy; TIME_WAIT is not a live owner.
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(('127.0.0.1', port))
+
+
 class BoundedHTTPServer(http.server.HTTPServer):
+    shutdown_timeout = 6
+
     def get_request(self):
         connection, address = super().get_request()
         # Covers request line and headers, before BaseHTTPRequestHandler runs.
         connection.settimeout(5)
         return connection, address
+
+    def shutdown(self):
+        # HTTPServer.shutdown itself waits without a deadline. A slow request
+        # must leave cleanupPending instead of trapping cancellation forever.
+        stopper = threading.Thread(target=super().shutdown, daemon=True)
+        stopper.start()
+        stopper.join(timeout=self.shutdown_timeout)
+        w.need(not stopper.is_alive(), 'provider shutdown deadline')
 
 
 class WireClient:
@@ -104,7 +137,7 @@ class WireClient:
 def native_run(gateway, sidecar, output, port=28999):
     w.need(sys.platform == 'linux', 'Linux only; macOS eslogger + root deferred')
     w.need(28999 <= port <= 29008, 'gateway port must be in 28999 series')
-    with ExitStack() as lease:
+    with lease_signals(), ExitStack() as lease:
         try:
             lease.enter_context(parity_lock(timeout=1))
         except TimeoutError as error:
@@ -113,8 +146,7 @@ def native_run(gateway, sidecar, output, port=28999):
             # Check both fixed endpoints before launching any owned process.
             # The shared lease spans the bind handoff and provider cleanup.
             for candidate in (port, port + 1):
-                with socket.socket() as probe:
-                    probe.bind(('127.0.0.1', candidate))
+                probe_bind(candidate)
             result = _native_run(gateway, sidecar, output, port)
         except OSError as error:
             if error.errno == errno.EADDRINUSE:
@@ -136,8 +168,7 @@ def wait_ready(tracer, folder, port, deadline):
         if tracer.poll() is not None:
             # A non-participant may claim the gateway port after preflight.
             # Probe the same endpoint; native_run maps EADDRINUSE to BLOCKED.
-            with socket.socket() as probe:
-                probe.bind(('127.0.0.1', port))
+            probe_bind(port)
             w.need(False, 'native gateway exited before readiness')
         stderr = (folder / 'stderr.log').read_text()
         if f'native listening 127.0.0.1:{port}\n' in stderr:
@@ -179,19 +210,31 @@ def _native_run(gateway, sidecar, output, port):
             self.end_headers()
             self.wfile.write(encoded)
 
-    server = BoundedHTTPServer(('127.0.0.1', port + 1), Provider)
-    worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
-    worker.start()
-    stopped = False
+    server = worker = None
+    started = stopped = False
     def stop_provider():
         nonlocal stopped
-        if not stopped:
-            server.shutdown()
-            server.server_close()
-            worker.join(timeout=6)
-            w.need(not worker.is_alive(), 'provider did not stop')
-            stopped = True
+        # The provider thread inherits the blocked mask below; no other thread
+        # can deliver a Python cancellation while the main thread cleans it up.
+        with common.deferred_signals():
+            if not stopped and server is not None:
+                if started:
+                    server.shutdown()
+                server.server_close()
+                if started:
+                    worker.join(timeout=6)
+                    w.need(not worker.is_alive(), 'provider did not stop')
+                stopped = True
+                common.LIVE_GROUPS.discard('native-witness-provider')
     try:
+        # Publish ownership before cancellation can escape. Only this short
+        # window is masked; capture/Popen inherits the original main-thread mask.
+        with common.deferred_signals():
+            server = BoundedHTTPServer(('127.0.0.1', port + 1), Provider)
+            common.LIVE_GROUPS.add('native-witness-provider')
+            worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
+            worker.start()
+            started = True
         (home / 'pilotdeck.yaml').write_text(
             'schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n'
             f'      protocol: openai\n      url: http://127.0.0.1:{port + 1}/v1\n'
@@ -254,7 +297,7 @@ def main():
     try:
         native_run(args.gateway, args.sidecar, args.output, args.port)
     except Blocked as error:
-        print(json.dumps({'status': 'BLOCKED', 'scoring': 'NOT_RUN', 'error': str(error)}), file=sys.stderr)
+        print(json.dumps({'status': 'BLOCKED', 'scoring': 'NOT_RUN', 'error': str(error)}))
         return 2
     return 0
 
