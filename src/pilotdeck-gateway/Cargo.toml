@@ -34,12 +34,15 @@ uuid = { version = "=1.27.0", features = ["v4"] }
 pilotdeck-yaml = { path = "../pilotdeck-yaml" }
 url = "=2.5.8"
 regex = "=1.13.1"
-tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal", "time", "io-util", "sync", "process"] }
+tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal", "time", "io-util", "sync", "process", "fs"] }
 tokio-tungstenite = "=0.28.0"
 hyper = { version = "=1.7.0", features = ["client", "server", "http1"] }
 hyper-util = { version = "=0.1.17", features = ["client-legacy", "http1", "tokio"] }
 http-body-util = "=0.1.3"
 bytes = "=1.10.1"
+# #1209: Node's automatic Date header for native HTTP responses
+# (IMF-fixdate). Already locked transitively; no version or download change.
+httpdate = "=1.0.3"
 # #867: pull-based Node fetch response decoding, pure Rust codecs.
 async-compression = { version = "=0.4.51", features = ["tokio", "gzip", "zlib", "deflate", "brotli"] }
 # A6.4-pr5 (human-approved 2026-10-20): pure-Rust TLS for provider HTTPS.

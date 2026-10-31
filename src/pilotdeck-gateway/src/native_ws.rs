@@ -4,12 +4,13 @@
 use crate::{
     ProxyError, acceptor,
     frame::{self, Decoder},
-    http_proxy,
+    http_proxy, native_http,
     runtime::{connection::GatewayTextConnection, turn::gateway::TurnGateway},
 };
 use std::{
     future::Future,
     net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -28,6 +29,7 @@ pub struct NativeWsServer {
     token: String,
     version: String,
     resources: Resources,
+    http: native_http::Config,
 }
 impl NativeWsServer {
     pub async fn bind(
@@ -45,6 +47,14 @@ impl NativeWsServer {
         if !crate::mutants::on("native-ws-token-policy") && token.trim().is_empty() {
             return Err("native WS requires an explicit nonempty token".into());
         }
+        // The bind policy admits only 127.0.0.1, so the native listener is
+        // always the TS loopback case for /auth/local-token; non-loopback
+        // routing is covered directly by the native_http router tests.
+        let http = native_http::Config {
+            token: token.clone(),
+            loopback: true,
+            static_root: None,
+        };
         Ok(Self {
             listener: TcpListener::bind(address).await?,
             host,
@@ -62,7 +72,16 @@ impl NativeWsServer {
                     MAX_TOTAL_INPUT_BYTES
                 },
             ),
+            http,
         })
+    }
+
+    /// Serve the TS static fallback from an explicit root. The default
+    /// (native_process) keeps TS serving static assets; only tests and
+    /// later A8.4 packages opt in.
+    pub fn with_static_root(mut self, root: PathBuf) -> Self {
+        self.http.static_root = Some(root);
+        self
     }
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
@@ -96,6 +115,7 @@ impl NativeWsServer {
                 token,
                 version,
                 resources,
+                http,
             } = self;
             let mut connections = JoinSet::new();
             tokio::pin!(stop);
@@ -117,6 +137,7 @@ impl NativeWsServer {
                             let token = token.clone();
                             let version = version.clone();
                             let input = resources.input.clone();
+                            let http = http.clone();
                             connections.spawn(async move {
                                 let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
                                     drop(permit);
@@ -124,7 +145,7 @@ impl NativeWsServer {
                                 } else {
                                     Some(permit)
                                 };
-                                if let Err(error) = serve_socket(socket, host, token, version, input).await {
+                                if let Err(error) = serve_socket(socket, host, token, version, input, http).await {
                                     eprintln!("native WS connection: {error}");
                                 }
                                 if crate::mutants::on("ws-caps-connection-leak") {
@@ -497,18 +518,23 @@ async fn serve_socket(
     token: String,
     version: String,
     input: Arc<Semaphore>,
+    http: native_http::Config,
 ) -> Result<(), ProxyError> {
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
-    http_proxy::serve_connection_with(socket, |mut request, lease| {
-        let response = if http_proxy::is_upgrade(&request) {
+    let upgrade_sender = &upgrade;
+    let http_config = &http;
+    http_proxy::serve_connection_native(socket, move |mut request, lease| async move {
+        if http_proxy::is_upgrade(&request) {
             match (
                 request.uri().path(),
                 acceptor::websocket_accept(request.headers()),
                 lease,
             ) {
                 ("/ws", Some(key), Some(lease)) => {
-                    if let Some(upgrade) = upgrade.lock().expect("native upgrade state").take() {
+                    if let Some(upgrade) =
+                        upgrade_sender.lock().expect("native upgrade state").take()
+                    {
                         let _ = upgrade.send((hyper::upgrade::on(&mut request), lease));
                     }
                     Ok(acceptor::websocket_response(Default::default(), &key))
@@ -519,11 +545,8 @@ async fn serve_socket(
                 _ => Err(std::io::Error::other("invalid native WS upgrade")),
             }
         } else {
-            let mut response = hyper::Response::new(http_proxy::empty());
-            *response.status_mut() = hyper::StatusCode::NOT_FOUND;
-            Ok(response)
-        };
-        std::future::ready(response)
+            native_http::serve(&request, http_config).await
+        }
     })
     .await?;
     drop(upgrade);
