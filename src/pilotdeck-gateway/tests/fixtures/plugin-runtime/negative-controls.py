@@ -104,7 +104,9 @@ try:
         def run(label, test, compile=False):
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
             (OUTPUT / f'{label}.slots.log').write_text(gate.stdout + gate.stderr)
-            command_args = ['--no-run'] if compile else [test, '--', '--exact', '--nocapture', '--test-threads=1']
+            # #818: captured output keeps the named libtest status line intact
+            # for both passed() and the shared named-panic kill criterion.
+            command_args = ['--no-run'] if compile else [test, '--', '--exact', '--test-threads=1']
             try:
                 result = run_owned(command + command_args, cwd=ROOT, env=MUTANT_ENV, timeout=900)
             except subprocess.TimeoutExpired as error:
