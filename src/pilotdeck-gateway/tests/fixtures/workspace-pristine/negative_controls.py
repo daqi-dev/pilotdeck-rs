@@ -70,6 +70,13 @@ cases = [
      "ENV = target_environment(REPO)",
      "ENV = {key: value for key, value in target_environment(REPO).items() if key != 'CARGO_TARGET_DIR'}",
      'RunnerTargets.test_tool_budget_target_admission', '#1166 tool-budget runner shares the admissible target'),
+    # #1166 r7: a runner that trusts the caller's environment verbatim skips
+    # the shared admission and its unset-variable default; the None cell of the
+    # bound test then observes a KeyError instead of the shared default.
+    ('trust-caller-target', TOOL_BUDGET,
+     "ENV = target_environment(REPO)",
+     "ENV = dict(os.environ)",
+     'RunnerTargets.test_tool_budget_target_admission', '#1166 tool-budget runner shares the admissible target'),
     ('round6-ad-hoc-source-target', ROUND6,
      "env = target_environment(root)",
      "env = {'CARGO_TARGET_DIR': str(root / 'src/target')}",

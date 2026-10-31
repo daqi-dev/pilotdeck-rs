@@ -40,6 +40,17 @@ mutants = [
     ('overwrite-evidence', source, 'with path.open("x", encoding="utf-8") as out:',
      'with path.open("w", encoding="utf-8") as out:',
      'test_isolation_and_exclusive_evidence', '#1120 exclusive evidence guard'),
+    # #1166 r6/r7 family: reintroducing the hard equality against one in-tree
+    # target must be killed by the out-of-tree positive control. Written with a
+    # split path join so this file never mentions the literal target directory
+    # (the sibling allow-list scan reads every fixtures .py).
+    ('equality-assert-reintroduced', source, 'env = negative_process.target_environment(ROOT)',
+     'env = dict(os.environ)\n'
+     '    mandated = ROOT / "_build" / "cargo-target"\n'
+     '    if os.environ.get("CARGO_TARGET_DIR") != str(mandated):\n'
+     '        raise ValueError("#1120 set the mandated CARGO_TARGET_DIR before running")',
+     'test_out_of_tree_target_passes_build_target_admission',
+     '#1120 out-of-tree target passes build target admission'),
 ]
 
 
