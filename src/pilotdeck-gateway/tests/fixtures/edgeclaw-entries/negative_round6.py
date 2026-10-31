@@ -90,8 +90,8 @@ for path, test, run_anchor, slot_anchor in [
     ])
 rows = []
 env = os.environ.copy()
-target = root/'src/target'
-assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), 'use this worktree src/target only'
+target = root/'_build/cargo-target'
+assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), '#1166 use this worktree _build/cargo-target only'
 env['CARGO_TARGET_DIR'] = str(target)
 originals = {}
 runner_originals = {}

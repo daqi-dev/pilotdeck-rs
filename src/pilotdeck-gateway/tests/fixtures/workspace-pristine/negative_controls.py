@@ -24,12 +24,23 @@ SCANNER = ROOT / 'src/pilotdeck-gateway/tests/common/source_inputs.rs'
 DISCOVERY = ROOT / 'src/pilotdeck-gateway/examples/workspace_inputs.rs'
 YAML = ROOT / 'src/pilotdeck-yaml/tests/run_resource_scaling.py'
 ROUND6 = FIXTURES / 'edgeclaw-entries/negative_round6.py'
+ROUND7 = FIXTURES / 'edgeclaw-entries/negative_round7.py'
+TOOL_BUDGET = FIXTURES / 'tool-budget/negative_project.py'
 JUDGE = FIXTURES / 'negative-output-directory/negative.py'
 spec = importlib.util.spec_from_file_location('workspace_python_judge', JUDGE)
 judge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(judge)
 
 cases = [
+    ('tool-budget-source-target', TOOL_BUDGET,
+     "TARGET = REPO / '_build/cargo-target'", "TARGET = REPO / 'src/target'",
+     'RunnerTargets.test_tool_budget_target_admission', '#1166 tool-budget runner shares the admissible target'),
+    ('round6-source-target', ROUND6,
+     "target = root/'_build/cargo-target'", "target = root/'src/target'",
+     'RunnerTargets.test_round6_target_admission', '#1166 round6 runner shares the admissible target'),
+    ('round7-source-target', ROUND7,
+     "target = root/'_build/cargo-target'", "target = root/'src/target'",
+     'RunnerTargets.test_round7_target_admission', '#1166 round7 runner shares the admissible target'),
     ('skip-attribute-inputs', SCANNER,
      'if self.workspace {\n                    self.walk(attribute_tokens, false, module_dirs.clone());\n                }',
      'if false && self.workspace {\n                    self.walk(attribute_tokens, false, module_dirs.clone());\n                }',
@@ -356,7 +367,7 @@ def main():
     env = _scanner_environment()
     out = new_output_directory(args.output)
     records = []
-    guarded = [SOURCE, TESTS, YAML, ROUND6, JUDGE, SCANNER, DISCOVERY, Path(__file__).resolve(),
+    guarded = [SOURCE, TESTS, YAML, ROUND6, ROUND7, TOOL_BUDGET, JUDGE, SCANNER, DISCOVERY, Path(__file__).resolve(),
                FIXTURES / 'negative_suite.py', FIXTURES / 'negative_panic.py',
                FIXTURES / 'pending_reanchor.py']
 

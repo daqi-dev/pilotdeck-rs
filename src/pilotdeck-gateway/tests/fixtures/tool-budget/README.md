@@ -100,8 +100,15 @@ Unix 上原文件与别名目标都复用 `project_files::create_new_beneath`：
 项目外建目录。真实 TS 的 `project-layout-missing-parents` 金样从缺失
 `.pilotdeck` 开始，复刻 recursive mkdir 的正常落盘。
 
-负控：`timeout 580 python3 src/pilotdeck-gateway/tests/fixtures/tool-budget/negative_project.py`。
-串行跑四条变异，使用本树 `src/target`；每个 cargo 子进程有期限且超时终止进程组，
+负控（从仓库根执行）：
+
+```sh
+export CARGO_TARGET_DIR="$PWD/_build/cargo-target"
+timeout 580 python3 src/pilotdeck-gateway/tests/fixtures/tool-budget/negative_project.py
+```
+
+串行跑四条变异，只接受本树 `_build/cargo-target`（未设置时同样使用此目录）；
+scanner 与 Cargo 共用它，`src/target` 会被共享准入守卫拒绝。每个 cargo 子进程有期限且超时终止进程组，
 `finally` 按原字节恢复并核 SHA-256。控制包括 spill 根基准回退、按路径 mkdir、
 移除目录 NOFOLLOW、跳过 mkdir；编译失败、空匹配、超时均不算检出。
 非 Unix 保持原有按路径 `create_new` 行为。

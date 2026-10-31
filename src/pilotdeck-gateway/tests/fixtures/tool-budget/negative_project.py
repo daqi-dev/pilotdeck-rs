@@ -16,8 +16,8 @@ REPO = Path(__file__).resolve().parents[5]
 LOGS = REPO / '_tmp/20261023-issue-344-spill-toctou'
 BUDGET = REPO / 'src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'
 FILES = REPO / 'src/pilotdeck-gateway/src/project_files.rs'
-TARGET = REPO / 'src/target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve()
+TARGET = REPO / '_build/cargo-target'
+assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
 ENV = dict(os.environ, CARGO_TARGET_DIR=str(TARGET))
 with mutating_sources(REPO, [BUDGET, FILES]) as snapshots:
     ORIGINAL = {p: snapshots[p] for p in (BUDGET, FILES)}

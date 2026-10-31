@@ -598,6 +598,62 @@ except SourceBaselineError: print('REFUSED')
                 child.communicate(timeout=5)
 
 
+class RunnerTargets(unittest.TestCase):
+    def check_runner(self, relative, env_name, arguments, marker):
+        # Execute the real script up to its first source lease. Stop before any
+        # product mutation, but use the real shared target normalization.
+        class Admitted(Exception):
+            pass
+
+        script = FIXTURES / relative
+        code = compile(script.read_bytes(), str(script), 'exec')
+        target = str(ROOT / '_build/cargo-target')
+        for supplied in (target, None, str(ROOT / 'src/target'), str(ROOT.parent / 'other-target')):
+            with self.subTest(target=supplied), tempfile.TemporaryDirectory(prefix='pdrs1166-runner-') as out:
+                namespace = dict(__file__=str(script), __name__='__main__')
+                observed = []
+
+                def admission(root, paths):
+                    cargo_env = namespace[env_name]
+                    scanner_env = api._scanner_environment()
+                    observed.append((root, cargo_env['CARGO_TARGET_DIR'], scanner_env['CARGO_TARGET_DIR'],
+                                     api._target_environment(root, cargo_env)['CARGO_TARGET_DIR']))
+                    raise Admitted()
+
+                env = dict(os.environ)
+                env.pop('CARGO_TARGET_DIR', None)
+                if supplied is not None:
+                    env['CARGO_TARGET_DIR'] = supplied
+                admitted, error = False, None
+                with patch.dict(os.environ, env, clear=True), \
+                        patch.object(sys, 'argv', [str(script), *[arg.format(out=out) for arg in arguments]]), \
+                        patch.object(api, 'mutating_sources', side_effect=admission):
+                    try:
+                        exec(code, namespace)
+                    except Admitted:
+                        admitted = True
+                    except (AssertionError, RuntimeError) as caught:
+                        error = caught
+                if supplied in (target, None):
+                    self.assertTrue(admitted and error is None, marker)
+                    self.assertTrue(observed == [(ROOT, target, target, target)], marker)
+                else:
+                    self.assertTrue(not admitted and not observed and isinstance(error, AssertionError)
+                                    and '#1166 use this worktree _build/cargo-target only' in str(error), marker)
+
+    def test_tool_budget_target_admission(self):
+        self.check_runner('tool-budget/negative_project.py', 'ENV', [],
+                          '#1166 tool-budget runner shares the admissible target')
+
+    def test_round6_target_admission(self):
+        self.check_runner('edgeclaw-entries/negative_round6.py', 'env', ['--out', '{out}'],
+                          '#1166 round6 runner shares the admissible target')
+
+    def test_round7_target_admission(self):
+        self.check_runner('edgeclaw-entries/negative_round7.py', 'env', ['{out}'],
+                          '#1166 round7 runner shares the admissible target')
+
+
 class ScannerBootstrap(unittest.TestCase):
     def test_fresh_target_first_mutation_bootstraps_inside_pristine_lock(self):
         with tempfile.TemporaryDirectory(prefix='pdrs1166-cold-target-') as directory:

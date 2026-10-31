@@ -70,3 +70,13 @@ store 读、edit、delete、deprecate、restore；`direct_entry_write_rejects_un
 `negative_fix1.py --out <目录>` 分别移除每个入口的路径校验、snapshot-version 操作锁，
 必须运行时断言失败；既有 `negative.py` 还覆盖 IO message、global id 分类和映射回归。
 `negative.py` / `negative_ids.py` / `negative_fix1.py` 均保留调用者的 Cargo 环境，恢复并核对源文件字节。
+
+`negative_round6.py` / `negative_round7.py` 只接受本树 `_build/cargo-target`
+（未设置时同样使用此目录），scanner 与 Cargo 共用它；共享准入守卫拒绝 `src/target`。
+从仓库根运行：
+
+```sh
+export CARGO_TARGET_DIR="$PWD/_build/cargo-target"
+python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-entries/negative_round6.py --out <全新输出目录>
+python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-entries/negative_round7.py <全新输出目录>
+```
