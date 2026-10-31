@@ -109,12 +109,31 @@ mutations = [
              'object_density_harness_selfcheck', '#1128 pinned compact FNV digest'),
     # The pretty copy must track the CLI's own write_json_pretty_into: the
     # binding test pins that function's exact text, so any change to the
-    # product pipeline fails the harness (#1128 fix-r1, review P2).
+    # product pipeline fails the harness (#1128 fix-r1, review P2). The
+    # indent literal is one knob; the colon separator is its sibling (#1128
+    # fix-r2, review sibling #1: one knob per mutation, no blanket trust).
     Mutation('cli-pretty-indent', cli_main, 'pilotdeck-protocol', 'object_density',
              'out.write_all(b"  ")?;',
              'out.write_all(b" ")?;',
              'object_density_pretty_copy_tracks_cli_implementation',
              '#1128 CLI write_json_pretty_into changed; re-derive the harness pretty copy'),
+    Mutation('cli-pretty-colon-space', cli_main, 'pilotdeck-protocol', 'object_density',
+             "':' => out.write_all(b\": \")?,",
+             "':' => out.write_all(b\":\")?,",
+             'object_density_pretty_copy_tracks_cli_implementation',
+             '#1128 CLI write_json_pretty_into changed; re-derive the harness pretty copy'),
+    # The binding test also diffs the pinned CLI text against the live copy's
+    # byte literals: mutating the pinned constant alone simulates a CLI change
+    # where only the constant was re-derived and `reindent_pretty` stayed
+    # stale, which must fail at that parity assertion, not pass (#1128 fix-r2,
+    # review opus #3). The anchor lives only inside the pinned constant text
+    # in the harness; the live copy spells the same rule with
+    # extend_from_slice.
+    Mutation('cli-pretty-colon-parity', harness, 'pilotdeck-protocol', 'object_density',
+             "':' => out.write_all(b\": \")?,",
+             "':' => out.write_all(b\":\")?,",
+             'object_density_pretty_copy_tracks_cli_implementation',
+             '#1128 pretty byte literals diverged between CLI and the harness copy'),
 ]
 
 
