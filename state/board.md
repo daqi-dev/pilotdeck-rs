@@ -2571,3 +2571,4 @@ updated: 2026-10-31 20:20 · by Claude Code 协调者
 - 20:02 本机负载 142（删 cargo-target 后多单冷编译，4 cargo × 默认 10 jobs）→ cargo-gate shim 默认 CARGO_BUILD_JOBS=4（cp -p 保执行位）。#1154 r3 DeepSeek P1×3：差异账本被原地改写（尺子 P1）、negative_proxy 守护集漏判官 pairing/tests.rs、宿主证据 → GLM fix-r3（末轮）。在途 10 单 > 在审 8，暂不开 A8 新线。
 - 20:16 #1140（A5.4 包 3 判分接线）GLM 交付 3bef6fafc → check_frozen --write 重登记 5314d8799，PR #1196 draft；r1 opus + DeepSeek + macmini 官方复算；cb8 真实采集等 #1154。
 - 20:20 **两小时交接** → `_tmp/20261031-handoff-2020.md`。待人：#1183、#1191、Node 基线卡 `state/decisions-20261031-node-baseline.md`（AI 代批待复核）。
+- 22:08 #1199 探针：只改 state/，验证 docs_only 跳过重 job（合后关闭，不合入）
