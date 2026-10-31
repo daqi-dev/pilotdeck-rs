@@ -37,9 +37,10 @@ const MARKER_TIMEOUT: Duration = Duration::from_secs(8);
 /// one returns right after the writer reports its give-up (#1141).
 const RETURN_GRACE: Duration = Duration::from_secs(2);
 
-/// How long the panic test below may wait for the stranger to signal that it
-/// started; the stranger publishes that signal as its first act, so this only
-/// bounds a stranger that never started (#1141 fix-r2 review P1-1).
+/// How long the tests below may wait for the stranger to signal that it
+/// started; the stranger publishes that signal only once it has confirmed it
+/// holds the pipe's read end, so this only bounds a stranger that never
+/// started or never got the read end (#1141 fix-r2 review P1-1, fix-r3).
 const STRANGER_STARTED_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long the guard below may take to confirm the stranger's process group
@@ -56,9 +57,12 @@ const STRANGER_EOF: &str = "stranger-eof";
 /// (#1141 fix-r1 review P2-1).
 const STRANGER_GO: &str = "stranger-go";
 
-/// The signal the stranger publishes as its first act; the panic test below
-/// waits for it so its deliberate panic lands once the stranger provably
-/// exists but no publication step has run yet (#1141 fix-r2 review P1-1).
+/// The signal the stranger publishes once it has confirmed it holds the
+/// pipe's read end; the tests below wait for it — the panic test so its
+/// deliberate panic lands once the stranger provably exists but no
+/// publication step has run yet (#1141 fix-r2 review P1-1), the dead-helper
+/// test so neither the helper's death nor the writer's first write can
+/// precede the stranger holding the read end (#1141 fix-r3, Linux cb8).
 const STRANGER_STARTED: &str = "stranger-started";
 
 /// The panic the `spawned` hook of the panic test below raises once the
@@ -68,40 +72,55 @@ const STRANGER_STARTED: &str = "stranger-started";
 const DELIBERATE_PANIC: &str = "#1141 deliberate panic while the stranger is running";
 
 /// The stranger the dead-helper tests leave holding the pipe's read end
-/// (#1141, #1125 r4 review P2-1): after the go signal it drains the pipe
-/// with a zero-timeout `select` on its stdin and classifies what it sees —
-/// a 0-byte read means EOF was pending, i.e. every write end was closed
-/// before the observation, while a not-ready read end means one is still
-/// held (the writer is gone by then, so no data can ever arrive and make it
-/// ready; the state is monotone, which is what replaces a timing grace).
-/// It publishes the verdict — and the `started` signal it publishes as its
-/// first act — atomically through a staging file + rename (#166 r8), and
-/// then parks in a bounded sleep that only the test's [`StrangerGuard`] may
-/// end, never EOF or a self-chosen lifetime. `/bin/sh` itself cannot make a
+/// (#1141, #1125 r4 review P2-1): its first act is to confirm it really
+/// holds the pipe — `fstat(0)` must show a FIFO, which is only true when
+/// the shell handed the background command the read end instead of the
+/// async-rule `/dev/null` (dash, the Linux `/bin/sh`, points a background
+/// command's stdin there even behind an explicit `<&0`; bash keeps the
+/// pipe — the helper below saves the read end to fd 3 first and redirects
+/// from there, which holds under both) — and only then does it publish the
+/// `started` signal the helper and the test's `spawned` hook both wait for
+/// (#1141 fix-r3, Linux cb8: with the read end lost, the writer died on
+/// EPIPE instead of the deadline). A stdin that is not the pipe is
+/// recorded as the marker verdict `stdin-not-a-pipe` — the r2 probe read a
+/// `/dev/null` stdin as a 0-byte `eof`, silently misclassifying the very
+/// broken shape it was there to observe. After the go signal it drains the
+/// pipe with a zero-timeout `select` on its stdin and classifies what it
+/// sees — a 0-byte read means EOF was pending, i.e. every write end was
+/// closed before the observation, while a not-ready read end means one is
+/// still held (the writer is gone by then, so no data can ever arrive and
+/// make it ready; the state is monotone, which is what replaces a timing
+/// grace). It publishes every verdict — and the `started` signal —
+/// atomically through a staging file + rename (#166 r8), and then parks in
+/// a bounded sleep that only the test's [`StrangerGuard`] may end, never
+/// EOF or a self-chosen lifetime. `/bin/sh` itself cannot make a
 /// non-blocking read, so the stranger is this `python3` probe (`python3` is
 /// an established dependency of the gateway host runtime and of tests:
 /// `host/connection.rs`, `pilotdeck-yaml/tests/resource_scaling.rs`); the
 /// script contains no single quotes, so it embeds verbatim into the
 /// helper's single-quoted `-c` argument below.
 const STRANGER_PROBE: &str = r#"
-import os, select, sys, time
+import os, select, stat, sys, time
 marker, go, started = sys.argv[1], sys.argv[2], sys.argv[3]
 def publish(path, text):
     staging = path + ".staging"
     with open(staging, "w") as handle:
         handle.write(text)
     os.rename(staging, path)
-publish(started, "started")
-deadline = time.monotonic() + 60.0
-while not os.path.exists(go) and time.monotonic() < deadline:
-    time.sleep(0.05)
-while True:
-    if not select.select([0], [], [], 0)[0]:
-        publish(marker, "write-end-still-held")
-        break
-    if not os.read(0, 65536):
-        publish(marker, "eof")
-        break
+if not stat.S_ISFIFO(os.fstat(0).st_mode):
+    publish(marker, "stdin-not-a-pipe")
+else:
+    publish(started, "started")
+    deadline = time.monotonic() + 60.0
+    while not os.path.exists(go) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    while True:
+        if not select.select([0], [], [], 0)[0]:
+            publish(marker, "write-end-still-held")
+            break
+        if not os.read(0, 65536):
+            publish(marker, "eof")
+            break
 time.sleep(30)
 "#;
 
@@ -192,10 +211,12 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
 /// while holding the pipe's read end, so killing the helper cannot break
 /// the writer out of its blocked write. Only the writer's own deadline
 /// ends the write and drops the parent's copy of the write end before the
-/// publication returns (#1125 fix-r3 review P2-2). The stranger's `<&0`
-/// is what keeps it on the read end: without an explicit redirection
-/// `/bin/sh` points a background command's stdin at `/dev/null`, so the
-/// read end would close with the helper (#1141, #1125 r4 review P2-1).
+/// publication returns (#1125 fix-r3 review P2-2). The stranger's `<&3`
+/// off the helper's fd 3 save is what keeps it on the read end: without an
+/// explicit redirection `/bin/sh` points a background command's stdin at
+/// `/dev/null`, and dash does so even with one (`<&0`), so the read end
+/// would close with the helper (#1141, #1125 r4 review P2-1, #1141 fix-r3
+/// Linux cb8 finding).
 #[test]
 fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
     let scratch = Scratch::new("helper-stall-stranger");
@@ -224,26 +245,29 @@ fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
 }
 
 /// #1141 (#1125 r4 review P2-1): the helper is already dead — it `exit 0`s
-/// on its own right after the spawn — while a stranger process still holds
-/// the pipe's read end, so neither the helper's death nor its kill can end
-/// the blocked write; only the writer's own deadline does. The observable
-/// chain: the reap report shows an ordinary exit (a guard-killed helper
-/// would report SIGKILL), the write fails with `TimedOut` (a read end
-/// closed at the deadline would have surfaced as a broken pipe instead),
-/// and the publication returns within its deadline. The stranger — released
-/// by a go signal the test publishes once the publication has returned —
-/// then observes the pipe with the non-blocking probe and records the
-/// verdict in the marker, proving the writer thread exited and with it
-/// dropped this process's only copy of the write end: EOF reaches a reader
-/// only after every write end is closed, and the go signal was published
-/// after the return, so a copy still held past that boundary is observed
-/// as `write-end-still-held` instead of `eof` (#1141 fix-r2 review P2-1,
-/// which replaced the r1 marker-timestamp judgment and its fixed grace).
-/// The stranger parks in a bounded sleep after recording the verdict rather
-/// than ending on its own, so the [`StrangerGuard`] is the only thing that
-/// may collect it, on every exit of this test (#1141 fix-r1 review P1-1):
-/// it kills the stranger's process group, confirms the group is empty, and
-/// the test asserts the stranger was collected before it returns.
+/// on its own once the stranger has confirmed it holds the pipe's read end
+/// (`started`), which both the helper's bounded wait and this test's
+/// `spawned` hook gate on (#1141 fix-r3, Linux cb8) — while the stranger
+/// process still holds the pipe's read end, so neither the helper's death
+/// nor its kill can end the blocked write; only the writer's own deadline
+/// does. The observable chain: the reap report shows an ordinary exit (a
+/// guard-killed helper would report SIGKILL), the write fails with
+/// `TimedOut` (a read end closed at the deadline would have surfaced as a
+/// broken pipe instead), and the publication returns within its deadline.
+/// The stranger — released by a go signal the test publishes once the
+/// publication has returned — then observes the pipe with the non-blocking
+/// probe and records the verdict in the marker, proving the writer thread
+/// exited and with it dropped this process's only copy of the write end:
+/// EOF reaches a reader only after every write end is closed, and the go
+/// signal was published after the return, so a copy still held past that
+/// boundary is observed as `write-end-still-held` instead of `eof` (#1141
+/// fix-r2 review P2-1, which replaced the r1 marker-timestamp judgment and
+/// its fixed grace). The stranger parks in a bounded sleep after recording
+/// the verdict rather than ending on its own, so the [`StrangerGuard`] is
+/// the only thing that may collect it, on every exit of this test (#1141
+/// fix-r1 review P1-1): it kills the stranger's process group, confirms the
+/// group is empty, and the test asserts the stranger was collected before
+/// it returns.
 #[test]
 fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     let scratch = Scratch::new("helper-dead-stranger");
@@ -271,8 +295,19 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         // #1141 fix-r2 review P1-1: the helper runs as its own group leader
         // (`process_group(0)` below), so its spawn-returned id is the group
         // the stranger lands in — adopted here, before the helper or the
-        // stranger can do anything at all.
-        |pid| stranger.adopt(helper_group(pid)),
+        // stranger can do anything at all. #1141 fix-r3 (Linux cb8): the
+        // stranger publishes `started` only once its stdin provably is the
+        // pipe, so waiting here keeps the writer from starting — and the
+        // helper below from dying — before the read end is held; with the
+        // read end lost (dash points a background stdin at /dev/null), the
+        // writer died on EPIPE instead of the deadline.
+        |pid| {
+            stranger.adopt(helper_group(pid));
+            wait_for_signal(&started, STRANGER_STARTED_TIMEOUT).expect(
+                "#1141 the stranger must confirm it holds the pipe read end \
+                 before the publication writes",
+            );
+        },
         |status| {
             let _ = kill_sent.send(status);
         },
@@ -407,36 +442,50 @@ fn stalled_without_reading() -> process::Command {
 
 /// `/bin/sh` leaves a background `sleep` holding the pipe's read end, then
 /// `exec`s its own sleep: killing the helper cannot close the read end, so
-/// only the writer's deadline ends the write. The `<&0` keeps the stranger
-/// on the read end — a plain `sleep 5 &` reads `/dev/null`, because
-/// `/bin/sh` assigns background commands that stdin unless it is explicitly
-/// redirected (#1141). The stranger is a `sleep 5`, so it lets go on its own
-/// shortly after the 1.5-second deadline and never outlives the test by more
-/// than a bounded moment.
+/// only the writer's deadline ends the write. The stranger stays on the
+/// read end through the same fd 3 save as the dead-helper stranger below
+/// (#1141 fix-r3): a plain `sleep 5 &` reads `/dev/null` because the POSIX
+/// async rule assigns a background command that stdin, and — the Linux cb8
+/// finding — dash applies the rule even behind an explicit `<&0`, which
+/// lost the read end there; bash honors an explicit `<&0`, which is why the
+/// same shape kept working on macOS. The stranger is a `sleep 5`, so it
+/// lets go on its own shortly after the 1.5-second deadline and never
+/// outlives the test by more than a bounded moment.
 fn stalled_behind_a_stranger_reader() -> process::Command {
     let mut helper = process::Command::new("/bin/sh");
     helper
         .arg("-c")
-        .arg("sleep 5 <&0 & exec /bin/sleep 30")
+        .arg("exec 3<&0; sleep 5 <&3 & exec /bin/sleep 30")
         .arg("stalled-helper")
         .stdin(process::Stdio::piped());
     helper
 }
 
-/// `/bin/sh` `exit 0`s right away, so the helper is dead long before the
-/// deadline, while a background stranger keeps holding the pipe's read end
-/// through the same `<&0` retention as above (#1141). The helper runs as its
-/// own process-group leader (`process_group(0)`), so the stranger — and
-/// everything it runs — stays in a group the test alone can end, and whose
-/// id is the spawn-returned one the `spawned` hook hands over: the group
-/// exists from the spawn on, so it never depends on the helper (or the
-/// stranger) publishing anything (#1141 fix-r2 review P1-1). The stranger
-/// itself is the [`STRANGER_PROBE`] python process: it waits for the go
-/// signal the test publishes once the publication has returned (capped, so
-/// even a test that never signals leaves it bounded), observes the pipe,
-/// records the verdict, and then parks in a bounded sleep that only the
-/// test's [`StrangerGuard`] may end, never EOF or a self-chosen lifetime
-/// (#1141 fix-r1 review P1-1).
+/// `/bin/sh` saves the pipe's read end to fd 3, launches the stranger from
+/// there, and `exit 0`s once the stranger has confirmed it holds the read
+/// end, so the helper is dead long before the deadline while the stranger
+/// keeps holding the pipe's read end (#1141). The fd 3 detour is the
+/// load-bearing part: the POSIX async rule points a background command's
+/// stdin at `/dev/null`, and dash (the Linux `/bin/sh`) applies it even
+/// behind an explicit `<&0` — with the read end lost there, the writer died
+/// on a broken pipe instead of its deadline (Linux cb8, #1141 fix-r3) —
+/// while saving to fd 3 first and redirecting with `<&3` keeps the pipe
+/// under both dash and bash (this machine, 10/10 each: `<&0 &` keeps fd 0 a
+/// FIFO under bash only; `exec 3<&0` + `<&3 &` under both). The bounded
+/// started-wait — never an unbounded `wait`, so a stranger that never starts
+/// cannot wedge the helper past its own deadline — is the other half of the
+/// handshake: the helper may not die before the stranger provably holds the
+/// read end. The helper runs as its own process-group leader
+/// (`process_group(0)`), so the stranger — and everything it runs — stays
+/// in a group the test alone can end, and whose id is the spawn-returned one
+/// the `spawned` hook hands over: the group exists from the spawn on, so it
+/// never depends on the helper (or the stranger) publishing anything (#1141
+/// fix-r2 review P1-1). The stranger itself is the [`STRANGER_PROBE`]
+/// python process: it waits for the go signal the test publishes once the
+/// publication has returned (capped, so even a test that never signals
+/// leaves it bounded), observes the pipe, records the verdict, and then
+/// parks in a bounded sleep that only the test's [`StrangerGuard`] may end,
+/// never EOF or a self-chosen lifetime (#1141 fix-r1 review P1-1).
 fn dead_helper_with_a_stranger_reader(
     marker: &Path,
     go: &Path,
@@ -446,7 +495,10 @@ fn dead_helper_with_a_stranger_reader(
     helper
         .arg("-c")
         .arg(format!(
-            "python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" <&0 &
+            "exec 3<&0
+               python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" <&3 &
+               i=0
+               while [ ! -e \"$3\" ] && [ \"$i\" -lt 100 ]; do i=$((i+1)); /bin/sleep 0.05; done
                exit 0"
         ))
         .arg("dead-helper")
@@ -537,8 +589,9 @@ impl Drop for StrangerGuard {
 }
 
 /// Wait until the stranger has published `signal`, bounded by `wait`; the
-/// stranger publishes the signal as its first act, so the bound only covers
-/// a stranger that never started (#1141 fix-r2 review P1-1).
+/// stranger publishes the signal only once it has confirmed it holds the
+/// pipe's read end, so the bound only covers a stranger that never started
+/// or never got the read end (#1141 fix-r2 review P1-1, fix-r3).
 fn wait_for_signal(signal: &Path, wait: Duration) -> io::Result<()> {
     let deadline = Instant::now() + wait;
     while !signal.exists() && Instant::now() < deadline {

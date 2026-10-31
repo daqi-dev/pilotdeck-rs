@@ -21,7 +21,12 @@ KILLED. The cleanup, deadline, and writer mutants are bound to the
 lib-only publication unit tests instead: they are deterministic and
 unix-only like the module itself. macOS uses posix_spawn and never shows
 the window, so the two race mutants are a Linux contract (expected
-SURVIVED elsewhere); the other nine must kill on every unix host. The
+SURVIVED elsewhere), and so is `stranger-retention-reverted` (#1141
+fix-r3, Linux cb8: dash, the Linux `/bin/sh`, points a background
+command's stdin at /dev/null even behind an explicit `<&0`, so the r2
+helper lost the pipe's read end and the writer died on EPIPE; bash keeps
+the pipe, so the mutant survives on macOS); the other ten must kill on
+every unix host. The
 #1141 mutants target the dead-helper stranger test's write-end
 observation — the stranger is a python probe that classifies the pipe at
 the go signal (a 0-byte read is EOF pending, a not-ready read end is a
@@ -37,7 +42,13 @@ plus the spawn-window panic test, which proves the guard owns the group
 from the spawn on (`spawn-hook-removed`) and still ends the stranger
 after an in-flight panic (`stranger-panic-guard-kill-removed`, fix-r2
 review P1-1). The stranger parks in a bounded sleep that only that guard
-may end.
+may end. The fix-r3 handshake mutants prove the stranger must provably
+hold the read end before anything else runs: the probe publishes
+`started` only after `fstat(0)` shows a FIFO, and both the helper and the
+test's `spawned` hook wait for that signal, so a mutant that inverts the
+confirmation (`stranger-confirmation-inverted`) or drops the fd-3
+retention save (`stranger-retention-reverted`) leaves the publication
+blocked at the hook's expect.
 """
 import argparse
 import json
@@ -325,6 +336,37 @@ cases = [
      '''    spawned(helper_id);''',
      '''    let _ = (helper_id, &spawned);''',
      panic_stranger, '#1141 the publication must panic while the stranger is running'),
+    # #1141 fix-r3 (Linux cb8): the stranger must confirm it holds the pipe
+    # before anything else runs — the probe publishes `started` only once
+    # `fstat(0)` shows a FIFO, and both the helper and the test's `spawned`
+    # hook wait for that signal, so the writer cannot start and the helper
+    # cannot die before the read end is provably held. The mutant inverts
+    # the confirmation, so no `started` ever appears and the hook's expect
+    # is the assertion that kills, on every unix host.
+    ('stranger-confirmation-inverted', publication,
+     '''if not stat.S_ISFIFO(os.fstat(0).st_mode):''',
+     '''if stat.S_ISFIFO(os.fstat(0).st_mode):''',
+     dead_stranger,
+     '#1141 the stranger must confirm it holds the pipe read end before the publication writes'),
+    # #1141 fix-r3 (Linux cb8): the fd-3 save is what holds the read end
+    # across dash's async-rule /dev/null — dash replaces a background
+    # command's stdin even behind an explicit `<&0`, which lost the read
+    # end on Linux and killed the writer with EPIPE instead of its
+    # deadline. The mutant reverts the helper to the r2 shape (no save, no
+    # started handshake), so on Linux `started` never appears and the
+    # spawned hook's expect kills; bash keeps the pipe behind `<&0`, so
+    # the mutant SURVIVES on macOS like the two race mutants above (a
+    # Linux contract, run by the coordinator on cb8/CI).
+    ('stranger-retention-reverted', publication,
+     '''            "exec 3<&0
+               python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" <&3 &
+               i=0
+               while [ ! -e \\"$3\\" ] && [ \\"$i\\" -lt 100 ]; do i=$((i+1)); /bin/sleep 0.05; done
+               exit 0"''',
+     '''            "python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" <&0 &
+               exit 0"''',
+     dead_stranger,
+     '#1141 the stranger must confirm it holds the pipe read end before the publication writes'),
 ]
 
 
