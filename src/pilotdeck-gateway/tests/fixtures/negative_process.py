@@ -8,6 +8,7 @@ a plain ``with Popen(...)`` plus ``communicate()`` can block forever even after
 the leader is dead (#528).
 """
 from contextlib import contextmanager, nullcontext
+import builtins
 import fcntl
 import hashlib
 import json
@@ -231,8 +232,23 @@ class SourceBaselineError(RuntimeError):
 # same tree lock. A second ``flock`` on a separate fd would deadlock even in
 # one process, so the registry only defers to the outermost holder. Separate
 # threads and separate processes still exclude each other through the kernel.
-_HELD = {}
-_HELD_GUARD = threading.Lock()
+# The registry is process state, not module state (#1166 r9): runner_control
+# publishes an in-memory candidate copy of this module while the original
+# already owns the tree lock, and a copy with its own empty registry would
+# open a second fd and flock against its own process until the deadline.
+# The one registry therefore lives on ``builtins``, outside every module
+# ``__dict__`` that a published copy re-executes; ``dict.setdefault`` on that
+# real dict is atomic, so racing first callers cannot end up with two.
+_HELD_STATE = "_pdrs_negative_process_held"
+
+
+def _held_state():
+    state = globals().get(_HELD_STATE)
+    if state is None:
+        state = builtins.__dict__.setdefault(
+            _HELD_STATE, {"held": {}, "guard": threading.Lock()})
+        globals()[_HELD_STATE] = state
+    return state
 
 
 def _held_key(path):
@@ -261,8 +277,9 @@ class TreeLock:
 
     def __enter__(self):
         key = _held_key(self.path)
-        with _HELD_GUARD:
-            held = _HELD.get(key)
+        state = _held_state()
+        with state["guard"]:
+            held = state["held"].get(key)
             if held is not None:
                 held["depth"] += 1
                 self._key = key
@@ -277,8 +294,8 @@ class TreeLock:
         except BaseException:
             os.close(fd)
             raise
-        with _HELD_GUARD:
-            _HELD[key] = {"fd": fd, "depth": 1}
+        with state["guard"]:
+            state["held"][key] = {"fd": fd, "depth": 1}
         self._fd = fd
         self._key = key
         return self
@@ -301,20 +318,21 @@ class TreeLock:
 
     def __exit__(self, *exc):
         key, self._key = self._key, None
+        state = _held_state()
         if self._delegate:
             self._delegate = False
-            with _HELD_GUARD:
-                held = _HELD.get(key)
+            with state["guard"]:
+                held = state["held"].get(key)
                 if held is not None:
                     held["depth"] -= 1
                     if held["depth"] <= 0:
-                        del _HELD[key]
+                        del state["held"][key]
             return
         fd, self._fd = self._fd, None
         if fd is None:
             return
-        with _HELD_GUARD:
-            _HELD.pop(key, None)
+        with state["guard"]:
+            state["held"].pop(key, None)
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
