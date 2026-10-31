@@ -27,7 +27,12 @@ python3 -I src/pilotdeck-protocol/tests/fixtures/jsobject-density/measure.py \
 ```
 
 前置条件：`CARGO_TARGET_DIR` 由调用方设置；Node 用 `NODE22` 指定且必须
-v22.22.0；启动前 tracked 树必须等于 HEAD。cargo 构建经 `scripts/cargo-slots.sh`
+v22.22.0；启动前 tracked 树必须等于 HEAD。`measure.py` 与负控共用本目录
+`tree_guard.py`（移植 #983 r9x）：检查全树暂存/工作区差异，拒绝
+assume-unchanged / skip-worktree；拒绝 protocol、CLI（harness 编译时读取其
+main.rs）、workspace 清单/锁文件、toolchain 与两级 `.cargo` 的未跟踪输入，
+`.cargo` / `src/.cargo` 目录存在也拒绝。protocol 无 workspace path 依赖。
+pre 窗口只允许 lib.rs 工作区差异，暂存和索引标志不豁免。cargo 构建经 `scripts/cargo-slots.sh`
 排队。输出目录必须不存在（`.claim` 独占创建）。
 
 安全与口径：
@@ -55,9 +60,9 @@ v22.22.0；启动前 tracked 树必须等于 HEAD。cargo 构建经 `scripts/car
   结果行里如实记录 `stringifyError`，但解析相照常采满全部 reps（deep 格与
   Rust 同样 5 轮 × 7 reps 对照）；Rust 侧 #983 起全迭代。TS dump 缺失只有
   这一种允许情形：该格是 deep 类、且 timed / 写 dump 的 RSS 单 rep 运行至少
-  一路实测记录了该 RangeError（错误原文记入 `prettySha256` 的
+  一路实测记录了这个完整错误，且另一路没有记录其他错误（错误原文记入 `prettySha256` 的
   `tsStringifyError`，`tsMatchesRust` 记 `null`）；非 deep 格或错误不是
-  RangeError 的 dump 缺失一律失败退出，不记 `null` 通过。
+  该栈溢出（包括 `RangeError: Invalid string length`）的 dump 缺失一律失败退出，不记 `null` 通过。
 
 证据归档：本机一轮全矩阵见 `_tmp/20261026-issue-1128/host-run/`（RESULT.md
 在证据目录，不进提交）。`negative_controls.py` 是 harness 正控
@@ -65,3 +70,9 @@ v22.22.0；启动前 tracked 树必须等于 HEAD。cargo 构建经 `scripts/car
 `object_density_pretty_copy_tracks_cli_implementation` 的变异负控（HEAD-only，
 提交后由协调者在宿主跑；用法 `--check` / `[--compile-only] NEW_OUTPUT_DIR
 [name …]`）。
+
+快速守卫回归：`python3 -I <本目录>/test_controls.py`；其 `--negative` 模式
+在内存编译 Python 变异并逐条汇总 KILLED/SURVIVED/INVALID，判杀绑定完整测试名
+与同一行的 `AssertionError: … #1128 …`。Git 四态测试只创建几份合成输入，
+不复制产品仓库、不创建第二 Cargo 目录。restored 正控保留在原有
+`mutating_sources` 树锁内，cargo 前重新检查 HEAD。
