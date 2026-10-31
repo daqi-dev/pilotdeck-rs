@@ -354,7 +354,7 @@ fn verify_abort_state_oracle(oracle: &Value) {
     let expected = json!({"sourceCommit":source["sourceCommit"],"nodeVersion":"v22.22.0",
         "generatorSha256":format!("{:x}",Sha256::digest(generator)),
         "signalSourceSha256":format!("{:x}",Sha256::digest(source_bytes)),
-        "sourceSha256":source["sourceSha256"],"kind":"real-ts-sdk-state-with-websocket-io-double","matrixCells":11});
+        "sourceSha256":source["sourceSha256"],"kind":"real-ts-sdk-state-with-websocket-io-double","matrixCells":15});
     for (key, value) in expected
         .as_object()
         .expect("#1145 supplemental identity fields")
@@ -365,12 +365,12 @@ fn verify_abort_state_oracle(oracle: &Value) {
         );
     }
     let rows = oracle["cases"].as_array().expect("#1145 supplemental rows");
-    assert_eq!(rows.len(), 11, "#1145 fixed supplemental row denominator");
+    assert_eq!(rows.len(), 15, "#1145 fixed supplemental row denominator");
     let ids = rows
         .iter()
         .map(|row| row["id"].as_str().expect("#1145 supplemental cell id"))
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(ids.len(), 11, "#1145 unique supplemental cell identities");
+    assert_eq!(ids.len(), 15, "#1145 unique supplemental cell identities");
 }
 
 #[test]

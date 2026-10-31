@@ -328,13 +328,9 @@ async fn stream_turn(
         }
         let next = next_query_frame(query, &initialized.request_id, &abort_ids, signals);
         let incoming = if let Some(deadline) = abort_deadline {
-            match timeout_at(deadline, next).await {
+            match within_abort_deadline(deadline, async { Ok(next.await) }).await {
                 Ok(incoming) => incoming,
-                Err(_) => {
-                    return QueryOutcome::FatalAbort(Failure::Error(
-                        "Gateway request timed out: abort_turn".into(),
-                    ));
-                }
+                Err(error) => return QueryOutcome::FatalAbort(error),
             }
         } else {
             next.await
@@ -401,9 +397,15 @@ async fn within_abort_deadline<T>(
     deadline: Instant,
     request: impl std::future::Future<Output = Result<T, Failure>>,
 ) -> Result<T, Failure> {
-    timeout_at(deadline, request)
-        .await
-        .map_err(|_| Failure::Error("Gateway request timed out: abort_turn".into()))?
+    // Timeout polls its inner future first; a continuously ready stream can
+    // also starve the timer driver. Check the clock after every ready result,
+    // independently of both the inner future and the driver's last tick.
+    match timeout_at(deadline, request).await {
+        Ok(result) if Instant::now() < deadline => result,
+        _ => Err(Failure::Error(
+            "Gateway request timed out: abort_turn".into(),
+        )),
+    }
 }
 
 fn retain_query(error: Failure, abort_ids: Vec<String>, deadline: Option<Instant>) -> QueryOutcome {
@@ -423,7 +425,11 @@ async fn finish_pending_aborts(
     deadline: Instant,
 ) -> Result<(), Failure> {
     loop {
-        match timeout_at(deadline, query.query_frame(None, abort_ids)).await {
+        match within_abort_deadline(deadline, async {
+            Ok(query.query_frame(None, abort_ids).await)
+        })
+        .await
+        {
             Ok(Ok(QueryFrame::AbortReply(result))) => {
                 result?;
                 query.close().await;
@@ -439,11 +445,7 @@ async fn finish_pending_aborts(
                 query.flush_pending().await;
                 return Err(error);
             }
-            Err(_) => {
-                return Err(Failure::Error(
-                    "Gateway request timed out: abort_turn".into(),
-                ));
-            }
+            Err(error) => return Err(error),
             // With no stream id only abort responses are returned. Keep this
             // exhaustive if another non-stream notification is added later.
             Ok(Ok(_)) => {}
@@ -593,6 +595,277 @@ fn array(value: &JsValue) -> Option<&[JsValue]> {
 mod tests {
     use super::*;
     use crate::test_negative_receipt::verify;
+
+    fn deadline_row(mode: &str) -> serde_json::Value {
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/sdk-signal-abort-state/oracle.json"
+        ))
+        .expect("#1145 deadline oracle JSON");
+        oracle["cases"]
+            .as_array()
+            .expect("#1145 deadline oracle cases")
+            .iter()
+            .find(|row| row["kind"] == "abort-deadline" && row["input"]["mode"] == mode)
+            .expect("#1145 deadline named TS cell exists")
+            .clone()
+    }
+
+    fn assert_deadline_error<T>(result: Result<T, Failure>, mode: &str) {
+        let row = deadline_row(mode);
+        let Err(Failure::Error(message)) = result else {
+            panic!("#1145 fixed abort deadline wins over ready frames");
+        };
+        assert_eq!(
+            json!(message),
+            row["output"]["message"],
+            "#1145 abort deadline error matches real TS"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn abort_ready_frames_cannot_starve_deadline() {
+        use std::time::Duration;
+        assert_eq!(
+            deadline_row("ready-flood")["output"]["readyAfterDeadline"],
+            true,
+            "#1145 TS ready backlog survives abort expiry"
+        );
+        let deadline = Instant::now() + transport::REQUEST_TIMEOUT;
+        // Deterministically cross the deadline with a non-final frame ready on
+        // every poll. No socket scheduling gap may accidentally kill a mutant.
+        for frame in 0..64 {
+            let event = within_abort_deadline(deadline, std::future::ready(Ok(frame))).await;
+            assert_eq!(
+                event.expect("#1145 ready frame before deadline"),
+                frame,
+                "#1145 ready frame preserved before deadline"
+            );
+        }
+        tokio::time::advance(transport::REQUEST_TIMEOUT + Duration::from_millis(1)).await;
+        assert_deadline_error(
+            within_abort_deadline(deadline, std::future::ready(Ok(64))).await,
+            "ready-flood",
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn abort_ready_deadline_does_not_need_timer_driver() {
+        let deadline = Instant::now() + std::time::Duration::from_millis(5);
+        // A single poll crosses D and returns Ready without giving the timer
+        // driver a turn. A clock check only before polling also misses this.
+        let ready = async {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            Ok(())
+        };
+        assert_deadline_error(within_abort_deadline(deadline, ready).await, "ready-flood");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn abort_idle_deadline_matches_ts() {
+        let deadline = Instant::now() + transport::REQUEST_TIMEOUT;
+        assert_deadline_error(
+            within_abort_deadline(deadline, std::future::pending::<Result<(), Failure>>()).await,
+            "idle",
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn abort_reply_before_deadline_matches_ts() {
+        let deadline = Instant::now() + transport::REQUEST_TIMEOUT;
+        tokio::time::advance(transport::REQUEST_TIMEOUT - std::time::Duration::from_millis(1))
+            .await;
+        let resolved = within_abort_deadline(deadline, std::future::ready(Ok(())))
+            .await
+            .is_ok();
+        assert_eq!(
+            json!(resolved),
+            deadline_row("reply-before-deadline")["output"]["resolved"],
+            "#1145 reply before abort deadline resolves like TS"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn abort_cancelled_wait_preserves_original_deadline() {
+        let deadline = Instant::now() + transport::REQUEST_TIMEOUT;
+        let mut first = Box::pin(within_abort_deadline(
+            deadline,
+            std::future::pending::<Result<(), Failure>>(),
+        ));
+        let waiting = std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(std::future::Future::poll(first.as_mut(), cx).is_pending())
+        })
+        .await;
+        assert!(
+            waiting,
+            "#1145 predecessor stays pending before cancellation"
+        );
+        drop(first);
+        tokio::time::advance(transport::REQUEST_TIMEOUT + std::time::Duration::from_millis(1))
+            .await;
+        assert_deadline_error(
+            within_abort_deadline(deadline, std::future::ready(Ok(()))).await,
+            "failed-stream",
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn abort_failed_stream_keeps_fixed_deadline() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio::{
+            net::TcpListener,
+            time::{Duration, timeout},
+        };
+        use tokio_tungstenite::{accept_async, tungstenite::Message};
+        timeout(Duration::from_secs(90), async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("#1145 retained deadline bind owned mock port");
+            let address = listener
+                .local_addr()
+                .expect("#1145 retained deadline mock address");
+            let connection = Connection {
+                gateway_url: format!("ws://{address}/ws"),
+                auth_token: "fixture".into(),
+            };
+            let accept = async {
+                let (socket, _) = listener
+                    .accept()
+                    .await
+                    .expect("#1145 retained deadline accept");
+                accept_async(socket)
+                    .await
+                    .expect("#1145 retained deadline handshake")
+            };
+            let (client, mut peer) = tokio::join!(Transport::open(&connection, true), accept);
+            let mut client = client.expect("#1145 retained deadline opened query");
+            let deadline = Instant::now() + transport::REQUEST_TIMEOUT;
+            let abort = client
+                .begin_request("abort_turn", json!({"sessionKey":"s"}))
+                .await
+                .expect("#1145 retained deadline abort sent");
+            peer.next()
+                .await
+                .expect("#1145 retained deadline abort exists")
+                .expect("#1145 retained deadline valid abort");
+            peer.send(Message::Text(
+                json!({"type":"response","id":"stream","ok":false,
+                "error":{"message":"stream rejected"}})
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("#1145 retained deadline stream error sent");
+            let abort_ids = vec![abort];
+            let failed = client
+                .query_frame(Some("stream"), &abort_ids)
+                .await
+                .expect("#1145 retained deadline stream failure is not socket failure");
+            let QueryFrame::StreamFailed(error) = failed else {
+                panic!("#1145 retained deadline stream must fail independently");
+            };
+            let QueryOutcome::RetainAborts {
+                abort_ids,
+                deadline,
+                ..
+            } = retain_query(error, abort_ids, Some(deadline))
+            else {
+                panic!("#1145 retained deadline keeps pending abort owner");
+            };
+            // A never-replying predecessor is bounded by its original deadline
+            // even after the stream registration is retired.
+            tokio::time::pause();
+            tokio::time::advance(transport::REQUEST_TIMEOUT + Duration::from_millis(1)).await;
+            assert_deadline_error(
+                finish_pending_aborts(&mut client, &abort_ids, deadline).await,
+                "failed-stream",
+            );
+        })
+        .await
+        .expect("#1145 retained deadline bounded cleanup");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn abort_flood_reaches_fatal_exit() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio::{
+            net::TcpListener,
+            time::{Duration, timeout},
+        };
+        use tokio_tungstenite::{accept_async, tungstenite::Message};
+        timeout(Duration::from_secs(90), async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("#1145 flood bind owned mock port");
+            let address = listener.local_addr().expect("#1145 flood mock address");
+            let connection = Connection {
+                gateway_url: format!("ws://{address}/ws"),
+                auth_token: "fixture".into(),
+            };
+            let accept = async {
+                let (socket, _) = listener.accept().await.expect("#1145 flood accept");
+                accept_async(socket).await.expect("#1145 flood handshake")
+            };
+            let (client, peer) = tokio::join!(Transport::open(&connection, true), accept);
+            let mut client = client.expect("#1145 flood opened query");
+            let mut peer = peer;
+            let mut signals = Signals::interrupted_for_test();
+            let initialized = InitializedTurn {
+                request_id: "stream".into(),
+                run_id: "run".into(),
+            };
+            let server = async {
+                let abort = peer
+                    .next()
+                    .await
+                    .expect("#1145 flood abort frame exists")
+                    .expect("#1145 flood abort frame valid");
+                let abort: serde_json::Value =
+                    serde_json::from_str(abort.to_text().expect("#1145 flood abort is text"))
+                        .expect("#1145 flood abort is JSON");
+                assert_eq!(
+                    abort["method"], "abort_turn",
+                    "#1145 flood holds actual abort RPC"
+                );
+                // Hold the abort reply forever. Push non-final frames without
+                // any interval, then advance the real runtime clock past D.
+                for seq in 0..128 {
+                    peer.feed(Message::Text(
+                        json!({"type":"event","id":"stream","seq":seq,
+                        "final":false,"event":{"type":"turn_started"}})
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .expect("#1145 flood queue non-final event");
+                }
+                peer.flush().await.expect("#1145 flood flush queued events");
+                tokio::time::pause();
+                tokio::time::advance(transport::REQUEST_TIMEOUT + Duration::from_millis(1)).await;
+                let mut seq = 128;
+                loop {
+                    peer.send(Message::Text(
+                        json!({"type":"event","id":"stream","seq":seq,
+                        "final":false,"event":{"type":"turn_started"}})
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .expect("#1145 flood continuous non-final event");
+                    seq += 1;
+                }
+            };
+            let outcome = tokio::select! {
+                outcome = stream_turn(&mut client, &[], "s", initialized, &mut signals) => outcome,
+                () = server => panic!("#1145 flood server only ends when CLI finishes"),
+            };
+            let QueryOutcome::FatalAbort(error) = outcome else {
+                panic!("#1145 flood deadline must take fatal CLI exit path");
+            };
+            assert_deadline_error::<()>(Err(error), "ready-flood");
+        })
+        .await
+        .expect("#1145 flood bounded mock cleanup");
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn abort_send_respects_predecessor_deadline() {

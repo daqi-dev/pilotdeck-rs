@@ -28,6 +28,8 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 # Bound parent test -> cargo target selection for the workspace manifest.
 CARGO_TARGETS = {
+    'skills::tests::marker_write_reports_the_write_stage_like_node':
+        ['-p', 'pilotdeck-cli', '--bin', 'pilotdeck'],
     'skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp':
         ['-p', 'pilotdeck-cli', '--bin', 'pilotdeck'],
     'runtime::model::stats::dateparse_tests::stats_dateparse_matches_real_ts_in_three_timezones':
@@ -132,6 +134,7 @@ def main():
         parser.error('CARGO_TARGET_DIR must be supplied by the caller')
     root = Path(__file__).resolve().parents[5]
     cli_source = root / 'src/pilotdeck-cli/src/skills_migrate.rs'
+    skills_source = root / 'src/pilotdeck-cli/src/skills.rs'
     dateparse_source = root / 'src/pilotdeck-gateway/src/runtime/model/stats_dateparse_tests.rs'
     lock_source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/overview_lock_tests.rs'
     entries_source = root / 'src/pilotdeck-gateway/tests/edgeclaw_entries.rs'
@@ -156,6 +159,11 @@ def main():
     env['CARGO_PROFILE_DEV_DEBUG'] = 'line-tables-only'
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
     mutations = [
+        ('marker-exact-rename', skills_source,
+         '"::marker_child_over_file_size_limit"',
+         '"::marker_child_over_file_size_limit_renamed"',
+         'skills::tests::marker_write_reports_the_write_stage_like_node',
+         '#1145 marker child emitted no WRITE_ERROR line'),
         ('umask-exact-rename', cli_source,
          '"::copy_tree_preserves_modes_like_node_async_cp"',
          '"::copy_tree_preserves_modes_like_node_async_cp_renamed"',
@@ -570,7 +578,7 @@ def main():
         with (args.output / name).open('x') as stream:
             stream.write(text)
 
-    def run(label, test):
+    def run(label, test, compile_only=False):
         slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=10)
         save(f'{label}.slots.log', slots.stdout + slots.stderr)
         # No -q: cargo forwards it to libtest as --quiet, which replaces the
@@ -584,8 +592,10 @@ def main():
         # fail the positive control; the explicit flag pins the layout.
         result = run_owned([
             'cargo', 'test', '--manifest-path', 'src/Cargo.toml', *CARGO_TARGETS[test],
-            '--', '--exact', test, '--nocapture', '--test-threads=2',
-            *(['--ignored'] if test in IGNORED_PARENTS else []),
+            *(['--no-run'] if compile_only else [
+                '--', '--exact', test, '--nocapture', '--test-threads=2',
+                *(['--ignored'] if test in IGNORED_PARENTS else []),
+            ]),
         ], cwd=root, env=env, timeout=900)
         log = result.stdout + result.stderr
         save(f'{label}.log', log)
@@ -621,11 +631,16 @@ def main():
             save(f'{name}.patch', ''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True), fromfile=str(source), tofile=str(source))))
             source.write_text(changed)
-            result, log = run(f'{name}-negative', test)
-            if positive:
-                status, reason = classify(result, test, assertion, log)
+            build, build_log = run(f'{name}-compile', test, compile_only=True)
+            compiled = build.returncode == 0 and 'could not compile' not in build_log
+            if not compiled:
+                status, reason = 'INVALID', 'mutant failed no-run compilation; not a kill'
             else:
-                status, reason = 'INVALID', 'positive control did not pass the bound test'
+                result, log = run(f'{name}-negative', test)
+                if positive:
+                    status, reason = classify(result, test, assertion, log)
+                else:
+                    status, reason = 'INVALID', 'positive control did not pass the bound test'
         # Restoration and byte-level SHA validation belong to mutating_sources's
         # finally, which runs under the tree lock — re-checking here would race
         # another runner's mutation of the same file (fix-r1 review).
@@ -634,7 +649,7 @@ def main():
             if positive and not passed(result, test, restored):
                 status, reason = 'INVALID', reason + '; restored bound test did not pass'
         summary.append({'name': name, 'status': status, 'reason': reason,
-                        'sourceSha256': hashlib.sha256(original).hexdigest()})
+                        'compiled': compiled, 'sourceSha256': hashlib.sha256(original).hexdigest()})
         save(f'{name}.json', json.dumps(summary[-1], indent=2) + '\n')
         print(f'{name}: {status}: {reason}', flush=True)
     counts = {state: sum(row['status'] == state for row in summary)
