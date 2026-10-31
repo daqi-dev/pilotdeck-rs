@@ -16,12 +16,16 @@
 //!
 //! * `runHeartbeat` snapshots pending keys and each session's unindexed rows,
 //!   so a capture during an awaited classify/create is *not* marked indexed;
-//! * a `clearSession` during an awaited classify/create is re-checked before
-//!   the persist (#917, human decision 2026-10-27 #914 A, diff ledger
-//!   `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`): the cleared session's
-//!   turn is discarded instead of writing the file the TS baseline
-//!   "resurrects"; the same clear before `markL0Indexed` still removes the
-//!   already-written file instead;
+//! * a `clearSession` during an awaited classify/create/select is re-checked
+//!   before the persist (#917, human decision 2026-10-27 #914 A, diff ledger
+//!   `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001` / `-002`): the cleared
+//!   session's turn is discarded instead of writing the file the TS baseline
+//!   "resurrects"; fix-r1 additionally re-checks every candidate inside the
+//!   same snapshot operation scope `clearSession` holds, defers the General
+//!   project meta write into that segment, and tracks a close-surviving clear
+//!   generation, so a clear that lands in a route/select await — or is
+//!   followed by a `close` — can no longer resurrect either; the same clear
+//!   before `markL0Indexed` still removes the already-written file instead;
 //! * `markL0Indexed` and the final `saveIndexTrace` sit outside the per-session
 //!   `try`, so a close at those points rejects `runHeartbeat` with
 //!   `Error: database is not open`; a close inside the copied per-session body
@@ -128,6 +132,15 @@ pub enum HeartbeatStage {
     BeforeCreateNote,
     BeforeSelectIndexProject,
     BeforeMarkL0Indexed,
+    /// #917 fix-r1: a Rust-only seam with no TS counterpart (the TS baseline
+    /// has no persist recheck at all). It fires inside the per-candidate
+    /// commit segment, after the in-scope clear recheck and before the meta
+    /// write / `upsertCandidate`, while the snapshot operation scope is held.
+    /// A hook must not perform a same-thread clear here: the scope is
+    /// same-thread reentrant, so the clear would run inside the segment after
+    /// its own recheck. Cross-thread clears are exactly what the scope
+    /// excludes, and the lock-semantics regression parks on this point.
+    BeforePersistCommit,
 }
 
 #[doc(hidden)]
@@ -297,6 +310,13 @@ impl HeartbeatIndexer {
         }
 
         for session_key in session_keys {
+            // #917 fix-r1: capture the clear generation before listing this
+            // session's rows. Any `clearSession` after this point bumps the
+            // generation, and the persist-side recheck compares against this
+            // baseline, so a clear that lands in a later await is detected
+            // even when the L0 lookup itself can no longer read SQLite
+            // (clear followed by close).
+            let clear_baseline = self.repository.session_clear_generation(&session_key);
             let sessions = self
                 .repository
                 .storage
@@ -639,6 +659,7 @@ impl HeartbeatIndexer {
                         session,
                         &focus_user_turns,
                         &batch_context_messages,
+                        clear_baseline,
                         &mut trace,
                         &mut stats,
                         &mut processed_ids,
@@ -777,6 +798,7 @@ impl HeartbeatIndexer {
         session: &L0SessionRecord,
         focus_user_turns: &[MemoryMessage],
         batch_context_messages: &[MemoryMessage],
+        clear_baseline: u64,
         trace: &mut JsObject,
         stats: &mut HeartbeatStats,
         processed_ids: &mut Vec<String>,
@@ -1120,18 +1142,14 @@ impl HeartbeatIndexer {
             // runs. The TS baseline still writes the turn's file ("file
             // resurrection"); the registered divergence discards the turn's
             // candidates instead, so a cleared session's memory never reaches
-            // the file stores. The lookup deliberately fails open: a close
-            // during the same awaits must keep failing at the same calls TS
-            // fails at, or the close matrix cells would drift.
-            let session_cleared = match self
-                .repository
-                .storage
-                .get_l0_by_ids(std::slice::from_ref(&session.l0_index_id))
-            {
-                Ok(rows) => rows.is_empty(),
-                // Fail open, per the comment above.
-                Err(_) => false,
-            };
+            // the file stores. fix-r1: the clear generation answers even when
+            // the L0 lookup can no longer read SQLite (clear then close), and
+            // only `StorageError::Closed` fails open — a close during the same
+            // awaits must keep failing at the same calls TS fails at, or the
+            // close matrix cells would drift. Any other read error is
+            // fail-closed: it propagates instead of silently resurrecting.
+            let session_cleared =
+                self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
 
             let mut persisted_records: Vec<MemoryFileRecord> = Vec::new();
             let mut wrote_global_user_note = false;
@@ -1146,7 +1164,7 @@ impl HeartbeatIndexer {
                 let Some(candidate) = candidate else {
                     continue;
                 };
-                let routed = self
+                let mut routed = self
                     .route_general_candidate(
                         candidate,
                         focus_turn,
@@ -1154,6 +1172,43 @@ impl HeartbeatIndexer {
                         &session.session_key,
                     )
                     .await?;
+                // #917 fix-r1 (Codex/opus r1): the recheck and the file
+                // writes below must share `clearSession`'s critical section.
+                // The route/select awaits above stay outside the scope; every
+                // candidate is re-rechecked inside it before any write, so a
+                // clear that completed while the select was in flight can no
+                // longer resurrect this turn. The segment holds no await.
+                let _commit_scopes = self
+                    .repository
+                    .snapshot_operation_scope()
+                    .map_err(HeartbeatError::File)?;
+                if self
+                    .repository
+                    .session_clear_generation(&session.session_key)
+                    != clear_baseline
+                {
+                    self.info(JsString::from(format!(
+                        "[clawxmemory] skip persist for cleared session={}",
+                        session.session_key
+                    )));
+                    break;
+                }
+                self.fire(HeartbeatStage::BeforePersistCommit, &session.session_key);
+                if let Some(meta_input) = routed.pending_meta.take() {
+                    let meta = store
+                        .upsert_project_meta(&meta_input)
+                        .map_err(HeartbeatError::File)?;
+                    let project_id = meta
+                        .get("projectId")
+                        .and_then(JsValue::as_string)
+                        .cloned()
+                        .unwrap_or_default();
+                    routed
+                        .candidate
+                        .insert("projectId".into(), JsValue::String(project_id));
+                    routed.created_project_meta =
+                        Some(meta.as_object().cloned().unwrap_or_default());
+                }
                 if let Some(meta) = &routed.created_project_meta {
                     self.push_stored_result(
                         trace,
@@ -1622,6 +1677,35 @@ impl HeartbeatIndexer {
         push_stored_result(trace, value);
     }
 
+    /// #917 recheck: has a `clearSession` removed this turn's session since
+    /// the run captured `clear_baseline` before listing its rows? The clear
+    /// generation answers even when SQLite is no longer readable (clear then
+    /// close); the L0 lookup is the round-1 registered check for clears that
+    /// predate the baseline read. `StorageError::Closed` alone fails open so
+    /// a close during the awaited classify/createNote keeps failing at the
+    /// same call TS fails at; every other read error is fail-closed and
+    /// propagates instead of silently resurrecting the turn.
+    fn session_cleared(
+        &self,
+        session_key: &str,
+        clear_baseline: u64,
+        l0_index_id: &String,
+    ) -> Result<bool, HeartbeatError> {
+        if self.repository.session_clear_generation(session_key) != clear_baseline {
+            return Ok(true);
+        }
+        match self
+            .repository
+            .storage
+            .get_l0_by_ids(std::slice::from_ref(l0_index_id))
+        {
+            Ok(rows) => Ok(rows.is_empty()),
+            // Fail open, per the doc comment above.
+            Err(StorageError::Closed) => Ok(false),
+            Err(error) => Err(HeartbeatError::Storage(error)),
+        }
+    }
+
     // -- routeGeneralCandidate (`heartbeat.ts:472-548`) --------------------
 
     async fn route_general_candidate(
@@ -1743,6 +1827,7 @@ impl HeartbeatIndexer {
             routed.insert("projectId".into(), JsValue::String(project_id));
             return Ok(RoutedCandidate {
                 candidate: routed,
+                pending_meta: None,
                 created_project_meta: None,
                 selected_project: Some(project.clone()),
                 selection_debug,
@@ -1766,8 +1851,14 @@ impl HeartbeatIndexer {
                 .or_else(|| candidate.get("name").and_then(JsValue::as_string).cloned())
                 .unwrap_or_default()
         };
-        let meta = store
-            .upsert_project_meta(&object(vec![
+        // #917 fix-r1: the project meta write is deferred into the persist
+        // commit segment (`pending_meta`), so it happens under the snapshot
+        // operation scope and only after the in-scope clear recheck — the
+        // select await above is the only await, and a clear that lands in it
+        // must not leave a half-routed General project behind either.
+        Ok(RoutedCandidate {
+            candidate: candidate.clone(),
+            pending_meta: Some(object(vec![
                 ("projectName", JsValue::String(project_name)),
                 (
                     "description",
@@ -1781,19 +1872,8 @@ impl HeartbeatIndexer {
                 ),
                 ("status", JsValue::String("in_progress".into())),
                 ("sourceKind", JsValue::String("general_local".into())),
-            ]))
-            .map_err(HeartbeatError::File)?;
-        let project_id = meta
-            .get("projectId")
-            .and_then(JsValue::as_string)
-            .cloned()
-            .unwrap_or_default();
-        let mut routed = candidate.clone();
-        routed.insert("projectId".into(), JsValue::String(project_id));
-        let meta_object = meta.as_object().cloned().unwrap_or_default();
-        Ok(RoutedCandidate {
-            candidate: routed,
-            created_project_meta: Some(meta_object),
+            ])),
+            created_project_meta: None,
             selected_project: None,
             selection_debug,
             routing_decision: Some("create_new"),
@@ -1814,6 +1894,11 @@ pub struct CaptureL0SessionInput {
 #[derive(Default)]
 struct RoutedCandidate {
     candidate: JsObject,
+    /// #917 fix-r1: when routing decided to create a new General project, the
+    /// `upsertProjectMeta` input is carried here instead of being written
+    /// inside the await-ful routing; the persist commit segment materializes
+    /// it after its in-scope clear recheck.
+    pending_meta: Option<JsObject>,
     created_project_meta: Option<JsObject>,
     selected_project: Option<JsValue>,
     selection_debug: Option<JsValue>,

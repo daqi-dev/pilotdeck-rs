@@ -404,6 +404,11 @@ impl EdgeClawFileStores {
             if session.is_empty() {
                 return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
             }
+            // #917 fix-r1: record the clear before deleting anything, so a
+            // heartbeat that listed this session's rows before the clear can
+            // detect it afterwards even when the SQLite handle is no longer
+            // readable (clear followed by close).
+            self.session_clears.bump(session);
             let l0 = self.storage.conn()?.query_row(
                 "SELECT COUNT(*) FROM l0_sessions WHERE session_key = ?",
                 [session],
@@ -436,6 +441,11 @@ impl EdgeClawFileStores {
                 array(field(&deleted, "deletedProjectIds").clone()).len(),
             ))
         })
+    }
+    /// #917 fix-r1: the clear generation a heartbeat run captured as its
+    /// baseline; see [`SessionClears`].
+    pub fn session_clear_generation(&self, session: &str) -> u64 {
+        self.session_clears.generation_of(session)
     }
     fn clear_result(
         &self,

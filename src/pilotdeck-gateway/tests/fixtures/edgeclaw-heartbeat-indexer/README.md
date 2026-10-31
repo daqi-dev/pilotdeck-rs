@@ -43,7 +43,20 @@ file write, `storedResults=[]`, `isNoOp=true`), while requests and
 `promptDebug` stay byte-identical to the TS cells. Every other cell —
 including `clearSession` before `markL0Indexed` and all `close` cells — still
 replays byte-identically against `oracle.json`. The Rust recheck fails open on
-a lookup error so the `close` cells keep failing where TS fails.
+`StorageError::Closed` alone so the `close` cells keep failing where TS fails;
+any other L0 read error fails closed with the honest storage error.
+
+fix-r1 adds the sixth cell `matrix-general-select-clearSession`: the TS
+baseline never recorded it in `oracle.json`, so the cell carries its own input
+(the `matrix-general-select-clearProject` input with the action changed) and
+its TS evidence under `ts` — the gated in-flight probe observation from
+`_tmp/20261026-issue-917/fix-r1/probe-select-clearsession.mts` (Node v22.22.0,
+baseline `cc7c4e6`), which still resurrects `Project/alpha-38e115ba98.md`
+while the fixed Rust replay writes nothing. Input fields, request sequence
+and the classify/create `promptDebug` are field-for-field identical between
+the two sides; the divergence drops the routing step's `promptDebug` together
+with the discarded persist, and the seeded `GeneralProjects/` meta survives on
+both sides (registered in the `-002` diff ledger entry).
 
 Run the generator with Node 22 and the baseline's `tsx`:
 
@@ -65,11 +78,16 @@ Two cases carry a candidate name cut at 80 UTF-16 units
 as Node does; a third carries an untruncated non-BMP name.
 
 The negative controls mutate committed bytes, so `mutating_sources` refuses to
-run on an uncommitted working tree. Three #917 mutants guard the persist-site
-recheck: neutralizing it, hoisting it in front of the classify await (a
-two-edit `dict(changes=[...])` row), and flipping its fail-open arm. The first
-two must resurrect the cleared session's file and the last must drift a `close`
-cell away from the TS baseline. After commit:
+run on an uncommitted working tree. Seven #917 mutants guard the fix-r1
+recheck: removing both layers (the round-1 shape, three edits), hoisting the
+recheck in front of the classify await (three edits), letting the in-lock
+recheck fire only while `storedResults` is empty, removing the in-lock recheck
+alone, dropping the commit segment's snapshot scope, flipping the `Closed`
+fail-open arm, and treating a non-`Closed` L0 read error as not-cleared. The
+first four must resurrect the cleared session's turn, the fifth must let a
+concurrent clear run inside the commit segment, the sixth must drift a `close`
+cell away from the TS baseline, and the last must resurrect through a dropped
+`l0_sessions` table. After commit:
 
 ```sh
 CARGO_TARGET_DIR=/abs/cargo-target python3 tests/fixtures/edgeclaw-heartbeat-indexer/negative.py /abs/negative-out
