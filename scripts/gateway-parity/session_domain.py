@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""E1 draft apparatus. Calibration is TS-only; A7 native execution is NOT_RUN.
+"""E1 draft apparatus. Calibration is TS-only; A7 native scoring is wired (#1140).
 
-No A2 proxy round is relabelled native. Native audit functions below consume
-independent launcher/exec/network evidence; their mutation tests are apparatus
-tests, never evidence that a Rust host has run or retired the TS host.
+The deadline suite scores one native witness capture (rust host + rust
+sidecar) against the A19-HOST expectations registered in
+fixtures/session-expectations.json; matrix cells without witness evidence
+stay NOT_RUN and the shared aggregation cannot report PASS. No A2 proxy
+round is relabelled native: audit functions consume independent launcher/
+exec/network evidence, and their mutation tests are apparatus tests, never
+evidence that a Rust host has run or retired the TS host.
 """
 # >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
 # -I keeps PYTHONPATH, user site and the script directory out of module
@@ -817,7 +821,10 @@ def project_observation(observation):
                   if event['event']['type'] not in SESSION_PREFIX_TYPES]
         record = registry['record']
         result = record.get('result')
-        projected = {'applicable': True, 'events': events, 'state': record['state'],
+        # A missing state is an observed surface mismatch for this case, never
+        # a batch-level KeyError (#1140 fix-r1): the projection scores it on
+        # registry.state so every other case keeps its verdict.
+        projected = {'applicable': True, 'events': events, 'state': record.get('state'),
                     'result': None if result is None else _session_label(result)}
     else:
         projected = {'applicable': False}
@@ -1073,12 +1080,14 @@ def validate_calibration(folder, output, baseline):
 
 
 def audit_native(evidence, contract):
-    """Fail-closed contract for future A7 recorder integration, not an executor.
+    """Fail-closed contract for A7 recorder integration, not an executor.
 
     contract is prepared by the launcher BEFORE execution, never copied from a
-    candidate's report. execEvents must include exited children, and calls must
-    come from the independent egress observer. A ps snapshot alone is insufficient.
-    Current CLI deliberately cannot certify a native run; tests use labelled fixtures.
+    candidate's report; the binding is the one exception because it exists only
+    at runtime: the independent observer records it at hello and it is bound
+    to the contract afterwards (#1140). execEvents must include exited children,
+    and calls must come from the independent egress observer. A ps snapshot
+    alone is insufficient; the deadline CLI scores only captures that pass here.
     """
     require(evidence['topology'] == 'native' and contract['host'] == 'rust',
             'NATIVE_TOPOLOGY', 'Rust host required for a native declaration')
@@ -1144,15 +1153,30 @@ def audit_native(evidence, contract):
     require(observer['connections'] == len({r['connection'] for r in observer['rows']})
             and observer['connections'] == contract['connections'], 'CONNECTIONS', 'connection count mismatch')
     require(evidence['binding'] == contract['binding'], 'BINDING', 'wrong/old interaction binding')
+    # #1140: the binding is a runtime record.  It must have been recorded by
+    # the independent observer at hello and bound to the contract afterwards;
+    # a pre-registered or SYNTHETIC binding can never audit a native run.
+    require(contract.get('bindingSource') == 'observer-hello', 'BINDING',
+            'binding must be recorded by the independent observer at hello and bound '
+            'to the contract afterwards; pre-registered/SYNTHETIC bindings are rejected')
     # Validate bytes using the existing independent TCP decoder and wire checker.
+    # #1140 fix-r1: every recorder row must carry wire metadata, and the decoder
+    # cross-check is direction-aware -- a sent row's frame is the payload text
+    # (compare.wire_frame's A4 contract) while only received frames are recorded
+    # decoded, so the sent text is compared against the decoder's raw view.
     for row in observer['rows']:
+        require(isinstance(row.get('wire'), dict), 'OBSERVER_WIRE',
+                'observer rows must carry wire metadata '
+                '(opcode/fin/rsv/masked/lengthCode/payloadLength)')
         wire_frame(row)
         decoded = []
         decoder = Decoder(decoded.append, row['direction'])
         decoder.feed(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n' + bytes.fromhex(row['wireHex']))
-        require(len(decoded) == 1 and decoded[0].get('frame') == row['frame'],
+        require(len(decoded) == 1
+                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],
                 'OBSERVER_WIRE', 'wire observation disagrees with recorder')
-    hellos = [r['frame'] for r in observer['rows'] if r['frame'].get('type') == 'hello_ok']
+    hellos = [r['frame'] for r in observer['rows']
+              if isinstance(r['frame'], dict) and r['frame'].get('type') == 'hello_ok']
     require(bool(hellos), 'BINDING', 'actual server hello/binding missing')
     for frame in hellos:
         binding = frame.get('interactionBinding', {})
@@ -1163,24 +1187,234 @@ def audit_native(evidence, contract):
     require(observer['rows'] == contract['observerRows'], 'OBSERVER_DIFFERENCE', 'observer differs from independent driver')
 
 
-def deadline_report():
+def _observer_binding(rows):
+    """The interaction binding the independent observer recorded at hello.
+
+    A runtime record cannot be pre-registered: the binding exists only once
+    the gateway has answered hello.  Every hello the observer saw must agree.
+    """
+    hellos = [row for row in rows
+              if isinstance(row, dict) and isinstance(row.get('frame'), dict)
+              and row['frame'].get('type') == 'hello_ok']
+    require(bool(hellos), 'BINDING', 'observer recorded no server hello/binding')
+    bindings = [row['frame'].get('interactionBinding') for row in hellos]
+    require(all(isinstance(binding, dict) for binding in bindings),
+            'BINDING', 'observer hello binding malformed')
+    require(all(json.dumps(binding, sort_keys=True) == json.dumps(bindings[0], sort_keys=True)
+                for binding in bindings), 'BINDING', 'observer hello records disagree on the binding')
+    return bindings[0]
+
+
+def load_native_capture(folder):
+    """Load one #1140 native witness capture directory and bind its contract.
+
+    Receipt hashes pin every artifact consumed here.  The binding and the
+    observer rows are runtime records the prelaunch contract cannot know: they
+    are read from the independent observer (session-domain/observer.json,
+    recorded at hello) and only then bound to the launch contract, so a
+    pre-registered binding or observer ledger is rejected (#1140 withdrew the
+    SYNTHETIC envelope; observer-at-hello is the only admissible source).  The
+    provider ledger is the driver's own observation of mock traffic and is
+    cross-checked against the strace-recorded egress witness.
+    """
+    folder = Path(folder).resolve()
+    require((folder / 'capture').is_dir() and (folder / 'session-domain').is_dir(),
+            'NATIVE_CAPTURE', 'not a native witness capture directory: ' + str(folder))
+    receipt = read(folder / 'capture/receipt.json')
+    require(receipt.get('status') == 'WITNESS_CAPTURED' and receipt.get('tracerExitCode') == 0,
+            'NATIVE_CAPTURE', 'capture did not complete; see capture/failure.json')
+    artifacts = (('capture/trace.log', 'traceSha256'), ('capture/launch.json', 'launchSha256'),
+                 ('capture/prelaunch.json', 'prelaunchSha256'), ('capture/evidence.json', 'evidenceSha256'),
+                 ('session-domain/observer.json', 'observerSha256'), ('session-domain/cases.json', 'casesSha256'),
+                 ('session-domain/provider.json', 'providerSha256'))
+    for name, key in artifacts:
+        require((folder / name).is_file() and digest(folder / name) == receipt.get(key),
+                'NATIVE_CAPTURE', 'missing/altered capture artifact: ' + name)
+    prelaunch, launch = read(folder / 'capture/prelaunch.json'), read(folder / 'capture/launch.json')
+    require({key: value for key, value in launch.items() if key != 'launcherPid'} == prelaunch,
+            'NATIVE_CAPTURE', 'launch contract changed after pre-registration')
+    for key in ('binding', 'observerRows', 'bindingSource'):
+        require(key not in launch and key not in prelaunch, 'BINDING',
+                'runtime binding/observer records must not be pre-registered before launch')
+    observer = read(folder / 'session-domain/observer.json')
+    require(isinstance(observer, dict) and isinstance(observer.get('rows'), list)
+            and isinstance(observer.get('connections'), int), 'EMPTY_OBSERVER', 'observer document malformed')
+    require(bool(observer['rows']), 'EMPTY_OBSERVER', 'empty independent observer')
+    contract = dict(launch, binding=_observer_binding(observer['rows']),
+                    observerRows=observer['rows'], bindingSource='observer-hello')
+    evidence = read(folder / 'capture/evidence.json')
+    cases_document, provider = read(folder / 'session-domain/cases.json'), read(folder / 'session-domain/provider.json')
+    expected = read(SCRIPT / 'fixtures/session-calibration.json')['cases']
+    require(contract.get('cases') == expected, 'COVERAGE',
+            'the native capture must declare the full E1 case manifest; no denominator shrink')
+    rows = cases_document.get('cases') if isinstance(cases_document, dict) else None
+    require(isinstance(rows, list) and rows, 'OBSERVATION_STRUCTURE', 'case rows malformed')
+    named = [row.get('case') if isinstance(row, dict) else None for row in rows]
+    require(all(isinstance(case, str) and case for case in named)
+            and len(set(named)) == len(named) and set(named) <= set(expected),
+            'OBSERVATION_STRUCTURE', 'case rows must be unique names inside the manifest')
+    requests = provider.get('requests') if isinstance(provider, dict) else None
+    require(isinstance(requests, list), 'NETWORK_WITNESS', 'provider request ledger malformed')
+    require(isinstance(provider.get('endpoint'), str), 'NETWORK_WITNESS', 'provider endpoint missing')
+    require(bool(requests), 'NETWORK_WITNESS',
+            'provider request ledger is empty: no model egress was observed')
+    targets = {call.get('target') for call in evidence.get('networkWitness', {}).get('calls', [])}
+    require(not requests or provider['endpoint'] in targets, 'NETWORK_WITNESS',
+            'driver-observed provider traffic missing from the egress witness')
+    # The output/disk/http surface names are the audit's fixed accounting set;
+    # #1140 maps the session-domain capture trio onto them as placeholders
+    # (observer/cases/provider).  The audit verifies artifact hashes only, so
+    # the names carry no scoring semantics here.
+    surfaces = {}
+    for surface, name in (('output', 'observer.json'), ('disk', 'cases.json'), ('http', 'provider.json')):
+        path = folder / 'session-domain' / name
+        surfaces[surface] = {'status': 'RECORDED', 'artifacts': [{'path': str(path), 'sha256': digest(path)}]}
+    audited = dict(evidence, expectedCases=expected, executedCases=named,
+                   capabilities=contract.get('capabilities'), surfaces=surfaces,
+                   observer=observer, binding=contract['binding'])
+    return {'folder': folder, 'contract': contract, 'evidence': audited, 'rows': rows,
+            'expected': expected, 'executed': named}
+
+
+def _native_observation_structure(observation):
+    """Shape of one observed native case; None when healthy, else the field.
+
+    #1140 fix-r1: the shapes the projection dereferences are checked here, so
+    a malformed event is a rejected capture (OBSERVATION_STRUCTURE) rather than
+    a batch-level KeyError.  A missing run-record state is deliberately not
+    structural: the projection scores it as that case's registry.state mismatch.
+    """
+    if not isinstance(observation, dict) or set(observation) != {'frames', 'durableStatus', 'registry'}:
+        return 'observation keys'
+    if not (isinstance(observation['frames'], list)
+            and all(isinstance(event, dict) and isinstance(event.get('type'), str)
+                    for event in observation['frames'])):
+        return 'frames'
+    durable = observation['durableStatus']
+    if not (isinstance(durable, dict) and isinstance(durable.get('entries'), list)
+            and all(isinstance(entry, dict) and isinstance(entry.get('event'), str)
+                    for entry in durable['entries'])):
+        return 'durableStatus'
+    registry = observation['registry']
+    if not isinstance(registry, dict) or not isinstance(registry.get('applicable'), bool):
+        return 'registry'
+    if registry['applicable'] and not (isinstance(registry.get('events'), list)
+                                       and all(isinstance(event, dict) and isinstance(event.get('seq'), int)
+                                               and isinstance(event.get('event'), dict)
+                                               and isinstance(event['event'].get('type'), str)
+                                               for event in registry['events'])
+                                       and isinstance(registry.get('record'), dict)
+                                       and (registry['record'].get('result') is None
+                                            or (isinstance(registry['record'].get('result'), dict)
+                                                and isinstance(registry['record']['result'].get('type'), str)))):
+        return 'registry events/record'
+    return None
+
+
+def score_native_cases(rows, expected):
+    """Compare observed three surfaces per case with the registered rust expectation.
+
+    No denominator shrink (#1140): every case of the frozen manifest is scored.
+    A row the capture did not execute stays NOT_RUN and can never count as
+    PASS; a differing surface is a per-case FAIL, never hidden in an aggregate.
+    """
+    document = read(SCRIPT / 'fixtures/session-expectations.json')
+    registered = {row['case']: row['rust'] for row in document['cases']}
+    require(set(registered) == set(expected), 'EXPECTATION_COVERAGE',
+            'expectation cases must equal the E1 case manifest one-to-one')
+    observed = {row['case']: row['observation'] for row in rows}
+    verdicts = []
+    for case in expected:
+        observation = observed.get(case)
+        if observation is None:
+            verdicts.append({'case': case, 'status': 'NOT_RUN', 'rule': 'COVERAGE',
+                             'surfaces': ['observation']})
+            continue
+        problem = _native_observation_structure(observation)
+        require(problem is None, 'OBSERVATION_STRUCTURE', case + ': ' + (problem or 'malformed'))
+        surfaces = _expectation_diff_surfaces(project_observation(observation), registered[case])
+        verdicts.append({'case': case, 'status': 'FAIL' if surfaces else 'PASS',
+                         'rule': 'EXPECTATION_MISMATCH' if surfaces else None,
+                         'surfaces': surfaces})
+    return verdicts
+
+
+def native_deadline_evidence(folder):
+    """Audit and per-case score one native witness capture (#1140 wiring).
+
+    Any audit rejection fails the native cell with the rejecting rule, and a
+    case whose observed surfaces differ from the registered rust expectation
+    is a per-case FAIL, never hidden.  This certifies nothing about the other
+    matrix cells: without witness evidence they stay NOT_RUN.
+    """
+    capture = load_native_capture(folder)
+    audit_native(capture['evidence'], capture['contract'])
+    verdicts = score_native_cases(capture['rows'], capture['expected'])
+    evidence = capture['evidence']
+    return {'verdicts': verdicts, 'expected': capture['expected'],
+            'processes': evidence['processes'],
+            'connections': evidence['observer']['connections'],
+            'cleanup': 'PASS' if evidence['cleanup']['allStopped'] else 'FAIL',
+            'surfaces': {name: [row['path'] for row in surface['artifacts']]
+                         for name, surface in evidence['surfaces'].items()},
+            'sidecarSha256': next((p['sha256'] for p in evidence['processes'] if p['role'] == 'sidecar'), None),
+            'witness': {'status': 'PASS', 'auditRule': None, 'capture': str(capture['folder']),
+                        'observerRows': len(evidence['observer']['rows'])}}
+
+
+def deadline_report(native_capture=None):
     cells = []
+    native = native_deadline_evidence(native_capture) if native_capture is not None else None
     for host, sidecar in MATRIX:
-        cells.append({'id': f'{host}-host/{sidecar}-sidecar', 'host': host, 'sidecar': sidecar,
-                      'topology': 'native' if host == 'rust' else 'ts-reference',
-                      'status': 'NOT_RUN', 'expectedGroups': list(CELLS),
-                      'expectedCases': read(SCRIPT / 'fixtures/session-calibration.json')['cases'], 'executedCases': [],
-                      'repeats': REPEATS, 'rounds': [], 'processes': [], 'connections': None,
-                      'sidecarSha256': None, 'output': None, 'disk': None, 'http': None,
-                      'oracle': 'NOT_RUN', 'cleanup': 'NOT_RUN'})
-    result = {'status': 'NOT_RUN', 'structureStatus': 'PASS', 'cells': cells,
-            'reason': 'A7 native host/driver/exec+egress witnesses are not ready; A5.4 '
-                      'expectations are registered in fixtures/session-expectations.json '
-                      'but native scoring is not wired here',
-            'executionStatus': 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN'}
+        cell = {'id': f'{host}-host/{sidecar}-sidecar', 'host': host, 'sidecar': sidecar,
+                'topology': 'native' if host == 'rust' else 'ts-reference',
+                'status': 'NOT_RUN', 'expectedGroups': list(CELLS),
+                'expectedCases': read(SCRIPT / 'fixtures/session-calibration.json')['cases'], 'executedCases': [],
+                'repeats': REPEATS, 'rounds': [], 'processes': [], 'connections': None,
+                'sidecarSha256': None, 'output': None, 'disk': None, 'http': None,
+                'oracle': 'NOT_RUN', 'cleanup': 'NOT_RUN'}
+        if native is not None and host == 'rust' and sidecar == 'rust':
+            # One observed turn per case per capture; the TS calibration's
+            # five-repetition registration stays the calibrate suite's own.
+            cell['cases'] = native['verdicts']
+            cell['expectedCases'] = native['expected']
+            # Only cases the capture actually scored count as executed; a
+            # NOT_RUN verdict is the absence of evidence, not an execution
+            # (#1140 fix-r1).
+            cell['executedCases'] = [row['case'] for row in native['verdicts']
+                                     if row['status'] != 'NOT_RUN']
+            cell['repeats'] = 1
+            cell['processes'] = native['processes']
+            cell['connections'] = native['connections']
+            cell['sidecarSha256'] = native['sidecarSha256']
+            cell['surfaces'] = native['surfaces']
+            cell['output'] = native['surfaces']['output']
+            cell['disk'] = native['surfaces']['disk']
+            cell['http'] = native['surfaces']['http']
+            cell['oracle'] = 'EXPECTATION_COMPARISON'
+            cell['cleanup'] = native['cleanup']
+            cell['witness'] = native['witness']
+            cell['status'], _ = common.aggregate_status(*(row['status'] for row in native['verdicts']))
+        cells.append(cell)
+    statuses = [cell['status'] for cell in cells]
+    status = common.aggregate_status(*statuses)[0]
+    result = {'status': status, 'structureStatus': 'PASS', 'cells': cells,
+            'reason': 'A5.4 wiring (#1140): the native rust-host/rust-sidecar cell is scored '
+                      'against the registered A19-HOST expectations when a witness capture is '
+                      'supplied; matrix cells without witness evidence stay NOT_RUN and cannot '
+                      'make the batch PASS',
+            'executionStatus': status if native is not None else 'NOT_RUN',
+            'acceptanceStatus': 'NOT_RUN'}
+    executed = [cell for cell in cells if cell['executedCases']]
     require([(c['host'], c['sidecar']) for c in cells] == list(MATRIX)
-            and all(c['status'] == 'NOT_RUN' and not c['executedCases'] and c['expectedCases'] for c in cells),
-            'DEADLINE_STRUCTURE', 'four non-executed matrix cells required')
+            and all(c['expectedCases'] == cells[0]['expectedCases'] for c in cells)
+            and all(c['status'] == 'NOT_RUN' and not c['executedCases']
+                    for c in cells if not c['executedCases'])
+            and len(executed) <= 1
+            and all(c['host'] == 'rust' and c['sidecar'] == 'rust' for c in executed)
+            and all(len(set(c['executedCases'])) == len(c['executedCases'])
+                    and set(c['executedCases']) <= set(c['expectedCases']) for c in executed),
+            'DEADLINE_STRUCTURE', 'matrix cells intact; only the native cell may carry evidence')
     return result
 
 
@@ -1189,8 +1423,27 @@ def main():
     parser.add_argument('--suite', choices=('calibrate', 'deadline'), required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path, default=BASELINE)
+    parser.add_argument('--native-capture', type=Path,
+                        help='#1140 native witness capture directory; the deadline suite '
+                             'audits it and scores its rust-host/rust-sidecar cell against '
+                             'the registered A19-HOST expectations')
     args = parser.parse_args()
     takeovers = []
+    # Preconditions are checked before any output directory exists (#187); they
+    # stay above install_shutdown so the #166 lease/shutdown anchors in the
+    # gateway-batch source suite keep their healthy text.
+    if args.suite != 'deadline' and args.native_capture is not None:
+        print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
+                          'error': '--native-capture applies to the deadline suite only'},
+                         ensure_ascii=False))
+        return 2
+    if args.suite == 'deadline' and args.native_capture is not None:
+        capture = args.native_capture.resolve()
+        if not ((capture / 'capture').is_dir() and (capture / 'session-domain').is_dir()):
+            print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
+                              'error': 'native witness capture directory lacks capture/ or '
+                                       f'session-domain/: {capture}'}, ensure_ascii=False))
+            return 2
     install_shutdown()
     try:
         with parity_lock(timeout=30, takeovers=takeovers):
@@ -1222,7 +1475,7 @@ def main():
             code = 0
             try:
                 if args.suite == 'deadline':
-                    report.update(deadline_report())
+                    report.update(deadline_report(args.native_capture))
                     _, code = common.aggregate_status(report['status'])
                 else:
                     report['lockTakeovers'] = takeovers

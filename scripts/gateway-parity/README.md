@@ -65,9 +65,15 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 每项 5 次，复用原观察规则和负控，保留六格原件。这是 TS 进程内受控校准；
 没有启动 sidecar 或 HTTP gateway，不声称覆盖原八组在线回归。
 
-`--suite deadline` 输出四格 `NOT_RUN`，结构自检通过仍 exit 3（未运行专用码）。实际原生执行、exec/egress
-采集器接入和产品比较仍需 A7。`audit_native` 提供缺证据即拒绝的审计契约；
-合成拓扑夹具仅证明规则能拒绝变异，不能证明原生宿主已运行。旧 A2 代理驱动不改称原生驱动。
+`--suite deadline` 无参时输出四格 `NOT_RUN`，结构自检通过仍 exit 3（未运行专用码）。加
+`--native-capture <采集目录>`（#1140 A5.4，只允许 deadline）时，rust/rust 格按
+`scripts/native-witness/collect.py --session-domain` 的真实采集逐 case 判分：先过
+`load_native_capture` 的七哈希/合同/绑定审计，再与 #1177 登记的期望比三面，输出逐
+case PASS/FAIL；其余三格仍 `NOT_RUN`，批不能 PASS（native 全 PASS → 批 `NOT_RUN`
+exit 3；任一 FAIL → 批 `FAIL` exit 1）。采集目录的记录契约与离线端到端验证见
+`scripts/native-witness/README.md` 与 `tests/fixtures/native-session-e2e/`。
+`audit_native` 提供缺证据即拒绝的审计契约；合成拓扑夹具仅证明规则能拒绝变异，
+不能证明原生宿主已运行。旧 A2 代理驱动不改称原生驱动。
 
 `python3 -I scripts/gateway-parity/controls/session_domain.py --case all --output <新目录>`
 执行 10 类必需负控及 7 项补充回归。加 `--source <校准输出>/six-cells` 可变异真实 TS

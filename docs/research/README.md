@@ -14,3 +14,4 @@
 | [005](005_phase-a-gateway/) | 2026-10-14 | 阶段 A：用 Rust 替换 18789 gateway |
 | [008](008_phase-a-session-domain/must-know.md) | 2026-10-14 | 阶段 A 深水区：会话域、状态权威、Rust 宿主与 #19 收尾竞态（附 gap / 决策卡） |
 | [009](009_a19-host-expectations/decision.md) | 2026-10-31 | A19-HOST 逐格期望登记：D4-B 失败面推导决策卡（AI 代批，待人复核） |
+| [010](010_892-aggregation-exit/decision.md) | 2026-10-31 | #1140 包三：deadline native 接线不新增聚合出口（#892 运行时观测口径）决策卡（AI 代批，待人复核） |
