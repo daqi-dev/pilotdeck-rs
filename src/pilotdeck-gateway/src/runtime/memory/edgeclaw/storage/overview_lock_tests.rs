@@ -12,10 +12,7 @@ use std::{
 };
 
 const CHILD: &str = "runtime::memory::edgeclaw::storage::overview::lock_tests::scan_lock_child";
-const ORACLE: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/edgeclaw-export/lock-oracle.json"
-));
+const ORACLE: &str = include_str!("../../../../../tests/fixtures/edgeclaw-export/lock-oracle.json");
 
 #[test]
 fn scan_lock_topologies_finish() {

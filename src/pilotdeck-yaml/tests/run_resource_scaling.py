@@ -4,8 +4,7 @@
 Run from repo root:
   CARGO_TARGET_DIR="$PWD/_build/cargo-target" python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
     --baseline /path/to/baseline --output _tmp/review-yaml/resources-round6.json
-Or set CARGO_TARGET_DIR and PILOTDECK_YAML_BASELINE, then cargo test --release
--p pilotdeck-yaml --test resource_scaling resource_scaling -- --ignored --exact --nocapture.
+Start this Python driver directly; its Cargo child only builds the worker.
 
 N is calibrated using ONLY Node to 0.2-1s; 4N scales breadth/length/repetitions,
 never nesting depth. Each sample gets a fresh process. Median of three timings,

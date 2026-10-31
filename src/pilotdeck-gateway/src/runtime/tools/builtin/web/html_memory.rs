@@ -339,10 +339,7 @@ mod tests {
         }
 
         let _guard = GLOBAL_TEST_LOCK.lock().await;
-        let raw = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/html-markdown/depth-oracle.json"
-        ));
+        let raw = include_str!("../../../../../tests/fixtures/html-markdown/depth-oracle.json");
         crate::test_baseline::oracle(raw);
         let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
         let case = oracle["cases"]
