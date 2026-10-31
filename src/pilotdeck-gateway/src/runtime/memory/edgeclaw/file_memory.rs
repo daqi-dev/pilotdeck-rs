@@ -404,8 +404,36 @@ pub struct EdgeClawFileStores {
     /// heartbeat whose L0 recheck can no longer read SQLite still learns that a
     /// `clearSession` completed after the run listed its rows. Only
     /// `clearSession` bumps it; `clear(current_project)` / `clear(all)` do not.
+    /// fix-r2: the generation means "the clear completed" — it advances only
+    /// after the session's L0 rows are actually deleted, never while a failed
+    /// clear might still leave them behind.
     pub(super) session_clears: SessionClears,
+    /// #917 fix-r2: the `clearSession` seam for the concurrency matrix.
+    /// Production never installs a hook.
+    pub(super) clear_session_hook: ClearSessionHookSlot,
 }
+
+/// #917 fix-r2: deterministic stage names for the `clearSession` seam, the
+/// storage-side twin of [`HeartbeatStage`](super::heartbeat::indexer::HeartbeatStage).
+/// The callback runs synchronously inside `clear_session_memory_data`'s
+/// snapshot scope and may abort the clear by returning an error, which stands
+/// in for the mid-clear storage failure the #917 fix-r2 regression needs (the
+/// clear generation must not have advanced at that point).
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClearSessionStage {
+    /// After the empty-session guard, before the L0 count and before any data
+    /// is removed (the pre-fix-r2 bump position): the clear has committed to
+    /// removing the session but has not removed a single row yet.
+    BeforeRemoveData,
+}
+
+#[doc(hidden)]
+pub type ClearSessionHook = std::sync::Arc<
+    dyn Fn(ClearSessionStage, &str) -> std::result::Result<(), FileMemoryError> + Send + Sync,
+>;
+
+type ClearSessionHookSlot = std::sync::Mutex<Option<ClearSessionHook>>;
 
 /// #917 fix-r1: in-memory per-session clear counter. `generation` is the
 /// process-wide monotone counter; `sessions` records the value each cleared
@@ -422,7 +450,9 @@ impl SessionClears {
             sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
-    /// Record that `clearSession` started removing this session's data.
+    /// Record that `clearSession` finished removing this session's data
+    /// (#917 fix-r2: only after the L0 rows are gone, so a clear that fails
+    /// midway leaves the generation — and the rows — untouched).
     pub(crate) fn bump(&self, session: &str) {
         let next = self
             .generation
@@ -545,6 +575,7 @@ impl EdgeClawFileStores {
             }),
             temp_random_fragment: Arc::new(default_temp_fragment),
             session_clears: SessionClears::new(),
+            clear_session_hook: std::sync::Mutex::new(None),
         })
     }
     /// Override the sibling temp-path naming seams. `sqlite.ts:422` reads

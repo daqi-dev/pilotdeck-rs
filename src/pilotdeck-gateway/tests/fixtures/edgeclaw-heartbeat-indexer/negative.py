@@ -10,8 +10,10 @@ INVALID row and exits non-zero if any row is not KILLED.
 Rows are `(name, path, before, after, test, anchor)` tuples for single edits,
 or `dict(name=..., changes=[(path, before, after), ...], test=...,
 assertion=...)` when one mutant needs several edits applied together (the
-#917 before-await hoist). `changes` apply in order, each against the text the
-previous one produced.
+#917 before-await hoist, the fix-r2 bump move). `changes` apply in order,
+each against the text the previous one produced. Mutated files: the heartbeat
+indexer and (fix-r2) the storage entries module that owns the clear
+generation.
 
 New product files are not in HEAD before the coordinator commits them, so this
 script is normally run after that commit. `NEGATIVE_ONLY=a,b` narrows a sample.
@@ -27,6 +29,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 indexer = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/indexer.rs'
+entries = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/entries.rs'
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
@@ -95,6 +98,23 @@ DISABLED_RECHECK = '''                if false
 DISABLED_MARKER = '''        if false && self.repository.session_clear_generation(session_key) != clear_baseline {
             return Ok(true);
         }
+'''
+
+# #917 fix-r2 (review P1-1): the clear generation must mean "the clear
+# completed". Moving the bump back to its fix-r1 position — in front of the
+# clear-session seam that occupies that spot now — makes a clear that fails
+# midway advance the generation anyway.
+BUMP_AFTER_DELETE = '            self.session_clears.bump(session);\n'
+
+CLEAR_SESSION_GUARD = '''            if session.is_empty() {
+                return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
+            }
+'''
+
+BUMP_BEFORE_SEAM = '''            if session.is_empty() {
+                return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
+            }
+            self.session_clears.bump(session);
 '''
 
 # The reviewer's "recheck outside the lock" shape: the snapshot scope is
@@ -192,13 +212,36 @@ cases = [
      '#770 case matrix-single-classify-close differs'),
     # #917 fix-r1 (review P1): a non-Closed L0 read error treated as
     # not-cleared (fail-open) resurrects the turn instead of failing the
-    # session with the honest storage error.
+    # session with the honest storage error. fix-r2 (review P1-2): the bound
+    # assertion is the run's first error — the stats join's expect — because
+    # the fail-open candidate is written first and the run then rejects at
+    # `markL0Indexed` on the dropped table, so the stats assertion is never
+    # reached.
     ('clear-resurrect-non-closed-fail-open',
      indexer,
      NON_CLOSED_ARM,
      '            Err(_error) => Ok(false),',
      'non_closed_l0_read_error_fails_closed',
-     '#917 the session must fail closed with the honest storage error'),
+     '#917 a non-Closed L0 read error must fail the session, not reject the run'),
+    # #917 fix-r2 (review P1-1 data-loss half): the bump moved back in front
+    # of the seam, so a clear that fails midway (the seam's injected error)
+    # has already advanced the generation; the in-flight heartbeat discards
+    # the turn and marks its still-present L0 row indexed — silent loss.
+    dict(name='clear-resurrect-bump-before-delete',
+         changes=[(entries, BUMP_AFTER_DELETE, ''),
+                  (entries, CLEAR_SESSION_GUARD, BUMP_BEFORE_SEAM)],
+         test='failed_clear_midway_keeps_the_turn_persistable',
+         assertion='#917 a clearSession that failed midway must leave the turn persistable, not silently drop it'),
+    # #917 fix-r2 (review P1-1 race half): the bump moved back AND the
+    # empty-L0 backstop flipped, so a heartbeat whose baseline was read
+    # inside the parked clear's window passes both rechecks and resurrects
+    # the file after the clear completes.
+    dict(name='clear-resurrect-parked-window-resurrect',
+         changes=[(entries, BUMP_AFTER_DELETE, ''),
+                  (entries, CLEAR_SESSION_GUARD, BUMP_BEFORE_SEAM),
+                  (indexer, L0_ARM, '            Ok(_) => Ok(false),')],
+         test='clear_parked_mid_scope_does_not_resurrect_turn_started_inside_window',
+         assertion="#917 the turn whose baseline was read inside the parked clear's window must be discarded, not resurrected"),
     ('close-rejection-swallowed',
      indexer,
      '''            self.repository
@@ -426,7 +469,7 @@ def assertion_failure(log, anchor):
 
 
 killed, survived = [], []
-with mutating_sources(root, [indexer], baseline=baseline) as originals:
+with mutating_sources(root, [indexer, entries], baseline=baseline) as originals:
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     run = cargo_test(None)
     (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)

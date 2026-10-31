@@ -1,6 +1,8 @@
 //! Repository entry operations and non-transactional clear ordering.
 //! Fixed TS baseline: `core/storage/sqlite.ts:1752-2004`.
-use super::super::file_memory::{EdgeClawFileStores, FileMemoryError};
+use super::super::file_memory::{
+    ClearSessionHook, ClearSessionStage, EdgeClawFileStores, FileMemoryError,
+};
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use sha1::{Digest, Sha1};
@@ -398,17 +400,35 @@ impl EdgeClawFileStores {
             ))
         })
     }
+    /// #917 fix-r2: install the `clearSession` seam (tests only; production
+    /// never calls this).
+    #[doc(hidden)]
+    pub fn set_clear_session_hook(&self, hook: ClearSessionHook) {
+        *self
+            .clear_session_hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hook);
+    }
     pub fn clear_session_memory_data(&self, session: &str) -> Result<JsValue> {
         self.snapshot_operation(|| {
             let session = js_trim(session);
             if session.is_empty() {
                 return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
             }
-            // #917 fix-r1: record the clear before deleting anything, so a
-            // heartbeat that listed this session's rows before the clear can
-            // detect it afterwards even when the SQLite handle is no longer
-            // readable (clear followed by close).
-            self.session_clears.bump(session);
+            // #917 fix-r2 seam: fires exactly at the pre-fix-r2 bump
+            // position — before the L0 count, before any data is removed. A
+            // hook that returns an error aborts the clear with nothing
+            // deleted (the mid-clear storage failure shape); one that blocks
+            // parks the clear inside its critical section (the in-flight
+            // window shape). Production never installs a hook.
+            if let Some(hook) = self
+                .clear_session_hook
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+            {
+                hook(ClearSessionStage::BeforeRemoveData, session)?;
+            }
             let l0 = self.storage.conn()?.query_row(
                 "SELECT COUNT(*) FROM l0_sessions WHERE session_key = ?",
                 [session],
@@ -433,6 +453,15 @@ impl EdgeClawFileStores {
             self.storage
                 .conn()?
                 .execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
+            // #917 fix-r2 (review P1-1): the generation means "this session's
+            // clear completed", never "it started". Bump only after the L0 rows
+            // are actually gone: a clear that fails anywhere above must leave
+            // the generation untouched, so an in-flight heartbeat neither
+            // discards the turn nor marks its still-present L0 row indexed
+            // (the silent-turn-loss shape), and a baseline read inside a live
+            // clear's critical section can only predate the deletion — after
+            // the bump the rows are gone, so that run lists nothing.
+            self.session_clears.bump(session);
             Ok(self.clear_result(
                 "session",
                 l0 as usize,

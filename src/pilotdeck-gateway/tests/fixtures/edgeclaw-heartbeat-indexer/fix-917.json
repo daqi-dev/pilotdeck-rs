@@ -1,5 +1,8 @@
 {
-  "registeredDivergence": "A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001",
+  "registeredDivergence": [
+    "A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001",
+    "A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-002"
+  ],
   "issue": 917,
   "decision": "state/decisions-20261027-770-resurrect.md",
   "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
