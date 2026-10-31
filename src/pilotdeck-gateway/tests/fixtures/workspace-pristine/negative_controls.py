@@ -2,7 +2,7 @@
 """#1166 Python/Rust controls; commit first, never bypass the real HEAD guard.
 
 --check validates anchors and compiles Python candidates (Rust builds need HEAD).
-Prebuild workspace_inputs offline before entry. Normal mode compiles each mutant, runs its bound unittest,
+Shared admission bootstraps a missing workspace_inputs before its lease. Normal mode compiles each mutant, runs its bound unittest,
 restores, reruns, and accounts for every mutation before a nonzero summary.
 """
 import argparse
@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
-from negative_process import exclusive_write, new_output_directory
+from negative_process import exclusive_write, new_output_directory, _scanner_environment, _ensure_workspace_scanner
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -31,8 +31,8 @@ spec.loader.exec_module(judge)
 
 cases = [
     ('skip-attribute-inputs', SCANNER,
-     'if self.workspace {\n                    self.walk(attribute_tokens, false, module_dir.clone());\n                }',
-     'if false && self.workspace {\n                    self.walk(attribute_tokens, false, module_dir.clone());\n                }',
+     'if self.workspace {\n                    self.walk(attribute_tokens, false, module_dirs.clone());\n                }',
+     'if false && self.workspace {\n                    self.walk(attribute_tokens, false, module_dirs.clone());\n                }',
      'WorkspacePristine.test_attribute_data_inputs_are_guarded', '#1166 attribute data inputs remain guarded'),
     ('gateway-only', SOURCE, "areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')",
      "areas = ('src/pilotdeck-gateway/src', '.cargo', ':(top,glob)rust-toolchain*')",
@@ -61,7 +61,7 @@ cases = [
     ('killed-other-crate', SOURCE, "areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')",
      "areas = ('src/pilotdeck-gateway/src', '.cargo', ':(top,glob)rust-toolchain*')",
      'WorkspacePristine.test_sigkill_predecessor_other_crate_is_rejected', '#1166 next holder must reject killed other-crate residue'),
-    ('skip-build-clean', SOURCE, "        _assert_product_pristine(root, 'HEAD')\n",
+    ('skip-build-clean', SOURCE, "        _assert_product_pristine(root, 'HEAD', env=env)\n",
      '        # missing pristine verification\n',
      'SnapshotControls.test_build_copy_and_slot_are_inside_lock', '#1166 clean slot build copy must stay inside tree lease'),
     ('skip-build-slot', SOURCE, "slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)",
@@ -100,8 +100,8 @@ cases = [
     ('artifact-kind-filter', SOURCE, "and row['target'].get('kind') == [kind] and row.get('executable')):",
      "and row.get('executable')):",
      'SnapshotControls.test_artifact_kind_filter', '#1166 select only requested executable kind'),
-    ('build-progress-deadline', SOURCE, 'timeout=1800, idle_timeout=600)',
-     'timeout=1800, idle_timeout=60)',
+    ('build-progress-deadline', SOURCE, 'run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)',
+     'run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=60)',
      'SnapshotControls.test_build_copy_and_slot_are_inside_lock', '#1166 cargo build must retain bounded progress deadlines'),
     ('missing-digest-record', SOURCE, "(output / 'sha256').write_text(hashlib.sha256(Path(binary).read_bytes()).hexdigest() + '\\n')",
      "(output / 'wrong-digest-path').write_text(hashlib.sha256(Path(binary).read_bytes()).hexdigest() + '\\n')",
@@ -118,7 +118,7 @@ cases = [
     ('runner-candidate-not-loaded', ROUND6, "patch.object(io, 'open_code', side_effect=code_reader):",
      'contextlib.nullcontext():',
      'SnapshotControls.test_runner_code_stream_keeps_real_sources_pristine', '#1166 runner meta-control must execute candidate code stream'),
-    ('skip-literal-inputs', SOURCE, 'literal_inputs = _workspace_literal_inputs(root, baseline)',
+    ('skip-literal-inputs', SOURCE, 'literal_inputs = _workspace_literal_inputs(root, baseline, env=env)',
      'literal_inputs = ()',
      'WorkspacePristine.test_new_external_literal_inputs_are_automatically_guarded', '#1166 new external literal inputs must be guarded'),
     ('skip-module-recursion', DISCOVERY, 'if edge.rust_source {',
@@ -130,15 +130,66 @@ cases = [
     ('ignore-parse-error', SOURCE, 'if result.returncode != 0:\n            raise ValueError',
      'if result.returncode != 0:\n            return ()\n            raise ValueError',
      'WorkspacePristine.test_nonliteral_and_unparseable_inputs_fail_closed', '#1166 unresolved Rust inputs must fail closed'),
-    ('cache-input-exempt', SOURCE, '_assert_input_areas(root, baseline, literal_inputs, exclude_caches=False)',
-     '_assert_input_areas(root, baseline, literal_inputs, exclude_caches=True)',
+    ('cache-input-exempt', SOURCE, '_assert_input_areas(root, baseline, batch, exclude_caches=False)',
+     '_assert_input_areas(root, baseline, batch, exclude_caches=True)',
      'WorkspacePristine.test_explicit_cache_input_is_not_exempt', '#1166 included cache names remain build inputs'),
-    ('cache-names-rejected', SOURCE, "caches = ('target/**', '__pycache__/**', '*.pyc', '.DS_Store', '.pytest_cache/**')",
+    ('cache-names-rejected', SOURCE, "caches = ('__pycache__/**', '*.pyc', '.DS_Store', '.pytest_cache/**')",
      "caches = ('__pycache__/**', '*.pyc')",
      'WorkspacePristine.test_only_untracked_caches_are_excluded', '#1166 disposable untracked caches are not build inputs'),
-    ('accept-foreign-target', SOURCE, 'if target_dir == root or not target_dir.is_relative_to(root):',
-     'if False and (target_dir == root or not target_dir.is_relative_to(root)):',
-     'SnapshotControls.test_target_directory_must_belong_to_worktree', '#1166 foreign cargo target must be rejected before work'),
+    ('reject-external-target', SOURCE, "    env = _scanner_environment(env)\n    if kind not in",
+     "    env = _scanner_environment(env)\n    raise RuntimeError('foreign target rejected')\n    if kind not in",
+     'SnapshotControls.test_external_target_is_rebuilt_and_copied', '#1166 external target must build and snapshot successfully'),
+    ('cwd-relative-target', SOURCE, "str((scanner_root / target).resolve())",
+     "str(Path(target).resolve())",
+     'SnapshotControls.test_relative_target_is_independent_of_process_cwd', '#1166 target resolves relative to repository root'),
+    ('no-default-scanner-target', SOURCE, "or str(scanner_root / 'src/target')",
+     "or str(scanner_root / 'wrong-target')",
+     'SnapshotControls.test_relative_target_is_independent_of_process_cwd', '#1166 scanner has a default target without caller setup'),
+    ('skip-scanner-bootstrap', SOURCE, '    _ensure_workspace_scanner()\n', '    # bootstrap omitted\n',
+     'ScannerBootstrap.test_fresh_target_first_mutation_bootstraps_before_lock', '#1166 cold first mutation prepares before lease and warm reuses helper'),
+    ('bootstrap-no-slot', SOURCE, "    wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15).check_returncode()",
+     '    pass # no slot',
+     'ScannerBootstrap.test_fresh_target_first_mutation_bootstraps_before_lock', '#1166 cold first mutation prepares before lease and warm reuses helper'),
+    ('bootstrap-status-ignored', SOURCE, "    result.check_returncode()\n    if not executable.is_file():",
+     "    return\n    if not executable.is_file():",
+     'ScannerBootstrap.test_bootstrap_failure_never_enters_mutation', '#1166 failed scanner bootstrap must fail closed'),
+    ('deep-target-exempt', SOURCE, "':(exclude,glob)src/*/target/**'",
+     "':(exclude,glob)src/**/target/**'",
+     'WorkspacePristine.test_deep_target_is_not_a_cache', '#1166 nested target inputs cannot be exempt'),
+    ('unbounded-pathspecs', SOURCE, 'if batch and size + length > 32768:',
+     'if False and batch and size + length > 32768:',
+     'WorkspacePristine.test_literal_batches_are_bounded_and_complete', '#1166 literal argv batches stay bounded'),
+    ('drop-final-pathspec-batch', SOURCE, '    if batch:\n        yield tuple(batch)',
+     '    if False and batch:\n        yield tuple(batch)',
+     'WorkspacePristine.test_literal_batches_are_bounded_and_complete', '#1166 every literal survives batching'),
+    ('drop-final-real-literal-batch', SOURCE, '    if batch:\n        yield tuple(batch)',
+     '    if False and batch:\n        yield tuple(batch)',
+     'WorkspacePristine.test_last_real_literal_batch_is_guarded', '#1166 final real literal batch remains guarded'),
+    ('skip-literal-batch-checks', SOURCE, '_assert_input_areas(root, baseline, batch, exclude_caches=False)',
+     'pass # dropped literal batch',
+     'WorkspacePristine.test_literal_batches_are_bounded_and_complete', '#1166 every literal batch is checked without cache exemptions'),
+    ('omit-crate-root-context', DISCOVERY, 'path.parent().expect("#1166 seed parent").to_path_buf(),',
+     'source_inputs::source_module_dir(&path),',
+     'WorkspacePristine.test_crate_root_and_module_seed_contexts', '#1166 crate roots and module seeds retain both real inputs'),
+    ('ordinary-module-treated-as-root', SCANNER, 'Some("mod.rs")',
+     'Some("lib.rs" | "main.rs" | "mod.rs")',
+     'WorkspacePristine.test_ordinary_lib_and_main_modules_use_stem_directories', '#1166 ordinary lib and main modules use stem directories'),
+    ('drop-second-seed-candidate', SCANNER, 'for candidate in resolved {',
+     'for candidate in resolved.into_iter().take(1) {',
+     'WorkspacePristine.test_seed_union_does_not_stop_at_first_existing_module', '#1166 seed ownership union cannot drop a candidate'),
+    ('ambiguous-seed-accepted', SCANNER, 'existing.len() <= 1,',
+     'true || existing.len() <= 1,',
+     'WorkspacePristine.test_ambiguous_seed_module_fails_closed', '#1166 each ownership context rejects ambiguous modules'),
+    ('runner-target-env-omitted', Path(__file__).resolve(),
+     "run_owned(command, cwd=ROOT / 'src', env=env, "
+     "timeout=1800, idle_timeout=600)",
+     "run_owned(command, cwd=ROOT / 'src', timeout=1800, idle_timeout=600)",
+     'SnapshotControls.test_runner_build_uses_normalized_environment', '#1166 runner Cargo uses normalized caller target'),
+    ('runner-build-budget-shortened', Path(__file__).resolve(),
+     "run_owned(command, cwd=ROOT / 'src', env=env, "
+     "timeout=1800, idle_timeout=600)",
+     "run_owned(command, cwd=ROOT / 'src', env=env, timeout=900, idle_timeout=600)",
+     'SnapshotControls.test_runner_build_uses_normalized_environment', '#1166 runner helper keeps bounded progress deadlines'),
     ('accept-input-symlink', SCANNER, '!candidate.ancestors().any(Path::is_symlink),',
      'true || !candidate.ancestors().any(Path::is_symlink),',
      'WorkspacePristine.test_internal_symlink_input_is_rejected', '#1166 input symlink identities cannot be hidden'),
@@ -227,6 +278,7 @@ def main():
         return int(bool(failures))
     if args.output is None:
         parser.error('OUTPUT is required without --check')
+    env = _scanner_environment()
     out = new_output_directory(args.output)
     records = []
     guarded = [SOURCE, TESTS, YAML, ROUND6, JUDGE, SCANNER, DISCOVERY, Path(__file__).resolve(),
@@ -236,7 +288,7 @@ def main():
     def run(label, test):
         result = run_owned([sys.executable, '-I', '-B', '-X',
                             'pycache_prefix=' + str(out / (label + '.pycache')),
-                            str(TESTS), test], cwd=ROOT, timeout=90)
+                            str(TESTS), test], cwd=ROOT, env=env, timeout=90)
         exclusive_write(out / (label + '.log'), result.stdout + result.stderr)
         return result
 
@@ -245,7 +297,7 @@ def main():
                 ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs', '--no-run'],
                 ['cargo', 'build', '--offline', '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs'])):
             wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900).check_returncode()
-            result = run_owned(command, cwd=ROOT / 'src', timeout=900)
+            result = run_owned(command, cwd=ROOT / 'src', env=env, timeout=1800, idle_timeout=600)
             exclusive_write(out / (label + f'-{index}.log'), result.stdout + result.stderr)
             result.check_returncode()
 
@@ -254,8 +306,9 @@ def main():
         status, reason, compiled = 'INVALID', 'not run', False
         written = False
         try:
-            # Keep the lease through restored rebuild too. No guard launches
-            # Cargo; its prebuilt helper is only refreshed at this outer layer.
+            # Prepare before the outer lease as well; inner admissions reuse
+            # the helper while the lease covers mutation and restored rebuild.
+            _ensure_workspace_scanner(env)
             with tree_lock(ROOT):
                 try:
                     with mutating_sources(ROOT, guarded) as originals:

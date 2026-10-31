@@ -8,8 +8,7 @@ child binary run zero tests and still exit 0, and the driver must fail the
 family at its "#942 resource worker rerun matched no test" error instead of
 recording a phantom sample.
 
-The ignored cargo test (resource_scaling) wraps the same Python entry point
-but cannot restrict the matrix, so this control drives the driver directly
+The Python driver is the measurement entry point; this control drives it
 with one fixed-size family (comments at the seed size, no calibration) and a
 single repeat; the receipt logic under mutation is identical. Run after
 committing the candidate. The build requires real HEAD; never bypass

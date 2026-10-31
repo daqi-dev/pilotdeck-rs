@@ -22,4 +22,4 @@ python3 src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/measure.py _tmp/20261
 
 2026-10-31 fix-r1（同树）执行记录：修后首次 128 MiB 格 Rust 触发 `RSS >6 GiB` 停止（`_tmp/20261026-issue-983/fix-r1/rust-128/`），TS 同格完成 3.68 GiB；据此继续修复（`JsValue` 内联 96→56 字节）后，32/64/128 MiB 三格 Rust/TS 全部完成，峰值 RSS 逐格 0.86×/0.96×/1.02× TS，stdout sha256 与 TS 逐格相同（`_tmp/20261026-issue-983/fix-r1/`）。
 
-#1166：共享测量构建要求 `CARGO_TARGET_DIR` 位于本树内（解析符号链接后检查）。同树长构建须串行安排：排槽上限 900 秒、构建上限 1800 秒（静默上限 600 秒），可能超过其他 runner 默认 900 秒等锁期限；等锁超时记 INVALID，不作为产品失败。
+#1166：共享测量构建要求本树独占的 `CARGO_TARGET_DIR`（允许树外；相对路径由共享入口按仓库根转绝对路径）。入口在锁内核 HEAD 并重新调用 Cargo 后复制本次二进制，位置不作为来源证明。同树长构建须串行安排：排槽上限 900 秒、构建上限 1800 秒（静默上限 600 秒），可能超过其他 runner 默认 900 秒等锁期限；等锁超时记 INVALID，不作为产品失败。

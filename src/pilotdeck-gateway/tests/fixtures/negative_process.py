@@ -348,18 +348,51 @@ def _head_bytes(root, relative, baseline):
                                   f"cannot read {baseline} bytes: {error}")
 
 
-def _workspace_literal_inputs(root, baseline):
+def _scanner_environment(env=None):
+    """One target interpretation, independent of the Python/Cargo caller cwd.
+
+    The target may be outside this tree. Each coordinator must dedicate it to
+    one tree; location is not provenance. Relative paths are rooted here and
+    the absolute value is passed to both Cargo and the scanner.
+    """
+    env = dict(os.environ if env is None else env)
+    scanner_root = Path(__file__).resolve().parents[4]
+    target = env.get('CARGO_TARGET_DIR') or str(scanner_root / 'src/target')
+    env['CARGO_TARGET_DIR'] = str((scanner_root / target).resolve())
+    return env
+
+
+def _ensure_workspace_scanner(env=None):
+    """Bootstrap only a missing helper, before acquiring a source-tree lease.
+
+    Never silently replace an existing helper: its embedded source digest is
+    checked on every scan, including deliberate scanner mutations. Rebuilding a
+    stale helper is the owner's job. Cargo failure/timeout aborts admission.
+    """
+    env = _scanner_environment(env)
+    executable = Path(env['CARGO_TARGET_DIR']) / 'debug/examples/workspace_inputs'
+    if executable.is_file():
+        return
+    root = Path(__file__).resolve().parents[4]
+    wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15).check_returncode()
+    result = run_owned(['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
+                        '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs'],
+                       cwd=root, env=env, timeout=1800, idle_timeout=600)
+    result.check_returncode()
+    if not executable.is_file():
+        raise RuntimeError('#1166 scanner build produced no executable')
+
+
+def _workspace_literal_inputs(root, baseline, *, env=None):
     """Run the prebuilt #449/#1166 proc-macro2 scanner; never launch Cargo here.
 
-    Prebuild `cargo build --offline -p pilotdeck-gateway --example workspace_inputs`
-    before a negative-control window. No inventory cache: included external Rust
+    The shared entry points bootstrap a missing helper before the lease.
+    No inventory cache: included external Rust
     sources are re-read every time. Embedded source identity rejects stale builds.
     """
     root = Path(root).resolve()
     try:
-        target = os.environ.get('CARGO_TARGET_DIR')
-        if not target:
-            raise ValueError('CARGO_TARGET_DIR must be supplied by the caller')
+        target = _scanner_environment(env)['CARGO_TARGET_DIR']
         scanner_root = Path(__file__).resolve().parents[4]
         sources = (scanner_root / 'src/pilotdeck-gateway/examples/workspace_inputs.rs',
                    scanner_root / 'src/pilotdeck-gateway/tests/common/source_inputs.rs',
@@ -389,7 +422,7 @@ def _workspace_literal_inputs(root, baseline):
         raise SourceBaselineError(root, 'src', f'#1166 cannot resolve Rust build input: {error}') from error
 
 
-def _assert_product_pristine(root, baseline):
+def _assert_product_pristine(root, baseline, *, env=None):
     # A runner only names the files it is about to mutate, but a killed
     # predecessor from another group can leave any product source mutated.
     # Checking the whole workspace (including fixtures and path dependencies)
@@ -399,11 +432,24 @@ def _assert_product_pristine(root, baseline):
     # and src/data are path dependencies too. Do not maintain a crate list.
     areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')
     _assert_input_areas(root, baseline, areas)
-    literal_inputs = _workspace_literal_inputs(root, baseline)
-    _assert_input_areas(root, baseline, (*areas, *literal_inputs))
-    # Explicitly included files are inputs even when named like a cache.
-    if literal_inputs:
-        _assert_input_areas(root, baseline, literal_inputs, exclude_caches=False)
+    literal_inputs = _workspace_literal_inputs(root, baseline, env=env)
+    # Explicitly included files are inputs even when named like a cache. Bound
+    # argv by encoded bytes (not characters/count); preserve every literal.
+    for batch in _pathspec_batches(literal_inputs):
+        _assert_input_areas(root, baseline, batch, exclude_caches=False)
+
+
+def _pathspec_batches(paths):
+    batch, size = [], 0
+    for path in paths:
+        length = len(os.fsencode(path)) + 1
+        if batch and size + length > 32768:
+            yield tuple(batch)
+            batch, size = [], 0
+        batch.append(path)
+        size += length
+    if batch:
+        yield tuple(batch)
 
 
 def _assert_input_areas(root, baseline, areas, *, exclude_caches=True):
@@ -421,8 +467,10 @@ def _assert_input_areas(root, baseline, areas, *, exclude_caches=True):
     # Include ignored inputs: .gitignore is not a compilation boundary.
     # Only known disposable Cargo/Python/OS caches are excluded, and only here (never
     # from the tracked/index checks). Keep artifacts outside source folders.
-    caches = ('target/**', '__pycache__/**', '*.pyc', '.DS_Store', '.pytest_cache/**')
-    exclusions = tuple(':(exclude,glob)src/**/' + name for name in caches) if exclude_caches else ()
+    caches = ('__pycache__/**', '*.pyc', '.DS_Store', '.pytest_cache/**')
+    exclusions = (tuple(':(exclude,glob)src/**/' + name for name in caches)
+                  + (':(exclude,glob)src/target/**', ':(exclude,glob)src/*/target/**')
+                  if exclude_caches else ())
     untracked = _git(root, 'ls-files', '--others', '-z', '--', *areas, *exclusions).split(b'\0')
     if untracked[0]:
         raise SourceBaselineError(root, os.fsdecode(untracked[0]),
@@ -460,9 +508,7 @@ def build_snapshot(root, output, *, package, target, kind='test', release=True,
     env = dict(os.environ if env is None else env)
     if not env.get('CARGO_TARGET_DIR'):
         raise RuntimeError('#1166 CARGO_TARGET_DIR must be supplied by the caller')
-    target_dir = (root / env['CARGO_TARGET_DIR']).resolve()
-    if target_dir == root or not target_dir.is_relative_to(root):
-        raise RuntimeError('#1166 CARGO_TARGET_DIR must belong to this worktree')
+    env = _scanner_environment(env)
     if kind not in ('test', 'bin'):
         raise ValueError('#1166 unsupported measurement target kind')
     output = Path(output).resolve()
@@ -474,8 +520,9 @@ def build_snapshot(root, output, *, package, target, kind='test', release=True,
         command.append('--no-run')
     if release:
         command.append('--release')
+    _ensure_workspace_scanner(env)
     with tree_lock(root, timeout=900):
-        _assert_product_pristine(root, 'HEAD')
+        _assert_product_pristine(root, 'HEAD', env=env)
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
         (output / 'slots.log').write_text(slot.stdout + slot.stderr)
         result = run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)
@@ -557,6 +604,7 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
             raise ValueError(f"source to mutate is outside {root}: {candidate}")
         normalized.append((alias, candidate, relative))
 
+    _ensure_workspace_scanner()
     with tree_lock(root, timeout=lock_timeout):
         _assert_product_pristine(root, baseline)
         baseline_bytes = {path: _head_bytes(root, relative, baseline)

@@ -13,11 +13,13 @@ pub(crate) struct SourceEdge {
     pub rust_source: bool,
 }
 
+// File names lib.rs/main.rs imply crate ownership only at Cargo roots.
+// A default `mod lib;` or `mod main;` still owns its stem directory.
 pub(crate) fn source_module_dir(file: &Path) -> PathBuf {
     let parent = file.parent().expect("#1166 source has a parent");
     if matches!(
         file.file_name().and_then(|name| name.to_str()),
-        Some("lib.rs" | "main.rs" | "mod.rs")
+        Some("mod.rs")
     ) {
         parent.to_path_buf()
     } else {
@@ -48,7 +50,7 @@ pub(crate) fn workspace_target(root: &Path, candidate: &Path) -> PathBuf {
 pub(crate) fn workspace_source_edges(
     root: &Path,
     file: &Path,
-    module_dir: PathBuf,
+    module_dirs: Vec<PathBuf>,
 ) -> Vec<SourceEdge> {
     let source = read_vendored_source("workspace", file);
     let tokens = lex_source(&source).unwrap_or_else(|error| {
@@ -65,7 +67,7 @@ pub(crate) fn workspace_source_edges(
         macro_depth: 0,
         workspace: true,
     };
-    scanner.walk(&tokens, true, module_dir);
+    scanner.walk(&tokens, true, module_dirs);
     scanner.targets
 }
 
@@ -224,7 +226,7 @@ pub(crate) fn vendored_source_edges(package: &str, directory: &Path, file: &Path
         macro_depth: 0,
         workspace: false,
     };
-    scanner.walk(&tokens, true, source_module_dir(file));
+    scanner.walk(&tokens, true, vec![source_module_dir(file)]);
     scanner.targets.into_iter().map(|edge| edge.path).collect()
 }
 
@@ -246,6 +248,17 @@ fn read_vendored_source(package: &str, file: &Path) -> String {
     })
 }
 
+// Policy table (both modes share proc-macro2 and reject escaped literals):
+//                     vendored #449             workspace #1166
+// includes            include! only             include!/include_str!/include_bytes!
+// trailing comma      reject                    accept one
+// default modules     collected by caller       resolve recursively
+// path base/bounds    vendored package rules     repository, no symlink
+// conditional path    scan conservatively       reject unresolved context
+// alias/indirection   vendored boundary policy  reject include aliases
+// A workspace seed may be a custom Cargo crate root or an ordinary module.
+// Scan the union of both ownership contexts, then use exact contexts on edges.
+// Extra inputs are conservative; no existing decoy can hide the actual input.
 struct EdgeScanner<'a> {
     package: &'a str,
     directory: &'a Path,
@@ -256,7 +269,7 @@ struct EdgeScanner<'a> {
 }
 
 impl EdgeScanner<'_> {
-    fn walk(&mut self, tokens: &[SourceToken], top_level: bool, module_dir: PathBuf) {
+    fn walk(&mut self, tokens: &[SourceToken], top_level: bool, module_dirs: Vec<PathBuf>) {
         let mut index = 0;
         let mut explicit_module = false;
         while index < tokens.len() {
@@ -267,7 +280,7 @@ impl EdgeScanner<'_> {
                 explicit_module |= attribute_names_path(attribute_tokens);
                 self.attribute_paths(attribute_tokens, top_level);
                 if self.workspace {
-                    self.walk(attribute_tokens, false, module_dir.clone());
+                    self.walk(attribute_tokens, false, module_dirs.clone());
                 }
                 index = attribute + 1;
                 continue;
@@ -300,7 +313,7 @@ impl EdgeScanner<'_> {
                 } = &tokens[body]
                 {
                     self.macro_depth += 1;
-                    self.walk(body_tokens, false, module_dir.clone());
+                    self.walk(body_tokens, false, module_dirs.clone());
                     self.macro_depth -= 1;
                 }
                 index = body + 1;
@@ -326,24 +339,37 @@ impl EdgeScanner<'_> {
                             "#1166 macro module cannot be resolved statically"
                         );
                         if !explicit_module {
-                            let candidates = [
-                                module_dir.join(format!("{name}.rs")),
-                                module_dir.join(name).join("mod.rs"),
-                            ];
-                            let existing: Vec<_> =
-                                candidates.iter().filter(|path| path.is_file()).collect();
-                            assert_eq!(
-                                existing.len(),
-                                1,
-                                "#1166 default Rust module must resolve to exactly one file: {} / {name}",
-                                module_dir.display()
+                            let mut resolved = Vec::new();
+                            for directory in &module_dirs {
+                                let candidates = [
+                                    directory.join(format!("{name}.rs")),
+                                    directory.join(name).join("mod.rs"),
+                                ];
+                                let existing: Vec<_> = candidates
+                                    .into_iter()
+                                    .filter(|path| path.is_file())
+                                    .collect();
+                                assert!(
+                                    existing.len() <= 1,
+                                    "#1166 default Rust module is ambiguous: {} / {name}",
+                                    directory.display()
+                                );
+                                resolved.extend(existing);
+                            }
+                            assert!(
+                                !resolved.is_empty(),
+                                "#1166 default Rust module must resolve to a file: {name}"
                             );
-                            let path = workspace_target(self.directory, existing[0]);
-                            self.targets.push(SourceEdge {
-                                module_dir: source_module_dir(&path),
-                                path,
-                                rust_source: true,
-                            });
+                            resolved.sort();
+                            resolved.dedup();
+                            for candidate in resolved {
+                                let path = workspace_target(self.directory, &candidate);
+                                self.targets.push(SourceEdge {
+                                    module_dir: source_module_dir(&path),
+                                    path,
+                                    rust_source: true,
+                                });
+                            }
                         }
                         explicit_module = false;
                         index += 3;
@@ -356,7 +382,11 @@ impl EdgeScanner<'_> {
                             tokens: inner,
                         }),
                     ) => {
-                        self.walk(inner, false, module_dir.join(name));
+                        self.walk(
+                            inner,
+                            false,
+                            module_dirs.iter().map(|dir| dir.join(name)).collect(),
+                        );
                         explicit_module = false;
                         index += 3;
                         continue;
@@ -372,7 +402,7 @@ impl EdgeScanner<'_> {
                             // An inline generated module adds no file edge itself.
                             // Its body is still scanned at macro depth: any source
                             // edge whose expansion directory is unknown is rejected.
-                            self.walk(inner, false, module_dir.clone());
+                            self.walk(inner, false, module_dirs.clone());
                             explicit_module = false;
                             index += 4;
                             continue;
@@ -403,7 +433,7 @@ impl EdgeScanner<'_> {
                         self.file.display()
                     );
                 }
-                self.walk(inner, false, module_dir.clone());
+                self.walk(inner, false, module_dirs.clone());
             }
             index += 1;
         }
