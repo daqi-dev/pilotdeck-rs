@@ -12,9 +12,11 @@
 //! `write_json_pretty_into` (two-space indent, `": "`, empty containers stay
 //! inline) turns them into the streamed pretty output. The copy is local on
 //! purpose: the CLI's own single implementation (#983 fix-r11) stays private
-//! to the product binary, and this file must not grow product copies that
-//! drift unmutated — `negative_controls.py` anchors this copy the same way
-//! `sdk-decode-budget` anchors the CLI's.
+//! to the product binary. It cannot drift unmutated either way —
+//! `negative_controls.py` anchors this copy the same way `sdk-decode-budget`
+//! anchors the CLI's, and `object_density_pretty_copy_tracks_cli_implementation`
+//! below fails whenever the CLI's function text changes, so the copy and the
+//! product pipeline must be re-derived together.
 use std::time::Instant;
 
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
@@ -22,6 +24,10 @@ use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 /// `{"a":1}` plus one separator is exactly 8 bytes: the small-object grid is
 /// sized by element count, matching the issue's 10^6-element anchor at 8 MiB.
 const SMALL_ELEMENT: &str = "{\"a\":1}";
+/// `{}` plus one separator is exactly 3 bytes: the empty-object grid isolates
+/// the per-object `Box` allocation of the #983 boxing from key/value/hash
+/// bucket costs, which the small-object grid already carries.
+const EMPTY_ELEMENT: &str = "{}";
 /// Spine padding key of the deep grid; each level pads `"p"` to the target size.
 const DEEP_PAD_KEY: &str = "p";
 /// Default spine depth of the deep grid: the issue's 10^4-level anchor.
@@ -39,6 +45,24 @@ fn build_small_objects(target_bytes: usize) -> String {
             text.push(',');
         }
         text.push_str(SMALL_ELEMENT);
+    }
+    text.push(']');
+    text
+}
+
+/// `[{},{},…]`: `target_bytes` of array elements, one empty object per 3
+/// bytes of wire text. Every element still allocates the boxed `JsObject` of
+/// #983 but never touches a HashMap bucket: the allocation path the small and
+/// wide grids cannot isolate (review P2: matrix lacked this class).
+fn build_empty_objects(target_bytes: usize) -> String {
+    let count = target_bytes / (EMPTY_ELEMENT.len() + 1);
+    let mut text = String::with_capacity(count * (EMPTY_ELEMENT.len() + 1) + 2);
+    text.push('[');
+    for index in 0..count {
+        if index > 0 {
+            text.push(',');
+        }
+        text.push_str(EMPTY_ELEMENT);
     }
     text.push(']');
     text
@@ -203,17 +227,27 @@ fn atomic_write(path: &str, bytes: &[u8], what: &str) {
 /// `tests/fixtures/jsobject-density/negative_controls.py`.
 #[test]
 fn object_density_harness_selfcheck() {
+    // 23 bytes / 8-byte elements = 2, but / 7 (a mutated divisor) = 3: the
+    // fixture sits on the divisor boundary (review opus #1; 26 divided the
+    // same way both times and could not see the `+ 1`).
     assert_eq!(
-        build_small_objects(26),
-        "[{\"a\":1},{\"a\":1},{\"a\":1}]",
+        build_small_objects(23),
+        "[{\"a\":1},{\"a\":1}]",
         "#1128 small-object builder exact bytes"
+    );
+    assert_eq!(
+        build_empty_objects(23),
+        "[{},{},{},{},{},{},{}]",
+        "#1128 empty-object builder exact bytes"
     );
     assert_eq!(
         build_wide_object(24),
         "{\"k000000\":1,\"k000001\":1}",
         "#1128 wide-object builder exact bytes"
     );
-    let deep = build_deep_spine(47, 2);
+    // 48 bytes at depth 2 pads each level with 10 x's; dropping the `- 1`
+    // would pad 11 (47 padded the same either way, review opus #6).
+    let deep = build_deep_spine(48, 2);
     assert_eq!(
         deep, "{\"a\":{\"a\":1,\"p\":\"xxxxxxxxxx\"},\"p\":\"xxxxxxxxxx\"}",
         "#1128 deep-spine builder exact bytes"
@@ -258,9 +292,93 @@ fn object_density_harness_selfcheck() {
     );
 }
 
+/// The CLI's `main.rs`, read at compile time: the pretty-reindentation copy
+/// in this file is a local twin of the product's `write_json_pretty_into`,
+/// so the CLI source itself is a build input of this harness.
+const CLI_MAIN: &str = include_str!("../../pilotdeck-cli/src/main.rs");
+
+/// The exact text of `write_json_pretty_into` in `src/pilotdeck-cli/src/main.rs`
+/// as of #1128 fix-r1. If the test below fails, the CLI's pretty pipeline
+/// changed and `reindent_pretty` above (plus the self-check goldens and the
+/// anchors in `negative_controls.py`) must be re-derived from the new
+/// implementation before any #1128 measurement is trusted again.
+const CLI_WRITE_JSON_PRETTY_INTO: &str = r#"
+fn write_json_pretty_into(raw: &str, out: &mut impl Write) -> std::io::Result<()> {
+    fn char(out: &mut impl Write, value: char) -> std::io::Result<()> {
+        let mut encoded = [0_u8; 4];
+        out.write_all(value.encode_utf8(&mut encoded).as_bytes())
+    }
+
+    fn newline(out: &mut impl Write, depth: usize) -> std::io::Result<()> {
+        out.write_all(b"\n")?;
+        for _ in 0..depth {
+            out.write_all(b"  ")?;
+        }
+        Ok(())
+    }
+
+    let mut chars = raw.chars().peekable();
+    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
+    while let Some(value) = chars.next() {
+        if quoted {
+            char(out, value)?;
+            if escaped {
+                escaped = false;
+            } else if value == '\\' {
+                escaped = true;
+            } else if value == '"' {
+                quoted = false;
+            }
+            continue;
+        }
+        match value {
+            '"' => {
+                quoted = true;
+                char(out, value)?;
+            }
+            '{' | '[' => {
+                char(out, value)?;
+                let close = if value == '{' { '}' } else { ']' };
+                if chars.peek() == Some(&close) {
+                    char(out, close)?;
+                    chars.next();
+                } else {
+                    depth += 1;
+                    newline(out, depth)?;
+                }
+            }
+            '}' | ']' => {
+                depth -= 1;
+                newline(out, depth)?;
+                char(out, value)?;
+            }
+            ',' => {
+                char(out, value)?;
+                newline(out, depth)?;
+            }
+            ':' => out.write_all(b": ")?,
+            _ => char(out, value)?,
+        }
+    }
+    Ok(())
+}"#;
+
+/// Review P2 (#1128 fix-r1): `reindent_pretty` is a copy of the CLI's
+/// `write_json_pretty_into`, and the copy staying green while the CLI changed
+/// semantics would measure a pipeline the product no longer ships. Fail
+/// closed on any change to the CLI function's text; the copy's own rules are
+/// anchored by `negative_controls.py`'s pretty-* mutations.
+#[test]
+fn object_density_pretty_copy_tracks_cli_implementation() {
+    assert!(
+        CLI_MAIN.contains(CLI_WRITE_JSON_PRETTY_INTO),
+        "#1128 CLI write_json_pretty_into changed; re-derive the harness pretty copy"
+    );
+}
+
 /// The measurement itself: `#[ignore]`d — a CI run must never judge
 /// performance (#1128 is a measured comparison, not a gate). Driven by
-/// `OBJECT_DENSITY_KIND` (`small`|`wide`|`deep`|`file`), `OBJECT_DENSITY_TARGET_BYTES`,
+/// `OBJECT_DENSITY_KIND` (`small`|`wide`|`deep`|`empty`|`file`), `OBJECT_DENSITY_TARGET_BYTES`,
 /// `OBJECT_DENSITY_DEPTH`, `OBJECT_DENSITY_INPUT`, `OBJECT_DENSITY_EMIT`,
 /// `OBJECT_DENSITY_DUMP_PRETTY`, `OBJECT_DENSITY_REPS`, `OBJECT_DENSITY_WARMUP`.
 /// Prints one `#1128-BENCH` JSON line; `measure.py` aggregates the raw reps.
@@ -268,13 +386,20 @@ fn object_density_harness_selfcheck() {
 #[ignore = "#1128 measurement harness; run through tests/fixtures/jsobject-density/measure.py"]
 fn object_density_bench() {
     let kind = std::env::var("OBJECT_DENSITY_KIND")
-        .expect("#1128 OBJECT_DENSITY_KIND (small|wide|deep|file) is required");
+        .expect("#1128 OBJECT_DENSITY_KIND (small|wide|deep|empty|file) is required");
     let label = std::env::var("OBJECT_DENSITY_LABEL").unwrap_or_else(|_| kind.clone());
     let (text, input_path) = match kind.as_str() {
         "small" => (
             build_small_objects(
                 env_usize("OBJECT_DENSITY_TARGET_BYTES")
                     .expect("#1128 OBJECT_DENSITY_TARGET_BYTES is required for small"),
+            ),
+            None,
+        ),
+        "empty" => (
+            build_empty_objects(
+                env_usize("OBJECT_DENSITY_TARGET_BYTES")
+                    .expect("#1128 OBJECT_DENSITY_TARGET_BYTES is required for empty"),
             ),
             None,
         ),

@@ -5,24 +5,29 @@ Usage:
   CARGO_TARGET_DIR=... python3 measure.py NEW_OUTPUT_DIR [workload ...]
 
 Workloads: small-1 small-8 small-32 wide-1 wide-8 wide-32 deep-1 deep-8
-deep-32 transcript baseline (MiB units). Without a selection every workload
-runs. The Rust harness is `src/pilotdeck-protocol/tests/object_density.rs`
-(`#[ignore]`d, never a CI judgment); this script builds it in release mode,
-measures decode / compact / pretty / drop wall times over 7 reps plus a
-single-rep process for peak RSS (wait4 rusage, bytes on macOS), then repeats
-everything with the boxing of `JsObject.indices` reverted in place (the #983
-memory fix stays committed; only the measurement build is unboxed), and
-finally runs the same workload files through Node v22.22.0
-(JSON.parse + JSON.stringify(x, null, 2)).
+deep-32 empty-1 empty-8 empty-32 transcript baseline (MiB units). Without a
+selection every workload runs. The Rust harness is
+`src/pilotdeck-protocol/tests/object_density.rs` (`#[ignore]`d, never a CI
+judgment); this script builds it in release mode, measures decode / compact /
+pretty / drop wall times over 7 reps plus a single-rep process for peak RSS
+(wait4 rusage, bytes on macOS), then repeats everything with the boxing of
+`JsObject.indices` reverted in place (the #983 memory fix stays committed;
+only the measurement build is unboxed), and finally runs the same workload
+files through Node v22.22.0 (JSON.parse + JSON.stringify(x, null, 2)).
 
 The pre-boxing variant is a local, in-place reverse of the exact boxing diff
 (`git diff c46e3803d^ c46e3803d -- src/pilotdeck-protocol/src/lib.rs`), per
 the coordinator's instruction: the old implementation is never committed.
-The script refuses to start on a dirty tracked tree, fails closed if the diff
-anchor no longer applies, restores with `git checkout --` in a finally
-block, verifies the tree is clean again, rebuilds, and re-runs one spot-check
-workload so the post numbers reproduce. A `pre-build-in-progress` marker
-file inside the output directory marks the mutation window.
+The script refuses to start on a dirty tracked tree, verifies the boxing
+commit is reachable, and runs the reverse-patch window inside the shared
+`mutating_sources` guard: the tree lock serializes concurrent in-place
+runners, lib.rs is verified byte-for-byte against HEAD before the window
+opens, and the snapshot restore is verified against both the snapshot and
+the git object on the way out — never a blanket `git checkout`. It fails
+closed if the diff anchor no longer applies, rebuilds after restoring, and
+re-runs one spot-check workload so the post numbers reproduce. A
+`pre-build-in-progress` marker file inside the output directory marks the
+mutation window.
 """
 from pathlib import Path
 import hashlib
@@ -37,7 +42,8 @@ sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[5]
 shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
-from negative_process import new_output_directory, run_owned, wait_for_slot  # noqa: E402
+from negative_process import (mutating_sources, new_output_directory,  # noqa: E402
+                              run_owned, wait_for_slot)
 
 # The commit that boxed JsObject.indices (#983 fix-r1); its parent is the
 # unboxed baseline. Override only if the anchor is known to have moved.
@@ -46,8 +52,12 @@ LIB_RS = 'src/pilotdeck-protocol/src/lib.rs'
 TRANSCRIPT = 'src/pilotdeck-gateway/tests/fixtures/compaction-orchestrator/oracle.json'
 MIB = 1024 * 1024
 # Pretty outputs that are dumped and sha256-compared across all three
-# runners (boxed, unboxed, Node): one per class plus the transcript.
-DUMP_CLASSES = {'small-1', 'wide-1', 'deep-1', 'transcript'}
+# runners (boxed, unboxed, Node): one per class plus the transcript. A
+# selected label of this set whose post or pre dump is missing aborts the
+# run; a missing Node dump stays `tsMatchesRust: null` because the
+# indented-stringify RangeError on deep spines is an expected baseline
+# property, not a harness failure.
+DUMP_CLASSES = {'small-1', 'wide-1', 'deep-1', 'empty-1', 'transcript'}
 REPS = 7
 NODE = os.environ.get('NODE22', '/opt/homebrew/bin/node')
 RUN_TIMEOUT = 900
@@ -56,6 +66,7 @@ WORKLOADS = [
     ('small-1', 'small', MIB), ('small-8', 'small', 8 * MIB), ('small-32', 'small', 32 * MIB),
     ('wide-1', 'wide', MIB), ('wide-8', 'wide', 8 * MIB), ('wide-32', 'wide', 32 * MIB),
     ('deep-1', 'deep', MIB), ('deep-8', 'deep', 8 * MIB), ('deep-32', 'deep', 32 * MIB),
+    ('empty-1', 'empty', MIB), ('empty-8', 'empty', 8 * MIB), ('empty-32', 'empty', 32 * MIB),
     ('transcript', 'file', None), ('baseline', 'small', 10),
 ]
 
@@ -108,10 +119,15 @@ def build_release_test(env, log_name, out):
 
 
 def run_wrapped(command, run_env, label, out):
-    """Run a measurement command under the wait4 wrapper; return (stdout line dict, rss)."""
+    """Run a measurement command under the wait4 wrapper; return (stdout line dict, rss).
+
+    `run_owned` starts the wrapper in its own session and kills the whole
+    group on timeout, so an over-running harness process cannot survive the
+    run as an orphan and pollute later timings.
+    """
     pid_file = out / f'{label}.pid'
     wrapped = [sys.executable, str(Path(__file__).resolve()), '--exec', str(pid_file), *command]
-    child = subprocess.run(wrapped, env=run_env, capture_output=True, text=True, timeout=RUN_TIMEOUT)
+    child = run_owned(wrapped, env=run_env, timeout=RUN_TIMEOUT)
     usage = json.loads(pid_file.with_suffix('.usage.json').read_text())
     if child.returncode or usage['exit']:
         raise SystemExit(f'#1128 run {label} failed (exit {usage["exit"]}):\n'
@@ -237,28 +253,34 @@ def main():
 
     marker = out / 'pre-build-in-progress'
     marker.write_text('unboxed measurement build active; lib.rs is reverted below HEAD\n')
+    # The whole reverse-patch window runs inside the shared `mutating_sources`
+    # guard (#1128 fix-r1, review P0): the tree lock serializes any other
+    # in-place runner of this tree, lib.rs is verified byte-for-byte against
+    # HEAD before the window opens, and the exit restore writes the HEAD
+    # snapshot back — a plain `git checkout --` here would also revert
+    # changes this process never made.
+    if git('cat-file', '-e', f'{BOXING_COMMIT}^{{commit}}', check=False).returncode:
+        raise SystemExit(f'#1128 boxing commit {BOXING_COMMIT} is not reachable from this '
+                         'history; set PDRS_BOXING_COMMIT to the moved anchor')
     try:
-        diff = git('diff', f'{BOXING_COMMIT}^', BOXING_COMMIT, '--', LIB_RS).stdout
-        if b'Box<HashMap<JsString, usize>>' not in diff:
-            raise SystemExit('#1128 boxing anchor vanished from the diff; refusing to measure '
-                             'a different change')
-        applied = subprocess.run(['git', 'apply', '-R', '-'], input=diff, cwd=str(root),
-                                 capture_output=True)
-        if applied.returncode:
-            raise SystemExit('#1128 reverse boxing patch no longer applies: '
-                             + applied.stderr.decode().strip())
-        unboxed = (root / LIB_RS).read_text()
-        if ('indices: HashMap<JsString, usize>,' not in unboxed
-                or 'indices: Box<HashMap<JsString, usize>>,' in unboxed):
-            raise SystemExit('#1128 unboxed verification failed after patching')
-        (out / 'pre.patch').write_text(diff.decode())
-        exe_pre = build_release_test(env, 'build-pre.slots.log', out)
-        result['workloads']['pre'] = measure_rust('pre', exe_pre, env, out, workloads, inputs)
+        with mutating_sources(root, [root / LIB_RS]):
+            diff = git('diff', f'{BOXING_COMMIT}^', BOXING_COMMIT, '--', LIB_RS).stdout
+            if b'Box<HashMap<JsString, usize>>' not in diff:
+                raise SystemExit('#1128 boxing anchor vanished from the diff; refusing to '
+                                 'measure a different change')
+            applied = subprocess.run(['git', 'apply', '-R', '-'], input=diff, cwd=str(root),
+                                     capture_output=True)
+            if applied.returncode:
+                raise SystemExit('#1128 reverse boxing patch no longer applies: '
+                                 + applied.stderr.decode().strip())
+            unboxed = (root / LIB_RS).read_text()
+            if ('indices: HashMap<JsString, usize>,' not in unboxed
+                    or 'indices: Box<HashMap<JsString, usize>>,' in unboxed):
+                raise SystemExit('#1128 unboxed verification failed after patching')
+            (out / 'pre.patch').write_text(diff.decode())
+            exe_pre = build_release_test(env, 'build-pre.slots.log', out)
+            result['workloads']['pre'] = measure_rust('pre', exe_pre, env, out, workloads, inputs)
     finally:
-        git('checkout', '--', LIB_RS)
-        residue = git('status', '--porcelain', '--', LIB_RS, check=False).stdout.decode()
-        if residue:
-            raise SystemExit(f'#1128 restore failed, tree still dirty:\n{residue}')
         marker.unlink()
     for label, row in result['workloads']['pre'].items():
         if row['timed']['inputFnv64'] != result['workloads']['post'][label]['timed']['inputFnv64']:
@@ -273,7 +295,9 @@ def main():
         if spot['valueBytes'] != post_line['valueBytes'] or \
                 spot['prettyFnv64'] != post_line['prettyFnv64']:
             raise SystemExit('#1128 restored spot-check disagrees with the post measurement')
-    result['restoredSpotCheck'] = spot
+    # An unrun check must not read as a passed one: `null` and a passed line
+    # are different states (#1128 fix-r1, review opus #3).
+    result['restoredSpotCheck'] = spot if spot is not None else 'not-run (small-8 not selected)'
 
     ts_rows = {}
     for label, _kind, _target in workloads:
@@ -295,17 +319,26 @@ def main():
 
     digests = {}
     for label in sorted(DUMP_CLASSES):
+        if label not in inputs:
+            continue  # not selected in this run
         entry = {}
-        for name in ('post', 'pre', 'ts'):
+        for name in ('post', 'pre'):
             path = out / 'dumps' / f'{name}-{label}.pretty'
-            if path.is_file():
-                entry[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-        if 'post' in entry and 'pre' in entry and entry['post'] != entry['pre']:
-            raise SystemExit(f'#1128 pretty output differs between boxed and unboxed for {label}')
-        if 'ts' in entry and 'post' in entry:
+            # A selected dump class whose Rust-side dump is missing must fail
+            # the run, not silently skip the comparison (#1128 fix-r1,
+            # review opus #2): that would turn the hard byte check into a
+            # vacuous pass.
+            if not path.is_file():
+                raise SystemExit(f'#1128 {name} pretty dump missing for {label}')
+            entry[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        ts_path = out / 'dumps' / f'ts-{label}.pretty'
+        if ts_path.is_file():
+            entry['ts'] = hashlib.sha256(ts_path.read_bytes()).hexdigest()
             entry['tsMatchesRust'] = entry['ts'] == entry['post']
         else:
             entry['tsMatchesRust'] = None  # Node could not stringify this workload.
+        if entry['post'] != entry['pre']:
+            raise SystemExit(f'#1128 pretty output differs between boxed and unboxed for {label}')
         digests[label] = entry
     result['prettySha256'] = digests
 

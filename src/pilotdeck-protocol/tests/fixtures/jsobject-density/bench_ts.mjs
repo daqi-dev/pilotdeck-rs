@@ -21,9 +21,12 @@ if (!input) {
   process.exit(2);
 }
 const text = readFileSync(input, 'utf8');
+// Byte counts, not UTF-16 code units: the Rust side reports bytes, so
+// String.length would only agree on pure-ASCII workloads.
+const inputBytes = Buffer.byteLength(text);
 
 function atomicWrite(path, bytes) {
-  const temporary = path.replace(/(\.[^.]*)?$/, '.tmp');
+  const temporary = path + '.tmp';
   writeFileSync(temporary, bytes);
   renameSync(temporary, path);
 }
@@ -43,7 +46,7 @@ function pass(dump) {
   if (dump) {
     atomicWrite(dump, pretty);
   }
-  return { parseMs: t1 - t0, stringifyMs: t2 - t1, prettyBytes: pretty.length,
+  return { parseMs: t1 - t0, stringifyMs: t2 - t1, prettyBytes: Buffer.byteLength(pretty),
            stringifyError: null };
 }
 
@@ -58,13 +61,15 @@ for (let index = 0; index < reps; index += 1) {
   const result = pass(index === 0 ? process.env.OBJECT_DENSITY_DUMP_PRETTY : null);
   parseMs.push(result.parseMs);
   if (result.stringifyError) {
+    // Keep sampling parse in every remaining rep (#1128 fix-r1, review
+    // P1-1): the RangeError is a property of the stringify phase alone.
     stringifyError = result.stringifyError;
-    break;
+    continue;
   }
   stringifyMs.push(result.stringifyMs);
   prettyBytes = result.prettyBytes;
 }
 console.log(`#1128-TS ${JSON.stringify({
-  kind: 'file', label, inputBytes: text.length, reps: parseMs.length,
+  kind: 'file', label, inputBytes, reps: parseMs.length,
   parseMs, stringifyMs, prettyBytes, stringifyError,
 })}`);
