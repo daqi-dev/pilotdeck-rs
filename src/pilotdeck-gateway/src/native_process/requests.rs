@@ -81,6 +81,26 @@ impl GatewayRequests for Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            // createLocalGateway's archive callbacks use the configured fallback
+            // project for nullish keys. Fill it before isolated admission, while
+            // leaving Metadata's cwd lazy for explicit paths and other RPCs.
+            let mut params = params;
+            if matches!(
+                method.to_utf8().as_deref(),
+                Ok("native_archive_manifest"
+                    | "native_archive_entries"
+                    | "native_archive_artifact")
+            ) && let JsValue::Object(fields) = &mut params
+                && matches!(
+                    fields.get("projectKey"),
+                    None | Some(JsValue::Undefined | JsValue::Null)
+                )
+            {
+                fields.insert(
+                    "projectKey".into(),
+                    self.options.project.to_string_lossy().as_ref().into(),
+                );
+            }
             if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())
                 && !project
                     .as_string()
