@@ -18,6 +18,20 @@ pub(super) struct TextOutput {
     sequence: f64,
 }
 
+/// SDK iterator failures retain the query; CLI loop-body failures invoke
+/// AsyncIteratorClose and therefore close it.
+#[derive(Debug)]
+pub(super) enum EventError {
+    Iterator(Failure),
+    Consumer(Failure),
+}
+
+impl From<Failure> for EventError {
+    fn from(error: Failure) -> Self {
+        Self::Iterator(error)
+    }
+}
+
 enum Terminal {
     Completed(Option<JsValue>),
     Failed(JsValue),
@@ -41,7 +55,11 @@ impl TextOutput {
         }
     }
 
-    pub(super) fn event(&mut self, event: &JsValue) -> Result<(), Failure> {
+    pub(super) fn run_id(&self) -> &JsString {
+        &self.run_id
+    }
+
+    pub(super) fn event(&mut self, event: &JsValue) -> Result<(), EventError> {
         // Transport::next_sequence requires contiguous frames starting at zero
         // and drops duplicates before yielding. Thus the accepted-event ordinal
         // is exactly frame.seq, including events hidden by the SDK below.
@@ -133,15 +151,15 @@ impl TextOutput {
             // consumeRun prints every public event the SDK yields.
             let mapped = public_event(event, &raw_type, &self.session);
             let text = stringify_json(&mapped)
-                .map_err(|e| Failure::Error(e.to_string()))?
+                .map_err(|e| EventError::Consumer(Failure::Error(e.to_string())))?
                 .unwrap_or_default();
             stdout_line(&text);
             return Ok(());
         }
         if !matches!(public_type(&raw_type, event), JsValue::String(_)) {
-            return Err(Failure::Error(
+            return Err(EventError::Consumer(Failure::Error(
                 "event.type.includes is not a function".into(),
-            ));
+            )));
         }
         // eventText checks the public type after SDK mapping. Unknown raw names
         // become pilotdeck.<name>, which retains the contains("assistant") rule.
@@ -155,7 +173,7 @@ impl TextOutput {
                 stdout
                     .write_all(text.as_bytes())
                     .and_then(|()| stdout.flush())
-                    .map_err(|e| Failure::Error(e.to_string()))?;
+                    .map_err(|e| EventError::Consumer(Failure::Error(e.to_string())))?;
                 self.streamed = true;
             }
         }

@@ -1,5 +1,33 @@
 // Validate observation provenance, not a desired Rust/TS lifecycle outcome.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+// Identity strings only become provenance after checking the actual inputs.
+// Keep this separate from validate(): data mutations must still reach their
+// specifically registered structural assertion before disk identity is checked.
+export function validateFiles(source, directory, baseline) {
+  for (const [name, digest] of Object.entries(source.probeSha256)) {
+    assert.equal(createHash('sha256').update(readFileSync(join(directory, name))).digest('hex'),
+      digest, `#1145 producer file SHA256 matches disk: ${name}`);
+  }
+  assert.ok(baseline, '#1145 PDRS_BASELINE is required for TS file verification');
+  for (const [name, digest] of Object.entries(source.sourceSha256)) {
+    assert.equal(createHash('sha256').update(readFileSync(join(baseline, name))).digest('hex'),
+      digest, `#1145 TS file SHA256 matches disk: ${name}`);
+  }
+}
+
+export const DATA_MUTATIONS = 61;
+export const EXTRA_CONTROLS = 11;
+export const TOTAL_CONTROLS = DATA_MUTATIONS + EXTRA_CONTROLS;
+export function validateControlCount(mutations, results) {
+  assert.equal(mutations.length, DATA_MUTATIONS, '#1145 fixed data mutation denominator');
+  if (results !== undefined) {
+    assert.equal(results.length, TOTAL_CONTROLS, '#1145 fixed negative result denominator');
+  }
+}
 
 function milestonesFromTrace(row) {
   const input = row.input;
