@@ -378,8 +378,16 @@ cases = [
      "str(Path(target).resolve())",
      'SnapshotControls.test_relative_target_is_independent_of_process_cwd', '#1166 target resolves relative to repository root'),
     ('no-default-scanner-target', SOURCE, "str(root / '_build/cargo-target')",
-     "str(scanner_root / 'wrong-target')",
+     "str(root / '_build/wrong-target')",
      'SnapshotControls.test_relative_target_is_independent_of_process_cwd', '#1166 scanner has a default target without caller setup'),
+    # The shared admission must resolve the target it hands to Cargo: a host
+    # chain's _build is a symlink, and the unresolved literal is a different
+    # directory than the one every runner and the scanner actually share.
+    ('target-admission-unresolved', SOURCE,
+     "    env['CARGO_TARGET_DIR'] = str((scanner_root / target).resolve())\n    target = Path(env['CARGO_TARGET_DIR'])",
+     "    env['CARGO_TARGET_DIR'] = target\n    target = Path(env['CARGO_TARGET_DIR'])",
+     'RunnerTargets.test_shared_target_admission_resolves_symlinked_build',
+     '#1166 shared admission resolves the symlinked _build target'),
     ('owner-publication-after-cargo', SOURCE, '        marker, owner = _publish_build_owner(root, env)\n        result = run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)',
      '        result = run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)\n        marker, owner = _publish_build_owner(root, env)',
      'SnapshotControls.test_owner_publication_precedes_cargo_inside_lock', '#1166 owner publication precedes cargo inside pristine lease'),
