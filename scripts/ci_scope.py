@@ -16,12 +16,13 @@ diff 为空、git 出错、事件缺 SHA、分类器自身异常。
 是重 job 里尺子的输入——check_ledger / check_coverage_manifest 读 docs/research、docs/plan，
 check_frozen / check-approval-provenance 读 state/decisions-*，product-coverage 读
 docs/experiments——按目录放行会让纯文档 PR 跳过校验它们的尺子（假 PASS）。state/board.md
-没有任何尺子读取（scripts/test-pdrs-loop.sh 用自造的临时测试 board），board_literal_violations
+没有任何尺子读取（scripts/test-pdrs-loop.sh 用自造的临时测试 board），board_ruler_violations
 机检持续看守这条前提。放行的是「跳过重 job」，宁可多跑不可漏跑。
 """
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -68,59 +69,100 @@ def classify(env=None, cwd='.') -> bool:
     return docs_only_for_range(cwd, base, head)
 
 
-# ---------- #1199 机检（fix-r1）：看守「没有尺子读 state/board.md」这条白名单前提 ----------
-# scripts/test-ci-scope.py 在 scope job（无条件运行）里调用 board_literal_violations：扫描
-# scripts/ 与 src/**/tests 下的 .py / .mjs / .sh，引用 state/board.md 字面量而不在允许清单
-# 登记的都算违例；允许清单条目过期（文件不存在或不再引用字面量）也算违例，保证登记精确。
-# 以后有人让尺子读 board，scope job 的自测会自动报警。允许清单逐条登记并写明为什么不危
-# 险：本地 worker 工具不在 CI 任何 job 运行（ci.yml 只跑 test-pdrs-loop.sh），自造测试
-# board 的用临时目录里自己那份。
-BOARD_LITERAL_ALLOWLIST = {
-    'scripts/ci_scope.py': '白名单常量与机检自身，只比较路径不读取文件',
-    'scripts/test-ci-scope.py': '分类器自测的样例路径',
-    'scripts/pdrs-loop.sh': '本地 worker 循环工具，CI 任何 job 都不运行',
-    'scripts/next-task.sh': '本地 worker 工具，CI 任何 job 都不运行',
-    'scripts/test-pdrs-loop.sh': '临时目录自造测试 board，不读仓库的 state/board.md',
-    'src/pilotdeck-gateway/tests/test_metadata_io_driver.py': '按字面钉死白名单的守卫断言',
+# ---------- #1199 机检（fix-r2 放宽）：看守「没有尺子读 state/board.md」这条白名单前提 ----------
+# scripts/test-ci-scope.py 在 scope job（无条件运行）里调用 board_ruler_violations：扫描
+# scripts/、src/ 全树与 .github/ 下的所有文本文件（不限扩展名，二进制与 target/ 跳过），
+# 文本里出现 board.md 这个 token（不要求带 state/ 前缀——拼接写法 Path('state')/'board.md'
+# 也命中）或 state/* 一类覆盖 board 的通配（如 state/*.md）而不在允许清单登记的都算违例；
+# 允许清单条目过期（文件不存在、是二进制或不再引用）也算违例，保证登记精确。以后有人让
+# 尺子读 board，scope job 的自测会自动报警。边界（尽力而为）：目录遍历写法（iterdir /
+# Path('state').glob(...)）不在字面量与通配扫描覆盖内。
+# 允许清单逐条登记 (理由, ci_free) 并写明为什么不危险：自测守卫与造测试 board 的写法各管
+# 自己；「不在 CI 运行」的本地协调读者（ci_free=True）的前提由机检断言看守——该文件出现
+# 在任何 .github/workflows/*.yml（整路径或带边界的文件名）即违例，「CI 不运行」破了，
+# 按路径放行的闸门就漏到真实 board 读者上。
+BOARD_RULER_ALLOWLIST = {
+    'scripts/ci_scope.py': ('白名单常量与机检自身，只比较路径不读取文件', False),
+    'scripts/test-ci-scope.py': ('分类器自测的样例路径', False),
+    'scripts/pdrs-loop.sh': ('本地 worker 循环工具，不在 CI 任何 job 运行（ci_free 断言看守）', True),
+    'scripts/next-task.sh': ('本地 worker 工具，不在 CI 任何 job 运行（ci_free 断言看守）', True),
+    'scripts/test-pdrs-loop.sh': ('临时目录自造测试 board，不读仓库的 state/board.md', False),
+    'src/pilotdeck-gateway/tests/test_metadata_io_driver.py': ('按字面钉死白名单的守卫断言', False),
+    'src/pilotdeck-gateway/tests/fixtures/metadata/describe-io-errors.md':
+        ('fixture 文档的叙述性提及，不是尺子', False),
+    '.github/workflows/ci.yml': ('注释里说明白名单语义，不读取 board', False),
 }
-RULER_SCAN_EXTENSIONS = ('.py', '.mjs', '.sh')
+BOARD_TOKEN = 'board.md'
+STATE_GLOB_PATTERN = re.compile(r'state/\*')
 
 
-def _read(root, rel):
-    """读仓库相对路径的文本；文件缺失 / 不可读返回空串（按「不再引用」处理）。"""
+def _read_text(root, rel):
+    """读仓库相对路径的文本；缺失 / 不可读 / 二进制（含 NUL 字节）返回 None。"""
     try:
-        return (root / rel).read_text(encoding='utf-8', errors='replace')
+        data = (root / rel).read_bytes()
     except OSError:
-        return ''
+        return None
+    return None if b'\0' in data else data.decode('utf-8', errors='replace')
 
 
 def _ruler_files(root):
-    """枚举 scripts/ 全部与 src/ 下 tests 目录内的 .py / .mjs / .sh，产出仓库相对路径。"""
-    for directory in ('scripts', 'src'):
+    """枚举 scripts/、src/ 全树与 .github/ 下的文件（跳过 target/），产出仓库相对路径。"""
+    for directory in ('scripts', 'src', '.github'):
         base = root / directory
         if not base.is_dir():
             continue
         for path in sorted(base.rglob('*')):
-            if not path.is_file() or path.suffix not in RULER_SCAN_EXTENSIONS:
-                continue
-            rel = path.relative_to(root)
-            if directory == 'src' and 'tests' not in rel.parts:
-                continue
-            yield rel.as_posix()
+            if path.is_file() and 'target' not in path.parts:
+                yield path.relative_to(root).as_posix()
 
 
-def board_literal_violations(root):
+def _ruler_references(text):
+    """文本是否引用 board：board.md token（含拼接写法）或覆盖 board 的 state/* 通配。"""
+    return BOARD_TOKEN in text or bool(STATE_GLOB_PATTERN.search(text))
+
+
+def _workflow_text(root):
+    """拼接全部 .github/workflows/*.yml|*.yaml 的文本；目录缺失或全不可读返回空串。"""
+    parts = []
+    workflows = root / '.github' / 'workflows'
+    if workflows.is_dir():
+        for pattern in ('*.yml', '*.yaml'):
+            for path in sorted(workflows.glob(pattern)):
+                if path.is_file():
+                    try:
+                        parts.append(path.read_text(encoding='utf-8', errors='replace'))
+                    except OSError:
+                        pass
+    return '\n'.join(parts)
+
+
+def _ci_referenced(root, rel):
+    """仓库相对路径是否被任何 .github/workflows/*.yml 调用（整路径，或带边界的文件名）。"""
+    text = _workflow_text(root)
+    if not text or rel in text:
+        return bool(text)
+    return bool(re.search(r'(?<![\w-])' + re.escape(rel.rpartition('/')[2]), text))
+
+
+def board_ruler_violations(root):
     """返回违反「尺子不读 state/board.md」前提的文件（仓库相对路径，排序稳定）。
 
-    两类违例：引用了字面量但不在允许清单（有人让尺子读 board）；允许清单条目过期
-    （文件不存在或不再引用字面量，登记必须精确）。
+    三类违例：引用了 board（token 或 state/* 通配）但不在允许清单（有人让尺子读
+    board）；允许清单条目过期（文件缺失、二进制或不再引用，登记必须精确）；ci_free
+    条目被 .github/workflows/*.yml 调用（「不在 CI 运行」的登记前提破了）。
     """
     violations = []
     for rel in _ruler_files(root):
-        if DOCS_ONLY_PATH in _read(root, rel) and rel not in BOARD_LITERAL_ALLOWLIST:
+        text = _read_text(root, rel)
+        if text is None:
+            continue
+        if _ruler_references(text) and rel not in BOARD_RULER_ALLOWLIST:
             violations.append(rel)
-    for rel in BOARD_LITERAL_ALLOWLIST:
-        if DOCS_ONLY_PATH not in _read(root, rel):
+    for rel, (_reason, ci_free) in BOARD_RULER_ALLOWLIST.items():
+        text = _read_text(root, rel)
+        if text is None or not _ruler_references(text):
+            violations.append(rel)
+        elif ci_free and _ci_referenced(root, rel):
             violations.append(rel)
     return sorted(set(violations))
 

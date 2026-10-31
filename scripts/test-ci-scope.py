@@ -6,8 +6,11 @@
 对 CI YAML 的内存变异同模式），逐项记 KILLED / SURVIVED / INVALID，全部跑完再汇总。
 
 fix-r1 收窄：白名单只剩 state/board.md 一个精确路径（state/ .42cog/ docs/ 的其余文件是
-重 job 尺子的输入），并新增 board_literal_violations 机检——扫描 scripts/ 与 src/**/tests
-下引用 state/board.md 字面量的 .py / .mjs / .sh，未在允许清单登记即违例。
+重 job 尺子的输入）。fix-r2：① 机检放宽为 board_ruler_violations——扫描 scripts/、src/
+全树与 .github/ 下的所有文本文件（不限扩展名，二进制与 target/ 跳过），匹配 board.md
+token（拼接写法也命中）与 state/* 一类通配，ci_free 登记被 workflow 调用即违例；② 加
+「以 board.md 为前缀但不等于它」的全等负例（.bak / .mdx / 同名目录下）与 equality-to-prefix
+变异负控。
 """
 from __future__ import annotations
 
@@ -124,6 +127,22 @@ def example_42cog_file(module):
           '#1199 .42cog file is not docs-only')
 
 
+def example_board_bak_path(module):
+    # fix-r2（DeepSeek P2-2）：以 board.md 为前缀但不等于它的路径必须判 False，钉死全等。
+    check(not module.paths_are_docs_only(['state/board.md.bak']),
+          '#1199 board.md.bak prefix path is not docs-only')
+
+
+def example_board_mdx_path(module):
+    check(not module.paths_are_docs_only(['state/board.mdx']),
+          '#1199 board.mdx prefix path is not docs-only')
+
+
+def example_board_dir_child_paths(module):
+    check(not module.paths_are_docs_only(['state/board.md', 'state/board.md/x.py']),
+          '#1199 paths under board.md are not docs-only')
+
+
 def example_git_docs_only(module):
     with tempfile.TemporaryDirectory(prefix='ci-scope-pos-') as temp:
         repo, base, tip = repo_with_changes(temp, changes=[('state/board.md', 'x')])
@@ -158,6 +177,27 @@ def example_git_rename(module):
         repo, base, tip = repo_with_changes(temp, rename=('src/main.rs', 'state/board.md'),
                                             board_in_base=False)
         check(not module.docs_only_for_range(repo, base, tip), '#1199 git: rename keeps both sides')
+
+
+def example_git_board_backup_file(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-bak-') as temp:
+        repo, base, tip = repo_with_changes(temp, changes=[('state/board.md.bak', 'x')])
+        check(not module.docs_only_for_range(repo, base, tip),
+              '#1199 git: board backup file is not docs-only')
+
+
+def example_git_board_replaced_by_dir(module):
+    # fix-r2（DeepSeek P2-2）的 startswith 回归场景：删掉 board 换成同名目录，diff 两侧
+    # （state/board.md、state/board.md/x.py）都以白名单路径开头，全等必须判 False。
+    with tempfile.TemporaryDirectory(prefix='ci-scope-dir-') as temp:
+        repo, base, _unused = repo_with_changes(temp)
+        (repo / 'state' / 'board.md').unlink()
+        (repo / 'state' / 'board.md' / 'x.py').parent.mkdir(parents=True)
+        (repo / 'state' / 'board.md' / 'x.py').write_text('x\n', encoding='utf-8')
+        run(['git', 'add', '-A'], repo)
+        run(['git', 'commit', '-qm', 'dir'], repo)
+        check(not module.docs_only_for_range(repo, base, head(repo)),
+              '#1199 git: board replaced by a directory is not docs-only')
 
 
 def example_git_board_rename(module):
@@ -243,12 +283,12 @@ def example_main_fail_closed(module):
               '#1199 classifier failure still emits false')
 
 
-# ---------- 机检正负例（board_literal_violations：看守「没有尺子读 state/board.md」） ----------
+# ---------- 机检正负例（board_ruler_violations：看守「没有尺子读 state/board.md」） ----------
 
 def make_registered_tree(temp, module):
     """造一棵「允许清单全部登记在案」的最小合成树，返回树根。"""
     root = Path(temp) / 'root'
-    for rel in module.BOARD_LITERAL_ALLOWLIST:
+    for rel in module.BOARD_RULER_ALLOWLIST:
         target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text('BOARD = "state/board.md"  # 登记在案的引用\n', encoding='utf-8')
@@ -256,14 +296,14 @@ def make_registered_tree(temp, module):
 
 
 def example_scan_real_repo(module):
-    check(module.board_literal_violations(ROOT) == [],
+    check(module.board_ruler_violations(ROOT) == [],
           '#1199 scan: real repo registers every board ruler')
 
 
 def example_scan_allows_registered(module):
     with tempfile.TemporaryDirectory(prefix='ci-scope-reg-') as temp:
         root = make_registered_tree(temp, module)
-        check(module.board_literal_violations(root) == [],
+        check(module.board_ruler_violations(root) == [],
               '#1199 scan: registered board references pass')
 
 
@@ -272,7 +312,7 @@ def example_scan_flags_unregistered(module):
         root = make_registered_tree(temp, module)
         rogue = root / 'scripts' / 'rogue-check.py'
         rogue.write_text("BOARD = 'state/board.md'\n", encoding='utf-8')
-        check(module.board_literal_violations(root) == ['scripts/rogue-check.py'],
+        check(module.board_ruler_violations(root) == ['scripts/rogue-check.py'],
               '#1199 scan: unregistered board ruler is flagged')
 
 
@@ -282,26 +322,82 @@ def example_scan_flags_src_test_ruler(module):
         rogue = root / 'src' / 'pilotdeck-gateway' / 'tests' / 'rogue.mjs'
         rogue.parent.mkdir(parents=True, exist_ok=True)
         rogue.write_text("const board = 'state/board.md';\n", encoding='utf-8')
-        check(module.board_literal_violations(root) == ['src/pilotdeck-gateway/tests/rogue.mjs'],
+        check(module.board_ruler_violations(root) == ['src/pilotdeck-gateway/tests/rogue.mjs'],
               '#1199 scan: src tests ruler is flagged')
+
+
+def example_scan_flags_joined_path_ruler(module):
+    # fix-r2：拼接写法不含完整路径字面量，token 扫描必须命中；顺带钉住 src 全树（不限
+    # tests 目录）与不限扩展名（.rs）。
+    with tempfile.TemporaryDirectory(prefix='ci-scope-join-') as temp:
+        root = make_registered_tree(temp, module)
+        rogue = root / 'src' / 'pilotdeck-gateway' / 'rogue.rs'
+        rogue.parent.mkdir(parents=True, exist_ok=True)
+        rogue.write_text('let board = Path::new("state").join("board.md");\n', encoding='utf-8')
+        check(module.board_ruler_violations(root) == ['src/pilotdeck-gateway/rogue.rs'],
+              '#1199 scan: joined-path board ruler is flagged')
+
+
+def example_scan_flags_github_ruler(module):
+    # fix-r2：workflow 里的内联 run 读 board 也算尺子，.github/ 必须在扫描面里。
+    with tempfile.TemporaryDirectory(prefix='ci-scope-ghr-') as temp:
+        root = make_registered_tree(temp, module)
+        rogue = root / '.github' / 'workflows' / 'gate.yml'
+        rogue.parent.mkdir(parents=True, exist_ok=True)
+        rogue.write_text('on: push\njobs:\n  gate:\n    steps:\n      - run: cksum state/board.md\n',
+                         encoding='utf-8')
+        check(module.board_ruler_violations(root) == ['.github/workflows/gate.yml'],
+              '#1199 scan: .github ruler is flagged')
+
+
+def example_scan_flags_state_glob_ruler(module):
+    # fix-r2：state/*.md 一类通配能读到 board，同样算引用。
+    with tempfile.TemporaryDirectory(prefix='ci-scope-glob-') as temp:
+        root = make_registered_tree(temp, module)
+        rogue = root / 'scripts' / 'rogue-glob.py'
+        rogue.write_text("boards = sorted(glob('state/*.md'))\n", encoding='utf-8')
+        check(module.board_ruler_violations(root) == ['scripts/rogue-glob.py'],
+              '#1199 scan: state/* glob ruler is flagged')
+
+
+def example_scan_flags_ci_run_reader(module):
+    # fix-r2：ci_free 登记（「不在 CI 运行」）被 workflow 调用即违例——前提破了。
+    with tempfile.TemporaryDirectory(prefix='ci-scope-ci-') as temp:
+        root = make_registered_tree(temp, module)
+        workflow = root / '.github' / 'workflows' / 'run.yml'
+        workflow.write_text('on: push\njobs:\n  x:\n    steps:\n      - run: bash scripts/next-task.sh\n',
+                            encoding='utf-8')
+        check(module.board_ruler_violations(root) == ['scripts/next-task.sh'],
+              '#1199 scan: ci-free reader invoked by a workflow is flagged')
 
 
 def example_scan_ignores_out_of_scope(module):
     with tempfile.TemporaryDirectory(prefix='ci-scope-out-') as temp:
         root = make_registered_tree(temp, module)
-        for rel in ('docs/foo.md', 'scripts/notes.txt', 'src/main.rs', 'src/rogue.py'):
+        for rel in ('docs/foo.md', 'notes.txt', 'state/notes.md'):
             target = root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('see state/board.md\n', encoding='utf-8')
-        check(module.board_literal_violations(root) == [],
-              '#1199 scan: out-of-scope files are ignored')
+        check(module.board_ruler_violations(root) == [],
+              '#1199 scan: files outside scripts/ src/ .github/ are ignored')
+
+
+def example_scan_ignores_binary_and_target(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-skip-') as temp:
+        root = make_registered_tree(temp, module)
+        (root / 'scripts' / 'rogue.pyc').write_bytes(b'board.md\x00\x00\x00binary')
+        inside = root / 'scripts' / 'target' / 'rogue.py'
+        inside.parent.mkdir(parents=True, exist_ok=True)
+        inside.write_text("BOARD = 'state/board.md'\n", encoding='utf-8')
+        check(module.board_ruler_violations(root) == [],
+              '#1199 scan: binaries and target/ are skipped')
 
 
 def example_scan_flags_stale_registration(module):
     with tempfile.TemporaryDirectory(prefix='ci-scope-stl-') as temp:
         root = make_registered_tree(temp, module)
         (root / 'scripts' / 'next-task.sh').write_text('# 不再引用 board\n', encoding='utf-8')
-        check(module.board_literal_violations(root) == ['scripts/next-task.sh'],
+        check(module.board_ruler_violations(root) == ['scripts/next-task.sh'],
               '#1199 scan: stale registration is flagged')
 
 
@@ -316,10 +412,15 @@ EXAMPLES = (
     ('#1199 docs/plan file is not docs-only', example_ruler_input_plan),
     ('#1199 state/decisions file is not docs-only', example_ruler_input_decisions),
     ('#1199 .42cog file is not docs-only', example_42cog_file),
+    ('#1199 board.md.bak prefix path is not docs-only', example_board_bak_path),
+    ('#1199 board.mdx prefix path is not docs-only', example_board_mdx_path),
+    ('#1199 paths under board.md are not docs-only', example_board_dir_child_paths),
     ('#1199 git: docs-only range is true', example_git_docs_only),
     ('#1199 git: board plus docs file is not docs-only', example_git_board_plus_docs),
     ('#1199 git: mixed src is not docs-only', example_git_mixed),
     ('#1199 git: .github is not docs-only', example_git_github),
+    ('#1199 git: board backup file is not docs-only', example_git_board_backup_file),
+    ('#1199 git: board replaced by a directory is not docs-only', example_git_board_replaced_by_dir),
     ('#1199 git: rename keeps both sides', example_git_rename),
     ('#1199 git: renaming the board keeps both sides', example_git_board_rename),
     ('#1199 git: deleting only the board stays docs-only', example_git_delete_board),
@@ -336,7 +437,12 @@ EXAMPLES = (
     ('#1199 scan: registered board references pass', example_scan_allows_registered),
     ('#1199 scan: unregistered board ruler is flagged', example_scan_flags_unregistered),
     ('#1199 scan: src tests ruler is flagged', example_scan_flags_src_test_ruler),
-    ('#1199 scan: out-of-scope files are ignored', example_scan_ignores_out_of_scope),
+    ('#1199 scan: joined-path board ruler is flagged', example_scan_flags_joined_path_ruler),
+    ('#1199 scan: .github ruler is flagged', example_scan_flags_github_ruler),
+    ('#1199 scan: state/* glob ruler is flagged', example_scan_flags_state_glob_ruler),
+    ('#1199 scan: ci-free reader invoked by a workflow is flagged', example_scan_flags_ci_run_reader),
+    ('#1199 scan: files outside scripts/ src/ .github/ are ignored', example_scan_ignores_out_of_scope),
+    ('#1199 scan: binaries and target/ are skipped', example_scan_ignores_binary_and_target),
     ('#1199 scan: stale registration is flagged', example_scan_flags_stale_registration),
 )
 
@@ -379,6 +485,10 @@ MUTATIONS = (
      "DOCS_ONLY_PATH = 'state/board.md'",
      "DOCS_ONLY_PATH = 'state/board.mdx'",
      '#1199 board-only paths classify true'),
+    ('equality-to-prefix',
+     'return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)',
+     'return bool(paths) and all(path.startswith(DOCS_ONLY_PATH) for path in paths)',
+     '#1199 board.md.bak prefix path is not docs-only'),
     ('empty-diff-accepted',
      'return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)',
      'return all(path == DOCS_ONLY_PATH for path in paths)',
@@ -400,25 +510,45 @@ MUTATIONS = (
      'return True  # #1199 事件缺 SHA fail-closed',
      '#1199 missing event SHA is fail-closed'),
     ('scan-literal-ignored',
-     'if DOCS_ONLY_PATH in _read(root, rel) and rel not in BOARD_LITERAL_ALLOWLIST:',
-     'if False and rel not in BOARD_LITERAL_ALLOWLIST:',
+     'if _ruler_references(text) and rel not in BOARD_RULER_ALLOWLIST:',
+     'if False and rel not in BOARD_RULER_ALLOWLIST:',
      '#1199 scan: unregistered board ruler is flagged'),
     ('scan-allowlist-bypassed',
-     'if DOCS_ONLY_PATH in _read(root, rel) and rel not in BOARD_LITERAL_ALLOWLIST:',
-     'if DOCS_ONLY_PATH in _read(root, rel):',
+     'if _ruler_references(text) and rel not in BOARD_RULER_ALLOWLIST:',
+     'if _ruler_references(text):',
      '#1199 scan: registered board references pass'),
     ('scan-stale-registration-ignored',
-     'if DOCS_ONLY_PATH not in _read(root, rel):',
+     'if text is None or not _ruler_references(text):',
      'if False:',
      '#1199 scan: stale registration is flagged'),
-    ('scan-drops-src-tests',
-     "if directory == 'src' and 'tests' not in rel.parts:",
-     "if directory == 'src':",
-     '#1199 scan: src tests ruler is flagged'),
-    ('scan-drops-mjs-extension',
-     "RULER_SCAN_EXTENSIONS = ('.py', '.mjs', '.sh')",
-     "RULER_SCAN_EXTENSIONS = ('.py', '.sh')",
-     '#1199 scan: src tests ruler is flagged'),
+    ('scan-token-narrows-to-full-path',
+     'return BOARD_TOKEN in text or bool(STATE_GLOB_PATTERN.search(text))',
+     'return DOCS_ONLY_PATH in text',
+     '#1199 scan: joined-path board ruler is flagged'),
+    ('scan-state-glob-dropped',
+     'return BOARD_TOKEN in text or bool(STATE_GLOB_PATTERN.search(text))',
+     'return BOARD_TOKEN in text',
+     '#1199 scan: state/* glob ruler is flagged'),
+    ('scan-ci-free-assertion-dropped',
+     'elif ci_free and _ci_referenced(root, rel):',
+     'elif False:',
+     '#1199 scan: ci-free reader invoked by a workflow is flagged'),
+    ('scan-drops-github-dir',
+     "for directory in ('scripts', 'src', '.github'):",
+     "for directory in ('scripts', 'src'):",
+     '#1199 scan: .github ruler is flagged'),
+    ('scan-drops-src-tree',
+     "for directory in ('scripts', 'src', '.github'):",
+     "for directory in ('scripts', '.github'):",
+     '#1199 scan: joined-path board ruler is flagged'),
+    ('scan-target-skip-dropped',
+     "if path.is_file() and 'target' not in path.parts:",
+     'if path.is_file():',
+     '#1199 scan: binaries and target/ are skipped'),
+    ('scan-binary-skip-dropped',
+     "return None if b'\\0' in data else data.decode('utf-8', errors='replace')",
+     "return data.decode('utf-8', errors='replace')",
+     '#1199 scan: binaries and target/ are skipped'),
 )
 
 
