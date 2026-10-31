@@ -12,18 +12,26 @@ ROOT = Path(__file__).resolve().parents[5]
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 NATIVE_ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_archive.rs'
 REGRESSION = ROOT / 'src/pilotdeck-gateway/src/native_process/metadata_cwd_tests.rs'
-LEDGER = ROOT / 'specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001.md'
+# fix-r3 (review P1-3): the six admission cells bind to the correction entry's
+# explicit admission lines, so the drift mutant targets that file.
+LEDGER = ROOT / 'specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md'
+BASELINE = ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs'
+MASKS = ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs'
+MASK_TABLE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/_shared/regeneration-masks.tsv'
 ORACLE = Path(__file__).resolve().parent / 'oracle.json'
 PREFIX = 'native_process::tests::metadata_cwd::'
 MUTATIONS = [
-    ('manifest-no-fallback', REQUESTS,
-     'Ok("native_archive_manifest"', 'Ok("disabled_archive_manifest"',
+    # fix-r3 (review P3-7): the three per-method gates share
+    # native_archive::ARCHIVE_METHODS, so the per-method mutants retire the
+    # shared list itself.
+    ('manifest-no-fallback', NATIVE_ARCHIVE,
+     '"native_archive_manifest",', '"disabled_archive_manifest",',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    ('entries-no-fallback', REQUESTS,
-     '| "native_archive_entries"', '| "disabled_archive_entries"',
+    ('entries-no-fallback', NATIVE_ARCHIVE,
+     '"native_archive_entries",', '"disabled_archive_entries",',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    ('artifact-no-fallback', REQUESTS,
-     '| "native_archive_artifact")', '| "disabled_archive_artifact")',
+    ('artifact-no-fallback', NATIVE_ARCHIVE,
+     '"native_archive_artifact",', '"disabled_archive_artifact",',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
     ('null-not-defaulted', NATIVE_ARCHIVE,
      'None | Some(JsValue::Undefined | JsValue::Null)', 'None | Some(JsValue::Undefined)',
@@ -67,13 +75,16 @@ MUTATIONS = [
      '"name": "manifest_missing_deleted",\n      "method": "manifest",\n      "key": "missing",\n      "cwd": "deleted",\n      "cwdReadable": true,',
      'archive_matrix_matches_ts', '#1154 archive cwd state dimension'),
     ('ledger-admission-drift', LEDGER,
-     'The isolated native process serves only its configured project.',
-     'The isolated native process admits only its own project.',
+     'admission-message: The isolated native process serves only its configured project.',
+     'admission-message: The isolated native process admits only its own project.',
      'archive_matrix_matches_ts',
      '#1154 archive admission expectation stays bound to its ledger'),
 ]
 
 if __name__ == '__main__':
+    # fix-r3 (review P2-5): the oracle_bounded precheck's baseline module and
+    # the shared mask table are judges and stay guarded.
     raise SystemExit(matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
         passed_count=1, child_count=36, exact=True,
-        paths=[REQUESTS, NATIVE_ARCHIVE, REGRESSION, LEDGER, ORACLE]))
+        paths=[REQUESTS, NATIVE_ARCHIVE, REGRESSION, LEDGER, ORACLE,
+               BASELINE, MASKS, MASK_TABLE]))
