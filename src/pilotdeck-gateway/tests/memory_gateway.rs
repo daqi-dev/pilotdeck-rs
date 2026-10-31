@@ -9,7 +9,7 @@
 mod baseline;
 
 use pilotdeck_gateway::runtime::memory::{
-    MemoryManagementService, MemoryProviderError, ProjectMemoryRegistry,
+    MemoryManagementService, MemoryProjection, MemoryProviderError, ProjectMemoryRegistry,
     gateway::{MemoryDispatch, MemoryGateway},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
@@ -125,7 +125,7 @@ fn gateway_replays_real_ts_wrapper_oracle() {
         .expect("#1214 gatewayCases must be an array");
     assert_eq!(
         cases.len(),
-        8,
+        9,
         "#1214 the committed gateway case corpus is pinned"
     );
     let mut replayed_steps = 0;
@@ -237,7 +237,7 @@ fn gateway_replays_real_ts_wrapper_oracle() {
         }
     }
     assert_eq!(
-        replayed_steps, 50,
+        replayed_steps, 66,
         "#1214 the committed gateway step corpus is pinned"
     );
 }
@@ -246,4 +246,88 @@ fn gateway_replays_real_ts_wrapper_oracle() {
 #[ignore = "#280 run with PDRS_BASELINE; regenerates the committed oracle byte-for-byte"]
 fn memory_gateway_fixture_regenerates_identically() {
     baseline::regenerates_identically("memory-gateway");
+}
+
+/// A registry whose provider hits the R19 host boundary: every projection
+/// outcome must surface as `Forward`, not a synthesized error response.
+struct HostBoundaryRegistry;
+impl ProjectMemoryRegistry for HostBoundaryRegistry {
+    fn resolve_project_key(
+        &self,
+        _project_key: &JsString,
+    ) -> Result<JsString, MemoryProviderError> {
+        Err(MemoryProviderError::host_required())
+    }
+    fn memory_management(
+        &self,
+        _project_key: &JsString,
+    ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn dispatch_forwards_requires_host_boundary() {
+    let gateway = MemoryGateway::new(
+        Arc::new(HostBoundaryRegistry) as Arc<dyn ProjectMemoryRegistry>,
+        FALLBACK,
+    );
+    let list = gateway.dispatch(
+        "memory_list",
+        &parse_json(r#"{"projectKey":"/p"}"#).expect("#1214 Forward test JSON must parse"),
+    );
+    assert_eq!(
+        list,
+        Some(MemoryDispatch::Forward),
+        "#1214 memory_list must forward a requires_host boundary to the Node host"
+    );
+    let wipe = gateway.dispatch(
+        "memory_wipe",
+        &parse_json(r#"{"projectKey":"/p"}"#).expect("#1214 Forward test JSON must parse"),
+    );
+    assert_eq!(
+        wipe,
+        Some(MemoryDispatch::Forward),
+        "#1214 memory_wipe must forward a requires_host boundary to the Node host"
+    );
+}
+
+#[test]
+fn from_projection_serves_both_methods() {
+    let calls: Arc<Mutex<Vec<JsValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let projection = MemoryProjection::new(
+        Arc::new(GatewayRegistry {
+            calls: Arc::clone(&calls),
+            management: Some(Arc::new(GatewayManagement {
+                calls: Arc::clone(&calls),
+                items: Vec::new(),
+            })),
+            known_projects: None,
+        }) as Arc<dyn ProjectMemoryRegistry>,
+        FALLBACK,
+    );
+    let gateway = MemoryGateway::from_projection(projection);
+    let list = gateway.dispatch(
+        "memory_list",
+        &parse_json(r#"{"projectKey":"/p"}"#).expect("#1214 from_projection JSON must parse"),
+    );
+    assert_eq!(
+        list,
+        Some(MemoryDispatch::Response(
+            parse_json(r#"{"items":[]}"#).expect("#1214 from_projection expected must parse")
+        )),
+        "#1214 from_projection must serve memory_list through the wired projection"
+    );
+    let wipe = gateway.dispatch(
+        "memory_wipe",
+        &parse_json(r#"{"projectKey":"/p"}"#).expect("#1214 from_projection JSON must parse"),
+    );
+    assert_eq!(
+        wipe,
+        Some(MemoryDispatch::Response(
+            parse_json(r#"{"wiped":true,"scope":"project"}"#)
+                .expect("#1214 from_projection expected must parse")
+        )),
+        "#1214 from_projection must serve memory_wipe through the wired projection"
+    );
 }

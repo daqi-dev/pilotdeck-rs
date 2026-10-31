@@ -1897,6 +1897,308 @@
           ]
         }
       ]
+    },
+    {
+      "name": "whitespace-trim-boundary",
+      "capability": "available",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        },
+        {
+          "id": "g",
+          "sourceSessionKey": "a\ud800b"
+        }
+      ],
+      "steps": [
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "﻿"
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "　"
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "᠎"
+          },
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"b\",\"title\":\"no-session\"},{\"id\":\"c\",\"sourceSessionKey\":\"s2\"},{\"id\":\"d\",\"sourceSessionKey\":1},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"},{\"id\":\"f\",\"sourceSessionKey\":\"\"},{\"id\":\"g\",\"sourceSessionKey\":\"a\\ud800b\"}]}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "᠎"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:᠎"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "​"
+          },
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"b\",\"title\":\"no-session\"},{\"id\":\"c\",\"sourceSessionKey\":\"s2\"},{\"id\":\"d\",\"sourceSessionKey\":1},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"},{\"id\":\"f\",\"sourceSessionKey\":\"\"},{\"id\":\"g\",\"sourceSessionKey\":\"a\\ud800b\"}]}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "​"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:​"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SESSION_KEY",
+            "message": "sessionKey must be non-empty when provided."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": "﻿"
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SESSION_KEY",
+            "message": "sessionKey must be non-empty when provided."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SESSION_KEY",
+            "message": "sessionKey must be non-empty when provided."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SESSION_KEY",
+            "message": "sessionKey must be non-empty when provided."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": "　"
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SESSION_KEY",
+            "message": "sessionKey must be non-empty when provided."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": "᠎"
+          },
+          "resultJson": "{\"items\":[]}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": "​"
+          },
+          "resultJson": "{\"items\":[]}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "memoryWipe",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session",
+            "sessionKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SESSION_KEY",
+            "message": "sessionKey must be non-empty when provided."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryWipe",
+          "params": "object",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session",
+            "sessionKey": "​"
+          },
+          "resultJson": "{\"wiped\":true,\"scope\":\"session\"}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clearSession",
+              "sessionKey": "​"
+            }
+          ]
+        }
+      ]
     }
   ]
 }
