@@ -384,10 +384,39 @@ regeneration!(spill_lease_regenerates_identically, "spill-lease");
 regeneration!(stats_cwd_regenerates_identically, "stats-cwd");
 regeneration!(stats_dateparse_regenerates_identically, "stats-dateparse");
 regeneration!(steer_regenerates_identically, "steer");
-regeneration!(
-    surrogate_collation_matrix_regenerates_identically,
-    "surrogate-collation-matrix"
-);
+// #132a fix-r1: not the shared macro — the goldens are ICU-sensitive (decision
+// card 2026-10-31). Node v22.22.0 exists with ICU 77.1 (source-built ~/opt
+// hosts) and 78.2 (homebrew, the recording baseline), so the guard pins the
+// ICU build up front and BLOCKs with its own message instead of failing the
+// byte comparison as a vague positive-control miss.
+#[test]
+#[ignore = "requires fixed PilotDeck baseline and Node v22.22.0 with ICU 78.2"]
+fn surrogate_collation_matrix_regenerates_identically() {
+    let version = baseline::node_command()
+        .arg("--version")
+        .output()
+        .expect("#132a Node version");
+    assert!(
+        version.status.success(),
+        "#132a Node version command failed"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        "v22.22.0",
+        "#132a pinned Node runtime"
+    );
+    let icu = baseline::node_command()
+        .args(["-p", "process.versions.icu"])
+        .output()
+        .expect("#132a Node ICU probe");
+    assert!(icu.status.success(), "#132a Node ICU probe failed");
+    assert_eq!(
+        String::from_utf8_lossy(&icu.stdout).trim(),
+        "78.2",
+        "#132a BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline)"
+    );
+    baseline::regenerates_identically("surrogate-collation-matrix");
+}
 regeneration!(task_budget_regenerates_identically, "task-budget");
 regeneration!(token_accounting_regenerates_identically, "token-accounting");
 regeneration!(token_stats_regenerates_identically, "token-stats");
@@ -1171,6 +1200,7 @@ fn surrogate_collation_matrix_covers_locale_and_key_classes() {
     );
     let mut control_orders: Vec<Vec<String>> = Vec::new();
     let mut control_winners: Vec<String> = Vec::new();
+    let mut mixed_orders: Vec<Vec<String>> = Vec::new();
     for (raw_row, (lang, resolved)) in rows.iter().zip(locales) {
         let row = object(raw_row.get(), "locale row");
         assert_eq!(
@@ -1365,9 +1395,13 @@ fn surrogate_collation_matrix_covers_locale_and_key_classes() {
                 "#132 session-{name} winner must agree with the catalog comparator"
             );
             if name == "lone-high" || name == "lone-low" {
+                // #132a fix-r1: the catalog inputs are already in the recorded
+                // order, so an U+FFFD fold of every lone surrogate leaves this
+                // stable order untouched — the fold is what the session winner
+                // above detects, not this catalog comparison.
                 assert_eq!(
                     order, keys,
-                    "#132 lone surrogates must order by code point, not fold to U+FFFD"
+                    "#132 lone surrogate catalog order is the recorded code-point order; a U+FFFD fold is caught by the session winner"
                 );
             }
             if name == "band-boundary" {
@@ -1377,22 +1411,56 @@ fn surrogate_collation_matrix_covers_locale_and_key_classes() {
                     "#132 the surrogate band must sort below U+FFFD"
                 );
             }
+            if name == "fffd-vs-pair" {
+                assert_eq!(
+                    order,
+                    vec!["😀", "\u{10FFFF}", "\u{FFFD}"],
+                    "#132 the replacement character must sort after astral code points"
+                );
+            }
+            if name == "valid-pair" {
+                assert_eq!(
+                    order,
+                    vec!["😀", "😁", "𠀀", "\u{10FFFF}"],
+                    "#132 valid surrogate pairs must order by code point"
+                );
+            }
             if name == "embedded-fold" {
                 assert_eq!(
                     order,
                     vec!["ab", r"a\ud800b", r"a\udc00b", "a\u{FFFD}b"],
-                    "#132 embedded lone surrogates must stay distinct and below U+FFFD"
+                    "#132 embedded lone surrogates stay distinct and below U+FFFD in the recorded order; a fold tie is caught by the session winner"
+                );
+            }
+            if name == "cjk-embedded-fold" {
+                assert_eq!(
+                    order,
+                    vec!["中", r"中\ud800", r"中\udc00", "中\u{FFFD}"],
+                    "#132 cjk-embedded-fold catalog order is the recorded stable order; a U+FFFD fold is caught by the session winner"
+                );
+            }
+            if name == "pair-interpretation" {
+                // A UTF-16 code-unit comparator orders the lone-pair case
+                // [\ud800\ud801, 𐀀, \udc00\ud800] — same permutation, same
+                // winner, only this exact order catches it (#132a fix-r1).
+                assert_eq!(
+                    order,
+                    vec![r"𐀀", r"\ud800\ud801", r"\udc00\ud800"],
+                    "#132 a surrogate pair must order by code point, not by UTF-16 code unit"
                 );
             }
             if name == "mixed-uniform" {
                 // assigned < lone surrogates (code-point order) < U+FFFD, in
-                // every locale — the tail an FFFD fold would collapse.
+                // every locale. The stable sort also keeps this tail under an
+                // U+FFFD fold (the input is already in that order), so the
+                // session winner is the fold detector here too.
                 let tail: Vec<String> = order[order.len() - 5..].to_vec();
                 assert_eq!(
                     tail,
                     vec![r"\ud800", r"\ud801", r"\udc00", r"\udc01", "\u{FFFD}"],
                     "#132 assigned-then-surrogate-then-FFFD tail must hold in {lang}"
                 );
+                mixed_orders.push(order.clone());
             }
             if name == "locale-control" {
                 control_orders.push(order.clone());
@@ -1421,5 +1489,28 @@ fn surrogate_collation_matrix_covers_locale_and_key_classes() {
     assert_ne!(
         control_winners[1], control_winners[3],
         "#132 zh_CN vs sv_SE control winner must differ"
+    );
+    // #132a fix-r1 (review opus P2): de_DE and ja_JP record the same
+    // locale-control order as en_US under ICU 78.2, so those rows carry no
+    // divergence evidence of their own — pin that expectation (and ja_JP's
+    // mixed-uniform divergence, which is its arrival evidence) so a
+    // re-recording on a different ICU fails here loudly instead of silently
+    // weakening what the control proves. de_DE diverges nowhere in the matrix;
+    // its arrival rests on resolvedLocale alone.
+    assert_eq!(
+        control_orders[2], control_orders[0],
+        "#132 de_DE control order must match en_US; its arrival rests on resolvedLocale alone"
+    );
+    assert_eq!(
+        control_orders[4], control_orders[0],
+        "#132 ja_JP control order must match en_US (ICU 78.2)"
+    );
+    assert_ne!(
+        mixed_orders[4], mixed_orders[0],
+        "#132 ja_JP vs en_US mixed order must differ (\u{4e2d} before \u{20000})"
+    );
+    assert_eq!(
+        mixed_orders[2], mixed_orders[0],
+        "#132 de_DE mixed order must match en_US (ICU 78.2)"
     );
 }

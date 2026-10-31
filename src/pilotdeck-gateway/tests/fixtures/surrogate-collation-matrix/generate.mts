@@ -13,6 +13,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 
 assert.equal(process.version, 'v22.22.0');
+// #132a fix-r1: the goldens are ICU-sensitive. Node 22.22.0 exists with ICU
+// 77.1 (source-built ~/opt) and 78.2 (homebrew, the recording baseline,
+// decision card 2026-10-31); a mismatch must BLOCK with its own message
+// instead of failing the byte comparison as a vague positive-control miss.
+assert.equal(process.versions.icu, '78.2',
+  'BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline, decision card 2026-10-31)');
 assert.ok(process.env.PDRS_BASELINE, 'PDRS_BASELINE must point at the PilotDeck checkout');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const sources = ['src/gateway/dialog/modelCatalog.ts', 'src/gateway/server/GatewayWsConnection.ts',
@@ -25,10 +31,14 @@ const locales = ['en_US.UTF-8', 'zh_CN.UTF-8', 'de_DE.UTF-8', 'sv_SE.UTF-8', 'ja
 const resolved = new Map([['en_US.UTF-8', 'en-US'], ['zh_CN.UTF-8', 'zh-CN'], ['de_DE.UTF-8', 'de-DE'], ['sv_SE.UTF-8', 'sv-SE'], ['ja_JP.UTF-8', 'ja-JP']]);
 // Key classes from #132: distinct lone highs/lows, the high/low band boundary,
 // U+FFFD, valid pairs, and mixed Unicode. `locale-control` has no surrogate;
-// its order differs per locale and proves the child's locale reached the sort.
-// A fold of every lone surrogate to U+FFFD (ICU4X compare_utf16) would make
-// `embedded-fold` / `cjk-embedded-fold` ties, so the recorded orders are the
-// evidence the future native comparator must reproduce byte-exactly.
+// its order differs per locale and proves the child's locale reached the sort
+// (de_DE / ja_JP record the same order as en_US under ICU 78.2, so their
+// arrival rests on resolvedLocale; ja_JP also diverges in mixed-uniform).
+// A fold of every lone surrogate to U+FFFD (ICU4X compare_utf16) ties
+// `embedded-fold` / `cjk-embedded-fold`, but the catalog inputs are already in
+// the recorded order, so the stable sort keeps it and the catalog frames alone
+// cannot expose a fold: the reversed session input plus w<i> tags is the fold
+// detector, and both frames are recorded.
 const cases: [string, string[]][] = [
   ['lone-high', ['\ud800', '\ud801', '\ud807', '\udbff']],
   ['lone-low', ['\udc00', '\udc01', '\udc07', '\udfff']],
@@ -45,7 +55,6 @@ const cases: [string, string[]][] = [
 if (process.argv[2] === '--child') {
   const lang = process.argv[3];
   assert.ok(locales.includes(lang), `unknown locale ${lang}`);
-  assert.equal(process.versions.icu, '78.2');
   const root = mkdtempSync(join(tmpdir(), 'pdrs-surrogate-matrix-'));
   const isolation = join(root, 'isolation');
   mkdirSync(join(isolation, 'home'), { recursive: true });
