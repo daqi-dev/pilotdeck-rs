@@ -3,8 +3,9 @@
 """#1168 negative controls: every signal guarantee in run.py is load-bearing.
 
 Applies one source mutation at a time to the committed run.py under
-negative_process.mutating_sources and requires the targeted real-signal cell
-in test_signals.py to fail with its own #1168 message (KILLED). Run from the
+negative_process.mutating_sources and requires the targeted cell in
+test_signals.py (a real-signal phase or a fix-r2 unit cell) to fail with its
+own #1168 message (KILLED). Run from the
 repository root after the branch is committed (mutating_sources only mutates
 HEAD-identical sources), giving a fresh evidence directory:
 
@@ -53,7 +54,7 @@ SIGNALS = ('2', '15')  # SIGINT, SIGTERM, one verdict per signal cell
 mutations = [
     ('no-cancel-handler', 'test_probe_running',
      ('#1168 signal child completes',
-      '#1168 a cancelled capture publishes a FAIL report naming the signal'),
+      '#1168 a cancelled capture publishes a report with status and moduleMatrixStatus FAIL naming the signal'),
      [('''    with cancel_signals():
         try:
             with parity_lock():
@@ -119,10 +120,57 @@ mutations = [
        '''        if isinstance(None, KeyboardInterrupt):
             return''')]),
     ('no-cancel-report', 'test_cleanup_close',
-     ('#1168 a cancelled capture publishes a FAIL report naming the signal',),
+     ('#1168 a cancelled capture publishes a report with status and moduleMatrixStatus FAIL naming the signal',),
      [('''            publish_cancelled(args.output, error)
             return 1''',
        '''            return 1''')]),
+    ('cleanup-interrupt-ignored', 'test_cleanup_interrupted',
+     ('#1168 an interrupted cleanup never audits PASS',),
+     [('''                except BaseException as error:
+                    # fix-r2: KeyboardInterrupt is not an Exception; an
+                    # interrupt landing inside this window (a compromised
+                    # shield or any BaseException) must not audit PASS —
+                    # the lease below would honestly stay cleanupPending
+                    # while this audit lied. Re-raise keeps the unwind.
+                    cleanup_error = str(error) or type(error).__name__
+                    raise''',
+       '''                except Exception as error:
+                    # fix-r2: KeyboardInterrupt is not an Exception; an
+                    # interrupt landing inside this window (a compromised
+                    # shield or any BaseException) must not audit PASS —
+                    # the lease below would honestly stay cleanupPending
+                    # while this audit lied. Re-raise keeps the unwind.
+                    cleanup_error = str(error) or type(error).__name__
+                    raise''')]),
+    ('cancel-report-keeps-matrix', 'test_publish_cancelled_flips_matrix_status',
+     ('#1168 the cancellation report flips status and moduleMatrixStatus',),
+     [('''    report['status'], report['moduleMatrixStatus'] = 'FAIL', 'FAIL'
+    report['failure'] = reason''',
+       '''    report['status'] = 'FAIL'
+    report['failure'] = reason''')]),
+    ('torn-report-escapes', 'test_publish_cancelled_torn_report',
+     ('#1168 a torn report.json is replaced, never trusted nor escaped',),
+     [('''    except (OSError, ValueError):
+        # JSONDecodeError and UnicodeDecodeError are ValueErrors: a report
+        # torn by a killed writer is replaced below, never propagated.
+        report = {}''',
+       '''    except OSError:
+        # JSONDecodeError and UnicodeDecodeError are ValueErrors: a report
+        # torn by a killed writer is replaced below, never propagated.
+        report = {}''')]),
+    ('unowned-output-published', 'test_publish_cancelled_respects_ownership',
+     ('#1168 the cancellation backstop never creates the output directory',
+      '#1168 the cancellation backstop never overwrites a directory run() does not own'),
+     [('''    if output not in owned_output:
+        return''',
+       '''    if output not in owned_output:
+        output.mkdir(parents=True, exist_ok=True)''')]),
+    ('save-non-atomic', 'test_save_atomic_under_interrupt',
+     ('#1168 a mid-write cancellation never tears the published file',),
+     [('''    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\\n')
+    temporary.replace(path)''',
+       '''    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\\n')''')]),
 ]
 
 

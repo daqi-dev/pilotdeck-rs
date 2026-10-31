@@ -50,9 +50,20 @@ MODES = ('Rust-sidecar-ts', 'Rust-sidecar-native')
 CASES = ('model-stream', 'provider-error', 'provider-unconfigured', 'token-saver-judge')
 REPEATS = 5
 
+# fix-r2: run() records the output directory it created (its mkdir is
+# exist_ok=False). publish_cancelled may only publish inside that directory:
+# a lease-wait cancellation must not create it (the same --output stays
+# retryable) and must never touch another run's evidence.
+owned_output = []
+
 
 def save(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+    # fix-r2: publish atomically (tmp + rename). A cancellation landing in
+    # the middle of a write must leave the previously published file intact,
+    # never a torn report no later reader can parse.
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+    temporary.replace(path)
 
 
 def digest(path):
@@ -73,7 +84,16 @@ def publish_cancelled(output, error):
     used to exit 1 while report.json still said NOT_RUN/moduleMatrixStatus
     PASS with no cancellation reason. Best effort: when even this write
     fails, exit code 1 remains the authority.
+
+    fix-r2: only a directory run() created may be written. A cancellation
+    from before that mkdir (lease wait) publishes nothing: creating the
+    directory would defeat run()'s exist_ok=False retry contract, and a
+    pre-existing directory belongs to another run's evidence. A previous
+    report that is torn or undecodable is replaced, never trusted, and a
+    parse failure must not escape main() after SIG_IGN.
     """
+    if output not in owned_output:
+        return
     reason = str(error) or type(error).__name__
     report = {}
     path = output / 'report.json'
@@ -82,9 +102,13 @@ def publish_cancelled(output, error):
             loaded = json.loads(path.read_text())
             if isinstance(loaded, dict):
                 report = loaded
-        report['status'], report['moduleMatrixStatus'] = 'FAIL', 'FAIL'
-        report['failure'] = reason
-        output.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError):
+        # JSONDecodeError and UnicodeDecodeError are ValueErrors: a report
+        # torn by a killed writer is replaced below, never propagated.
+        report = {}
+    report['status'], report['moduleMatrixStatus'] = 'FAIL', 'FAIL'
+    report['failure'] = reason
+    try:
         save(path, report)
     except OSError:
         pass
@@ -97,7 +121,9 @@ def cancel_signals():
     #1168: without a handler, SIGTERM terminates the process between the
     probe's spawn and the finally clauses, orphaning the probe's process
     groups and leaving the shared lease cleanupPending until MAX_AGE. Same
-    shape as scripts/native-witness/collect.py lease_signals (#1140).
+    shape as scripts/native-witness/collect.py lease_signals (#1140),
+    except the in-unwind second-raise suppression below: collect.py still
+    re-raises unconditionally (frozen; coordinator follow-up).
     """
     def cancel(signum, _frame):
         # fix-r1 P1-1: while one cancellation is already unwinding, a second
@@ -420,8 +446,13 @@ def run_probe(args, config, directory):
                 try:
                     if child is not None:
                         cleanup_owned(child, owned)
-                except Exception as error:
-                    cleanup_error = str(error)
+                except BaseException as error:
+                    # fix-r2: KeyboardInterrupt is not an Exception; an
+                    # interrupt landing inside this window (a compromised
+                    # shield or any BaseException) must not audit PASS —
+                    # the lease below would honestly stay cleanupPending
+                    # while this audit lied. Re-raise keeps the unwind.
+                    cleanup_error = str(error) or type(error).__name__
                     raise
                 finally:
                     save(directory / 'launch.json', {'argv': command, 'pid': None if child is None else child.pid,
@@ -436,6 +467,9 @@ def run_probe(args, config, directory):
 
 def run(args):
     args.output.mkdir(parents=True, exist_ok=False)
+    # fix-r2: publish_cancelled may only write inside a directory this
+    # process created through the exist_ok=False contract above.
+    owned_output.append(args.output)
     ledger_path = ROOT / 'specs/gateway-coverage/ledger.json'
     ledger = json.loads(ledger_path.read_text())
     methods = [row['method'] for row in ledger['methods']]
