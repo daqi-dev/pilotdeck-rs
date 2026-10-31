@@ -6340,3 +6340,9 @@ async fn pending_owned_session_shutdown_before_first_poll() {
 async fn pending_owned_session_after_executor_shutdown_without_runtime() {
     drop_shutdown_matrix("dead", true).await;
 }
+
+#[test]
+#[ignore = "requires the pinned TS checkout and Node v22.22.0"]
+fn projection_cache_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("session-factory/projection-cache");
+}
