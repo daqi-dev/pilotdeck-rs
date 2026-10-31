@@ -115,9 +115,12 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 关闭帧只应用 `D1-SDK-WS-CLOSE-REASON-001` 的四格单字段例外。
 未处理 rejection 仅按 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` 的八个完整 ID
 接受各自固定的 Rust 单行错误，不匹配或推广 Node 堆栈形状；stdout、退出码、
-abort、连接、监听器和文件树继续严格比较。96 格预期 94 PASS / 2 FAIL；
+abort、连接、监听器和文件树继续严格比较。96 个有效观察格（不含另列的六个 stdin 缺口）预期 94 PASS / 2 FAIL；
 `{run,resume}--unknown-cleanup` 的动态 runId 保留 FAIL。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
+`approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
+新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
+保留精确 `PilotDeckError: <msg>` 行；比较器测试的 hooks 投影直接来自 TS hooks，不以错误文字推导。
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
 
 ```sh
@@ -141,7 +144,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py
 python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
-产品及比较边界负控固定 29 个变异（9 个既有产品变异、12 个既有比较/包装器变异、6 个八格 stderr 边界变异、2 个嵌套子测试变异），完整绑定测试名与单行断言；每项先正控、变异编译、负控、
+产品及比较边界负控固定 34 个变异（9 个既有产品变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异），完整绑定测试名与单行断言；每项先正控、变异编译、负控、
 恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。

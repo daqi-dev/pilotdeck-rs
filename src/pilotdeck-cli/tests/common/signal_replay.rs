@@ -683,7 +683,14 @@ fn approved_signal_stderr(id: &str) -> Option<&'static [u8]> {
 
 fn stderr_matches_for_case(id: &str, ts: &str, rust: &[u8]) -> bool {
     match approved_signal_stderr(id) {
-        Some(expected) => expected == rust,
+        Some(expected) => {
+            let message = std::str::from_utf8(expected)
+                .expect("#1145 approved stderr UTF-8")
+                .strip_suffix('\n')
+                .expect("#1145 approved stderr newline");
+            let exception = format!("PilotDeckError: {message}\n");
+            expected == rust && ts.split_inclusive('\n').any(|line| line == exception)
+        }
         None => stderr_matches(ts, rust),
     }
 }
@@ -1349,7 +1356,19 @@ mod comparison_tests {
         );
     }
 
-    // Independent expected identities: adding a ninth production entry must fail.
+    // Independent scope, verbatim from D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.
+    const APPROVED_SIGNAL_IDS: [&str; 8] = [
+        "run--abort-error-sigint",
+        "run--abort-error-sigterm",
+        "resume--abort-error-sigint",
+        "resume--abort-error-sigterm",
+        "run--terminal-during-abort-final-sigint",
+        "run--terminal-during-abort-final-sigterm",
+        "resume--terminal-during-abort-final-sigint",
+        "resume--terminal-during-abort-final-sigterm",
+    ];
+
+    // Independent byte expectations must not reuse the implementation table.
     const UNHANDLED_CASES: [(&str, &[u8]); 8] = [
         ("run--abort-error-sigint", b"d1 fixture rejected\n"),
         ("run--abort-error-sigterm", b"d1 fixture rejected\n"),
@@ -1372,6 +1391,234 @@ mod comparison_tests {
             b"Gateway client closed.\n",
         ),
     ];
+
+    // Same TokenStream lexer and literal policy as gateway/tests/unsafe_boundary.rs.
+    // This is intentionally a narrow projection, not another Rust lexer: any
+    // function/arm shape outside the literal match below fails closed.
+    fn approved_match_ids(source: &str) -> Option<BTreeSet<String>> {
+        use proc_macro2::{Delimiter, TokenStream, TokenTree};
+        use std::str::FromStr;
+
+        fn plain_string(literal: &str) -> Option<String> {
+            if literal.starts_with('"') {
+                let value = literal.strip_prefix('"')?.strip_suffix('"')?;
+                return (!value.contains(['\\', '"'])).then(|| value.to_owned());
+            }
+            let rest = literal.strip_prefix('r')?;
+            let hashes = rest.bytes().take_while(|byte| *byte == b'#').count();
+            rest[hashes..]
+                .strip_prefix('"')?
+                .strip_suffix(&format!("\"{}", "#".repeat(hashes)))
+                .map(str::to_owned)
+        }
+
+        let tokens: Vec<_> = TokenStream::from_str(source).ok()?.into_iter().collect();
+        let functions: Vec<_> = tokens
+            .windows(2)
+            .enumerate()
+            .filter_map(|(i, pair)| {
+                matches!(pair, [TokenTree::Ident(keyword), TokenTree::Ident(name)]
+                if keyword == "fn" && name == "approved_signal_stderr")
+                .then_some(i)
+            })
+            .collect();
+        let [start] = functions.as_slice() else {
+            return None;
+        };
+        // The registered function is an unqualified top-level item following
+        // another function. Reject attributes/qualifiers so a cfg-disabled
+        // decoy cannot hide a macro-generated implementation from this guard.
+        if *start > 0
+            && !matches!(&tokens[start - 1], TokenTree::Group(group) if group.delimiter() == Delimiter::Brace)
+        {
+            return None;
+        }
+        let body = tokens[start + 2..].iter().find_map(|token| match token {
+            TokenTree::Group(group) if group.delimiter() == Delimiter::Brace => Some(group),
+            _ => None,
+        })?;
+        let body: Vec<_> = body.stream().into_iter().collect();
+        let [
+            TokenTree::Ident(keyword),
+            TokenTree::Ident(input),
+            TokenTree::Group(arms),
+        ] = body.as_slice()
+        else {
+            return None;
+        };
+        if keyword != "match" || input != "id" || arms.delimiter() != Delimiter::Brace {
+            return None;
+        }
+        let tokens: Vec<_> = arms.stream().into_iter().collect();
+        let mut ids = BTreeSet::new();
+        let mut fallback = false;
+        for arm in tokens.split(|token| matches!(token, TokenTree::Punct(p) if p.as_char() == ','))
+        {
+            if arm.is_empty() {
+                continue;
+            }
+            if fallback {
+                return None;
+            }
+            let arrow = arm
+                .iter()
+                .position(|token| matches!(token, TokenTree::Punct(p) if p.as_char() == '='))?;
+            if !matches!(arm.get(arrow + 1), Some(TokenTree::Punct(p)) if p.as_char() == '>') {
+                return None;
+            }
+            let (pattern, result) = (&arm[..arrow], &arm[arrow + 2..]);
+            if matches!(pattern, [TokenTree::Ident(name)] if name == "_") {
+                if !matches!(result, [TokenTree::Ident(name)] if name == "None") {
+                    return None;
+                }
+                fallback = true;
+                continue;
+            }
+            if !matches!(result, [TokenTree::Ident(name), TokenTree::Group(args)]
+                if name == "Some" && args.delimiter() == Delimiter::Parenthesis
+                    && matches!(args.stream().into_iter().collect::<Vec<_>>().as_slice(), [TokenTree::Literal(_)]))
+            {
+                return None;
+            }
+            for part in
+                pattern.split(|token| matches!(token, TokenTree::Punct(p) if p.as_char() == '|'))
+            {
+                let [TokenTree::Literal(literal)] = part else {
+                    return None;
+                };
+                if !ids.insert(plain_string(&literal.to_string())?) {
+                    return None;
+                }
+            }
+        }
+        fallback.then_some(ids)
+    }
+
+    #[test]
+    fn approved_stderr_match_domain_is_exact() {
+        let expected: BTreeSet<_> = APPROVED_SIGNAL_IDS.map(str::to_owned).into_iter().collect();
+        assert_eq!(expected.len(), 8, "#1145 eight unique approved stderr IDs");
+        let ids = approved_match_ids(include_str!("signal_replay.rs"))
+            .expect("#1145 approved stderr match syntax must be explicit and literal");
+        assert_eq!(
+            ids, expected,
+            "#1145 approved stderr match arms equal exactly eight IDs"
+        );
+        let cases: BTreeSet<_> = UNHANDLED_CASES
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(
+            cases, expected,
+            "#1145 rejection byte cases equal approved ID scope"
+        );
+        let spec = include_str!(
+            "../../../../specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
+        );
+        let documented: BTreeSet<_> = spec
+            .lines()
+            .filter_map(|line| {
+                line.strip_prefix("- `")?
+                    .strip_suffix('`')
+                    .map(str::to_owned)
+            })
+            .collect();
+        assert_eq!(
+            documented, expected,
+            "#1145 approved stderr IDs equal registered difference"
+        );
+    }
+
+    #[test]
+    fn approved_stderr_match_parser_fails_closed() {
+        let source = include_str!("signal_replay.rs");
+        let approved = approved_match_ids(source).expect("#1145 scope parser positive");
+        let arm = concat!("\"run--", "abort-error-sigint\"");
+        let raw = source.replacen(
+            arm,
+            "/* outer /* nested */ comment */ r##\"run--abort-error-sigint\"##",
+            1,
+        );
+        assert_eq!(
+            approved_match_ids(&raw),
+            Some(approved.clone()),
+            "#1145 scope lexer handles raw literals and nested comments"
+        );
+        for (old, new) in [
+            (
+                "fn approved_signal_stderr(",
+                "#[cfg(any())] fn approved_signal_stderr(",
+            ),
+            (arm, "\"run--abort-error-sigint\\x00\""),
+            (arm, "some_macro!()"),
+            (arm, "\"run--abort-error-sigterm\""),
+            ("match id {", "match other {"),
+            ("_ => None,", "_ => Some(b\"unexpected\"),"),
+            ("_ => None,", ""),
+            ("_ => None,", "_ if false => None,"),
+            ("_ => None,", "_ => None, \"later\" => Some(b\"later\"),"),
+        ] {
+            // Target the actual function body, not unrelated matches before it.
+            let start = source
+                .find(concat!("fn approved_", "signal_stderr("))
+                .expect("#1145 scope parser function anchor");
+            let changed = format!(
+                "{}{}",
+                &source[..start],
+                source[start..].replacen(old, new, 1)
+            );
+            assert_ne!(
+                changed, source,
+                "#1145 scope parser mutation changes source"
+            );
+            assert!(
+                approved_match_ids(&changed).is_none(),
+                "#1145 scope parser rejects unsupported arm: {new}"
+            );
+        }
+        assert!(
+            approved_match_ids("fn (").is_none(),
+            "#1145 scope lexer failure is closed"
+        );
+        assert_eq!(
+            approved_match_ids(source),
+            Some(approved),
+            "#1145 scope parser restored positive"
+        );
+    }
+
+    #[test]
+    fn unhandled_rejection_requires_original_error() {
+        for (id, message) in UNHANDLED_CASES {
+            let raw = original(id);
+            assert!(
+                stderr_matches_for_case(id, raw, message),
+                "#1145 TS rejection binding positive: {id}"
+            );
+            let text = std::str::from_utf8(message).expect("#1145 TS rejection expected UTF-8");
+            let line = format!("PilotDeckError: {text}");
+            assert!(
+                raw.contains(&line),
+                "#1145 TS rejection original error line: {id}"
+            );
+            for bad in [
+                String::new(),
+                raw.replace(&line, "PilotDeckError: changed error\n"),
+                raw.replace(&line, ""),
+                raw.replace(&line, &format!("extra {line}")),
+                raw.replace(&line, &line.replace('\n', " suffix\n")),
+            ] {
+                assert!(
+                    !stderr_matches_for_case(id, &bad, message),
+                    "#1145 rejection requires exact original TS error: {id}"
+                );
+            }
+            assert!(
+                stderr_matches_for_case(id, raw, message),
+                "#1145 TS rejection binding restored: {id}"
+            );
+        }
+    }
 
     #[test]
     fn unhandled_rejection_stderr_is_exact_and_scoped() {
@@ -1420,10 +1667,12 @@ mod comparison_tests {
             "other--abort-error-sigint",
             "run--terminal-during-abort-final-sighup",
         ] {
-            assert!(
-                !stderr_matches_for_case(id, original(UNHANDLED_CASES[0].0), UNHANDLED_CASES[0].1),
-                "#1145 unregistered unhandled rejection cannot pass: {id}"
-            );
+            for (source, message) in UNHANDLED_CASES {
+                assert!(
+                    !stderr_matches_for_case(id, original(source), message),
+                    "#1145 unregistered unhandled rejection cannot pass: {id}"
+                );
+            }
         }
         for (id, message) in UNHANDLED_CASES {
             assert!(
@@ -1462,9 +1711,17 @@ mod comparison_tests {
                 .as_array_mut()
                 .expect("#1145 rejection surface close array")
                 .sort_by_key(|row| row["connection"].as_u64());
-            // Abort rejection crashes before finally; final-terminal consumption
-            // reaches finally and removes both listeners in the real TS capture.
-            let removed = message == b"Gateway client closed.\n";
+            // Project the recorded TS hooks into the Rust comparison shape.
+            // This is comparator input, not a claim to have replayed Rust here.
+            let removed = expected["hooks"]
+                .as_array()
+                .expect("#1145 rejection surface TS hooks")
+                .iter()
+                .any(|row| {
+                    row["hook"]["kind"] == "listener-removed"
+                        && row["hook"]["listeners"]["SIGINT"] == 0
+                        && row["hook"]["listeners"]["SIGTERM"] == 0
+                });
             actual["hooks"] = if removed {
                 json!([{"kind":"listeners-removed"}])
             } else {
