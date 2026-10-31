@@ -63,11 +63,10 @@ MUTATION_STATUS = {'KILLED': 'PASS', 'SURVIVED': 'FAIL', 'INVALID': 'BLOCKED'}
 
 
 def aggregate_status(*children):
-    """Most pessimistic child ``(status, exit_code)``; unknown -> FAIL/1."""
+    """Most pessimistic child ``(status, exit_code)``; empty/unknown -> FAIL/1."""
     known = [child for child in children if child is not None]
-    # Empty / all-None stays PASS/0 as on main: changing it is a scoring-
-    # semantics change of a frozen ruler and needs human approval (#952).
-    if any(child not in BATCH_STATUS_ORDER for child in known):
+    # #952 human-approved A (2026-10-31): no executed children must fail closed.
+    if not known or any(child not in BATCH_STATUS_ORDER for child in known):
         return 'FAIL', BATCH_EXIT_CODES['FAIL']
     status = max(known, key=BATCH_STATUS_ORDER.index, default='PASS')
     return status, BATCH_EXIT_CODES[status]
