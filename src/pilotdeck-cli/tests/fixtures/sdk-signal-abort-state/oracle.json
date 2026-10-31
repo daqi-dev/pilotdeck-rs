@@ -1,7 +1,7 @@
 {
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "nodeVersion": "v22.22.0",
-  "generatorSha256": "27a12511290dabbca592237ad922d4faa24a2f7cab2de5f3db0a7327a01f0408",
+  "generatorSha256": "e2ed8290fd9d96268db2e0be2fa438fda27f0d8b9edd88ca2edfc545297d1a35",
   "signalSourceSha256": "ac9be8f71f8dd6b1226092ebb3112d1d6f4a6514e9d0937589a2cac09cf2c55b",
   "sourceSha256": {
     "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
@@ -13,7 +13,7 @@
     "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
   },
   "kind": "real-ts-sdk-state-with-websocket-io-double",
-  "matrixCells": 15,
+  "matrixCells": 21,
   "cases": [
     {
       "id": "run-id-turn_started-ordinary",
@@ -260,6 +260,94 @@
         "pendingAbort": 0,
         "socketPresent": true,
         "closes": 0
+      }
+    },
+    {
+      "id": "hello-deadline-ready-flood",
+      "kind": "transport-deadline",
+      "input": {
+        "operation": "hello",
+        "mode": "ready-flood",
+        "timeoutMs": 10000
+      },
+      "output": {
+        "beforeDeadlineSettled": false,
+        "framesDelivered": 192,
+        "resolved": false,
+        "message": "Gateway hello timed out."
+      }
+    },
+    {
+      "id": "hello-deadline-idle",
+      "kind": "transport-deadline",
+      "input": {
+        "operation": "hello",
+        "mode": "idle",
+        "timeoutMs": 10000
+      },
+      "output": {
+        "beforeDeadlineSettled": false,
+        "framesDelivered": 0,
+        "resolved": false,
+        "message": "Gateway hello timed out."
+      }
+    },
+    {
+      "id": "hello-deadline-reply-before-deadline",
+      "kind": "transport-deadline",
+      "input": {
+        "operation": "hello",
+        "mode": "reply-before-deadline",
+        "timeoutMs": 10000
+      },
+      "output": {
+        "beforeDeadlineSettled": false,
+        "framesDelivered": 0,
+        "resolved": true
+      }
+    },
+    {
+      "id": "request-deadline-ready-flood",
+      "kind": "transport-deadline",
+      "input": {
+        "operation": "request",
+        "mode": "ready-flood",
+        "timeoutMs": 30000
+      },
+      "output": {
+        "beforeDeadlineSettled": false,
+        "framesDelivered": 192,
+        "resolved": false,
+        "message": "Gateway request timed out: deadline_probe"
+      }
+    },
+    {
+      "id": "request-deadline-idle",
+      "kind": "transport-deadline",
+      "input": {
+        "operation": "request",
+        "mode": "idle",
+        "timeoutMs": 30000
+      },
+      "output": {
+        "beforeDeadlineSettled": false,
+        "framesDelivered": 0,
+        "resolved": false,
+        "message": "Gateway request timed out: deadline_probe"
+      }
+    },
+    {
+      "id": "request-deadline-reply-before-deadline",
+      "kind": "transport-deadline",
+      "input": {
+        "operation": "request",
+        "mode": "reply-before-deadline",
+        "timeoutMs": 30000
+      },
+      "output": {
+        "beforeDeadlineSettled": false,
+        "framesDelivered": 0,
+        "resolved": true
       }
     }
   ]

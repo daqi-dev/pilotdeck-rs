@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#1145 HEAD-only product controls: [--check] | NEW_OUTPUT_DIR [mutation ...].
 
-The catalog has exactly thirty-five controls. Each selected control runs its named
+The catalog has exactly thirty-seven controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -34,6 +34,7 @@ from negative_suite import (
 
 root = Path(__file__).resolve().parents[5]
 turn = root / "src/pilotdeck-cli/src/sdk/turn.rs"
+transport = root / "src/pilotdeck-cli/src/sdk/transport.rs"
 signals = root / "src/pilotdeck-cli/src/sdk/signals.rs"
 output = root / "src/pilotdeck-cli/src/sdk/output.rs"
 replay = root / "src/pilotdeck-cli/tests/common/signal_replay.rs"
@@ -41,16 +42,18 @@ skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 35
+EXPECTED_TOTAL = 37
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
 # Declarative whole-file anchors are understood by main's anchor_selfcheck.
 # Every old fragment must occur exactly once; mutants are never cumulative.
 mutations = [
+    ('hello-ready-loop-starves-deadline', transport, '        let hello = loop {\n            let frame = self.receive(Some((deadline, message))).await?;\n            if string_field(&frame, "type").as_deref() == Some("hello_ok") {\n                break frame;\n            }\n        };', '        let hello = timeout_at(deadline, async {\n            loop {\n                let frame = self.receive(None).await?;\n                if string_field(&frame, "type").as_deref() == Some("hello_ok") {\n                    return Ok::<_, Failure>(frame);\n                }\n            }\n        }).await.map_err(|_| error(message))??;', 'product::sdk::transport::tests::hello_ready_frames_cannot_starve_deadline', '#1145 hello fixed deadline wins over ready frames'),
+    ('request-ready-loop-starves-deadline', transport, '        loop {\n            let frame = self.receive(Some((deadline, &message))).await?;\n            if string_field(&frame, "type").as_deref() != Some("response")\n                || string_field(&frame, "id").as_deref() != Some(&id)\n            {\n                continue;\n            }\n            if frame.get("ok").and_then(JsValue::as_bool) == Some(true) {\n                return Ok(take_field(frame, "result"));\n            }\n            let message = frame\n                .get("error")\n                .and_then(|value| string_field(value, "message"));\n            return Err(error(\n                message.as_deref().unwrap_or("Gateway request failed."),\n            ));\n        }', '        timeout_at(deadline, async {\n        loop {\n            let frame = self.receive(None).await?;\n            if string_field(&frame, "type").as_deref() != Some("response")\n                || string_field(&frame, "id").as_deref() != Some(&id)\n            {\n                continue;\n            }\n            if frame.get("ok").and_then(JsValue::as_bool) == Some(true) {\n                return Ok(take_field(frame, "result"));\n            }\n            let message = frame\n                .get("error")\n                .and_then(|value| string_field(value, "message"));\n            return Err(error(\n                message.as_deref().unwrap_or("Gateway request failed."),\n            ));\n        }\n        }).await.map_err(|_| error(&message))?', 'product::sdk::transport::tests::request_ready_frames_cannot_starve_deadline', '#1145 request fixed deadline wins over ready frames'),
     (
         "abort-ready-starves-deadline",
-        turn,
+        transport,
         "        Ok(result) if Instant::now() < deadline => result,",
         "        Ok(result) => result,",
         "product::sdk::turn::tests::abort_ready_frames_cannot_starve_deadline",
@@ -116,7 +119,7 @@ mutations = [
     ('abort-stale-run-id', output, 'self.run_id = run_id.clone();', 'self.run_id = "requested-run".into();', 'product::sdk::turn::tests::abort_uses_consumed_run_id_without_utf16_loss', '#1145 abort uses latest lossless runId'),
     ('consumer-error-retains-query', output, 'return Err(EventError::Consumer(Failure::Error(\n                "event.type.includes is not a function".into(),', 'return Err(EventError::Iterator(Failure::Error(\n                "event.type.includes is not a function".into(),', 'product::sdk::turn::tests::output_failure_preserves_iterator_vs_consumer_lifetime', '#1145 event error matches TS iterator or consumer lifetime'),
     ('pending-abort-reader-finishes-early', turn, '    abort_ids: &[String],\n    deadline: Instant,\n) -> Result<(), Failure> {\n    loop {', '    abort_ids: &[String],\n    deadline: Instant,\n) -> Result<(), Failure> {\n    if abort_ids.len() == 1 { return Ok(()); }\n    loop {', 'product::sdk::turn::tests::pending_abort_keeps_query_until_reply', '#1145 abort cannot finish before its reply'),
-    ('abort-send-extends-predecessor-deadline', turn, 'timeout_at(deadline, request)', 'timeout_at(deadline + transport::REQUEST_TIMEOUT, request)', 'product::sdk::turn::tests::abort_send_respects_predecessor_deadline', '#1145 blocked second abort cannot extend first deadline'),
+    ('abort-send-extends-predecessor-deadline', transport, 'timeout_at(deadline, request)', 'timeout_at(deadline + REQUEST_TIMEOUT, request)', 'product::sdk::turn::tests::abort_send_respects_predecessor_deadline', '#1145 blocked second abort cannot extend first deadline'),
     ('node-version-required', replay, 'r"\\}\\n\\nNode\\.js v22\\.22\\.0\\n\\z",', 'r"\\}\\n\\n(?:Node\\.js v22\\.22\\.0\\n)?\\z",', 'signal_replay::comparison_tests::stderr_missing_node_version_is_not_normalized', '#1145 incomplete Node version cannot pass'),
     ('node-frames-required', replay, 'r"(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n",', 'r"(?:(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n)?",', 'signal_replay::comparison_tests::stderr_missing_stack_frames_is_not_normalized', '#1145 missing stack frames cannot pass'),
     ('node-business-message-consistent', replay, "if business.strip_suffix('\\n') == Some(message) {", 'if !message.is_empty() {', 'signal_replay::comparison_tests::stderr_changed_business_line_is_not_hidden', '#1145 mismatched business and exception remain literal'),
@@ -163,7 +166,7 @@ def check_catalog():
         count = path.read_text(encoding="utf-8").count(old)
         if count != 1:
             stale.append(f"{name}: expected one anchor, found {count}")
-        if not test.startswith(("signal_cases::", "product::sdk::turn::tests::", "product::skills::tests::", "product::skills_migrate::tests::", "signal_replay::comparison_tests::")) or not assertion.startswith(("#1145 ", "#273 ")):
+        if not test.startswith(("signal_cases::", "product::sdk::turn::tests::", "product::sdk::transport::tests::", "product::skills::tests::", "product::skills_migrate::tests::", "signal_replay::comparison_tests::")) or not assertion.startswith(("#1145 ", "#273 ")):
             stale.append(f"{name}: invalid named-test/assertion binding")
     if stale:
         raise RuntimeError("#1145 stale product controls: " + "; ".join(stale))
