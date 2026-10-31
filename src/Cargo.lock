@@ -979,6 +979,7 @@ dependencies = [
  "bytes",
  "html5ever",
  "http-body-util",
+ "httpdate",
  "hyper",
  "hyper-rustls",
  "hyper-util",

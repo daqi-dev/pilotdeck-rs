@@ -231,6 +231,37 @@ where
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
+    serve_connection_configured(stream, handler, false).await
+}
+
+/// The native listener's connection serving. TS emits literal header cases
+/// (`Date`, `Connection` capitalized), so responses render Title-Case, and
+/// every native_http handler response sets `Date` explicitly, so the
+/// automatic date stays off: the bare parser-level 400s then match TS's
+/// undated ones. The byte-level transport diffs this leaves are registered
+/// in the gateway-parity diff ledger.
+pub(crate) async fn serve_connection_native<S, F, Fut>(
+    stream: S,
+    handler: F,
+) -> Result<(), hyper::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
+    Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
+{
+    serve_connection_configured(stream, handler, true).await
+}
+
+async fn serve_connection_configured<S, F, Fut>(
+    stream: S,
+    handler: F,
+    native: bool,
+) -> Result<(), hyper::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
+    Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
+{
     let state = SharedReadState::default();
     let stream = UpgradeReadGate {
         stream,
@@ -250,7 +281,11 @@ where
         };
         handler(request, lease)
     });
-    http1::Builder::new()
+    let mut builder = http1::Builder::new();
+    if native {
+        builder.title_case_headers(true).auto_date_header(false);
+    }
+    builder
         .serve_connection(TokioIo::new(stream), service)
         .with_upgrades()
         .await
