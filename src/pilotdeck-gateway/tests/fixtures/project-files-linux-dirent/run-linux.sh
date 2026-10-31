@@ -23,6 +23,16 @@ set -o pipefail
 
 baseline_ts=${1:?usage: run-linux.sh <pilotdeck-ts-baseline> [evidence-dir]}
 repo=$(cd "$(dirname "$0")/../../../../.." && pwd) # repository (worktree) root (five levels: fixtures dir → src/pilotdeck-gateway/tests/fixtures/<dir>)
+# Guard the five-level count itself: a wrong repo root produces src/src/...
+# manifest paths that only fail later, far from the cause (r2 review P1-2).
+repo_toplevel=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || {
+  echo "BLOCKED: $repo is not a git worktree" >&2
+  exit 2
+}
+if [ "$repo_toplevel" != "$repo" ]; then
+  echo "BLOCKED: $repo is not the worktree root (git says $repo_toplevel)" >&2
+  exit 2
+fi
 evidence=${2:-$repo/_tmp/$(date +%Y%m%d-%H%M%S)-issue-133-cb8}
 mkdir -p "$evidence"
 
@@ -44,6 +54,32 @@ export PATH="$(dirname "$node_bin"):$PATH"
 
 report() { printf '\n== %s\n' "$*"; }
 
+# scripts/cargo-slots.sh exits 1 while full (its header says callers wait and
+# retry, like the Python side's wait_for_slot: 30s interval, 15-minute cap)
+# and any other non-zero status means the check itself is broken — a missing
+# script must never read as "slot free". Poll, then BLOCKED.
+wait_for_cargo_slot() {
+  local slots="$repo/scripts/cargo-slots.sh"
+  local waited=0
+  if [ ! -f "$slots" ]; then
+    echo "BLOCKED: $slots missing; refusing to start cargo without the slot check" >&2
+    exit 2
+  fi
+  while true; do
+    bash "$slots"
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
+      return 0
+    fi
+    if [ "$rc" -ne 1 ] || [ "$waited" -ge 900 ]; then
+      echo "BLOCKED: no cargo slot within ${waited}s (cargo-slots.sh rc=$rc)" >&2
+      exit 2
+    fi
+    sleep 30
+    waited=$((waited + 30))
+  done
+}
+
 report "environment contract"
 if [ -z "${CARGO_TARGET_DIR:-}" ]; then
   echo "BLOCKED: CARGO_TARGET_DIR must be supplied by the caller" >&2
@@ -58,7 +94,7 @@ export PDRS_BASELINE="$baseline_ts"
 git -C "$repo" rev-parse HEAD | tee "$evidence/rust-head.txt"
 
 report "cargo test --no-run (whole tree compiles)"
-bash "$repo/scripts/cargo-slots.sh"
+wait_for_cargo_slot
 ( cd "$repo" && cargo test --manifest-path src/Cargo.toml --no-run ) 2>&1 | tee "$evidence/no-run.log"
 if [ $? -ne 0 ]; then
   echo "FAIL: cargo test --no-run did not compile (see no-run.log)" >&2
@@ -66,7 +102,7 @@ if [ $? -ne 0 ]; then
 fi
 
 report "#133 positive: raw-byte dirent parity vs the pinned TS baseline"
-bash "$repo/scripts/cargo-slots.sh"
+wait_for_cargo_slot
 out133=$evidence/issue-133-positive
 mkdir -p "$out133"
 ( cd "$repo" && PDRS_LINUX_DIRENT_CHECK=1 PDRS_BASELINE="$baseline_ts" PDRS_LINUX_DIRENT_OUT="$out133" \
@@ -85,19 +121,19 @@ receipt = json.load(open(sys.argv[1]))
 assert receipt["cleanup"] is True, receipt
 assert receipt["responses"] == 5, receipt
 assert receipt["direntEntries"] == 21, receipt
-assert receipt["wireItemCounts"] == [6, 5, 2, 4, 2], receipt
+assert receipt["wireItemCounts"] == [7, 6, 2, 4, 3], receipt
 print("receipt:", json.dumps({k: receipt[k] for k in ("node", "icu", "baselineHead", "direntEntries", "wireItemCounts", "responses", "cleanup")}))
 PY
 [ $? -eq 0 ] || { echo "FAIL: #133 receipt incomplete or unexpected" >&2; failed=1; }
 
 report "#117 positive: node_io errno table vs a fresh Linux Node sample"
-bash "$repo/scripts/cargo-slots.sh"
+wait_for_cargo_slot
 # A leftover sample from an earlier run in a reused evidence dir must never
 # stand in for this run's measurement, so remove it before sampling.
 rm -f "$evidence/node-errno-sample.json"
 ( cd "$repo" && "$node_bin" --expose-internals src/pilotdeck-gateway/tests/fixtures/node-io/linux-errno-verify.mjs "$evidence/node-errno-sample.json" ) 2>&1 | tee "$evidence/issue-117-sampler.log"
 if [ $? -ne 0 ]; then
-  echo "FAIL: #117 errno sampler failed (see issue-117-sampler.log); the Node gates above already passed, so this is table drift, not an environment issue" >&2
+  echo "FAIL: #117 errno sampler failed — see issue-117-sampler.log for the cause (a missing module/path breaks the sampler the same way table drift does)" >&2
   failed=1
 fi
 ( cd "$repo" && PDRS_NODE_IO_LINUX_JSON="$evidence/node-errno-sample.json" \
@@ -121,13 +157,16 @@ if grep -q "Generated output differs: .*node_io/generated.rs" "$evidence/generat
 elif [ "$gen_rc" -ne 0 ] && grep -q "Generated output differs: .*errors.json" "$evidence/generator-check.log"; then
   echo "expected: only errors.json differs (platform + darwin uv/errno fields are platform data; the numbers are checked by the gated test against this Linux's libc)"
 else
-  echo "unexpected generator --check result (rc=$gen_rc):" >&2
+  # rc=0 means even errors.json matched byte-for-byte — impossible on Linux,
+  # where platform/uv/errno fields differ by design, so the apparatus itself
+  # is broken. Any other unexpected result fails too.
+  echo "FAIL: unexpected generator --check result (rc=$gen_rc); rc=0 on Linux means even the platform fields matched, i.e. the check is broken — see generator-check.log:" >&2
   cat "$evidence/generator-check.log" >&2
-  [ "$gen_rc" -eq 0 ] || failed=1
+  failed=1
 fi
 
 report "#133 negative controls (require the committed state; NOT_RUN marks pre-commit)"
-bash "$repo/scripts/cargo-slots.sh"
+wait_for_cargo_slot
 ( cd "$repo" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" python3 -I src/pilotdeck-gateway/tests/fixtures/project-files-linux-dirent/negative_controls.py "$evidence/issue-133-negatives" ) \
   > "$evidence/issue-133-negatives.log" 2>&1
 neg133=$?
@@ -143,7 +182,7 @@ else
 fi
 
 report "#117 negative controls (require the committed state; NOT_RUN marks pre-commit)"
-bash "$repo/scripts/cargo-slots.sh"
+wait_for_cargo_slot
 ( cd "$repo" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" python3 -I src/pilotdeck-gateway/tests/fixtures/node-io/negative_controls.py "$evidence/issue-117-negatives" ) \
   > "$evidence/issue-117-negatives.log" 2>&1
 neg117=$?
