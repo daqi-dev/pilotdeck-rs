@@ -55,6 +55,21 @@ pub(super) struct Signals {
 }
 
 impl Signals {
+    #[cfg(test)]
+    pub(super) fn interrupted_for_test() -> Self {
+        // A local observed SIGINT without installing or raising process-wide
+        // handlers; concurrent unit tests must not share the once registry.
+        Self {
+            registration: Arc::new(Registration {
+                interrupt: Arc::new(AtomicBool::new(true)),
+                terminate: Arc::new(AtomicBool::new(false)),
+                active: AtomicBool::new(false),
+            }),
+            observed: 1,
+            removed: true,
+        }
+    }
+
     pub(super) fn install() -> Result<Self, Failure> {
         let registration = REGISTRATION
             .get_or_init(Registration::install)

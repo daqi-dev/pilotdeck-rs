@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#1145 HEAD-only product controls: [--check] | NEW_OUTPUT_DIR [mutation ...].
 
-The catalog has exactly thirty-four controls. Each selected control runs its named
+The catalog has exactly thirty-five controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -41,13 +41,21 @@ skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 34
+EXPECTED_TOTAL = 35
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
 # Declarative whole-file anchors are understood by main's anchor_selfcheck.
 # Every old fragment must occur exactly once; mutants are never cumulative.
 mutations = [
+    (
+        "abort-ready-starves-deadline",
+        turn,
+        "        Ok(result) if Instant::now() < deadline => result,",
+        "        Ok(result) => result,",
+        "product::sdk::turn::tests::abort_ready_frames_cannot_starve_deadline",
+        "#1145 fixed abort deadline wins over ready frames",
+    ),
     (
         "listener-installed-before-control",
         turn,
@@ -107,7 +115,7 @@ mutations = [
     ),
     ('abort-stale-run-id', output, 'self.run_id = run_id.clone();', 'self.run_id = "requested-run".into();', 'product::sdk::turn::tests::abort_uses_consumed_run_id_without_utf16_loss', '#1145 abort uses latest lossless runId'),
     ('consumer-error-retains-query', output, 'return Err(EventError::Consumer(Failure::Error(\n                "event.type.includes is not a function".into(),', 'return Err(EventError::Iterator(Failure::Error(\n                "event.type.includes is not a function".into(),', 'product::sdk::turn::tests::output_failure_preserves_iterator_vs_consumer_lifetime', '#1145 event error matches TS iterator or consumer lifetime'),
-    ('pending-abort-reader-finishes-early', turn, ') -> Result<(), Failure> {\n    loop {\n        match timeout_at(deadline, query.query_frame(None, abort_ids)).await {', ') -> Result<(), Failure> {\n    if abort_ids.len() == 1 { return Ok(()); }\n    loop {\n        match timeout_at(deadline, query.query_frame(None, abort_ids)).await {', 'product::sdk::turn::tests::pending_abort_keeps_query_until_reply', '#1145 abort cannot finish before its reply'),
+    ('pending-abort-reader-finishes-early', turn, '    abort_ids: &[String],\n    deadline: Instant,\n) -> Result<(), Failure> {\n    loop {', '    abort_ids: &[String],\n    deadline: Instant,\n) -> Result<(), Failure> {\n    if abort_ids.len() == 1 { return Ok(()); }\n    loop {', 'product::sdk::turn::tests::pending_abort_keeps_query_until_reply', '#1145 abort cannot finish before its reply'),
     ('abort-send-extends-predecessor-deadline', turn, 'timeout_at(deadline, request)', 'timeout_at(deadline + transport::REQUEST_TIMEOUT, request)', 'product::sdk::turn::tests::abort_send_respects_predecessor_deadline', '#1145 blocked second abort cannot extend first deadline'),
     ('node-version-required', replay, 'r"\\}\\n\\nNode\\.js v22\\.22\\.0\\n\\z",', 'r"\\}\\n\\n(?:Node\\.js v22\\.22\\.0\\n)?\\z",', 'signal_replay::comparison_tests::stderr_missing_node_version_is_not_normalized', '#1145 incomplete Node version cannot pass'),
     ('node-frames-required', replay, 'r"(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n",', 'r"(?:(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n)?",', 'signal_replay::comparison_tests::stderr_missing_stack_frames_is_not_normalized', '#1145 missing stack frames cannot pass'),

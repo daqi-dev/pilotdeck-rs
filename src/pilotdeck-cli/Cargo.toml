@@ -34,7 +34,7 @@ serde_json.workspace = true
 # #1145: lex the accepted stderr match domain with the same lexer as unsafe_boundary.
 proc-macro2 = "=1.0.107"
 # Write-stage signal registration and the real WebSocket CLI replay tests.
-tokio = { version = "=1.48.0", features = ["rt", "signal", "macros"] }
+tokio = { version = "=1.48.0", features = ["rt", "signal", "macros", "test-util"] }
 
 [lints]
 workspace = true
