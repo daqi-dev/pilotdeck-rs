@@ -139,19 +139,24 @@ def exec_line(pid, path):
     return f'{pid} execve({hx(str(path))}, [{hx(str(path))}], 0x1 /* 0 vars */) = 0\n'
 
 
-def compatibility_envelope(folder, contract, evidence):
+def compatibility_envelope(folder, contract, evidence, *, connection_id='SYNTHETIC_CONTROL_ONLY'):
     """Labelled audit consumer control; deliberately not a native scoring report."""
     evidence, contract = copy.deepcopy(evidence), copy.deepcopy(contract)
     artifact = Path(folder) / 'synthetic-control.txt'
     artifact.write_text('SYNTHETIC_CONTROL_ONLY; not native surfaces or A7 acceptance\n')
-    binding = {'connectionId': 'SYNTHETIC_CONTROL_ONLY', 'generation': 1}
+    binding = {'connectionId': connection_id, 'generation': 1}
     frame = {'type': 'hello_ok', 'protocolVersion': '1.2', 'interactionBinding': binding}
     payload = json.dumps(frame, separators=(',', ':')).encode()
     length = len(payload)
-    header = bytes([129, length]) if length < 126 else b'\x81\x7e' + length.to_bytes(2, 'big')
+    if length < 126:
+        header = bytes([129, length])
+    elif length <= 65535:
+        header = b'\x81\x7e' + length.to_bytes(2, 'big')
+    else:
+        header = b'\x81\x7f' + length.to_bytes(8, 'big')
     rows = [{'connection': 1, 'direction': 'receive', 'frame': frame, 'wireHex': (header + payload).hex(),
              'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
-                      'lengthCode': min(length, 126), 'payloadLength': length}}]
+                      'lengthCode': header[1], 'payloadLength': length}}]
     contract.update(cases=['SYNTHETIC_CONTROL_ONLY'], capabilities={}, connections=1,
                     binding=binding, observerRows=rows)
     evidence.update(expectedCases=contract['cases'], executedCases=contract['cases'], capabilities={},
@@ -184,6 +189,190 @@ class WitnessTests(unittest.TestCase):
                     + '102 exit_group(7) = ?\n102 +++ exited with 7 +++\n'
                     + '101 exit(0) = ?\n101 +++ exited with 0 +++\n'
                     + '100 exit_group(0) = ?\n100 +++ exited with 0 +++\n')
+
+    def test_large_client_frames(self):
+        client = c.WireClient.__new__(c.WireClient)
+        client.socket, client.rows = mock.Mock(), []
+        client.deadline = time.monotonic() + 30
+        for size in (125, 126, 65535, 65536):
+            value = 'x' * (size - 2)  # JSON quotes account for the other bytes.
+            error = None
+            try:
+                client.send(value)
+            except Exception as caught:
+                error = caught
+            self.assertTrue(error is None, '#1169 client sends 64-bit frame lengths: ' + str(error))
+            frame = client.socket.sendall.call_args.args[0]
+            code, extra = (size, 0) if size < 126 else ((126, 2) if size <= 65535 else (127, 8))
+            self.assertTrue(frame[:2] == bytes([0x81, 0x80 | code]), '#1169 client frame header at length boundary')
+            if extra:
+                self.assertTrue(int.from_bytes(frame[2:2 + extra], 'big') == size, '#1169 client extended length is exact')
+            mask, payload = frame[2 + extra:6 + extra], frame[6 + extra:]
+            self.assertTrue(len(payload) == size, '#1169 client payload length agrees with header')
+            decoded = bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
+            self.assertTrue(decoded == json.dumps(value).encode(), '#1169 client payload mask roundtrips')
+            self.assertTrue(client.rows[-1]['wireHex'] == frame.hex(), '#1169 driver records sent bytes')
+
+    def test_large_compatibility_frame(self):
+        error, contract = None, None
+        try:
+            contract, _ = compatibility_envelope(self.folder, self.contract, {}, connection_id='x' * 65536)
+        except Exception as caught:
+            error = caught
+        self.assertTrue(error is None, '#1169 envelope supports 64-bit frame lengths: ' + str(error))
+        row = contract['observerRows'][0]
+        frame = bytes.fromhex(row['wireHex'])
+        payload = json.dumps(row['frame'], separators=(',', ':')).encode()
+        self.assertTrue(frame[:2] == b'\x81\x7f' and int.from_bytes(frame[2:10], 'big') == len(payload), '#1169 envelope extended length is exact')
+        self.assertTrue(frame[10:] == payload and row['wire']['lengthCode'] == 127, '#1169 envelope wire metadata matches bytes')
+
+    def test_connect_eaddrinuse_not_blocked(self):
+        from contextlib import nullcontext
+        fault = OSError(errno.EADDRINUSE, 'ephemeral source ports exhausted')
+        def connect(*_):
+            return c.WireClient(28999, time.monotonic() + 5)
+        error = None
+        with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
+                mock.patch.object(c.socket, 'create_connection', side_effect=fault) as opened, \
+                mock.patch.object(c, '_native_run', side_effect=connect):
+            try:
+                c.native_run('', '', self.folder / 'not-blocked')
+            except Exception as caught:
+                error = caught
+        self.assertTrue(error is fault, '#1169 connect EADDRINUSE is not fixed-port BLOCKED')
+        self.assertTrue(opened.call_count == 1, '#1169 EADDRINUSE test reaches real WireClient connect path')
+
+    def test_bind_error_scope(self):
+        def original_error(operation, expected, marker):
+            caught = None
+            try:
+                operation()
+            except Exception as error:
+                caught = error
+            self.assertTrue(caught is expected, marker)
+        fault = OSError(errno.EADDRINUSE, 'not a listener bind')
+        with mock.patch.object(c.socket, 'socket', side_effect=fault):
+            original_error(lambda: c.probe_bind(28999, reuse_address=False), fault,
+                           '#1169 socket creation error is not BLOCKED')
+        with mock.patch.object(c.socket, 'socket') as sockets:
+            sockets.return_value.__enter__.return_value.setsockopt.side_effect = fault
+            original_error(lambda: c.probe_bind(29000, reuse_address=True), fault,
+                           '#1169 setsockopt error is not BLOCKED')
+        for error_number in (errno.EACCES, errno.EADDRNOTAVAIL):
+            fault = OSError(error_number, 'other bind error')
+            with mock.patch.object(c.socket, 'socket') as sockets:
+                sockets.return_value.__enter__.return_value.bind.side_effect = fault
+                original_error(lambda: c.probe_bind(28999, reuse_address=False), fault,
+                               '#1169 non-conflict bind error propagates')
+
+    def test_non_utf8_string_is_incomplete(self):
+        for value in ('"\\xff"', '"\\xc3\\x28"'):
+            raw = self.raw.replace(hx(str(self.host)), value)
+            error = None
+            try:
+                w.parse_trace(raw, self.contract)
+            except Exception as caught:
+                error = caught
+            self.assertTrue(isinstance(error, w.Incomplete), '#1169 invalid UTF8 becomes Incomplete')
+            self.assertTrue(isinstance(error.__cause__, UnicodeDecodeError), '#1169 invalid UTF8 keeps decode cause')
+        self.assertTrue(w.text_string(hx('comma, space')) == 'comma, space', '#1169 hex encoding protects argv delimiters')
+
+    def test_sendmmsg_explicitly_unsupported(self):
+        message = '{msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\\x61", iov_len=1}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=1}'
+        for batch in (message, message + ', ' + message,
+                      message + ', ' + message.replace('msg_name=NULL', 'msg_name={sa_family=AF_INET}'),
+                      message + ', ' + message.replace('msg_controllen=0', 'msg_controllen=24')):
+            raw = self.raw.replace('102 exit_group', f'102 sendmmsg(3, [{batch}], {batch.count("msg_hdr=")}, MSG_NOSIGNAL) = 1\n102 exit_group')
+            with self.assertRaisesRegex(w.Incomplete, 'sendmmsg batches are unsupported', msg='#1169 sendmmsg explicitly refuses every batch'):
+                w.parse_trace(raw, self.contract)
+        for call in ('sendto(3, "\\x61", 1, MSG_NOSIGNAL, NULL, 0)',
+                     'sendmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[], msg_iovlen=0, msg_controllen=0, msg_flags=0}, 0)'):
+            raw = self.raw.replace('102 exit_group', f'102 {call} = 1\n102 exit_group')
+            self.assertTrue(len(w.parse_trace(raw, self.contract)['networkWitness']['calls']) == 2, '#1169 supported connected writes retain existing calls')
+
+    def test_trace_size_precheck(self):
+        self.assertTrue(w.TRACE_LIMIT == 64 * 1024 * 1024, '#1169 trace production cap is 64 MiB')
+        path = self.folder / 'oversize.trace'
+        with path.open('wb') as stream:
+            stream.truncate(w.TRACE_LIMIT + 1)
+        stream = mock.MagicMock()
+        stream.__enter__.return_value = stream
+        stream.read.return_value = b''
+        with mock.patch.object(Path, 'open', return_value=stream), \
+                mock.patch.object(w.os, 'fstat', return_value=path.stat()):
+            with self.assertRaises(w.Incomplete, msg='#1169 oversized trace rejected before read'):
+                w.read_trace(path)
+        self.assertTrue(stream.read.call_count == 0, '#1169 oversized trace never allocates input')
+
+    def test_trace_size_growth_and_read_bound(self):
+        path = self.folder / 'growing.trace'
+        path.write_bytes(b'x' * 33)
+        with mock.patch.object(w, 'TRACE_LIMIT', 32), \
+                mock.patch.object(w.os, 'fstat', return_value=mock.Mock(st_size=0)):
+            with self.assertRaises(w.Incomplete, msg='#1169 trace growth past cap is rejected'):
+                w.read_trace(path)
+        stream = mock.MagicMock()
+        stream.__enter__.return_value = stream
+        stream.read.return_value = b'ok'
+        with mock.patch.object(w, 'TRACE_LIMIT', 32), mock.patch.object(Path, 'open', return_value=stream), \
+                mock.patch.object(w.os, 'fstat', return_value=mock.Mock(st_size=2)):
+            self.assertTrue(w.read_trace(path) == 'ok', '#1169 bounded read returns original trace')
+        self.assertTrue(stream.read.call_args_list == [mock.call(33)], '#1169 trace read requests at most cap plus one')
+        for size in (0, 31, 32):
+            path.write_bytes(b'x' * size)
+            with mock.patch.object(w, 'TRACE_LIMIT', 32):
+                value, error = None, None
+                try:
+                    value = w.read_trace(path)
+                except Exception as caught:
+                    error = caught
+                self.assertTrue(error is None and value == 'x' * size, '#1169 trace cap is inclusive in bytes')
+        path.write_bytes(b'\xff')
+        error = None
+        try:
+            w.read_trace(path)
+        except Exception as caught:
+            error = caught
+        self.assertTrue(isinstance(error, w.Incomplete), '#1169 trace file decode is controlled')
+
+    def test_capture_trace_limit_wired(self):
+        folder = self.folder / 'oversize-capture'
+        with mock.patch.object(w, 'TRACE_LIMIT', len(self.raw.encode()) - 1):
+            with self.assertRaises(w.Incomplete, msg='#1169 capture enforces trace limit before receipt'):
+                self.capture_fixture(folder, None)
+        self.assertFalse((folder / 'receipt.json').exists(), '#1169 oversize capture publishes no receipt')
+        self.assertTrue((folder / 'failure.json').is_file(), '#1169 oversize capture records failure')
+
+    def test_load_trace_limit_wired(self):
+        folder = self.folder / 'valid-capture'
+        self.capture_fixture(folder, None)
+        self.assertTrue(w.load_capture(folder)[0] == self.raw, '#1169 normal capture reloads')
+        with mock.patch.object(w, 'TRACE_LIMIT', len(self.raw.encode()) - 1):
+            with self.assertRaises(w.Incomplete, msg='#1169 reload enforces trace limit'):
+                w.load_capture(folder)
+
+    def test_collector_trace_limit_wired(self):
+        folder = self.folder / 'driver'
+        folder.mkdir()
+        (folder / 'trace.log').write_text('100 execve("\\x61", [], 0x0) = 0\n')
+        server, worker, client = mock.Mock(), mock.Mock(), mock.Mock()
+        worker.is_alive.return_value = False
+        client.receive.side_effect = [{'type': 'hello_ok', 'interactionBinding': {}},
+                                     {'id': 'witness', 'final': True, 'event': {'finishReason': 'completed', 'text': 'native witness text'}}]
+        client.rows, client.upgrade = [], 'synthetic upgrade'
+        def capture(_contract, _output, _environment, *, exercise, validate):
+            exercise(mock.Mock(), folder, time.monotonic() + 5)
+        with mock.patch.object(c, 'BoundedHTTPServer', return_value=server), \
+                mock.patch.object(c.threading, 'Thread', return_value=worker), \
+                mock.patch.object(c.w, 'identity', return_value={}), \
+                mock.patch.object(c.w, 'capture', side_effect=capture), \
+                mock.patch.object(c, 'wait_ready'), mock.patch.object(c, 'WireClient', return_value=client), \
+                mock.patch.object(c.w, 'TRACE_LIMIT', 1), mock.patch.object(c.w, 'stop_host') as stop:
+            with self.assertRaises(c.w.Incomplete, msg='#1169 driver enforces trace limit before host lookup'):
+                c._native_run(self.host, self.child, self.folder / 'native-limit', 28999)
+        self.assertTrue(stop.call_count == 0, '#1169 oversized trace never selects a host pid')
+        self.assertTrue(client.socket.close.call_count == 1, '#1169 driver still closes owned client')
 
     def test_parity_lock_busy(self):
         lock = self.folder / 'parity.lock'
@@ -289,9 +478,9 @@ class WitnessTests(unittest.TestCase):
             port = listener.getsockname()[1]
             listener.listen()
             for reuse in (False, True):
-                with self.assertRaises(OSError, msg='#1140 both probe policies reject real listener') as busy:
+                with self.assertRaises(c.Blocked, msg='#1140 both probe policies reject real listener') as busy:
                     c.probe_bind(port, reuse_address=reuse)
-                self.assertTrue(busy.exception.errno == errno.EADDRINUSE, '#1140 real listener is address in use')
+                self.assertTrue(busy.exception.__cause__.errno == errno.EADDRINUSE, '#1140 real listener is address in use')
             with socket.create_connection(('127.0.0.1', port), timeout=2) as client:
                 connection, _ = listener.accept()
                 with connection:
@@ -300,13 +489,13 @@ class WitnessTests(unittest.TestCase):
                     self.assertTrue(client.recv(1) == b'', '#1140 server FIN precedes client close')
                     client.shutdown(socket.SHUT_WR)
                     self.assertTrue(connection.recv(1) == b'', '#1140 client FIN completes TIME_WAIT setup')
-        with self.assertRaises(OSError, msg='#1140 gateway probe rejects real TIME_WAIT') as waiting:
+        with self.assertRaises(c.Blocked, msg='#1140 gateway probe rejects real TIME_WAIT') as waiting:
             c.probe_bind(port, reuse_address=False)
-        self.assertTrue(waiting.exception.errno == errno.EADDRINUSE, '#1140 TIME_WAIT occupies bare bind')
+        self.assertTrue(waiting.exception.__cause__.errno == errno.EADDRINUSE, '#1140 TIME_WAIT occupies bare bind')
         error = None
         try:
             c.probe_bind(port, reuse_address=True)
-        except OSError as caught:
+        except (OSError, c.Blocked) as caught:
             error = caught
         self.assertTrue(error is None, '#1140 reusable probe accepts real TIME_WAIT')
 
@@ -360,12 +549,22 @@ class WitnessTests(unittest.TestCase):
                     error = caught
                 self.assertTrue(isinstance(error, c.Blocked), '#1140 occupied fixed port reports BLOCKED')
                 self.assertTrue(attempted == list(range(28999, busy + 1)) and run.call_count == 0, '#1140 occupied port has no fallback or launch')
+    def test_provider_bind_conflict(self):
+        from contextlib import nullcontext
         # A non-participant can bind between preflight and actual provider bind.
+        def provider_bind(*_):
+            server = c.BoundedHTTPServer.__new__(c.BoundedHTTPServer)
+            server.server_bind()
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
-                mock.patch.object(c, '_native_run', side_effect=OSError(errno.EADDRINUSE, 'provider bind race')):
-            with self.assertRaises(c.Blocked, msg='#1140 actual provider bind race is BLOCKED'):
+                mock.patch.object(c.http.server.HTTPServer, 'server_bind', side_effect=OSError(errno.EADDRINUSE, 'provider bind race')), \
+                mock.patch.object(c, '_native_run', side_effect=provider_bind):
+            error = None
+            try:
                 c.native_run('', '', self.folder / 'blocked')
+            except Exception as caught:
+                error = caught
+            self.assertTrue(isinstance(error, c.Blocked), '#1169 actual provider bind race is BLOCKED')
 
     def test_gateway_bind_race(self):
         from contextlib import nullcontext

@@ -26,6 +26,8 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py \
 
 CLI 消费者判定可重试 BLOCKED 时，必须同时核对退出码 2 和 **stdout JSON 的 `status == "BLOCKED"`**。argparse 用法错误同样返回 2，但只往 stderr 写 usage、stdout 为空，不能按退出码单独归为 BLOCKED。成功状态也走 stdout。绑定竞态可能已创建输出目录，重试必须换新目录。
 
+EADDRINUSE 仅在预检/启动失败复查的 `probe.bind` 和 provider 的实际 `server_bind` 中映射为 BLOCKED。`WireClient.create_connection` 的临时源端口耗尽、socket 创建/选项错误以及其他采集行为保留原异常，不能归为固定监听端口冲突。WS 发送按 payload 字节数支持 7/16/64 位长度编码，包含 65535/65536 边界。
+
 `collect.py` 通过真实 native opt-in 启动 gateway，完成 WS hello / submit_turn，本地 mock 返回文本，以 pidfd 核实所属 tracer 后 SIGTERM 停机，等待完整 trace 与退出码 0，再确认 sidecar exec、模型出网和 JSONL 落盘；这些检查及 provider 清理都先于 receipt 发布。`driver.json` 保留本轮 WS 字节、解码和 mock 请求。它是驱动观察，不是已冻结的完整 A7 observer。
 
 `capture/` 保留：
@@ -40,6 +42,12 @@ CLI 消费者判定可重试 BLOCKED 时，必须同时核对退出码 2 和 **s
 `strace -f` 追踪 execve/execveat、clone/clone3/fork/vfork、exit/exit_group、connect、sendto/sendmsg/sendmmsg、io_uring_setup。保留 exit status，不能使用 `-qq`；`-xx` 避免 C 字符串转义歧义，过长/不认识的格式拒收。[strace 官方手册](https://github.com/strace/strace/blob/master/doc/strace.1.in) 定义这些选项。
 
 本版本是受控 ELF / TCP profile：argv/path 必须与启动前登记一致，sha256 在启动前及采集后核对；假定受控二进制运行中不被替换后又恢复，**不是 exec 瞬间的内核镜像哈希证明**。脚本解释器、成功 execveat、同 PID 重复 exec、PID 复用、无 exec 的 fork 子进程、未知可执行文件、未退出线程、逃逸 clone flags、AF_UNIX helper、地址型 UDP/SCM_RIGHTS、成功 io_uring_setup 均拒完整。Popen 关闭继承描述符，观测范围是它启动的子树；不防恶意内核/同用户篡改整套原始证据。unfinished/resumed 必须按 PID 配对并核对 syscall 名，缺失、重复或错配均拒收；配对后再提取参数和返回值，去掉 strace 在参数末尾插入的分隔空白。线程 connect 归 TGID，已连接 socket 的无目的地址 write/send 不另计新出口。孙代照实记录，但冻结审计当前只允许 host 直接子进程；不会把孙代伪装成直接子进程。
+
+**sendmmsg 所有批次均明确拒收，包括已连接 socket**；保留 TRACE 中该调用用于发现不支持的行为，不表示可认证。当前不解析每条 msg_hdr，不能凭批次中某个 `msg_name=NULL` 就认证混有目的地址或控制消息的整个批次。单条 sendto/sendmsg 的既有边界不变。此处选择 #1169 允许的“明示拒收”方案，扩展支持需真实批量 trace 与逐条核验测试。
+
+argv 元素内的逗号、空格、引号在 `-xx` 下均编码为 `\\xNN`，例如 `, ` 是 `\\x2c\\x20`；因此字面 `, ` 仅分隔元素，既有 roundtrip 用例覆盖这类路径，#1169 的逗号误拆未复现。非 UTF-8 的 path/argv/address 字节受控报 Incomplete，不泄漏 UnicodeDecodeError，也不替换非法字节。
+
+`trace.log` 的三处文件读取（driver 查 host、capture 解析、离线 reload）共用 **64 MiB（含边界）**上限：在同一打开文件上先 fstat，超限不读取；随后最多读上限加一字节并再次检查，覆盖检查后增长。超限或非 UTF-8 都拒收，采集路径不发布成功 receipt。该上限控制读取与解析输入，不限制 strace 在采集窗口内的磁盘写入量；原始失败 trace 保留供排查。
 
 正常停机要求 gateway 在 `--drain-ms 1500` 下处理 SIGTERM 并 exit 0，tracer 同样退出 0；cb8 对 HEAD 949b385a 的原始 trace/receipt 已实证此形态。被信号杀死或其他非零退出仍拒收，不能当正常 drain。`signal.pidfd_send_signal` 自 Python 3.9 已提供（见 [Python 3.11 官方文档](https://docs.python.org/3.11/library/signal.html#signal.pidfd_send_signal)），不降级为存在 PID 复用窗口的 `os.kill`。
 
@@ -63,4 +71,4 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/negative.py \
   _tmp/20261026-issue-1140/negative-committed-001
 ```
 
-源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 45 个变异；可加 `--case NAME` 仅选一个样本。源码未进 HEAD 时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。
+源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 63 个变异（#1169 新增 18 个）；可加 `--case NAME` 仅选一个样本。采集器、解析器、测试与负控脚本都须等于 HEAD；未提交时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TRACE = 'execve,execveat,clone,clone3,fork,vfork,exit,exit_group,connect,sendto,sendmsg,sendmmsg,io_uring_setup'
 LIMIT_SECONDS = 60
 STRING_LIMIT = 1048576
+TRACE_LIMIT = 64 * 1024 * 1024
 
 
 class Incomplete(ValueError):
@@ -59,7 +60,22 @@ def identity(path, argv):
 def text_string(value):
     """-xx emits every string byte as hex; no ambiguous C/octal decoding."""
     need(re.fullmatch(r'"(?:\\x[0-9a-f]{2})*"', value) is not None, 'truncated/non-hex string')
-    return bytes.fromhex(value[1:-1].replace('\\x', '')).decode('utf-8', errors='strict')
+    try:
+        return bytes.fromhex(value[1:-1].replace('\\x', '')).decode('utf-8', errors='strict')
+    except UnicodeDecodeError as error:
+        raise Incomplete('#1169 non-UTF-8 trace string') from error
+
+
+def read_trace(path):
+    """Bound allocation on the opened file, including growth after fstat."""
+    with Path(path).open('rb') as stream:
+        need(os.fstat(stream.fileno()).st_size <= TRACE_LIMIT, 'trace exceeds 64 MiB')
+        raw = stream.read(TRACE_LIMIT + 1)
+    need(len(raw) <= TRACE_LIMIT, 'trace exceeds 64 MiB')
+    try:
+        return raw.decode('utf-8', errors='strict')
+    except UnicodeDecodeError as error:
+        raise Incomplete('#1169 non-UTF-8 trace file') from error
 
 
 def records(raw):
@@ -162,7 +178,9 @@ def parse_trace(raw, contract):
             target = f'[{address}]:{port}' if ipv6 else f'{address}:{port}'
             calls.append({'ownerPid': owners[tid], 'tid': tid, 'target': target,
                           'address': address, 'port': port, 'syscall': name, 'result': result})
-        elif name in ('sendto', 'sendmsg', 'sendmmsg'):
+        elif name == 'sendmmsg':
+            need(False, 'sendmmsg batches are unsupported, including connected sockets')
+        elif name in ('sendto', 'sendmsg'):
             # Connected socket writes add no new destination. Addressed datagrams
             # and ancillary descriptor passing cannot be silently certified.
             connected = ((name == 'sendto' and re.search(r', NULL, 0$', args))
@@ -279,7 +297,7 @@ def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=No
             if exercise:
                 exercise(tracer, output, deadline)
             result = tracer.wait(timeout=max(0.001, deadline - time.monotonic()))
-        raw = (output / 'trace.log').read_text()
+        raw = read_trace(output / 'trace.log')
         evidence = parse_trace(raw, launch)
         need(result == 0, 'tracer/host failed; inspect stderr and trace')
         if validate is not None:
@@ -311,6 +329,7 @@ def load_capture(folder):
     receipt = json.loads((folder / 'receipt.json').read_text())
     need(receipt['status'] == 'WITNESS_CAPTURED' and receipt['tracerExitCode'] == 0,
          'capture was not completed successfully')
+    raw = read_trace(folder / 'trace.log')
     for name, key in [('trace.log', 'traceSha256'), ('launch.json', 'launchSha256'),
                       ('prelaunch.json', 'prelaunchSha256'), ('evidence.json', 'evidenceSha256')]:
         need(sha(folder / name) == receipt[key], 'capture artifact changed: ' + name)
@@ -318,4 +337,4 @@ def load_capture(folder):
     prelaunch = json.loads((folder / 'prelaunch.json').read_text())
     need({k: v for k, v in contract.items() if k != 'launcherPid'} == prelaunch,
          'launch contract changed after pre-registration')
-    return (folder / 'trace.log').read_text(), contract, json.loads((folder / 'evidence.json').read_text())
+    return raw, contract, json.loads((folder / 'evidence.json').read_text())
