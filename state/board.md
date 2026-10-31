@@ -1,43 +1,30 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 22:35 · by Claude Code 协调者
-- #1011 | impl | doing | PR #1175 第一步（TS 矩阵 + 金样）r1 opus + GLM 0/0（P2×2）；本机宿主在跑 → 第二步 Rust 实现 + 两条 P2 → Codex（`_tmp/20261031-p2-1011-phase2/extra.md`）
-- #1145 | impl | doing | PR #1148 r5 GLM 0/0 但 abort 期限洪泛不触发升 P1 → Codex fix-r5；mbp2 r5m 在跑；RST 映射跟进 #1178
-- #1166 | impl | doing | PR #1172（M6）r3 GLM 尺子 P1（跨树 target 归属）+ 两家同撞锁外 bootstrap → Codex fix-r4；余项 #1180
+updated: 2026-11-01 05:35 · by Claude Code 协调者
+- #1214 | impl | doing | A8.2-pr4 U2 memory 网关适配 → GLM cb8 远端
+- #1209 | impl | doing | PR #1212 A8.4-pr1 原生 HTTP；r1 DeepSeek P1 + opus 两条升 P1 → fix-r1 GLM cb8
+- #1166 | impl | doing | PR #1172（M6）r10 cb8 宿主：workspace-pristine 50 INVALID（_build 符号链接）+ 2 SURVIVED → 尺子 P1 r10-host-fix GLM cb8
+- #1145 | review | doing | PR #1148 收敛（final opus 0/0）；mbp2 r8 宿主在跑 → 入队
+- #1136 | review | doing | PR #1171 最终 opus 0/0；macmini r3n 单项复核两处超时 → 入队
+- #1154 | review | doing | PR #1186 r4 收敛；macmini r4n 单项复核 native-process → 最终块 → 入队
+- #1140 | review | doing | PR #1196 r4 两家 0/0；mbp2 复算排车道；cb8 真实采集等 #1154
 - #1139 | impl | blocked | PR #1170；等 #1166 合入后改用 proc-macro2 共享入口（同时关 #1174）
-- #1136 | impl | doing | PR #1171 macmini 全绿；Codex fix-r1（wire-end RST 路径升 P1 + 补负控）；重复抽取跟进 #1179
-- #1154 | impl | doing | 原生进程 Metadata cwd 对齐 TS + Cwd.set 差异登记 → Codex
-- #917 | review | doing | GLM 交付 32de320dd → r1 opus + Codex + macmini
-- #133 | impl | doing | Linux 非法 UTF-8 dirent 真实对拍 + #117 errno Linux（同 PR）→ GLM，cb8 实跑
-- #132 | impl | doing | 第一步 TS 原件矩阵 → GLM；第二、三步等 #1154 合入
-- codex | coord | blocked | Codex 额度用尽，11-04 14:36 恢复；在途 Codex 单已转 GLM 接续
-- #1168 | impl | doing | native-topology 信号矩阵（#590 前置）→ GLM
-- A5.4 | coord | doing | 子代理梳理剩余定标范围（`_tmp/20261031-a54-scope/SCOPE.md`）→ 拆包解锁 #1140 判分接线 / #590 / D4
-- #589 | impl | blocked | 关单前置只剩 #1011（#1010 #1019 #1020 已关）
-- #590 | impl | blocked | 前置 A5.4 冻结期望（#1140 采集器已合）
-- #1140 | review | doing | 判分接线 PR #1196 r1（opus + DeepSeek + macmini 复算）；cb8 真实采集等 #1154
-- #727 | impl | blocked | 前置 #589（A7 Rust 宿主接线）
+- #589 | coord | doing | 前置已清（#1011 合入）→ 收尾自查 `_tmp/20261101-589-closeout/CHECK.md`
+- #1215 | impl | ready | A8.1-pr4 U6 MCP 四控制适配 → GLM（在审 ≤ 8 时放）
+- #1216 | impl | ready | A8.3-pr1a cron 存储与迁移 → GLM（在审 ≤ 8 时放）
+- #996 | impl | ready | session 族负控迁编译期开关（#1011 已合入，前置清）→ GLM（在审 ≤ 8 时放）
+- #132 | impl | blocked | 第二、三步等 #1154 合入
+- codex | coord | blocked | Codex 额度用尽，11-04 14:36 恢复；期间实现方用 GLM
+- #590 | impl | blocked | 前置 A5.4 冻结期望（#1140）
+- #727 | impl | blocked | 前置 #589
 - #19 | impl | blocked | 修复归 #727
 - #1146 | impl | blocked | D1-P09 前置 A8 + P08（#1145）
 - #123 | impl | doing | D1：P08 #1145 在审；P09 #1146 等 A8
-- #996 | impl | blocked | 后续批次按 #988；session 族与 #1011 同模块，#1011 合入后派
-- #1099 | impl | doing | M6 总单：pr1–pr3 已合；在途子单 #1166 / #1139；pr4 存量迁移等两者合入（共享负控件 M6 车道独占）
+- #1099 | impl | doing | M6 总单：在途子单 #1166 / #1139；pr4 存量迁移等两者合入
 - #1061 | impl | blocked | 归 M6 #1099
-- #1087 | impl | blocked | 归 M6 #1099（#1000 已合，契约已合）→ M6-pr4
+- #1087 | impl | blocked | 归 M6 #1099 → M6-pr4
 - #953 | impl | blocked | item 3 余项等 #996 迁移
-- #978 | impl | blocked | 第一轮扫描完成；余十轮验收
-- #892 | coord | blocked | 修 3 轮仍假 PASS，挂起；决策卡 decisions-20261028-892-suspend
-- #685 | coord | blocked | regress 上游 PR 待发布
-- #91 | impl | blocked | 前置于 A6.4 / A7 相关 PR
-- D4 | impl | blocked | 已人批；待 A5.4 定标时排期
-- p2-sweep | impl | doing | P2-跟进 47 条 > 10：本轮清 #1154 #917；下批候选 #1162 #1044 #360 #897（后者等 #1011）
-- gate-#275 | coord | blocked | 协作工具存量，不新开发
-- #629 | coord | blocked | workflow_dispatch 候选
-- #150 | coord | human | draft PR，待人定
-- #144-triage | coord | human | 人定暂缓(10-17)
-- 167-ruler-a4 | coord | human | 人定暂缓(10-17)
-- state-files | coord | human | 状态文件精简提案（人：先不动）
 <!-- READY:END -->
 
 > ## 2026-10-25 03:57 · #589/#590 fix-r4 ACK 收据与安全红探针配方（GLM glm-5.3-mb，wt=issue-589-live-integrity）
@@ -2617,3 +2604,8 @@ updated: 2026-10-31 22:35 · by Claude Code 协调者
 - 02:18 #1154 macmini：native-archive-cwd_negative_proxy 1 INVALID = 正控 archive_nullish_project_key_uses_the_proxy_boot_fallback 3 s 读超时（macmini 同时跑 2 条长链）；本机连跑 3 次都过（每次 0.03 s）。DEADLINE=3 s 是 main 上既有常量，非本 PR 引入 → 判负载偶发，链跑完后单项重跑这一套。
 - 02:32 **两小时交接** → `_tmp/20261101-handoff-0232.md`。
 - 04:25 **两小时交接** → `_tmp/20261101-handoff-0425.md`。#1154 宿主 3 个超时 INVALID（正控就挂、同变异体他单 KILLED）→ macmini 单项重跑；#1136 宿主 resume_exit 超时落在本 PR 大改的测试 → 本机 5 连跑判定；#1209 GLM 交付 → PR #1212 r1 opus+DeepSeek + cb8。
+- 04:45 #1209 r1：opus 0/0（P2×8）；DeepSeek P1（Connection: close / HTTP/1.0 仍回 keep-alive，Node 实测）+ P2×5；opus concurrency 两条升 P1（空闲 keep-alive 拖住停机 drain；测试绑 127.0.0.2 在 macOS 必挂）→ fix-r1 GLM cb8。#1136 本机 sdk_resume_exit 5/5 过 → macmini r3n 单项复核；#1154 r4n proxy 5/5 KILLED。#1213 合入 cf0f7dae8。
+- 05:03 #1011 mbp2 r4 宿主全绿（282 KILLED，live-e2e macOS 28 KILLED，targeted / lib rc=0）+ 最终 opus 0/0 → PR #1175 ready 入队；本机合 main 后 --no-run 编译核验在跑。
+- 05:20 #1166 cb8 r10 宿主：workspace-pristine 50 INVALID + 2 SURVIVED。INVALID 是 cb8 runner 的 _build 为符号链接，test_controls.py 写死字面路径（cb8 直接复现，macOS 过）；SURVIVED（index-as-baseline、killed-other-crate）本机 macOS 同样 SURVIVED，此前两轮也有、未被处理 → 尺子 P1×3 → GLM cb8 r10-host-fix。记忆补「宿主失败先列全表」。
+- 05:28 #1175（#1011）合入 8041e4995（邮箱 noreply；#1011 关；本机树归档回收；mbp2 69G / cb8 24G 构建目录已删）。
+- 05:34 #1011 合入后放新单：开 #1214（U2 memory）/ #1215（U6 MCP）/ #1216（cron 存储），#1214 → GLM cb8；#589 前置清 → 子代理做收尾自查；READY 重写。
