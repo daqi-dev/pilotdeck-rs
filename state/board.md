@@ -2609,3 +2609,16 @@ updated: 2026-11-01 05:35 · by Claude Code 协调者
 - 05:20 #1166 cb8 r10 宿主：workspace-pristine 50 INVALID + 2 SURVIVED。INVALID 是 cb8 runner 的 _build 为符号链接，test_controls.py 写死字面路径（cb8 直接复现，macOS 过）；SURVIVED（index-as-baseline、killed-other-crate）本机 macOS 同样 SURVIVED，此前两轮也有、未被处理 → 尺子 P1×3 → GLM cb8 r10-host-fix。记忆补「宿主失败先列全表」。
 - 05:28 #1175（#1011）合入 8041e4995（邮箱 noreply；#1011 关；本机树归档回收；mbp2 69G / cb8 24G 构建目录已删）。
 - 05:34 #1011 合入后放新单：开 #1214（U2 memory）/ #1215（U6 MCP）/ #1216（cron 存储），#1214 → GLM cb8；#589 前置清 → 子代理做收尾自查；READY 重写。
+- 05:36 #1140 复算在 mbp2 等 28999 端口锁 3.5 h（被 #1145 长链占）→ 停本机等待器（远端未起）改派 cb8 r4cb（端口锁独立）。
+- 05:51 **macmini 进程启动偶发卡 12–35 s（与 PR 无关）**：env -i 起参数校验探针，#1154 二进制 40 次有 1 次 12.5 s，#1136 二进制 60 次有 1 次 35 s，负载约 4 → 一连串「负载偶发」超时的真因；超时类 INVALID 改在本机复跑（记忆 macmini-exec-stall）。#1154 r4n native-process 5 INVALID 在本机原样复跑 5/5 KILLED → 本机全量 native-process 在跑；#1136 json-precedence 本机复跑在跑。
+- 05:51 #589 收尾自查（子代理，_tmp/20261101-589-closeout/CHECK.md）：代码齐、0 占位；挡关单三件 → 开 #1218（#1055/#1210 集中清，pending record 无界增长升 P1，GLM macmini 远端）、#1219（两条失去归属的差异重新挂单）、#1220（timeline / streamBoundary 投影，人批需修）；结论已贴 #589。
+- 05:56 #1136 json-precedence 本机复跑 KILLED（resume_exit 本机 5/5 早已过）→ 两处 macmini 超时均本机复核；macmini r3n 已停（本机 + 远端归零）→ PR #1171 ready 入队（合 main 后 --no-run 编译通过）。
+- 05:59 #1166 r10-host-fix 576760be6（GLM）：target 期望统一取 resolve 并加符号链接 _build 用例；两条 SURVIVED 都证明不冗余并补独有场景 → 样本 8 变异两种布局全 KILLED；全量负控需树净，交宿主 → r11 DeepSeek（增量）+ opus + cb8 全量 28 套。
+- 06:02 #1140 改派 cb8 是误判：calibrate 在 Linux 上按设计 BLOCKED（E1 controls 跳过平台专属正控）→ 改本机 host-local r4l。calibrate BLOCKED 退出后对拍锁未释放（cleanupPending 残留），连带 #1166 r11 cb8 起链即 FAILED → 核实无残留进程后手工挪锁，#1166 改起 r11h；装置问题开 #1221（前置于 #1140 关单）。
+- 06:03 #1140 本机复算 r4l（HEAD a3906eb2）：calibrate PASS、deadline 无 capture NOT_RUN（rc=3，符合期望）、test_safety OK、check_frozen PASS → 只剩 cb8 真实采集（等 #1154 合入）。
+- 06:19 #1136（PR #1171）合入 00440ad52（邮箱 noreply；#1136 关；本机树归档回收；macmini 16G / cb8 21G 构建目录删）。#1166 r11：DeepSeek 0/0（P2 证据路径 → 协调者把远端收回的样本日志拷回轮次目录，脚本 ROOT 解析正确）；opus 0/0，sibling P2 两条（兄弟脚本锚点仍断言未 resolve 的 target、killed-other-crate 无实跑证据）→ 等 cb8 r11h 全量（符号链接布局）实跑判定。
+- 06:20 在审降到 7 → 放 #1215（A8.1-pr4 U6 MCP）→ GLM mbp2 远端（pmset 无近期睡眠、交流电）。
+- 06:29 #1209 fix-r1 2d33bfe53（GLM）：Connection: close / HTTP/1.0、停机关闭已服务的空闲连接、回放改绑 127.0.0.1、P2 全修，负控 7→11 全 KILLED；auto-receive 因新账本文件未跟踪误判失败 → 手工收货（final.patch 漏了新文件，以树为准）→ r2 opus 0/0 + DeepSeek 在跑，本机宿主排在评审后。新增两条差异待批 → 决策单 #1222（7 处，用户可感知表，建议 A）。
+- 06:29 本机宿主与同树评审并行（#790 / #747 之后同类第三次）→ local-host-queue2 加守卫：同树 run-review-roles / dsh 评审在跑时等待（实测命中）；记忆 negctl-before-review 补 stop-tree 会杀树内评审子进程。
+- 06:29 #1214 GLM 交付 6ad572022（8 案例 50 步金样、8 负控手工 KILLED）→ PR #1223 草稿 → r1 opus + DeepSeek，本机宿主排在评审后。
+- 06:31 **两小时交接** → `_tmp/20261101-handoff-0631.md`。
