@@ -960,6 +960,7 @@ dependencies = [
  "pilotdeck-gateway",
  "pilotdeck-protocol",
  "pilotdeck-transport",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2",
