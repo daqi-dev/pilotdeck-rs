@@ -22,7 +22,9 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py \
   --capture _tmp/20261026-issue-1140/linux-native-001/capture
 ```
 
-输出目录必须不存在。默认网关 `127.0.0.1:28999`、模型 mock `127.0.0.1:29000`；`--port` 可选 28999..29008（模型为下一端口），绑定前使用 `scripts/gateway-parity/common.py::parity_lock` 的 `/tmp/pdrs-parity.lock` 目录租约，覆盖采集和 provider 清理；目录占用轮询 timeout 为 1 秒（guard 行为继承共享协议），锁忙或任一固定端口占用均报告 `BLOCKED`、退出码 2，不搜索或连接其他进程。与 CLI/native-topology/全量对拍共用租约。独立 `home/`、`project/`；环境只带这次 home、固定 PATH/LANG，不读真实 key，不碰 `~/.pilotdeck` 或 18789。仅发一次本地模型轮次（产品可能另发标题请求）；driver 的每次等待共用 60 秒绝对 deadline。模型服务器在 accept 后立即设置 5 秒 socket 空闲超时，覆盖请求行、headers 和 body。
+输出目录必须不存在。默认网关 `127.0.0.1:28999`、模型 mock `127.0.0.1:29000`；`--port` 可选 28999..29008（模型为下一端口），绑定前使用 `scripts/gateway-parity/common.py::parity_lock` 的 `/tmp/pdrs-parity.lock` 目录租约，覆盖采集和 provider 清理；目录占用轮询 timeout 为 1 秒（guard 行为继承共享协议），锁忙或任一固定端口占用均报告 `BLOCKED`、退出码 2，不搜索或连接其他进程。预检和启动失败复查共用 `SO_REUSEADDR` 探针，允许 TIME_WAIT、仍拒绝活动监听。与 CLI/native-topology/全量对拍共用租约。独立 `home/`、`project/`；环境只带这次 home、固定 PATH/LANG，不读真实 key，不碰 `~/.pilotdeck` 或 18789。仅发一次本地模型轮次（产品可能另发标题请求）；driver 的每次等待共用 60 秒绝对 deadline。模型服务器在 accept 后立即设置 5 秒 socket 空闲超时，覆盖请求行、headers 和 body。
+
+CLI 消费者判定可重试 BLOCKED 时，必须同时核对退出码 2 和 **stdout JSON 的 `status == "BLOCKED"`**。argparse 用法错误同样返回 2，但只往 stderr 写 usage、stdout 为空，不能按退出码单独归为 BLOCKED。成功状态也走 stdout。绑定竞态可能已创建输出目录，重试必须换新目录。
 
 `collect.py` 通过真实 native opt-in 启动 gateway，完成 WS hello / submit_turn，本地 mock 返回文本，以 pidfd 核实所属 tracer 后 SIGTERM 停机，等待完整 trace 与退出码 0，再确认 sidecar exec、模型出网和 JSONL 落盘；这些检查及 provider 清理都先于 receipt 发布。`driver.json` 保留本轮 WS 字节、解码和 mock 请求。它是驱动观察，不是已冻结的完整 A7 observer。
 
@@ -41,7 +43,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py \
 
 正常停机要求 gateway 在 `--drain-ms 1500` 下处理 SIGTERM 并 exit 0，tracer 同样退出 0；cb8 对 HEAD 949b385a 的原始 trace/receipt 已实证此形态。被信号杀死或其他非零退出仍拒收，不能当正常 drain。`signal.pidfd_send_signal` 自 Python 3.9 已提供（见 [Python 3.11 官方文档](https://docs.python.org/3.11/library/signal.html#signal.pidfd_send_signal)），不降级为存在 PID 复用窗口的 `os.kill`。
 
-SIGINT / SIGTERM 进入同一清理分支；启动发布窗延迟 Python 异常直到 Popen 身份存下，清理期间重复信号延迟处理。异常/超时杀本次持有的 tracer；`--kill-on-exit` 使内核终止其 tracees（包括改变会话的后代）。强制 SIGKILL 采集器不保证执行 Python 清理，协调者应先 SIGTERM；不声称失败路径 `allStopped=true`。
+取租约之前安装 SIGINT / SIGTERM 处理器，直到租约退出后才恢复；预检、provider 启动、capture 前后都走取消清理。provider 身份发布和清理窗口使用共享 `deferred_signals`，provider 线程继承屏蔽掩码，主线程进入 capture/Popen 前恢复原掩码。capture 启动发布窗延迟 Python 异常直到 Popen 身份存下，清理期间重复信号延迟处理。provider shutdown 等待上限 6 秒，随后线程 join 上限 6 秒；清理失败保留 `cleanupPending` 租约，不发布成功。异常/超时杀本次持有的 tracer；`--kill-on-exit` 使内核终止其 tracees（包括改变会话的后代）。强制 SIGKILL 采集器不保证执行 Python 清理，协调者应先 SIGTERM；不声称失败路径 `allStopped=true`。
 
 ## 原有审计与漏记负控
 
@@ -61,4 +63,4 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/negative.py \
   _tmp/20261026-issue-1140/negative-committed-001
 ```
 
-源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 24 个变异；可加 `--case NAME` 仅选一个样本。源码未进 HEAD 时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。
+源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 37 个变异；可加 `--case NAME` 仅选一个样本。源码未进 HEAD 时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。
