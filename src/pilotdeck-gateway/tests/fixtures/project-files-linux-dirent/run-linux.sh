@@ -22,7 +22,7 @@ set -u
 set -o pipefail
 
 baseline_ts=${1:?usage: run-linux.sh <pilotdeck-ts-baseline> [evidence-dir]}
-repo=$(cd "$(dirname "$0")/../../../.." && pwd) # repository (worktree) root
+repo=$(cd "$(dirname "$0")/../../../../.." && pwd) # repository (worktree) root (five levels: fixtures dir → src/pilotdeck-gateway/tests/fixtures/<dir>)
 evidence=${2:-$repo/_tmp/$(date +%Y%m%d-%H%M%S)-issue-133-cb8}
 mkdir -p "$evidence"
 
