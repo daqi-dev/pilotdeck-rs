@@ -226,7 +226,8 @@ class Controls(unittest.TestCase):
 
     def test_out_of_tree_target_passes_build_target_admission(self):
         with tempfile.TemporaryDirectory() as temp:
-            target = Path(temp) / "cargo-target"
+            # macOS 的 TMPDIR 在 /var（→ /private/var 符号链接）下；共享准入返回 resolve() 后的路径，期望值同样取 resolve()。
+            target = (Path(temp) / "cargo-target").resolve()
             env = {"CARGO_TARGET_DIR": str(target),
                    "CARGO_PROFILE_DEV_DEBUG": "line-tables-only",
                    "CARGO_PROFILE_TEST_DEBUG": "line-tables-only"}
