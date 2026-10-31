@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import tempfile
 import tomllib
+import types
 import unittest
 from unittest.mock import patch
 
@@ -432,15 +433,24 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'^DOCS_ONLY_PATH = .*$', source, re.M),
                          ["DOCS_ONLY_PATH = 'state/board.md'"],
                          '#1199 docs-only whitelist is exactly the single board path')
-        # 行为层的完整正负例由 scripts/test-ci-scope.py 在 scope job 里跑；
-        # 这里加载真模块做行为抽查，防「文本钉住了、模块本身坏了」。
-        spec = importlib.util.spec_from_file_location('ci_scope_guard', path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        # 行为层的完整正负例由 scripts/test-ci-scope.py 在 scope job 里跑；这里 exec 读到的
+        # 源码做行为抽查，防「文本钉住了、模块本身坏了」——用 exec 而非 importlib 是为了让
+        # read_bytes 补丁下的变异源码也能流进行为层（fix-r2 的守卫变异因此可杀）。
+        module = types.ModuleType('ci_scope_guard')
+        module.__dict__['__name__'] = 'ci_scope_guard'
+        exec(compile(source, str(path), 'exec'), module.__dict__)  # noqa: S102 —— 只进隔离命名空间
         self.assertTrue(module.paths_are_docs_only(['state/board.md']),
                        '#1199 board-only path classifies true')
         self.assertFalse(module.paths_are_docs_only(['state/board.md', 'docs/a.md']),
                          '#1199 board plus any other file is not docs-only')
+        # #1199 fix-r2（DeepSeek P2-2）：以 board.md 为前缀但不等于它的路径必须判 False——
+        # 全等退化成 startswith 时这些样例全部漏判（变异负控见 test_ci_rejects_ci_scope_whitelist_drift）。
+        self.assertFalse(module.paths_are_docs_only(['state/board.md.bak']),
+                         '#1199 board.md.bak prefix path is not docs-only')
+        self.assertFalse(module.paths_are_docs_only(['state/board.mdx']),
+                         '#1199 board.mdx prefix path is not docs-only')
+        self.assertFalse(module.paths_are_docs_only(['state/board.md', 'state/board.md/x.py']),
+                         '#1199 path under board.md is not docs-only')
         self.assertFalse(module.paths_are_docs_only(['state/decisions-20261031-x.md']),
                          '#1199 ruler-input state file is not docs-only')
         self.assertFalse(module.paths_are_docs_only([]), '#1199 empty path list is not docs-only')
@@ -460,6 +470,14 @@ class EnvironmentControls(unittest.TestCase):
                  b"DOCS_ONLY_PATH = ('state/board.md', 'docs/')\n"),
                 ('whitelist-widens-to-dir',
                  b"DOCS_ONLY_PATH = 'state/'\n"))]
+        # #1199 fix-r2（DeepSeek P2-2）：全等退化成 startswith → 前缀路径（board.md.bak 等）
+        # 漏判成 docs-only，必须被上面的行为负例抓住（经 read_bytes 补丁流进行为抽查）。
+        anchor = b'return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)\n'
+        self.assertEqual(source.count(anchor), 1, '#1199 unique equality mutation anchor')
+        cases.append(('equality-to-prefix',
+                      source.replace(anchor, b'return bool(paths) and all(path.startswith('
+                                             b'DOCS_ONLY_PATH) for path in paths)\n', 1),
+                      '#1199 board.md.bak prefix path is not docs-only'))
         self.check_ci_mutations(cases, 'test_ci_scope_whitelist_is_exactly_the_single_board_path',
                                 '#1199', reader='read_bytes')
 
