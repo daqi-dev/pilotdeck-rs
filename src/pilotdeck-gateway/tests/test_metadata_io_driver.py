@@ -426,37 +426,41 @@ class EnvironmentControls(unittest.TestCase):
                '#1199 scope exports exactly docs_only')
         self.check_ci_mutations(cases, 'test_scope_job_runs_its_own_self_test_then_classifier', '#1199')
 
-    def test_ci_scope_whitelist_is_exactly_the_documented_prefixes(self):
+    def test_ci_scope_whitelist_is_exactly_the_single_board_path(self):
         path = Path(__file__).resolve().parents[3] / 'scripts/ci_scope.py'
         source = path.read_bytes().decode()
-        self.assertEqual(re.findall(r'^DOCS_PREFIXES = \(.*\)$', source, re.M),
-                         ["DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')"],
-                         '#1199 docs-only whitelist is exactly the three prefixes')
+        self.assertEqual(re.findall(r'^DOCS_ONLY_PATH = .*$', source, re.M),
+                         ["DOCS_ONLY_PATH = 'state/board.md'"],
+                         '#1199 docs-only whitelist is exactly the single board path')
         # 行为层的完整正负例由 scripts/test-ci-scope.py 在 scope job 里跑；
         # 这里加载真模块做行为抽查，防「文本钉住了、模块本身坏了」。
         spec = importlib.util.spec_from_file_location('ci_scope_guard', path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        self.assertTrue(module.paths_are_docs_only(['state/board.md', 'docs/a.md', '.42cog/b.json']),
-                       '#1199 docs-only paths classify true')
-        self.assertFalse(module.paths_are_docs_only(['state/board.md', 'src/main.rs']),
-                         '#1199 mixed src is not docs-only')
+        self.assertTrue(module.paths_are_docs_only(['state/board.md']),
+                       '#1199 board-only path classifies true')
+        self.assertFalse(module.paths_are_docs_only(['state/board.md', 'docs/a.md']),
+                         '#1199 board plus any other file is not docs-only')
+        self.assertFalse(module.paths_are_docs_only(['state/decisions-20261031-x.md']),
+                         '#1199 ruler-input state file is not docs-only')
         self.assertFalse(module.paths_are_docs_only([]), '#1199 empty path list is not docs-only')
 
     def test_ci_rejects_ci_scope_whitelist_drift(self):
         source = (Path(__file__).resolve().parents[3] / 'scripts/ci_scope.py').read_bytes()
-        line = b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')\n"
+        line = b"DOCS_ONLY_PATH = 'state/board.md'\n"
         self.assertEqual(source.count(line), 1, '#1199 unique whitelist mutation anchor')
-        # #1199 规格 4：白名单加入 src/ 或 .github/ → 必须失败（行为层由
-        # scripts/test-ci-scope.py 的同名变异再加一道）。
+        # #1199 fix-r1（收窄）：白名单退回目录前缀 / 加宽成元组 / 值改成目录 → 必须失败
+        # （行为层由 scripts/test-ci-scope.py 的同名变异再加一道）。
         cases = [(name, source.replace(line, changed, 1),
-                  '#1199 docs-only whitelist is exactly the three prefixes')
+                  '#1199 docs-only whitelist is exactly the single board path')
                  for name, changed in (
-                ('whitelist-adds-src', b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', 'src/')\n"),
-                ('whitelist-adds-github', b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', '.github/')\n"),
-                ('whitelist-adds-empty-prefix', b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', '')\n"),
-                ('whitelist-drops-state', b"DOCS_PREFIXES = ('.42cog/', 'docs/')\n"))]
-        self.check_ci_mutations(cases, 'test_ci_scope_whitelist_is_exactly_the_documented_prefixes',
+                ('whitelist-returns-to-prefixes',
+                 b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')\n"),
+                ('whitelist-widens-to-tuple',
+                 b"DOCS_ONLY_PATH = ('state/board.md', 'docs/')\n"),
+                ('whitelist-widens-to-dir',
+                 b"DOCS_ONLY_PATH = 'state/'\n"))]
+        self.check_ci_mutations(cases, 'test_ci_scope_whitelist_is_exactly_the_single_board_path',
                                 '#1199', reader='read_bytes')
 
     def test_required_job_runs_shared_isolation_regressions(self):

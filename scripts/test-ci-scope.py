@@ -4,11 +4,14 @@
 用法：python3 -I scripts/test-ci-scope.py   退出码 0 全过 · 1 有失败 · 2 锚点过期
 不修改任何产品源码：变异体只 exec 改写后的源码文本（与 test_metadata_io_driver.py
 对 CI YAML 的内存变异同模式），逐项记 KILLED / SURVIVED / INVALID，全部跑完再汇总。
+
+fix-r1 收窄：白名单只剩 state/board.md 一个精确路径（state/ .42cog/ docs/ 的其余文件是
+重 job 尺子的输入），并新增 board_literal_violations 机检——扫描 scripts/ 与 src/**/tests
+下引用 state/board.md 字面量的 .py / .mjs / .sh，未在允许清单登记即违例。
 """
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 import subprocess
 import sys
@@ -38,8 +41,8 @@ def head(repo):
     return run(['git', 'rev-parse', 'HEAD'], repo).stdout.strip()
 
 
-def repo_with_changes(temp, changes=(), rename=None):
-    """建真实 git 仓库：base 提交含 src/main.rs，再按 changes / rename 做一次提交。"""
+def repo_with_changes(temp, changes=(), rename=None, delete=None, board_in_base=True):
+    """建真实 git 仓库：base 提交含 src/main.rs（board_in_base 时含 state/board.md）。"""
     repo = Path(temp) / 'repo'
     repo.mkdir()
     run(['git', 'init', '-q'], repo)
@@ -47,6 +50,9 @@ def repo_with_changes(temp, changes=(), rename=None):
     run(['git', 'config', 'user.name', 'ci-scope'], repo)
     (repo / 'src').mkdir()
     (repo / 'src' / 'main.rs').write_text('fn main() {}\n', encoding='utf-8')
+    (repo / 'state').mkdir()
+    if board_in_base:
+        (repo / 'state' / 'board.md').write_text('updated: 2026-10-31 00:00 · by base\n', encoding='utf-8')
     run(['git', 'add', '-A'], repo)
     run(['git', 'commit', '-qm', 'base'], repo)
     base = head(repo)
@@ -58,7 +64,9 @@ def repo_with_changes(temp, changes=(), rename=None):
         old, new = rename
         (repo / new).parent.mkdir(parents=True, exist_ok=True)
         run(['git', 'mv', old, new], repo)
-    if not changes and rename is None:
+    if delete is not None:
+        run(['git', 'rm', '-q', delete], repo)
+    if not changes and rename is None and delete is None:
         return repo, base, base  # 空 diff：head 就是 base
     run(['git', 'add', '-A'], repo)
     run(['git', 'commit', '-qm', 'change'], repo)
@@ -68,8 +76,13 @@ def repo_with_changes(temp, changes=(), rename=None):
 # ---------- 正负例（对被测模块对象跑；真实模块与变异模块都跑同一组） ----------
 
 def example_docs_only_paths(module):
-    check(module.paths_are_docs_only(['state/board.md', 'docs/a.md', '.42cog/b.json']),
-          '#1199 docs-only paths classify true')
+    check(module.paths_are_docs_only(['state/board.md']),
+          '#1199 board-only paths classify true')
+
+
+def example_board_plus_any_other(module):
+    check(not module.paths_are_docs_only(['state/board.md', 'docs/a.md']),
+          '#1199 board plus any other file is not docs-only')
 
 
 def example_mixed_src_paths(module):
@@ -91,11 +104,38 @@ def example_rename_sides(module):
           '#1199 rename old side is not docs-only')
 
 
+def example_ruler_input_research(module):
+    check(not module.paths_are_docs_only(['docs/research/008_phase-a-session-domain/gap.md']),
+          '#1199 docs/research file is not docs-only')
+
+
+def example_ruler_input_plan(module):
+    check(not module.paths_are_docs_only(['docs/plan/005_phase-a-session-domain.md']),
+          '#1199 docs/plan file is not docs-only')
+
+
+def example_ruler_input_decisions(module):
+    check(not module.paths_are_docs_only(['state/decisions-20261031-x.md']),
+          '#1199 state/decisions file is not docs-only')
+
+
+def example_42cog_file(module):
+    check(not module.paths_are_docs_only(['.42cog/real.md']),
+          '#1199 .42cog file is not docs-only')
+
+
 def example_git_docs_only(module):
     with tempfile.TemporaryDirectory(prefix='ci-scope-pos-') as temp:
-        repo, base, tip = repo_with_changes(
-            temp, changes=[('state/board.md', 'x'), ('docs/a.md', 'y'), ('.42cog/b.json', '{}')])
+        repo, base, tip = repo_with_changes(temp, changes=[('state/board.md', 'x')])
         check(module.docs_only_for_range(repo, base, tip), '#1199 git: docs-only range is true')
+
+
+def example_git_board_plus_docs(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-bpd-') as temp:
+        repo, base, tip = repo_with_changes(
+            temp, changes=[('state/board.md', 'x'), ('docs/a.md', 'y')])
+        check(not module.docs_only_for_range(repo, base, tip),
+              '#1199 git: board plus docs file is not docs-only')
 
 
 def example_git_mixed(module):
@@ -113,9 +153,25 @@ def example_git_github(module):
 
 
 def example_git_rename(module):
+    # rename 进白名单路径：改名检测会藏掉旧侧 src/main.rs，diff 就「看起来」只碰 board。
     with tempfile.TemporaryDirectory(prefix='ci-scope-rn-') as temp:
-        repo, base, tip = repo_with_changes(temp, rename=('src/main.rs', 'docs/main.md'))
+        repo, base, tip = repo_with_changes(temp, rename=('src/main.rs', 'state/board.md'),
+                                            board_in_base=False)
         check(not module.docs_only_for_range(repo, base, tip), '#1199 git: rename keeps both sides')
+
+
+def example_git_board_rename(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-brn-') as temp:
+        repo, base, tip = repo_with_changes(temp, rename=('state/board.md', 'docs/board.md'))
+        check(not module.docs_only_for_range(repo, base, tip),
+              '#1199 git: renaming the board keeps both sides')
+
+
+def example_git_delete_board(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-del-') as temp:
+        repo, base, tip = repo_with_changes(temp, delete='state/board.md')
+        check(module.docs_only_for_range(repo, base, tip),
+              '#1199 git: deleting only the board stays docs-only')
 
 
 def example_git_empty(module):
@@ -187,16 +243,86 @@ def example_main_fail_closed(module):
               '#1199 classifier failure still emits false')
 
 
+# ---------- 机检正负例（board_literal_violations：看守「没有尺子读 state/board.md」） ----------
+
+def make_registered_tree(temp, module):
+    """造一棵「允许清单全部登记在案」的最小合成树，返回树根。"""
+    root = Path(temp) / 'root'
+    for rel in module.BOARD_LITERAL_ALLOWLIST:
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('BOARD = "state/board.md"  # 登记在案的引用\n', encoding='utf-8')
+    return root
+
+
+def example_scan_real_repo(module):
+    check(module.board_literal_violations(ROOT) == [],
+          '#1199 scan: real repo registers every board ruler')
+
+
+def example_scan_allows_registered(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-reg-') as temp:
+        root = make_registered_tree(temp, module)
+        check(module.board_literal_violations(root) == [],
+              '#1199 scan: registered board references pass')
+
+
+def example_scan_flags_unregistered(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-rog-') as temp:
+        root = make_registered_tree(temp, module)
+        rogue = root / 'scripts' / 'rogue-check.py'
+        rogue.write_text("BOARD = 'state/board.md'\n", encoding='utf-8')
+        check(module.board_literal_violations(root) == ['scripts/rogue-check.py'],
+              '#1199 scan: unregistered board ruler is flagged')
+
+
+def example_scan_flags_src_test_ruler(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-src-') as temp:
+        root = make_registered_tree(temp, module)
+        rogue = root / 'src' / 'pilotdeck-gateway' / 'tests' / 'rogue.mjs'
+        rogue.parent.mkdir(parents=True, exist_ok=True)
+        rogue.write_text("const board = 'state/board.md';\n", encoding='utf-8')
+        check(module.board_literal_violations(root) == ['src/pilotdeck-gateway/tests/rogue.mjs'],
+              '#1199 scan: src tests ruler is flagged')
+
+
+def example_scan_ignores_out_of_scope(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-out-') as temp:
+        root = make_registered_tree(temp, module)
+        for rel in ('docs/foo.md', 'scripts/notes.txt', 'src/main.rs', 'src/rogue.py'):
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('see state/board.md\n', encoding='utf-8')
+        check(module.board_literal_violations(root) == [],
+              '#1199 scan: out-of-scope files are ignored')
+
+
+def example_scan_flags_stale_registration(module):
+    with tempfile.TemporaryDirectory(prefix='ci-scope-stl-') as temp:
+        root = make_registered_tree(temp, module)
+        (root / 'scripts' / 'next-task.sh').write_text('# 不再引用 board\n', encoding='utf-8')
+        check(module.board_literal_violations(root) == ['scripts/next-task.sh'],
+              '#1199 scan: stale registration is flagged')
+
+
 EXAMPLES = (
-    ('#1199 docs-only paths classify true', example_docs_only_paths),
+    ('#1199 board-only paths classify true', example_docs_only_paths),
+    ('#1199 board plus any other file is not docs-only', example_board_plus_any_other),
     ('#1199 mixed src is not docs-only', example_mixed_src_paths),
     ('#1199 .github is not docs-only', example_github_paths),
     ('#1199 empty path list is not docs-only', example_empty_paths),
     ('#1199 rename old side is not docs-only', example_rename_sides),
+    ('#1199 docs/research file is not docs-only', example_ruler_input_research),
+    ('#1199 docs/plan file is not docs-only', example_ruler_input_plan),
+    ('#1199 state/decisions file is not docs-only', example_ruler_input_decisions),
+    ('#1199 .42cog file is not docs-only', example_42cog_file),
     ('#1199 git: docs-only range is true', example_git_docs_only),
+    ('#1199 git: board plus docs file is not docs-only', example_git_board_plus_docs),
     ('#1199 git: mixed src is not docs-only', example_git_mixed),
     ('#1199 git: .github is not docs-only', example_git_github),
     ('#1199 git: rename keeps both sides', example_git_rename),
+    ('#1199 git: renaming the board keeps both sides', example_git_board_rename),
+    ('#1199 git: deleting only the board stays docs-only', example_git_delete_board),
     ('#1199 git: empty diff is not docs-only', example_git_empty),
     ('#1199 git: failure is fail-closed', example_git_failure),
     ('#1199 push to main stays full', example_classify_push),
@@ -206,6 +332,12 @@ EXAMPLES = (
     ('#1199 merge_group range reaches git', example_classify_merge_group),
     ('#1199 emit appends to GITHUB_OUTPUT', example_emit),
     ('#1199 classifier failure still emits false', example_main_fail_closed),
+    ('#1199 scan: real repo registers every board ruler', example_scan_real_repo),
+    ('#1199 scan: registered board references pass', example_scan_allows_registered),
+    ('#1199 scan: unregistered board ruler is flagged', example_scan_flags_unregistered),
+    ('#1199 scan: src tests ruler is flagged', example_scan_flags_src_test_ruler),
+    ('#1199 scan: out-of-scope files are ignored', example_scan_ignores_out_of_scope),
+    ('#1199 scan: stale registration is flagged', example_scan_flags_stale_registration),
 )
 
 
@@ -231,21 +363,25 @@ def load(source):
 # ---------- 变异负控（全部内存内 exec，不改源码文件） ----------
 # (名字, 旧锚点, 新文本, 必须命中的样例 tag)。锚点在源码中必须恰好出现一次，过期即退出 2。
 MUTATIONS = (
-    ('whitelist-adds-src',
-     "DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')",
-     "DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', 'src/')",
-     '#1199 mixed src is not docs-only'),
-    ('whitelist-adds-github',
-     "DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')",
-     "DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', '.github/')",
-     '#1199 .github is not docs-only'),
-    ('whitelist-adds-empty-prefix',
-     "DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')",
-     "DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', '')",
-     '#1199 mixed src is not docs-only'),
+    ('whitelist-widens-to-state-dir',
+     'return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)',
+     'return bool(paths) and all(path.startswith("state/") for path in paths)',
+     '#1199 state/decisions file is not docs-only'),
+    ('whitelist-widens-to-docs-dir',
+     'return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)',
+     'return bool(paths) and all(path.startswith("docs/") for path in paths)',
+     '#1199 docs/research file is not docs-only'),
+    ('whitelist-widens-to-42cog-dir',
+     'return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)',
+     'return bool(paths) and all(path.startswith(".42cog/") for path in paths)',
+     '#1199 .42cog file is not docs-only'),
+    ('whitelist-value-drifts',
+     "DOCS_ONLY_PATH = 'state/board.md'",
+     "DOCS_ONLY_PATH = 'state/board.mdx'",
+     '#1199 board-only paths classify true'),
     ('empty-diff-accepted',
-     'return bool(paths) and all(path.startswith(DOCS_PREFIXES) for path in paths)',
-     'return all(path.startswith(DOCS_PREFIXES) for path in paths)',
+     'return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)',
+     'return all(path == DOCS_ONLY_PATH for path in paths)',
      '#1199 git: empty diff is not docs-only'),
     ('rename-sides-hidden',
      "['git', 'diff', '--name-only', '--no-renames', '-z', base, head]",
@@ -263,6 +399,26 @@ MUTATIONS = (
      'return False  # #1199 事件缺 SHA fail-closed',
      'return True  # #1199 事件缺 SHA fail-closed',
      '#1199 missing event SHA is fail-closed'),
+    ('scan-literal-ignored',
+     'if DOCS_ONLY_PATH in _read(root, rel) and rel not in BOARD_LITERAL_ALLOWLIST:',
+     'if False and rel not in BOARD_LITERAL_ALLOWLIST:',
+     '#1199 scan: unregistered board ruler is flagged'),
+    ('scan-allowlist-bypassed',
+     'if DOCS_ONLY_PATH in _read(root, rel) and rel not in BOARD_LITERAL_ALLOWLIST:',
+     'if DOCS_ONLY_PATH in _read(root, rel):',
+     '#1199 scan: registered board references pass'),
+    ('scan-stale-registration-ignored',
+     'if DOCS_ONLY_PATH not in _read(root, rel):',
+     'if False:',
+     '#1199 scan: stale registration is flagged'),
+    ('scan-drops-src-tests',
+     "if directory == 'src' and 'tests' not in rel.parts:",
+     "if directory == 'src':",
+     '#1199 scan: src tests ruler is flagged'),
+    ('scan-drops-mjs-extension',
+     "RULER_SCAN_EXTENSIONS = ('.py', '.mjs', '.sh')",
+     "RULER_SCAN_EXTENSIONS = ('.py', '.sh')",
+     '#1199 scan: src tests ruler is flagged'),
 )
 
 
