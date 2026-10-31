@@ -160,6 +160,8 @@ UNSUPPORTED_SIGNALS = {
     'test_negative_adaptive_isolation.py': set(),
     'native-topology/run.py': {'table:CASES'},
     'native-topology/controls.py': {'call:mutate'},
+    'native-topology/test_signals.py': set(),  # #1168 real-signal phase children, no mutation table
+    'native-topology/negative_signals.py': {'table:mutations'},
     'negative_suite.py': {'call:mutate'},
     'test_negative_suite.py': {'table:cases'},
     'test_negative_panic.py': {'table:cases'},
