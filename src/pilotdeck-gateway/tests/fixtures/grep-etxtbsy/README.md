@@ -22,7 +22,13 @@ pid（对 `process_group(0)` 的 helper 即进程组号）在 guard 接管的同
 调用方，清理不再依赖子进程事后写组号文件；dead-stranger 用例的陌生进程是
 一个 python3 探针，go 信号后用零超时 `select` + `os.read` 对读端分类（0
 字节 = EOF 挂起 = 返回前全部写端已关；未就绪 = 仍有写端活过返回边界），
-判定原子写进 marker。
+判定原子写进 marker。fix-r3（#1141，Linux cb8）起：helper 先 `exec 3<&0`
+把读端存到 fd 3、后台命令再 `<&3`（dash 对后台命令即使显式 `<&0` 也指
+`/dev/null`，读端会随 helper 灭、writer 得 EPIPE；bash 则不会——fd 3 保存
+在两个 shell 下都保住读端）；探针的第一件事是 `fstat(0)` 确认拿到的是管道
+（S_ISFIFO）才发布 `started`，否则立刻把 `stdin-not-a-pipe` 写进 marker；
+helper `exit 0` 前与测试的 `spawned` 钩子都等 `started`，所以 helper 死亡、
+writer 开写都在陌生进程确认持有读端之后（握手全部走信号文件 + 有界轮询）。
 
 变异体：
 
@@ -76,7 +82,17 @@ pid（对 `process_group(0)` 的 helper 即进程组号）在 guard 接管的同
   发布跑完整个截止错误，panic 用例的
   `#1141 the publication must panic while the stranger is running` 最先失败
   （其后紧跟的 `#1141 the guard must own the stranger's group from the spawn
-  on` 所有权断言保证半途而废的钩子也不能空转通过）。
+  on` 所有权断言保证半途而废的钩子也不能空转通过）；
+- `stranger-confirmation-inverted`（#1141 fix-r3，Linux cb8）：探针的 FIFO
+  确认反转（`if not stat.S_ISFIFO(...)` → `if stat.S_ISFIFO(...)`）——陌生
+  进程不再发布 `started`，dead-helper 用例 `spawned` 钩子里的 expect
+  `#1141 the stranger must confirm it holds the pipe read end before the
+  publication writes` 失败（任意 unix 宿主确定性判杀）；
+- `stranger-retention-reverted`（#1141 fix-r3，Linux cb8）：helper 退回 r2
+  形状（无 fd 3 保存、`<&0 &`、无 started 握手）。dash（Linux `/bin/sh`）对
+  后台命令即使显式 `<&0` 也指 `/dev/null`，读端随 helper 灭 → `started`
+  永不出现 → 同一 expect 失败；bash 显式 `<&0` 能保住读端，故 macOS 上
+  SURVIVED——与两条 race 变异体同类的 **Linux 契约**。
 
 `test_scratch_publication` 是 lib 专属测试模块
 （`src/test_scratch_publication.rs`，`#[cfg(all(test, unix))]`，fix-r3 评审 P2
@@ -94,14 +110,15 @@ crate 以 `#[path]` 各编一份，共享文件里不再放单测，避免每份
 
 ```sh
 CARGO_TARGET_DIR=<绝对路径> python3 -I negative_controls.py NEW_OUT_DIR
-# 锚点新鲜度预检（须打印 `11 anchors: ok` 后退出 0）
+# 锚点新鲜度预检（须打印 `13 anchors: ok` 后退出 0）
 python3 -I negative_controls.py --check-anchors
 ```
 
 平台契约：macOS 的 std::process 走 posix_spawn，观察不到继承描述符窗口，
 `script-direct-write` / `helper-in-process-write` 在该平台预期 SURVIVED
-（或因无关失败 INVALID）——这两个竞态负控是 **Linux 契约**，判杀只在
-Linux 宿主（cb8 / CI）上成立；`no-temp-cleanup` 与九个 deadline/writer/
-guard 变异体在任意 unix 宿主上确定性判杀（unix 平台无关，非 unix 无该测试
-模块）。
+（或因无关失败 INVALID）——这两个竞态负控与 `stranger-retention-reverted`
+（dash 后台 stdin 规则，见上）是 **Linux 契约**，判杀只在
+Linux 宿主（cb8 / CI）上成立；`no-temp-cleanup` 与十个 deadline/writer/
+guard/handshake 变异体在任意 unix 宿主上确定性判杀（unix 平台无关，非
+unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
