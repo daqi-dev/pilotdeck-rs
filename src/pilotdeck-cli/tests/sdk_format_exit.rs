@@ -176,7 +176,7 @@ struct StdinWriter {
     joined: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl StdinWriter {
-    fn start(mut stdin: std::process::ChildStdin, data: Vec<u8>) -> Self {
+    fn start(mut stdin: impl Write + Send + 'static, data: Vec<u8>) -> Self {
         let (finished, done) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -276,44 +276,65 @@ async fn fixture_stdin_broken_pipe_preserves_output() {
     verify(output.stderr == b"fixture-err", "#1097 preserve stderr");
 }
 
-#[tokio::test]
-async fn fixture_stdin_writer_yields_before_child_reads() {
-    let runtime = Runtime::new();
-    let release = runtime.0.join("release");
-    let mut command = Command::new("/bin/sh");
+#[test]
+fn fixture_stdin_writer_yields_before_child_reads() {
+    // Observe the thread entering the real pipe write. Both asynchronous and
+    // synchronous writers publish this event; elapsed time is never the oracle.
+    struct ObservedStdin {
+        stdin: std::process::ChildStdin,
+        entered: Option<std::sync::mpsc::Sender<std::thread::ThreadId>>,
+    }
+    impl Write for ObservedStdin {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if let Some(entered) = self.entered.take() {
+                entered
+                    .send(std::thread::current().id())
+                    .expect("#1136 publish first pipe write");
+            }
+            self.stdin.write(bytes)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.stdin.flush()
+        }
+    }
+    let mut command = Command::new("/bin/sleep");
     command
         .env_clear()
-        .args([
-            "-c",
-            "while [ ! -f \"$1\" ]; do /bin/sleep 0.01; done; exit 23",
-            "fixture",
-        ])
-        .arg(&release)
+        .arg("30")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let input = json!({"stdinHex": "61".repeat(2 * 1024 * 1024)});
-    let (ready, observed) = std::sync::mpsc::channel();
+    let mut child = OwnedChild(
+        Some(command.spawn().expect("#1136 spawn blocked reader")),
+        Writers::default(),
+    );
+    let stdin = child
+        .0
+        .as_mut()
+        .expect("#1136 own blocked reader")
+        .stdin
+        .take()
+        .expect("#1136 observe blocked stdin");
+    let (entered, observed) = std::sync::mpsc::channel();
     let starter = std::thread::spawn(move || {
-        ready
-            .send(spawn(&mut command, &input))
-            .unwrap_or_else(|_| panic!("#1097 publish owned child"));
+        StdinWriter::start(
+            ObservedStdin {
+                stdin,
+                entered: Some(entered),
+            },
+            vec![b'x'; 2 * 1024 * 1024],
+        )
     });
-    // Always release the child before checking: a synchronous-writer mutant
-    // fails this assertion without leaking a blocked writer or timing out.
-    let early = observed.recv_timeout(Duration::from_secs(3));
-    let yielded = early.is_ok();
-    let temporary = release.with_extension("tmp");
-    fs::write(&temporary, b"release").expect("#1097 release bytes");
-    fs::rename(temporary, &release).expect("#1097 atomic child release");
-    let child =
-        early.unwrap_or_else(|_| observed.recv_timeout(BOUND).expect("#1097 released child"));
-    starter.join().expect("#1097 starter joined");
-    let output = collect(child).await;
-    verify(yielded, "#1097 stdin writer yields before child reads");
+    let caller = starter.thread().id();
+    let first_write = observed.recv_timeout(BOUND);
+    // The child never reads. Close its pipe before joining even if the progress
+    // wait failed, so neither a synchronous mutant nor a failed setup leaks it.
+    drop(child);
+    starter.join().expect("#1136 starter joined").finish();
+    let writer = first_write.expect("#1136 first pipe write progress");
     verify(
-        output.status.code() == Some(23),
-        "#1097 blocked reader exit preserved",
+        writer != caller,
+        "#1097 stdin writer yields before child reads",
     );
 }
 
@@ -335,7 +356,11 @@ fn fixture_stdin_cancel_reaps_writer() {
         writers.lock().expect("#1097 writer ownership").len() == 1,
         "#1097 writer registered",
     );
-    let joined = writers.lock().expect("#1136 observe writer join")[0]
+    let joined = writers
+        .lock()
+        .expect("#1136 observe writer join")
+        .first()
+        .expect("#1136 registered writer exists")
         .joined
         .clone();
     // This child never consumes stdin. Cancelling its owner must close the
