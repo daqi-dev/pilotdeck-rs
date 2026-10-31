@@ -600,10 +600,12 @@ class TreeLockBudget(unittest.TestCase):
                 worker = threading.Thread(target=wait)
                 worker.start()
                 worker.join(2)
+                finished_while_held = not worker.is_alive()
             # Releasing the real lock also bounds cleanup of a broken waiter.
             worker.join(2)
             self.assertFalse(worker.is_alive(), '#1142 worker waiter must finish')
-            self.assertTrue(outcome == [TimeoutError], '#1142 worker must respect lock deadline')
+            self.assertTrue(finished_while_held and outcome == [TimeoutError],
+                            '#1142 worker must respect lock deadline')
             self.assertIs(signal.getsignal(signal.SIGALRM), self.handler,
                           '#1142 worker must not change caller signal handler')
 

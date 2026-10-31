@@ -29,6 +29,8 @@ spec = importlib.util.spec_from_file_location('treelock_python_controls', JUDGE)
 python_controls = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(python_controls)
 
+# Identical injections intentionally bind different named tests: retaining an
+# existing budget and delivering a caller deadline are separate obligations.
 cases = [
     ('alarm-cleared', SOURCE,
      '    def _acquire(self, fd):\n',
@@ -63,6 +65,25 @@ cases = [
      '    def _acquire(self, fd):\n        signal.setitimer(signal.ITIMER_REAL, 10)\n',
      'TreeLockBudget.test_no_timer_is_created',
      '#1142 idle acquisition must not arm a timer'),
+    ('timeout-timer-cleared', SOURCE,
+     '                if remaining <= 0:\n'
+     '                    raise TimeoutError(f"source lock busy: {self.path}")',
+     '                if remaining <= 0:\n'
+     '                    signal.setitimer(signal.ITIMER_REAL, 0)\n'
+     '                    raise TimeoutError(f"source lock busy: {self.path}")',
+     'TreeLockBudget.test_lock_timeout_preserves_outer_alarm',
+     '#1142 caller timer must retain only its remaining budget'),
+    ('worker-deadline-ignored', SOURCE,
+     '                if remaining <= 0:\n'
+     '                    raise TimeoutError(f"source lock busy: {self.path}")',
+     # Preserve TimeoutError, but delay it until the real holder releases so
+     # only the pre-release completion check detects the unbounded worker wait.
+     '                if remaining <= 0:\n'
+     '                    if threading.current_thread() is not threading.main_thread():\n'
+     '                        fcntl.flock(fd, fcntl.LOCK_EX)\n'
+     '                    raise TimeoutError(f"source lock busy: {self.path}")',
+     'TreeLockBudget.test_worker_wait_remains_bounded',
+     '#1142 worker must respect lock deadline'),
 ]
 
 
