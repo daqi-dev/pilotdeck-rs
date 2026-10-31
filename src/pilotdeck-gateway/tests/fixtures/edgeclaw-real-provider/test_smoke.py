@@ -224,6 +224,26 @@ class Controls(unittest.TestCase):
                     smoke.build(Path(temp), lambda s: s)
                 self.assertFalse(build.called, "#1120 unavailable slot count cannot start compiler")
 
+    def test_out_of_tree_target_passes_build_target_admission(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "cargo-target"
+            env = {"CARGO_TARGET_DIR": str(target),
+                   "CARGO_PROFILE_DEV_DEBUG": "line-tables-only",
+                   "CARGO_PROFILE_TEST_DEBUG": "line-tables-only"}
+            with patch.dict(os.environ, env), patch.object(
+                    smoke.common, "run_cargo_slots",
+                    return_value={"exit": 0, "stdout": "cargo-slots: 1/4", "stderr": ""}), \
+                    patch.object(smoke.common, "run_bounded", return_value={
+                        "exit": 0, "timedOut": False, "stdout": "", "stderr": ""}) as compiler:
+                try:
+                    binary = smoke.build(Path(temp), lambda s: s)
+                except ValueError as error:
+                    self.fail(f"#1120 out-of-tree target passes build target admission, got: {error}")
+                self.assertTrue(binary == target / "debug/examples/edgeclaw_smoke",
+                                "#1120 build returns the admitted out-of-tree example path")
+                self.assertTrue(compiler.call_args[0][2]["CARGO_TARGET_DIR"] == str(target),
+                                "#1120 compiler env carries the admitted out-of-tree target")
+
     def test_expired_reservation_and_wrong_scope(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "lease.json"

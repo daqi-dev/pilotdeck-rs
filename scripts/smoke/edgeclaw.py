@@ -26,6 +26,10 @@ FIXTURE = ROOT / "src/pilotdeck-gateway/tests/fixtures/edgeclaw-real-provider"
 spec = importlib.util.spec_from_file_location("real_provider", Path(__file__).with_name("real_provider.py"))
 common = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(common)
+spec = importlib.util.spec_from_file_location(
+    "negative_process", ROOT / "src/pilotdeck-gateway/tests/fixtures/negative_process.py")
+negative_process = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(negative_process)
 
 MODEL = "glm-5.3-mb"
 REPETITIONS = 3
@@ -417,9 +421,9 @@ def isolated_env(cell, baseline, relay, port):
 
 
 def build(evidence, redact):
-    target = ROOT / "_build/cargo-target"
-    if os.environ.get("CARGO_TARGET_DIR") != str(target):
-        raise ValueError("#1120 set the mandated CARGO_TARGET_DIR before running")
+    # #1166: target admission is the one shared rule in negative_process;
+    # this script must not keep its own allow-list of target directories.
+    env = negative_process.target_environment(ROOT)
     for name in ("CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG"):
         if os.environ.get(name) != "line-tables-only":
             raise ValueError(f"#1120 {name} must be line-tables-only")
@@ -430,11 +434,11 @@ def build(evidence, redact):
     result = common.run_bounded([
         "cargo", "build", "--locked", "--manifest-path", str(ROOT / "src/Cargo.toml"),
         "-p", "pilotdeck-gateway", "--example", "edgeclaw_smoke",
-    ], ROOT, dict(os.environ), BUILD_TIMEOUT)
+    ], ROOT, env, BUILD_TIMEOUT)
     write_json(evidence / "build.json", result, redact)
     if result["exit"] != 0 or result["timedOut"]:
         raise ValueError("#1120 Rust probe build incomplete")
-    return target / "debug/examples/edgeclaw_smoke"
+    return Path(env["CARGO_TARGET_DIR"]) / "debug/examples/edgeclaw_smoke"
 
 
 def main():
