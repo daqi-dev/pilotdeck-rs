@@ -37,7 +37,7 @@ python3 -I pilotdeck-gateway/tests/fixtures/native-topology/run.py \
 
 取消补发布的所有权契约（fix-r2）：`run()` 以 `exist_ok=False` 创建输出目录并登记所有权；补发布只写本进程创建的目录。租约等待期的取消（`run()` 尚未建目录）不创建目录、不读取也不改写任何既有证据——退出码 1 是唯一取消凭证，同一 `--output` 路径随后可原样重试。旧 `report.json` 若被先前进程撕裂或非 UTF-8，解析失败按空报告处理、整体替换为新的 FAIL 报告，异常不得逃出 `main()`。所有 `save()` 一律临时文件 + rename 原子发布：取消落在写中途时，已发布文件保持旧完整内容。
 
-`test_signals.py` 以真实子进程矩阵逐格复验上述保证（17 相位 × INT/TERM，含发布窗内 INT+TERM 混合顺序两格与清理窗内注入中断一格；钩子在目标相位真实 `os.kill`，`provider-thread-started` 以 serve 入口握手加闸门保证命中「start 返回、serve 未进入」窗口），另含取消补发布/原子写的 4 个单元用例（撕裂报告、所有权、moduleMatrixStatus 翻转、写中途取消）；`negative_signals.py` 逐项变异源码并要求对应格在每个信号上以自己的 #1168 消息失败（每信号单独判杀，混合结果不算；提交后在宿主跑：`python3 -I src/pilotdeck-gateway/tests/fixtures/native-topology/negative_signals.py <新证据目录>`，默认全量，可跟变异名筛选）。
+`test_signals.py` 以真实子进程矩阵逐格复验上述保证（17 相位 × INT/TERM，含发布窗内 INT+TERM 混合顺序两格与清理窗内注入中断一格；钩子在目标相位真实 `os.kill`，`provider-thread-started` 以 serve 入口握手加闸门保证命中「start 返回、serve 未进入」窗口），另含取消补发布/原子写的 4 个单元用例（撕裂报告、所有权、moduleMatrixStatus 翻转、写中途取消）；探针掩码观察器门为 45s——宿主实测探针启动可拖过原 10s 门限，取消会在探针发布其掩码观察器之前就收割它；门超时后仍无观察器按「探针未发布掩码观察」单独判报 FAIL，不再与「继承被阻塞掩码」混判，两条都是失败，掩码断言本身不变（fix-r3）；`negative_signals.py` 逐项变异源码并要求对应格在每个信号上以自己的 #1168 消息失败（每信号单独判杀，混合结果不算；提交后在宿主跑：`python3 -I src/pilotdeck-gateway/tests/fixtures/native-topology/negative_signals.py <新证据目录>`，默认全量，可跟变异名筛选）。
 
 ## 负控与发现的产品差异
 

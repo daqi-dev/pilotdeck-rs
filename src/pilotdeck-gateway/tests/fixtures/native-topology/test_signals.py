@@ -142,7 +142,13 @@ def signal_child(folder, phase, signum):
         return counts[name]
 
     def wait_any_observer():
-        deadline = time.monotonic() + 10
+        # fix-r3: the r3m host stalled a probe start well past the old 10s
+        # gate (one mutant cell still had no observer after 18s), so the
+        # phase fired while the probe was mid-startup and the cancellation
+        # reaped it before it could publish any mask evidence. The gate must
+        # outlast a realistically slow start: 45s stays under run_probe's
+        # 60s PROBE_TIMEOUT and the cell's own 90s bound.
+        deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
             found = next(out.rglob('probe-observer.json'), None) if out.is_dir() else None
             if found is not None:
@@ -394,8 +400,18 @@ class NativeTopologySignalTests(unittest.TestCase):
         self.assertTrue(value['probePid'] is not None, f'#1168 the probe was spawned: {phase}/{sig}')
         self.assertTrue(value['probeAlive'] is False,
                         f'#1168 cleanup is not interruptible, the probe group is reaped: {phase}/{sig}')
+        # fix-r3: a probe reaped before it published its observer is missing
+        # evidence, not a mask violation — on the r3m host a start stalled past
+        # the observer gate made None fail the mask assertion below, which
+        # read as a blocked mask no cell could have produced (mixed-phase
+        # probes spawn through the identical window and passed). Report the
+        # unpublished observer under its own message, still fail-closed.
+        self.assertTrue(value['probeMaskBlocked'] is not None,
+                        f'#1168 the probe publishes its observed signal mask before it is '
+                        f'reaped: {phase}/{sig}: observed={value["probeMaskBlocked"]!r}')
         self.assertTrue(value['probeMaskBlocked'] == [],
-                        f'#1168 the probe inherits an unblocked signal mask: {phase}/{sig}')
+                        f'#1168 the probe inherits an unblocked signal mask: {phase}/{sig}: '
+                        f'{value["probeMaskBlocked"]!r}')
 
     def check_provider_cleaned(self, value, phase, sig):
         self.assertTrue(value['shutdowns'] == value['closes'] == value['joins'] == 1,
