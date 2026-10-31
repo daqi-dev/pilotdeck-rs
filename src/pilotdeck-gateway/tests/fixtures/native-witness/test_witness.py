@@ -10,6 +10,9 @@ if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
 import copy
+from contextlib import contextmanager
+import errno
+import io
 import importlib.util
 import json
 import os
@@ -25,6 +28,9 @@ SOURCE = ROOT / 'scripts/native-witness/witness.py'
 spec = importlib.util.spec_from_file_location('witness', SOURCE)
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
+spec = importlib.util.spec_from_file_location('witness_collector', ROOT / 'scripts/native-witness/collect.py')
+c = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(c)
 
 
 def hx(text):
@@ -81,6 +87,179 @@ class WitnessTests(unittest.TestCase):
                     + '101 exit(0) = ?\n101 +++ exited with 0 +++\n'
                     + '100 exit_group(0) = ?\n100 +++ exited with 0 +++\n')
 
+    def test_parity_lock_busy(self):
+        lock = self.folder / 'parity.lock'
+        real_lock = c.parity_lock
+        with real_lock(lock=lock), mock.patch.object(c, 'parity_lock', side_effect=lambda **_: real_lock(timeout=0.01, lock=lock)), \
+                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as bind, \
+                mock.patch.object(c, '_native_run') as run:
+            original = (lock / 'owner.json').read_bytes()
+            with self.assertRaises(c.Blocked, msg='#1140 busy parity lease blocks before bind'):
+                c.native_run('', '', self.folder / 'blocked')
+            self.assertTrue((lock / 'owner.json').read_bytes() == original, '#1140 predecessor lease unchanged')
+            self.assertTrue(bind.call_count == run.call_count == 0, '#1140 busy lease never touches ports or process')
+
+    def test_parity_lock_lifetime(self):
+        lock = self.folder / 'parity.lock'
+        real_lock = c.parity_lock
+        for cancelled in (False, True):
+            def run(*_):
+                self.assertTrue(lock.is_dir(), '#1140 lease covers collection and cleanup')
+                if cancelled:
+                    raise KeyboardInterrupt('deterministic owned cancellation')
+                return 'finished'
+            with mock.patch.object(c, 'parity_lock', side_effect=lambda **_: real_lock(lock=lock)), \
+                    mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as bind, \
+                    mock.patch.object(c, '_native_run', side_effect=run):
+                bind.return_value.__enter__.return_value.bind.side_effect = lambda *_: self.assertTrue(lock.is_dir(), '#1140 lease precedes fixed port bind')
+                if cancelled:
+                    with self.assertRaises(KeyboardInterrupt, msg='#1140 owned cancellation propagates through lease'):
+                        c.native_run('', '', self.folder / 'unused')
+                else:
+                    self.assertTrue(c.native_run('', '', self.folder / 'unused') == 'finished', '#1140 successful collection returns')
+            self.assertFalse(lock.exists(), '#1140 own lease released after collection or cancellation')
+
+    def test_parity_lock_cancel(self):
+        @contextmanager
+        def cancelled(**_):
+            raise KeyboardInterrupt('deterministic waiting cancellation')
+            yield
+        with mock.patch.object(c, 'parity_lock', cancelled), mock.patch.object(sys, 'platform', 'linux'), \
+                mock.patch.object(c.socket, 'socket') as bind, mock.patch.object(c, '_native_run') as run:
+            with self.assertRaises(KeyboardInterrupt, msg='#1140 waiting cancellation never launches'):
+                c.native_run('', '', self.folder / 'unused')
+            self.assertTrue(bind.call_count == run.call_count == 0, '#1140 cancelled waiter never touches ports')
+
+    def test_ports_blocked(self):
+        from contextlib import nullcontext
+        for busy in (28999, 29000):
+            attempted = []
+            def bind(address):
+                attempted.append(address[1])
+                if address[1] == busy:
+                    raise OSError(errno.EADDRINUSE, 'deterministic occupied port')
+            with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                    mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
+                    mock.patch.object(c, '_native_run') as run:
+                sockets.return_value.__enter__.return_value.bind.side_effect = bind
+                error = None
+                try:
+                    c.native_run('', '', self.folder / 'blocked')
+                except Exception as caught:
+                    error = caught
+                self.assertTrue(isinstance(error, c.Blocked), '#1140 occupied fixed port reports BLOCKED')
+                self.assertTrue(attempted == list(range(28999, busy + 1)) and run.call_count == 0, '#1140 occupied port has no fallback or launch')
+        # A non-participant can bind between preflight and actual provider bind.
+        with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
+                mock.patch.object(c, '_native_run', side_effect=OSError(errno.EADDRINUSE, 'provider bind race')):
+            with self.assertRaises(c.Blocked, msg='#1140 actual provider bind race is BLOCKED'):
+                c.native_run('', '', self.folder / 'blocked')
+
+    def test_gateway_bind_race(self):
+        from contextlib import nullcontext
+        tracer = mock.Mock()
+        tracer.poll.return_value = 1
+        def run(*_):
+            c.wait_ready(tracer, self.folder, 28999, 0)
+        with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
+                mock.patch.object(c, '_native_run', side_effect=run):
+            sockets.return_value.__enter__.return_value.bind.side_effect = [None, None, OSError(errno.EADDRINUSE, 'gateway bind race')]
+            error = None
+            try:
+                c.native_run('', '', self.folder / 'unused')
+            except Exception as caught:
+                error = caught
+            self.assertTrue(isinstance(error, c.Blocked), '#1140 gateway bind race reports BLOCKED')
+        with mock.patch.object(c.socket, 'socket'):
+            with self.assertRaises(c.w.Incomplete, msg='#1140 other startup failure remains incomplete'):
+                c.wait_ready(tracer, self.folder, 28999, 0)
+
+    def test_blocked_cli_status(self):
+        from contextlib import redirect_stderr
+        with mock.patch.object(sys, 'argv', ['collect.py', '--gateway', 'host', '--sidecar', 'child', '--output', 'unused']), \
+                mock.patch.object(c, 'native_run', side_effect=c.Blocked('#1140 busy')), redirect_stderr(io.StringIO()) as stderr:
+            self.assertTrue(c.main() == 2, '#1140 BLOCKED CLI has exit two')
+        self.assertTrue(json.loads(stderr.getvalue())['status'] == 'BLOCKED', '#1140 BLOCKED CLI emits explicit status')
+
+    def capture_fixture(self, folder, validate, *, result=0):
+        tracer = mock.Mock(pid=99)
+        tracer.poll.return_value = result
+        tracer.wait.return_value = result
+        contract = dict(self.contract, project=str(self.folder))
+        contract.pop('launcherPid')
+        def exercise(_tracer, output, _deadline):
+            (output / 'trace.log').write_text(self.raw)
+        with mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(w.shutil, 'which', return_value='/strace'), \
+                mock.patch.object(w.subprocess, 'run', return_value=mock.Mock(stdout='--kill-on-exit')), \
+                mock.patch.object(w.subprocess, 'Popen', return_value=tracer):
+            return w.capture(contract, folder, {}, exercise=exercise, validate=validate)
+
+    def test_smoke_before_receipt(self):
+        home = self.folder / 'smoke-home'
+        home.mkdir()
+        durable = home / 'turn.jsonl'
+        requests = [{'path': '/v1/chat/completions'}]
+        for fault in ('none', 'sidecar', 'calls', 'requests', 'target', 'durable'):
+            durable.write_text('{}\n')
+            folder = self.folder / ('smoke-' + fault)
+            seen = []
+            def validate(contract, evidence):
+                self.assertFalse((folder / 'receipt.json').exists(), '#1140 smoke runs before receipt publication')
+                if fault == 'sidecar':
+                    evidence['processes'] = [p for p in evidence['processes'] if p['role'] != 'sidecar']
+                if fault == 'calls':
+                    evidence['networkWitness']['calls'] = []
+                if fault == 'target':
+                    evidence['networkWitness']['calls'][0]['target'] = '127.0.0.1:29009'
+                if fault == 'durable':
+                    durable.unlink()
+                c.validate_smoke(contract, evidence, [] if fault == 'requests' else requests, home)
+                seen.append(True)
+            error = None
+            try:
+                self.capture_fixture(folder, validate)
+            except w.Incomplete as caught:
+                error = caught
+            # Collector owns a separate module identity for Incomplete; convert
+            # it through the capture's generic exception path without masking it.
+            except c.w.Incomplete as caught:
+                error = caught
+            if fault == 'none':
+                self.assertTrue(error is None and seen == [True], '#1140 valid smoke runs validation')
+                self.assertTrue(w.load_capture(folder)[1]['launcherPid'] == 99, '#1140 valid smoke receipt reloads')
+            else:
+                self.assertTrue(error is not None, '#1140 smoke rejects ' + fault)
+                self.assertFalse((folder / 'receipt.json').exists(), '#1140 failed smoke publishes no receipt')
+                self.assertTrue((folder / 'failure.json').is_file(), '#1140 failed smoke records failure')
+                with self.assertRaises(w.Incomplete, msg='#1140 failed smoke cannot reload'):
+                    w.load_capture(folder)
+
+    def test_native_validator_wired(self):
+        # Exercise the real collector closure, with no socket or child process.
+        def capture(contract, output, environment, *, exercise, validate=None):
+            self.assertTrue(callable(validate), '#1140 collector wires prepublication validator')
+            validate(contract, {'synthetic': True})
+            self.assertTrue(server.shutdown.call_count == 1, '#1140 provider stops before receipt')
+            return 'validated'
+        server, worker = mock.Mock(), mock.Mock()
+        worker.is_alive.return_value = False
+        with mock.patch.object(c, 'BoundedHTTPServer', return_value=server), \
+                mock.patch.object(c.threading, 'Thread', return_value=worker), \
+                mock.patch.object(c.w, 'identity', return_value={}), mock.patch.object(c.w, 'capture', side_effect=capture), \
+                mock.patch.object(c, 'validate_smoke') as validate:
+            result = c._native_run(self.host, self.child, self.folder / 'native', 28999)
+        self.assertTrue(result == 'validated' and validate.call_count == 1, '#1140 collector invokes smoke validation')
+        self.assertTrue(server.shutdown.call_count == server.server_close.call_count == worker.join.call_count == 1, '#1140 provider cleanup is idempotent')
+
+    def test_tracer_nonzero(self):
+        for result in (-signal.SIGTERM, 128 + signal.SIGTERM, 1):
+            folder = self.folder / ('nonzero-' + str(result))
+            with self.assertRaises(w.Incomplete, msg='#1140 nonzero tracer cannot publish success'):
+                self.capture_fixture(folder, None, result=result)
+            self.assertFalse((folder / 'receipt.json').exists(), '#1140 nonzero tracer has no receipt')
+
     def test_provider_read_deadline(self):
         import socket
         spec = importlib.util.spec_from_file_location('collector_test', ROOT / 'scripts/native-witness/collect.py')
@@ -116,7 +295,8 @@ class WitnessTests(unittest.TestCase):
 
     def test_replay_exec(self):
         value = w.parse_trace(self.raw, self.contract)
-        value['execWitness']['events'].pop(2)
+        value['execWitness']['events'] = [e for e in value['execWitness']['events']
+                                          if not (e['event'] == 'exec' and e['pid'] == 102)]
         checked = w.checked_evidence(self.raw, self.contract, value)
         self.assertFalse(checked['execWitness']['complete'], '#1140 replay-exec detects omitted short child')
 
@@ -166,7 +346,8 @@ class WitnessTests(unittest.TestCase):
         for kind in ('exec', 'network', 'ps', 'both-child-ledgers'):
             bad = copy.deepcopy(value)
             if kind == 'exec':
-                bad['execWitness']['events'].pop(2)
+                bad['execWitness']['events'] = [e for e in bad['execWitness']['events']
+                                                 if not (e['event'] == 'exec' and e['pid'] == 102)]
             elif kind == 'network':
                 bad['networkWitness']['calls'].pop()
             elif kind == 'ps':
