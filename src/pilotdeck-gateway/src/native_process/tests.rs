@@ -472,7 +472,9 @@ async fn production_profile_and_registration() {
         files: crate::metadata::NativeFiles,
     };
     negative_assert!(
-        metadata.has_registered_project(&options.project),
+        metadata
+            .has_registered_project(&options.project)
+            .expect("#1071 registered project path"),
         "#1071 project visible to metadata"
     );
     let selection = crate::session_model::execute(
@@ -596,3 +598,6 @@ fn tool_policy_and_turn_environment() {
 
 #[path = "review_tests.rs"]
 mod review;
+
+#[path = "metadata_cwd_tests.rs"]
+mod metadata_cwd;

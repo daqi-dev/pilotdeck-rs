@@ -2,7 +2,7 @@
 //! no retention window. Custom authorization/retention/artifact stores are A6
 //! extension points, unimplemented here (not exemptions).
 use crate::{
-    metadata::{Files, Metadata, js_trim, object, resolve, resolved_identity, text_field},
+    metadata::{Files, Metadata, js_trim, object, resolve, resolve_process_identity, text_field},
     project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -31,6 +31,61 @@ fn safe_integer(value: &JsValue, min: f64, max: f64) -> bool {
 }
 fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
+}
+/// `input.projectKey ?? fallbackProjectRoot` (createLocalGateway.ts:1184,
+/// 1205, 1223): a missing or null key takes the boot's configured fallback
+/// project, while an empty string stays explicit and resolves against cwd.
+/// Both boots share this one fill — the isolated gate passes its configured
+/// project and the out-of-process proxy passes PILOT_HOME, the
+/// `pilotdeck server` boot's fallbackProjectRoot (pilotdeck.ts:107-111) — so
+/// the two entry points cannot drift. The pinned default-boot fixture
+/// instead replays nullish keys through `project()`'s cwd resolution, so the
+/// fill stays at the request entry points, not inside `response`.
+pub(crate) fn fill_default_project_key(params: &mut JsValue, fallback: &Path) {
+    if let JsValue::Object(fields) = params
+        && matches!(
+            fields.get("projectKey"),
+            None | Some(JsValue::Undefined | JsValue::Null)
+        )
+    {
+        fields.insert(
+            "projectKey".into(),
+            fallback.to_string_lossy().as_ref().into(),
+        );
+    }
+}
+/// The three archive RPC names. `fill_request_default_project_key` below and
+/// the isolated entry gate in `native_process/requests.rs` both branch on this
+/// one list, so a fourth archive method cannot be wired into only one of the
+/// two entry points. `dispatch.rs` spells the same three names alongside other
+/// methods in `LOCAL_METHODS`, `needs_files` and the archive route, and stays
+/// in sync by hand (see the comments there).
+pub(crate) const ARCHIVE_METHODS: [&str; 3] = [
+    "native_archive_manifest",
+    "native_archive_entries",
+    "native_archive_artifact",
+];
+
+/// Request-level adapter for the proxy path, reusing the same params fill.
+/// `JsValue` has no nested mutation, so params is swapped out and back; a
+/// non-object params keeps TS's own read-error shape and is left untouched.
+pub(crate) fn fill_request_default_project_key(request: &mut JsValue, fallback: &Path) {
+    if !text_field(request, "method")
+        .is_some_and(|method| ARCHIVE_METHODS.contains(&method.as_str()))
+    {
+        return;
+    }
+    let JsValue::Object(fields) = request else {
+        return;
+    };
+    if !matches!(fields.get("params"), Some(JsValue::Object(_))) {
+        return;
+    }
+    let mut params = fields
+        .insert("params".into(), JsValue::Undefined)
+        .unwrap_or(JsValue::Undefined);
+    fill_default_project_key(&mut params, fallback);
+    fields.insert("params".into(), params);
 }
 /// `String(value)`. A too-deep array is V8's RangeError, surfaced as a plain
 /// gateway error (real TS + WS evidence: tests/fixtures/runtime-boundaries.json).
@@ -205,7 +260,7 @@ fn unknown_project_key(units: &[u16]) -> Error {
 fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::path::PathBuf> {
     let value = field(params, "projectKey");
     let requested = if nullish(value) {
-        metadata.cwd.clone()
+        crate::metadata::resolve_process_path(&metadata.cwd, Path::new("")).map_err(cwd_error)?
     } else {
         let Some(s) = value.as_string() else {
             return Err(path_type(value, "paths[0]"));
@@ -214,7 +269,7 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
         // but it folds `.`/`..` first. A surrogate-bearing segment removed by
         // `..` therefore never reaches the comparison; only a surviving one is
         // unrepresentable, and disk markers (valid UTF-8) cannot match it.
-        let Some(requested) = resolved_identity(&metadata.cwd, s) else {
+        let Some(requested) = resolve_process_identity(&metadata.cwd, s).map_err(cwd_error)? else {
             return Err(unknown_project_key(s.units()));
         };
         PathBuf::from(requested)
@@ -222,7 +277,10 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
     if requested == metadata.home {
         return Ok(requested);
     }
-    if registry(metadata).has_registered_project(&requested) {
+    if registry(metadata)
+        .has_registered_project(&requested)
+        .map_err(cwd_error)?
+    {
         return Ok(requested);
     }
     // The fallback key is the host's cwd path (a Rust `Path`); a string key
@@ -231,9 +289,13 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
         Some(s) => unknown_project_key(s.units()),
         None => error(
             "PROJECT_NOT_FOUND",
-            &format!("Unknown projectKey: {}", metadata.cwd.to_string_lossy()),
+            &format!("Unknown projectKey: {}", requested.to_string_lossy()),
         ),
     })
+}
+fn cwd_error(e: io::Error) -> Error {
+    let (code, message) = crate::metadata::process_cwd_diagnostic(&e);
+    (code, message.into())
 }
 fn fs_error(e: io::Error, method: &str, operation: &str, path: &Path) -> Error {
     if crate::project_files::nofollow_loop(&e) {
@@ -303,7 +365,8 @@ fn transcript<F: Files>(
     method: &str,
 ) -> Result<Option<Vec<JsValue>>> {
     let path = registry(metadata)
-        .chat_dir(&project.to_string_lossy())
+        .process_chat_dir(&project.to_string_lossy())
+        .map_err(cwd_error)?
         .join(format!("{}.jsonl", session_id(session)));
     if path.as_os_str().to_string_lossy().contains('\0') {
         return Err((

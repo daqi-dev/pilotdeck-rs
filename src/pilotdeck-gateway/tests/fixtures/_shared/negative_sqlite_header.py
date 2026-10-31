@@ -102,7 +102,11 @@ def main():
     phase = 'enter'
     body_error = None
     try:
-        with mutating_sources(ROOT, [GENERATOR, STORAGE_OBSERVER]) as originals:
+        with mutating_sources(ROOT, [GENERATOR, STORAGE_OBSERVER,
+                ROOT / 'src/pilotdeck-gateway/tests/generator_provenance.rs',
+                ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+                ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+                FIXTURES / '_shared/regeneration-masks.tsv']) as originals:
             phase = 'body'
             try:
                 original = {path: originals[path].decode() for path in originals}

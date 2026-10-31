@@ -81,6 +81,15 @@ impl GatewayRequests for Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            // createLocalGateway's archive callbacks use the configured fallback
+            // project for nullish keys. Fill it before isolated admission, while
+            // leaving Metadata's cwd lazy for explicit paths and other RPCs.
+            let mut params = params;
+            if let Ok(name) = method.to_utf8()
+                && crate::native_archive::ARCHIVE_METHODS.contains(&name.as_str())
+            {
+                crate::native_archive::fill_default_project_key(&mut params, &self.options.project);
+            }
             if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())
                 && !project
                     .as_string()
@@ -133,7 +142,7 @@ impl GatewayRequests for Requests {
             }
             let metadata = Metadata {
                 home: self.options.home.clone(),
-                cwd: self.options.project.clone(),
+                cwd: std::path::PathBuf::new(),
                 files: NativeFiles,
             };
             let request = object([

@@ -2,6 +2,9 @@
 use crate::metadata::{Files, Metadata, object, text_field};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 
+// The three native_archive names in this list and in `needs_files` mirror
+// native_archive::ARCHIVE_METHODS by hand: they sit alongside other methods
+// here, so the shared const cannot be embedded directly.
 const LOCAL_METHODS: &[&str] = &[
     "supported_agents",
     "list_projects",
@@ -84,6 +87,10 @@ pub(crate) fn route_with_environment<F: Files>(
     if !LOCAL_METHODS.contains(&method.as_str()) {
         return Route::Forward;
     }
+    // Spelled out rather than native_archive::ARCHIVE_METHODS: mutating the
+    // shared list must not break this routing invariant (the whitelist check
+    // below relies on every local method being routed). Keep in sync by hand
+    // with the shared list and LOCAL_METHODS/needs_files above.
     if matches!(
         method.as_str(),
         "native_archive_manifest" | "native_archive_entries" | "native_archive_artifact"
@@ -120,7 +127,9 @@ pub(crate) fn route_with_environment<F: Files>(
     let result = match method.as_str() {
         "supported_agents" => Ok(supported_agents()),
         "list_projects" => match metadata {
-            Some(metadata) => Ok(metadata.list_projects()),
+            Some(metadata) => metadata
+                .list_projects()
+                .map_err(|e| crate::metadata::process_cwd_diagnostic(&e)),
             None => return Route::Forward,
         },
         "describe_project" => {
@@ -142,7 +151,9 @@ pub(crate) fn route_with_environment<F: Files>(
             } else {
                 let root = params.get("projectKey").unwrap_or(&undefined);
                 match root.as_string() {
-                    Some(root) => Ok(metadata.describe_project(root)),
+                    Some(root) => metadata
+                        .describe_project(root)
+                        .map_err(|e| crate::metadata::process_cwd_diagnostic(&e)),
                     None => {
                         // Shared with the SDK MCP slice's `project_key`
                         // (#347 fix-r1): Node's Received text, with

@@ -142,6 +142,8 @@ pub fn list_session_entries(path: &std::path::Path) -> std::io::Result<Vec<(Stri
 }
 
 /// Resolve a chat directory through the existing project marker lookup.
+/// `cwd` is the caller's explicit base (native assembly supplies the absolute
+/// configured project); this API does not look up process cwd.
 pub fn session_chat_dir(
     home: &std::path::Path,
     cwd: &std::path::Path,

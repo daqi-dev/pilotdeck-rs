@@ -113,7 +113,12 @@ def main():
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
-        with mutating_sources(root, list(dict.fromkeys(case[1] for case in selected))) as originals:
+        with mutating_sources(root, list(dict.fromkeys(
+                [*[case[1] for case in selected],
+                 root / 'src/pilotdeck-gateway/tests/config_snapshot.rs',
+                 root / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+                 root / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+                 root / 'src/pilotdeck-gateway/tests/fixtures/_shared/regeneration-masks.tsv']))) as originals:
             for name, path, old, new, test, assertion in selected:
                 status, reason = 'INVALID', 'not executed'
                 target = 'config_snapshot' if test in {'config_snapshot_regenerates_identically', 'all_successful_config_corpus_cases_have_snapshot_projections'} else 'config_changes'

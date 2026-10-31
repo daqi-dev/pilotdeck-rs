@@ -1,6 +1,6 @@
 //! Read-only StaffDeck runtime binding transformation. No queues or provisioning.
 use super::{Env, Error, exists, graph, host_io_error, read_error, structured_clone, value::*};
-use crate::metadata::{Files, Metadata, object, resolve};
+use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsValue, parse_json};
 use pilotdeck_yaml::{Options, parse_document};
 
@@ -140,9 +140,11 @@ pub(super) fn apply<F: Files>(
             let JsValue::Array(rows) = field(&store, "projects") else {
                 unreachable!()
             };
-            let root = resolve(&metadata.cwd, project)
-                .to_string_lossy()
-                .into_owned();
+            let root =
+                crate::metadata::resolve_process_path(&metadata.cwd, std::path::Path::new(project))
+                    .map_err(super::cwd_error)?
+                    .to_string_lossy()
+                    .into_owned();
             for row in rows {
                 if property(row, "projectRoot")?
                     .as_string()
@@ -214,10 +216,14 @@ pub(super) fn apply<F: Files>(
             return Err(invalid_path_argument(&received));
         };
         // path.join normalizes segments, but does not reset at an absolute later segment.
-        let definitions = resolve(
+        let definitions = crate::metadata::resolve_process_path(
             &metadata.cwd,
-            &format!("{}/staffdeck/{id}/sops.json", metadata.home.display()),
-        );
+            std::path::Path::new(&format!(
+                "{}/staffdeck/{id}/sops.json",
+                metadata.home.display()
+            )),
+        )
+        .map_err(super::cwd_error)?;
         let bundle = if exists(metadata, &definitions)? {
             let bytes = metadata
                 .files

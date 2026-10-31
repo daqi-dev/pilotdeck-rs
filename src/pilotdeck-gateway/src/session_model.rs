@@ -6,7 +6,7 @@ mod replay;
 pub(crate) mod tests;
 use crate::{
     config::{self, Env, Error},
-    metadata::{Files, Metadata, object, resolve, text_field},
+    metadata::{Files, Metadata, object, resolve},
     project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
@@ -108,27 +108,30 @@ pub(crate) fn execute<F: Files>(
     // Normalize raw UTF-16 first; only a surrogate that survives is genuinely
     // unrepresentable. Disk-derived keys are valid UTF-8, so such a key can
     // never name home or a registered project; reject with the original units.
-    let requested = crate::metadata::resolved_identity(&metadata.cwd, project_string);
+    let requested = crate::metadata::resolve_process_identity(&metadata.cwd, project_string)
+        .map_err(crate::config::cwd_error)?;
     let project = if requested
         .as_deref()
         .is_some_and(|path| resolve(&metadata.cwd, path) == metadata.home)
     {
         metadata.home.to_string_lossy().into_owned()
     } else {
-        let projects = metadata.list_projects();
-        let found = match field(&projects, "projects") {
-            JsValue::Array(items) => items
-                .iter()
-                .filter_map(|p| text_field(p, "projectKey"))
-                .find(|p| {
-                    requested.as_deref().is_some_and(|path| {
-                        resolve(&metadata.cwd, p) == resolve(&metadata.cwd, path)
-                    })
-                }),
-            _ => None,
+        let found = match requested.as_deref() {
+            Some(path) => metadata
+                .has_registered_project(std::path::Path::new(path))
+                .map_err(crate::config::cwd_error)?,
+            None => false,
         };
-        found.ok_or_else(|| unknown_project_key(project_units))?
+        if !found {
+            return Err(unknown_project_key(project_units));
+        }
+        requested.expect("registered project has a resolved identity")
     };
+    let project =
+        crate::metadata::resolve_process_path(&metadata.cwd, std::path::Path::new(&project))
+            .map_err(crate::config::cwd_error)?
+            .to_string_lossy()
+            .into_owned();
     let session = field(params, "sessionKey");
     if matches!(session, JsValue::Undefined | JsValue::Null)
         || session.as_string().is_some_and(|s| {
@@ -144,7 +147,9 @@ pub(crate) fn execute<F: Files>(
         ));
     };
     let path_session = sanitize_session(session_string);
-    let chat_dir = metadata.chat_dir(&project);
+    let chat_dir = metadata
+        .process_chat_dir(&project)
+        .map_err(crate::config::cwd_error)?;
     if session_string.units().contains(&0) || chat_dir.to_string_lossy().contains('\0') {
         // path.join accepts NUL; the first fs.stat validates the entire path.
         // Preserve UTF-16 in its error, including lone surrogates in sessionKey.

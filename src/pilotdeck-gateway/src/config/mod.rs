@@ -147,7 +147,7 @@ pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> Result<std::path::PathBuf, 
     crate::metadata::resolve_process_path(std::path::Path::new(""), cwd).map_err(cwd_error)
 }
 
-fn cwd_error(error: std::io::Error) -> Error {
+pub(crate) fn cwd_error(error: std::io::Error) -> Error {
     let (code, message) = crate::metadata::process_cwd_diagnostic(&error);
     Error {
         code: code.into(),
@@ -388,7 +388,9 @@ fn read_source<F: Files>(
 ) -> Result<(), Error> {
     // existsSync('') is false, whereas path.resolve('') denotes cwd.
     if !path.is_empty() {
-        let absolute = crate::metadata::resolve(&metadata.cwd, path);
+        let absolute =
+            crate::metadata::resolve_process_path(&metadata.cwd, std::path::Path::new(path))
+                .map_err(cwd_error)?;
         if exists(metadata, &absolute)? {
             match metadata.files.read(&absolute) {
                 Ok(bytes) => {
