@@ -415,9 +415,13 @@ pub(super) fn register_project(options: &Options) -> Result<(), ProxyError> {
     let marker = directory.join(".cwd");
     if marker.exists() {
         let existing = std::fs::read_to_string(&marker)?;
-        if crate::metadata::resolve(&options.project, crate::metadata::js_trim(&existing))
-            != options.project
-        {
+        let existing = crate::metadata::js_trim(&existing);
+        // TS registration lookup rejects blank markers before resolving paths.
+        // Resolving "" against the project would otherwise manufacture ownership.
+        if existing.is_empty() {
+            return Err("Native project storage marker is empty.".into());
+        }
+        if crate::metadata::resolve(&options.project, existing) != options.project {
             return Err("Native project storage marker belongs to a different project.".into());
         }
         return Ok(());
