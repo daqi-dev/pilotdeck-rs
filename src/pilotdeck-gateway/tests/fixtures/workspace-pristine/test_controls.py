@@ -139,11 +139,165 @@ class WorkspacePristine(unittest.TestCase):
 
     def test_only_untracked_caches_are_excluded(self):
         for name in ('src/target/debug/cache', 'src/pilotdeck-cli/target/debug/cache',
+                     'src/vendor/nested/target/debug/cache', 'src/.DS_Store',
+                     'src/pilotdeck-cli/.pytest_cache/state',
                      'src/pilotdeck-cli/tests/__pycache__/fixture.pyc'):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('cache')
-        api._assert_product_pristine(self.root, 'HEAD')
+        error = None
+        try:
+            api._assert_product_pristine(self.root, 'HEAD')
+        except Exception as caught:
+            error = caught
+        self.assertTrue(error is None, '#1166 disposable untracked caches are not build inputs')
+
+    def commit_source(self, text, files):
+        source = self.root / INPUTS[1]
+        source.write_text(text)
+        for name, content in files.items():
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        git(self.root, 'add', '-f', '.')
+        git(self.root, 'commit', '-qm', 'new literal inputs')
+
+    def test_new_external_literal_inputs_are_automatically_guarded(self):
+        # These paths did not exist when the helper was written. Include a
+        # recursive Rust source and inline-module #[path] resolution too.
+        self.commit_source(
+            'const A: &str = include_str!("../../../new-assets/help.txt");\n'
+            'const B: &[u8] = r#include_bytes! { r#"../../../new-assets/blob"# };\n'
+            '#[path = "../../../new-assets/extra.inc"] mod extra;\n'
+            'mod nested { #[path = "../../../../new-assets/nested.rs"] mod child; }\n',
+            {'new-assets/help.txt': 'help', 'new-assets/blob': 'blob',
+             'new-assets/extra.inc': 'const C: &str = include_str!("transitive.txt");',
+             'new-assets/transitive.txt': 'transitive', 'new-assets/nested.rs': '// empty',
+             'src/pilotdeck-cli/src/nested/.keep': ''})
+        failure = None
+        try:
+            api._assert_product_pristine(self.root, 'HEAD')
+        except Exception as error:
+            failure = error
+        self.assertTrue(failure is None, '#1166 literal discovery accepts valid Rust paths')
+        for name in ('help.txt', 'blob', 'extra.inc', 'transitive.txt', 'nested.rs'):
+            path = self.root / 'new-assets' / name
+            with self.subTest(input=name), api.mutating_sources(self.root, [path]):
+                path.write_text('// changed input')
+                with self.assertRaises(api.SourceBaselineError,
+                                       msg='#1166 new external literal inputs must be guarded'):
+                    api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_nonliteral_and_unparseable_inputs_fail_closed(self):
+        for source in ('const X: &str = include_str!(concat!("x", "y"));',
+                       'const X: &[u8] = include_bytes!(env!("INPUT"));',
+                       '#[path = concat!("x", "y")] mod x;',
+                       '#[cfg_attr(any(), path = "x.rs")] mod x;',
+                       'mod missing;',
+                       'const X: &str = "unterminated', '/* unfinished',
+                       'fn x() {', 'include_str!("missing");',
+                       '#[path = "../.."] mod x;'):
+            with self.subTest(source=source):
+                self.commit_source(source, {})
+                with self.assertRaises(api.SourceBaselineError,
+                                       msg='#1166 unresolved Rust inputs must fail closed'):
+                    api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_comments_strings_and_escaped_paths(self):
+        self.commit_source(
+            '// include_str!(dynamic())\n/* outer /* include_bytes!(x) */ end */\n'
+            'const A: &str = r##"include_str!(not_a_path)"##;\n'
+            'const B: &[u8] = br#"include_bytes!(not_a_path)"#;\n'
+            'const C: &CStr = cr#"include_bytes!(not_a_path)"#;\n'
+            'const Q: char = \'"\'; fn f<\'a>(x: &\'a str) {}\n'
+            'const X: &str = include_str!("../../../new-assets/hel\\u{70}\\x2e\\\n  txt",);',
+            {'new-assets/help.txt': 'help'})
+        error = None
+        try:
+            api._assert_product_pristine(self.root, 'HEAD')
+            inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+        except Exception as caught:
+            error, inputs = caught, ()
+        self.assertTrue(error is None and ':(top,literal)new-assets/help.txt' in inputs,
+                        '#1166 Rust lexing distinguishes literals from comments and data')
+
+    def test_explicit_cache_input_is_not_exempt(self):
+        self.commit_source('const X: &str = include_str!("../.DS_Store");',
+                           {'src/pilotdeck-cli/.DS_Store': 'build input'})
+        git(self.root, 'rm', '--cached', 'src/pilotdeck-cli/.DS_Store')
+        git(self.root, 'commit', '-qm', 'make literal input untracked')
+        with self.assertRaises(api.SourceBaselineError,
+                               msg='#1166 included cache names remain build inputs'):
+            api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_external_literal_index_flags_and_symlinks_fail_closed(self):
+        self.commit_source('const X: &str = include_str!("../../../assets/help");',
+                           {'assets/help': 'help'})
+        for flag in ('assume-unchanged', 'skip-worktree'):
+            git(self.root, 'update-index', '--' + flag, 'assets/help')
+            try:
+                with self.assertRaises(api.SourceBaselineError,
+                                       msg='#1166 external input index flags must be rejected'):
+                    api._assert_product_pristine(self.root, 'HEAD')
+            finally:
+                git(self.root, 'update-index', '--no-' + flag, 'assets/help')
+        with tempfile.TemporaryDirectory() as outside:
+            external = Path(outside) / 'help'
+            external.write_text('outside')
+            target = self.root / 'assets/help'
+            target.unlink()
+            target.symlink_to(external)
+            git(self.root, 'add', 'assets/help')
+            git(self.root, 'commit', '-qm', 'external symlink input')
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1166 literal inputs cannot escape the repository'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_external_default_modules_are_guarded(self):
+        self.commit_source('#[path = "../../../assets/custom.inc"] mod external;',
+                           {'assets/custom.inc': 'mod child;',
+                            'assets/child.rs': 'include!("fragment.inc");',
+                            'assets/fragment.inc': 'const X: &str = include_str!("payload");',
+                            'assets/payload': 'original'})
+        for name in ('child.rs', 'fragment.inc', 'payload'):
+            path = self.root / 'assets' / name
+            with self.subTest(input=name), api.mutating_sources(self.root, [path]):
+                path.write_text('// residue')
+                with self.assertRaises(api.SourceBaselineError,
+                                       msg='#1166 external default modules remain guarded'):
+                    api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_macro_expansion_and_aliases_fail_closed(self):
+        for source in (
+                'macro_rules! load { () => { include_str!("../../../assets/payload") } }',
+                'macro_rules! load { () => { #[path="../../../assets/child.rs"] mod child; } }',
+                'use std::include_str as load; const X: &str = load!("../../../assets/payload");'):
+            with self.subTest(source=source):
+                self.commit_source(source, {'assets/payload': 'data', 'assets/child.rs': '// source'})
+                with self.assertRaises(api.SourceBaselineError,
+                                       msg='#1166 ambiguous macro input locations must fail closed'):
+                    api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_internal_symlink_input_is_rejected(self):
+        self.commit_source('const X: &str = include_str!("../../../assets/link/payload");',
+                           {'assets/one/payload': 'one', 'assets/two/payload': 'two'})
+        (self.root / 'assets/link').symlink_to('one', target_is_directory=True)
+        git(self.root, 'add', 'assets/link')
+        git(self.root, 'commit', '-qm', 'symlink input')
+        with self.assertRaises(api.SourceBaselineError,
+                               msg='#1166 input symlink identities cannot be hidden'):
+            api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_symlink_workspace_source_is_rejected(self):
+        source = self.root / INPUTS[0]
+        (self.root / 'linked.rs').write_text('// source outside src')
+        source.unlink()
+        source.symlink_to('../../../linked.rs')
+        git(self.root, 'add', '-f', '.')
+        git(self.root, 'commit', '-qm', 'symlink workspace source')
+        with self.assertRaises(api.SourceBaselineError,
+                               msg='#1166 source symlink identities cannot be hidden'):
+            api._assert_product_pristine(self.root, 'HEAD')
 
     def test_git_failure_is_not_clean(self):
         with patch.object(api, '_git', side_effect=RuntimeError('synthetic git error')):
@@ -317,10 +471,32 @@ class SnapshotControls(unittest.TestCase):
                         '#1166 snapshot digest matches executable')
 
     def test_no_target_no_build(self):
-        with self.dependencies(), self.assertRaises(RuntimeError,
+        marker = '#1166 absent target must fail before build'
+        with patch.object(api, 'tree_lock', side_effect=AssertionError(marker)), self.assertRaises(RuntimeError,
                 msg='#1166 absent target must fail before build'):
             api.build_snapshot(self.root, self.root / 'run', package='fixture', target='probe', env={})
         self.assertFalse(self.events, '#1166 absent target cannot touch sources')
+
+    def test_target_directory_must_belong_to_worktree(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs1166-other-target-') as other:
+            (self.root / 'shared-link').symlink_to(other, target_is_directory=True)
+            marker = '#1166 foreign cargo target must be rejected before work'
+            for index, target in enumerate((other, '../shared-target', str(self.root), 'shared-link')):
+                output = self.root / f'run-{index}'
+                with self.subTest(target=target), patch.object(
+                        api, 'tree_lock', side_effect=AssertionError(marker)), self.assertRaises(
+                        RuntimeError, msg='#1166 foreign cargo target must be rejected before work'):
+                    api.build_snapshot(self.root, output, package='fixture', target='probe',
+                                       env={'CARGO_TARGET_DIR': target})
+                self.assertFalse(self.events, '#1166 foreign cargo target cannot acquire or build')
+                self.assertFalse(output.exists(), '#1166 foreign target cannot claim output')
+
+    def test_yaml_has_only_python_measurement_entrypoint(self):
+        source = (ROOT / 'src/pilotdeck-yaml/tests/resource_scaling.rs').read_text()
+        self.assertFalse('fn resource_scaling()' in source,
+                         '#1166 YAML must not nest a Cargo build in its ignored driver')
+        self.assertTrue('fn resource_worker()' in source,
+                        '#1166 Python driver retains the resource worker')
 
     def test_failed_or_missing_build_never_copies(self):
         for failed, missing in ((True, False), (False, True)):

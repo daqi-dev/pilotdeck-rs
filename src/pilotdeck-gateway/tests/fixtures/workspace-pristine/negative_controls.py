@@ -97,9 +97,10 @@ cases = [
     ('reuse-output', SOURCE, 'output.mkdir(parents=True, exist_ok=False)',
      'output.mkdir(parents=True, exist_ok=True)',
      'SnapshotControls.test_existing_empty_run_is_refused', '#1166 existing empty run must be refused'),
-    ('missing-target-accepted', SOURCE, "if not env.get('CARGO_TARGET_DIR'):",
-     "if False and not env.get('CARGO_TARGET_DIR'):",
-     'SnapshotControls.test_no_target_no_build', '#1166 caller target environment survives'),
+    ('missing-target-accepted', SOURCE,
+     "if not env.get('CARGO_TARGET_DIR'):\n        raise RuntimeError('#1166 CARGO_TARGET_DIR must be supplied by the caller')",
+     "env.setdefault('CARGO_TARGET_DIR', str(root / 'target'))",
+     'SnapshotControls.test_no_target_no_build', '#1166 absent target must fail before build'),
     ('yaml-missing-pin-accepted', YAML, 'if sha256 is None:', 'if False and sha256 is None:',
      'SnapshotControls.test_yaml_pinned_snapshot_does_not_wait_for_parent',
      '#1166 explicit binary requires pinned digest'),
@@ -130,6 +131,59 @@ cases = [
      'SnapshotControls.test_runner_code_stream_keeps_real_sources_pristine',
      '#1166 runner meta-control must execute candidate code stream'),
 
+    ('skip-literal-inputs', SOURCE, 'literal_inputs = _workspace_literal_inputs(root, baseline)',
+     'literal_inputs = ()', 'WorkspacePristine.test_new_external_literal_inputs_are_automatically_guarded',
+     '#1166 new external literal inputs must be guarded'),
+    ('skip-module-recursion', SOURCE, "if rust_source or candidate.suffix == '.rs':",
+     "if candidate.suffix == '.rs':",
+     'WorkspacePristine.test_new_external_literal_inputs_are_automatically_guarded',
+     '#1166 new external literal inputs must be guarded'),
+    ('skip-default-module', SOURCE, "if values[i + 2] == ';' and not explicit_module:",
+     "if False and values[i + 2] == ';' and not explicit_module:",
+     'WorkspacePristine.test_external_default_modules_are_guarded',
+     '#1166 external default modules remain guarded'),
+    ('ignore-parse-error', SOURCE,
+     'except (ValueError, OSError, IndexError) as error:\n            raise SourceBaselineError',
+     'except (ValueError, OSError, IndexError) as error:\n            continue\n            raise SourceBaselineError',
+     'WorkspacePristine.test_nonliteral_and_unparseable_inputs_fail_closed',
+     '#1166 unresolved Rust inputs must fail closed'),
+    ('cache-input-exempt', SOURCE,
+     '_assert_input_areas(root, baseline, literal_inputs, exclude_caches=False)',
+     '_assert_input_areas(root, baseline, literal_inputs, exclude_caches=True)',
+     'WorkspacePristine.test_explicit_cache_input_is_not_exempt',
+     '#1166 included cache names remain build inputs'),
+    ('cache-names-rejected', SOURCE,
+     "caches = ('target/**', '__pycache__/**', '*.pyc', '.DS_Store', '.pytest_cache/**')",
+     "caches = ('__pycache__/**', '*.pyc')",
+     'WorkspacePristine.test_only_untracked_caches_are_excluded',
+     '#1166 disposable untracked caches are not build inputs'),
+    ('accept-foreign-target', SOURCE,
+     'if target_dir == root or not target_dir.is_relative_to(root):',
+     'if False and (target_dir == root or not target_dir.is_relative_to(root)):',
+     'SnapshotControls.test_target_directory_must_belong_to_worktree',
+     '#1166 foreign cargo target must be rejected before work'),
+    ('accept-input-symlink', SOURCE,
+     'if any(part.is_symlink() for part in (candidate, *candidate.parents)):',
+     'if False and any(part.is_symlink() for part in (candidate, *candidate.parents)):',
+     'WorkspacePristine.test_internal_symlink_input_is_rejected',
+     '#1166 input symlink identities cannot be hidden'),
+    ('accept-source-symlink', SOURCE,
+     'if any(part.is_symlink() for part in (path, *path.parents)):',
+     'if False and any(part.is_symlink() for part in (path, *path.parents)):',
+     'WorkspacePristine.test_symlink_workspace_source_is_rejected',
+     '#1166 source symlink identities cannot be hidden'),
+    ('raw-literal-misparsed', SOURCE, "'str' if raw[1] == 'r' else 'opaque'",
+     "'opaque'", 'WorkspacePristine.test_new_external_literal_inputs_are_automatically_guarded',
+     '#1166 literal discovery accepts valid Rust paths'),
+    ('skip-include-recursion', SOURCE, "value == 'include', True))", "False, True))",
+     'WorkspacePristine.test_external_default_modules_are_guarded',
+     '#1166 external default modules remain guarded'),
+    ('ambiguous-macros-accepted', SOURCE,
+     'except (ValueError, OSError, IndexError) as error:\n            raise SourceBaselineError',
+     'except (ValueError, OSError, IndexError) as error:\n            continue\n            raise SourceBaselineError',
+     'WorkspacePristine.test_macro_expansion_and_aliases_fail_closed',
+     '#1166 ambiguous macro input locations must fail closed'),
+
 ]
 
 
@@ -144,6 +198,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path, nargs='?')
     parser.add_argument('--check', action='store_true')
+    parser.add_argument('--case', choices=[row[0] for row in cases], help='run one bounded sample')
     args = parser.parse_args()
     if not os.environ.get('CARGO_TARGET_DIR'):
         parser.error('CARGO_TARGET_DIR must be supplied by the caller')
@@ -172,7 +227,8 @@ def main():
         exclusive_write(out / (label + '.log'), result.stdout + result.stderr)
         return result
 
-    for name, path, old, new, test, marker in cases:
+    selected = [row for row in cases if args.case is None or row[0] == args.case]
+    for name, path, old, new, test, marker in selected:
         status, reason, compiled = 'INVALID', 'not run', False
         try:
             with mutating_sources(ROOT, guarded) as originals:
