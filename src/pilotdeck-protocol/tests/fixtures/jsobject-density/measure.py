@@ -50,22 +50,23 @@ shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
 from negative_process import (mutating_sources, new_output_directory,  # noqa: E402
                               run_owned, tree_lock, wait_for_slot)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from tree_guard import LIB_RS, tree_matches_head
 
 # The commit that boxed JsObject.indices (#983 fix-r1); its parent is the
 # unboxed baseline. Override only if the anchor is known to have moved.
 BOXING_COMMIT = os.environ.get('PDRS_BOXING_COMMIT', 'c46e3803d')
-LIB_RS = 'src/pilotdeck-protocol/src/lib.rs'
 TRANSCRIPT = 'src/pilotdeck-gateway/tests/fixtures/compaction-orchestrator/oracle.json'
 MIB = 1024 * 1024
 # Pretty outputs that are dumped and sha256-compared across all three
 # runners (boxed, unboxed, Node): one per class plus the transcript. A
 # selected label of this set whose post, pre or Node dump is missing aborts
 # the run. The single exception (#1128 fix-r2, review Codex P1-1): a deep
-# grid whose Node runs actually recorded the indented-stringify RangeError
+# grid whose Node runs recorded only the indented-stringify stack overflow
 # (V8's indented stringify is recursive and overflows at the 10^4-level
 # spines) may lack a Node dump, recorded as `tsMatchesRust: null` plus the
 # error text in `tsStringifyError`. Any other missing Node dump — including
-# a deep grid without a recorded RangeError — is a harness failure, not a
+# a deep grid without that exact stack-overflow error — is a harness failure, not a
 # baseline property.
 DUMP_CLASSES = {'small-1', 'wide-1', 'deep-1', 'empty-1', 'transcript'}
 REPS = 7
@@ -103,23 +104,26 @@ def bench_line(output, marker):
     raise SystemExit(f'#1128 no {marker} line in runner output:\n{output[-2000:]}')
 
 
-# Every input cargo reads from this checkout: the workspace sources and the
-# root-level configuration it resolves from cwd (#1128 r5 Codex P1-1).
-BUILD_INPUTS = ('src', '.cargo', 'rust-toolchain', 'rust-toolchain.toml')
-
-
 def require_clean_tree(stage, allow=()):
     """Fail unless every build input equals HEAD (tracked and untracked).
 
     `allow` names repo-relative paths this process changed on purpose (the
     pre window's reverted lib.rs). A git failure is never read as clean
     (#1128 r5 Codex P1-3)."""
-    lines = git('status', '--porcelain', '--untracked-files=all', '--',
-                *BUILD_INPUTS).stdout.decode().splitlines()
-    dirty = [line for line in lines if line[3:] not in allow]
-    if dirty:
-        raise SystemExit(f'#1128 build inputs differ from HEAD under the lock before {stage}:\n'
-                         + '\n'.join(dirty))
+    try:
+        tree_matches_head(root, allow=allow)
+    except (RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+        raise SystemExit(f'#1128 build inputs differ from HEAD before {stage}:\n{error}') from error
+
+
+def missing_ts_dump_error(kind, errors, label):
+    """Only the observed deep-stack overflow can exempt a missing TS dump."""
+    expected = 'RangeError: Maximum call stack size exceeded'
+    recorded = [error for error in errors if error]
+    if kind == 'deep' and recorded and all(error == expected for error in recorded):
+        return expected
+    raise SystemExit(f'#1128 ts pretty dump missing for {label} without the expected '
+                     f'deep stack overflow (errors={errors!r})')
 
 
 def build_release_test(env, log_name, out):
@@ -256,9 +260,7 @@ def main():
     version = subprocess.run([NODE, '--version'], capture_output=True, text=True).stdout.strip()
     if version != 'v22.22.0':
         raise SystemExit(f'#1128 actual Node v22.22.0 required, found {version}')
-    dirty = git('status', '--porcelain', '--untracked-files=no', check=False).stdout.decode()
-    if dirty:
-        raise SystemExit('#1128 tracked tree differs from HEAD before measuring:\n' + dirty)
+    require_clean_tree('measurement startup')
 
     (out / 'workloads').mkdir()
     (out / 'dumps').mkdir()
@@ -414,19 +416,15 @@ def main():
         # writes the dump. A missing dump is acceptable only as the expected
         # deep-spine RangeError — the grid must be a deep one and a run must
         # have actually recorded that exact error; anything else (a silent
-        # Node-side failure on small/wide/empty/transcript, or a non-Range
+        # Node-side failure on small/wide/empty/transcript, or a different
         # error anywhere) fails the run instead of passing as `null`
         # (#1128 fix-r2, review Codex P1-1 / opus #6).
         errors = [ts_rows[label][run]['stringifyError'] for run in ('timed', 'rssTimed')]
         if ts_path.is_file():
             entry['ts'] = hashlib.sha256(ts_path.read_bytes()).hexdigest()
             entry['tsMatchesRust'] = entry['ts'] == entry['post']
-        elif kinds[label] == 'deep' and any(
-                error and 'RangeError' in error for error in errors):
-            entry['tsStringifyError'] = next(error for error in errors if error)
         else:
-            raise SystemExit(f'#1128 ts pretty dump missing for {label} without the expected '
-                             f'deep RangeError (timed={errors[0]!r}, rss={errors[1]!r})')
+            entry['tsStringifyError'] = missing_ts_dump_error(kinds[label], errors, label)
         digests[label] = entry
     result['prettySha256'] = digests
 

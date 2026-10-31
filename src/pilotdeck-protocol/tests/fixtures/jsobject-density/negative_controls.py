@@ -31,6 +31,8 @@ shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, classify, passed
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from tree_guard import tree_matches_head
 
 harness = root / 'src/pilotdeck-protocol/tests/object_density.rs'
 cli_main = root / 'src/pilotdeck-cli/src/main.rs'
@@ -160,16 +162,6 @@ def crate_files(rel):
     return files
 
 
-def tree_matches_head():
-    """Every tracked file (index and worktree) equals HEAD: closes transitive build inputs (#983 r6)."""
-    staged = subprocess.run(['git', '-C', str(root), 'diff', '--cached', '--quiet', 'HEAD'])
-    unstaged = subprocess.run(['git', '-C', str(root), 'diff', '--quiet', 'HEAD'])
-    if staged.returncode != 0 or unstaged.returncode != 0:
-        listing = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'],
-                                 capture_output=True, text=True).stdout
-        raise RuntimeError('#1128 tracked tree differs from HEAD before positive control:\n' + listing)
-
-
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
@@ -232,7 +224,7 @@ def main():
             with mutating_sources(root, guarded) as originals:
                 original = originals[row.path].decode()
                 try:
-                    tree_matches_head()
+                    tree_matches_head(root)
                     if not compile_only and not passed(run(row.name + '-positive', row, env),
                                                         row.test):
                         raise RuntimeError('positive bound test failed')
@@ -257,6 +249,9 @@ def main():
                     row.path.write_bytes(originals[row.path])
                     if row.path.read_bytes() != originals[row.path]:
                         raise RuntimeError('restoration mismatch')
+                # Still inside mutating_sources: retain its tree lock through
+                # the restored check and cargo, and re-prove all build inputs.
+                tree_matches_head(root)
                 if not compile_only and not passed(run(row.name + '-restored', row, env),
                                                     row.test):
                     item.update(status='INVALID', reason=item['reason'] +
