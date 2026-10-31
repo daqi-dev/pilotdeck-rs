@@ -344,6 +344,14 @@ fn archive_fixture() -> Value {
     .expect("#1154 archive valid oracle JSON")
 }
 
+// #1154 fix-r2 (review P2-11): the six admission cells below stay machine-bound
+// to the registered diff, so an approved or revoked registration must fail the
+// matrix instead of silently drifting from the hardcoded expectation.
+const ADMISSION_LEDGER: &str =
+    include_str!("../../../../specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001.md");
+const ADMISSION_CODE: &str = "gateway_request_failed";
+const ADMISSION_MESSAGE: &str = "The isolated native process serves only its configured project.";
+
 #[test]
 fn archive_matrix_matches_ts() {
     crate::test_baseline::oracle_bounded(include_str!(
@@ -495,7 +503,13 @@ async fn observe_archive(name: &str) {
     let expected = if key == "empty" && cwd != "project" {
         // Existing isolated admission policy, recorded separately from TS parity.
         // specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001.md
-        json!({"ok":false,"code":"gateway_request_failed","message":"The isolated native process serves only its configured project."})
+        negative_assert!(
+            ADMISSION_LEDGER.contains("id: A7.2-NATIVE-ARCHIVE-CWD-001")
+                && ADMISSION_LEDGER.contains(ADMISSION_CODE)
+                && ADMISSION_LEDGER.contains(ADMISSION_MESSAGE),
+            "#1154 archive admission expectation stays bound to its ledger"
+        );
+        json!({"ok":false,"code":ADMISSION_CODE,"message":ADMISSION_MESSAGE})
     } else if row["ok"] == true {
         json!({"ok":true,"result":row["result"]})
     } else {

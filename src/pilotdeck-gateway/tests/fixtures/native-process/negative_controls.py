@@ -403,6 +403,7 @@ def main():
     guarded = [SOURCE, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
+               ROOT / 'src/pilotdeck-gateway/src/lib.rs',
                ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
                ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
                FIXTURES / '_shared/baseline.mts', FIXTURES / '_shared/regeneration-masks.tsv']

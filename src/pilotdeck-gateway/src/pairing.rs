@@ -153,7 +153,18 @@ where
                         state.authenticated && !state.invalidated && !state.closed
                     };
                     if eligible && request.as_ref().is_some_and(dispatch::is_local) {
-                        let request = request.expect("eligible local request");
+                        let mut request = request.expect("eligible local request");
+                        // This proxy fronts a `pilotdeck server` boot, whose
+                        // fallbackProjectRoot is PILOT_HOME (pilotdeck.ts:107-111):
+                        // a nullish archive projectKey reads the General
+                        // workspace, not this process's cwd. Same shared fill
+                        // as the isolated gate, with the proxy boot's fallback.
+                        if let Some(metadata) = metadata {
+                            crate::native_archive::fill_request_default_project_key(
+                                &mut request,
+                                &metadata.home,
+                            );
+                        }
                         if dispatch::needs_files(&request) {
                             let metadata = metadata.cloned();
                             // Completion is polled only after the current input
