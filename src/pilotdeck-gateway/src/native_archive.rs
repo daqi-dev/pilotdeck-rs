@@ -32,6 +32,50 @@ fn safe_integer(value: &JsValue, min: f64, max: f64) -> bool {
 fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
 }
+/// `input.projectKey ?? fallbackProjectRoot` (createLocalGateway.ts:1184,
+/// 1205, 1223): a missing or null key takes the boot's configured fallback
+/// project, while an empty string stays explicit and resolves against cwd.
+/// Both boots share this one fill — the isolated gate passes its configured
+/// project and the out-of-process proxy passes PILOT_HOME, the
+/// `pilotdeck server` boot's fallbackProjectRoot (pilotdeck.ts:107-111) — so
+/// the two entry points cannot drift. The pinned default-boot fixture
+/// instead replays nullish keys through `project()`'s cwd resolution, so the
+/// fill stays at the request entry points, not inside `response`.
+pub(crate) fn fill_default_project_key(params: &mut JsValue, fallback: &Path) {
+    if let JsValue::Object(fields) = params
+        && matches!(
+            fields.get("projectKey"),
+            None | Some(JsValue::Undefined | JsValue::Null)
+        )
+    {
+        fields.insert(
+            "projectKey".into(),
+            fallback.to_string_lossy().as_ref().into(),
+        );
+    }
+}
+/// Request-level adapter for the proxy path, reusing the same params fill.
+/// `JsValue` has no nested mutation, so params is swapped out and back; a
+/// non-object params keeps TS's own read-error shape and is left untouched.
+pub(crate) fn fill_request_default_project_key(request: &mut JsValue, fallback: &Path) {
+    if !matches!(
+        text_field(request, "method").as_deref(),
+        Some("native_archive_manifest" | "native_archive_entries" | "native_archive_artifact")
+    ) {
+        return;
+    }
+    let JsValue::Object(fields) = request else {
+        return;
+    };
+    if !matches!(fields.get("params"), Some(JsValue::Object(_))) {
+        return;
+    }
+    let mut params = fields
+        .insert("params".into(), JsValue::Undefined)
+        .unwrap_or(JsValue::Undefined);
+    fill_default_project_key(&mut params, fallback);
+    fields.insert("params".into(), params);
+}
 /// `String(value)`. A too-deep array is V8's RangeError, surfaced as a plain
 /// gateway error (real TS + WS evidence: tests/fixtures/runtime-boundaries.json).
 fn display(value: &JsValue) -> Result<String> {

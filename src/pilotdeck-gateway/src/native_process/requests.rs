@@ -90,16 +90,8 @@ impl GatewayRequests for Requests {
                 Ok("native_archive_manifest"
                     | "native_archive_entries"
                     | "native_archive_artifact")
-            ) && let JsValue::Object(fields) = &mut params
-                && matches!(
-                    fields.get("projectKey"),
-                    None | Some(JsValue::Undefined | JsValue::Null)
-                )
-            {
-                fields.insert(
-                    "projectKey".into(),
-                    self.options.project.to_string_lossy().as_ref().into(),
-                );
+            ) {
+                crate::native_archive::fill_default_project_key(&mut params, &self.options.project);
             }
             if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())
                 && !project

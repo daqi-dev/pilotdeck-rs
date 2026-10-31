@@ -44,12 +44,22 @@ if __name__ == '__main__':
         raise SystemExit('CARGO_TARGET_DIR and PDRS_BASELINE must be supplied')
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    # Protect the executable judge too, matching matrix_main's HEAD policy.
+    # Protect the executable judge too, matching matrix_main's HEAD policy. The
+    # #280 verdict itself lives in tests/common/baseline.rs (compiled into the
+    # lib by src/lib.rs's #[path]), with regeneration_masks.rs and the shared
+    # mask table outside the src/pilotdeck-gateway/src pristine scan.
     fixture_root = Path(__file__).resolve().parents[1]
     guarded = [Path(__file__).resolve(), *[
         fixture_root / name for name in (
             'negative_suite.py', 'negative_process.py', 'negative_panic.py',
             'pending_reanchor.py',
+        )
+    ], *[
+        ROOT / name for name in (
+            'src/pilotdeck-gateway/src/lib.rs',
+            'src/pilotdeck-gateway/tests/common/baseline.rs',
+            'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+            'src/pilotdeck-gateway/tests/fixtures/_shared/regeneration-masks.tsv',
         )
     ]]
     with mutating_sources(ROOT, guarded):

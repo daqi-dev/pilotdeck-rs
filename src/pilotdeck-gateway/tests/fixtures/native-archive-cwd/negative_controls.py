@@ -10,7 +10,9 @@ from negative_suite import matrix_main
 
 ROOT = Path(__file__).resolve().parents[5]
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+NATIVE_ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_archive.rs'
 REGRESSION = ROOT / 'src/pilotdeck-gateway/src/native_process/metadata_cwd_tests.rs'
+LEDGER = ROOT / 'specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001.md'
 ORACLE = Path(__file__).resolve().parent / 'oracle.json'
 PREFIX = 'native_process::tests::metadata_cwd::'
 MUTATIONS = [
@@ -23,17 +25,17 @@ MUTATIONS = [
     ('artifact-no-fallback', REQUESTS,
      '| "native_archive_artifact")', '| "disabled_archive_artifact")',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    ('null-not-defaulted', REQUESTS,
+    ('null-not-defaulted', NATIVE_ARCHIVE,
      'None | Some(JsValue::Undefined | JsValue::Null)', 'None | Some(JsValue::Undefined)',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    ('missing-not-defaulted', REQUESTS,
+    ('missing-not-defaulted', NATIVE_ARCHIVE,
      'None | Some(JsValue::Undefined | JsValue::Null)', 'Some(JsValue::Undefined | JsValue::Null)',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    ('fallback-process-cwd', REQUESTS,
-     'self.options.project.to_string_lossy().as_ref().into(),',
+    ('fallback-process-cwd', NATIVE_ARCHIVE,
+     'fallback.to_string_lossy().as_ref().into(),',
      'std::env::current_dir().unwrap_or_default().to_string_lossy().as_ref().into(),',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    ('empty-string-defaulted', REQUESTS,
+    ('empty-string-defaulted', NATIVE_ARCHIVE,
      'None | Some(JsValue::Undefined | JsValue::Null)',
      'None | Some(JsValue::Undefined | JsValue::Null | JsValue::String(_))',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
@@ -64,9 +66,14 @@ MUTATIONS = [
      '"name": "manifest_missing_deleted",\n      "method": "manifest",\n      "key": "missing",\n      "cwd": "deleted",\n      "cwdReadable": false,',
      '"name": "manifest_missing_deleted",\n      "method": "manifest",\n      "key": "missing",\n      "cwd": "deleted",\n      "cwdReadable": true,',
      'archive_matrix_matches_ts', '#1154 archive cwd state dimension'),
+    ('ledger-admission-drift', LEDGER,
+     'The isolated native process serves only its configured project.',
+     'The isolated native process admits only its own project.',
+     'archive_matrix_matches_ts',
+     '#1154 archive admission expectation stays bound to its ledger'),
 ]
 
 if __name__ == '__main__':
     raise SystemExit(matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
         passed_count=1, child_count=36, exact=True,
-        paths=[REQUESTS, REGRESSION, ORACLE]))
+        paths=[REQUESTS, NATIVE_ARCHIVE, REGRESSION, LEDGER, ORACLE]))

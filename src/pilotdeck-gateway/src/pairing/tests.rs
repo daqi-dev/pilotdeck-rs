@@ -740,6 +740,128 @@ async fn authenticated_native_requests_match_ts_bytes_and_never_reach_upstream()
     pair.finish().await;
 }
 
+/// #1154 fix-r2: this proxy fronts a `pilotdeck server` boot, whose
+/// fallbackProjectRoot is PILOT_HOME (pilotdeck.ts:107-111), so a missing/null
+/// archive projectKey reads the General workspace while an empty string stays
+/// explicit and resolves against the proxy cwd (a registered project here).
+/// Node v22.22.0 measurement of both boots: the fix-r2 probe log under
+/// `_tmp/20261026-issue-1154/fix-r2/ts-fallback-probe.log`.
+#[tokio::test]
+async fn archive_nullish_project_key_uses_the_proxy_boot_fallback() {
+    use crate::{negative_assert_eq, test_scratch::Scratch};
+    let scratch = Scratch::new("1154-proxy-archive");
+    let home = scratch.path().join("home");
+    let project = scratch.path().join("project");
+    let registered = home
+        .join("projects")
+        .join(crate::metadata::project_id(&project));
+    let general = home
+        .join("projects")
+        .join(crate::metadata::project_id(&home));
+    for dir in [
+        &home,
+        &project,
+        &registered.join("chats"),
+        &general.join("chats"),
+    ] {
+        std::fs::create_dir_all(dir).expect("#1154 proxy archive scratch directory");
+    }
+    std::fs::write(
+        registered.join(".cwd"),
+        project.to_string_lossy().as_bytes(),
+    )
+    .expect("#1154 proxy archive registration marker");
+    let transcript = |text: &str| {
+        format!(
+            r#"{{"type":"message","sessionId":"fixture","turnId":"","sequence":0,"createdAt":"2026-10-15T00:00:00Z","payload":{{"text":"{text}"}}}}"#
+        ) + "\n"
+    };
+    std::fs::write(
+        general.join("chats").join("fixture.jsonl"),
+        transcript("from-general-home"),
+    )
+    .expect("#1154 proxy archive General transcript");
+    std::fs::write(
+        registered.join("chats").join("fixture.jsonl"),
+        transcript("from-cwd-project"),
+    )
+    .expect("#1154 proxy archive registered transcript");
+    let metadata = crate::metadata::Metadata {
+        home,
+        cwd: project,
+        files: crate::metadata::NativeFiles,
+    };
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    for (label, params, expected) in [
+        (
+            "missing",
+            r#"{"sessionKey":"fixture"}"#,
+            "from-general-home",
+        ),
+        (
+            "null",
+            r#"{"sessionKey":"fixture","projectKey":null}"#,
+            "from-general-home",
+        ),
+        (
+            "empty",
+            r#"{"sessionKey":"fixture","projectKey":""}"#,
+            "from-cwd-project",
+        ),
+    ] {
+        let request = client_frame(
+            0x81,
+            126,
+            format!(r#"{{"type":"request","id":"{label}","method":"native_archive_entries","params":{params}}}"#)
+                .as_bytes(),
+        );
+        write(&mut pair.client, &request).await;
+        let mut decoder = Decoder::default();
+        let payload = loop {
+            if let Some(frame) = decoder
+                .next_server()
+                .expect("#1154 proxy archive response frame")
+            {
+                break frame.payload;
+            }
+            timeout(DEADLINE, pair.client.read_buf(&mut decoder.buffer))
+                .await
+                .expect("#1154 proxy archive response timeout")
+                .expect("#1154 proxy archive response read");
+        };
+        let response = dispatch::parse(&payload).expect("#1154 proxy archive response JSON");
+        let text = response
+            .get("result")
+            .and_then(|result| result.get("entries"))
+            .and_then(|entries| match entries {
+                pilotdeck_protocol::JsValue::Array(rows) => rows.first().cloned(),
+                _ => None,
+            })
+            .and_then(|first| first.get("payload").cloned())
+            .and_then(|payload| payload.get("text").cloned())
+            .and_then(|text| text.as_string().cloned());
+        let text = text.as_ref().and_then(|text| text.to_utf8().ok());
+        negative_assert_eq!(
+            text.as_deref(),
+            Some(expected),
+            "#1154 proxy archive nullish key uses the boot fallback project"
+        );
+    }
+    silent(&mut pair.server).await;
+    pair.server
+        .shutdown()
+        .await
+        .expect("#1154 proxy archive upstream shutdown");
+    pair.finish().await;
+}
+
 #[test]
 fn cjk_local_responses_match_node_without_upstream_requests() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -1555,6 +1677,47 @@ async fn metadata_io_native_retained_pairs_have_no_upstream_request() {
     .await;
 }
 
+// The pinned 138-case fixture is default-boot truth: createLocalGateway()
+// resolves a nullish archive projectKey against its cwd project, so the two
+// object-params nullish cases read the registered workspace. This proxy is
+// the server boot (pilotdeck.ts:107-111: fallbackProjectRoot = PILOT_HOME),
+// whose shared fill points those same cases at the General workspace
+// instead; the fixture home ships no General chat dir, so both TS and this
+// port answer the session-not-found diagnostic (measured in
+// _tmp/20261026-issue-1154/fix-r2/ts-general-absent-probe.log; homes that
+// do ship a General workspace are covered by
+// archive_nullish_project_key_uses_the_proxy_boot_fallback and
+// tests/fixtures/native-archive-cwd/negative_proxy.py). The default-boot
+// wire replay stays pinned in native_archive::tests.
+fn archive_server_boot_response(request: &str) -> Option<String> {
+    // Mirror the production admission in
+    // native_archive::fill_request_default_project_key: only the three archive
+    // methods with an object params and a nullish projectKey get the fill.
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(request) else {
+        return None;
+    };
+    if !matches!(
+        parsed.get("method").and_then(serde_json::Value::as_str),
+        Some("native_archive_manifest" | "native_archive_entries" | "native_archive_artifact")
+    ) {
+        return None;
+    }
+    let params = parsed.get("params")?;
+    if !params.is_object()
+        || !matches!(
+            params.get("projectKey"),
+            None | Some(serde_json::Value::Null)
+        )
+    {
+        return None;
+    }
+    let id = parsed.get("id")?.as_str()?;
+    let session = params.get("sessionKey")?.as_str()?;
+    Some(format!(
+        "{{\"type\":\"response\",\"id\":\"{id}\",\"ok\":false,\"error\":{{\"code\":\"SESSION_NOT_FOUND\",\"message\":\"Session not found: {session}\"}}}}"
+    ))
+}
+
 #[tokio::test]
 async fn native_archives_match_production_wire_and_do_not_reach_upstream() {
     let (metadata, fixture) = crate::native_archive::tests::fixture();
@@ -1570,10 +1733,12 @@ async fn native_archives_match_production_wire_and_do_not_reach_upstream() {
     for case in fixture["cases"].as_array().unwrap() {
         let request = case["request"].as_str().unwrap();
         let response = case["response"].as_str().unwrap();
+        let server_boot = archive_server_boot_response(request);
+        let expected = server_boot.as_deref().unwrap_or(response);
         let wire = client_frame(0x81, 126, request.as_bytes());
         write(&mut pair.client, &wire).await;
         local += 1;
-        read(&mut pair.client, &server_frame(1, response.as_bytes())).await;
+        read(&mut pair.client, &server_frame(1, expected.as_bytes())).await;
     }
     // Probe the upstream after the entire batch: any leaked archive bytes would
     // precede this unrelated frame and fail the exact read, even when delayed.
@@ -1730,16 +1895,16 @@ async fn archive_native_materialized_138_pairs_are_local() {
     authenticate(&mut pair).await;
     let mut count = 0;
     for case in data["cases"].as_array().unwrap() {
-        write(
-            &mut pair.client,
-            &client_frame(0x81, 126, case["request"].as_str().unwrap().as_bytes()),
-        )
-        .await;
-        read(
-            &mut pair.client,
-            &server_frame(1, case["response"].as_str().unwrap().as_bytes()),
-        )
-        .await;
+        let request = case["request"].as_str().unwrap();
+        let response = case["response"].as_str().unwrap();
+        // Same server-boot retarget as the wire replay above: the materialized
+        // home ships no General chat dir either, so the two nullish-key
+        // object-params cases answer the session-not-found diagnostic.
+        let server_boot = archive_server_boot_response(request);
+        let expected = server_boot.as_deref().unwrap_or(response);
+        let wire = client_frame(0x81, 126, request.as_bytes());
+        write(&mut pair.client, &wire).await;
+        read(&mut pair.client, &server_frame(1, expected.as_bytes())).await;
         count += 1;
     }
     let probe = client_frame(
