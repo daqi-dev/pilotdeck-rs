@@ -2592,3 +2592,13 @@ updated: 2026-10-31 22:35 · by Claude Code 协调者
 - 22:21 #1199 r1 opus P0（白名单目录含尺子输入：docs/research、docs/plan、state/decisions-* 被 check_ledger / ui-server check_frozen 等读）成立 → 白名单收窄为单一路径 state/board.md + 「尺子引用 board」机检 → GLM 远端 mbp2。#133 + #117 收敛（cb8：Linux 真实对拍 5+5 负控 KILLED、lib 绿）→ 最终 opus 块。合并队列监视器被 stop-tree 误杀（cwd 在树内）→ stop-tree 排除守望进程、监视器从主仓根起。人要求重读规则 → _tmp/20261031-rules-reread/NOTES.md（回复改短、剩 P2 一家复核、在审 >8 不开新单、不再新增工具、real.md 资源现实待更新）。
 - 22:23 #1166 hold 目录没挡住守望（深度 3 内），fix 8f6511e9c 自动推送致 r7 宿主作废 → 停干净，r8 opus+DeepSeek + cb8 + mbp2（换 mbp2 均衡负载）。
 - 22:35 **两小时交接** → `_tmp/20261031-handoff-2235.md`。
+- 22:37 #1166 r8：opus 0/0；DeepSeek P1（新正控期望值未 resolve，macOS /var→/private/var 恒 False）本机实测成立 → 协调者一行修，本地提交暂不推（等 r8 宿主跑完），该增量评审改 GLM + DeepSeek。#1140 fix-r2 重登记推 464d0d54b。#1199 fix-r1 5c083afcc 已收。
+- 22:39 #1193（#132 第一步）合入 6bef8f8c0（收尾完成，#132 保持打开，第二三步等 #1154）。#1199 r2、#1140 r3 评审起。
+- 22:47 #1136（macmini 3.5 h 跑到 3/7 套）、#1145（mbp2 2.5 h 跑到 2/6 套）宿主慢但在推进；两单评审已收敛 → 预先跑最终 opus 全量块，宿主一完即入队。
+- 23:01 #1195（#133 + #117）合入 a70e8a10a（收尾：两单关、cb8 构建与远端 worker 树清）。#1199 r2 两家 0/0，剩 P2（机检扫描面过窄等）→ 只修 P2 的 fix-r2（mbp2），之后一家复核。#1140 r3 两家 0/0；P2-1（binding 改值无负控，按 P1）+ 事件指针 → fix-r3 末轮（mbp2）。
+- 23:03 #1145 最终 opus 块 P1：sdk-decode-budget 的 stream-event-field 锚点随 QueryFrame 重构过期（--check 5/6，协调者实测）→ 协调者同步一行（6/6），本地提交暂不推（等 mbp2 r7 宿主），增量评审改 GLM + DeepSeek；接入闸门开跟进。#1136 最终 opus 块 0/0，等 macmini 宿主。
+- 23:15 #1202（state 22:35 交接）合入 8a2cd2b3b。#1199 只修 P2 的 fix-r2 a67c4b756 → 一家复核：直接跑当前 head 的 opus 全量块（同时作 pr-gate 必需块）。
+- 23:17 #1199 收敛（final opus 0/0）→ PR #1200 ready 入队。
+- 23:45 宿主分诊（_tmp/20261031-host-triage/TRIAGE.md）：失败与 Node 换版无关。#1145 sdk-sessions-list 7 条锚点过期（fix-r6 改缩进）→ GLM cb8；#1166 两条真缺陷（round6 自测、gateway-entry-guard 扫描器早于锁）→ GLM cb8；#1011 live-e2e / #1166 exact-rerun-receipt 是 Linux 既有平台差异 → #1204。#1140 fix-r3 重登记 a3906eb25 → r4 opus+DeepSeek + macmini 复算。
+- 23:48 #917 远端 22:25 就做完，本机等待进程被 22:0x 的 stop-tree 误杀（参数含 wt 路径）→ 补跑 remote-wait 收回 0b2362762；stop-tree 已排除 remote-wait。→ r4 opus+DeepSeek + mbp2 宿主。
+- 00:05 **#1200（#1199 ci 分流）合入 907988426**：此后只改 state/board.md 的 PR 只跑 scope + schema-baseline。本 PR 即首个实测。
