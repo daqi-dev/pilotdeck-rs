@@ -1,44 +1,39 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 12:15 · by Claude Code 协调者
-- #123 | impl | doing | P07 #1097 已合（e13b189a3，#1106）；P08、P09 串行其后；#1136 前置于 #123 收尾
-- #1010 | impl | doing | 与 #1122 叠栈以 PR #1127 合入；r3 opus + GLM 0/0，GLM P2 观察循环超时失效（升 P0）→ macmini 后 fix-r3
-- #1011 | impl | blocked | #745 FactoryStorage projection cache；同模块串行，等 #1010
-- #590 | impl | blocked | native 格 + 四格矩阵；前置 #1140（采集器，判分接线已人授权）与 A5.4 冻结期望
-- #952 | impl | doing | aggregate_status 空输入改 FAIL/1（人批 A）→ Codex
-- #1140 | impl | doing | native exec + 出网见证采集器（人批二 A，判分接线等 A5.4）→ Codex
-- #1159 | coord | doing | #1158 账本批量审批 -R 落地 → Codex
-- #589 | impl | blocked | 关单前置 #1010 #1011 #1019 #1020
-- #996 | impl | blocked | pr2 已合（64ab7cbf5）；后续批次按 #988 推广计划，待在审回落后派
-- p2-batch-4b | impl | doing | 归 M6：#935-1/2/4 #782 #835 在 #1110；#935-3 #902 #786-3 待后续 M6 PR
-- #1061 | impl | blocked | gateway-batch 负控取消路径（P0 类）——归 M6 #1099
-- #953 | impl | blocked | item 3 余项等 #996 迁移
-- #983 | review | doing | PR #1121 fix-r11（json_pretty 收敛）r11 opus + Codex 0/0；mbp2 全量在跑 → 入队
-- #1131 | impl | doing | PR #1133 A4 实际端口：rebase 到 #1071 后 + 重钉 #749 哈希；GLM 块 0/0、macmini 全绿 → 补跑 sdk-sessions-list 后入队
-- #892 | coord | blocked | 修 3 轮仍假 PASS，挂起；决策卡 decisions-20261028-892-suspend
-- #727 | impl | blocked | 前置 A7 Rust 宿主接线
+updated: 2026-10-31 16:40 · by Claude Code 协调者
+- #1011 | impl | doing | PR #1175 第一步（TS 矩阵 + 金样）r1 opus + GLM 0/0（P2×2）；本机宿主在跑 → 第二步 Rust 实现 + 两条 P2 → Codex（`_tmp/20261031-p2-1011-phase2/extra.md`）
+- #1145 | review | doing | PR #1148 rebase 到 #1173 后 d912417b3；macmini r5m（34 源码负控 + sdk_signal_exit）+ GLM r5 全量闸门 → 补结果块入队
+- #1166 | impl | doing | PR #1172（M6）Codex fix-r3（末轮）：去掉树内 CARGO_TARGET_DIR 要求、example 在 mutating_sources 内构建
+- #1139 | impl | blocked | PR #1170；等 #1166 合入后改用 proc-macro2 共享入口（同时关 #1174）
+- #1136 | review | doing | PR #1171 macmini 宿主在跑 → fix-r1（wire-end 检查依赖子进程退出后 20 ms accept，升 P1）
+- #1154 | impl | doing | 原生进程 Metadata cwd 对齐 TS + Cwd.set 差异登记 → Codex
+- #917 | impl | doing | EdgeClaw clearSession 后 heartbeat 不复活（人定 #914 A）→ GLM
+- A5.4 | coord | doing | 子代理梳理剩余定标范围（`_tmp/20261031-a54-scope/SCOPE.md`）→ 拆包解锁 #1140 判分接线 / #590 / D4
+- #589 | impl | blocked | 关单前置只剩 #1011（#1010 #1019 #1020 已关）
+- #590 | impl | blocked | 前置 A5.4 冻结期望（#1140 采集器已合）
+- #1140 | impl | blocked | 采集器已合 cbb4d1f27；判分接线等 A5.4
+- #727 | impl | blocked | 前置 #589（A7 Rust 宿主接线）
 - #19 | impl | blocked | 修复归 #727
+- #1146 | impl | blocked | D1-P09 前置 A8 + P08（#1145）
+- #123 | impl | doing | D1：P08 #1145 在审；P09 #1146 等 A8
+- #996 | impl | blocked | 后续批次按 #988；session 族与 #1011 同模块，#1011 合入后派
+- #1099 | impl | doing | M6 总单：pr1–pr3 已合；在途子单 #1166 / #1139；pr4 存量迁移等两者合入（共享负控件 M6 车道独占）
+- #1061 | impl | blocked | 归 M6 #1099
+- #1087 | impl | blocked | 归 M6 #1099（#1000 已合，契约已合）→ M6-pr4
+- #953 | impl | blocked | item 3 余项等 #996 迁移
+- #978 | impl | blocked | 第一轮扫描完成；余十轮验收
+- #892 | coord | blocked | 修 3 轮仍假 PASS，挂起；决策卡 decisions-20261028-892-suspend
 - #685 | coord | blocked | regress 上游 PR 待发布
 - #91 | impl | blocked | 前置于 A6.4 / A7 相关 PR
 - D4 | impl | blocked | 已人批；待 A5.4 定标时排期
+- p2-sweep | impl | doing | P2-跟进 47 条 > 10：本轮清 #1154 #917；下批候选 #1162 #1044 #360 #897（后者等 #1011）
 - gate-#275 | coord | blocked | 协作工具存量，不新开发
 - #629 | coord | blocked | workflow_dispatch 候选
 - #150 | coord | human | draft PR，待人定
 - #144-triage | coord | human | 人定暂缓(10-17)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
-- accepted-diffs-1023 | coord | human | 10-23 登记未批准条目（余项见 pending-diffs）
 - state-files | coord | human | 状态文件精简提案（人：先不动）
-- #1087 | impl | blocked | M6 首批：#818 同类残留 → 归 M6 #1099，等 #1000 合入 + M6 契约
-- #1099 | impl | doing | M6 总单：pr1 比对器、pr2 契约已合（1de25441e）；pr3 迁移首批 #1110（turn-submit / failure-guard + #935 #782 #835）→ Codex；共享负控件归 M6 车道独占
-- cb8 | coord | doing | 自检通过（227 case 一致）→ M6 宿主 + 短链车道（review-phase5 HOST=cb8 / host-only-cb8.sh）；macOS 专属套件留 macmini
-- #978 | impl | blocked | 第一轮扫描完成（实测可机械改写 0 项）；余 #1109 + 十轮验收
-- #1111 | review | doing | M2-pr2 r1 opus + Codex + cb8（机械比对通过）
-- #1114 | impl | doing | PR #1117 r1 P0（detach 二次 poll panic）+ P1×2 → GLM fix-r1
-- mbp2 | coord | doing | 新宿主接入：子代理建链 + 判定一致性自检；通过后承接 macOS 专属套件 + 短链溢出
-- #1123 | review | doing | PR #1124 ready 入队（两家 0/0，cb8 负控 53 + 5 KILLED）
-- #1122 | review | doing | PR #1127（叠 #1010）r1 opus + GLM + cb8
-- #1129 | impl | doing | run-registry 金样生成器同毫秒不 mask（快机器假 INVALID，P1）→ Codex
 <!-- READY:END -->
 
 > ## 2026-10-25 03:57 · #589/#590 fix-r4 ACK 收据与安全红探针配方（GLM glm-5.3-mb，wt=issue-589-live-integrity）
@@ -2543,3 +2538,4 @@ updated: 2026-10-31 12:15 · by Claude Code 协调者
 - 13:18 **两小时交接** → `_tmp/20261031-handoff-1317.md`。本段合入 #1150 #1127 #1160；人一次批完 6 张决策单；待人只剩 #1164。
 - 15:01 **两小时交接** → `_tmp/20261031-handoff-1501.md`。本段合入 #1161 #1167 #1152 #1153 #1163；人批全部落地；待人清零。
 - 15:52 **#1165 合入 d5a5f89a8**（#1144，自动关单）→ #1011 解锁。#1145 P08 第四阶段 d71466407（#1164 选 B，8 格 stderr 登记差异）：96 格 94 PASS / 2 FAIL（动态 runId，按规约保留）；决策卡 #1164 追加段经本 state PR 进 main。#1166 fix-r1 Codex 用 Python 手写了 Rust 词法器（违反 scanner-real-lexer）→ 退回 fix-r2，改为复用 unsafe_boundary.rs 的 proc-macro2；规则补进 negctl-rules。#1145 r3m 定向参数又漏 -p pilotdeck-cli（同类第二次，记忆 host-verify-entry），补跑 82 passed。
+- 16:40 **两小时交接** → `_tmp/20261031-handoff-1640.md`。#1173 合入 50effdc9b → #1145 rebase（决策卡冲突取 main 超集）推 d912417b3，macmini r5m + GLM r5 起跑。READY 陈旧重写（11 张已关单清出）。#1011 r1 两家 0/0、本机宿主补起；派 #1154 → Codex、#917 → GLM（P2 集中清理）；A5.4 剩余范围交子代理梳理。下一步：#1011 宿主过 → 派第二步；#1145 闸门齐 → 入队。
