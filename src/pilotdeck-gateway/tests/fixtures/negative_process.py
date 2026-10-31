@@ -348,213 +348,45 @@ def _head_bytes(root, relative, baseline):
                                   f"cannot read {baseline} bytes: {error}")
 
 
-def _rust_tokens(source):
-    """Lex edges, never grep strings/comments as executable Rust.
-
-    Deliberately small lexer, not a Rust evaluator: macro expressions used as
-    paths are refused. Nested comments, raw/byte/C strings and lifetimes must
-    be consumed before looking for include/path tokens.
-    """
-    tokens, pos, brackets = [], 0, []
-    raw_pattern = re.compile(r'(br|cr|r)(#*)"')
-    quoted_pattern = re.compile(r'(b|c)?"')
-    char_pattern = re.compile(r"b?'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|[^\n])|[^'\\\n])'")
-    identifier_pattern = re.compile(r'(?:r#)?[a-zA-Z_\u0080-\uffff][\w]*')
-    while pos < len(source):
-        if source[pos].isspace():
-            pos += 1
-            continue
-        if source.startswith('//', pos):
-            end = source.find('\n', pos)
-            pos = len(source) if end < 0 else end + 1
-            continue
-        if source.startswith('/*', pos):
-            pos, depth = pos + 2, 1
-            while depth and pos < len(source):
-                if source.startswith('/*', pos):
-                    depth += 1
-                    pos += 2
-                elif source.startswith('*/', pos):
-                    depth -= 1
-                    pos += 2
-                else:
-                    pos += 1
-            if depth:
-                raise ValueError('unterminated Rust comment')
-            continue
-        raw = raw_pattern.match(source, pos)
-        if raw:
-            start = raw.end()
-            ending = '"' + raw[2]
-            end = source.find(ending, start)
-            if end < 0:
-                raise ValueError('unterminated Rust raw string')
-            tokens.append(('str' if raw[1] == 'r' else 'opaque', source[start:end]))
-            pos = end + len(ending)
-            continue
-        quoted = quoted_pattern.match(source, pos)
-        if quoted:
-            start = quoted.end()
-            end = start
-            while end < len(source) and source[end] != '"':
-                end += 2 if source[end] == '\\' else 1
-            if end >= len(source):
-                raise ValueError('unterminated Rust string')
-            tokens.append(('escaped' if not quoted[1] else 'opaque', source[start:end]))
-            pos = end + 1
-            continue
-        char = char_pattern.match(source, pos)
-        if char:
-            tokens.append(('opaque', char[0]))
-            pos = char.end()
-            continue
-        identifier = identifier_pattern.match(source, pos)
-        if identifier:
-            tokens.append(('id', identifier[0].removeprefix('r#')))
-            pos = identifier.end()
-            continue
-        token = source[pos]
-        if token in '([{':
-            brackets.append(token)
-        elif token in ')]}':
-            if not brackets or brackets.pop() != dict(zip(')]}', '([{'))[token]:
-                raise ValueError('unbalanced Rust delimiters')
-        tokens.append(('punct', token))
-        pos += 1
-    if brackets:
-        raise ValueError('unclosed Rust delimiter')
-    return tokens
-
-
-def _rust_path_literal(token):
-    kind, value = token
-    if kind == 'str':
-        return value
-    if kind != 'escaped':
-        raise ValueError('build input must be one string literal')
-    # Decode Rust escapes, not Python's subtly different string grammar.
-    def escape(match):
-        code = match[0][1:]
-        simple = {'n': '\n', 'r': '\r', 't': '\t', '0': '\0', '\\': '\\', '"': '"', "'": "'"}
-        if code in simple:
-            return simple[code]
-        if code.startswith('x'):
-            number = int(code[1:], 16)
-            if number > 127:
-                raise ValueError('non-ASCII Rust hex escape')
-            return chr(number)
-        if code.startswith('u{'):
-            return chr(int(code[2:-1].replace('_', ''), 16))
-        if code.startswith(('\n', '\r\n')):
-            return ''
-        raise ValueError('unsupported Rust path escape')
-    return re.sub(r'\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|\r?\n\s*|.)', escape, value)
-
-
-def _rust_input_edges(source, path, module_dir=None):
-    tokens = _rust_tokens(source)
-    if module_dir is None:
-        module_dir = path.parent if path.name in ('lib.rs', 'main.rs', 'mod.rs') else path.parent / path.stem
-    edges, modules, stack, macro_scopes = [], [], [], []
-    explicit_module = False
-    importing = False
-    values = [value for _kind, value in tokens]
-    for i, (kind, value) in enumerate(tokens):
-        if kind == 'id' and value == 'use':
-            importing = True
-        if kind == 'punct' and value == ';':
-            importing = False
-        if (kind == 'id' and value in ('include', 'include_str', 'include_bytes')
-                and (values[i + 1:i + 2] == ['!'] or importing)):
-            if importing or macro_scopes:
-                raise ValueError('aliased or macro-expanded include cannot be resolved statically')
-            close = {'(': ')', '[': ']', '{': '}'}.get(values[i + 2])
-            end = i + 4
-            if values[end:end + 1] == [',']:
-                end += 1
-            if close is None or values[end:end + 1] != [close]:
-                raise ValueError('include input must be one string literal')
-            edges.append((path.parent, _rust_path_literal(tokens[i + 3]), value == 'include', True))
-        # Recognize raw identifiers too; reject conditional/macro locations
-        # rather than guessing which directory the compiler will use.
-        if kind == 'id' and value == 'path' and values[i + 1:i + 2] == ['='] and '[' in stack:
-            if macro_scopes or i == 0 or values[i - 1] != '[':
-                raise ValueError('conditional/nested path attributes are not statically resolved')
-            if values[i + 3:i + 4] not in ([']'], [')'], [',']):
-                raise ValueError('path attribute must be one string literal')
-            base = path.parent
-            if modules:
-                base = module_dir.joinpath(*modules)
-            edges.append((base, _rust_path_literal(tokens[i + 2]), True, True))
-            explicit_module = True
-        if kind == 'id' and value == 'mod' and i + 2 < len(tokens) and values[i + 2] in (';', '{'):
-            if values[i + 2] == ';' and not explicit_module:
-                base = module_dir.joinpath(*modules)
-                candidates = (base / (values[i + 1] + '.rs'), base / values[i + 1] / 'mod.rs')
-                existing = [candidate for candidate in candidates if candidate.is_file()]
-                if len(existing) != 1:
-                    raise ValueError('default Rust module must resolve to exactly one file')
-                edges.append((base, str(existing[0].relative_to(base)), True, False))
-            explicit_module = False
-        if kind == 'punct' and value in '([{':
-            if i >= 3 and values[i - 3:i - 1] == ['macro_rules', '!']:
-                macro_scopes.append(len(stack))
-            module = values[i - 1] if i >= 2 and values[i - 2] == 'mod' and value == '{' else None
-            stack.append(value)
-            if value == '{':
-                stack.append(module)
-                if module:
-                    modules.append(module)
-        elif kind == 'punct' and value in ')]}':
-            if value == '}':
-                module = stack.pop()
-                if module:
-                    modules.pop()
-            stack.pop()
-            if macro_scopes and len(stack) == macro_scopes[-1]:
-                macro_scopes.pop()
-    return edges
-
-
 def _workspace_literal_inputs(root, baseline):
-    """Discover literal inputs from every committed workspace .rs, recursively.
+    """Run the prebuilt #449/#1166 proc-macro2 scanner; never launch Cargo here.
 
-    Reading the HEAD inventory prevents staged deletion hiding a source. The
-    caller checks src first and checks the discovered paths too, so edited or
-    hidden sources cannot remove an edge and pass validation.
-    Follow include! and modules regardless of suffix. Macro expansion, import
-    aliases, conditional path attributes and symlink identities fail closed.
+    Prebuild `cargo build --offline -p pilotdeck-gateway --example workspace_inputs`
+    before a negative-control window. No inventory cache: included external Rust
+    sources are re-read every time. Embedded source identity rejects stale builds.
     """
     root = Path(root).resolve()
-    names = _git(root, 'ls-tree', '-r', '--name-only', '-z', baseline, '--', 'src').split(b'\0')
-    pending = [(root / os.fsdecode(name), None) for name in names if name.endswith(b'.rs')]
-    seen, inputs = set(), set()
-    while pending:
-        path, module_dir = pending.pop()
-        if (path, module_dir) in seen:
-            continue
-        seen.add((path, module_dir))
-        try:
-            if any(part.is_symlink() for part in (path, *path.parents)):
-                raise ValueError('Rust source path contains a symlink')
-            path.resolve(strict=True).relative_to(root)
-            for base, literal, rust_source, parent_dir in _rust_input_edges(
-                    path.read_text(encoding='utf-8'), path, module_dir):
-                candidate = base / literal
-                if any(part.is_symlink() for part in (candidate, *candidate.parents)):
-                    raise ValueError('Rust input path contains a symlink')
-                relative = Path(os.path.abspath(candidate)).relative_to(root).as_posix()
-                resolved = candidate.resolve(strict=True).relative_to(root).as_posix()
-                if not literal or not candidate.is_file():
-                    raise ValueError('input is not a file')
-                inputs.update((relative, resolved))
-                if rust_source or candidate.suffix == '.rs':
-                    resolved_path = root / resolved
-                    pending.append((resolved_path, resolved_path.parent if parent_dir else None))
-        except (ValueError, OSError, IndexError) as error:
-            raise SourceBaselineError(root, str(path.relative_to(root)),
-                                      f'#1166 cannot resolve Rust build input: {error}') from error
-    return tuple(':(top,literal)' + name for name in sorted(inputs))
+    try:
+        target = os.environ.get('CARGO_TARGET_DIR')
+        if not target:
+            raise ValueError('CARGO_TARGET_DIR must be supplied by the caller')
+        scanner_root = Path(__file__).resolve().parents[4]
+        sources = (scanner_root / 'src/pilotdeck-gateway/examples/workspace_inputs.rs',
+                   scanner_root / 'src/pilotdeck-gateway/tests/common/source_inputs.rs',
+                   scanner_root / 'src/pilotdeck-gateway/Cargo.toml',
+                   scanner_root / 'src/Cargo.toml', scanner_root / 'src/Cargo.lock')
+        digest = hashlib.sha256(b''.join(path.read_bytes() for path in sources)).hexdigest()
+        executable = Path(target).resolve() / 'debug/examples/workspace_inputs'
+        expected_head = _git(root, 'rev-parse', '--verify', baseline + '^{commit}').decode().strip()
+        result = run_owned([str(executable), str(root), expected_head], timeout=60, cwd=root)
+        if result.returncode != 0:
+            raise ValueError('Rust scanner failed: ' + result.stderr[-4000:])
+        document = json.loads(result.stdout)
+        if (not isinstance(document, dict) or document.get('head') != expected_head
+                or document.get('root') != str(root) or document.get('scanner_sha256') != digest):
+            raise ValueError('Rust scanner identity mismatch; prebuild the current example offline')
+        inputs = document.get('inputs')
+        if not isinstance(inputs, list):
+            raise ValueError('Rust scanner input list is malformed')
+        for name in inputs:
+            if (not isinstance(name, str) or not name or Path(name).is_absolute()
+                    or '..' in Path(name).parts or Path(name).as_posix() != name):
+                raise ValueError('Rust scanner input path is malformed')
+        if len(set(inputs)) != len(inputs):
+            raise ValueError('Rust scanner input list has duplicates')
+        return tuple(':(top,literal)' + name for name in inputs)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        raise SourceBaselineError(root, 'src', f'#1166 cannot resolve Rust build input: {error}') from error
 
 
 def _assert_product_pristine(root, baseline):
