@@ -4,6 +4,7 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 #[path = "support/llm_stub.rs"]
+#[allow(dead_code)]
 mod llm_stub;
 #[path = "common/scratch.rs"]
 mod scratch;

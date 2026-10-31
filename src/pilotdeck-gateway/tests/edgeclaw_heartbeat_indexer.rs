@@ -19,12 +19,13 @@ mod mutants;
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
     memory::edgeclaw::{
-        file_memory::EdgeClawFileStores,
+        file_memory::{EdgeClawFileStores, FileMemoryError},
         heartbeat::{
             helpers::messages_from_value,
             indexer::{
-                CaptureL0SessionInput, HeartbeatHook, HeartbeatIndexer, HeartbeatLogger,
-                HeartbeatOptions, HeartbeatRunOptions, HeartbeatStage,
+                CaptureL0SessionInput, HeartbeatError, HeartbeatHook, HeartbeatIndexer,
+                HeartbeatLogger, HeartbeatOptions, HeartbeatRunOptions, HeartbeatStage,
+                HeartbeatStats,
             },
         },
         llm::transport::LlmMemoryExtractor,
@@ -44,6 +45,25 @@ use std::{
 
 const ORACLE: &str = include_str!("fixtures/edgeclaw-heartbeat-indexer/oracle.json");
 const NOW: &str = "2026-10-22T00:00:00.000Z";
+
+// #917: the six M13 clearSession cells whose expectation flips from the TS
+// baseline (which resurrects the cleared session's file after the clear) to
+// the registered divergences
+// `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001` / `-002`
+// (human decision 2026-10-27, #914 option A). `oracle.json` itself stays
+// byte-identical to TS, so the regeneration guard keeps proving the TS side.
+const FIX_ORACLE: &str = include_str!("fixtures/edgeclaw-heartbeat-indexer/fix-917.json");
+// fix-r1 adds the sixth cell: the TS baseline never recorded a
+// `matrix-general-select-clearSession` oracle.json case, so its TS evidence
+// rides along inside the fix-917.json cell under `ts` instead.
+const DIVERGED_CASES: [&str; 6] = [
+    "matrix-single-afterList-clearSession",
+    "matrix-single-classify-clearSession",
+    "matrix-single-createNote-clearSession",
+    "matrix-general-classify-clearSession",
+    "matrix-general-createNote-clearSession",
+    "matrix-general-select-clearSession",
+];
 
 // -- oracle access ---------------------------------------------------------
 
@@ -896,6 +916,18 @@ macro_rules! case_test {
     };
 }
 
+// #917: the same replay shape, but the expectation is the registered
+// divergence in `fix-917.json` instead of the TS cell.
+macro_rules! diverged_case_test {
+    ($function:ident, $name:literal) => {
+        #[tokio::test]
+        async fn $function() {
+            let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+            assert_diverged_case($name).await;
+        }
+    };
+}
+
 case_test!(single_project_cycle_matches_ts, "single-project");
 case_test!(single_all_kinds_matches_ts, "single-all-kinds");
 case_test!(general_create_matches_ts, "general-create");
@@ -911,32 +943,41 @@ case_test!(
     "capture-duplicate-suppression"
 );
 case_test!(
-    matrix_after_list_clear_session_matches_ts,
-    "matrix-single-afterList-clearSession"
-);
-case_test!(
     matrix_classify_capture_matches_ts,
     "matrix-single-classify-capture"
 );
-case_test!(
-    matrix_classify_clear_session_matches_ts,
+// #917: the six clearSession resurrection cells replay the same TS inputs
+// but expect the registered divergence (`fix-917.json`), not the TS outcome.
+diverged_case_test!(
+    matrix_after_list_clear_session_no_resurrection,
+    "matrix-single-afterList-clearSession"
+);
+diverged_case_test!(
+    matrix_classify_clear_session_no_resurrection,
     "matrix-single-classify-clearSession"
 );
-case_test!(
-    matrix_create_note_clear_session_matches_ts,
+diverged_case_test!(
+    matrix_create_note_clear_session_no_resurrection,
     "matrix-single-createNote-clearSession"
 );
 case_test!(
     matrix_before_mark_clear_session_matches_ts,
     "matrix-single-beforeMark-clearSession"
 );
-case_test!(
-    matrix_general_classify_clear_session_matches_ts,
+diverged_case_test!(
+    matrix_general_classify_clear_session_no_resurrection,
     "matrix-general-classify-clearSession"
 );
-case_test!(
-    matrix_general_create_note_clear_session_matches_ts,
+diverged_case_test!(
+    matrix_general_create_note_clear_session_no_resurrection,
     "matrix-general-createNote-clearSession"
+);
+// #917 fix-r1: the select-window cell. The TS baseline never recorded it in
+// oracle.json, so the replay input comes from the fix cell itself and the TS
+// evidence is the gated probe observation under its `ts` field.
+diverged_case_test!(
+    matrix_general_select_clear_session_no_resurrection,
+    "matrix-general-select-clearSession"
 );
 case_test!(
     matrix_general_select_clear_project_matches_ts,
@@ -1096,4 +1137,1393 @@ fn capture_l0_session_two_threads_is_atomic() {
 #[test]
 fn regenerates_identically() {
     baseline::regenerates_identically("edgeclaw-heartbeat-indexer");
+}
+
+// -- #917 registered divergence ---------------------------------------------
+
+fn fix_case<'a>(fix: &'a JsValue, name: &str) -> &'a JsValue {
+    fix.get("cases")
+        .and_then(|cases| cases.get(name))
+        .unwrap_or_else(|| panic!("#917 fix-917.json is missing case {name}"))
+}
+
+/// Same replay as [`assert_case`], but the expectation is the #917 registered
+/// divergence in `fix-917.json` instead of the TS cell: the session was
+/// cleared while the classify/createNote/select awaits were in flight, so the
+/// turn's candidates must be discarded instead of writing the file the TS
+/// baseline resurrects.
+async fn assert_diverged_case(name: &str) {
+    let parsed = parse_json(ORACLE).expect("#917 oracle json");
+    let fix = parse_json(FIX_ORACLE).expect("#917 fix-917.json");
+    let expected = fix_case(&fix, name);
+    // fix-r1: the sixth cell has no oracle.json twin (the TS baseline never
+    // recorded `matrix-general-select-clearSession`), so its input is the fix
+    // cell itself; the TS probe evidence under `ts` is not a replay input.
+    let case = array(field(&parsed, "cases"))
+        .iter()
+        .find(|case| text(field(case, "name")) == name)
+        .unwrap_or(expected);
+    let observed = run_case(case).await;
+    assert_eq!(
+        canonical(field(&observed, "requests")),
+        canonical(field(expected, "requests")),
+        "#917 case {name} request method/url/headers/body differs"
+    );
+    assert_eq!(
+        canonical(&prompt_debug_values(&observed)),
+        canonical(&prompt_debug_values(expected)),
+        "#917 case {name} promptDebug differs"
+    );
+    assert_eq!(
+        canonical(&stored_candidate_fields(&observed)),
+        canonical(&stored_candidate_fields(expected)),
+        "#917 case {name} storedResults candidate source differs"
+    );
+    if canonical(&observed) != canonical(&without_ts(expected)) {
+        panic!(
+            "#917 case {name} differs\n  actual:   {}\n  expected: {}",
+            canonical(&observed),
+            canonical(&without_ts(expected))
+        );
+    }
+}
+
+/// The fix-r1 sixth cell carries its TS probe observation under `ts`, which is
+/// evidence for the divergence registration, not part of the replay
+/// expectation; strip it before the whole-observation comparison.
+fn without_ts(value: &JsValue) -> JsValue {
+    match value {
+        JsValue::Object(object) => {
+            let mut next = JsObject::new();
+            for (key, item) in object.entries().to_vec() {
+                if key.to_utf8().map(|key| key == "ts").unwrap_or(false) {
+                    continue;
+                }
+                next.insert(key, item);
+            }
+            JsValue::Object(next)
+        }
+        other => panic!("#917 fix-917.json case must be an object, got {other:?}"),
+    }
+}
+
+/// `fix-917.json` must override exactly the registered resurrection cells,
+/// and every override must really remove what the TS cell still records: the
+/// TS cell writes at least one `Project/` / `GeneralProjects/` file, reports
+/// `writtenFiles > 0` and keeps its L0 rows deleted; the divergence writes no
+/// such file, reports `writtenFiles = 0`, keeps the L0 rows deleted and keeps
+/// the TS request sequence and promptDebug bytes untouched. The fix-r1 sixth
+/// cell has no oracle.json twin, so its TS side is the gated probe observation
+/// under `ts`: same input, same request sequence, but the routing step's
+/// promptDebug drops with the discarded persist (strict prefix, see below).
+#[test]
+fn registered_divergence_covers_exactly_the_resurrect_cells() {
+    let parsed = parse_json(ORACLE).expect("#917 oracle json");
+    let fix = parse_json(FIX_ORACLE).expect("#917 fix-917.json");
+    let registered = match field(&fix, "cases") {
+        JsValue::Object(cases) => cases
+            .entries()
+            .iter()
+            .map(|(key, _)| {
+                key.to_utf8()
+                    .expect("#917 fix-917.json case keys must be UTF-8")
+            })
+            .collect::<Vec<_>>(),
+        other => panic!("#917 fix-917.json cases must be an object, got {other:?}"),
+    };
+    assert_eq!(
+        registered,
+        DIVERGED_CASES.to_vec(),
+        "#917 fix-917.json must override exactly the registered M13 resurrection cells"
+    );
+    // fix-r2 (review opus P2): the first five cells are registered by `-001`,
+    // the sixth by `-002`; the ledger pointers must name both so no cell
+    // points at an entry that does not cover it.
+    let divergences = array(field(&fix, "registeredDivergence"))
+        .iter()
+        .map(text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        divergences,
+        vec![
+            "A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001",
+            "A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-002",
+        ],
+        "#917 fix-917.json must point at both diff ledger entries (-001: the first five cells, -002: the sixth)"
+    );
+    let resurrected = |case: &JsValue| {
+        // fix-r1: the general-select cell seeds `GeneralProjects/` metadata
+        // before the heartbeat, so seeded paths are not resurrection output.
+        let seeded = array(field(case, "seeds"))
+            .iter()
+            .map(|seed| text(field(seed, "relativePath")))
+            .collect::<Vec<_>>();
+        array(field(field(case, "files"), "memory"))
+            .iter()
+            .filter(|file| {
+                let path = text(field(file, "relativePath"));
+                path.starts_with("Project/")
+                    || (path.starts_with("GeneralProjects/") && !seeded.contains(&path))
+            })
+            .count()
+    };
+    let written_files = |case: &JsValue| {
+        field(case, "result")
+            .get("stats")
+            .and_then(|stats| stats.get("writtenFiles"))
+            .and_then(JsValue::as_number)
+            .unwrap_or_default()
+    };
+    for name in DIVERGED_CASES {
+        let expected = fix_case(&fix, name);
+        // fix-r1: the sixth cell has no oracle.json twin, so its TS baseline
+        // is the gated probe observation riding along under `ts`.
+        let oracle = array(field(&parsed, "cases"))
+            .iter()
+            .find(|case| text(field(case, "name")) == name);
+        let ts = oracle.unwrap_or_else(|| field(expected, "ts"));
+        assert!(
+            resurrected(ts) > 0,
+            "#917 TS cell {name} must still record the resurrected file in its TS baseline"
+        );
+        assert_eq!(
+            resurrected(expected),
+            0,
+            "#917 divergence cell {name} must not write Project/GeneralProjects files"
+        );
+        assert!(
+            written_files(ts) > 0.0,
+            "#917 TS cell {name} must record writtenFiles > 0"
+        );
+        assert_eq!(
+            written_files(expected),
+            0.0,
+            "#917 divergence cell {name} must record writtenFiles = 0"
+        );
+        assert!(
+            array(field(field(ts, "db"), "l0")).is_empty(),
+            "#917 TS cell {name} must record the cleared L0 rows"
+        );
+        assert!(
+            array(field(field(expected, "db"), "l0")).is_empty(),
+            "#917 divergence cell {name} must keep the L0 rows deleted"
+        );
+        assert_eq!(
+            canonical(field(ts, "requests")),
+            canonical(field(expected, "requests")),
+            "#917 divergence cell {name} must keep the TS request sequence"
+        );
+        if oracle.is_some() {
+            assert_eq!(
+                canonical(&prompt_debug_values(ts)),
+                canonical(&prompt_debug_values(expected)),
+                "#917 divergence cell {name} must keep the TS promptDebug"
+            );
+        } else {
+            // fix-r1: the sixth cell's routing step carries the select
+            // promptDebug in TS; the divergence drops it together with the
+            // discarded persist, so the fix must keep the probe's earlier
+            // classify/create promptDebug entries one for one.
+            let (probe_debug, kept_debug) =
+                (prompt_debug_values(ts), prompt_debug_values(expected));
+            match (&probe_debug, &kept_debug) {
+                (JsValue::Array(probe), JsValue::Array(kept)) => {
+                    assert!(
+                        !kept.is_empty()
+                            && kept.len() < probe.len()
+                            && kept
+                                .iter()
+                                .zip(probe.iter())
+                                .all(|(kept, probe)| canonical(kept) == canonical(probe)),
+                        "#917 fix-r1 cell {name} must keep the probe classify/create promptDebug"
+                    );
+                }
+                _ => panic!("#917 fix-r1 cell {name} promptDebug must be arrays"),
+            }
+        }
+        if let Some(probe) = expected.get("ts") {
+            // fix-r1: the probe observation must be the same experiment as the
+            // divergence cell — identical inputs, identical request sequence —
+            // so the persist flip is attributable to the fix alone.
+            for key in [
+                "name", "mode", "timing", "action", "seeds", "captures", "llmSteps",
+            ] {
+                assert_eq!(
+                    canonical(field(probe, key)),
+                    canonical(field(expected, key)),
+                    "#917 fix-r1 cell {name} ts probe {key} must match the divergence input"
+                );
+            }
+            assert_eq!(
+                canonical(field(probe, "requests")),
+                canonical(field(expected, "requests")),
+                "#917 fix-r1 cell {name} ts probe requests must match the divergence replay"
+            );
+        }
+    }
+}
+
+// #917: the deterministic hook injects `clearSession` at the point where the
+// real-TS probe released the gated createNote request and asserts it hit the
+// target session. The persist after the await must then discard the turn — no
+// file is written and no storedResult is recorded — instead of resurrecting
+// the cleared session's memory the way the TS baseline does.
+#[tokio::test]
+async fn clear_during_create_note_await_discards_persist() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let root = TempDir::new("clear-create-note");
+    let root_path = root.path();
+    let home = root_path.join("home");
+    fs::create_dir_all(&home).expect("#917 create home");
+    let workspace = root_path.join("workspace");
+    fs::create_dir_all(&workspace).expect("#917 create workspace");
+    let clock = Arc::new(|| NOW.to_string());
+    let stores = Arc::new(
+        EdgeClawFileStores::with_workspace_clock(
+            root_path.join("control.sqlite"),
+            root_path.join("memory"),
+            root_path.join("root").join("global"),
+            &workspace,
+            home.join(".pilotdeck"),
+            clock.clone(),
+        )
+        .expect("#917 open repository"),
+    );
+    stores
+        .storage
+        .set_pipeline_state(
+            "workspaceDir",
+            &JsValue::String(workspace.to_string_lossy().as_ref().into()),
+        )
+        .expect("#917 set workspaceDir");
+
+    let response = |value: serde_json::Value| {
+        serde_json::json!({
+            "status": 200,
+            "body": serde_json::to_string(&serde_json::json!({
+                "choices": [{
+                    "message": {
+                        "content": serde_json::to_string(&value)
+                            .expect("#917 scripted response content")
+                    }
+                }]
+            })).expect("#917 scripted response envelope"),
+        })
+    };
+    let steps = vec![
+        response(serde_json::json!({
+            "should_store": true,
+            "labels": [{
+                "type": "project",
+                "reason": "durable project fact",
+                "evidence": "project evidence"
+            }]
+        })),
+        response(serde_json::json!({
+            "skip": false,
+            "reason": "",
+            "name": "Alpha",
+            "description": "Alpha description",
+            "markdown": "## Summary\nAlpha body"
+        })),
+    ];
+    let server = LlmStub::start(steps, Arc::new(AtomicU64::new(0))).await;
+    let extractor = Arc::new(LlmMemoryExtractor::new(
+        config(&server.origin),
+        Arc::new(HyperModelTransport::new()),
+        Arc::new(()),
+    ));
+    let indexer = HeartbeatIndexer::new(
+        stores.clone(),
+        extractor,
+        HeartbeatOptions {
+            batch_size: None,
+            source: Some("edgeclaw".into()),
+            settings: IndexingSettings {
+                reasoning_mode: "answer_first".into(),
+                auto_index_interval_minutes: 30.0,
+                auto_dream_interval_minutes: 60.0,
+            },
+            logger: None,
+            clock: Some(clock),
+        },
+    );
+    indexer
+        .capture_l0_session(CaptureL0SessionInput {
+            session_key: "s1".into(),
+            timestamp: Some("2026-10-22T00:00:01.000Z".into()),
+            messages: vec![MemoryMessage {
+                msg_id: None,
+                role: MemoryRole::User,
+                content: "cleared during create".into(),
+            }],
+            source: None,
+        })
+        .expect("#917 capture l0 must not fail")
+        .expect("#917 capture l0 must insert the first row");
+
+    let injected: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let hook_injected = injected.clone();
+    let hook_stores = stores.clone();
+    let hooked = indexer.with_hook(Arc::new(move |stage, session_key| {
+        assert_eq!(
+            session_key, "s1",
+            "#917 the clear hook must fire on the target session"
+        );
+        if stage == HeartbeatStage::BeforeCreateNote {
+            let mut injected = hook_injected.lock().expect("#917 hook lock");
+            assert_eq!(
+                *injected, 0,
+                "#917 the createNote clear must be injected exactly once"
+            );
+            *injected += 1;
+            hook_stores
+                .clear_session_memory_data("s1")
+                .expect("#917 hook clearSession");
+        }
+    }));
+
+    let stats = hooked
+        .run_heartbeat(HeartbeatRunOptions {
+            reason: Some("manual".into()),
+            ..HeartbeatRunOptions::default()
+        })
+        .await
+        .expect("#917 runHeartbeat must not reject when the session is cleared mid-await");
+    assert_eq!(
+        *injected.lock().expect("#917 hook lock"),
+        1,
+        "#917 the clear hook must have fired at the createNote await"
+    );
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 0, 0),
+        "#917 a cleared session must not count any written file"
+    );
+    let l0 = stores.storage.list_all_l0().expect("#917 list l0 rows");
+    assert!(
+        l0.is_empty(),
+        "#917 the cleared session's L0 rows must stay deleted"
+    );
+    let memory_files = array(&tree(stores.get_file_memory_store().get_root_dir()))
+        .iter()
+        .map(|file| text(field(file, "relativePath")))
+        .collect::<Vec<_>>();
+    assert!(
+        memory_files
+            .iter()
+            .all(|path| !path.starts_with("Project/")),
+        "#917 no project memory file may be written for the cleared session, got {memory_files:?}"
+    );
+    let global_tree = tree(stores.get_global_user_store().get_root_dir());
+    let global_files = array(&global_tree);
+    assert!(
+        global_files.is_empty(),
+        "#917 no global user file may be written for the cleared session"
+    );
+    let traces = stores
+        .storage
+        .list_recent_index_traces(20)
+        .expect("#917 list traces");
+    let trace = traces
+        .first()
+        .expect("#917 the heartbeat must record its index trace");
+    assert_eq!(
+        trace.get("isNoOp"),
+        Some(&JsValue::Bool(true)),
+        "#917 the discarded turn must leave a no-op trace"
+    );
+    let requests = server.requests.lock().expect("#917 stub requests").clone();
+    server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run; only the persist is discarded"
+    );
+}
+
+// -- #917 fix-r1: gated in-flight injection -----------------------------------
+//
+// Codex r1 P2: the hook above injects `clearSession` synchronously before the
+// LLM request is issued, so it never proves the clear lands while the request
+// is actually in flight. The direct tests below use a `"kind":"gate"` LlmStub
+// step — the request is recorded first, then its response is parked until
+// `release(step_index)` — wait until the stub has recorded the request, run
+// the clear from the test thread, and only then release the response.
+
+fn llm_response(value: serde_json::Value) -> Value {
+    serde_json::json!({
+        "status": 200,
+        "body": serde_json::to_string(&serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": serde_json::to_string(&value)
+                        .expect("#917 scripted response content")
+                }
+            }]
+        })).expect("#917 scripted response envelope"),
+    })
+}
+
+fn classify_response(labels: &[(&str, &str)]) -> Value {
+    llm_response(serde_json::json!({
+        "should_store": !labels.is_empty(),
+        "labels": labels
+            .iter()
+            .map(|(kind, reason)| serde_json::json!({
+                "type": kind,
+                "reason": reason,
+                "evidence": format!("{kind} evidence"),
+            }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+fn note_response(name: &str, description: &str, markdown: &str) -> Value {
+    llm_response(serde_json::json!({
+        "skip": false,
+        "reason": "",
+        "name": name,
+        "description": description,
+        "markdown": markdown,
+    }))
+}
+
+fn select_response(decision: &str, project_id: &str, reason: &str) -> Value {
+    llm_response(serde_json::json!({
+        "decision": decision,
+        "selected_project_id": project_id,
+        "reason": reason,
+    }))
+}
+
+/// Park this step's response until `LlmStub::release(index)`.
+fn gated(step: Value) -> Value {
+    let mut step = step;
+    step["kind"] = serde_json::json!("gate");
+    step
+}
+
+struct GatedLab {
+    stores: Arc<EdgeClawFileStores>,
+    db_path: PathBuf,
+    server: LlmStub,
+    indexer: HeartbeatIndexer,
+    logger: Arc<RecordingLogger>,
+    // Kept last so the temp root outlives the stores it hosts.
+    _root: TempDir,
+}
+
+async fn gated_lab(
+    name: &str,
+    general: bool,
+    seeds: &[(&str, &str, &str)],
+    steps: impl FnOnce(&[String]) -> Vec<Value>,
+) -> GatedLab {
+    let root = TempDir::new(name);
+    let root_path = root.path().to_path_buf();
+    let home = root_path.join("home");
+    fs::create_dir_all(&home).expect("#917 create home");
+    let workspace = if general {
+        home.join(".pilotdeck")
+    } else {
+        root_path.join("workspace")
+    };
+    fs::create_dir_all(&workspace).expect("#917 create workspace");
+    let clock = Arc::new(|| NOW.to_string());
+    let stores = Arc::new(
+        EdgeClawFileStores::with_workspace_clock(
+            root_path.join("control.sqlite"),
+            root_path.join("memory"),
+            root_path.join("root").join("global"),
+            &workspace,
+            home.join(".pilotdeck"),
+            clock.clone(),
+        )
+        .expect("#917 open repository"),
+    );
+    stores
+        .storage
+        .set_pipeline_state(
+            "workspaceDir",
+            &JsValue::String(workspace.to_string_lossy().as_ref().into()),
+        )
+        .expect("#917 set workspaceDir");
+    let mut project_ids = Vec::new();
+    for (project_name, description, status) in seeds {
+        let mut input = JsObject::new();
+        input.insert(
+            "projectName".into(),
+            JsValue::String((*project_name).into()),
+        );
+        input.insert("description".into(), JsValue::String((*description).into()));
+        input.insert("status".into(), JsValue::String((*status).into()));
+        let meta = stores
+            .get_file_memory_store()
+            .upsert_project_meta(&input)
+            .expect("#917 seed project");
+        project_ids.push(
+            meta.get("projectId")
+                .and_then(JsValue::as_string)
+                .map(|value| value.to_utf8().expect("#917 project id is UTF-8"))
+                .unwrap_or_default(),
+        );
+    }
+    let server = LlmStub::start(steps(&project_ids), Arc::new(AtomicU64::new(0))).await;
+    let extractor = Arc::new(LlmMemoryExtractor::new(
+        config(&server.origin),
+        Arc::new(HyperModelTransport::new()),
+        Arc::new(()),
+    ));
+    let logger = Arc::new(RecordingLogger::default());
+    let indexer = HeartbeatIndexer::new(
+        stores.clone(),
+        extractor,
+        HeartbeatOptions {
+            batch_size: None,
+            source: Some("edgeclaw".into()),
+            settings: IndexingSettings {
+                reasoning_mode: "answer_first".into(),
+                auto_index_interval_minutes: 30.0,
+                auto_dream_interval_minutes: 60.0,
+            },
+            logger: Some(logger.clone()),
+            clock: Some(clock),
+        },
+    );
+    GatedLab {
+        stores,
+        db_path: root_path.join("control.sqlite"),
+        server,
+        indexer,
+        logger,
+        _root: root,
+    }
+}
+
+fn capture_user_turn(indexer: &HeartbeatIndexer, session: &str, timestamp: &str, content: &str) {
+    indexer
+        .capture_l0_session(CaptureL0SessionInput {
+            session_key: session.into(),
+            timestamp: Some(timestamp.into()),
+            messages: vec![MemoryMessage {
+                msg_id: None,
+                role: MemoryRole::User,
+                content: content.into(),
+            }],
+            source: None,
+        })
+        .expect("#917 capture l0 must not fail")
+        .expect("#917 capture l0 must insert the row");
+}
+
+async fn wait_for_requests(server: &LlmStub, count: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while server
+        .requests
+        .lock()
+        .expect("#917 stub requests lock")
+        .len()
+        < count
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "#917 the stub must record {count} in-flight requests within 10s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
+fn spawn_heartbeat(
+    indexer: &HeartbeatIndexer,
+) -> tokio::task::JoinHandle<Result<HeartbeatStats, HeartbeatError>> {
+    let runner = indexer.clone();
+    tokio::spawn(async move {
+        runner
+            .run_heartbeat(HeartbeatRunOptions {
+                reason: Some("manual".into()),
+                ..HeartbeatRunOptions::default()
+            })
+            .await
+    })
+}
+
+fn memory_paths(stores: &EdgeClawFileStores) -> Vec<String> {
+    array(&tree(stores.get_file_memory_store().get_root_dir()))
+        .iter()
+        .map(|file| text(field(file, "relativePath")))
+        .collect()
+}
+
+fn run_options() -> HeartbeatRunOptions {
+    HeartbeatRunOptions {
+        reason: Some("manual".into()),
+        ..HeartbeatRunOptions::default()
+    }
+}
+
+// T1: a `clearSession` that lands while the single-turn createNote request is
+// genuinely in flight (the stub recorded it, its response is parked) must
+// still discard the turn's persist.
+#[tokio::test]
+async fn clear_while_create_note_request_in_flight_discards_persist() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-create-note-gate", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            gated(note_response(
+                "Alpha",
+                "Alpha description",
+                "## Summary\nAlpha body",
+            )),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "cleared during in-flight create",
+    );
+    let heartbeat = spawn_heartbeat(&lab.indexer);
+    wait_for_requests(&lab.server, 2).await;
+    lab.stores
+        .clear_session_memory_data("s1")
+        .expect("#917 the in-flight clear must succeed");
+    lab.server.release(1);
+    let stats = heartbeat
+        .await
+        .expect("#917 the heartbeat task must not panic")
+        .expect("#917 runHeartbeat must not reject when the clear lands mid-request");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 0, 0),
+        "#917 a clear while the createNote request is in flight must discard the turn's persist"
+    );
+    assert!(
+        lab.stores
+            .storage
+            .list_all_l0()
+            .expect("#917 list l0 rows")
+            .is_empty(),
+        "#917 the cleared session's L0 rows must stay deleted"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#917 no project memory file may be written for the in-flight-cleared session, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run; only the persist is discarded"
+    );
+}
+
+// T2: the second turn's createNote request is the parked one; the clear lands
+// while it is in flight. The first turn's already-committed file is deleted by
+// the clear, the second turn's candidate is discarded, and no file survives.
+#[tokio::test]
+async fn second_turn_create_note_request_in_flight_clear_discards_persist() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("second-turn-clear-gate", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+            classify_response(&[("project", "second turn fact")]),
+            gated(note_response(
+                "Beta",
+                "Beta description",
+                "## Summary\nBeta body",
+            )),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "first turn user",
+    );
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:02.000Z",
+        "second turn user",
+    );
+    let heartbeat = spawn_heartbeat(&lab.indexer);
+    wait_for_requests(&lab.server, 4).await;
+    lab.stores
+        .clear_session_memory_data("s1")
+        .expect("#917 the in-flight clear must succeed");
+    lab.server.release(3);
+    let stats = heartbeat
+        .await
+        .expect("#917 the heartbeat task must not panic")
+        .expect("#917 runHeartbeat must not reject when the clear lands mid-request");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (2, 1, 0),
+        "#917 the first turn may write before the clear; the second turn's in-flight clear must discard its persist"
+    );
+    assert!(
+        lab.stores
+            .storage
+            .list_all_l0()
+            .expect("#917 list l0 rows")
+            .is_empty(),
+        "#917 the cleared session's L0 rows must stay deleted"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#917 the clear must delete the first turn's file and discard the second turn's candidate, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        4,
+        "#917 both turns' classify and createNote requests must run; only the second persist is discarded"
+    );
+}
+
+// T-select: general mode, seeded project, attach route — the clear lands
+// while the selectIndexProject request is in flight. The routed candidate
+// must be discarded; the seeded meta has no source session and must survive.
+#[tokio::test]
+async fn clear_during_select_request_in_flight_discards_persist() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab(
+        "select-clear-gate",
+        true,
+        &[("Existing Project", "existing description", "in_progress")],
+        |project_ids| {
+            vec![
+                classify_response(&[("project", "durable project fact")]),
+                note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+                gated(select_response(
+                    "attach_existing",
+                    &project_ids[0],
+                    "attach existing",
+                )),
+            ]
+        },
+    )
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "cleared during in-flight select",
+    );
+    let heartbeat = spawn_heartbeat(&lab.indexer);
+    wait_for_requests(&lab.server, 3).await;
+    lab.stores
+        .clear_session_memory_data("s1")
+        .expect("#917 the in-flight clear must succeed");
+    lab.server.release(2);
+    let stats = heartbeat
+        .await
+        .expect("#917 the heartbeat task must not panic")
+        .expect("#917 runHeartbeat must not reject when the clear lands mid-select");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 0, 0),
+        "#917 a clear while the select request is in flight must discard the routed candidate"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#917 no note may be attached after an in-flight clearSession, got {paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.starts_with("GeneralProjects/")),
+        "#917 the seeded project meta must survive clearSession, got {paths:?}"
+    );
+    assert!(
+        lab.stores
+            .storage
+            .list_all_l0()
+            .expect("#917 list l0 rows")
+            .is_empty(),
+        "#917 the cleared session's L0 rows must stay deleted"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        3,
+        "#917 classify, createNote and select must still run; only the persist is discarded"
+    );
+}
+
+// T-second-label: one turn, two labels (the extractor keeps one candidate per
+// kind, so the second label must be a different kind). The first candidate
+// commits before the clear; the clear lands while the second candidate's
+// select request is in flight, so the per-candidate recheck (not just the
+// first round's) is what must discard the second label's candidate.
+#[tokio::test]
+async fn second_label_select_request_in_flight_clear_discards_persist() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("second-label-clear-gate", true, &[], |_| {
+        vec![
+            classify_response(&[("project", "first fact"), ("feedback", "second fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+            note_response("Beta", "Beta description", "## Rule\nBeta body"),
+            gated(select_response("create_new", "", "new project")),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "two labels in one turn",
+    );
+    let heartbeat = spawn_heartbeat(&lab.indexer);
+    wait_for_requests(&lab.server, 4).await;
+    lab.stores
+        .clear_session_memory_data("s1")
+        .expect("#917 the in-flight clear must succeed");
+    lab.server.release(3);
+    let stats = heartbeat
+        .await
+        .expect("#917 the heartbeat task must not panic")
+        .expect("#917 runHeartbeat must not reject when the clear lands mid-select");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 2, 0),
+        "#917 the first label may write before the clear; the second label's in-flight clear must discard its candidate"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths
+            .iter()
+            .all(|path| !path.to_lowercase().contains("beta")),
+        "#917 the second label's candidate must be discarded after the in-flight clear, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        4,
+        "#917 classify, both createNote requests and the second label's select must still run"
+    );
+}
+
+// T-lock: the commit segment (in-scope recheck + meta write + upsertCandidate)
+// holds the same snapshot operation locks `clearSession` takes. A cross-thread
+// clear that starts while the segment is parked at BeforePersistCommit must
+// block until the segment's writes complete, then delete the committed file —
+// no net resurrection. Dropping the scope (the negative-control mutant) lets
+// the clear run first and the write resurrect the file afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn commit_segment_blocks_concurrent_clear_until_writes_complete() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("commit-lock", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "cleared during commit segment",
+    );
+    let (parked_tx, parked_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let parked_tx = Arc::new(Mutex::new(parked_tx));
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    let fired = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hook = {
+        let parked_tx = parked_tx.clone();
+        let release_rx = release_rx.clone();
+        let fired = fired.clone();
+        Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+            assert_eq!(
+                session_key, "s1",
+                "#917 the commit hook must fire on the target session"
+            );
+            if stage == HeartbeatStage::BeforePersistCommit {
+                fired.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                parked_tx
+                    .lock()
+                    .expect("#917 commit hook channel lock")
+                    .send(())
+                    .expect("#917 the commit hook must signal the parked segment");
+                release_rx
+                    .lock()
+                    .expect("#917 commit hook channel lock")
+                    .recv_timeout(std::time::Duration::from_secs(30))
+                    .expect("#917 the commit hook must be released");
+            }
+        })
+    };
+    let hooked = lab.indexer.with_hook(hook);
+    let handle = tokio::runtime::Handle::current();
+    let heartbeat = thread::spawn(move || handle.block_on(hooked.run_heartbeat(run_options())));
+    parked_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#917 the heartbeat must park inside the commit segment");
+    let clear_stores = lab.stores.clone();
+    let clear = thread::spawn(move || {
+        let start = std::time::Instant::now();
+        clear_stores
+            .clear_session_memory_data("s1")
+            .expect("#917 the concurrent clear must succeed after the commit segment");
+        start.elapsed()
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    release_tx
+        .send(())
+        .expect("#917 the release signal must reach the commit hook");
+    let stats = heartbeat
+        .join()
+        .expect("#917 the heartbeat thread must not panic")
+        .expect(
+            "#917 runHeartbeat must not reject when a concurrent clear waits on the commit segment",
+        );
+    let clear_elapsed = clear.join().expect("#917 the clear thread must not panic");
+    assert_eq!(
+        fired.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "#917 the commit hook must fire exactly once"
+    );
+    assert!(
+        clear_elapsed >= std::time::Duration::from_millis(250),
+        "#917 a concurrent clearSession must block until the commit segment's writes complete, but it returned after {clear_elapsed:?}"
+    );
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#917 the parked commit segment must still write its candidate exactly once"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#917 the waiting clear must delete the committed file after the segment releases, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run before the parked commit segment"
+    );
+}
+
+// T-clear-close: the composite Codex 1 cell. `clearSession` then `close()`
+// land before the createNote response arrives. The clear generation answers
+// without SQLite, so the turn is still discarded (TS would resurrect it —
+// registered divergence -002) and the run ends in the same closed-database
+// rejection the TS close cells record.
+#[tokio::test]
+async fn clear_then_close_discards_candidates_and_fails_closed() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-then-close", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "cleared then closed",
+    );
+    let hook_stores = lab.stores.clone();
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#917 the clear-then-close hook must fire on the target session"
+                );
+                if stage == HeartbeatStage::BeforeCreateNote {
+                    hook_stores
+                        .clear_session_memory_data("s1")
+                        .expect("#917 the composite clear must succeed");
+                    let _ = hook_stores.close();
+                }
+            }));
+    let error = hooked.run_heartbeat(run_options()).await.expect_err(
+        "#917 clear-then-close must end in the closed-database rejection like the TS close cell",
+    );
+    assert!(
+        error.to_string().contains("database is not open"),
+        "#917 clear-then-close must reject with the honest closed-storage error, got {error}"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#917 the clear generation must discard the turn even though SQLite is closed, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run before the closed-database rejection"
+    );
+}
+
+// T-drop-table: the composite Codex 1 cell. A second SQLite connection drops
+// `l0_sessions` before the createNote response arrives. The recheck's L0
+// lookup fails with a non-Closed storage error and must fail closed: the
+// session fails with the honest error and nothing is written.
+#[tokio::test]
+async fn non_closed_l0_read_error_fails_closed() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("drop-table", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "table dropped mid-turn",
+    );
+    let db_path = lab.db_path.clone();
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#917 the drop-table hook must fire on the target session"
+                );
+                if stage == HeartbeatStage::BeforeCreateNote {
+                    let connection = rusqlite::Connection::open(&db_path)
+                        .expect("#917 the probe connection must open the repository database");
+                    connection
+                        .execute_batch("DROP TABLE l0_sessions")
+                        .expect("#917 the probe connection must drop the L0 table");
+                }
+            }));
+    let stats = hooked
+        .run_heartbeat(run_options())
+        .await
+        .expect("#917 a non-Closed L0 read error must fail the session, not reject the run");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (0, 0, 1),
+        "#917 the session must fail closed with the honest storage error"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#917 a fail-closed read error must not resurrect the turn, got {paths:?}"
+    );
+    let warns = lab
+        .logger
+        .0
+        .lock()
+        .expect("#917 logger lock")
+        .iter()
+        .filter(|(level, _)| level == "warn")
+        .map(|(_, message)| message.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        warns
+            .iter()
+            .any(|message| message.contains("no such table")),
+        "#917 the warn must carry the honest SQLite error, got {warns:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run before the fail-closed recheck"
+    );
+}
+
+// T-fail (fix-r2, review P1-1 data-loss half): `clearSession` fails midway —
+// the clear hook aborts it at the pre-fix-r2 bump position, before any data
+// is removed — while the turn's createNote request is in flight. A failed
+// clear must not advance the generation, so the heartbeat must neither
+// discard the turn nor mark its still-present L0 row indexed without
+// persisting: the turn's file is written and the run succeeds. The
+// bump-before-delete order silently dropped the turn here (candidates
+// discarded, row marked indexed, never retried).
+#[tokio::test]
+async fn failed_clear_midway_keeps_the_turn_persistable() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-fails-midway", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            gated(note_response(
+                "Alpha",
+                "Alpha description",
+                "## Summary\nAlpha body",
+            )),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "cleared by a failing clear",
+    );
+    lab.stores
+        .set_clear_session_hook(Arc::new(|_stage, session| {
+            assert_eq!(
+                session, "s1",
+                "#917 the failed-clear hook must fire on the target session"
+            );
+            Err(FileMemoryError::Invalid(
+                "#917 injected mid-clear storage failure".into(),
+            ))
+        }));
+    let heartbeat = spawn_heartbeat(&lab.indexer);
+    wait_for_requests(&lab.server, 2).await;
+    let error = lab
+        .stores
+        .clear_session_memory_data("s1")
+        .expect_err("#917 the mid-way clear must fail with the injected storage error");
+    assert!(
+        error
+            .to_string()
+            .contains("#917 injected mid-clear storage failure"),
+        "#917 the clear must fail with the injected mid-clear error, got {error}"
+    );
+    lab.server.release(1);
+    let stats = heartbeat
+        .await
+        .expect("#917 the heartbeat task must not panic")
+        .expect("#917 a clearSession that failed midway must not fail the heartbeat run");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#917 a clearSession that failed midway must leave the turn persistable, not silently drop it"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#917 list l0 rows after the failed clear");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#917 the failed clear must leave the session's L0 row in place"
+    );
+    assert!(
+        rows[0].indexed,
+        "#917 the L0 row may be marked indexed only alongside the persist that really wrote the file"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#917 the failed clear must not lose the turn's persist, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run; the persist follows the failed clear"
+    );
+}
+
+// T-park (fix-r2, review P1-1 race half / opus r2 baseline-race cell):
+// `clearSession` parks inside its critical section at the pre-fix-r2 bump
+// position (nothing removed yet) while a heartbeat run starts inside that
+// window: the AfterListUnindexed signal proves the run read its clear
+// baseline and listed the still-present rows while the clear holds the
+// snapshot scope (it then blocks on that scope at getProjectMeta). Releasing
+// the clear lets it finish (delete + bump); the heartbeat — whose baseline
+// predates the completed clear — must discard the turn. With the bump before
+// the deletion the same run could observe the new generation while the rows
+// were still present; after the move "generation advanced" implies "rows
+// gone" by construction, so this interleaving cannot resurrect.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clear_parked_mid_scope_does_not_resurrect_turn_started_inside_window() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-parked-mid-scope", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "cleared while parked mid-scope",
+    );
+    let (clear_parked_tx, clear_parked_rx) = std::sync::mpsc::channel::<()>();
+    let (release_clear_tx, release_clear_rx) = std::sync::mpsc::channel::<()>();
+    let (listed_tx, listed_rx) = std::sync::mpsc::channel::<()>();
+    let release_clear_rx = Arc::new(Mutex::new(release_clear_rx));
+    lab.stores
+        .set_clear_session_hook(Arc::new(move |_stage, session| {
+            assert_eq!(
+                session, "s1",
+                "#917 the parked-clear hook must fire on the target session"
+            );
+            clear_parked_tx
+                .send(())
+                .expect("#917 the parked clear must signal its critical section");
+            release_clear_rx
+                .lock()
+                .expect("#917 parked-clear channel lock")
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("#917 the parked clear must be released");
+            Ok(())
+        }));
+    let clear_stores = lab.stores.clone();
+    let clear = thread::spawn(move || {
+        clear_stores
+            .clear_session_memory_data("s1")
+            .expect("#917 the parked clear must complete after its release");
+    });
+    clear_parked_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#917 the clear must park inside its critical section");
+    let listed_tx = Arc::new(Mutex::new(listed_tx));
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#917 the parked-clear heartbeat hook must fire on the target session"
+                );
+                if stage == HeartbeatStage::AfterListUnindexed {
+                    listed_tx
+                        .lock()
+                        .expect("#917 heartbeat hook channel lock")
+                        .send(())
+                        .expect(
+                            "#917 the heartbeat must signal it listed the rows inside the window",
+                        );
+                }
+            }));
+    let handle = tokio::runtime::Handle::current();
+    let heartbeat = thread::spawn(move || handle.block_on(hooked.run_heartbeat(run_options())));
+    listed_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#917 the heartbeat must list the rows while the clear is parked mid-scope");
+    release_clear_tx
+        .send(())
+        .expect("#917 the release signal must reach the parked clear");
+    let stats = heartbeat
+        .join()
+        .expect("#917 the heartbeat thread must not panic")
+        .expect("#917 runHeartbeat must not reject when a parked clear completes mid-run");
+    clear
+        .join()
+        .expect("#917 the parked-clear thread must not panic");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 0, 0),
+        "#917 the turn whose baseline was read inside the parked clear's window must be discarded, not resurrected"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#917 no project memory file may be written for the session cleared inside the parked window, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run before the discard"
+    );
 }

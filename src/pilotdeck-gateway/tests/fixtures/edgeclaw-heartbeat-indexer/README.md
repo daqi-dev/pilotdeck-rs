@@ -33,6 +33,33 @@ The M13 matrix observed from this real TS baseline:
 | close during awaited classify/create/select | per-session catch warns; final trace save rejects with `database is not open` |
 | close before `markL0Indexed` | `markL0Indexed` rejects immediately, no per-session warning |
 
+`oracle.json` is untouched by #917: the five "resurrected" cells above stay
+byte-identical TS observations, and the `#[ignore]` regeneration guard,
+`verify.mts` and the #280 regeneration-negative controls all keep passing.
+The registered divergences `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`
+(#917, human decision #914 A) and `-002` live in `fix-917.json`: the same
+six cells' inputs — the first five identical to their `oracle.json` twins,
+the fix-r1 sixth cell carrying its own — but the cleared session's turn is
+discarded before the persist (no file write, `storedResults=[]`,
+`isNoOp=true`), while requests and `promptDebug` stay byte-identical to the
+TS cells. Every other cell — including `clearSession` before `markL0Indexed`
+and all `close` cells — still replays byte-identically against `oracle.json`.
+The Rust recheck fails open on `StorageError::Closed` alone so the `close`
+cells keep failing where TS fails; any other L0 read error fails closed with
+the honest storage error.
+
+fix-r1 adds the sixth cell `matrix-general-select-clearSession`: the TS
+baseline never recorded it in `oracle.json`, so the cell carries its own input
+(the `matrix-general-select-clearProject` input with the action changed) and
+its TS evidence under `ts` — the gated in-flight probe observation from
+`_tmp/20261026-issue-917/fix-r1/probe-select-clearsession.mts` (Node v22.22.0,
+baseline `cc7c4e6`), which still resurrects `Project/alpha-38e115ba98.md`
+while the fixed Rust replay writes nothing. Input fields, request sequence
+and the classify/create `promptDebug` are field-for-field identical between
+the two sides; the divergence drops the routing step's `promptDebug` together
+with the discarded persist, and the seeded `GeneralProjects/` meta survives on
+both sides (registered in the `-002` diff ledger entry).
+
 Run the generator with Node 22 and the baseline's `tsx`:
 
 ```sh
@@ -53,7 +80,20 @@ Two cases carry a candidate name cut at 80 UTF-16 units
 as Node does; a third carries an untruncated non-BMP name.
 
 The negative controls mutate committed bytes, so `mutating_sources` refuses to
-run on an uncommitted working tree. After commit:
+run on an uncommitted working tree. Nine #917 mutants guard the fix-r1/fix-r2
+recheck: removing both layers (the round-1 shape, three edits), hoisting the
+recheck in front of the classify await (three edits), letting the in-lock
+recheck fire only while `storedResults` is empty, removing the in-lock recheck
+alone, dropping the commit segment's snapshot scope, flipping the `Closed`
+fail-open arm, treating a non-`Closed` L0 read error as not-cleared, and moving
+the clear-generation bump back in front of the deletion (the failed-clear
+regression; the parked-window variant of the same move additionally flips the
+empty-L0 backstop). The first four must resurrect the cleared session's turn,
+the fifth must let a concurrent clear run inside the commit segment, the sixth
+must drift a `close` cell away from the TS baseline, the seventh must
+resurrect through a dropped `l0_sessions` table, and the last two must lose
+the turn to a failed clear / resurrect it across the parked clear's window.
+After commit:
 
 ```sh
 CARGO_TARGET_DIR=/abs/cargo-target python3 tests/fixtures/edgeclaw-heartbeat-indexer/negative.py /abs/negative-out

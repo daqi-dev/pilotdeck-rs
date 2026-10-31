@@ -7,6 +7,14 @@ anchor aborts with status 2 instead of being reported as SURVIVED, and the
 runner never stops at the first non-kill: it records every KILLED / SURVIVED /
 INVALID row and exits non-zero if any row is not KILLED.
 
+Rows are `(name, path, before, after, test, anchor)` tuples for single edits,
+or `dict(name=..., changes=[(path, before, after), ...], test=...,
+assertion=...)` when one mutant needs several edits applied together (the
+#917 before-await hoist, the fix-r2 bump move). `changes` apply in order,
+each against the text the previous one produced. Mutated files: the heartbeat
+indexer and (fix-r2) the storage entries module that owns the clear
+generation.
+
 New product files are not in HEAD before the coordinator commits them, so this
 script is normally run after that commit. `NEGATIVE_ONLY=a,b` narrows a sample.
 cargo always uses the caller's CARGO_TARGET_DIR; without it the script exits
@@ -21,11 +29,103 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 indexer = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/indexer.rs'
+entries = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/entries.rs'
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
 out.mkdir(parents=True, exist_ok=True)
+
+# #917 fix-r1: the two recheck layers (the pre-loop `session_cleared` helper
+# call and the in-lock per-candidate generation recheck) plus the commit-segment
+# scope binding, all verbatim from `process_session` / `session_cleared`. The
+# anchors below must stay byte-identical to the source or the run refuses to
+# start (AnchorExpired).
+BEFORE_CLASSIFY_FIRE = '            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'
+
+PRE_LOOP_RECHECK = '''            let session_cleared =
+                self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
+'''
+
+IN_LOOP_RECHECK = '''                if self
+                    .repository
+                    .session_clear_generation(&session.session_key)
+                    != clear_baseline
+'''
+
+HELPER_MARKER = '''        if self.repository.session_clear_generation(session_key) != clear_baseline {
+            return Ok(true);
+        }
+'''
+
+L0_ARM = '            Ok(rows) => Ok(rows.is_empty()),'
+
+CLOSED_ARM = '            Err(StorageError::Closed) => Ok(false),'
+
+NON_CLOSED_ARM = '            Err(error) => Err(HeartbeatError::Storage(error)),'
+
+SCOPE_BINDING = '''                let _commit_scopes = self
+                    .repository
+                    .snapshot_operation_scope()
+                    .map_err(HeartbeatError::File)?;
+'''
+
+# The reviewer's "check once, before the awaits" shape: the marker comparison
+# runs in front of the classify await and both in-flight layers are gone.
+HOISTED_RECHECK = '''            let session_cleared = self
+                .repository
+                .session_clear_generation(&session.session_key)
+                != clear_baseline;
+            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'''
+
+# The reviewer's "only recheck on the first round" shape: the per-candidate
+# recheck is gated on an empty storedResults list, so every candidate after
+# the first write resurrects.
+FIRST_ROUND_RECHECK = '''                if stored_results_len(trace) == 0
+                    && self
+                        .repository
+                        .session_clear_generation(&session.session_key)
+                        != clear_baseline
+'''
+
+DISABLED_RECHECK = '''                if false
+                    && self
+                        .repository
+                        .session_clear_generation(&session.session_key)
+                        != clear_baseline
+'''
+
+DISABLED_MARKER = '''        if false && self.repository.session_clear_generation(session_key) != clear_baseline {
+            return Ok(true);
+        }
+'''
+
+# #917 fix-r2 (review P1-1): the clear generation must mean "the clear
+# completed". Moving the bump back to its fix-r1 position — in front of the
+# clear-session seam that occupies that spot now — makes a clear that fails
+# midway advance the generation anyway.
+BUMP_AFTER_DELETE = '            self.session_clears.bump(session);\n'
+
+CLEAR_SESSION_GUARD = '''            if session.is_empty() {
+                return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
+            }
+'''
+
+BUMP_BEFORE_SEAM = '''            if session.is_empty() {
+                return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
+            }
+            self.session_clears.bump(session);
+'''
+
+# The reviewer's "recheck outside the lock" shape: the snapshot scope is
+# acquired and dropped again at once, so a concurrent clearSession runs while
+# the commit segment is between its recheck and its writes.
+DROPPED_SCOPE = '''                let commit_scopes = self
+                    .repository
+                    .snapshot_operation_scope()
+                    .map_err(HeartbeatError::File)?;
+                drop(commit_scopes);
+'''
 
 # (name, path, before, after, bound test, exact runtime anchor)
 cases = [
@@ -54,15 +154,94 @@ cases = [
             }''',
      'matrix_classify_capture_matches_ts',
      '#770 case matrix-single-classify-capture differs'),
-    ('clear-session-resurrection',
+    # #917 fix-r1: both recheck layers removed at once (the round-1 shape,
+    # now split across the helper and the in-lock recheck). The golden
+    # clearSession cell catches the resurrected file and storedResults.
+    dict(name='clear-resurrect-recheck-removed',
+         changes=[(indexer, HELPER_MARKER, DISABLED_MARKER),
+                  (indexer, L0_ARM, '            Ok(_) => Ok(false),'),
+                  (indexer, IN_LOOP_RECHECK, DISABLED_RECHECK)],
+         test='matrix_classify_clear_session_no_resurrection',
+         assertion='#917 case matrix-single-classify-clearSession storedResults candidate source differs'),
+    # #917 fix-r1 (review P0): the recheck hoisted in front of the classify
+    # await and both in-flight layers neutralized — the reviewer's "check
+    # once before the awaits" shape. A clear that lands while the createNote
+    # request is in flight is missed and the turn is resurrected.
+    dict(name='clear-resurrect-recheck-before-await',
+         changes=[(indexer, BEFORE_CLASSIFY_FIRE, HOISTED_RECHECK),
+                  (indexer, PRE_LOOP_RECHECK, ''),
+                  (indexer, IN_LOOP_RECHECK, DISABLED_RECHECK)],
+         test='clear_while_create_note_request_in_flight_discards_persist',
+         assertion="#917 a clear while the createNote request is in flight must discard the turn's persist"),
+    # #917 fix-r1 (review P0): the in-lock recheck only fires while
+    # storedResults is still empty, so a clear that lands while a later
+    # candidate's select is in flight resurrects that candidate.
+    ('clear-resurrect-loop-recheck-first-round-only',
      indexer,
-     '                let record = target_store.upsert_candidate(&routed.candidate)?;',
-     '''                if self.repository.storage.list_unindexed_l0_by_session(&session.session_key)?.is_empty() {
-                    continue;
-                }
-                let record = target_store.upsert_candidate(&routed.candidate)?;''',
-     'matrix_classify_clear_session_matches_ts',
-     '#770 case matrix-single-classify-clearSession storedResults candidate source differs'),
+     IN_LOOP_RECHECK,
+     FIRST_ROUND_RECHECK,
+     'second_label_select_request_in_flight_clear_discards_persist',
+     "#917 the first label may write before the clear; the second label's in-flight clear must discard its candidate"),
+    # #917 fix-r1 (review P0): the in-lock per-candidate recheck removed
+    # while the pre-loop helper stays — a clear that lands during the select
+    # await (after the pre-loop check) resurrects the routed candidate.
+    ('clear-resurrect-loop-recheck-removed',
+     indexer,
+     IN_LOOP_RECHECK,
+     DISABLED_RECHECK,
+     'clear_during_select_request_in_flight_discards_persist',
+     '#917 a clear while the select request is in flight must discard the routed candidate'),
+    # #917 fix-r1 (review P0): the commit segment no longer holds the snapshot
+    # operation scope across its writes, so a concurrent clearSession runs
+    # while the segment is parked between its recheck and its writes.
+    ('clear-resurrect-recheck-outside-lock',
+     indexer,
+     SCOPE_BINDING,
+     DROPPED_SCOPE,
+     'commit_segment_blocks_concurrent_clear_until_writes_complete',
+     "#917 a concurrent clearSession must block until the commit segment's writes complete"),
+    # #917 fix-r1: the fail-open arm flipped. Treating a Closed lookup as
+    # cleared skips the file write in the close cells and drifts them away
+    # from the TS baseline (TS writes the file, then rejects at
+    # setPipelineState).
+    ('clear-resurrect-recheck-fail-closed',
+     indexer,
+     CLOSED_ARM,
+     '            Err(StorageError::Closed) => Ok(true),',
+     'matrix_classify_close_matches_ts',
+     '#770 case matrix-single-classify-close differs'),
+    # #917 fix-r1 (review P1): a non-Closed L0 read error treated as
+    # not-cleared (fail-open) resurrects the turn instead of failing the
+    # session with the honest storage error. fix-r2 (review P1-2): the bound
+    # assertion is the run's first error — the stats join's expect — because
+    # the fail-open candidate is written first and the run then rejects at
+    # `markL0Indexed` on the dropped table, so the stats assertion is never
+    # reached.
+    ('clear-resurrect-non-closed-fail-open',
+     indexer,
+     NON_CLOSED_ARM,
+     '            Err(_error) => Ok(false),',
+     'non_closed_l0_read_error_fails_closed',
+     '#917 a non-Closed L0 read error must fail the session, not reject the run'),
+    # #917 fix-r2 (review P1-1 data-loss half): the bump moved back in front
+    # of the seam, so a clear that fails midway (the seam's injected error)
+    # has already advanced the generation; the in-flight heartbeat discards
+    # the turn and marks its still-present L0 row indexed — silent loss.
+    dict(name='clear-resurrect-bump-before-delete',
+         changes=[(entries, BUMP_AFTER_DELETE, ''),
+                  (entries, CLEAR_SESSION_GUARD, BUMP_BEFORE_SEAM)],
+         test='failed_clear_midway_keeps_the_turn_persistable',
+         assertion='#917 a clearSession that failed midway must leave the turn persistable, not silently drop it'),
+    # #917 fix-r2 (review P1-1 race half): the bump moved back AND the
+    # empty-L0 backstop flipped, so a heartbeat whose baseline was read
+    # inside the parked clear's window passes both rechecks and resurrects
+    # the file after the clear completes.
+    dict(name='clear-resurrect-parked-window-resurrect',
+         changes=[(entries, BUMP_AFTER_DELETE, ''),
+                  (entries, CLEAR_SESSION_GUARD, BUMP_BEFORE_SEAM),
+                  (indexer, L0_ARM, '            Ok(_) => Ok(false),')],
+         test='clear_parked_mid_scope_does_not_resurrect_turn_started_inside_window',
+         assertion="#917 the turn whose baseline was read inside the parked clear's window must be discarded, not resurrected"),
     ('close-rejection-swallowed',
      indexer,
      '''            self.repository
@@ -254,7 +433,18 @@ cases = [
      '#770 case single-project request method/url/headers/body differs'),
 ]
 only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
-unknown = only - {row[0] for row in cases}
+
+
+def normalized(entry):
+    """(name, [(path, before, after)...], bound test, exact runtime anchor)."""
+    if isinstance(entry, dict):
+        return entry['name'], list(entry['changes']), entry['test'], entry['assertion']
+    name, path, before, after, test, anchor = entry
+    return name, [(path, before, after)], test, anchor
+
+
+rows = [normalized(entry) for entry in cases]
+unknown = only - {name for name, _changes, _test, _anchor in rows}
 assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
 env = dict(os.environ)
@@ -279,7 +469,7 @@ def assertion_failure(log, anchor):
 
 
 killed, survived = [], []
-with mutating_sources(root, [indexer], baseline=baseline) as originals:
+with mutating_sources(root, [indexer, entries], baseline=baseline) as originals:
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     run = cargo_test(None)
     (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
@@ -287,17 +477,24 @@ with mutating_sources(root, [indexer], baseline=baseline) as originals:
         print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
         sys.exit(1)
 
-    for name, path, before, after, test, anchor in cases:
+    for name, changes, test, anchor in rows:
         if only and name not in only:
             continue
         reason = None
         try:
-            source = path.read_text()
-            count = source.count(before)
-            if count != 1:
-                raise AnchorExpired(
-                    f'{name}: anchor matched {count} times (expected 1); update negative.py')
-            path.write_text(source.replace(before, after))
+            texts = {}
+            for index, (path, before, after) in enumerate(changes, 1):
+                text = texts.get(path)
+                if text is None:
+                    text = path.read_text()
+                count = text.count(before)
+                if count != 1:
+                    raise AnchorExpired(
+                        f'{name} change {index}: anchor matched {count} times '
+                        '(expected 1); update negative.py')
+                texts[path] = text.replace(before, after)
+            for path, text in texts.items():
+                path.write_text(text)
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             run = cargo_test(test)
             log = run.stdout + run.stderr
