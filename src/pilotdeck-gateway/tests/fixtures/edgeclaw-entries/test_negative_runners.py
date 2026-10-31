@@ -44,9 +44,11 @@ class RunnerControls(unittest.TestCase):
                 gate.write_text(f'if [ ! -f "{marker}" ]; then touch "{marker}"; echo full; exit 1; fi\necho free\n')
 
                 def wait_slot(script):
-                    self.assertEqual(Path(script), ROOT/'scripts/cargo-slots.sh')
+                    self.assertTrue(Path(script) == ROOT/'scripts/cargo-slots.sh',
+                                    '#1166 the slot gate must be the tree cargo-slots script')
                     result = wait(gate, timeout=5, interval=0.02)
-                    self.assertEqual(result.stdout, 'full\nfree\n')
+                    self.assertTrue(result.stdout == 'full\nfree\n',
+                                    '#1166 the slot gate must report full then free')
                     calls.append('slot')
                     return result
 
@@ -58,8 +60,11 @@ class RunnerControls(unittest.TestCase):
                           "print('owned-ready',flush=True); time.sleep(20)")
 
                 def payload(command, **kwargs):
-                    self.assertEqual(command[0], 'cargo')
-                    self.assertEqual(calls, ['slot'])
+                    self.assertTrue(command[0] == 'cargo',
+                                    '#1166 the cargo test must be the payload command; got '
+                                    + repr(command[0]))
+                    self.assertTrue(calls == ['scanner', 'slot'],
+                                    '#1166 the workspace scanner must run before slot reservation and cargo')
                     calls.append('cargo')
                     return owned([sys.executable, '-c', leader, str(pids_file)], timeout=1)
 
@@ -70,13 +75,23 @@ class RunnerControls(unittest.TestCase):
                          patch.object(subprocess, 'run', side_effect=AssertionError('unowned subprocess.run')):
                         # wait_for_slot itself delegates to run_owned. Its native gate
                         # command must stay owned while the Cargo payload is replaced.
+                        # #1166: mutating_sources first runs the prebuilt workspace
+                        # scanner through run_owned too; it is identified by its
+                        # executable name and must precede the slot and cargo calls.
                         def dispatch(command, **kwargs):
-                            return owned(command, **kwargs) if command[0] == 'bash' else payload(command, **kwargs)
+                            if command[0] == 'bash':
+                                return owned(command, **kwargs)
+                            if Path(command[0]).name == 'workspace_inputs':
+                                calls.append('scanner')
+                                return owned(command, **kwargs)
+                            return payload(command, **kwargs)
                         with patch.object(negative_process, 'run_owned', side_effect=dispatch):
                             with self.assertRaises(subprocess.TimeoutExpired) as caught:
                                 runpy.run_path(str(FIXTURES/name), run_name='__main__')
-                    self.assertIn('owned-ready', caught.exception.output)
-                    self.assertEqual(calls, ['slot', 'cargo'])
+                    self.assertIn('owned-ready', caught.exception.output,
+                                  '#1166 the owned payload leader must report readiness')
+                    self.assertTrue(calls == ['scanner', 'slot', 'cargo'],
+                                    '#1166 the workspace scanner must run before slot reservation and cargo')
                     pids = [int(p) for p in pids_file.read_text().split()]
                     for pid in pids:
                         deadline = time.monotonic() + 5
