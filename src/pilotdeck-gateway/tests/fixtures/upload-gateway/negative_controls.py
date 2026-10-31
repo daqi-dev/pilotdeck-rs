@@ -5,7 +5,7 @@ The product files already exist in HEAD, but ``mutating_sources`` also refuses
 while the fix-r2 patch is uncommitted (the working tree must match HEAD). Run
 this after the coordinator commits the branch:
 
-    CARGO_TARGET_DIR=<worktree>/_build/cargo-target \
+    CARGO_TARGET_DIR=<caller-owned cargo target directory> \
       python3 src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py <out-dir>
 
 For a pre-commit rehearsal only, set ``PDRS_NEG_BASELINE`` to a tree object with

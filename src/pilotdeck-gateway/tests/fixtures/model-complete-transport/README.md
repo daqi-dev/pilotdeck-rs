@@ -65,7 +65,7 @@ cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/model-complete-trans
 ## Replay
 
 ```sh
-export CARGO_TARGET_DIR=$PWD/target
+export CARGO_TARGET_DIR="$PWD/_build/cargo-target"
 timeout 600 cargo test --manifest-path src/Cargo.toml \
   -p pilotdeck-gateway --test model_complete native_complete_transport_retry_matches_real_ts -- --exact
 ```

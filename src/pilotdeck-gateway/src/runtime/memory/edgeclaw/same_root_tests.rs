@@ -25,10 +25,8 @@ use std::{
 
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 const MS: u64 = 1792627200000;
-pub(super) const SAME_ROOT_ORACLE: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/edgeclaw-same-root-generation/oracle.json"
-));
+pub(super) const SAME_ROOT_ORACLE: &str =
+    include_str!("../../../../tests/fixtures/edgeclaw-same-root-generation/oracle.json");
 
 pub(super) struct Root(pub(super) PathBuf);
 

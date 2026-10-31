@@ -9,11 +9,15 @@ the leader is dead (#528).
 """
 from contextlib import contextmanager, nullcontext
 import fcntl
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import signal
+import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -344,21 +348,287 @@ def _head_bytes(root, relative, baseline):
                                   f"cannot read {baseline} bytes: {error}")
 
 
-def _assert_product_pristine(root, baseline):
+def target_environment(root, env=None):
+    """Admit the caller's CARGO_TARGET_DIR through the one shared rule.
+
+    #1166 redesign spec: sibling runners must not keep their own allow-lists of
+    target directories. This is the single sibling entry point: an unset
+    variable defaults to this tree's shared target, and every rejection is
+    defined only in ``_target_environment`` (blank, dot, filesystem root,
+    repository root, inside ``src``); an in-tree ``_build`` directory or the
+    host chain's dedicated out-of-tree target is equally admissible.
+    """
+    root = Path(root).resolve()
+    env = dict(os.environ if env is None else env)
+    if 'CARGO_TARGET_DIR' not in env:
+        env['CARGO_TARGET_DIR'] = str(root / '_build/cargo-target')
+    return _target_environment(root, env)
+
+
+def _scanner_environment(env=None):
+    """One target interpretation, independent of the Python/Cargo caller cwd.
+
+    The target may be outside this tree. Each coordinator must dedicate it to
+    one tree; location is not provenance. Relative paths are rooted here and
+    the absolute value is passed to both Cargo and the scanner.
+    """
+    return target_environment(Path(__file__).resolve().parents[4], env)
+
+
+def _ensure_workspace_scanner(env=None):
+    """Bootstrap only a missing helper under its pristine source-tree lease.
+
+    Never silently replace an existing helper: its embedded source digest is
+    checked on every scan, including deliberate scanner mutations. Rebuilding a
+    stale helper is the owner's job. Cargo failure/timeout aborts admission.
+    """
+    env = _scanner_environment(env)
+    executable = Path(env['CARGO_TARGET_DIR']) / 'debug/examples/workspace_inputs'
+    if executable.is_file():
+        return
+    root = Path(__file__).resolve().parents[4]
+    with tree_lock(root):
+        _assert_workspace_sources(root, 'HEAD')
+        # Another cold caller may have completed while this one waited.
+        if executable.is_file():
+            return
+        wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15).check_returncode()
+        # --locked, not --offline: a cold registry (fresh CI runner) must be
+        # allowed to download exactly the committed Cargo.lock versions, while
+        # the lockfile itself stays pinned (#1166 fix-r6 metadata-observer red).
+        result = run_owned(['cargo', 'build', '--locked', '--manifest-path', 'src/Cargo.toml',
+                            '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs'],
+                           cwd=root, env=env, timeout=1800, idle_timeout=600)
+        result.check_returncode()
+        if not executable.is_file():
+            raise RuntimeError('#1166 scanner build produced no executable')
+
+
+def _workspace_literal_inputs(root, baseline, *, env=None):
+    """Run the prebuilt #449/#1166 proc-macro2 scanner; never launch Cargo here.
+
+    The shared entry points bootstrap a missing helper inside a pristine lease.
+    No inventory cache: included external Rust
+    sources are re-read every time. Embedded source identity rejects stale builds.
+    """
+    root = Path(root).resolve()
+    try:
+        target = _scanner_environment(env)['CARGO_TARGET_DIR']
+        scanner_root = Path(__file__).resolve().parents[4]
+        sources = (scanner_root / 'src/pilotdeck-gateway/examples/workspace_inputs.rs',
+                   scanner_root / 'src/pilotdeck-gateway/tests/common/source_inputs.rs',
+                   scanner_root / 'src/pilotdeck-gateway/Cargo.toml',
+                   scanner_root / 'src/Cargo.toml', scanner_root / 'src/Cargo.lock')
+        digest = hashlib.sha256(b''.join(path.read_bytes() for path in sources)).hexdigest()
+        executable = Path(target).resolve() / 'debug/examples/workspace_inputs'
+        expected_head = _git(root, 'rev-parse', '--verify', baseline + '^{commit}').decode().strip()
+        result = run_owned([str(executable), str(root), expected_head], timeout=60, cwd=root)
+        if result.returncode != 0:
+            raise ValueError('Rust scanner failed: ' + result.stderr[-4000:])
+        document = json.loads(result.stdout)
+        if (not isinstance(document, dict) or document.get('head') != expected_head
+                or document.get('root') != str(root) or document.get('scanner_sha256') != digest):
+            raise ValueError('Rust scanner identity mismatch; prebuild the current example')
+        inputs = document.get('inputs')
+        if not isinstance(inputs, list):
+            raise ValueError('Rust scanner input list is malformed')
+        for name in inputs:
+            if (not isinstance(name, str) or not name or Path(name).is_absolute()
+                    or '..' in Path(name).parts or Path(name).as_posix() != name):
+                raise ValueError('Rust scanner input path is malformed')
+        if len(set(inputs)) != len(inputs):
+            raise ValueError('Rust scanner input list has duplicates')
+        return tuple(':(top,literal)' + name for name in inputs)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        raise SourceBaselineError(root, 'src', f'#1166 cannot resolve Rust build input: {error}') from error
+
+
+def _assert_product_pristine(root, baseline, *, env=None):
     # A runner only names the files it is about to mutate, but a killed
     # predecessor from another group can leave any product source mutated.
-    # Checking the whole gateway product tree turns that residue into a
+    # Checking the whole workspace (including fixtures and path dependencies)
+    # turns that residue into a
     # refusal for every next runner, not just the one that shares its file.
-    area = "src/pilotdeck-gateway/src"
-    changed = _git(root, "diff", "--name-only", baseline, "--", area).decode(
-        "utf-8", "replace").splitlines()
-    untracked = _git(root, "ls-files", "--others", "--exclude-standard",
-                     "--", area).decode("utf-8", "replace").splitlines()
-    unexpected = changed + untracked
-    if unexpected:
-        detail = "differs from" if changed else "untracked at"
-        raise SourceBaselineError(root, unexpected[0],
-                                  f"{detail} {baseline}")
+    # include_str!/include_bytes! can read non-Rust files; src/vendor
+    # and src/data are path dependencies too. Do not maintain a crate list.
+    _assert_workspace_sources(root, baseline)
+    literal_inputs = _workspace_literal_inputs(root, baseline, env=env)
+    # Explicitly included files are inputs even when named like a cache. Bound
+    # argv by encoded bytes (not characters/count); preserve every literal.
+    for batch in _pathspec_batches(literal_inputs):
+        _assert_input_areas(root, baseline, batch, exclude_caches=False)
+
+
+def _assert_workspace_sources(root, baseline):
+    # This cheap preflight does not need the scanner it protects at cold start.
+    areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')
+    _assert_input_areas(root, baseline, areas)
+
+
+def _pathspec_batches(paths):
+    batch, size = [], 0
+    for path in paths:
+        length = len(os.fsencode(path)) + 1
+        if batch and size + length > 32768:
+            yield tuple(batch)
+            batch, size = [], 0
+        batch.append(path)
+        size += length
+    if batch:
+        yield tuple(batch)
+
+
+def _assert_input_areas(root, baseline, areas, *, exclude_caches=True):
+    for options in ((), ('--cached',)):
+        changed = _git(root, 'diff', *options, '--name-only', '-z', baseline,
+                       '--', *areas).split(b'\0')
+        if changed[0]:
+            raise SourceBaselineError(root, os.fsdecode(changed[0]),
+                                      f'differs from {baseline}')
+    flags = _git(root, 'ls-files', '-v', '-z', '--', *areas).split(b'\0')
+    for entry in flags:
+        if entry and (entry[:1].islower() or entry[:1] == b'S'):
+            raise SourceBaselineError(root, os.fsdecode(entry[2:]),
+                                      'assume-unchanged / skip-worktree input')
+    # Include ignored inputs: .gitignore is not a compilation boundary.
+    # Only known disposable Cargo/Python/OS caches are excluded, and only here (never
+    # from the tracked/index checks). Keep artifacts outside source folders.
+    caches = ('__pycache__/**', '*.pyc', '.DS_Store', '.pytest_cache/**')
+    exclusions = (tuple(':(exclude,glob)src/**/' + name for name in caches)
+                  + (':(exclude,glob)src/target/**', ':(exclude,glob)src/*/target/**')
+                  if exclude_caches else ())
+    untracked = _git(root, 'ls-files', '--others', '-z', '--', *areas, *exclusions).split(b'\0')
+    if untracked[0]:
+        raise SourceBaselineError(root, os.fsdecode(untracked[0]),
+                                  f'untracked build input at {baseline}')
+
+
+def copy_binary(source, destination, *, expected_sha256=None):
+    """Create a new inode, optionally checking an explicitly pinned snapshot.
+
+    A pinned snapshot needs no source-tree lease: it reads no source or shared
+    Cargo artifact. Hash the copied bytes, so changing the source during copy
+    fails rather than attributing new bytes to the caller's expected build.
+    """
+    source, destination = Path(source), Path(destination)
+    with source.open('rb') as reader, destination.open('xb') as writer:
+        shutil.copyfileobj(reader, writer)
+        os.fchmod(writer.fileno(), stat.S_IMODE(os.fstat(reader.fileno()).st_mode))
+    digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise RuntimeError('#1166 binary snapshot SHA-256 mismatch')
+    return str(destination)
+
+
+def _target_environment(root, env):
+    raw = env.get('CARGO_TARGET_DIR')
+    if raw is None or not raw.strip():
+        raise RuntimeError('#1166 CARGO_TARGET_DIR must be supplied by the caller')
+    if raw.strip() == '.':
+        raise RuntimeError('#1166 target cannot be dot')
+    env = dict(env)
+    scanner_root = Path(__file__).resolve().parents[4]
+    target = raw
+    env['CARGO_TARGET_DIR'] = str((scanner_root / target).resolve())
+    target = Path(env['CARGO_TARGET_DIR'])
+    if target == Path(target.anchor):
+        raise RuntimeError('#1166 target cannot be filesystem root')
+    if target in (root, Path(__file__).resolve().parents[4]):
+        raise RuntimeError('#1166 target cannot be repository root')
+    if any(target.is_relative_to(base / 'src')
+           for base in (root, Path(__file__).resolve().parents[4])):
+        raise RuntimeError('#1166 target cannot be inside src')
+    return env
+
+
+def _publish_build_owner(root, env):
+    owner = dict(root=str(root), head=_git(root, 'rev-parse', 'HEAD').decode().strip(),
+                 nonce=os.urandom(16).hex())
+    target = Path(env['CARGO_TARGET_DIR'])
+    target.mkdir(parents=True, exist_ok=True)
+    marker = target / '.negative-build-owner.json'
+    payload = json.dumps(owner, sort_keys=True) + '\n'
+    pending = marker.with_name(marker.name + '.' + owner['nonce'] + '.tmp')
+    try:
+        with pending.open('x') as stream:
+            stream.write(payload)
+        pending.replace(marker)
+    finally:
+        pending.unlink(missing_ok=True)
+    return marker, payload
+
+
+def _artifact_identity(path):
+    info = Path(path).stat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _verify_snapshot_owner(marker, payload, artifact, identity):
+    """共享构建目录的产物守卫只对协作写者负责，对抗写者归已知边界。
+
+    A reused cargo artifact legitimately predates this build's start (cargo
+    skips recompilation), so no mtime lower bound exists (#1166 redesign:
+    the r4 bound rejected every warm target as a false FAIL).
+    """
+    try:
+        if marker.read_text() != payload:
+            raise RuntimeError('#1166 build owner changed during snapshot')
+        if _artifact_identity(artifact) != identity:
+            raise RuntimeError('#1166 build artifact changed during snapshot')
+    except OSError as error:
+        raise RuntimeError('#1166 build provenance unavailable after copy') from error
+
+
+def build_snapshot(root, output, *, package, target, kind='test', release=True,
+                   env=None):
+    """Build verified workspace inputs and copy the executable under one lease.
+
+    tree_lock alone only serializes readers/writers; it does not validate
+    source provenance. For pristine single test/bin measurements only; lib,
+    feature-mutant and rlib probes retain their own build/run inside the
+    mutating_sources lease. This entry point and mutating_sources validate after
+    acquiring it. Only this run's exclusive snapshot escapes the lease.
+    """
+    root = Path(root).resolve()
+    env = dict(os.environ if env is None else env)
+    env = _target_environment(root, env)
+    if kind not in ('test', 'bin'):
+        raise ValueError('#1166 unsupported measurement target kind')
+    output = Path(output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    command = ['cargo', 'test' if kind == 'test' else 'build', '--offline',
+               '--manifest-path', 'src/Cargo.toml', '-p', package,
+               '--' + kind, target, '--message-format=json']
+    if kind == 'test':
+        command.append('--no-run')
+    if release:
+        command.append('--release')
+    with tree_lock(root, timeout=900):
+        _assert_workspace_sources(root, 'HEAD')
+        _ensure_workspace_scanner(env)
+        _assert_product_pristine(root, 'HEAD', env=env)
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
+        (output / 'slots.log').write_text(slot.stdout + slot.stderr)
+        marker, owner = _publish_build_owner(root, env)
+        result = run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)
+        (output / 'build.log').write_text(result.stdout + result.stderr)
+        result.check_returncode()
+        executables = set()
+        for line in result.stdout.splitlines():
+            row = json.loads(line)
+            if (row.get('reason') == 'compiler-artifact'
+                    and row.get('target', {}).get('name') == target
+                    and row['target'].get('kind') == [kind] and row.get('executable')):
+                executables.add(row['executable'])
+        if len(executables) != 1:
+            raise RuntimeError('#1166 expected exactly one measurement executable')
+        artifact = executables.pop()
+        identity = _artifact_identity(artifact)
+        binary = copy_binary(artifact, output / 'executable')
+        _verify_snapshot_owner(marker, owner, artifact, identity)
+        (output / 'build-owner.json').write_text(owner)
+        (output / 'sha256').write_text(hashlib.sha256(Path(binary).read_bytes()).hexdigest() + '\n')
+        return binary
 
 
 @contextmanager
@@ -396,7 +666,7 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
 
     ``paths`` must be repo-relative or absolute paths inside ``root``. Every
     path is checked byte-for-byte against ``git show <baseline>:<path>`` while
-    the tree lock is held; the whole gateway product tree is also checked so a
+    the tree lock is held; the whole workspace input tree is also checked so a
     killed runner from another group cannot leave a mutant behind. A mismatch
     aborts *before* anything is written and leaves the unexpected bytes for a
     human to inspect. On exit the snapshot is written back and compared both to
@@ -424,6 +694,8 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
         normalized.append((alias, candidate, relative))
 
     with tree_lock(root, timeout=lock_timeout):
+        _assert_workspace_sources(root, baseline)
+        _ensure_workspace_scanner()
         _assert_product_pristine(root, baseline)
         baseline_bytes = {path: _head_bytes(root, relative, baseline)
                           for _alias, path, relative in normalized}

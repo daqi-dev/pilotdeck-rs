@@ -81,7 +81,9 @@ produce and what negative control NC-5 detects.
 
 Negative controls (`python3 src/pilotdeck-gateway/tests/fixtures/skills-tree-files/negative.py`,
 mutates a disposable copy of the tracked source (including pending repairs),
-uses the existing worktree `src/target`, and runs baseline → red → restored-green
+admits its Cargo target through the shared rule (unset defaults to the worktree
+`_build/cargo-target`; a dedicated out-of-tree target is equally admissible), and runs
+baseline → red → restored-green
 for each control. SIGINT/SIGTERM unwind the owned child wait, kill/reap its session,
 and remove the copy. The working source is never mutated. NC-5/NC-7 need macOS):
 

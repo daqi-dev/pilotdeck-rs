@@ -6,7 +6,6 @@ Every selected replacement has one exact source anchor; no test/oracle is edited
 """
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 import signal
@@ -16,12 +15,14 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, target_environment
 from negative_selection import select
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
 repo = workspace.parent
+env = target_environment(repo)
+env['CARGO_NET_OFFLINE'] = 'true'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 turn = workspace / 'pilotdeck-gateway/src/runtime/turn'
@@ -142,11 +143,7 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
         [dict(name='baseline', changes=[], case=None, marker='test result: ok.')] + mutants,
         sys.argv[2:], name=lambda row: row['name'])
     summary = []
-    env = dict(os.environ, CARGO_NET_OFFLINE='true')
     assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
-    target_dir = Path(env['CARGO_TARGET_DIR']).resolve()
-    assert target_dir in {(workspace / 'target').resolve(), (repo / '_build/cargo-target').resolve()}, \
-        'use this tree src/target or _build/cargo-target'
     # Current non-ignored tests selected by the gateway module filter. New tests may
     # increase the total; each existing behavior must still execute successfully.
     baseline_tests = [

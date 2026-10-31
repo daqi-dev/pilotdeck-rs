@@ -8,7 +8,7 @@
 ## 运行
 
 在 `src/` 下，先核 `../scripts/cargo-slots.sh`。每棵树独立设置
-`CARGO_TARGET_DIR="$PWD/target"`，然后运行：
+`CARGO_TARGET_DIR="$PWD/../_build/cargo-target"`，然后运行：
 
 ```sh
 cargo test -p pilotdeck-gateway --test a52_fixtures

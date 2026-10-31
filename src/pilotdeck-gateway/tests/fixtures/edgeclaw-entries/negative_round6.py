@@ -5,14 +5,14 @@ import contextlib
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 import runpy
 import subprocess
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 
 p = argparse.ArgumentParser()
 p.add_argument('--out', required=True)
@@ -67,10 +67,8 @@ mutations = [
     ('write-hook', s, 'h(SnapshotIoOperation::Write, p, None).map_err(|e| crate::node_io::path_error(e, "open", p))?;',
      'h(SnapshotIoOperation::Write, p, None)?;', 'write_hook_matches_real_node_error'),
 ]
-# The runner meta-controls mutate the runner scripts themselves. They run
-# outside the tree lock on purpose: the invoked runner (test_negative_runners
-# -> negative*.py) acquires that same lock, so holding it here would deadlock.
-# They never touch the four product sources protected by the lock.
+# Runner meta-controls compile verified snapshots in memory. The real runner
+# files stay at HEAD so a nested workspace guard never accepts dirty inputs.
 runner_mutations = []
 for path, test, run_anchor, slot_anchor in [
     (n, 'test_negative', 'run_owned(cmd,',
@@ -90,10 +88,7 @@ for path, test, run_anchor, slot_anchor in [
          test),
     ])
 rows = []
-env = os.environ.copy()
-target = root/'src/target'
-assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), 'use this worktree src/target only'
-env['CARGO_TARGET_DIR'] = str(target)
+env = target_environment(root)
 originals = {}
 runner_originals = {}
 
@@ -108,18 +103,24 @@ def record(name, run, log):
           flush=True)
 
 
-def runner_control(test):
-    # Execute the meta-control in this process, not as a child. The control
-    # runs the mutated runner through runpy; that runner re-enters
-    # mutating_sources for the same tree. TreeLock is reentrant for the owning
-    # thread, so the outer snapshot (which includes the runner bytes) stays
-    # authoritative and the inner runner cannot deadlock on a second flock.
+def runner_control(test, path, candidate):
+    # #1166 runpy reads its code through io.open_code. Override only that
+    # runner's execution stream; Path.read_bytes/Git still observe real HEAD.
+    compile(candidate, str(path), 'exec')
+    original_open = io.open_code
+
+    def code_reader(filename):
+        if Path(filename).resolve() == path.resolve():
+            return io.BytesIO(candidate.encode())
+        return original_open(filename)
+
     script = str(Path(__file__).with_name('test_negative_runners.py'))
     argv = [script, 'RunnerControls.' + test]
     stream = io.StringIO()
     previous = sys.argv
     code = 0
-    with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+    with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream), \
+            patch.object(io, 'open_code', side_effect=code_reader):
         sys.argv = argv
         try:
             runpy.run_path(script, run_name='__main__')
@@ -131,7 +132,8 @@ def runner_control(test):
 
 
 # One lock and one baseline check cover product sources *and* the runner
-# scripts mutated by the meta-controls. The runner takes the same lock
+# scripts executed by the meta-controls (only their in-memory code changes).
+# The runner takes the same lock
 # reentrantly in this process (see runner_control), so holding the outer
 # snapshot cannot deadlock the inner runner.
 selected_runner_paths = [n, n1, n2] if not args.only or any(m[0] == args.only for m in runner_mutations) else []
@@ -158,14 +160,10 @@ with mutating_sources(root, [e, a, f, s, o] + selected_runner_paths) as original
             continue
         text = originals[path].decode()
         assert text.count(old) == 1, (name, text.count(old))
-        path.write_text(text.replace(old, new))
-        try:
-            run = runner_control(test)
-            log = run.stdout + run.stderr
-            assert run.returncode and 'unowned subprocess.run' in log and 'FAILED (failures=1)' in log, log[-2000:]
-            record(name, run, log)
-        finally:
-            path.write_bytes(originals[path])
+        run = runner_control(test, path, text.replace(old, new, 1))
+        log = run.stdout + run.stderr
+        assert run.returncode and 'unowned subprocess.run' in log and 'FAILED (failures=1)' in log, log[-2000:]
+        record(name, run, log)
     (out/'summary.json').write_text(json.dumps({'results': rows, 'restoredSha256': {
         str(path.relative_to(root)): hashlib.sha256(content).hexdigest()
         for path, content in originals.items()

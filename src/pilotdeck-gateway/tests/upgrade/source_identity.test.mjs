@@ -3,9 +3,38 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,unlinkSync,symlinkSync,rmSync,realpathSync,utimesSync,existsSync} from 'node:fs';
 import {join,dirname} from 'node:path';
-import {execFileSync,spawnSync} from 'node:child_process';
+import childProcess,{execFileSync,spawnSync} from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {producerInputs,captureSourceIdentity,verifySourceIdentity,createBuildEvidence,assertBuildBinary,parseDepInfo,localPackages} from './source_identity.mjs';
+
+test('#1166 build evidence target precedence keeps default outside src',t=>{
+  const root=realpathSync(fileURLToPath(new URL('../../../../',import.meta.url)));
+  const originalExec=execFileSync,originalTarget=process.env.CARGO_TARGET_DIR;
+  const stop=Error('#1166 stopped before Cargo'),observed=[];
+  t.mock.method(childProcess,'execFileSync',(command,args,options)=>{
+    if(command!=='cargo')return originalExec(command,args,options);
+    observed.push(options.env.CARGO_TARGET_DIR);throw stop;
+  });
+  syncBuiltinESMExports();
+  t.after(()=>{
+    t.mock.restoreAll();syncBuiltinESMExports();
+    if(originalTarget===undefined)delete process.env.CARGO_TARGET_DIR;
+    else process.env.CARGO_TARGET_DIR=originalTarget;
+  });
+  for(const [envTarget,options,expected] of [
+    [undefined,{},join(root,'_build/cargo-target')],
+    [join(root,'_build/env-target'),{},join(root,'_build/env-target')],
+    [join(root,'_build/env-target'),{targetDir:join(root,'_build/option-target')},join(root,'_build/option-target')],
+  ]){
+    if(envTarget===undefined)delete process.env.CARGO_TARGET_DIR;
+    else process.env.CARGO_TARGET_DIR=envTarget;
+    assert.throws(()=>createBuildEvidence(root,options),error=>error===stop,'#1166 build evidence reaches Cargo boundary');
+    assert.equal(observed.at(-1),expected,'#1166 build evidence uses the selected target');
+  }
+  assert.equal(observed.length,3,'#1166 build evidence checks every target mode');
+});
 
 function fixture(t,{outside=false}={}){
   const root=realpathSync(mkdtempSync(join('/tmp','pdrs-source-identity-')));

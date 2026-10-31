@@ -3438,6 +3438,9 @@ fn assert_fixture_consumed(rows: &[JsValue], expected: impl Iterator<Item = Stri
     );
 }
 
+const LIVE_RECORDING_ORACLE: &str =
+    include_str!("../../../tests/fixtures/live-recording/oracle.json");
+
 macro_rules! live_recording_cases {
     ($($name:ident, $phase:literal, $action:literal;)*) => {
         $(#[tokio::test]
@@ -3446,9 +3449,7 @@ macro_rules! live_recording_cases {
         })*
         #[test]
         fn live_recording_oracle_fully_consumed() {
-            let oracle = crate::test_baseline::oracle(include_str!(
-                "../../../tests/fixtures/live-recording/oracle.json"
-            ));
+            let oracle = crate::test_baseline::oracle(LIVE_RECORDING_ORACLE);
             let JsValue::Array(rows) = oracle.get("matrix").unwrap() else { panic!("matrix") };
             assert_fixture_consumed(rows, [$(($phase, $action)),*].into_iter()
                 .filter(|(_, action)| *action != "failure")

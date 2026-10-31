@@ -1,28 +1,31 @@
 #!/bin/sh
 # Measure peak RSS for the #409 shapes on macOS. One mode per process.
-# Usage: sh tests/fixtures/html-markdown/rss-probe.sh [mode ...]
+# Usage (from gateway crate): CARGO_TARGET_DIR=/absolute/per-tree/target \
+#   sh tests/fixtures/html-markdown/rss-probe.sh [mode ...]
+# Workspace inputs must equal committed HEAD; the caller supplies the target.
 # Modes: deep-full-2.5 deep-bounded-2.5 deep-bounded-10 wide-bounded-10
 #        flat-bounded-10 (default: all five)
 set -eu
 cd "$(dirname "$0")/../../../.."
 modes=${*:-"deep-full-2.5 deep-bounded-2.5 deep-bounded-10 wide-bounded-10 flat-bounded-10"}
-json=$(mktemp)
-out=$(mktemp)
-trap 'rm -f "$json" "$out"' EXIT
-cargo test -p pilotdeck-gateway --release --test html_budget_probe --no-run \
-  --message-format=json > "$json"
-bin=$(python3 - "$json" <<'PY'
-import json, sys
-for line in open(sys.argv[1]):
-    item = json.loads(line)
-    if (item.get("reason") == "compiler-artifact"
-            and item.get("target", {}).get("name") == "html_budget_probe"
-            and item.get("executable")):
-        print(item["executable"])
-        break
-PY
+# Each invocation retains its own executable and build log under _tmp.
+# The Python helper acquires the tree lock before checking HEAD/queuing cargo.
+bin=$(python3 - <<'PYTHON'
+from pathlib import Path
+import sys
+import tempfile
+root = Path.cwd().parent
+sys.path.insert(0, str(root / 'src/pilotdeck-gateway/tests/fixtures'))
+from negative_process import build_snapshot
+base = root / '_tmp/20261026-html-markdown-rss'
+base.mkdir(parents=True, exist_ok=True)
+run = Path(tempfile.mkdtemp(prefix='run-', dir=base))
+print(build_snapshot(root, run / 'binary', package='pilotdeck-gateway',
+                     target='html_budget_probe'))
+PYTHON
 )
-[ -n "$bin" ] || { echo "probe binary not found" >&2; exit 1; }
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
 for mode in $modes; do
   echo "== $mode"
   # Take the child status first: `/usr/bin/time` prints `real` and the RSS

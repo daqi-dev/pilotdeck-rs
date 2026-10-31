@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """Serial mutations; explicit source hash supports uncommitted sandbox work."""
 import hashlib
-import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, tree_lock
+from negative_process import run_owned, target_environment, tree_lock
 
 root = Path(__file__).resolve().parents[5]
 evidence = Path(sys.argv[1]).resolve()
 expected_sha = sys.argv[2]
 evidence.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/hooks/exec.rs'
-env = {**os.environ, 'CARGO_TARGET_DIR': str(root / '_build/cargo-target')}
+env = target_environment(root)
 command = ['cargo', 'test', '--offline', '--manifest-path', str(root / 'src/Cargo.toml'),
            '-p', 'pilotdeck-gateway', '--lib', 'runtime::hooks::exec::output_tests', '--', '--nocapture']
 cap = 'if self.units.saturating_add(count) > limit {'

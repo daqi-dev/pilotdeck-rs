@@ -2,13 +2,12 @@
 
 `measure.py` 在 macOS 上启动真实 Rust / TS CLI，经 `127.0.0.1:28999` 的最小 WS mock 发送精确 32 / 64 / 128 MiB 的合法 `result.sessions=[0,0,…]`。逐块发送并流式计算 stdout 哈希，不在测量器内存中构造大数组或大输出。它是诊断工具，不是已实测的 TS 金样，不代表本问题已修复。
 
-必须先构建当前工作树的 CLI。`CARGO_TARGET_DIR` 必须由调用方设置；TS 使用 `PDRS_BASELINE` 指向的只读原件 `src/cli/pilotdeck.ts`，Node 默认 `/opt/homebrew/bin/node`，可由 `NODE22` 指定，版本必须为 v22.22.0。所有运行使用独立 HOME / PILOT_HOME / TMPDIR；不读取用户的 PilotDeck 配置。
+Rust 测量由脚本在树锁内校验已提交 HEAD、排槽、构建并复制独占快照；计时只执行快照。`CARGO_TARGET_DIR` 必须由调用方设置；TS 使用 `PDRS_BASELINE` 指向的只读原件 `src/cli/pilotdeck.ts`，Node 默认 `/opt/homebrew/bin/node`，可由 `NODE22` 指定，版本必须为 v22.22.0。所有运行使用独立 HOME / PILOT_HOME / TMPDIR；不读取用户的 PilotDeck 配置。
 
 ```sh
 export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-983/_build/cargo-target
 export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only
 export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
-scripts/cargo-slots.sh && cargo build --offline --manifest-path src/Cargo.toml -p pilotdeck-cli
 python3 src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/measure.py _tmp/20261026-issue-983/host-rust-32 rust 32
 python3 src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/measure.py _tmp/20261026-issue-983/host-ts-32 ts 32
 ```
@@ -22,3 +21,5 @@ python3 src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/measure.py _tmp/20261
 2026-10-30 宿主（wt-983）执行记录：32/64 MiB 两格 × Rust/TS 均完成（修前 Rust 64 MiB 触发 >6 GiB 停止条件，按上述规则不再跑 128 MiB 格），原始结果与本轮定级/修复结论见 `_tmp/20261026-issue-983/`（RESULT.md）。此前 2026-10-29 worker 环境曾因 `sandbox_apply: Operation not permitted` 无法前置网络隔离，故该轮未执行大输入。
 
 2026-10-31 fix-r1（同树）执行记录：修后首次 128 MiB 格 Rust 触发 `RSS >6 GiB` 停止（`_tmp/20261026-issue-983/fix-r1/rust-128/`），TS 同格完成 3.68 GiB；据此继续修复（`JsValue` 内联 96→56 字节）后，32/64/128 MiB 三格 Rust/TS 全部完成，峰值 RSS 逐格 0.86×/0.96×/1.02× TS，stdout sha256 与 TS 逐格相同（`_tmp/20261026-issue-983/fix-r1/`）。
+
+#1166：共享测量构建要求本树独占的 `CARGO_TARGET_DIR`（允许树外；相对路径由共享入口按仓库根转绝对路径）。入口在锁内核 HEAD 并重新调用 Cargo 后复制本次二进制，位置不作为来源证明。同树长构建须串行安排：排槽上限 900 秒、构建上限 1800 秒（静默上限 600 秒），可能超过其他 runner 默认 900 秒等锁期限；等锁超时记 INVALID，不作为产品失败。

@@ -189,8 +189,8 @@ export function assertBuildBinary(root,binary,buildValue){
   if(resolve(binary)!==build.executable)fail('BUILD_EVIDENCE','recorder binary differs from Cargo executable');
 }
 // Retain raw metadata and JSON messages, with hashes captured immediately after
-// the bounded build. No new target is chosen: caller supplies its owned target.
-export function createBuildEvidence(root,{manifestPath=join(root,'src/Cargo.toml'),packageName='pilotdeck-gateway',binaryName=packageName,targetDir=process.env.CARGO_TARGET_DIR??join(root,'src/target'),recorder=true}={}){
+// the bounded build. Use the caller's owned target or this checkout's src-external default.
+export function createBuildEvidence(root,{manifestPath=join(root,'src/Cargo.toml'),packageName='pilotdeck-gateway',binaryName=packageName,targetDir=process.env.CARGO_TARGET_DIR??join(root,'_build/cargo-target'),recorder=true}={}){
   root=checkout(root);manifestPath=resolve(manifestPath);targetDir=resolve(targetDir);
   inside(root,targetDir);inside(root,manifestPath);
   const cwd=dirname(manifestPath),env={...process.env,CARGO_TARGET_DIR:targetDir};

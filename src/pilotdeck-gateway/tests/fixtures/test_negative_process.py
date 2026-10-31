@@ -1,5 +1,5 @@
 # anchor-selfcheck: unsupported unit tests of the shared process/source guard
-"""Run directly with Python; no Cargo, network or product fixtures needed.
+"""Run directly with Python; no network or product fixtures needed; the shared guard may bootstrap its Rust scanner offline.
 
 The source-window cases create a throwaway git repository under the system
 temporary directory, so they exercise the real baseline check without touching
@@ -699,7 +699,8 @@ class MutatingSources(unittest.TestCase):
 
     def test_other_product_source_residue_is_refused(self):
         # A runner names only its own files, but a killed runner from another
-        # group can leave any gateway source mutated. The global product check
+        # group can leave any workspace input mutated (full matrix in
+        # workspace-pristine/test_controls.py). The global product check
         # must refuse before the new runner compiles a polluted tree.
         with tempfile.TemporaryDirectory(prefix="pdrs-negative-other-") as temp:
             root, target = self.repo(temp)
@@ -731,7 +732,8 @@ class MutatingSources(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "product area"], cwd=root, check=True)
             other.write_text("// residue\n")
-            with patch("negative_process._assert_product_pristine"):
+            with patch("negative_process._assert_product_pristine"), \
+                    patch("negative_process._assert_workspace_sources"):
                 with mutating_sources(root, [target]) as snapshot:
                     self.assertEqual(snapshot[target], b"// head\n")
                     self.assertEqual(other.read_text(), "// residue\n",
@@ -833,6 +835,7 @@ class ParityMutationLock(unittest.TestCase):
             common.__file__ = str(source)
             exec(compile(snapshot[source], str(source), "exec"), common.__dict__)
             with patch.object(negative_process, "_assert_product_pristine"), \
+                    patch.object(negative_process, "_assert_workspace_sources"), \
                     patch.object(negative_process, "_head_bytes",
                                  side_effect=lambda _root, path, _base: snapshot[root / path]):
                 yield root, source, target, snapshot, common

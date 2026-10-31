@@ -311,7 +311,7 @@ RSS 数字由 `rss-probe.sh` 单进程测量；脚本先取探针子进程状态
 `bounded_peak_rss_is_lower_than_full` 和 2.5 MiB 深层 prefix 用例标了
 `#[ignore]`（进程级 RSS 在并行测试下不稳定，后者 debug 约 1 GB），需要时用
 `cargo test --release -p pilotdeck-gateway --test html_budget_probe -- --ignored`
-或 `rss-probe.sh` 手动跑。
+或 `rss-probe.sh` 手动跑。后者要求调用方导出本树独占的 `CARGO_TARGET_DIR`，且 workspace 输入等于已提交 HEAD；脚本在树锁内排槽、构建和快照，再执行 `_tmp/` 独占目录里的探针。
 
 因此提前停止只解决“输出/UTF-16 副本”放大：2.5 MiB 深嵌套少约 227 MB、
 耗时减半，`flatten` 容量由 264 MB 降到 400 KB（单测断言）。
@@ -319,3 +319,5 @@ RSS 数字由 `rss-probe.sh` 单进程测量；脚本先取探针子进程状态
 不是截断投影能覆盖的。评估候选节点/内存预算见
 `_tmp/20261022-a65-pr9c/RESULT.md`「#454：实测、评估与候选」；本轮未改
 `specs/`、`accepted-diffs.md` 或解析器语义，也未新增节点门槛。
+
+#1166：共享测量构建要求本树独占的 `CARGO_TARGET_DIR`（允许树外；相对路径由共享入口按仓库根转绝对路径）。入口在锁内核 HEAD 并重新调用 Cargo 后复制本次二进制，位置不作为来源证明。同树长构建须串行安排：排槽上限 900 秒、构建上限 1800 秒（静默上限 600 秒），可能超过其他 runner 默认 900 秒等锁期限；等锁超时记 INVALID，不作为产品失败。

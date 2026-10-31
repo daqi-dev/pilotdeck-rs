@@ -409,15 +409,15 @@ async fn matrix(name: &str) {
     registry.dispose().await.expect("#743 gates prerequisite");
     std::fs::remove_dir_all(root).expect("#743 gates prerequisite");
 }
+const GATES_ORACLE: &str = include_str!("../../../tests/fixtures/turn-gates/oracle.json");
+
 macro_rules! gate_cases {
     ($($name:ident, $case:literal;)*) => {
         $(#[tokio::test]
         async fn $name() { matrix($case).await; })*
         #[test]
         fn gates_oracle_fully_consumed() {
-            let oracle = crate::test_baseline::oracle(include_str!(
-                "../../../tests/fixtures/turn-gates/oracle.json"
-            ));
+            let oracle = crate::test_baseline::oracle(GATES_ORACLE);
             let JsValue::Array(rows) = oracle.get("matrix").unwrap() else { panic!("matrix") };
             assert_fixture_consumed(rows, [$($case),*].into_iter().map(str::to_owned));
         }

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Serial behavior mutations; locked, baseline-checked, exact byte restore."""
 import hashlib
-import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 
 root = Path(__file__).resolve().parents[5]
 evidence = Path(sys.argv[1]).resolve()
@@ -37,7 +36,7 @@ mutations = [
     ('disabled-eager', '        self.emit(key, reason);', '        self.emit(key, reason);\n        if self.0.options.on_session_idle_evict.is_none() { record.handle.snapshot(); }', idle),
     ('early-callback', '.dispose(format!("session_{label}").into())\n            .await;', '.dispose(format!("session_{label}").into());', idle),
 ]
-env = dict(os.environ, CARGO_TARGET_DIR=str(root / '_build/cargo-target'))
+env = target_environment(root)
 def command(test):
     return ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', prefix + test, '--', '--nocapture']
 def run(label, test, red, slots):

@@ -214,7 +214,7 @@ class Controls(unittest.TestCase):
 
     def test_cargo_false_zero_with_ps_error_is_blocked(self):
         with tempfile.TemporaryDirectory() as temp:
-            env = {"CARGO_TARGET_DIR": str(ROOT / "_build/cargo-target"),
+            env = {"CARGO_TARGET_DIR": str(Path(temp) / "cargo-target"),
                    "CARGO_PROFILE_DEV_DEBUG": "line-tables-only",
                    "CARGO_PROFILE_TEST_DEBUG": "line-tables-only"}
             with patch.dict(os.environ, env), patch.object(smoke.common, "run_cargo_slots", return_value={

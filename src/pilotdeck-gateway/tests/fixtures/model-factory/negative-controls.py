@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
 """Serial, bounded source mutations; restore bytes even on failure. No scratch target."""
 import hashlib
-import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, target_environment
 
 root = Path(__file__).resolve().parents[5]
+env = target_environment(root)
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
-expected_targets = {(root / '_build/cargo-target').resolve(), (root / 'src/target').resolve()}
-if Path(os.environ['CARGO_TARGET_DIR']).resolve() not in expected_targets:
-    raise SystemExit(f'use a launcher target in {sorted(expected_targets)}')
 registry = root / 'src/pilotdeck-gateway/src/runtime/model/provider_registry.rs'
 family = root / 'src/pilotdeck-gateway/src/runtime/project/model.rs'
 with mutating_sources(root, [registry, family]) as snapshots:
@@ -163,7 +160,7 @@ with mutating_sources(root, [registry, family]) as snapshots:
             path.write_text(original.replace(before, after))
             try:
                 try:
-                    result = run_owned(['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'), '--offline', '-p', 'pilotdeck-gateway', *target, test, '--', '--exact', '--test-threads=1'], cwd=root, timeout=100)
+                    result = run_owned(['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'), '--offline', '-p', 'pilotdeck-gateway', *target, test, '--', '--exact', '--test-threads=1'], cwd=root, env=env, timeout=100)
                 except subprocess.TimeoutExpired as error:
                     (output / f'{name}.log').write_text((error.output or '') + (error.stderr or ''))
                     raise

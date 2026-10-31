@@ -12,9 +12,9 @@ PDRS_BASELINE=/absolute/PilotDeck node --import /absolute/PilotDeck/node_modules
 Rust 回放：`runtime::turn::failure_guard::tests::real_ts_failure_guard_and_classify`；ignored 重生成守卫：`real_ts_failure_guard_regenerates_identically`。完整 submit 对拍在相邻 `turn-submit` 夹具中；guard 生命周期属于单次 pump，依靠 completion 与 timeout 约束观察权限，在任何出口释放，不共享跨轮计数器。
 
 ```sh
-CARGO_TARGET_DIR="$PWD/src/target" PDRS_BASELINE=/absolute/PilotDeck \
+CARGO_TARGET_DIR="$PWD/_build/cargo-target" PDRS_BASELINE=/absolute/PilotDeck \
   python3 src/pilotdeck-gateway/tests/fixtures/failure-guard/negative.py \
   _tmp/20261023-a72-pr4b-failure-guard/negative
 ```
 
-独占运行，脚本临时修改产品 guard/submit，要求不变的真实 TS 金样出现指定断言失败；编译失败、信号、超时、空筛选都不算有效负控。脚本核验唯一构建目录为本树 `src/target`，保存变异、原始输出、SHA-256 与恢复证明；每个子进程组最多 240 秒、整轮最多 30 分钟。可追加精确负控名以有界重跑。不要与另一源码写入/构建并发运行。
+独占运行，脚本临时修改产品 guard/submit，要求不变的真实 TS 金样出现指定断言失败；编译失败、信号、超时、空筛选都不算有效负控。脚本核验唯一构建目录为本树 `_build/cargo-target`，保存变异、原始输出、SHA-256 与恢复证明；每个子进程组最多 240 秒、整轮最多 30 分钟。可追加精确负控名以有界重跑。不要与另一源码写入/构建并发运行。

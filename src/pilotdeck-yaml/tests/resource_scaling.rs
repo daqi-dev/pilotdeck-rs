@@ -9,28 +9,6 @@ fn require_release() {
 }
 
 #[test]
-#[ignore = "release-only Node v22 resource comparison; requires PILOTDECK_YAML_BASELINE"]
-fn resource_scaling() {
-    require_release();
-    let baseline = std::env::var("PILOTDECK_YAML_BASELINE").expect("baseline checkout path");
-    let status = std::process::Command::new("python3")
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/run_resource_scaling.py"
-        ))
-        .arg("--baseline")
-        .arg(baseline)
-        .arg("--rust-bin")
-        .arg(std::env::current_exe().unwrap())
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "resource limits exceeded; see result table"
-    );
-}
-
-#[test]
 #[ignore = "isolated subprocess worker for resource_scaling"]
 // #942: this worker's name rides two Python copies — the `receipt_test`
 // filter in run_resource_scaling.py (its libtest receipt criterion) and the

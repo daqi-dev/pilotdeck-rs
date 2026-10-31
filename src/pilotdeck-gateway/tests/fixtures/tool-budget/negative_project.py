@@ -10,15 +10,15 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, target_environment
 
 REPO = Path(__file__).resolve().parents[5]
 LOGS = REPO / '_tmp/20261023-issue-344-spill-toctou'
+# A fresh clone (cb8) has no historical evidence directories yet.
+LOGS.mkdir(parents=True, exist_ok=True)
 BUDGET = REPO / 'src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'
 FILES = REPO / 'src/pilotdeck-gateway/src/project_files.rs'
-TARGET = REPO / 'src/target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve()
-ENV = dict(os.environ, CARGO_TARGET_DIR=str(TARGET))
+ENV = target_environment(REPO)
 with mutating_sources(REPO, [BUDGET, FILES]) as snapshots:
     ORIGINAL = {p: snapshots[p] for p in (BUDGET, FILES)}
     DEADLINE = time.monotonic() + 540
@@ -56,12 +56,14 @@ with mutating_sources(REPO, [BUDGET, FILES]) as snapshots:
 
     try:
         budget = ORIGINAL[BUDGET].decode()
-        # Reproduce the previous spill-root algorithm from the reviewed a656ee8e;
-        # retain the test hook at the same pre-mkdir/check boundary. Since #637 the
-        # hooks are process-global statics fired by `fire_spill_hook` (the spill
-        # I/O runs on blocking threads), so the injection calls that helper.
-        old = subprocess.check_output(['git', 'show', 'a656ee8ebb73e7043186eb3461a4c51d84c2fc98:src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'], cwd=REPO).decode()
-        old = old[old.index('fn ensure_directory('):old.index('// Keep the canonical paths')]
+        # Reproduce the pre-fix spill-root algorithm: it is byte-identical to
+        # this file's own #[cfg(not(unix))] fallback (verified against the
+        # reviewed pre-fix revision). Reading it from the working bytes keeps
+        # the control usable in clones that do not carry the historical object
+        # (#1166 redesign: no hardcoded baseline SHA).
+        fallback = budget[budget.index('// Non-Unix keeps'):]
+        old = fallback[fallback.index('fn ensure_directory('):
+                       fallback.index('// Keep the checked project root')]
         old = old.replace('    if !within(root, target) {', '''    let root = target; // regression: trust spill root instead of project
         #[cfg(test)]
         fire_spill_hook(&BEFORE_SPILL_MKDIR, target);
