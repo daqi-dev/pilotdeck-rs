@@ -779,7 +779,10 @@ impl SdkMcpConfig {
 
 // ------------------------------------------------------------------ helpers
 
-fn require_input<'a>(input: &'a JsValue, field: &str) -> Result<&'a JsValue, SdkMcpError> {
+pub(super) fn require_input<'a>(
+    input: &'a JsValue,
+    field: &str,
+) -> Result<&'a JsValue, SdkMcpError> {
     match input {
         JsValue::Undefined | JsValue::Null => Err(SdkMcpError::type_error(format!(
             "Cannot read properties of {} (reading '{}')",
@@ -829,7 +832,7 @@ fn input_kind(value: &JsValue) -> &'static str {
     }
 }
 
-fn required_trimmed(
+pub(super) fn required_trimmed(
     value: Option<&JsValue>,
     field: &str,
     code: &'static str,
@@ -1226,7 +1229,7 @@ fn disabled_message(server_name: &JsValue) -> Result<JsString, SdkMcpError> {
     Ok(JsString::from_utf16(units))
 }
 
-fn range_error(_: js_value::StackOverflow) -> SdkMcpError {
+pub(super) fn range_error(_: js_value::StackOverflow) -> SdkMcpError {
     SdkMcpError::plain("RangeError", js_value::StackOverflow::MESSAGE)
 }
 
