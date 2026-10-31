@@ -53,10 +53,12 @@ def lease_signals():
             signal.signal(sig, handler)
 
 
-def probe_bind(port):
-    # Match the real listener's reuse policy; TIME_WAIT is not a live owner.
+def probe_bind(port, *, reuse_address):
+    # Tokio's gateway bind does not reuse addresses; HTTPServer does.
+    # Probe with the respective policy, including during startup rechecks.
     with socket.socket() as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if reuse_address:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(('127.0.0.1', port))
 
 
@@ -145,8 +147,8 @@ def native_run(gateway, sidecar, output, port=28999):
         try:
             # Check both fixed endpoints before launching any owned process.
             # The shared lease spans the bind handoff and provider cleanup.
-            for candidate in (port, port + 1):
-                probe_bind(candidate)
+            for candidate, reuse_address in ((port, False), (port + 1, True)):
+                probe_bind(candidate, reuse_address=reuse_address)
             result = _native_run(gateway, sidecar, output, port)
         except OSError as error:
             if error.errno == errno.EADDRINUSE:
@@ -168,7 +170,7 @@ def wait_ready(tracer, folder, port, deadline):
         if tracer.poll() is not None:
             # A non-participant may claim the gateway port after preflight.
             # Probe the same endpoint; native_run maps EADDRINUSE to BLOCKED.
-            probe_bind(port)
+            probe_bind(port, reuse_address=False)
             w.need(False, 'native gateway exited before readiness')
         stderr = (folder / 'stderr.log').read_text()
         if f'native listening 127.0.0.1:{port}\n' in stderr:

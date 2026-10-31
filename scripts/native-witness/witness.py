@@ -111,6 +111,10 @@ def parse_trace(raw, contract):
         call = re.fullmatch(r'(\w+)\((.*)\)\s+=\s+(.+)', body)
         need(call is not None, 'unparsed syscall: ' + body[:120])
         name, args, result = call.groups()
+        # records() pairs by PID and verifies the syscall name before parsing.
+        # strace inserts a space before <unfinished ...>; when resumed starts
+        # with ')' that separator remains at the end of the argument list.
+        args = args.rstrip()
         if name in ('execve', 'execveat'):
             attempts.append({'tid': tid, 'syscall': name, 'arguments': args, 'result': result})
             if result.startswith('-1 '):
