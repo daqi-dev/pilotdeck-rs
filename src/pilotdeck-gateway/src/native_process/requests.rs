@@ -85,9 +85,7 @@ impl GatewayRequests for Requests {
                 && !project
                     .as_string()
                     .and_then(|s| s.to_utf8().ok())
-                    .is_some_and(|p| {
-                        crate::metadata::resolve(&self.options.project, &p) == self.options.project
-                    })
+                    .is_some_and(|p| self.options.serves_project(&p))
             {
                 return Err(RequestError::new(
                     "The isolated native process serves only its configured project.",

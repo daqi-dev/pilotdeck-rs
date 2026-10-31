@@ -913,6 +913,64 @@
         "markerUnchanged": true
       }
     ],
+    "paths": {
+      "options": [
+        {
+          "input": "project",
+          "resolved": "{root}/project",
+          "registered": true
+        },
+        {
+          "input": "./project/",
+          "resolved": "{root}/project",
+          "registered": true
+        },
+        {
+          "input": "project/child/..",
+          "resolved": "{root}/project",
+          "registered": true
+        },
+        {
+          "input": "alias",
+          "resolved": "{root}/alias",
+          "registered": true
+        }
+      ],
+      "boundaries": [
+        {
+          "input": ".",
+          "resolved": "{root}/other",
+          "registered": false,
+          "storageMatches": false
+        },
+        {
+          "input": "./",
+          "resolved": "{root}/other",
+          "registered": false,
+          "storageMatches": false
+        },
+        {
+          "input": "",
+          "resolved": "{root}/other",
+          "registered": false,
+          "storageMatches": false
+        },
+        {
+          "input": "../project",
+          "resolved": "{root}/project",
+          "registered": true,
+          "storageMatches": true
+        },
+        {
+          "input": "{root}/project",
+          "resolved": "{root}/project",
+          "registered": true,
+          "storageMatches": true
+        }
+      ],
+      "cwdUnreadable": true,
+      "deletedCwdAbsolute": true
+    },
     "alias": {
       "reservedThroughAlias": true,
       "conflictCode": "SESSION_BUSY",

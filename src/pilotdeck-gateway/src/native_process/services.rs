@@ -49,7 +49,7 @@ impl SubmitHostServices for Services {
                 .as_string()
                 .and_then(|s| s.to_utf8().ok())
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;
-            if crate::metadata::resolve(&self.options.project, &project) != self.options.project {
+            if !self.options.serves_project(&project) {
                 return Err(unavailable(
                     "The isolated native process serves only its configured project.",
                 ));

@@ -403,6 +403,14 @@ pub fn transcript_path(options: &Options, session: &JsString) -> std::path::Path
     ))
 }
 pub(super) fn register_project(options: &Options) -> Result<(), ProxyError> {
+    // resolve_process_path reads current_dir only for a relative marker.
+    register_project_at(options, std::path::Path::new(""))
+}
+
+pub(super) fn register_project_at(
+    options: &Options,
+    cwd: &std::path::Path,
+) -> Result<(), ProxyError> {
     let chats = crate::session_chat_dir(
         &options.home,
         &options.project,
@@ -423,7 +431,9 @@ pub(super) fn register_project(options: &Options) -> Result<(), ProxyError> {
         }
         // TS stat(marker) / resolve(marker) interpret relative markers against
         // the process cwd, not the project requested by the caller.
-        if crate::metadata::resolve(&std::env::current_dir()?, existing) != options.project {
+        if crate::metadata::resolve_process_path(cwd, std::path::Path::new(existing))?
+            != options.project
+        {
             return Err("Native project storage marker belongs to a different project.".into());
         }
         return Ok(());

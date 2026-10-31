@@ -379,14 +379,15 @@ fn project_marker_ownership_matches_ts() {
             .0
             .canonicalize()
             .expect("#1137 canonical marker scratch");
-        // Never change the test process's shared cwd. For the cwd=project
-        // rows, register that existing directory under our isolated home.
-        let project = if row["cwd"] == "project" {
-            std::env::current_dir().expect("#1137 current marker project")
-        } else {
-            scratch.0.join("project")
-        };
+        // Both bases are explicit: this matrix never reads global process cwd.
+        let project = scratch.0.join("project");
         let other = scratch.0.join("other");
+        let cwd = if row["cwd"] == "project" {
+            &project
+        } else {
+            &other
+        }
+        .clone();
         let options = Options {
             home: scratch.0.join("home"),
             project,
@@ -437,7 +438,7 @@ fn project_marker_ownership_matches_ts() {
         let accepted = row["registered"]
             .as_bool()
             .expect("#1137 TS registration result");
-        let result = assembly::register_project(&options);
+        let result = assembly::register_project_at(&options, &cwd);
         let after = marker_snapshot(&marker, &options.project, &other);
         let raw_unchanged = raw_before.is_none_or(|before| {
             before == std::fs::read(&marker).expect("#1137 raw marker after registration")
@@ -512,4 +513,260 @@ fn marker_regenerates_identically() {
         }
         std::panic::resume_unwind(payload);
     }
+}
+
+#[cfg(unix)]
+fn path_scratch() -> Scratch {
+    let mut scratch =
+        Scratch(std::env::temp_dir().join(format!("pdrs-1137-path-{}", uuid::Uuid::new_v4())));
+    for name in ["home", "project/child", "other", "deleted"] {
+        std::fs::create_dir_all(scratch.0.join(name)).expect("#1137 path scratch directories");
+    }
+    for name in ["token", "sidecar"] {
+        std::fs::write(scratch.0.join(name), "fixture").expect("#1137 path scratch files");
+    }
+    scratch.0 = scratch
+        .0
+        .canonicalize()
+        .expect("#1137 path scratch canonical root");
+    std::os::unix::fs::symlink(scratch.0.join("project"), scratch.0.join("alias"))
+        .expect("#1137 path scratch symlink");
+    scratch
+}
+
+#[cfg(unix)]
+fn path_args(scratch: &Scratch, project: &str) -> Vec<OsString> {
+    vec![
+        "--home".into(),
+        scratch.0.join("home").into_os_string(),
+        "--project".into(),
+        project.into(),
+        "--listen".into(),
+        "127.0.0.1:0".into(),
+        "--token-file".into(),
+        scratch.0.join("token").into_os_string(),
+        "--sidecar".into(),
+        scratch.0.join("sidecar").into_os_string(),
+    ]
+}
+
+#[test]
+#[cfg(unix)]
+fn project_options_publish_and_restart_match_ts() {
+    let expected = marker_oracle();
+    let rows = expected["observations"]["paths"]["options"]
+        .as_array()
+        .expect("#1137 TS project option rows");
+    negative_assert_eq!(rows.len(), 4, "#1137 project option matrix count");
+    for row in rows {
+        let scratch = path_scratch();
+        let input = row["input"]
+            .as_str()
+            .expect("#1137 TS project option input");
+        let options = crate::test_negative_receipt::expect_ok(
+            Options::parse_at(path_args(&scratch, input), &scratch.0),
+            "#1137 project options accept lexical paths",
+        );
+        negative_assert_eq!(
+            options
+                .project
+                .to_string_lossy()
+                .replace(&*scratch.0.to_string_lossy(), "{root}"),
+            row["resolved"],
+            "#1137 project identity matches TS lexical resolve"
+        );
+        let first = assembly::register_project_at(&options, &scratch.0);
+        negative_assert!(first.is_ok(), "#1137 normalized project first publication");
+        let chats = crate::session_chat_dir(
+            &options.home,
+            &options.project,
+            &options.project.to_string_lossy(),
+        );
+        let marker = chats
+            .parent()
+            .expect("#1137 published marker parent")
+            .join(".cwd");
+        negative_assert_eq!(
+            std::fs::read_to_string(&marker).expect("#1137 published marker bytes"),
+            options.project.to_string_lossy(),
+            "#1137 marker publishes normalized project identity"
+        );
+        // Parse again as a second startup would, then validate the already published marker.
+        let restarted = crate::test_negative_receipt::expect_ok(
+            Options::parse_at(path_args(&scratch, input), &scratch.0),
+            "#1137 project options accept lexical paths",
+        );
+        negative_assert_eq!(
+            assembly::register_project_at(&restarted, &scratch.0).is_ok(),
+            row["registered"]
+                .as_bool()
+                .expect("#1137 TS restart result"),
+            "#1137 second startup accepts its own marker"
+        );
+    }
+    let scratch = path_scratch();
+    std::os::unix::fs::symlink(scratch.0.join("home"), scratch.0.join("home-alias"))
+        .expect("#1137 isolated home symlink");
+    negative_assert!(
+        Options::parse_at(path_args(&scratch, "home-alias"), &scratch.0).is_err(),
+        "#1137 lexical project retains physical home separation"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn process_path_boundaries_match_ts() {
+    // Only these dedicated ignored workers change cwd. The shared runner bounds
+    // each child at 30 seconds and reaps it on timeout; no signal files are used.
+    crate::test_process::run_cases(
+        "native_process::tests::review::absolute_marker_deleted_cwd_worker",
+        vec![("1137-deleted-cwd".into(), vec![])],
+    );
+    crate::test_process::run_cases(
+        "native_process::tests::review::project_path_boundaries_worker",
+        vec![("1137-project-paths".into(), vec![])],
+    );
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "isolated cwd worker; launched by process_path_boundaries_match_ts"]
+fn absolute_marker_deleted_cwd_worker() {
+    let scratch = path_scratch();
+    let project = scratch.0.join("project").to_string_lossy().into_owned();
+    let options = Options::parse_at(path_args(&scratch, &project), &scratch.0)
+        .expect("#1137 deleted cwd options");
+    assembly::register_project_at(&options, &scratch.0).expect("#1137 deleted cwd seed marker");
+    let expected = marker_oracle();
+    assert_eq!(
+        expected["observations"]["paths"]["cwdUnreadable"], true,
+        "#1137 TS deleted cwd really unreadable"
+    );
+    std::env::set_current_dir(scratch.0.join("deleted")).expect("#1137 enter doomed cwd");
+    std::fs::remove_dir(scratch.0.join("deleted")).expect("#1137 delete cwd before product call");
+    let parsed = Options::parse(path_args(&scratch, &project));
+    let result = assembly::register_project(&options);
+    // Restore to a known absolute directory, never reading the global cwd.
+    std::env::set_current_dir(&scratch.0).expect("#1137 restore deleted cwd worker");
+    negative_assert!(
+        parsed.is_ok(),
+        "#1137 absolute project parse ignores deleted cwd"
+    );
+    negative_assert_eq!(
+        result.is_ok(),
+        expected["observations"]["paths"]["deletedCwdAbsolute"]
+            .as_bool()
+            .expect("#1137 TS deleted cwd marker result"),
+        "#1137 absolute marker ignores deleted cwd"
+    );
+    crate::test_process::receipt("1137-deleted-cwd");
+}
+
+#[cfg(unix)]
+struct NoPathResources;
+#[cfg(unix)]
+impl crate::runtime::project::ProjectRuntimeFactory for NoPathResources {
+    fn stage(
+        &self,
+        _: &Path,
+        _: &mut crate::runtime::project::ResourceBundle,
+    ) -> crate::runtime::project::RuntimeResult {
+        panic!("#1137 path checks must not stage project resources")
+    }
+}
+#[cfg(unix)]
+impl crate::runtime::session::SessionFactory for NoPathResources {
+    fn create(
+        &self,
+        _: crate::runtime::session::SessionContext,
+        _: Option<crate::runtime::session::LiveSessionHandle>,
+    ) -> crate::runtime::refresh::BoxFuture<
+        Result<crate::runtime::session::LiveSessionHandle, crate::runtime::project::RuntimeError>,
+    > {
+        panic!("#1137 path checks must not create a session")
+    }
+}
+
+#[tokio::test]
+#[cfg(unix)]
+#[ignore = "isolated cwd worker; launched by process_path_boundaries_match_ts"]
+async fn project_path_boundaries_worker() {
+    use crate::runtime::{
+        project::ProjectRuntimeRegistry,
+        session::{SessionOwner, SessionOwnerOptions},
+        turn::{gateway::GatewayRequests, submit_host::SubmitHostServices},
+    };
+    let scratch = path_scratch();
+    let options = Options::parse_at(path_args(&scratch, "project"), &scratch.0)
+        .expect("#1137 path boundary options");
+    std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG)
+        .expect("#1137 path boundary config");
+    assembly::register_project_at(&options, &scratch.0).expect("#1137 path boundary marker");
+    let mut owner_options = SessionOwnerOptions::new(Arc::new(NoPathResources));
+    owner_options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(owner_options);
+    let requests = requests::Requests {
+        options: options.clone(),
+        env: options.environment(Env::new()),
+        coordinator: Arc::default(),
+        runs: Arc::new(
+            crate::runtime::turn::publish::FileRegistry::new(
+                crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
+                    .expect("#1137 path run file"),
+            )
+            .expect("#1137 path run registry"),
+        ),
+        owner: owner.clone(),
+    };
+    let services = services::Services {
+        options: options.clone(),
+        env: options.environment(Env::new()),
+        project: Arc::new(ProjectRuntimeRegistry::new(
+            options.project.clone(),
+            Arc::new(NoPathResources),
+        )),
+        recorders: Arc::default(),
+        owner,
+    };
+    std::env::set_current_dir(scratch.0.join("other")).expect("#1137 enter other cwd");
+    let oracle = marker_oracle();
+    let paths = &oracle["observations"]["paths"];
+    let rows = paths["boundaries"]
+        .as_array()
+        .expect("#1137 TS boundary rows");
+    negative_assert_eq!(rows.len(), 5, "#1137 project boundary matrix count");
+    for row in rows {
+        let input = row["input"]
+            .as_str()
+            .expect("#1137 boundary input")
+            .replace("{root}", &scratch.0.to_string_lossy());
+        let params = pilotdeck_protocol::parse_json(
+            &json!({"projectKey":input,"sessionKey":"s"}).to_string(),
+        )
+        .expect("#1137 path parameters JSON");
+        let read = requests
+            .request("active_turn_snapshot".into(), params.clone())
+            .await;
+        negative_assert_eq!(
+            read.is_ok(),
+            row["registered"]
+                .as_bool()
+                .expect("#1137 TS boundary registration"),
+            "#1137 request project guard uses process cwd"
+        );
+        negative_assert_eq!(
+            services.workspace_id(&params).is_ok(),
+            row["storageMatches"]
+                .as_bool()
+                .expect("#1137 TS storage boundary"),
+            "#1137 submit project guard uses process cwd"
+        );
+    }
+    std::env::set_current_dir(&scratch.0).expect("#1137 restore path boundary worker");
+    services
+        .project
+        .dispose()
+        .await
+        .expect("#1137 unused path project disposed");
+    crate::test_process::receipt("1137-project-paths");
 }
