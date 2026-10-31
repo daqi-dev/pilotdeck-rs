@@ -490,4 +490,88 @@ mod tests {
             ("EIO", "EIO: i/o error, read".into())
         );
     }
+    /// #117: the errno table was generated on macOS, so its libc numbers were
+    /// never measured against a real Linux Node. This runs on Linux against a
+    /// fresh sample from `tests/fixtures/node-io/linux-errno-verify.mjs`
+    /// (same pinned Node, `os.constants` + libuv tables, no repo writes).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_node_errno_numbers_match_node_os_constants() {
+        if std::env::var_os("PDRS_NODE_IO_LINUX_JSON").is_none() {
+            return;
+        }
+        let path = std::path::PathBuf::from(
+            std::env::var_os("PDRS_NODE_IO_LINUX_JSON")
+                .expect("#117 requires PDRS_NODE_IO_LINUX_JSON (fresh Node errno sample path)"),
+        );
+        let fresh: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("#117 read the fresh Node errno sample: {error}")),
+        )
+        .expect("#117 parse the fresh Node errno sample");
+        assert_eq!(
+            fresh["node"].as_str(),
+            Some("v22.22.0"),
+            "#117 sample Node version: {}",
+            fresh["node"]
+        );
+        assert_eq!(
+            fresh["uv"].as_str(),
+            Some("1.52.1"),
+            "#117 sample libuv version: {}",
+            fresh["uv"]
+        );
+        assert_eq!(
+            fresh["platform"].as_str(),
+            Some("linux"),
+            "#117 sample platform: {}",
+            fresh["platform"]
+        );
+        // The libuv name/description map and the UVException formatting are
+        // platform-independent; a fresh Linux sample must equal the committed
+        // darwin fixture line by line, or the table drifted.
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/node-io/errors.json")).unwrap();
+        assert_eq!(
+            fresh["all"], committed["all"],
+            "#117 fresh Linux libuv error map differs from the committed table"
+        );
+        assert_eq!(
+            fresh["formatting"], committed["formatting"],
+            "#117 fresh Linux UVException formatting differs from the committed table"
+        );
+        // On unix a libuv system errno is the negated libc errno, so every
+        // generated row carries the number Node itself uses on this Linux.
+        for (errno, code, _) in generated::ERRORS {
+            let entry = fresh["all"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["code"].as_str() == Some(code)))
+                .unwrap_or_else(|| panic!("#117 fresh libuv sample lacks {code}"));
+            assert_eq!(
+                -entry["uv"].as_i64().unwrap(),
+                i64::from(*errno),
+                "#117 libuv errno number for {code} differs from the generated table"
+            );
+            if let Some(constant) = fresh["errno"][code].as_i64() {
+                assert_eq!(
+                    constant,
+                    i64::from(*errno),
+                    "#117 Node os.constants.errno {code} differs from the generated table"
+                );
+            }
+        }
+        // The lookup direction real errors take: io::Error carries the libc
+        // errno, libuv's mapping recovers Node's code name.
+        for entry in fresh["all"].as_array().unwrap() {
+            let uv = entry["uv"].as_i64().unwrap();
+            if (-1024..0).contains(&uv) {
+                assert_eq!(
+                    lookup(&io::Error::from_raw_os_error(-uv as i32)).unwrap().0,
+                    entry["code"].as_str().unwrap(),
+                    "#117 lookup for {} recovers the wrong code",
+                    entry["code"]
+                );
+            }
+        }
+    }
 }
