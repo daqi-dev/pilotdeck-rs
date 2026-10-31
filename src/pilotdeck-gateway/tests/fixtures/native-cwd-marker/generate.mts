@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assertBaseline, baselineSourceHashes} from '../_shared/baseline.mts';
@@ -18,13 +18,28 @@ const {createDialogProjectRegistry} = await load(sources[2]);
 const {GatewayTurnReplacementCoordinator} = await load(sources[3]);
 const output = resolve(process.argv[2]);
 await mkdir(output, {recursive: true});
-const work = await mkdtemp(join(output, 'work-'));
+// process.cwd() resolves macOS /var -> /private/var. Use the same spelling
+// for requested projects so cwd=project remains true under the test tmpdir.
+const work = await realpath(await mkdtemp(join(output, 'work-')));
 const cases = [];
+const originalCwd = process.cwd();
+type MarkerCase = {name: string; marker?: string; markerHex?: string;
+  kind?: 'file' | 'directory' | 'symlink'; cwd?: 'project' | 'other'};
+const inputs: MarkerCase[] = [
+  {name: 'empty', marker: '', cwd: 'project'},
+  {name: 'whitespace', marker: ' \t\u00a0\ufeff ', cwd: 'project'},
+  {name: 'newline', marker: '\n', cwd: 'project'}, {name: 'matching', marker: '{project}'},
+  {name: 'padded', marker: ' \t{project}\n'}, {name: 'foreign', marker: '{other}'},
+  {name: 'relative-dot', marker: '.'}, {name: 'relative-dot-slash', marker: './'},
+  {name: 'trailing-slash', marker: '{project}/'},
+  {name: 'crlf', marker: '{project}\r\n'},
+  {name: 'directory', kind: 'directory'}, {name: 'dangling-symlink', kind: 'symlink'},
+  {name: 'invalid-utf8', markerHex: 'ff'},
+  {name: 'relative-dot-at-project', marker: '.', cwd: 'project'},
+  {name: 'relative-dot-slash-at-project', marker: './', cwd: 'project'},
+];
 try {
-  for (const [name, marker] of [
-    ['empty', ''], ['whitespace', ' \t\u00a0\ufeff '], ['newline', '\n'],
-    ['matching', '{project}'], ['padded', ' \t{project}\n'], ['foreign', '{other}'],
-  ]) {
+  for (const {name, marker, markerHex, kind = 'file', cwd = 'other'} of inputs) {
     const home = join(work, name, 'home'), project = join(work, name, 'project');
     const other = join(work, name, 'other');
     await mkdir(project, {recursive: true});
@@ -32,8 +47,28 @@ try {
     const directory = join(home, 'projects', createProjectId(project));
     await mkdir(directory, {recursive: true});
     const path = join(directory, '.cwd');
-    const bytes = marker.replace('{project}', project).replace('{other}', other);
-    await writeFile(path, bytes, {flag: 'wx'});
+    if (kind === 'directory') await mkdir(path);
+    else if (kind === 'symlink') await symlink('missing-target', path);
+    else {
+      const bytes = markerHex === undefined
+        ? Buffer.from(marker!.replace('{project}', project).replace('{other}', other))
+        : Buffer.from(markerHex, 'hex');
+      await writeFile(path, bytes, {flag: 'wx'});
+    }
+    const snapshot = async () => {
+      const entry = await lstat(path);
+      if (entry.isSymbolicLink()) return {kind: 'symlink', target: await readlink(path),
+        targetExists: await stat(path).then(() => true, () => false)};
+      if (entry.isDirectory()) return {kind: 'directory', entries: (await readdir(path)).sort()};
+      assert.ok(entry.isFile(), '#1137 marker is a regular file');
+      const bytesHex = (await readFile(path)).toString('hex')
+        .replaceAll(Buffer.from(project).toString('hex'), Buffer.from('{project}').toString('hex'))
+        .replaceAll(Buffer.from(other).toString('hex'), Buffer.from('{other}').toString('hex'));
+      return {kind: 'file', bytesHex};
+    };
+    const before = await snapshot();
+    const rawBefore = kind === 'file' ? await readFile(path) : null;
+    process.chdir(cwd === 'project' ? project : other);
     const resolver = createRegisteredWebProjectResolver({pilotHome: home});
     const registry = createDialogProjectRegistry({pilotHome: home, resolveProject: resolver,
       listProjects: () => listRegisteredWebProjects({pilotHome: home})});
@@ -41,10 +76,15 @@ try {
     let errorCode: string | null = null;
     try { await registry.resolveProjectKey(project); }
     catch (error: any) { errorCode = error.code; }
-    cases.push({name, marker, registered: resolved === project, errorCode,
-      markerUnchanged: await readFile(path, 'utf8') === bytes});
+    const after = await snapshot();
+    const rawUnchanged = rawBefore === null || rawBefore.equals(await readFile(path));
+    cases.push({name, marker, markerHex, kind, cwd, registered: resolved === project, errorCode,
+      before, after, markerUnchanged: rawUnchanged && JSON.stringify(before) === JSON.stringify(after)});
   }
-} finally { await rm(work, {recursive: true, force: true}); }
+} finally {
+  process.chdir(originalCwd);
+  await rm(work, {recursive: true, force: true});
+}
 
 // Rust Clone models another handle to the same TS object, not a TS clone API.
 const original = new GatewayTurnReplacementCoordinator({timeoutMs: 1000, session: {
