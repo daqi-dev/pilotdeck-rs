@@ -119,6 +119,7 @@ DATA_FILES = (
     'README.md',                                # apparatus documentation
     'fixtures/gateway-protocol.fixtures.json',  # A3/A4 protocol fixtures
     'fixtures/session-calibration.json',        # A5.3 E1 fixture; FROZEN hash row
+    'fixtures/session-expectations.json',       # A5.4 A19-HOST expectations; FROZEN hash row
     'package.json',                             # npm manifest for A3 tooling
     'package-lock.json',                        # pinned A3 dependency graph
 )
