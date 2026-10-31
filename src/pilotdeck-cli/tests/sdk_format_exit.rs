@@ -205,26 +205,51 @@ impl StdinWriter {
     }
 }
 
+// The hook belongs only to the thread invoking spawn. Ordinary replays leave
+// it empty; the wrapper reports the first actual write, including inline writes.
+type StdinObservation = (std::thread::ThreadId, Vec<u8>);
+thread_local! {
+    static STDIN_OBSERVER: std::cell::RefCell<Option<std::sync::mpsc::Sender<StdinObservation>>> = const { std::cell::RefCell::new(None) };
+}
+struct ObservedStdin {
+    stdin: std::process::ChildStdin,
+    entered: Option<std::sync::mpsc::Sender<StdinObservation>>,
+}
+impl Write for ObservedStdin {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some(entered) = self.entered.take() {
+            entered
+                .send((std::thread::current().id(), bytes.to_vec()))
+                .expect("#1136 publish spawn first pipe write");
+        }
+        self.stdin.write(bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdin.flush()
+    }
+}
+
 fn spawn(command: &mut Command, input: &Value) -> OwnedChild {
     let mut owned = OwnedChild(
-        Some(command.spawn().expect("#1097 spawn CLI")),
+        Some(command.spawn().expect("#1136 spawn CLI")),
         Writers::default(),
     );
-    let child = owned.0.as_mut().expect("#1097 immediately owned child");
+    let child = owned.0.as_mut().expect("#1136 immediately owned child");
     let hex = input["stdinHex"].as_str().unwrap_or("");
     let data: Vec<u8> = (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("#1097 stdin hex"))
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("#1136 stdin hex"))
         .collect();
     if input["holdStdin"] != true && input["stdinAfterCreate"] != true {
+        let stdin = ObservedStdin {
+            stdin: child.stdin.take().expect("#1136 stdin pipe"),
+            entered: STDIN_OBSERVER.with(|observer| observer.borrow_mut().take()),
+        };
         owned
             .1
             .lock()
-            .expect("#1097 register early stdin")
-            .push(StdinWriter::start(
-                child.stdin.take().expect("#1097 stdin pipe"),
-                data,
-            ));
+            .expect("#1136 register early stdin")
+            .push(StdinWriter::start(stdin, data));
     }
     owned
 }
@@ -276,66 +301,88 @@ async fn fixture_stdin_broken_pipe_preserves_output() {
     verify(output.stderr == b"fixture-err", "#1097 preserve stderr");
 }
 
-#[test]
-fn fixture_stdin_writer_yields_before_child_reads() {
-    // Observe the thread entering the real pipe write. Both asynchronous and
-    // synchronous writers publish this event; elapsed time is never the oracle.
-    struct ObservedStdin {
-        stdin: std::process::ChildStdin,
-        entered: Option<std::sync::mpsc::Sender<std::thread::ThreadId>>,
-    }
-    impl Write for ObservedStdin {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            if let Some(entered) = self.entered.take() {
-                entered
-                    .send(std::thread::current().id())
-                    .expect("#1136 publish first pipe write");
-            }
-            self.stdin.write(bytes)
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            self.stdin.flush()
-        }
-    }
-    let mut command = Command::new("/bin/sleep");
+#[tokio::test]
+async fn fixture_stdin_writer_yields_before_child_reads() {
+    // This is the real spawn entry, including hex decoding and registration.
+    // The child never reads stdin. A separate socket gates its exit, so even
+    // an inline writer is released after its first-write event, before verdict.
+    let (mut release, reader_release) =
+        std::os::unix::net::UnixStream::pair().expect("#1136 blocked reader release socket");
+    release
+        .set_write_timeout(Some(BOUND))
+        .expect("#1136 bounded reader release");
+    let mut command = Command::new("/bin/sh");
     command
         .env_clear()
-        .arg("30")
+        .args(["-c", "read release <&1; exit 23"])
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::from(std::os::fd::OwnedFd::from(reader_release)))
         .stderr(Stdio::piped());
-    let mut child = OwnedChild(
-        Some(command.spawn().expect("#1136 spawn blocked reader")),
-        Writers::default(),
-    );
-    let stdin = child
-        .0
-        .as_mut()
-        .expect("#1136 own blocked reader")
-        .stdin
-        .take()
-        .expect("#1136 observe blocked stdin");
+    let input = json!({"stdinHex": "00ff78c3".repeat(512 * 1024)});
     let (entered, observed) = std::sync::mpsc::channel();
+    let (returned, spawned) = std::sync::mpsc::channel();
     let starter = std::thread::spawn(move || {
-        StdinWriter::start(
-            ObservedStdin {
-                stdin,
-                entered: Some(entered),
-            },
-            vec![b'x'; 2 * 1024 * 1024],
-        )
+        STDIN_OBSERVER.with(|observer| *observer.borrow_mut() = Some(entered));
+        let child = spawn(&mut command, &input);
+        returned.send(child).expect("#1136 publish spawn return");
     });
     let caller = starter.thread().id();
     let first_write = observed.recv_timeout(BOUND);
-    // The child never reads. Close its pipe before joining even if the progress
-    // wait failed, so neither a synchronous mutant nor a failed setup leaks it.
+    // Release even on a missing progress event. Never turn a timeout/setup
+    // panic into the receipt for a synchronous writer regression.
+    let released = release.write_all(b"exit\n");
+    drop(release);
+    let mut child = spawned.recv_timeout(BOUND).expect("#1136 spawn returned");
+    starter.join().expect("#1136 spawn caller joined");
+    let output = collect_owned(&mut child, BOUND).await;
+    let writers = child.1.clone();
+    let registered = writers.lock().expect("#1136 spawn registry").len();
     drop(child);
-    starter.join().expect("#1136 starter joined").finish();
-    let writer = first_write.expect("#1136 first pipe write progress");
+    released.expect("#1136 release blocked reader");
+    let (writer, bytes) = first_write.expect("#1136 spawn first pipe write progress");
     verify(
         writer != caller,
-        "#1097 stdin writer yields before child reads",
+        "#1136 stdin writer yields before child reads",
     );
+    verify(
+        bytes == [0x00, 0xff, 0x78, 0xc3].repeat(512 * 1024),
+        "#1136 spawn decodes complete stdinHex",
+    );
+    verify(registered == 1, "#1136 spawn registers stdin writer");
+    verify(
+        output.status.code() == Some(23),
+        "#1136 blocked reader exit 23 preserved",
+    );
+}
+
+#[tokio::test]
+async fn fixture_stdin_deferred_until_requested() {
+    for (hold, delayed) in [(true, false), (false, true), (true, true)] {
+        let mut command = Command::new("/bin/sh");
+        command
+            .env_clear()
+            .args(["-c", "exit 23"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = spawn(
+            &mut command,
+            &json!({"stdinHex": "00ff78c3", "holdStdin": hold, "stdinAfterCreate": delayed}),
+        );
+        let retained = child
+            .0
+            .as_ref()
+            .expect("#1136 deferred child")
+            .stdin
+            .is_some();
+        let registered = child.1.lock().expect("#1136 deferred registry").len();
+        let output = collect(child).await;
+        verify(
+            retained && registered == 0,
+            "#1136 hold or delayed stdin stays with child",
+        );
+        assert_eq!(output.status.code(), Some(23), "#1136 deferred child exit");
+    }
 }
 
 #[test]
@@ -386,9 +433,9 @@ async fn collect_owned(child: &mut OwnedChild, bound: Duration) -> std::process:
             if child
                 .0
                 .as_mut()
-                .expect("#1097 owned child")
+                .expect("#1136 owned child")
                 .try_wait()
-                .expect("#1097 poll CLI")
+                .expect("#1136 poll CLI")
                 .is_some()
             {
                 break;
@@ -397,13 +444,13 @@ async fn collect_owned(child: &mut OwnedChild, bound: Duration) -> std::process:
         }
     })
     .await
-    .expect("#1097 bounded CLI exit");
+    .expect("#1136 bounded CLI exit");
     child
         .0
         .take()
-        .expect("#1097 reap owned CLI")
+        .expect("#1136 reap owned CLI")
         .wait_with_output()
-        .expect("#1097 collect output")
+        .expect("#1136 collect output")
 }
 fn snapshot(root: &Path) -> Value {
     fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<String, Value>) {
