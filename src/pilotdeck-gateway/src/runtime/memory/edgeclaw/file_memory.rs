@@ -400,6 +400,48 @@ pub struct EdgeClawFileStores {
     /// name (`sqlite.ts:422`); see [`Self::with_temp_name_seams`].
     pub(super) temp_now_ms: TempNowMs,
     pub(super) temp_random_fragment: TempRandomFragment,
+    /// #917 fix-r1: the session-clear generation survives a `close`, so a
+    /// heartbeat whose L0 recheck can no longer read SQLite still learns that a
+    /// `clearSession` completed after the run listed its rows. Only
+    /// `clearSession` bumps it; `clear(current_project)` / `clear(all)` do not.
+    pub(super) session_clears: SessionClears,
+}
+
+/// #917 fix-r1: in-memory per-session clear counter. `generation` is the
+/// process-wide monotone counter; `sessions` records the value each cleared
+/// session key last reached. A reader that captured a baseline before a clear
+/// observes a different value after it, without touching SQLite.
+pub(crate) struct SessionClears {
+    generation: std::sync::atomic::AtomicU64,
+    sessions: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+}
+impl SessionClears {
+    pub(crate) fn new() -> Self {
+        Self {
+            generation: std::sync::atomic::AtomicU64::new(0),
+            sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+    /// Record that `clearSession` started removing this session's data.
+    pub(crate) fn bump(&self, session: &str) {
+        let next = self
+            .generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(session.to_string(), next);
+    }
+    /// The generation this session key last reached (0 when never cleared).
+    pub(crate) fn generation_of(&self, session: &str) -> u64 {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(session)
+            .copied()
+            .unwrap_or(0)
+    }
 }
 impl EdgeClawFileStores {
     pub fn open(
@@ -502,6 +544,7 @@ impl EdgeClawFileStores {
                     .min(i64::MAX as u128) as i64
             }),
             temp_random_fragment: Arc::new(default_temp_fragment),
+            session_clears: SessionClears::new(),
         })
     }
     /// Override the sibling temp-path naming seams. `sqlite.ts:422` reads

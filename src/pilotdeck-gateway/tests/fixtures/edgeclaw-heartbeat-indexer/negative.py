@@ -33,40 +33,79 @@ assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
 out.mkdir(parents=True, exist_ok=True)
 
-# #917: the persist-site cleared-session recheck and the classify fire, both
-# verbatim from `process_session`. The anchors below must stay byte-identical
-# to the source or the run refuses to start (AnchorExpired).
-RECHECK_BLOCK = '''            // #917 (human decision 2026-10-27, #914 A; diff ledger
-            // `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`): a `clearSession`
-            // that lands while the classify/createNote awaits above are in
-            // flight deletes this session's L0 rows before the persist below
-            // runs. The TS baseline still writes the turn's file ("file
-            // resurrection"); the registered divergence discards the turn's
-            // candidates instead, so a cleared session's memory never reaches
-            // the file stores. The lookup deliberately fails open: a close
-            // during the same awaits must keep failing at the same calls TS
-            // fails at, or the close matrix cells would drift.
-            let session_cleared = match self
-                .repository
-                .storage
-                .get_l0_by_ids(std::slice::from_ref(&session.l0_index_id))
-            {
-                Ok(rows) => rows.is_empty(),
-                // Fail open, per the comment above.
-                Err(_) => false,
-            };'''
-
+# #917 fix-r1: the two recheck layers (the pre-loop `session_cleared` helper
+# call and the in-lock per-candidate generation recheck) plus the commit-segment
+# scope binding, all verbatim from `process_session` / `session_cleared`. The
+# anchors below must stay byte-identical to the source or the run refuses to
+# start (AnchorExpired).
 BEFORE_CLASSIFY_FIRE = '            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'
 
-HOISTED_RECHECK = '''            let session_cleared = match self
+PRE_LOOP_RECHECK = '''            let session_cleared =
+                self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
+'''
+
+IN_LOOP_RECHECK = '''                if self
+                    .repository
+                    .session_clear_generation(&session.session_key)
+                    != clear_baseline
+'''
+
+HELPER_MARKER = '''        if self.repository.session_clear_generation(session_key) != clear_baseline {
+            return Ok(true);
+        }
+'''
+
+L0_ARM = '            Ok(rows) => Ok(rows.is_empty()),'
+
+CLOSED_ARM = '            Err(StorageError::Closed) => Ok(false),'
+
+NON_CLOSED_ARM = '            Err(error) => Err(HeartbeatError::Storage(error)),'
+
+SCOPE_BINDING = '''                let _commit_scopes = self
+                    .repository
+                    .snapshot_operation_scope()
+                    .map_err(HeartbeatError::File)?;
+'''
+
+# The reviewer's "check once, before the awaits" shape: the marker comparison
+# runs in front of the classify await and both in-flight layers are gone.
+HOISTED_RECHECK = '''            let session_cleared = self
                 .repository
-                .storage
-                .get_l0_by_ids(std::slice::from_ref(&session.l0_index_id))
-            {
-                Ok(rows) => rows.is_empty(),
-                Err(_) => false,
-            };
+                .session_clear_generation(&session.session_key)
+                != clear_baseline;
             self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'''
+
+# The reviewer's "only recheck on the first round" shape: the per-candidate
+# recheck is gated on an empty storedResults list, so every candidate after
+# the first write resurrects.
+FIRST_ROUND_RECHECK = '''                if stored_results_len(trace) == 0
+                    && self
+                        .repository
+                        .session_clear_generation(&session.session_key)
+                        != clear_baseline
+'''
+
+DISABLED_RECHECK = '''                if false
+                    && self
+                        .repository
+                        .session_clear_generation(&session.session_key)
+                        != clear_baseline
+'''
+
+DISABLED_MARKER = '''        if false && self.repository.session_clear_generation(session_key) != clear_baseline {
+            return Ok(true);
+        }
+'''
+
+# The reviewer's "recheck outside the lock" shape: the snapshot scope is
+# acquired and dropped again at once, so a concurrent clearSession runs while
+# the commit segment is between its recheck and its writes.
+DROPPED_SCOPE = '''                let commit_scopes = self
+                    .repository
+                    .snapshot_operation_scope()
+                    .map_err(HeartbeatError::File)?;
+                drop(commit_scopes);
+'''
 
 # (name, path, before, after, bound test, exact runtime anchor)
 cases = [
@@ -95,34 +134,71 @@ cases = [
             }''',
      'matrix_classify_capture_matches_ts',
      '#770 case matrix-single-classify-capture differs'),
-    # #917: the persist-site recheck neutralized — the lookup still runs but
-    # its result is discarded, the removal equivalent that keeps the
-    # persist-site `session_cleared` binding compilable. Without the guard the
-    # cleared session's turn is resurrected into the file stores.
-    ('clear-resurrect-recheck-removed',
-     indexer,
-     '                Ok(rows) => rows.is_empty(),',
-     '                Ok(_) => false,',
-     'matrix_classify_clear_session_no_resurrection',
-     '#917 case matrix-single-classify-clearSession storedResults candidate source differs'),
-    # #917: the recheck hoisted in front of the classify await — the two-edit
-    # shape a plain tuple cannot express. Reading the L0 rows before the
-    # awaits misses a clearSession that lands while classify/createNote are
-    # in flight, so the turn is resurrected exactly as before #917.
+    # #917 fix-r1: both recheck layers removed at once (the round-1 shape,
+    # now split across the helper and the in-lock recheck). The golden
+    # clearSession cell catches the resurrected file and storedResults.
+    dict(name='clear-resurrect-recheck-removed',
+         changes=[(indexer, HELPER_MARKER, DISABLED_MARKER),
+                  (indexer, L0_ARM, '            Ok(_) => Ok(false),'),
+                  (indexer, IN_LOOP_RECHECK, DISABLED_RECHECK)],
+         test='matrix_classify_clear_session_no_resurrection',
+         assertion='#917 case matrix-single-classify-clearSession storedResults candidate source differs'),
+    # #917 fix-r1 (review P0): the recheck hoisted in front of the classify
+    # await and both in-flight layers neutralized — the reviewer's "check
+    # once before the awaits" shape. A clear that lands while the createNote
+    # request is in flight is missed and the turn is resurrected.
     dict(name='clear-resurrect-recheck-before-await',
          changes=[(indexer, BEFORE_CLASSIFY_FIRE, HOISTED_RECHECK),
-                  (indexer, RECHECK_BLOCK, '')],
-         test='matrix_create_note_clear_session_no_resurrection',
-         assertion='#917 case matrix-single-createNote-clearSession storedResults candidate source differs'),
-    # #917: the fail-open arm flipped. Treating a lookup error as cleared
-    # skips the file write in the close cells and drifts them away from the
-    # TS baseline (TS writes the file, then rejects at setPipelineState).
+                  (indexer, PRE_LOOP_RECHECK, ''),
+                  (indexer, IN_LOOP_RECHECK, DISABLED_RECHECK)],
+         test='clear_while_create_note_request_in_flight_discards_persist',
+         assertion="#917 a clear while the createNote request is in flight must discard the turn's persist"),
+    # #917 fix-r1 (review P0): the in-lock recheck only fires while
+    # storedResults is still empty, so a clear that lands while a later
+    # candidate's select is in flight resurrects that candidate.
+    ('clear-resurrect-loop-recheck-first-round-only',
+     indexer,
+     IN_LOOP_RECHECK,
+     FIRST_ROUND_RECHECK,
+     'second_label_select_request_in_flight_clear_discards_persist',
+     "#917 the first label may write before the clear; the second label's in-flight clear must discard its candidate"),
+    # #917 fix-r1 (review P0): the in-lock per-candidate recheck removed
+    # while the pre-loop helper stays — a clear that lands during the select
+    # await (after the pre-loop check) resurrects the routed candidate.
+    ('clear-resurrect-loop-recheck-removed',
+     indexer,
+     IN_LOOP_RECHECK,
+     DISABLED_RECHECK,
+     'clear_during_select_request_in_flight_discards_persist',
+     '#917 a clear while the select request is in flight must discard the routed candidate'),
+    # #917 fix-r1 (review P0): the commit segment no longer holds the snapshot
+    # operation scope across its writes, so a concurrent clearSession runs
+    # while the segment is parked between its recheck and its writes.
+    ('clear-resurrect-recheck-outside-lock',
+     indexer,
+     SCOPE_BINDING,
+     DROPPED_SCOPE,
+     'commit_segment_blocks_concurrent_clear_until_writes_complete',
+     "#917 a concurrent clearSession must block until the commit segment's writes complete"),
+    # #917 fix-r1: the fail-open arm flipped. Treating a Closed lookup as
+    # cleared skips the file write in the close cells and drifts them away
+    # from the TS baseline (TS writes the file, then rejects at
+    # setPipelineState).
     ('clear-resurrect-recheck-fail-closed',
      indexer,
-     '                Err(_) => false,',
-     '                Err(_) => true,',
+     CLOSED_ARM,
+     '            Err(StorageError::Closed) => Ok(true),',
      'matrix_classify_close_matches_ts',
      '#770 case matrix-single-classify-close differs'),
+    # #917 fix-r1 (review P1): a non-Closed L0 read error treated as
+    # not-cleared (fail-open) resurrects the turn instead of failing the
+    # session with the honest storage error.
+    ('clear-resurrect-non-closed-fail-open',
+     indexer,
+     NON_CLOSED_ARM,
+     '            Err(_error) => Ok(false),',
+     'non_closed_l0_read_error_fails_closed',
+     '#917 the session must fail closed with the honest storage error'),
     ('close-rejection-swallowed',
      indexer,
      '''            self.repository

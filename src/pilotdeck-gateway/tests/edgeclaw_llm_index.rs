@@ -4,6 +4,7 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 #[path = "support/llm_stub.rs"]
+#[allow(dead_code)]
 mod llm_stub;
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
