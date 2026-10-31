@@ -2602,3 +2602,8 @@ updated: 2026-10-31 22:35 · by Claude Code 协调者
 - 23:45 宿主分诊（_tmp/20261031-host-triage/TRIAGE.md）：失败与 Node 换版无关。#1145 sdk-sessions-list 7 条锚点过期（fix-r6 改缩进）→ GLM cb8；#1166 两条真缺陷（round6 自测、gateway-entry-guard 扫描器早于锁）→ GLM cb8；#1011 live-e2e / #1166 exact-rerun-receipt 是 Linux 既有平台差异 → #1204。#1140 fix-r3 重登记 a3906eb25 → r4 opus+DeepSeek + macmini 复算。
 - 23:48 #917 远端 22:25 就做完，本机等待进程被 22:0x 的 stop-tree 误杀（参数含 wt 路径）→ 补跑 remote-wait 收回 0b2362762；stop-tree 已排除 remote-wait。→ r4 opus+DeepSeek + mbp2 宿主。
 - 00:05 **#1200（#1199 ci 分流）合入 907988426**：此后只改 state/board.md 的 PR 只跑 scope + schema-baseline。本 PR 即首个实测。
+- 23:58 #1140 r4 两家 0/0 → 评审收敛；事件证据路径悬空（remote-wait 没拷回 evidence/ 子目录）→ 已补拷，记忆补收回步骤；driver 锚不独立（两家同撞，按对抗写者归已知边界）→ 跟进。剩 macmini 复算 + cb8 真实采集（等 #1154）。#1205（首个只改 board 的 state PR）实测快路径中。
+- 00:05 #1145 锚点同步 30ac7b595（sdk-sessions-list 54 个锚点、decode-budget 6/6 --check 全部有效）→ r8：DeepSeek 审全部增量、opus 审 GLM 部分、GLM 审协调者那一行（作者分开计）+ mbp2 全量宿主。
+- 00:06 #917 r4 两家 0/0（修复轮上限后复核收敛）；SELECT/DELETE 非原子等 P2 两家同撞 → 跟进；mbp2 r4 宿主在跑（3 套已 KILLED）→ 最终 opus 块已起。
+- 00:16 #1145 r8：DeepSeek 0/0/0、GLM（协调者那一行）0/0、opus boundary PARTIAL（缺覆盖行）→ 直接跑最终 opus 全量块；mbp2 r8 宿主在跑。#917 最终 opus 块 0/0，等 mbp2 宿主。
+- 00:35 **两小时交接** → `_tmp/20261101-handoff-0035.md`。
