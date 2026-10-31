@@ -1,0 +1,922 @@
+[
+  {
+    "id": "run--signal-sigint",
+    "leaf": "run",
+    "axis": "signal-sigint",
+    "stage": "control",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:control-request (未回复；listener=0)"
+  },
+  {
+    "id": "run--stdin-open-after-response-sigint",
+    "leaf": "run",
+    "axis": "stdin-open-after-response-sigint",
+    "stage": "stdin",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "client:stdin-read-enter (未 EOF；listener=0)"
+  },
+  {
+    "id": "run--query-hello-hold-sigint",
+    "leaf": "run",
+    "axis": "query-hello-hold-sigint",
+    "stage": "query-hello",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-hello-release-sigint",
+    "leaf": "run",
+    "axis": "query-hello-release-sigint",
+    "stage": "query-hello",
+    "signal": "SIGINT",
+    "action": "release",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-hello-reject-sigint",
+    "leaf": "run",
+    "axis": "query-hello-reject-sigint",
+    "stage": "query-hello",
+    "signal": "SIGINT",
+    "action": "reject",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-resume-hold-sigint",
+    "leaf": "run",
+    "axis": "query-resume-hold-sigint",
+    "stage": "query-resume",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-resume-release-sigint",
+    "leaf": "run",
+    "axis": "query-resume-release-sigint",
+    "stage": "query-resume",
+    "signal": "SIGINT",
+    "action": "release",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-resume-reject-sigint",
+    "leaf": "run",
+    "axis": "query-resume-reject-sigint",
+    "stage": "query-resume",
+    "signal": "SIGINT",
+    "action": "reject",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-model-hold-sigint",
+    "leaf": "run",
+    "axis": "query-model-hold-sigint",
+    "stage": "query-model",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-model-release-sigint",
+    "leaf": "run",
+    "axis": "query-model-release-sigint",
+    "stage": "query-model",
+    "signal": "SIGINT",
+    "action": "release",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-model-reject-sigint",
+    "leaf": "run",
+    "axis": "query-model-reject-sigint",
+    "stage": "query-model",
+    "signal": "SIGINT",
+    "action": "reject",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--abort-ok-sigint",
+    "leaf": "run",
+    "axis": "abort-ok-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "ok",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "run--abort-error-sigint",
+    "leaf": "run",
+    "axis": "abort-error-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "error",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "run--abort-hold-sigint",
+    "leaf": "run",
+    "axis": "abort-hold-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "run--second-sigint",
+    "leaf": "run",
+    "axis": "second-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "second": "SIGINT",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投同信号"
+  },
+  {
+    "id": "run--second-sigint-sigterm",
+    "leaf": "run",
+    "axis": "second-sigint-sigterm",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "second": "SIGTERM",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投另一信号"
+  },
+  {
+    "id": "run--terminal-consumed-completed-sigint",
+    "leaf": "run",
+    "axis": "terminal-consumed-completed-sigint",
+    "stage": "terminal",
+    "signal": "SIGINT",
+    "terminal": "completed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "run--terminal-consumed-failed-sigint",
+    "leaf": "run",
+    "axis": "terminal-consumed-failed-sigint",
+    "stage": "terminal",
+    "signal": "SIGINT",
+    "terminal": "failed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "run--terminal-during-abort-open-sigint",
+    "leaf": "run",
+    "axis": "terminal-during-abort-open-sigint",
+    "stage": "abort-terminal",
+    "signal": "SIGINT",
+    "final": false,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "run--terminal-during-abort-final-sigint",
+    "leaf": "run",
+    "axis": "terminal-during-abort-final-sigint",
+    "stage": "abort-terminal",
+    "signal": "SIGINT",
+    "final": true,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "run--signal-sigterm",
+    "leaf": "run",
+    "axis": "signal-sigterm",
+    "stage": "control",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:control-request (未回复；listener=0)"
+  },
+  {
+    "id": "run--stdin-open-after-response-sigterm",
+    "leaf": "run",
+    "axis": "stdin-open-after-response-sigterm",
+    "stage": "stdin",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "client:stdin-read-enter (未 EOF；listener=0)"
+  },
+  {
+    "id": "run--query-hello-hold-sigterm",
+    "leaf": "run",
+    "axis": "query-hello-hold-sigterm",
+    "stage": "query-hello",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-hello-release-sigterm",
+    "leaf": "run",
+    "axis": "query-hello-release-sigterm",
+    "stage": "query-hello",
+    "signal": "SIGTERM",
+    "action": "release",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-hello-reject-sigterm",
+    "leaf": "run",
+    "axis": "query-hello-reject-sigterm",
+    "stage": "query-hello",
+    "signal": "SIGTERM",
+    "action": "reject",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-resume-hold-sigterm",
+    "leaf": "run",
+    "axis": "query-resume-hold-sigterm",
+    "stage": "query-resume",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-resume-release-sigterm",
+    "leaf": "run",
+    "axis": "query-resume-release-sigterm",
+    "stage": "query-resume",
+    "signal": "SIGTERM",
+    "action": "release",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-resume-reject-sigterm",
+    "leaf": "run",
+    "axis": "query-resume-reject-sigterm",
+    "stage": "query-resume",
+    "signal": "SIGTERM",
+    "action": "reject",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-model-hold-sigterm",
+    "leaf": "run",
+    "axis": "query-model-hold-sigterm",
+    "stage": "query-model",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-model-release-sigterm",
+    "leaf": "run",
+    "axis": "query-model-release-sigterm",
+    "stage": "query-model",
+    "signal": "SIGTERM",
+    "action": "release",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--query-model-reject-sigterm",
+    "leaf": "run",
+    "axis": "query-model-reject-sigterm",
+    "stage": "query-model",
+    "signal": "SIGTERM",
+    "action": "reject",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "run--abort-ok-sigterm",
+    "leaf": "run",
+    "axis": "abort-ok-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "ok",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "run--abort-error-sigterm",
+    "leaf": "run",
+    "axis": "abort-error-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "error",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "run--abort-hold-sigterm",
+    "leaf": "run",
+    "axis": "abort-hold-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "run--second-sigterm",
+    "leaf": "run",
+    "axis": "second-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "second": "SIGTERM",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投同信号"
+  },
+  {
+    "id": "run--second-sigterm-sigint",
+    "leaf": "run",
+    "axis": "second-sigterm-sigint",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "second": "SIGINT",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投另一信号"
+  },
+  {
+    "id": "run--terminal-consumed-completed-sigterm",
+    "leaf": "run",
+    "axis": "terminal-consumed-completed-sigterm",
+    "stage": "terminal",
+    "signal": "SIGTERM",
+    "terminal": "completed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "run--terminal-consumed-failed-sigterm",
+    "leaf": "run",
+    "axis": "terminal-consumed-failed-sigterm",
+    "stage": "terminal",
+    "signal": "SIGTERM",
+    "terminal": "failed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "run--terminal-during-abort-open-sigterm",
+    "leaf": "run",
+    "axis": "terminal-during-abort-open-sigterm",
+    "stage": "abort-terminal",
+    "signal": "SIGTERM",
+    "final": false,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "run--terminal-during-abort-final-sigterm",
+    "leaf": "run",
+    "axis": "terminal-during-abort-final-sigterm",
+    "stage": "abort-terminal",
+    "signal": "SIGTERM",
+    "final": true,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "run--control-pending",
+    "leaf": "run",
+    "axis": "control-pending",
+    "stage": "control",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "run--stdin-pending",
+    "leaf": "run",
+    "axis": "stdin-pending",
+    "stage": "stdin",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "run--query-hello-pending",
+    "leaf": "run",
+    "axis": "query-hello-pending",
+    "stage": "query-hello",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "run--query-resume-pending",
+    "leaf": "run",
+    "axis": "query-resume-pending",
+    "stage": "query-resume",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "run--query-model-pending",
+    "leaf": "run",
+    "axis": "query-model-pending",
+    "stage": "query-model",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "run--complete-cleanup",
+    "leaf": "run",
+    "axis": "complete-cleanup",
+    "stage": "complete",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "run--failed-cleanup",
+    "leaf": "run",
+    "axis": "failed-cleanup",
+    "stage": "failed",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "run--unknown-cleanup",
+    "leaf": "run",
+    "axis": "unknown-cleanup",
+    "stage": "unknown",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "run--query-reject-cleanup",
+    "leaf": "run",
+    "axis": "query-reject-cleanup",
+    "stage": "query-reject",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "run--response-error-cleanup",
+    "leaf": "run",
+    "axis": "response-error-cleanup",
+    "stage": "response-error",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "run--control-reject-cleanup",
+    "leaf": "run",
+    "axis": "control-reject-cleanup",
+    "stage": "control-reject",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "resume--signal-sigint",
+    "leaf": "resume",
+    "axis": "signal-sigint",
+    "stage": "control",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:control-request (未回复；listener=0)"
+  },
+  {
+    "id": "resume--stdin-open-after-response-sigint",
+    "leaf": "resume",
+    "axis": "stdin-open-after-response-sigint",
+    "stage": "stdin",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "client:stdin-read-enter (未 EOF；listener=0)"
+  },
+  {
+    "id": "resume--query-hello-hold-sigint",
+    "leaf": "resume",
+    "axis": "query-hello-hold-sigint",
+    "stage": "query-hello",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-hello-release-sigint",
+    "leaf": "resume",
+    "axis": "query-hello-release-sigint",
+    "stage": "query-hello",
+    "signal": "SIGINT",
+    "action": "release",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-hello-reject-sigint",
+    "leaf": "resume",
+    "axis": "query-hello-reject-sigint",
+    "stage": "query-hello",
+    "signal": "SIGINT",
+    "action": "reject",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-resume-hold-sigint",
+    "leaf": "resume",
+    "axis": "query-resume-hold-sigint",
+    "stage": "query-resume",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-resume-release-sigint",
+    "leaf": "resume",
+    "axis": "query-resume-release-sigint",
+    "stage": "query-resume",
+    "signal": "SIGINT",
+    "action": "release",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-resume-reject-sigint",
+    "leaf": "resume",
+    "axis": "query-resume-reject-sigint",
+    "stage": "query-resume",
+    "signal": "SIGINT",
+    "action": "reject",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-model-hold-sigint",
+    "leaf": "resume",
+    "axis": "query-model-hold-sigint",
+    "stage": "query-model",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-model-release-sigint",
+    "leaf": "resume",
+    "axis": "query-model-release-sigint",
+    "stage": "query-model",
+    "signal": "SIGINT",
+    "action": "release",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-model-reject-sigint",
+    "leaf": "resume",
+    "axis": "query-model-reject-sigint",
+    "stage": "query-model",
+    "signal": "SIGINT",
+    "action": "reject",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--abort-ok-sigint",
+    "leaf": "resume",
+    "axis": "abort-ok-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "ok",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "resume--abort-error-sigint",
+    "leaf": "resume",
+    "axis": "abort-error-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "error",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "resume--abort-hold-sigint",
+    "leaf": "resume",
+    "axis": "abort-hold-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "hold",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "resume--second-sigint",
+    "leaf": "resume",
+    "axis": "second-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "second": "SIGINT",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投同信号"
+  },
+  {
+    "id": "resume--second-sigint-sigterm",
+    "leaf": "resume",
+    "axis": "second-sigint-sigterm",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "second": "SIGTERM",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投另一信号"
+  },
+  {
+    "id": "resume--terminal-consumed-completed-sigint",
+    "leaf": "resume",
+    "axis": "terminal-consumed-completed-sigint",
+    "stage": "terminal",
+    "signal": "SIGINT",
+    "terminal": "completed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "resume--terminal-consumed-failed-sigint",
+    "leaf": "resume",
+    "axis": "terminal-consumed-failed-sigint",
+    "stage": "terminal",
+    "signal": "SIGINT",
+    "terminal": "failed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "resume--terminal-during-abort-open-sigint",
+    "leaf": "resume",
+    "axis": "terminal-during-abort-open-sigint",
+    "stage": "abort-terminal",
+    "signal": "SIGINT",
+    "final": false,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "resume--terminal-during-abort-final-sigint",
+    "leaf": "resume",
+    "axis": "terminal-during-abort-final-sigint",
+    "stage": "abort-terminal",
+    "signal": "SIGINT",
+    "final": true,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "resume--signal-sigterm",
+    "leaf": "resume",
+    "axis": "signal-sigterm",
+    "stage": "control",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:control-request (未回复；listener=0)"
+  },
+  {
+    "id": "resume--stdin-open-after-response-sigterm",
+    "leaf": "resume",
+    "axis": "stdin-open-after-response-sigterm",
+    "stage": "stdin",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "client:stdin-read-enter (未 EOF；listener=0)"
+  },
+  {
+    "id": "resume--query-hello-hold-sigterm",
+    "leaf": "resume",
+    "axis": "query-hello-hold-sigterm",
+    "stage": "query-hello",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-hello-release-sigterm",
+    "leaf": "resume",
+    "axis": "query-hello-release-sigterm",
+    "stage": "query-hello",
+    "signal": "SIGTERM",
+    "action": "release",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-hello-reject-sigterm",
+    "leaf": "resume",
+    "axis": "query-hello-reject-sigterm",
+    "stage": "query-hello",
+    "signal": "SIGTERM",
+    "action": "reject",
+    "trigger": "server:query-hello + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-resume-hold-sigterm",
+    "leaf": "resume",
+    "axis": "query-resume-hold-sigterm",
+    "stage": "query-resume",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-resume-release-sigterm",
+    "leaf": "resume",
+    "axis": "query-resume-release-sigterm",
+    "stage": "query-resume",
+    "signal": "SIGTERM",
+    "action": "release",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-resume-reject-sigterm",
+    "leaf": "resume",
+    "axis": "query-resume-reject-sigterm",
+    "stage": "query-resume",
+    "signal": "SIGTERM",
+    "action": "reject",
+    "trigger": "server:query-resume + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-model-hold-sigterm",
+    "leaf": "resume",
+    "axis": "query-model-hold-sigterm",
+    "stage": "query-model",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-model-release-sigterm",
+    "leaf": "resume",
+    "axis": "query-model-release-sigterm",
+    "stage": "query-model",
+    "signal": "SIGTERM",
+    "action": "release",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--query-model-reject-sigterm",
+    "leaf": "resume",
+    "axis": "query-model-reject-sigterm",
+    "stage": "query-model",
+    "signal": "SIGTERM",
+    "action": "reject",
+    "trigger": "server:query-model + client:listeners-ready；后续动作等 client:abort-enter"
+  },
+  {
+    "id": "resume--abort-ok-sigterm",
+    "leaf": "resume",
+    "axis": "abort-ok-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "ok",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "resume--abort-error-sigterm",
+    "leaf": "resume",
+    "axis": "abort-error-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "error",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "resume--abort-hold-sigterm",
+    "leaf": "resume",
+    "axis": "abort-hold-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "hold",
+    "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "resume--second-sigterm",
+    "leaf": "resume",
+    "axis": "second-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "second": "SIGTERM",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投同信号"
+  },
+  {
+    "id": "resume--second-sigterm-sigint",
+    "leaf": "resume",
+    "axis": "second-sigterm-sigint",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "second": "SIGINT",
+    "action": "hold",
+    "trigger": "首次 server:abort_turn 后再投另一信号"
+  },
+  {
+    "id": "resume--terminal-consumed-completed-sigterm",
+    "leaf": "resume",
+    "axis": "terminal-consumed-completed-sigterm",
+    "stage": "terminal",
+    "signal": "SIGTERM",
+    "terminal": "completed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "resume--terminal-consumed-failed-sigterm",
+    "leaf": "resume",
+    "axis": "terminal-consumed-failed-sigterm",
+    "stage": "terminal",
+    "signal": "SIGTERM",
+    "terminal": "failed",
+    "action": "ok",
+    "trigger": "client:terminal-consumed（--stream-json 完整 result/error 行；final=false）"
+  },
+  {
+    "id": "resume--terminal-during-abort-open-sigterm",
+    "leaf": "resume",
+    "axis": "terminal-during-abort-open-sigterm",
+    "stage": "abort-terminal",
+    "signal": "SIGTERM",
+    "final": false,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "resume--terminal-during-abort-final-sigterm",
+    "leaf": "resume",
+    "axis": "terminal-during-abort-final-sigterm",
+    "stage": "abort-terminal",
+    "signal": "SIGTERM",
+    "final": true,
+    "action": "ok",
+    "trigger": "server:submit_turn → SIG → server:abort_turn → terminal；client:terminal-consumed 后/stream 完成后回复 abort"
+  },
+  {
+    "id": "resume--control-pending",
+    "leaf": "resume",
+    "axis": "control-pending",
+    "stage": "control",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "resume--stdin-pending",
+    "leaf": "resume",
+    "axis": "stdin-pending",
+    "stage": "stdin",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "resume--query-hello-pending",
+    "leaf": "resume",
+    "axis": "query-hello-pending",
+    "stage": "query-hello",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "resume--query-resume-pending",
+    "leaf": "resume",
+    "axis": "query-resume-pending",
+    "stage": "query-resume",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "resume--query-model-pending",
+    "leaf": "resume",
+    "axis": "query-model-pending",
+    "stage": "query-model",
+    "action": "hold",
+    "trigger": "对应 server 请求或 client:stdin-read-enter；不投信号、不回复"
+  },
+  {
+    "id": "resume--complete-cleanup",
+    "leaf": "resume",
+    "axis": "complete-cleanup",
+    "stage": "complete",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "resume--failed-cleanup",
+    "leaf": "resume",
+    "axis": "failed-cleanup",
+    "stage": "failed",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "resume--unknown-cleanup",
+    "leaf": "resume",
+    "axis": "unknown-cleanup",
+    "stage": "unknown",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "resume--query-reject-cleanup",
+    "leaf": "resume",
+    "axis": "query-reject-cleanup",
+    "stage": "query-reject",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "resume--response-error-cleanup",
+    "leaf": "resume",
+    "axis": "response-error-cleanup",
+    "stage": "response-error",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  },
+  {
+    "id": "resume--control-reject-cleanup",
+    "leaf": "resume",
+    "axis": "control-reject-cleanup",
+    "stage": "control-reject",
+    "action": "none",
+    "trigger": "终态/拒绝自然退出；观察 listener 移除、close、process exit"
+  }
+]
