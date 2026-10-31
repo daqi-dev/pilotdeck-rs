@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 20:20 · by Claude Code 协调者
+updated: 2026-10-31 22:35 · by Claude Code 协调者
 - #1011 | impl | doing | PR #1175 第一步（TS 矩阵 + 金样）r1 opus + GLM 0/0（P2×2）；本机宿主在跑 → 第二步 Rust 实现 + 两条 P2 → Codex（`_tmp/20261031-p2-1011-phase2/extra.md`）
 - #1145 | impl | doing | PR #1148 r5 GLM 0/0 但 abort 期限洪泛不触发升 P1 → Codex fix-r5；mbp2 r5m 在跑；RST 映射跟进 #1178
 - #1166 | impl | doing | PR #1172（M6）r3 GLM 尺子 P1（跨树 target 归属）+ 两家同撞锁外 bootstrap → Codex fix-r4；余项 #1180
@@ -12,8 +12,6 @@ updated: 2026-10-31 20:20 · by Claude Code 协调者
 - #133 | impl | doing | Linux 非法 UTF-8 dirent 真实对拍 + #117 errno Linux（同 PR）→ GLM，cb8 实跑
 - #132 | impl | doing | 第一步 TS 原件矩阵 → GLM；第二、三步等 #1154 合入
 - codex | coord | blocked | Codex 额度用尽，11-04 14:36 恢复；在途 Codex 单已转 GLM 接续
-- #1183 | coord | human | #1177 D3/D4 自决待复核
-- #1191 | coord | human | cb8 远端实现车道是否放 llm-center key
 - #1168 | impl | doing | native-topology 信号矩阵（#590 前置）→ GLM
 - A5.4 | coord | doing | 子代理梳理剩余定标范围（`_tmp/20261031-a54-scope/SCOPE.md`）→ 拆包解锁 #1140 判分接线 / #590 / D4
 - #589 | impl | blocked | 关单前置只剩 #1011（#1010 #1019 #1020 已关）
@@ -2571,3 +2569,26 @@ updated: 2026-10-31 20:20 · by Claude Code 协调者
 - 20:02 本机负载 142（删 cargo-target 后多单冷编译，4 cargo × 默认 10 jobs）→ cargo-gate shim 默认 CARGO_BUILD_JOBS=4（cp -p 保执行位）。#1154 r3 DeepSeek P1×3：差异账本被原地改写（尺子 P1）、negative_proxy 守护集漏判官 pairing/tests.rs、宿主证据 → GLM fix-r3（末轮）。在途 10 单 > 在审 8，暂不开 A8 新线。
 - 20:16 #1140（A5.4 包 3 判分接线）GLM 交付 3bef6fafc → check_frozen --write 重登记 5314d8799，PR #1196 draft；r1 opus + DeepSeek + macmini 官方复算；cb8 真实采集等 #1154。
 - 20:20 **两小时交接** → `_tmp/20261031-handoff-2020.md`。待人：#1183、#1191、Node 基线卡 `state/decisions-20261031-node-baseline.md`（AI 代批待复核）。
+- 20:32 **漏看人回复**：每轮跑的 scripts/human-comments.sh 不存在、2>/dev/null 吞错 → #1191（18:47）、#1183（20:22）漏 1.5 h；已改正确路径，记忆补规则。#1183 D3 A D4 A 关单；#1191 A：ZAI key（单行、600、stdin）放 cb8 / mbp2 / macmini，远端 worker 车道交子代理搭建。Node 基线人定 A，macmini / mbp2 源码对齐交子代理。规则审计交子代理（_tmp/20261031-rules-audit/）。#1140 r1 DeepSeek P1（collect 产物与 --native-capture 判分三处形状不兼容）→ GLM fix-r1。#1168 fix-r3（根因：负控下观察器未发布，门 10→45 s，掩码断言原样保留）→ r4。
+- 20:40 规则审计 _tmp/20261031-rules-audit/AUDIT.md：主仓停旧分支（读旧 CLAUDE.md）→ 已切 origin/main；评审家族：机械登记 / state 卡提交不计作者，卡 decisions-20261031-review-family（AI 代批待复核）。DeepSeek llm-center key 放三台宿主（人授权）。#1166 cb8 r6 大面积失败 = 同一处 5 轮补丁自相矛盾（mtime 下界假 FAIL、兄弟脚本只认树内 target、写死旧 SHA）→ 停修补，按卡 decisions-20261031-1166-target-redesign 收敛规格重做 → GLM。
+- 20:43 自查：主仓切 origin/main 后 glm_impl.py（导入主仓 scripts/run-review-roles.py）因 runner_env 签名变了而崩，#1166 redesign 一启动即 exit 1 → glm_impl 兼容两种签名后重派。
+- 20:46 #917 fix-r2 c457f1933（代次改在 L0 删除完成后递增）→ r3 opus+DeepSeek。#1168 r4：负控 14/14 KILLED、test_signals OK，唯一失败是 Rust-sidecar-native 一格 sidecar 握手超时（fix-r3 只改测试文件；r3 同格 PASS；macmini 负载 14、3 条链）→ topology 单项改在空闲 mbp2 重跑 r4b 核偶发。
+- 20:49 #1136 cb8 r3c：CLI 定向 6 套 Linux 全绿（定向写进 neg.sh 首次跑通）；仅 2 INVALID 非本单问题——对拍锁 180 s 超时（同机 #1166 负控持锁）与 cb8 ICU 77.1 重生成不符 → 本机单项补跑 r3l。
+- 20:59 远端 GLM worker 车道建成（_tmp/20261031-remote-worker/，三台冒烟 exit=0；密钥只在远端读、回收前按字节扫）。#132a 本机宿主发现孤儿旧实例与新实例同树并发 → 全杀后单实例重起（同晚第 2 次，记忆补）。#133 fix-r1 5bcc7ad27 → r2 opus+DeepSeek + cb8（ICU 78.2 Node）。
+- 21:03 #133 cb8 r2：ICU 78.2 / uv 1.52.1 门通过；run-linux.sh 仓库根少算一层（src/src/…）→ 协调者一行修正 c3397f61c（含 Claude 尾注 → 本单此后评审改 GLM + DeepSeek），cb8 r2b 重跑。冷存储迁移完成。
+- 21:05 #917 r3：opus 0/0/0；DeepSeek P1×2——会话级清除代次误伤清除后新捕获的 turn（丢数据按 P0）、parked 测试分不出纯回退 → GLM fix-r3（末轮）**首次派远端 cb8**（remote-worker.sh）。规则：修复轮默认远端（记忆 remote-worker-default）。
+- 21:08 交付监视器 v8 以 mtime 作状态，主仓 git switch 改 mtime → 数百条历史交付重报、auto-receive 重复触发（均按「树无改动」跳过，无误推）→ v9 改内容哈希、按当前状态重建基线。#1154 fix-r3 59755497d → r4 opus+DeepSeek+macmini（旧 r3 宿主两侧已停）。
+- 21:09 macmini / mbp2 也从源码对齐 ICU 78.2 / uv 1.52.1（报告 _tmp/20261031-node-baseline/darwin-build.md）；宿主链换版：chain18 / mbp2-v2 / cb8-v2，入口 review-phase6 / host-only5 / host-only-mbp2-v2 / host-only-cb8-v2。
+- 21:20 #1168 r4b（mbp2）topology run + controls PASS → 握手超时坐实为 macmini 负载偶发；两家 0 P0/P1 → 跑最终 opus 全量块待入队。#1136 r3：opus 0/0/0、DeepSeek 0/0；cb8 两个 INVALID 本机补跑 KILLED；macmini r3m（19:19 起）在跑。#133 cb8 r2b：#133 正控 + 4/4 负控 KILLED、#117 正控通过，仅 #117 负控因 difflib 收到 PosixPath 崩 → GLM fix-r2 派远端 cb8。#1011 fix-r1 → r3 opus+DeepSeek + cb8（chain-cb8-v2）。
+- 21:29 人认可 → 建 ~/ws/pdrs-ops（registry.tsv 唯一登记处、bin/ 固定名字由 ops-sync 生成、round-start 每轮机检、本地 git）；循环提示词加第 0 步；记忆 pdrs-ops-entries。发现今天一直误用 local-host-queue v1（v2 已于 10-30 出）。real.md 一句指针待随 22:20 交接 state PR（_tmp/20261031-state-staging/real-md-line.txt）。#1154 r4 DeepSeek P1-1 仲裁降 P2 → #1198（M6）。
+- 21:32 #1140 fix-r1（collect 产物与判分入口 schema 对齐）→ 重登记 025b7741f（机械提交带 Claude 尾注；review-family 卡第 2 条修订：署名照写、不计作者谱系）→ r2 opus+DeepSeek + macmini 复算（经 ~/ws/pdrs-ops/bin/review）。
+- 21:39 #1168 收敛（最终 opus 全量 0/0；macmini r4 + mbp2 r4b 宿主）→ PR #1187 ready 入队。#1199 ci 纯文档跳过重 job（人批；需精确放宽 #904/#918 守卫）→ GLM 远端 mbp2。磁盘修剪回 172 GiB。
+- 21:47 本机负载降到 6（修复轮远端化见效）。评审在宿主回传前交卷、把「缺宿主证据」报 P1 屡次白耗一轮 → pdrs-ops/lib/focus-header.md（宿主证据由协调者入队前核）。#132a 本机宿主 38 KILLED + regenerates 2 ok → 最终 opus 全量块。#1011 r3 DeepSeek P1 = 宿主证据（cb8 在跑）。
+- 21:51 #1140 r2：opus 0/0；DeepSeek P1 = 冻结件真实数据复算 + cb8 真实采集（协调者，等 #1154）；固定端口假 FAIL、三条自比 require → GLM fix-r2 派远端 cb8；排队中的 r2 macmini 复算先停（修后 head 会变）。
+- 22:00 #1166 r7：opus P1（scripts/smoke/edgeclaw.py build() 写死只认本树 _build，协调者实测 test_smoke 失败）+ DeepSeek P1（fixtures/README:48 仍写 mtime 下界）→ GLM 远端 cb8，轮次目录放 hold/ 下（守望扫不到，不自动推送），等 cb8 / macmini r7 宿主在 22e36b7a4 上跑完再手动收货，避免分支前移作废宿主。
+- 22:04 #1199：本机孤儿 claude -p 与远端 mbp2 worker 同时做完同一单（远端收回 exit=97）→ 孤儿成果存 orphan-local/，树复位后应用远端补丁交 auto-receive。停树落成脚本 ~/ws/pdrs-ops/bin/stop-tree（命令行 + cwd 双匹配，探针负控通过）；另清掉 #1166、#1140 本机孤儿（未写入）。
+- 22:08 #1168 合入 b3b1c36b6（收尾完成）。#1199 交付 543386953（PR #1200）→ r1 opus+DeepSeek；探针 PR #1201（只改 state/，base=#1199 分支）实测新规则。#133 远端补丁落地 b08b7b57f → r3 + cb8；#917 本机孤儿半截改动存档复位，等 cb8 远端交付。#917 r3 宿主 lib 两个信号测试「worker 30 s 无输出」= macmini 负载 14 时偶发（其余 11 次宿主均过）。
+- 22:12 **#1199 探针实测**：只改 state/ 的 #1201 整轮 CI 44 s（rust / a51 / observer skipped，check pass），#1200 自身改 .github 照常全量 → 证据贴 #1200，探针关闭删分支。#132a 收敛 → PR #1193 ready 入队。round-start 抓到主仓落后 → 已切。
+- 22:21 #1199 r1 opus P0（白名单目录含尺子输入：docs/research、docs/plan、state/decisions-* 被 check_ledger / ui-server check_frozen 等读）成立 → 白名单收窄为单一路径 state/board.md + 「尺子引用 board」机检 → GLM 远端 mbp2。#133 + #117 收敛（cb8：Linux 真实对拍 5+5 负控 KILLED、lib 绿）→ 最终 opus 块。合并队列监视器被 stop-tree 误杀（cwd 在树内）→ stop-tree 排除守望进程、监视器从主仓根起。人要求重读规则 → _tmp/20261031-rules-reread/NOTES.md（回复改短、剩 P2 一家复核、在审 >8 不开新单、不再新增工具、real.md 资源现实待更新）。
+- 22:23 #1166 hold 目录没挡住守望（深度 3 内），fix 8f6511e9c 自动推送致 r7 宿主作废 → 停干净，r8 opus+DeepSeek + cb8 + mbp2（换 mbp2 均衡负载）。
+- 22:35 **两小时交接** → `_tmp/20261031-handoff-2235.md`。

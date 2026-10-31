@@ -44,6 +44,8 @@
   - `channels.json`：结构化清单（通道名、模型、基址、密钥变量）
   - `locations.md`：每个配置的文件路径与行号
   - `README.md`：清单用途与维护约定
+  - 本机协调工具（10-31 人认可）：在仓库外 `~/ws/pdrs-ops/`（本地 git，不入库、不评审，只做编排不做判定）；入口与当前版本以其 `registry.tsv` 为准。宿主 Node 基线：本机 homebrew node@22（ICU 78.2 / libuv 1.52.1），cb8 / mbp2 / macmini 已从源码对齐（`state/decisions-20261031-node-baseline.md`）。
+  - 2026-10-31 现状：Codex 额度用尽（11-04 恢复）；实现以 GLM 为主，评审 opus + DeepSeek。GLM / DeepSeek 的 llm-center key 已放 cb8 / mbp2 / macmini（人批 #1191，DeepSeek 可高并发），实现默认派远端。
 - 硬件 / 网络：
 - 人手：Claude 协调，尽量把活派给其他智能体，智能体可以支持并发。
 
