@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::json;
 use signals::Signals;
 use std::io::{IsTerminal, Read};
-use tokio::time::{Instant, timeout_at};
+use tokio::time::Instant;
 use transport::{QueryFrame, Transport, string_field};
 
 pub(super) fn run(
@@ -397,15 +397,7 @@ async fn within_abort_deadline<T>(
     deadline: Instant,
     request: impl std::future::Future<Output = Result<T, Failure>>,
 ) -> Result<T, Failure> {
-    // Timeout polls its inner future first; a continuously ready stream can
-    // also starve the timer driver. Check the clock after every ready result,
-    // independently of both the inner future and the driver's last tick.
-    match timeout_at(deadline, request).await {
-        Ok(result) if Instant::now() < deadline => result,
-        _ => Err(Failure::Error(
-            "Gateway request timed out: abort_turn".into(),
-        )),
-    }
+    transport::within_deadline(deadline, request, "Gateway request timed out: abort_turn").await
 }
 
 fn retain_query(error: Failure, abort_ids: Vec<String>, deadline: Option<Instant>) -> QueryOutcome {
