@@ -18,7 +18,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const MAX_BYTES: u64 = 50 * 1024 * 1024;
+/// Also the disposable projection-checkpoint read bound (#1011): a cache
+/// file past it is treated as missing rather than read and parsed whole.
+pub(crate) const MAX_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

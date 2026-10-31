@@ -28,4 +28,6 @@ cargo test --offline -p pilotdeck-gateway --lib \
 
 supplemental 行有三种形状：`cold-*` 是顶层 before/held/settled；`invalid-*`、`turn-result`、`save-reject`、`capture-race`、`predecessor-reject` 只有 before/settled；`predecessor-pending`/`cancel-waiter` 把 held 观测嵌在 `details.held`（cancel-waiter 另有 `details.waiter`）。Rust 消费方（`projection_cache_tests.rs`）按各自行形状读取，不改 oracle 判定内容。
 
-第二阶段已接线：`runtime/session/projection_cache.rs` 提供投影检查点与 FIFO 存储队列，`factory.rs` 的持久会话投影接入可丢弃 checkpoint，`projection_cache_tests.rs` 逐格断言 oracle。产品负控覆盖缓存过期不刷新、损坏缓存不拒绝、并发丢条、turn_result 不调度、capture 只试一次、生成器遗留与 owner、守卫清单缺 lib.rs；ignored 基准 `projection_cache_append_benchmark` 量 metadata append 的 O(n²) 修复（不进 CI 判定）。
+第二阶段已接线：`runtime/session/projection_cache.rs` 提供投影检查点与 FIFO 存储队列，`factory.rs` 的持久会话投影接入可丢弃 checkpoint，`projection_cache_tests.rs` 逐格断言 oracle。产品负控覆盖缓存过期不刷新、损坏缓存不拒绝、并发丢条、turn_result 不调度、capture 只试一次、生成器遗留与 owner、守卫清单缺 lib.rs；ignored 基准 `projection_cache_append_benchmark` 量 metadata append 的 O(n²) 修复（不进 CI 判定）。**缩围说明：Rust 检查点只落 2/13 行（`agent-transcript.metadata`、`agent-transcript.turn-summary`，见 `envelope()`），conversation 恒走日志重放，其余 11 行未注册投影不伪造空缓存，冷启动重放**（已按 plan 预注册）；矩阵判据对齐的是投影值、持久日志、writer 序号与缓存字节/水位，不是 TS 判定表的全部字段。
+
+fix-r1：检查点读取复用 transcript 侧 50MiB 上限（`crate::storage::TRANSCRIPT_MAX_BYTES`，超限视为缺失走重放，差异登记见 `specs/gateway-parity/diffs/A7.2-SESSION-PROJECTION-CHECKPOINT-BOUND-001.md`）；`fresh-*`/`stale-*`/`cold-fresh`/`cold-stale` 断言 `hydrated_rows == 2`、`invalid-codec` 断言 2（codec 行单独回退），负控相应补 `oversized-checkpoint-accepted`、`hydrate-branch-removed`、`envelope-over-rejected`。

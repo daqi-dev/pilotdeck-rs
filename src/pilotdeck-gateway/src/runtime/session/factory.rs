@@ -691,6 +691,9 @@ impl FactoryStorage {
             .map_err(|e| RuntimeError::new(e.to_string()))?
         })
     }
+    /// Drains the queue and captures the projection checkpoint. No port calls
+    /// this yet; it is the storage flush / checkpoint binding the projection
+    /// cache tests exercise, matching TS `storage.flush()`.
     pub fn flush(&self) -> BoxFuture<RuntimeResult> {
         let writer = self.recorder.writer().clone();
         let cache = self.cache.clone();

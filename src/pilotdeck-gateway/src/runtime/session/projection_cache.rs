@@ -15,6 +15,14 @@ pub trait ProjectionCheckpointStore: Send + Sync {
 pub struct FileProjectionCheckpointStore(pub PathBuf);
 impl ProjectionCheckpointStore for FileProjectionCheckpointStore {
     fn load(&self) -> Option<JsValue> {
+        // The checkpoint is a disposable cache, never authoritative. Past the
+        // transcript read bound it is already unusable for a writable chain, so
+        // treat it as missing and let restore replay the transcript instead of
+        // allocating and parsing an unbounded file.
+        let len = std::fs::metadata(&self.0).ok()?.len();
+        if len > crate::storage::TRANSCRIPT_MAX_BYTES {
+            return None;
+        }
         parse_json(&std::fs::read_to_string(&self.0).ok()?).ok()
     }
     fn save(&self, envelope: &JsValue) -> RuntimeResult {
