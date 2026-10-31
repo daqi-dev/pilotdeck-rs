@@ -2607,3 +2607,12 @@ updated: 2026-10-31 22:35 · by Claude Code 协调者
 - 00:06 #917 r4 两家 0/0（修复轮上限后复核收敛）；SELECT/DELETE 非原子等 P2 两家同撞 → 跟进；mbp2 r4 宿主在跑（3 套已 KILLED）→ 最终 opus 块已起。
 - 00:16 #1145 r8：DeepSeek 0/0/0、GLM（协调者那一行）0/0、opus boundary PARTIAL（缺覆盖行）→ 直接跑最终 opus 全量块；mbp2 r8 宿主在跑。#917 最终 opus 块 0/0，等 mbp2 宿主。
 - 00:35 **两小时交接** → `_tmp/20261101-handoff-0035.md`。
+- 01:03 #1185（#917）、#1208 合入。在审产品单降到 7（另 3 个是旧协调 PR）→ 开 A8 新线 #1209（A8.4-pr1 原生 HTTP 基础路由）→ GLM 远端 cb8。
+- 01:04 #1011 fix-r2 5a02924da：GLM 实测推翻我的「拒绝点前移」推断——是新增同消息第二道守卫（TS assertActive 移植，TS 实测一致），负控改双守卫复合变异 → r4 opus+DeepSeek + mbp2（macOS，同时覆盖 live-e2e）。
+- 01:14 #1166 r8-host-fix 3556a6707 → r9 opus+DeepSeek + cb8；宿主清单补 hooks-output 第二参数（exec.rs sha256，分诊 1c）。
+- 01:19 #1011 r4 两家 0/0（判杀覆盖恢复：复合 + 两条单守卫变异均 KILLED）；P2 → 跟进；最终 opus 块已起，等 mbp2 宿主。
+- 01:40 #1166 r9：DeepSeek 0/0；opus P1（published_module 发布的 negative_process 副本 _HELD 为空 → 同进程自锁）经 cb8 实测确认（round6 等锁 900 s 超时 source lock busy）→ GLM mbp2 修（进程级可重入 / 显式持锁凭据，不许去锁或缩超时）；cb8 r9 宿主已停。
+- 02:01 #1140 r4 复算在 macmini 排队 2 h 16 min：碰对拍的链要先拿 28999 端口锁，被 #1136 长链（6.5 h）占住 → 改派 mbp2（端口锁独立）。
+- 02:07 #1166 r9-fix 29bb76a1b（可重入登记表挪到进程级）→ r10 opus+DeepSeek + cb8。
+- 02:18 #1154 macmini：native-archive-cwd_negative_proxy 1 INVALID = 正控 archive_nullish_project_key_uses_the_proxy_boot_fallback 3 s 读超时（macmini 同时跑 2 条长链）；本机连跑 3 次都过（每次 0.03 s）。DEADLINE=3 s 是 main 上既有常量，非本 PR 引入 → 判负载偶发，链跑完后单项重跑这一套。
+- 02:32 **两小时交接** → `_tmp/20261101-handoff-0232.md`。
