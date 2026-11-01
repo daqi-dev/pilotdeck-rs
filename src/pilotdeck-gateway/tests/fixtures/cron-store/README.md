@@ -40,7 +40,7 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test
 | migration 锁（2） | stale-lock-removed（11 分钟陈旧）、fresh-lock-times-out（60 秒新鲜锁） |
 
 † locale 门控。
-‡ 绑定测试 Linux-only（#1289，APFS/HFS+ 拒绝非 UTF-8 文件名）：非 Linux 宿主该行记 SKIPPED——不计 KILLED 也不计 INVALID，不使整轮失败；entry-lossy-home 的杀伤证据须在 Linux 宿主（cb8 / CI Linux）跑出，darwin 记 SKIPPED。
+‡ 绑定测试 Linux-only（#1289，APFS/HFS+ 拒绝非 UTF-8 文件名）：非 Linux 宿主该行记 SKIPPED——不计 KILLED 也不计 INVALID，不使整轮失败；entry-lossy-home 的杀伤证据须在 cb8 等 Linux 宿主跑负控脚本（CI 只跑 Rust 正控，不跑负控脚本——entry-lossy-home 的杀伤证据只来自 Linux 宿主负控），darwin 记 SKIPPED。
 
 ## 负控
 
@@ -78,7 +78,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cron-store/negative_controls.py 
 CARGO_TARGET_DIR=/absolute/build/dir python3 -I src/pilotdeck-gateway/tests/fixtures/cron-store/negative_controls.py /tmp/fresh-cron-store-negative [mutation ...]
 ```
 
-**执行记录**：脚本要求树等于已提交状态（`mutating_sources` 的 HEAD 守卫，任一守卫文件或整个 `src/` 树脏即拒跑）。#1289 提交后在 macOS（darwin）宿主全量实跑一次：20 KILLED、1 行因绑定测试 Linux-only 记跳过（SKIPPED）、EXIT=0（证据见该轮目录）；`entry-lossy-home` 须在 Linux 宿主（cb8 / CI Linux）跑，darwin 记 SKIPPED，Linux 全量预期 21 KILLED。更早轮次源码未提交时曾用等价脚本（fix-r2 证据目录 `sample_negative.py`，与 fix-r1 的 `manual-mutations.py` 同一序列）手动验证：快照字节 → 应用变异 → `cargo test --no-run` 编译 → 被绑测试 `--exact` 实跑 → 恢复并逐字节校验；fix-r2 抽样 5 项（entry-lossy-home / entry-cwd-unconditional / lock-guard-removed / tail-entry-never-removed / concurrency-serialization-removed）全 KILLED。
+**执行记录**：脚本要求树等于已提交状态（`mutating_sources` 的 HEAD 守卫，任一守卫文件或整个 `src/` 树脏即拒跑）。改后脚本（`SKIPPED`/`name` 记账）的全量跑由协调者在宿主完成：macmini（darwin）20 KILLED + 1 SKIPPED（`entry-lossy-home` 行，绑定测试 Linux-only）、cb8（Linux）21 KILLED（协调者宿主证据，见 PR #1291 正文）；CI 只跑 Rust 正控，不跑负控脚本，故 `entry-lossy-home` 的杀伤证据只来自 Linux 宿主负控（cb8），CI 不覆盖。更早轮次源码未提交时曾用等价脚本（fix-r2 证据目录 `sample_negative.py`，与 fix-r1 的 `manual-mutations.py` 同一序列）手动验证：快照字节 → 应用变异 → `cargo test --no-run` 编译 → 被绑测试 `--exact` 实跑 → 恢复并逐字节校验（改前证据：该序列不产生 SKIPPED/name 记账，不作为改后脚本行为的证据）；fix-r2 抽样 5 项（entry-lossy-home / entry-cwd-unconditional / lock-guard-removed / tail-entry-never-removed / concurrency-serialization-removed）全 KILLED——该抽样早于 #1289 的 Linux-only 门（当时守卫为 `#[cfg(unix)]`，APFS/HFS+ 宿主建不出非 UTF-8 夹具、正控即失败，样本必然出自可建夹具的宿主），#1289 起 darwin 宿主按上述规则对 entry-lossy-home 记 SKIPPED。
 
 非 cell 的守卫测试：`migration_non_utf8_home_keeps_one_physical_key`（Linux-only，#1289：APFS/HFS+ 拒绝非 UTF-8 文件名（EILSEQ），macOS 既建不出夹具、真实用户也不存在非 UTF-8 home，故 `#[cfg(target_os = "linux")]`，Linux 宿主与 CI 照跑；非 UTF-8 home + 同目录 projectKey，P1 双 key 回归）、`migration_absolute_home_survives_deleted_cwd`（父测试经 `run_cases` 拉起 `#[ignore]` worker `cron_deleted_cwd_worker`，worker 删除自身 cwd 后以绝对 home 跑迁移）、`panicking_migration_body_still_releases_the_lock`（warn 里 panic 的 logger + `catch_unwind`，断言锁文件已删）、`store_tail_entry_removed_after_uncontended_mutation`（完成 mutation 后 `TASK_FILE_TAILS` 条目删除，对齐 CronTaskStore.ts:168-172；等待者持有克隆时不删，串行性由并发测试守卫）。`blocked-dir-tasks-eacces` 的重放在 `geteuid()==0` 时跳过（root 可读 000 文件，该 cell 会因 warning/tree 不符而误报；读错误分支由 EISDIR cell 与 `read-tasks-error-aborts` 变异覆盖），chmod 恢复按保存的原 mode 而非固定 644。
 
