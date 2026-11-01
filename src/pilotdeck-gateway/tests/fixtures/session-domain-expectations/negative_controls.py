@@ -17,11 +17,26 @@ change its verdict exactly as the #1177 review demanded:
   whole derivation check;
 * restored: after the bytes are put back, the bound control fails again.
 
+#1190: every canonical-output require is covered -- frames, durable statuses,
+registry events / state / result, and the inapplicable-registry shape.  The
+inapplicable require sits behind the structure applicability clause and the
+registry.applicable scope surface (defense in depth), so its bound control
+relaxes exactly those two earlier rejections inside its own run; deleting the
+require must then let that corruption through.
+
 Every mutant is compiled before it runs.  All selected rows run to
 completion; any non-KILLED row is a nonzero exit.  A stale anchor or a failed
 compile is INVALID and keeps going.  ``mutating_sources`` refuses files that
 differ from HEAD, so this runner needs a real A5.2a ``--source`` and is meant
 for the post-commit host run; an uncommitted tree is INVALID, never SURVIVED.
+
+The case counts are never pinned in prose: they are derived from the panel's
+``EXPECTATION_CASES`` at run time, written to ``derived-counts.json`` in the
+evidence directory, and the binding tables below are machine-checked against
+that same table (every bound/unaffected entry must be registered with its
+claimed rule, and every ``EXPECTATION_RUST_DERIVATION`` control must be
+exercised by at least one mutation), so a renamed, reruled or unbound control
+fails the run instead of silently drifting the documented count.
 
 Per-row results live in memory only.  ``summary.json`` is published exactly
 once, after ``mutating_sources`` restored every guarded file and verified it
@@ -31,6 +46,7 @@ every already-recorded row and publishes INVALID instead of a false green
 summary, and the payload is written to a sibling temp file and renamed.
 """
 import argparse
+import ast
 import json
 from pathlib import Path
 import sys
@@ -42,6 +58,7 @@ from negative_suite import invalidate_completed, publish_summary
 ROOT = Path(__file__).resolve().parents[5]
 SESSION = ROOT / 'scripts/gateway-parity/session_domain.py'
 COMMON = ROOT / 'scripts/gateway-parity/common.py'
+PANEL = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 RUN_CONTROL = Path(__file__).resolve().with_name('run_control.py')
 
 MUTATIONS = [
@@ -62,11 +79,31 @@ MUTATIONS = [
      "            require(registry['result'] == canonical['result'], 'EXPECTATION_RUST_DERIVATION',\n"
      "                    case + ': rust registry result differs from the D4-B canonical output')\n",
      ""),
+    # The frames require (the post-prefix enqueue order) is deleted (#1190).
+    ('drop-frames-require', SESSION,
+     "        require(tuple(row['rust']['frames']) == canonical['frames'], 'EXPECTATION_RUST_DERIVATION',\n"
+     "                case + ': rust frames differ from the D4-B canonical output')\n",
+     ""),
+    # The durable-statuses require is deleted (#1190).
+    ('drop-durable-status-require', SESSION,
+     "        require(tuple(row['rust']['durableStatus']) == canonical['durableStatus'],\n"
+     "                'EXPECTATION_RUST_DERIVATION',\n"
+     "                case + ': rust durable statuses differ from the D4-B canonical output')\n",
+     ""),
+    # The inapplicable-registry require is neutralized: the branch body must
+    # stay a statement, so the require becomes ``pass`` (#1190).
+    ('drop-registry-inapplicable-require', SESSION,
+     "            require(registry == {'applicable': False}, 'EXPECTATION_RUST_DERIVATION',\n"
+     "                    case + ': rust registry must be inapplicable without a run registry')\n",
+     "            pass\n"),
 ]
 
 # Each mutation binds the controls whose corrupted fixture only the deleted
 # require can reject, plus one control that must stay killed under the same
-# mutant (a different require owns it).
+# mutant (a different require owns it).  The inapplicable require's bound
+# control relaxes the structure applicability clause and the registry.applicable
+# scope surface inside its own run (defense in depth: the canonical require
+# is what must reject when the earlier layers are gone).
 BOUND = {
     'drop-registry-events-require': (
         ('expectations-rust-registry-events', 'EXPECTATION_RUST_DERIVATION'),
@@ -78,6 +115,17 @@ BOUND = {
     'drop-registry-result-require': (
         ('expectations-rust-registry-result', 'EXPECTATION_RUST_DERIVATION'),
     ),
+    'drop-frames-require': (
+        ('expectations-rust-surface', 'EXPECTATION_RUST_DERIVATION'),
+        ('expectations-rust-frame-swap', 'EXPECTATION_RUST_DERIVATION'),
+    ),
+    'drop-durable-status-require': (
+        ('expectations-rust-no-registry-durable', 'EXPECTATION_RUST_DERIVATION'),
+        ('expectations-rust-no-registry-status-durable', 'EXPECTATION_RUST_DERIVATION'),
+    ),
+    'drop-registry-inapplicable-require': (
+        ('expectations-rust-registry-inapplicable', 'EXPECTATION_RUST_DERIVATION'),
+    ),
 }
 UNAFFECTED = {
     'drop-registry-events-require': ('expectations-rust-frame-swap',
@@ -86,7 +134,61 @@ UNAFFECTED = {
                                     'EXPECTATION_RUST_DERIVATION'),
     'drop-registry-result-require': ('expectations-rust-registry-state',
                                       'EXPECTATION_RUST_DERIVATION'),
+    'drop-frames-require': ('expectations-rust-registry-state',
+                            'EXPECTATION_RUST_DERIVATION'),
+    'drop-durable-status-require': ('expectations-rust-frame-swap',
+                                    'EXPECTATION_RUST_DERIVATION'),
+    'drop-registry-inapplicable-require': ('expectations-rust-no-registry-durable',
+                                            'EXPECTATION_RUST_DERIVATION'),
 }
+
+
+def panel_table(name):
+    """One module-level str->str table of the controls panel, parsed not run.
+
+    ``run_control.py`` loads that file from disk, so the same on-disk bytes are
+    the authority here; ``ast.literal_eval`` never executes the apparatus
+    bootstrap (same shape as ``committed_status_contract`` in
+    ``negative_process``).
+    """
+    tree = ast.parse(PANEL.read_text(encoding='utf-8'), filename=str(PANEL))
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == name):
+            table = ast.literal_eval(node.value)
+            if (not isinstance(table, dict) or not table
+                    or not all(isinstance(key, str) and isinstance(value, str)
+                               for key, value in table.items())):
+                raise ValueError(f'{name} is not a nonempty str->str dict')
+            return table
+    raise ValueError(f'no module-level {name} assignment found')
+
+
+def check_bindings(expectation_cases):
+    """The binding tables must agree with the panel's registered controls.
+
+    #1190 count drift: every bound/unaffected entry names a registered control
+    with the rule the tables claim, and every EXPECTATION_RUST_DERIVATION
+    control is exercised by at least one mutation row, so adding, renaming or
+    reruling a control without updating this runner fails the run instead of
+    silently changing the count the prose used to pin.
+    """
+    errors = []
+    exercised = set()
+    for name, *_rest in MUTATIONS:
+        for case, rule in list(BOUND[name]) + [UNAFFECTED[name]]:
+            registered = expectation_cases.get(case)
+            if registered != rule:
+                errors.append(f'{name}: {case} is claimed as {rule} '
+                              f'but registered as {registered}')
+            exercised.add(case)
+    missing = sorted(case for case, rule in expectation_cases.items()
+                     if rule == 'EXPECTATION_RUST_DERIVATION' and case not in exercised)
+    if missing:
+        errors.append('derivation controls not exercised by any mutation: '
+                     + ', '.join(missing))
+    return errors
 
 
 def run_control(out, label, name, source):
@@ -160,6 +262,12 @@ def main():
                              'the delivered post-commit run (a dirty rehearsal may '
                              'pass git stash create)')
     args = parser.parse_args()
+    expectation_cases = panel_table('EXPECTATION_CASES')
+    drift = check_bindings(expectation_cases)
+    if drift:
+        for message in drift:
+            print('BINDING DRIFT: ' + message, file=sys.stderr)
+        return 2
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
         print('unknown or duplicate --only name', file=sys.stderr)
@@ -173,6 +281,18 @@ def main():
         return 2
     out = new_output_directory(args.output)
     source = args.source.resolve()
+    # Counts are derived, never pinned in prose (#1190): the same
+    # EXPECTATION_CASES table this runner just machine-checked is the
+    # authority for how many controls exist, and the mutation table for how
+    # many requires are covered.
+    counts = {'expectationCases': len(expectation_cases),
+              'derivationExpectationCases':
+                  sum(rule == 'EXPECTATION_RUST_DERIVATION'
+                      for rule in expectation_cases.values()),
+              'calibrationCases': len(panel_table('CALIBRATION_CASES')),
+              'mutationRows': len(MUTATIONS)}
+    (out / 'derived-counts.json').write_text(json.dumps(counts, sort_keys=True))
+    print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
     results = []
     try:
         # One lease only: mutating_sources acquires the real parity lease
@@ -184,6 +304,12 @@ def main():
                 row = {'mutation': name, 'status': 'INVALID', 'reason': 'not executed'}
                 bound = BOUND[name]
                 unaffected = UNAFFECTED[name]
+                # #1190: initialize before the guarded window. A stale anchor
+                # or a failed compile used to raise before this binding, so
+                # the row carried either no evidence (NameError voiding the
+                # whole table) or the previous row's evidence.
+                evidence = {'baseline': [], 'mutant': [], 'unaffected': None,
+                            'restored': None}
                 try:
                     original = originals[source_path].decode()
                     if original.count(old) != 1:
@@ -191,8 +317,6 @@ def main():
                     mutant = original.replace(old, new, 1)
                     compile(mutant, str(source_path), 'exec')
                     (out / (name + '-mutant.py')).write_text(mutant)
-                    evidence = {'baseline': [], 'mutant': [], 'unaffected': None,
-                                'restored': None}
                     for case, rule in bound:
                         outcome, detail = run_bound(out, f'{name}-baseline-{case}', case,
                                                     rule, source, expect_fail=True)
@@ -230,6 +354,7 @@ def main():
                                                 rule, source, expect_fail=True)
                     if outcome == 'ok':
                         row['reason'] += '; restored: ' + detail
+                        evidence['restored'] = detail
                     else:
                         row['status'], row['reason'] = 'INVALID', \
                             'restored baseline not re-killed: ' + detail
