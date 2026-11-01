@@ -449,12 +449,14 @@ def provider_cases(requests, cases):
     covered = []
     for request in requests:
         body = json.loads(request['raw'])
+        need(isinstance(body, dict), 'provider request body must be an object')
         if body.get('stream') is not True:
             continue  # Title requests cannot supply a model case witness.
         messages = body.get('messages')
         need(body.get('model') == 'mock' and isinstance(messages, list), 'provider model request shape')
         texts = []
         for message in messages:
+            need(isinstance(message, dict), 'provider message must be an object')
             if message.get('role') == 'user':
                 content = message.get('content')
                 if isinstance(content, str):
@@ -484,6 +486,7 @@ def session_chain(contract, rows, observer, provider, driver, sources, cases):
     for row in observer['rows']:
         ws_profile(row['direction'], row['wire'])
         frame = json.loads(row['frame']) if row['direction'] == 'send' else row['frame']
+        need(isinstance(frame, dict), 'observer JSON frame must be an object')
         if frame.get('type') in ('hello', 'hello_ok'):
             if frame.get('type') == 'hello_ok':
                 hello_seen = True

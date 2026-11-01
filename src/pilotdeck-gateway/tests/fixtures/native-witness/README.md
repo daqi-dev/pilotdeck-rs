@@ -9,3 +9,5 @@
 `test_authentication.py` 验证 parser、WS profile、原二进制前提及清理所有权；`test_chain.py` 验证正式边界、逐 case 原件归属、独立 profile 和冻结门控。标有 SYNTHETIC_CONTROL_ONLY 的正控只能走测试辅助路径，正式 loader 必须拒收。
 
 `cb8-sendto-interleaved.trace` 是 cb8 第二次采集的原字节片段（exit/sendto 交错，5 行）；唯一字符串为 hex 编码的 mock WS 帧，解码文本为 `native witness text`、模型为 `mock`。没有 HTTP 请求、提示词、真实密钥或隔离路径。测试将它接入合成进程前后缀，只验证解析，不当作完整采集/TS 金样。
+
+`test_r11.py` 覆盖 final 后落盘、两文件 size/mtime 连续三次稳定、总 deadline/取消、失败请求终态、NOT_RUN 原因、非对象 JSON、binding 两侧对拍、三域 Unicode JSONL 读取及延迟 receipt。真实 collector 接线测试复用 socket gateway 的 after_final 钩子；registry `failed` 单独不够，须同时有落盘 error result 与本请求 final error，两个错误仍原样进入评分。负控均登记在既有 `negative_authentication.py`，测试全名与标记由其 bound/messages 提供。

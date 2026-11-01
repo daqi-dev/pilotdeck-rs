@@ -165,6 +165,7 @@ class WireClient:
                           'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
                                    'lengthCode': code, 'payloadLength': length},
                           'frame': value, 'connection': 1})
+        w.need(isinstance(value, dict), 'received JSON frame must be an object')
         return value
 
 
@@ -194,13 +195,19 @@ def validate_smoke(contract, evidence, requests, home):
 
 
 # #1140 session-domain collection budget: 72 cases through one gateway, each
-# with a settle pause and (for the timeout-first variants) a delayed provider
+# with a bounded durable wait and (for timeout-first variants) a delayed provider
 # response, must fit one capture window far below the tracer's own limits.
 SESSION_LIMIT_SECONDS = 900
 SESSION_TIMEOUT_MS = 400
 SESSION_ORDERING_TIMEOUT_MS = 30000
 SESSION_PROVIDER_DELAY = 1.5
-SESSION_SETTLE_SECONDS = 0.5
+# #1140 settle arbitration: all 72 measured writes preceded final (p95 -10 ms).
+# Ten seconds leaves ample margin while bounding stalled/missing durable writes.
+SESSION_SETTLE_LIMIT_SECONDS = 10
+SESSION_SETTLE_INTERVAL_SECONDS = 0.05
+# RunRegistry.append permits failed -> completed; failed needs the final
+# error frame as well as a persisted error result (see wait_observation).
+SESSION_TERMINAL_STATES = frozenset(('completed', 'aborted', 'interrupted'))
 SESSION_ORDERING_VARIANTS = ('known-final-first', 'unknown-first', 'after-complete',
                               'known-final-before-timeout-pending')
 
@@ -253,6 +260,59 @@ def read_observation(home, project, session, run_id, received, request_id=None, 
     return (observation, identity, source) if retain else observation
 
 
+def file_signatures(paths):
+    return tuple((stat.st_size, stat.st_mtime_ns) for stat in (p.stat() for p in paths))
+
+
+def wait_observation(home, project, session, run_id, received, request_id, deadline):
+    """Wait for a terminal run and three stable size/mtime samples after final.
+
+    No durable-completion frame exists in the current gateway protocol. Poll
+    the exact files the observation reads, bracketing each read with stats.
+    Cancellation propagates to capture's existing owned-process cleanup.
+    """
+    end = min(deadline, time.monotonic() + SESSION_SETTLE_LIMIT_SECONDS)
+    previous, stable, last = None, 0, None
+    while time.monotonic() < end:
+        try:
+            result = read_observation(home, project, session, run_id, received, request_id, retain=True)
+            observation, identity, source = result
+            paths = (Path(source['transcriptPath']), Path(source['registryPath']))
+            before = file_signatures(paths)
+            # Re-read between stat samples so the retained originals, not just
+            # the filename metadata, belong to the final stable interval.
+            result = read_observation(home, project, session, run_id, received, request_id, retain=True)
+            after = file_signatures(paths)
+            observation, identity, source = result
+            last = result
+            record = observation['registry']['record']
+            terminal = record.get('state') in SESSION_TERMINAL_STATES
+            # A failed registry is still appendable during a turn. After this
+            # request's final error it is a finished failed attempt; the final
+            # may be result_unknown while the durable error is turn_timeout.
+            # Retain both verbatim for #1242 scoring rather than requiring them
+            # equal (which would hide a stable product difference as NOT_RUN).
+            terminal = terminal or (record.get('state') == 'failed'
+                and isinstance(record.get('result'), dict) and record['result'].get('type') == 'error'
+                and any(frame.get('id') == request_id and frame.get('final') is True
+                        and isinstance(frame.get('event'), dict) and frame['event'].get('type') == 'error'
+                        for frame in received))
+            if terminal and before == after:
+                stable = stable + 1 if after == previous else 1
+                previous = after
+                if stable >= 3:
+                    return result
+            else:
+                previous, stable = None, 0
+        except (OSError, ValueError, KeyError, TypeError):
+            previous, stable = None, 0
+        time.sleep(min(SESSION_SETTLE_INTERVAL_SECONDS, max(0, end - time.monotonic())))
+    if last is None:
+        raise Blocked('#1140 落盘未完成: no readable transcript/registry before deadline')
+    _, identity, source = last
+    return None, identity, dict(source, collectionError='落盘未完成')
+
+
 def publish_session_domain(output, observer, rows, requests, endpoint, driver, sources=None):
     """Atomically publish the session-domain artifacts, then extend the receipt.
 
@@ -276,6 +336,7 @@ def publish_session_domain(output, observer, rows, requests, endpoint, driver, s
         os.replace(staging / name, folder / name)
     staging.rmdir()
     receipt = json.loads((output / 'capture/receipt.json').read_text())
+    receipt['status'] = 'WITNESS_CAPTURED'
     receipt.update({key: w.sha(folder / name)
                     for name, key in w.native.receipt_artifacts('session-domain').items()})
     temporary = output / 'capture/receipt.partial.json'
@@ -434,12 +495,12 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
                             received.append(frame)
                             if frame.get('id') == request_id and frame.get('final'):
                                 break
-                        # Durable writes settle after the final frame; the
-                        # three surfaces are observed, never raced.
-                        time.sleep(SESSION_SETTLE_SECONDS)
-                        observation, identity, source = read_observation(
-                            home, str(project), key, run_id, received, request_id, retain=True)
-                        rows.append({'case': case, 'identity': identity, 'observation': observation})
+                        observation, identity, source = wait_observation(
+                            home, str(project), key, run_id, received, request_id, deadline)
+                        row = {'case': case, 'identity': identity, 'observation': observation}
+                        if observation is None:
+                            row['reason'] = source['collectionError']
+                        rows.append(row)
                         driver_hello['identities'].append(identity)
                         sources.append(source)
                 else:
@@ -476,12 +537,21 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
                                       {'HOME': str(home), 'PILOT_HOME': str(home),
                                        'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
                                       timeout=SESSION_LIMIT_SECONDS if session_domain else w.LIMIT_SECONDS,
-                                      limit=SESSION_LIMIT_SECONDS,
+                                      limit=SESSION_LIMIT_SECONDS, defer_receipt=session_domain,
                                       exercise=exercise, validate=validate, ownership=common.LIVE_GROUPS)
         if session_domain:
-            publish_session_domain(output, {'connections': 1, 'rows': observer_rows},
-                                   rows, requests, f'127.0.0.1:{port + 1}',
-                                   driver_hello, sources)
+            try:
+                publish_session_domain(output, {'connections': 1, 'rows': observer_rows},
+                                       rows, requests, f'127.0.0.1:{port + 1}',
+                                       driver_hello, sources)
+            except BaseException as error:
+                try:
+                    w.save(output / 'capture/failure.json', {'status': 'INCOMPLETE',
+                           'error': repr(error), 'cleanupErrors': [],
+                           'cleanupPending': sorted(common.LIVE_GROUPS)})
+                except BaseException as publish_error:
+                    error.add_note('#1140 session publication failure: ' + repr(publish_error))
+                raise
         return launch, evidence
     finally:
         original_error = sys.exception()

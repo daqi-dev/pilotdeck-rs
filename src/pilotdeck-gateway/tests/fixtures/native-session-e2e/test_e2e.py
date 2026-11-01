@@ -4,7 +4,7 @@
 
 Runs the real session-domain collection (``collect._native_run``) against a
 real-socket mock gateway (``mock_gateway.py``), with only the OS layer mocked
-(strace, pidfd, platform) and the settle/provider delays shortened, then loads
+(strace, pidfd, platform) and provider delays shortened, then loads
 the frozen scoring by explicit path and requires the deadline report to score
 every one of the 72 manifest cases PASS/FAIL per case -- never EVIDENCE
 fail-closed (#1140 fix-r1 P1).  The data controls below corrupt exactly one
@@ -124,7 +124,11 @@ class E2ETests(unittest.TestCase):
                 + '100 exit_group(0) = ?\n100 +++ exited with 0 +++\n')
 
     @classmethod
-    def _collect(cls, output):
+    def _collect(cls, output, *, real_settle=False, after_final=None):
+        # The all-expectations projection fixture includes intentionally absent
+        # registries; it reads them directly. test_r11.test_collector_wait_wired
+        # uses real_settle=True and a final-before-disk socket gateway to cover
+        # the production waiting path without this projection-only substitute.
         tracer = mock.Mock(pid=99)
         tracer.poll.return_value = None
         tracer.wait.return_value = 0
@@ -147,7 +151,7 @@ class E2ETests(unittest.TestCase):
             # provider slot only when _native_run is about to bind it.
             gateway_guard.close()
             gateway = Gateway(cls.port, output / 'home', f'http://127.0.0.1:{cls.port + 1}',
-                              load_expectations(ROOT))
+                              load_expectations(ROOT), after_final=after_final)
             try:
                 with contextlib.ExitStack() as stack:
                     for patch in (mock.patch.object(sys, 'platform', 'linux'),
@@ -156,7 +160,9 @@ class E2ETests(unittest.TestCase):
                                                     return_value=mock.Mock(stdout='--kill-on-exit')),
                                   mock.patch.object(c.w.subprocess, 'Popen', side_effect=spawn),
                                   mock.patch.object(c.w, 'stop_host'),
-                                  mock.patch.object(c, 'SESSION_SETTLE_SECONDS', 0.01),
+                                  mock.patch.object(c, 'wait_observation', side_effect=c.wait_observation if real_settle else
+                                                    lambda home, project, key, run, frames, request, deadline:
+                                                    c.read_observation(home, project, key, run, frames, request, retain=True)),
                                   mock.patch.object(c, 'SESSION_PROVIDER_DELAY', 0.0)):
                         stack.enter_context(patch)
                     provider_guard.close()

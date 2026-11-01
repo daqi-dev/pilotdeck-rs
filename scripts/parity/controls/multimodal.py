@@ -62,7 +62,7 @@ S = _load('score', _HERE.parent / 'score.py')
 def run_controls(source):
     catalog = G.scenario_catalog()
     source = G.artifact_dir(source)
-    originals = {sid: [json.loads(line) for line in (source / f'{sid}.pilotdeck-current-sidecar.jsonl').read_text().splitlines()]
+    originals = {sid: [json.loads(line) for line in G.jsonl_lines((source / f'{sid}.pilotdeck-current-sidecar.jsonl').read_text())]
                  for sid in catalog}
     cases = {}
     # _tmp/ is gitignored, so a fresh checkout has no such directory yet;
@@ -253,7 +253,7 @@ def run_controls(source):
             for partial, sid in ((False, 'pure_text'), (True, partial_sid)):
                 path = directory / f'{sid}.pilotdeck-current-sidecar.jsonl'
                 original = path.read_text()
-                rows = [json.loads(line) for line in original.splitlines()]
+                rows = [json.loads(line) for line in G.jsonl_lines(original)]
                 requests = [r for r in rows if r.get('kind') == 'model.request']
                 for request in requests[:1] if partial else requests:
                     view = request['modelView']
@@ -306,7 +306,7 @@ def run_controls(source):
                 if key == 'expected_sha256':
                     for trace_path in directory.glob('*.pilotdeck-current-sidecar.jsonl'):
                         trace_backups[trace_path] = trace_path.read_text()
-                        rows = [json.loads(line) for line in trace_backups[trace_path].splitlines()]
+                        rows = [json.loads(line) for line in G.jsonl_lines(trace_backups[trace_path])]
                         for row in rows:
                             if row.get('kind') == 'harness.proof' and row.get('state') == 'sidecar_identity':
                                 row.update(sha256=ledger[key], expectedSha256=ledger[key])

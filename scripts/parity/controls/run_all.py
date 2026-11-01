@@ -165,7 +165,7 @@ def run_controls(source):
         original = lp.read_text()
         def write(p, records):
             p.write_text(''.join(json.dumps(r) + '\n' for r in records))
-        raw = [json.loads(line) for line in original.splitlines()]
+        raw = [json.loads(line) for line in G.jsonl_lines(original)]
         changed = deepcopy(raw)
         next(r for r in changed if r['kind'] == 'model.request')['modelView']['systemPrompt'] += '\nINJECTED_SEMANTIC_DIFFERENCE'
         write(rp, changed)

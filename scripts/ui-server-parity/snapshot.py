@@ -64,6 +64,11 @@ from contextlib import closing
 import stat
 
 
+from apparatus import load_source
+# Same registered B1 dependency as run.py; no bootstrap from another frozen domain.
+jsonl_lines = load_source('b1_jsonl', Path(__file__).resolve().parents[1] / 'exp008/compare.py').jsonl_lines
+
+
 def sqlite_value(value):
     return {'blob_b64': base64.b64encode(value).decode()} if isinstance(value, bytes) else value
 
@@ -121,7 +126,7 @@ def capture(directory):
                         except ValueError:
                             if path.suffix == '.jsonl':
                                 try:
-                                    data = [json.loads(line) for line in text.splitlines() if line]
+                                    data = [json.loads(line) for line in jsonl_lines(text) if line]
                                 except ValueError:
                                     item.update(kind='text', data=text)
                                 else:

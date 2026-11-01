@@ -74,6 +74,8 @@ def frozen_auditor():
 def observer_binding(evidence):
     """The interaction binding the independent observer recorded at hello.
 
+    Paired with session_domain._observer_binding; test_observer_binding_parity
+    checks both implementations over the same accepted/rejected inputs.
     A runtime record cannot be pre-registered; the binding exists only once
     the gateway has answered hello, and every hello must agree.
     """
@@ -128,7 +130,7 @@ def stop_host(tracer, pid):
 
 
 def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=None, validate=None,
-            limit=LIMIT_SECONDS, ownership=None):
+            limit=LIMIT_SECONDS, ownership=None, defer_receipt=False):
     need(sys.platform == 'linux', 'Linux strace required; macOS needs future eslogger + root support')
     strace = shutil.which('strace')
     need(strace is not None, 'strace is not installed')
@@ -180,7 +182,7 @@ def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=No
         if validate is not None:
             validate(launch, evidence)
         save(output / 'evidence.json', evidence)
-        save(output / 'receipt.json', {'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN',
+        save(output / 'receipt.json', {'status': 'INCOMPLETE' if defer_receipt else 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN',
                                       **{key: sha(output / name)
                                          for name, key in native.receipt_artifacts('capture').items()},
                                       'tracerExitCode': result})

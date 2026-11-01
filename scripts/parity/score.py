@@ -169,7 +169,7 @@ class Inputs:
             path = artifacts / f'{sid}.pilotdeck-current-sidecar.jsonl'
             self.track(path)
             self.dates[str(root)][sid] = date_context(
-                [json.loads(line) for line in path.read_text().splitlines() if line.strip()]) | {
+                [json.loads(line) for line in G.jsonl_lines(path.read_text()) if line.strip()]) | {
                     'started_wall': started, 'capture_utc_day': capture_day}
         # Calling the frozen directory comparator retains its identity checks,
         # E rules and oracle. A targeted TS pool need not contain all 53 traces.

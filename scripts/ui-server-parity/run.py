@@ -268,7 +268,7 @@ def record_monitored_side(directory, side, meta):
 
 def validate_recording(path):
     # Recorder completion/format gate only; no behavioral diff or normalization.
-    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records = [json.loads(line) for line in b1_comparator.jsonl_lines(path.read_text())]
     if not records or records[0].get('kind') != 'run_start' or not any(r.get('kind') == 'run_end' for r in records):
         raise RuntimeError('recording is missing start/end markers')
     if [r.get('seq') for r in records] != list(range(1, len(records) + 1)):

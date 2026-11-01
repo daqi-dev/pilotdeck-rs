@@ -1195,6 +1195,9 @@ def audit_native(evidence, contract):
 
 def _audit_observer_rows(rows):
     for row in rows:
+        require(isinstance(row, dict), 'OBSERVER_WIRE', 'observer row must be an object')
+        require(isinstance(row.get('frame'), str if row['direction'] == 'send' else dict),
+                'OBSERVER_WIRE', 'observer JSON frame must be an object (sent rows retain text)')
         require(isinstance(row.get('wire'), dict), 'OBSERVER_WIRE',
                 'observer rows must carry wire metadata '
                 '(opcode/fin/rsv/masked/lengthCode/payloadLength)')
@@ -1214,6 +1217,7 @@ def _audit_observer_rows(rows):
 def _observer_binding(rows):
     """The interaction binding the independent observer recorded at hello.
 
+    Paired with native-witness/witness.observer_binding and its parity test.
     A runtime record cannot be pre-registered: the binding exists only once
     the gateway has answered hello.  Every hello the observer saw must agree.
     """
@@ -1370,12 +1374,13 @@ def score_native_cases(rows, expected, provider_cases):
     # A case row whose observation key is absent scores that case NOT_RUN,
     # never a batch-level KeyError (#1140 fix-r2).
     observed = {row['case']: row.get('observation') for row in rows}
+    reasons = {row['case']: row.get('reason') for row in rows}
     verdicts = []
     for case in expected:
         observation = observed.get(case)
         if observation is None:
             verdicts.append({'case': case, 'status': 'NOT_RUN', 'rule': 'COVERAGE',
-                             'surfaces': ['observation']})
+                             'surfaces': ['observation'], 'detail': reasons.get(case) or 'observation missing'})
             continue
         problem = _native_observation_structure(observation)
         require(problem is None, 'OBSERVATION_STRUCTURE', case + ': ' + (problem or 'malformed'))
@@ -1592,7 +1597,7 @@ def main():
                     report['status'], code = common.aggregate_status('BLOCKED')
                     report['freezeStatus'] = 'BLOCKED'
                     report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
-            except (EvidenceError, OSError, ValueError, KeyError, TypeError, StopIteration,
+            except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, StopIteration,
                     subprocess.SubprocessError, TimeoutError, KeyboardInterrupt) as error:
                 report['status'] = 'BLOCKED' if isinstance(error, (ApparatusVerificationError, PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
                 if args.suite == 'deadline':
