@@ -74,8 +74,10 @@ pub(super) async fn start_observed(
     // unsupported skill prompt/tool composition is not silently omitted.
     validate_profile_inner(&options, &env, true).await?;
     let mut env = env;
-    env.entry("PILOTDECK_STORAGE_ROOT".into())
-        .or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());
+    let storage = env.entry("PILOTDECK_STORAGE_ROOT".into()).or_default();
+    if storage.is_empty() {
+        *storage = options.home.join("storage").to_string_lossy().into_owned();
+    }
     register_project(&options)?;
     let project = project_registry(&options, &env);
     // Validate real families before claiming readiness. Partial staging belongs

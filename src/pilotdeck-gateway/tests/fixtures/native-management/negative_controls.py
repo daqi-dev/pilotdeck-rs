@@ -19,10 +19,15 @@ REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 REFRESH = ROOT / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 OWNER = ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
+SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/runtime/snapshot.rs'
+STORAGE = ROOT / 'src/pilotdeck-gateway/src/storage/workspace_snapshot.rs'
+IMPORT = ROOT / 'src/pilotdeck-gateway/src/skills/import.rs'
 ORACLE = Path(__file__).resolve().parent / 'oracle.json'
 TEST = 'native_process::management_tests::route_refresh_reread_matches_ts'
 ADMISSION = 'native_process::management_tests::admission_and_unwired_families_stay_closed'
 HOST = 'native_process::management_tests::production_host_management_and_restart'
+SNAPSHOT_TEST = 'native_process::management_tests::snapshot_success_matches_ts'
+IMPORT_TEST = 'native_process::management_tests::skill_import_success_conflict_and_overwrite_match_ts'
 mutations = [
     ('omit-snapshot', SOURCE, 'if method.starts_with("snapshot_") {', 'if method.starts_with("unwired_snapshot_") {', TEST, '#1231 routed first result'),
     ('omit-manager', SOURCE, 'if matches!(method, "manager_sessions" | "manager_browsers") {', 'if matches!(method, "unwired_manager_sessions" | "manager_browsers") {', TEST, '#1231 routed first result'),
@@ -33,19 +38,19 @@ mutations = [
     ('missing-project-defaulted', SOURCE, 'validate_command_project(params)?;', 'if false { validate_command_project(params)?; }', TEST, '#1231 method wire result'),
     ('host-boundary-leaked', SOURCE, 'if e.requires_host {\n        return unavailable();\n    }', 'if false && e.requires_host {\n        return unavailable();\n    }', ADMISSION, '#1231 host-dependent skill rejected'),
     ('surrogate-target-accepted', SOURCE, '!s.to_utf8().is_ok_and(|p| self.options.serves_project(&p))', 's.to_utf8().is_ok_and(|p| !self.options.serves_project(&p))', ADMISSION, '#1231 surrogate restore target admission'),
-    ('capability-omitted', REQUESTS, '"skill_scan",', '"unwired_skill_scan",', HOST, '#1231 wired method declared'),
+    ('capability-omitted', REQUESTS, '"commands_list",', '"commands_list", "skill_scan",', HOST, '#1231 capability belongs to TS contract'),
     ('capability-snapshot_list', REQUESTS, '"snapshot_list",', '"unwired_snapshot_list",', HOST, '#1231 wired method declared'),
     ('capability-snapshot_get', REQUESTS, '"snapshot_get",', '"unwired_snapshot_get",', HOST, '#1231 wired method declared'),
     ('capability-snapshot_restore', REQUESTS, '"snapshot_restore",', '"unwired_snapshot_restore",', HOST, '#1231 wired method declared'),
     ('capability-manager_sessions', REQUESTS, '"manager_sessions",', '"unwired_manager_sessions",', HOST, '#1231 wired method declared'),
     ('capability-commands_list', REQUESTS, '"commands_list",', '"unwired_commands_list",', HOST, '#1231 wired method declared'),
-    ('capability-skill_list', REQUESTS, '"skill_list",', '"unwired_skill_list",', HOST, '#1231 wired method declared'),
-    ('capability-skill_read', REQUESTS, '"skill_read",', '"unwired_skill_read",', HOST, '#1231 wired method declared'),
-    ('capability-skill_write', REQUESTS, '"skill_write",', '"unwired_skill_write",', HOST, '#1231 wired method declared'),
-    ('capability-skill_create', REQUESTS, '"skill_create",', '"unwired_skill_create",', HOST, '#1231 wired method declared'),
-    ('capability-skill_delete', REQUESTS, '"skill_delete",', '"unwired_skill_delete",', HOST, '#1231 wired method declared'),
-    ('capability-skill_import', REQUESTS, '"skill_import",', '"unwired_skill_import",', HOST, '#1231 wired method declared'),
-    ('capability-skill_validate', REQUESTS, '"skill_validate",', '"unwired_skill_validate",', HOST, '#1231 wired method declared'),
+    ('capability-skill_list', REQUESTS, '"commands_list",', '"commands_list", "skill_list",', HOST, '#1231 capability belongs to TS contract'),
+    ('capability-skill_read', REQUESTS, '"commands_list",', '"commands_list", "skill_read",', HOST, '#1231 capability belongs to TS contract'),
+    ('capability-skill_write', REQUESTS, '"commands_list",', '"commands_list", "skill_write",', HOST, '#1231 capability belongs to TS contract'),
+    ('capability-skill_create', REQUESTS, '"commands_list",', '"commands_list", "skill_create",', HOST, '#1231 capability belongs to TS contract'),
+    ('capability-skill_delete', REQUESTS, '"commands_list",', '"commands_list", "skill_delete",', HOST, '#1231 capability belongs to TS contract'),
+    ('capability-skill_import', REQUESTS, '"commands_list",', '"commands_list", "skill_import",', HOST, '#1231 capability belongs to TS contract'),
+    ('capability-skill_validate', REQUESTS, '"commands_list",', '"commands_list", "skill_validate",', HOST, '#1231 capability belongs to TS contract'),
     ('skills-restart-refused', ASSEMBLY, 'if management && name == "skills" {', 'if management && name == "unwired_skills" {', HOST, '#1231 native management boot/restart'),
     ('snapshot-storage-omitted', ASSEMBLY, '.entry("PILOTDECK_STORAGE_ROOT".into())', '.entry("UNWIRED_STORAGE_ROOT".into())', HOST, '#1231 production route success'),
     ('oracle-corruption', ORACLE, '"node": "v22.22.0"', '"node": "v0.0.0"', 'native_process::management_tests::regenerates_identically', '#280 native-management/oracle.json differs'),
@@ -72,6 +77,33 @@ mutations.append(('notification-before-dirty', REFRESH, '''        // `if (input
         );
         // `if (input?.projectKey)`: an empty key is the all-runtimes branch.
         match input.project_key.filter(|key| !key.is_empty()) {''', TEST, '#1231 invalidate dirty notification order'))
+
+# fix-r1: real unwired methods, contract, storage and successful disk effects.
+mutations.append(('wire-memory_list', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "memory_list"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
+mutations.append(('capability-memory_list', REQUESTS, '"commands_list",', '"commands_list", "memory_list",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('wire-memory_wipe', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "memory_wipe"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
+mutations.append(('capability-memory_wipe', REQUESTS, '"commands_list",', '"commands_list", "memory_wipe",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('wire-mcp_server_status', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "mcp_server_status"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
+mutations.append(('capability-mcp_server_status', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_status",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('wire-set_mcp_servers', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "set_mcp_servers"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
+mutations.append(('capability-set_mcp_servers', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_servers",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('wire-mcp_server_reconnect', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "mcp_server_reconnect"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
+mutations.append(('capability-mcp_server_reconnect', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_reconnect",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('wire-mcp_server_toggle', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "mcp_server_toggle"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
+mutations.append(('capability-mcp_server_toggle', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_toggle",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('wire-set_mcp_permission_mode_override', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "set_mcp_permission_mode_override"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
+mutations.append(('capability-set_mcp_permission_mode_override', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_permission_mode_override",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('empty-storage-default-skipped', ASSEMBLY, 'if storage.is_empty() {', 'if false && storage.is_empty() {', 'native_process::management_tests::empty_storage_environment_uses_isolated_default', '#1231 empty storage snapshot available'))
+mutations.append(('snapshot-get-list-instead', SOURCE, '"snapshot_get" => gateway.get(params),', '"snapshot_get" => gateway.list(params),', SNAPSHOT_TEST, '#1231 snapshot get success and workspace filter'))
+mutations.append(('snapshot-get-workspace-ignored', SNAPSHOT, 'field(manifest, "workspaceId")\n                .as_string()\n                .is_some_and(|id| id.equals_str(&workspace_id))', 'field(manifest, "workspaceId")\n                .as_string()\n                .is_some_and(|id| id.equals_str(&workspace_id) || !workspace_id.is_empty())', SNAPSHOT_TEST, '#1231 snapshot get success and workspace filter'))
+mutations.append(('snapshot-restore-list-instead', SOURCE, '"snapshot_restore" => gateway.restore(params),', '"snapshot_restore" => gateway.list(params),', SNAPSHOT_TEST, '#1231 snapshot restore success'))
+mutations.append(('snapshot-restore-wrong-target', SNAPSHOT, 'let target_root = make_temp_restore_dir(&target_project)?;', 'let target_root = make_temp_restore_dir(&format!("{target_project}/.pilotdeck"))?;', SNAPSHOT_TEST, '#1231 snapshot restore target parent'))
+mutations.append(('skill-import-attachment-skipped', IMPORT, 'for entry in entries.into_iter().rev() {\n            let name = entry.file_name().to_string_lossy().into_owned();', 'for entry in entries.into_iter().rev() {\n            let name = entry.file_name().to_string_lossy().into_owned();\n            if name == "assets" { continue; }', IMPORT_TEST, ['#1231 skill import read list scan and conflict results', '#1231 skill import copies files and preserves conflict target']))
+mutations.append(('skill-import-conflict-overwritten', IMPORT, 'if exists && !truthy(field(input, "force")?) {', 'if false && exists && !truthy(field(input, "force")?) {', IMPORT_TEST, '#1231 skill import read list scan and conflict results'))
+mutations.append(('skill-import-force-refused', IMPORT, 'if exists && !truthy(field(input, "force")?) {', 'if exists && (truthy(field(input, "force")?) || exists) {', IMPORT_TEST, '#1231 skill import read list scan and conflict results'))
+
+mutations.append(('snapshot-restore-file-empty', STORAGE, 'write_file(Path::new(&output), &contents)?;', 'write_file(Path::new(&output), &contents[..0])?;', SNAPSHOT_TEST, '#1231 snapshot restored file bytes'))
+mutations.append(('empty-storage-wrong-root', ASSEMBLY, '*storage = options.home.join("storage").to_string_lossy().into_owned();', '*storage = options.home.join("wrong-storage").to_string_lossy().into_owned();', 'native_process::management_tests::empty_storage_environment_uses_isolated_default', '#1231 empty storage snapshot available'))
 
 
 def mutate(case, text):

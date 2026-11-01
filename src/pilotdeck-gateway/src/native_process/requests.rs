@@ -73,14 +73,6 @@ impl GatewayRequests for Requests {
                             "snapshot_restore",
                             "manager_sessions",
                             "commands_list",
-                            "skill_list",
-                            "skill_read",
-                            "skill_write",
-                            "skill_create",
-                            "skill_delete",
-                            "skill_import",
-                            "skill_validate",
-                            "skill_scan",
                         ]
                         .into_iter()
                         .map(JsValue::from)
