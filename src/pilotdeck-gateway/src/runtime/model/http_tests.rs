@@ -913,10 +913,11 @@ async fn stalled_error_body_hits_the_body_timeout() {
 }
 
 #[test]
-fn imf_fixdate_ranges_follow_date_parse() {
+fn retry_after_ranges_follow_node_date_parse() {
     // node probe (r1/probe-r1.out.txt): 32 Oct / 00 / 25:00 / 07:60 /
     // 24:00:01 -> NaN; 31 Feb rolls over; 24:00:00 is next midnight; a
-    // second >= 60 reads as :00.
+    // second >= 60 reads as :00. These now exercise the shared Node22
+    // `Date.parse` port (#360-2); the hand-rolled IMF-only parser is gone.
     let at = |text: &str| errors::retry_after_header(Some(text), 0.0);
     assert_eq!(
         at("Wed, 21 Oct 2015 07:28:00 GMT"),
@@ -1063,7 +1064,7 @@ fn append_js_string_allows_exactly_the_limit() {
 /// (no overflow panic for 9 digits), the ±8.64e15 edge is inclusive, and
 /// years below 100 are two-digit whatever their padding.
 #[test]
-fn imf_fixdate_year_edges_follow_date_parse() {
+fn retry_after_year_edges_follow_node_date_parse() {
     let at = |text: &str| errors::retry_after_header(Some(text), 0.0);
     assert_eq!(at("Fri, 01 Jan 999999999 00:00:00 GMT"), None);
     assert_eq!(at("Fri, 01 Jan 292278995 00:00:00 GMT"), None);

@@ -117,61 +117,53 @@ pub(crate) fn retry_after_from_message(message: &str) -> Option<f64> {
     }
 }
 
-/// `parseRetryAfterHeader` (protocol/errors.ts). HTTP-date values accept the
-/// IMF-fixdate form only; other `Date.parse` dialects return `None` here.
+/// `parseRetryAfterHeader` (protocol/errors.ts). Delta-seconds follow JS
+/// `Number`; every other value goes through the full Node22 `Date.parse`
+/// dialect set — IMF-fixdate, RFC 850, asctime, ISO and the V8-lenient forms
+/// — shared with the execution clock (`pilotdeck_transport::system_clock`,
+/// #360-2). A wall time without a timezone resolves against the process
+/// timezone exactly like a Node `Date.parse`; where no admitted system TZif
+/// can establish that offset — a state TS does not have — the value counts
+/// as unparseable and the header is ignored.
 pub(crate) fn retry_after_header(value: Option<&str>, now_ms: f64) -> Option<f64> {
+    retry_after_header_parsed(
+        value,
+        now_ms,
+        &pilotdeck_transport::system_clock::parse_node22_date,
+    )
+}
+
+/// The injected-parse seam for timezone-dependent dialects: the production
+/// entry resolves local wall times against the process timezone, so unit
+/// fixtures pin the local resolver instead of the ambient one (the same
+/// policy `parse_node22_date_with_local` itself exposes).
+#[cfg(test)]
+pub(super) fn retry_after_header_with_local<L>(
+    value: Option<&str>,
+    now_ms: f64,
+    local: &L,
+) -> Option<f64>
+where
+    L: Fn(i64) -> Result<i64, JsString> + ?Sized,
+{
+    retry_after_header_parsed(value, now_ms, &|text| {
+        pilotdeck_transport::system_clock::parse_node22_date_with_local(text, &|wall| local(wall))
+    })
+}
+
+fn retry_after_header_parsed(
+    value: Option<&str>,
+    now_ms: f64,
+    parse: &dyn Fn(&JsString) -> Result<Option<f64>, JsString>,
+) -> Option<f64> {
     let value = value.filter(|value| !value.is_empty())?;
     let trimmed = crate::metadata::js_trim(value);
     let seconds = crate::js_value::string_to_number(trimmed);
     if seconds.is_finite() && seconds >= 0.0 {
         return Some(js_round(seconds * 1000.0));
     }
-    let date = imf_fixdate(trimmed)?;
-    let delta = date - now_ms;
+    let delta = parse(&JsString::from(trimmed)).ok().flatten()? - now_ms;
     (delta > 0.0).then_some(delta)
-}
-
-fn imf_fixdate(text: &str) -> Option<f64> {
-    // e.g. "Wed, 21 Oct 2015 07:28:00 GMT". Field ranges follow V8's legacy
-    // `Date.parse` (node probes, RESULT 修复轮 1/2): day 1..=31 with month
-    // overflow (31 Feb = 3 Mar), hour 0..=24 (24 only as 24:00:00), minute
-    // 0..=59, a second >= 60 reads as 0, a year below 100 is two-digit
-    // (0..=49 -> 20xx, 50..=99 -> 19xx, whatever its zero padding), results
-    // beyond ±8.64e15 ms are NaN.
-    let parts: Vec<&str> = text.split(' ').collect();
-    let [_, day, month, year, time, "GMT"] = parts.as_slice() else {
-        return None;
-    };
-    // At most 9 digits: every field fits an i64; the millisecond total is
-    // computed in i128 (a 9-digit year overflows i64 milliseconds).
-    let number = |digits: &str| -> Option<i64> {
-        (!digits.is_empty() && digits.len() <= 9 && digits.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| digits.parse().ok())
-            .flatten()
-    };
-    let month = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ]
-    .iter()
-    .position(|m| m == month)? as i64;
-    let day = number(day).filter(|d| (1..=31).contains(d))?;
-    let year = match number(year)? {
-        year @ 0..=49 => year + 2000,
-        year @ 50..=99 => year + 1900,
-        year => year,
-    };
-    let hms: Vec<i64> = time.split(':').map(number).collect::<Option<_>>()?;
-    let [h, mi, s] = hms.as_slice() else {
-        return None;
-    };
-    let s = if *s >= 60 { 0 } else { *s };
-    if *h > 24 || *mi > 59 || (*h == 24 && (*mi != 0 || s != 0)) {
-        return None;
-    }
-    // |days| <= ~3.7e11 for a 9-digit year: no i64 overflow here.
-    let days = crate::runtime::tools::builtin::time::days_from_civil(year, month + 1, 1) + day - 1;
-    let ms = (i128::from(days) * 86_400 + i128::from(h * 3600 + mi * 60 + s)) * 1000;
-    (ms.abs() <= 8_640_000_000_000_000).then_some(ms as f64)
 }
 
 /// `NetworkFetchError` of `network/fetch.ts`.
