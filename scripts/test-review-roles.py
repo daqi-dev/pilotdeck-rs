@@ -161,7 +161,7 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("anthropic-ok：父环境的令牌/网关头/provider 选择器不得进子进程")
         if secret in log.read_text() or anth_secret in log.read_text():
             fails.append("测试日志里出现了密钥原值")
-        if rc != 0 or "runner=anthropic model=claude-sonnet-5-5" not in s or gate_errs(s):
+        if rc != 0 or "runner=anthropic model=claude-opus-5-5" not in s or gate_errs(s):
             fails.append(f"anthropic-ok：应全 PASS 且过闸（rc={rc}）")
 
         # 两通道回显行为已分叉（GLM 回显展示名、Claude 原样回显），模型守卫负控两通道各跑一遍
