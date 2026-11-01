@@ -4,6 +4,7 @@
 Use --compile for the separate compile audit, --audit for read-only anchors.
 The full suite belongs on the coordinator host; a guarded sample is enough here.
 """
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 # pristine guard: the session-switch-pristine-removed reverse negative in
 # negative-restore/test_restore.py reverts to it and must execute, not crash.
 from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
-from negative_suite import Case, classify, invalidate_completed, passed
+from negative_suite import classify, invalidate_completed, passed
 from _negative_common import mutate
 
 factory = root / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
@@ -292,6 +293,23 @@ def row_parts(row):
     return name, [(path, old, new)], scope, test, assertion
 
 
+@dataclass
+class RunnerCase:
+    """#1210: what this runner hands to the shared classifier for one row.
+
+    The shared ``negative_suite.Case`` stays single-change and M6-lane owned;
+    the multi-change record is local to this executor. ``classify`` only reads
+    ``test``/``assertion``, and the bound reverse negative in
+    negative-restore/test_restore.py pins that ``changes`` keeps every
+    (path, old, new) of the row instead of only the first one.
+    """
+
+    mutation: str
+    changes: list
+    test: str
+    assertion: object
+
+
 def row_name(row):
     return row['name'] if isinstance(row, dict) else row[0]
 
@@ -383,7 +401,6 @@ switch_cases = [c for c in chosen if row_name(c) in compile_switches]
 
 def compile_and_classify(row, case):
     name,changes,scope,test,assertion = row_parts(case)
-    first_path,first_old,first_new = changes[0]
     if run(name+'-compile',test,compile=True).returncode:
         raise RuntimeError('mutant compile failed')
     row['compiled']=True
@@ -393,7 +410,7 @@ def compile_and_classify(row, case):
         # #1210: the classifier sees every change of a multi-file row, not
         # only the first one.
         status,reason=classify(run(name+'-negative',test),
-                               Case(name,first_path,first_old,first_new,test,assertion,scope,changes))
+                               RunnerCase(name, changes, test, assertion))
         row.update(status=status,reason=reason)
 
 def restored(row, name, test):
