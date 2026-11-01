@@ -12,7 +12,7 @@ use std::{
 use icu_collator::CollatorBorrowed;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 
-use super::paths::{CronPaths, cron_run_events_path, resolve_cron_paths};
+use super::paths::{CronPaths, cron_run_events_path, resolve_cron_paths_from};
 use super::{
     CronRuntimeLogger, CronStoreError, iso_from_epoch_ms, parent_of, string_or_empty,
     stringify_compact, stringify_pretty, temp_suffix,
@@ -47,35 +47,44 @@ pub fn migrate_cron_stores(input: &MigrationInput<'_>) -> Result<(), CronStoreEr
     // from this single absolute home: deriving some from the raw relative
     // input would key the same physical directory twice (a relative and an
     // absolute `PathBuf`), and the later empty bucket would overwrite the
-    // migrated tasks and runs there.
-    let cwd = std::env::current_dir()?;
-    let home = metadata::resolve_process_path(&cwd, &input.pilot_home)?;
+    // migrated tasks and runs there. Like Node's one-argument `resolve`, an
+    // absolute home never consults the process cwd (which may be gone), and
+    // the home keeps its raw bytes — a lossy re-parse would re-create the
+    // double key for a non-UTF-8 home.
+    let home = metadata::resolve_process_path(Path::new(""), &input.pilot_home)?;
     let root_dir = metadata::resolve(&home, "cron");
     let lock_path = acquire_migration_lock(input, &root_dir)?;
     // CronStoreMigration.ts:102-105: `finally { await releaseLock(); }` runs on
     // a throw too, so a panic in the body must still release the lock.
-    let _release = LockRelease(lock_path.clone());
-    let body = migrate_locked(input, &home.to_string_lossy(), &root_dir);
-    // A release failure replaces the body result, like a rejected finally;
-    // the guard's own second removal is a `rm(force)` on a vanished path.
+    let mut release = LockRelease(Some(lock_path.clone()));
+    let body = migrate_locked(input, &home, &root_dir);
+    // A release failure replaces the body result, like a rejected finally.
+    // A successful explicit release disarms the guard: its `Drop` must not
+    // remove a lock file another migrator has freshly acquired in between.
     match remove_lock(&lock_path) {
-        Ok(()) => body,
+        Ok(()) => {
+            release.0.take();
+            body
+        }
         Err(error) => Err(error.into()),
     }
 }
 
 /// The `finally` half of CronStoreMigration.ts:102-105 for panicking bodies.
-struct LockRelease(PathBuf);
+/// Disarmed by `take()` once the explicit release succeeded.
+struct LockRelease(Option<PathBuf>);
 
 impl Drop for LockRelease {
     fn drop(&mut self) {
-        let _ = remove_lock(&self.0);
+        if let Some(lock_path) = self.0.take() {
+            let _ = remove_lock(&lock_path);
+        }
     }
 }
 
 fn migrate_locked(
     input: &MigrationInput<'_>,
-    home: &str,
+    home: &Path,
     root_dir: &Path,
 ) -> Result<(), CronStoreError> {
     let snapshots = read_snapshots(&metadata::resolve(root_dir, "projects"))?;
@@ -298,7 +307,7 @@ fn build_task_project_index(
 
 /// CronStoreMigration.ts:189-201.
 fn resolve_task_target_dir(
-    home: &str,
+    home: &Path,
     source_dir: &Path,
     task: &JsValue,
     blocked_task_dirs: &[PathBuf],
@@ -309,7 +318,7 @@ fn resolve_task_target_dir(
     let Some(project_key) = normalized_project_key(record.get("projectKey"))? else {
         return Ok(source_dir.to_path_buf());
     };
-    let target_dir = resolve_cron_paths(home, &project_key)?.project_dir;
+    let target_dir = resolve_cron_paths_from(home, &project_key)?.project_dir;
     Ok(if blocked_task_dirs.contains(&target_dir) {
         source_dir.to_path_buf()
     } else {
@@ -319,7 +328,7 @@ fn resolve_task_target_dir(
 
 /// CronStoreMigration.ts:203-220.
 fn resolve_run_target_dir(
-    home: &str,
+    home: &Path,
     source_dir: &Path,
     run: &JsValue,
     task_projects: &HashMap<JsString, std::collections::BTreeSet<String>>,
@@ -329,7 +338,7 @@ fn resolve_run_target_dir(
     if let Some(explicit_project) =
         normalized_project_key(run.and_then(|record| record.get("projectKey")))?
     {
-        let target_dir = resolve_cron_paths(home, &explicit_project)?.project_dir;
+        let target_dir = resolve_cron_paths_from(home, &explicit_project)?.project_dir;
         return Ok(if blocked_task_dirs.contains(&target_dir) {
             source_dir.to_path_buf()
         } else {
@@ -349,7 +358,7 @@ fn resolve_run_target_dir(
         return Ok(source_dir.to_path_buf());
     }
     let project_key = projects.iter().next().expect("the only project key");
-    let target_dir = resolve_cron_paths(home, project_key)?.project_dir;
+    let target_dir = resolve_cron_paths_from(home, project_key)?.project_dir;
     Ok(if blocked_task_dirs.contains(&target_dir) {
         source_dir.to_path_buf()
     } else {
@@ -671,7 +680,12 @@ fn merge_json_lines(left: &str, right: &str) -> String {
 /// file behind, exactly like the TS control flow.
 fn atomic_write(path: &Path, content: &str, now_ms: f64) -> Result<(), CronStoreError> {
     fs::create_dir_all(parent_of(path)?)?;
-    let temp = format!("{}{}", path.display(), temp_suffix(now_ms));
+    // `${path}.${suffix}.tmp`: built on the raw `OsStr` so a non-UTF-8
+    // directory keeps its bytes (`display()` would fold them to U+FFFD and
+    // place the temp file in a directory that does not exist).
+    let mut temp = path.as_os_str().to_os_string();
+    temp.push(temp_suffix(now_ms));
+    let temp = PathBuf::from(temp);
     fs::write(&temp, content)?;
     match fs::rename(&temp, path) {
         Ok(()) => Ok(()),
@@ -770,8 +784,9 @@ fn normalized_project_key(value: Option<&JsValue>) -> Result<Option<String>, Cro
     if js_trim(&text).is_empty() {
         return Ok(None);
     }
-    let cwd = std::env::current_dir()?;
-    let resolved = metadata::resolve_process_path(&cwd, Path::new(&text))?;
+    // Node's one-argument `resolve`: an absolute key never reads the process
+    // cwd, a relative one resolves against it.
+    let resolved = metadata::resolve_process_path(Path::new(""), Path::new(&text))?;
     Ok(Some(resolved.to_string_lossy().into_owned()))
 }
 
