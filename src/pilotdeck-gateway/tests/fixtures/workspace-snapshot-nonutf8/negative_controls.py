@@ -14,6 +14,11 @@ asserts every field of the failed capture against the gold. Each mutant below
 removes exactly one behaviour that assertion chain depends on: the lossy
 decoding keeping U+FFFD, the Node-formatted lstat error, the failure itself
 (instead of a silent skip), and the gold actually driving the comparison.
+fix-r1 adds the same contract for the new preconditions: the gold's raw files
+staying inside `workspace`, the gate locating its capture step by `op`, and
+the regen guard pinning libuv (`guard-uv-drift` runs the ignored
+generator_provenance guard and therefore needs PDRS_BASELINE, which
+run-linux.sh exports before calling this script).
 
 Because `mutating_sources` proves the tree equals HEAD, this must run after
 the #283 patch is committed; a pre-commit working tree is refused on purpose.
@@ -37,6 +42,8 @@ if not os.environ.get("CARGO_TARGET_DIR"):
 
 LIB = "src/pilotdeck-gateway/src/storage/workspace_snapshot.rs"
 ORACLE = "src/pilotdeck-gateway/tests/fixtures/workspace-snapshot/oracle.json"
+GATE = "src/pilotdeck-gateway/tests/workspace_snapshot.rs"
+GUARD = "src/pilotdeck-gateway/tests/generator_provenance.rs"
 
 # scan_visit's name decoding (workspaceSnapshot.ts:291-310): the lossy name is
 # what every later syscall re-encodes, so the U+FFFD must survive into the
@@ -57,6 +64,7 @@ LSTAT = """        let info = fs::symlink_metadata(&absolute)
 GOLD_ERROR = "ENOENT: no such file or directory, lstat '<dir>/workspace/bad-�.txt'"
 
 DEDICATED = "non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux"
+GUARD_TEST = "workspace_snapshot_regenerates_identically"
 
 # (name, file, old, new, cargo test args, kill criterion substring)
 MUTATIONS = [
@@ -94,6 +102,33 @@ MUTATIONS = [
      GOLD_ERROR.replace("lstat ", "stat ", 1),
      ["--test", "workspace_snapshot", DEDICATED],
      "#283 the error keeps Node's ENOENT wording for the lossy-decoded name"),
+    # The gold records the raw file outside `workspace`: the gate's flat
+    # raw self-check compares the listing of `workspace`, so its precondition
+    # assert must fire instead of silently comparing the wrong set.
+    ("oracle-raw-dir-drift", ORACLE, '"dir": "workspace",',
+     '"dir": "elsewhere",',
+     ["--test", "workspace_snapshot", DEDICATED],
+     "#283 the non-utf8 scenario records its raw files inside the workspace"),
+    # The gate locates its capture step by something other than op: the find
+    # must come back empty (the scenario's only other step is a tick) and the
+    # locating expect must fail, proving the locator discriminates by op.
+    ("gate-capture-locator-op", GATE,
+     '        .find(|step| s(field(step, "op")) == "capture")',
+     '        .find(|step| s(field(step, "op")) == "list")',
+     ["--test", "workspace_snapshot", DEDICATED],
+     "#283 the non-utf8 scenario records its capture"),
+    # The regen guard's libuv pin is loosened: the guard must BLOCK on the uv
+    # assertion (the recorded provider-order case is readdir order, a libuv
+    # property) instead of drifting into the byte comparison.
+    ("guard-uv-drift", GUARD,
+     '''        "1.52.1",
+        "#283 pinned libuv build (the runner pins the same version)"
+''',
+     '''        "0.0.0",
+        "#283 pinned libuv build (the runner pins the same version)"
+''',
+     ["--test", "generator_provenance", GUARD_TEST, "--", "--exact", "--ignored"],
+     "#283 pinned libuv build"),
 ]
 
 selected = sys.argv[2:]

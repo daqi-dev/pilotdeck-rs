@@ -173,7 +173,7 @@ neg133=$?
 negatives_not_run=0
 if [ "$neg133" -eq 0 ]; then
   echo "KILLED all #133 mutants"
-elif grep -qE '\((untracked at|differs from) HEAD\)' "$evidence/issue-133-negatives.log"; then
+elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issue-133-negatives.log"; then
   echo "NOT_RUN: uncommitted/untracked product sources (mutating_sources refuses them); rerun after the commit (coordinator)"
   negatives_not_run=1
 else
@@ -188,7 +188,7 @@ wait_for_cargo_slot
 neg117=$?
 if [ "$neg117" -eq 0 ]; then
   echo "KILLED all #117 mutants"
-elif grep -qE '\((untracked at|differs from) HEAD\)' "$evidence/issue-117-negatives.log"; then
+elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issue-117-negatives.log"; then
   echo "NOT_RUN: uncommitted/untracked product sources (mutating_sources refuses them); rerun after the commit (coordinator)"
   negatives_not_run=1
 else
