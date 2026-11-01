@@ -1,6 +1,8 @@
 # Retry-After 方言：#360 第 2 条
 
-Node **v22.22.0**，固定 TS **cc7c4e65**（`src/model/protocol/errors.ts` 的
+Node **v22.22.0 / ICU 78.2 / tzdata 2025c**（icu78 校准链；官方预编译
+v22.22.0 自带 ICU 77.1 / tzdata 2025b，用它重录会让再生守卫在校准宿主上失败，
+regen-r1 已重录过一次），固定 TS **cc7c4e65**（`src/model/protocol/errors.ts` 的
 `parseRetryAfterHeader`，`Date.now()` 打桩为 0）。覆盖 `Date.parse` 全方言：
 delta-seconds 的 `Number` 陷阱（`2015` 是数、`  ` 修剪后是 0、`0x10` 是 16）、
 IMF-fixdate 边界（两位年份、±8.64e15、24:00:00、秒 ≥60 转投 day 槽）、
