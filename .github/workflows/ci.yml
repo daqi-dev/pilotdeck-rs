@@ -49,6 +49,24 @@ jobs:
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
       - name: 共享执行器隔离与候选正控回归（#994）
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
+      # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
+      # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
+      # 宿主清单、neg-for-diff 都没拦住，靠最终评审读码才发现。glob 统一覆盖今后新增的
+      # 带 --check 脚本；任一锚点失配即本步非零退出；glob 一个都匹配不到同样按失败处理
+      # （闸门不允许静默通过）。本地负控：故意改坏 transport.rs 的 stream-event-field 锚点
+      # 后 --check 报 5/6 valid、rc=1（_tmp/20261026-issue-1053/neg-1203/）。
+      - name: CLI fixtures 负控 --check 锚点自检（#1203）
+        run: |
+          found=0
+          for script in src/pilotdeck-cli/tests/fixtures/*/negative_controls.py; do
+            [ -f "$script" ] || continue
+            found=1
+            python3 -I "$script" --check
+          done
+          if [ "$found" -ne 1 ]; then
+            echo 'no src/pilotdeck-cli/tests/fixtures/*/negative_controls.py found; the anchor gate must not silently pass' >&2
+            exit 1
+          fi
 
   # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；三个重 job 的结果
   # 「非 success 且不是（skipped 且 docs_only=true）」才拒绝——即分类器确定纯文档改动才
