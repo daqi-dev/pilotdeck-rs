@@ -37,6 +37,7 @@ cases = [
     dict(name='restore-unknown-outcome',
          changes=[(ledger,
                    '    .ok_or_else(|| invalid("Invalid terminal outcome."))\n}',
+                   '    .ok_or_else(|| invalid("Invalid terminal outcome."))\n'
                    '    .or(Ok(ModuleOutcome::ResultUnknown))\n}')],
          test=corrupt_test,
          assertion='#201 Rust opened TS-tolerated corruption: outcome-unknown-string'),
@@ -65,7 +66,7 @@ cases = [
                 ));
             };''',
                    '''            let messages = match field(entry, "messages") {
-                JsValue::Array(messages) => messages,
+                JsValue::Array(messages) => messages.clone(),
                 _ => Vec::new(),
             };''')],
          test=corrupt_test,
