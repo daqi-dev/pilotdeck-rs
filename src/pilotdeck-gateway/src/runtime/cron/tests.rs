@@ -1066,7 +1066,15 @@ fn store_concurrent_puts_across_threads_keep_every_task() {
 /// string would key the same physical directory twice and the later empty
 /// bucket would overwrite the migrated tasks (the `/w/same` projectKey
 /// targets its own source directory).
-#[cfg(unix)]
+// #1289: Linux-only. APFS / HFS+ reject non-UTF-8 filenames outright (the
+// `create_dir_all` below fails with EILSEQ, os error 92), so the fixture
+// cannot be created on macOS at all — and no real macOS user can have a
+// non-UTF-8 home either: the scenario needs a byte-path filesystem (the
+// same macOS blind spot as `project_files::tests::linux_dirent`, #133).
+// Linux hosts and Linux CI still run this guard unchanged. Deliberately a
+// compile-time gate, not a "skip when create_dir_all fails" branch: that
+// would swallow a genuine Linux-side fixture failure and pass silently.
+#[cfg(target_os = "linux")]
 #[test]
 fn migration_non_utf8_home_keeps_one_physical_key() {
     use std::os::unix::ffi::OsStrExt;

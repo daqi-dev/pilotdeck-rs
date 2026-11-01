@@ -19,6 +19,13 @@ the `cron_deleted_cwd_worker` test itself (`--ignored`, with PDRS_CRON_CASE),
 because a parent test's panic payload embeds the worker's libtest output,
 which the shared verdict truncates at the worker's own FAILED line — the
 marker never reaches the parent's panic block (fix-r3 P1).
+
+The raw-bytes home row is Linux-only (#1289): its bound test is
+`#[cfg(target_os = "linux")]` because APFS / HFS+ reject non-UTF-8 filenames
+(EILSEQ), so macOS can neither build the fixture nor host a non-UTF-8 home.
+Non-Linux hosts record that row SKIP — neither KILLED nor INVALID — and the
+drop does not fail the run (same accounting as exact-rerun-receipt's
+DARWIN_ONLY rows).
 """
 from pathlib import Path
 import json
@@ -40,6 +47,14 @@ TREE = 'once: replayed file tree differs from the TS oracle'
 # `--ignored` plus the listed environment, binding the worker's own panic
 # block instead of a parent that only relays it.
 DELETED_CWD_WORKER = {'ignored': True, 'env': {'PDRS_CRON_CASE': 'absolute-home-deleted-cwd'}}
+# #1289: entry-lossy-home's bound test is #[cfg(target_os = "linux")]-gated
+# (APFS / HFS+ reject non-UTF-8 filenames with EILSEQ, so macOS can neither
+# build the fixture nor host a non-UTF-8 home): elsewhere the test does not
+# exist, its positive control can never pass, and the row would be INVALID
+# by construction. Non-Linux hosts record the row SKIP — neither KILLED nor
+# INVALID — so a default full run does not fail on a structurally absent
+# control (same accounting as exact-rerun-receipt's DARWIN_ONLY rows).
+LINUX_ONLY = {'entry-lossy-home'}
 mutations = [
     # Migration routing removed: projectKey-routed tasks stay in their source
     # directory, so the recorded move never happens (issue scope 3, 迁移跳过).
@@ -307,6 +322,18 @@ def main():
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     summary = []
+    if sys.platform != 'linux':
+        # LINUX_ONLY rows cannot run here (the bound test is not compiled on
+        # this platform): record SKIP — neither KILLED nor INVALID — so a
+        # default full run does not fail on a structurally absent control.
+        # Default runs record the drop for the evidence directory.
+        for row in [row for row in selected if row[0] in LINUX_ONLY]:
+            summary.append(dict(mutation=row[0], test=row[4], assertion=row[5],
+                                status='SKIP', compiled=False,
+                                reason='bound test compiles only on Linux '
+                                        '(#[cfg(target_os = "linux")], #1289)'))
+            print(f'{row[0]}: SKIP: Linux-only bound test', flush=True)
+        selected = [row for row in selected if row[0] not in LINUX_ONLY]
     guarded = list(dict.fromkeys([source, migration, paths_rs, tests, Path(__file__).resolve(),
         Path(__file__).resolve().parents[1] / 'negative_process.py',
         Path(__file__).resolve().parents[1] / 'negative_suite.py']))
@@ -378,9 +405,16 @@ def main():
         print(f"{name}: {item['status']}: {item['reason']}", flush=True)
     save('summary.json', json.dumps(summary, indent=2) + '\n')
     counts = {state: sum(row['status'] == state for row in summary)
-              for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
+              for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED', 'SKIP')}
     print('summary: ' + ', '.join(f'{key}={value}' for key, value in counts.items()), flush=True)
-    return int(any(row['status'] != ('COMPILED' if compile_only else 'KILLED') for row in summary))
+    # SKIP (platform-absent, recorded above) is not a failure, but a run
+    # that killed nothing proved nothing: with zero KILLED rows the exit stays
+    # nonzero so a caller cannot read an all-SKIP selection as verified
+    # (same rule as exact-rerun-receipt).
+    success = 'COMPILED' if compile_only else 'KILLED'
+    return int(not summary
+               or not counts[success]
+               or any(row['status'] not in (success, 'SKIP') for row in summary))
 
 
 if __name__ == '__main__':
