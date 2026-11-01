@@ -15,6 +15,14 @@ index.html 等 11 个固定文件）、`b`（127.0.0.1，静态根仅 only.txt�
 - 静态回退：扩展名映射（大小写敏感）、目录、缺失回退 index、
   `enc%20oded` 字面名、root2 无 index → 404；绝对形式
   `http://127.0.0.1//app.js` 保留 `//app.js` 路径（非协议相对折叠）；
+  `static-upper-lower`（`GET /upper.txt`，夹具只写 `upper.TXT`）是唯一
+  依赖宿主文件系统大小写敏感性的 cell：大小写敏感（录制平台 Linux）
+  缺失、回退 index；大小写不敏感（macOS 默认 APFS）解析到 `upper.TXT`、
+  TS 与 Rust 一致地服务该文件（#1359 实测 `_tmp/20261026-issue-1359/`
+  `probe-macos.out`，登记 `specs/gateway-parity/diffs/`
+  `A8.4-NATIVE-HTTP-003.md`）。回放按运行时探测夹具根选期望，不写死
+  cfg；其余 cell 的请求路径要么与夹具文件精确匹配、要么无大小写变体
+  可碰撞，`/HEALTH` 等路由比较在内存中进行，不涉文件系统；
 - 穿越：URL 规范化中和后落到 index 回退或目标文件
   （`/%2e%2e/app.js`、`/sub\..\app.js` 服务 app.js 本身）；
 - 解析层：FOO/get/GETX 裸 400 关连接、非 ASCII 路径/查询 400、无 Host 400、
@@ -37,4 +45,7 @@ PDRS_BASELINE=/home/clawbox-08/ws/pdrs-runner/resources/PilotDeck \
 
 输出目录只需要存在；`oracle.json` 以 `wx` 写入。Rust 侧守卫
 `native_http::tests::regenerates_identically`（ignore）重生成并逐字节比较
-（date 掩码后）。两次连续运行已验证逐字节一致。
+（date 掩码后）。两次连续运行已验证逐字节一致。该守卫须在录制平台
+（Linux，大小写敏感文件系统）上跑：在大小写不敏感宿主上重生成，
+`static-upper-lower` 这一个 cell 会得到 upper 文件的字节（见上），逐字节
+比较在该宿主上不成立（见 #1359 登记，不改金样、不改共享重生成机制）。

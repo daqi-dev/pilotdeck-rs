@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_http.rs'
 SOURCE_PROXY = ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs'
+SOURCE_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs'
 PREFIX = 'native_http::tests::'
 switches = [
     ('native-http-method-allowlist-off', SOURCE, 'method_outside_llhttp_table_rejected', '#1209 unknown method is a bare 400'),
@@ -86,6 +87,12 @@ switches = [
     # mutant refreshes on any read, so the deadline poisons the socket and the
     # completed first head is answered `Connection: close`.
     ('native-http-unserved-read-arms-idle', SOURCE_PROXY, 'idle_state_no_request_stays_open', "#1250 the segmented first head is answered keep-alive: Node arms no idle timer before the first response finish, got"),
+    # #1359: the runtime host-filesystem probe that selects the
+    # static-upper-lower expectation (a case-insensitive host serves the
+    # upper.TXT file, a case-sensitive one falls back to the index golden);
+    # the mutant inverts the probe, so the replay compares the wrong
+    # family's golden bytes and fails at its own assertion on every host.
+    ('native-http-static-case-probe-inverted', SOURCE_TESTS, 'static_upper_lower', '#1209 cell static-upper-lower normalized response'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

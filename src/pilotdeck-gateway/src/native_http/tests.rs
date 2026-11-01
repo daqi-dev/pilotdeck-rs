@@ -227,9 +227,10 @@ async fn replay(id: &str) {
     let cell = cell(id);
     let fixture = roots();
     let (raw, closed) = exchange(&cell.server, &cell.request, &cell.id, &fixture).await;
+    let expected = expected_response(&cell, &fixture);
     assert_eq!(
         normalize(&raw),
-        normalize(&cell.response),
+        normalize(&expected),
         "#1209 cell {} normalized response",
         cell.id
     );
@@ -239,6 +240,47 @@ async fn replay(id: &str) {
         cell.id
     );
     let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #1359: the golden `static-upper-lower` cell (`GET /upper.txt` against a
+/// fixture that only writes `upper.TXT`) is the one cell whose bytes depend
+/// on the host filesystem: a case-sensitive filesystem misses the lowercase
+/// lookup and TS falls back to the index (the recorded golden — the fixture
+/// was recorded on Linux), while a case-insensitive one (macOS's default
+/// APFS) resolves it to `upper.TXT` and TS serves the file. Measured on the
+/// pinned baseline with Node v22.22.0: on a case-insensitive host the TS
+/// response for `/upper.txt` is byte-identical to the recorded
+/// `static-upper` golden (`_tmp/20261026-issue-1359/probe-macos.out`), so
+/// Rust and TS agree on every host and only the golden bytes are
+/// host-dependent. The expectation is therefore selected per host at
+/// runtime, by probing the fixture root with the same lookup the router
+/// performs — never a hard-coded cfg (registered in the parity ledger as
+/// A8.4-NATIVE-HTTP-003). Every other cell's request path either matches a
+/// fixture file exactly or has no case-variant file to collide with.
+fn expected_response(replayed: &Cell, fixture: &Fixture) -> String {
+    if replayed.id == "static-upper-lower" && serves_upper_txt(&fixture.root) {
+        return cell("static-upper").response;
+    }
+    replayed.response.clone()
+}
+
+/// Whether the static root would serve `/upper.txt` by case-insensitive
+/// resolution: the fixture wrote `upper.TXT`, and this is the same
+/// `is_file(candidate)` lookup `serve_static` performs for that request, so
+/// the probe decides with the exact evidence the router itself will use.
+/// The `native-http-static-case-probe-inverted` negative-control switch
+/// flips the answer, which must fail the `static-upper-lower` replay at its
+/// own assertion on every host.
+fn serves_upper_txt(root: &std::path::Path) -> bool {
+    let lookup = root
+        .join("upper.txt")
+        .metadata()
+        .is_ok_and(|metadata| metadata.is_file());
+    if crate::mutants::on("native-http-static-case-probe-inverted") {
+        !lookup
+    } else {
+        lookup
+    }
 }
 
 macro_rules! replay_tests {
