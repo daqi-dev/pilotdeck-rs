@@ -27,5 +27,5 @@ while read -r path; do
   printf '%s\t%s\t%s\t%s\t%s\n' "${path#"$ROOT/"}" "$br" "$pr" "$dirty" "$verdict"
 done < <(git -C "$ROOT" worktree list --porcelain | sed -n 's/^worktree //p')
 
-echo "wt-status: 共 $total 棵（上限 24），可回收 $free" >&2
+echo "wt-status: 共 $total 棵（上限 40），可回收 $free" >&2
 [ "$free" = 0 ]
