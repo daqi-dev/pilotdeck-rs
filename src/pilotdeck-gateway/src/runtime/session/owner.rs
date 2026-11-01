@@ -698,6 +698,7 @@ impl SessionOwner {
             .and_then(|record| record.context.project_key.clone());
         track(&mut state, project, completion.clone());
         state.closings.insert(key.clone(), completion.clone());
+        let settle = done.clone();
         let owner = self.clone();
         let key = key.clone();
         super::super::cleanup_task::spawn_with_error(
@@ -715,7 +716,7 @@ impl SessionOwner {
                         owner.0.turns.admission.turn_identity(&key),
                     )
                 };
-                if let Some(record) = record {
+                let outcome = if let Some(record) = record {
                     // #1055 ②: an evicted record's unconsumed creation or
                     // cleanup error would otherwise die with it; the closing
                     // caller receives it, aggregated beside a failed
@@ -731,7 +732,15 @@ impl SessionOwner {
                     combine_pending_error(result, pending)
                 } else {
                     Ok(())
-                }
+                };
+                // Settle the key's closing entry while the serial ticket is
+                // still held: after the ticket's release a queued same-key
+                // get_or_create may publish a new record, and shutdown's skip
+                // must never see this entry unsettled then, or that record
+                // would escape every drain list. TS has no such gap:
+                // getOrCreateActive awaits closingSessions first.
+                settle.send_replace(Some(outcome.clone()));
+                outcome
             },
         );
         Box::pin(wait_result(completion))
@@ -841,6 +850,7 @@ impl SessionOwner {
             );
             state.closings.insert(key.clone(), completion);
             let owner = self.clone();
+            let settle = done.clone();
             super::super::cleanup_task::spawn_with_error(
                 &tokio::runtime::Handle::current(),
                 done,
@@ -849,7 +859,12 @@ impl SessionOwner {
                 ),
                 async move {
                     let _exclusive = ticket.enter().await;
-                    owner.evict(&key, record, EvictionReason::Idle).await
+                    let outcome = owner.evict(&key, record, EvictionReason::Idle).await;
+                    // Same settle-before-release invariant as the close task:
+                    // a record published behind this key's ticket must never
+                    // land while this closing entry is still unsettled.
+                    settle.send_replace(Some(outcome.clone()));
+                    outcome
                 },
             );
         }
@@ -918,22 +933,36 @@ impl SessionOwner {
                         .unwrap()
                         .closings
                         .insert(key.clone(), drain_completion);
-                    drains.push(tokio::spawn(async move {
-                        // #1055 ②: fold each record's unconsumed creation or
-                        // cleanup error into the shutdown aggregate, aggregated
-                        // beside a failed disposal's own error, so neither is
-                        // dropped.
-                        let pending = record.unreported_creation_error.clone();
-                        let result = combine_pending_error(
-                            owner.evict(&key, record, EvictionReason::Shutdown).await,
-                            pending,
-                        );
-                        drain_done.send_replace(Some(result.clone()));
-                        result
-                    }));
+                    drains.push(drain_done.subscribe());
+                    // Same completion guard as the close and idle tasks: a
+                    // panicked or dropped disposal settles the key's closing
+                    // entry with the dropped error instead of leaving it
+                    // unsettled, so the aggregate still carries the failure
+                    // and a later close(key) falls back to the post-shutdown
+                    // branch (TS: `await closingSessions.get(key)` after
+                    // finishEviction removed the entry → undefined →
+                    // fulfilled).
+                    super::super::cleanup_task::spawn_with_error(
+                        &tokio::runtime::Handle::current(),
+                        drain_done,
+                        RuntimeError::new(
+                            "Session disposal task was dropped or panicked before completion.",
+                        ),
+                        async move {
+                            // #1055 ②: fold each record's unconsumed creation or
+                            // cleanup error into the shutdown aggregate, aggregated
+                            // beside a failed disposal's own error, so neither is
+                            // dropped.
+                            let pending = record.unreported_creation_error.clone();
+                            combine_pending_error(
+                                owner.evict(&key, record, EvictionReason::Shutdown).await,
+                                pending,
+                            )
+                        },
+                    );
                 }
                 for drain in drains {
-                    if let Err(error) = drain.await.expect("session disposal panicked") {
+                    if let Err(error) = wait_result(drain).await {
                         failures.push(error);
                     }
                 }
@@ -1092,13 +1121,12 @@ fn track(
 }
 
 /// The in-flight eviction a record-less close awaits (TS closingSessions). A
-/// settled entry is finishEviction's removal: a close, idle-sweep or
-/// shutdown task that panicked before its own cleanup cannot leak a stale
-/// result either, because those tasks' completion guard guarantees
-/// settlement. The per-key shutdown drains are plain spawns: a panic there
-/// leaves the entry unsettled and a later close answers wait_result's
-/// lifecycle-stopped error (registered limitation,
-/// A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001-R2).
+/// settled entry is finishEviction's removal: every entry owner — a close
+/// task, the idle sweep or a shutdown drain — runs under a completion guard
+/// that settles the entry even on panic or drop, and the close/idle tasks
+/// settle before releasing their serial ticket, so a settled entry never
+/// hides a later same-key publication from shutdown's drain list
+/// (#1245 fix-r2).
 fn unsettled_closing(
     state: &mut State,
     key: &JsString,

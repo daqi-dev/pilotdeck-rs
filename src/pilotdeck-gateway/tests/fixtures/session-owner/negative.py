@@ -39,7 +39,7 @@ def main():
          'async move {\n                let _exclusive = ticket.enter().await;\n                let (record, identity) = {',
          'async move {\n                let _unused_ticket = ticket;\n                let (record, identity) = {',
          'close_waits_for_prior_same_key_close_to_drain',
-         'close returned before the prior same-key close drained'),
+         '#1245 close settled before the in-flight same-key creation published its record'),
         ('empty-project-is-paused', owner,
          '!project.is_empty() && state.paused_projects.contains(project)',
          'state.paused_projects.contains(project)',

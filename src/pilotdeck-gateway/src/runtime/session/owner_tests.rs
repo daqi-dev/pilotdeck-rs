@@ -42,6 +42,7 @@ struct ProbeState {
     disposals: Mutex<HashMap<usize, Gate>>,
     setup_failures: Mutex<HashSet<usize>>,
     dispose_failures: Mutex<HashSet<usize>>,
+    evict_panics: Mutex<HashSet<JsString>>,
     factory_failures: Mutex<HashSet<JsString>>,
     abort_failures: Mutex<HashSet<usize>>,
 }
@@ -72,6 +73,11 @@ impl Probe {
             idle_sweep_interval_ms: 0,
             on_session_idle_evict: None,
             on_evict: Some(Arc::new(move |key, reason| {
+                // A misbehaving eviction callback must not strand the key's
+                // closing entry: the completion guard still settles it.
+                if evict.0.evict_panics.lock().unwrap().contains(key) {
+                    panic!("fixture evict callback panic");
+                }
                 let reason = match reason {
                     EvictionReason::Idle => "idle",
                     EvictionReason::Closed => "closed",
@@ -1390,6 +1396,88 @@ async fn shutdown_then_close_same_tick_fulfills_matches_ts() {
     );
 }
 
+/// E1 (fix-r2 probe skip-only-closing-key): a shutdown whose order mixes a
+/// close-owned key (`a`: its close registered the eviction in the same tick,
+/// task not yet drained) with a plain record (`b`: no closing entry) skips
+/// only `a` — the close keeps its own eviction and `closed` reason, `b` is
+/// still drained by shutdown with its `shutdown` reason, and the shutdown
+/// aggregate carries `a`'s failed disposal through the pending drain.
+#[tokio::test]
+async fn shutdown_skips_only_closing_keys_and_drains_the_rest_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    owner.get_or_create(context("b")).await.unwrap();
+    probe.0.dispose_failures.lock().unwrap().insert(id(&a));
+    let close_a = owner.close(&"a".into());
+    let shutdown = owner.shutdown();
+    let error = bounded(close_a)
+        .await
+        .expect_err("#1245 the close-owned key keeps its own eviction result");
+    assert!(
+        error.message == "Failed to dispose agent handle.",
+        "#1245 the close-owned key transmits its per-key dispose aggregate: got {}",
+        error.message
+    );
+    let shutdown_error = bounded(shutdown)
+        .await
+        .expect_err("#1245 the mixed shutdown aggregates the close's failed disposal");
+    assert!(
+        shutdown_error.message == "Failed to shut down all agent sessions.",
+        "#1245 the mixed shutdown keeps its own aggregate message: got {}",
+        shutdown_error.message
+    );
+    assert!(
+        probe.seen("evict:a:closed"),
+        "#1245 the close-owned key keeps its closed reason in a mixed shutdown"
+    );
+    assert!(
+        probe.seen("evict:b:shutdown"),
+        "#1245 the shutdown drain must still dispose the plain key after skipping the closing key"
+    );
+    assert!(
+        !probe.seen("evict:a:shutdown"),
+        "#1245 the shutdown must not steal the closing key's eviction"
+    );
+    assert!(
+        owner.current_handle(&"b".into()).is_none(),
+        "#1245 the plain key's record must not stay cached after the mixed shutdown"
+    );
+    assert!(
+        owner.current_handle(&"a".into()).is_none(),
+        "#1245 the close-owned key's record must not stay cached after the mixed shutdown"
+    );
+}
+
+/// E2 (fix-r2): a shutdown drain whose eviction callback panics must not leave
+/// the key's closing entry unsettled — the completion guard settles it with
+/// the dropped error, so the shutdown aggregate still fails and a later
+/// record-less close falls back to the post-shutdown branch and fulfills
+/// (TS has no panic; the closest analogue is a rejected eviction, which
+/// finishEviction still removes from closingSessions). The handle layer
+/// already contains session-dispose panics, so the callback is the only
+/// panic that reaches the owner's drain task.
+#[tokio::test]
+async fn shutdown_drain_panic_settles_the_keys_closing_entry() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    owner.get_or_create(context("a")).await.unwrap();
+    probe.0.evict_panics.lock().unwrap().insert("a".into());
+    let shutdown = owner.shutdown();
+    let error = bounded(shutdown)
+        .await
+        .expect_err("#1245 a panicked drain must fail the shutdown aggregate");
+    assert!(
+        error.message == "Failed to shut down all agent sessions.",
+        "#1245 the panicked drain keeps the whole-shutdown aggregate message: got {}",
+        error.message
+    );
+    tokio::time::timeout(Duration::from_millis(50), owner.close(&"a".into()))
+        .await
+        .expect("#1245 a close after a panicked drain must settle through the completion guard")
+        .expect("#1245 a record-less close after shutdown must fulfill like TS await undefined");
+}
+
 #[tokio::test]
 async fn project_close_during_creation_is_local_matches_ts() {
     let probe = Probe::default();
@@ -1627,10 +1715,56 @@ async fn close_waits_for_prior_same_key_close_to_drain() {
             .iter()
             .filter(|event| *event == "evict:a:closed")
             .count(),
-        1
+        1,
+        "#1245 exactly one same-key closed eviction must run"
     );
-    assert!(owner.current_handle(&key).is_none());
+    assert!(
+        owner.current_handle(&key).is_none(),
+        "#1245 the drained key must leave no cached record"
+    );
     owner.shutdown().await.unwrap();
+
+    // A second same-key close never reaches the ticket path above — it awaits
+    // the first close's registered closing entry — so pin the close task's own
+    // serial wait separately: a close issued while a same-key creation is
+    // still in flight must queue behind it and evict the record that creation
+    // publishes, not settle on a key that is about to come back. TS close
+    // fulfills immediately here (no record, no closing entry — see
+    // fix-r2/probe/close-during-creation.out); the queueing is the registered
+    // A7.2-SESSION-RECREATE-DRAIN-001 divergence.
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let creation_gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert(key.clone(), creation_gate.clone());
+    let creating = owner.get_or_create(context("a"));
+    until(|| probe.seen("create:a:1")).await;
+    let mut closing = owner.close(&key);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut closing)
+            .await
+            .is_err(),
+        "#1245 close settled before the in-flight same-key creation published its record"
+    );
+    creation_gate.open();
+    bounded(creating)
+        .await
+        .expect("#1245 the same-key creation must complete once its gate opens");
+    bounded(closing)
+        .await
+        .expect("#1245 the queued close must drain after the creation publishes");
+    assert!(
+        owner.current_handle(&key).is_none(),
+        "#1245 the queued close must evict the record the same-key creation published"
+    );
+    assert!(
+        probe.seen("evict:a:closed"),
+        "#1245 the queued close keeps its closed reason"
+    );
 }
 
 #[tokio::test]
