@@ -146,6 +146,25 @@ const STRANGER_STARTED: &str = "stranger-started";
 /// before dying" is an assertion, not an assumption.
 const STRANGER_SAW: &str = "stranger-saw";
 
+/// #1155 fix-r3 review P1-1: the receipt the helper publishes — atomically,
+/// staging + rename (#166 r8) — once it has computed its `end` deadline,
+/// launched the stranger, and reached its paused poll. The tests below wait
+/// for it before anything else, so the event ordering of the cross-deadline
+/// scenario is confirmed, never slept into: a helper that the scheduler parks
+/// between computing `end` and entering its poll can no longer skip the poll
+/// round entirely (the old shape's missed-kill window — the paused poll was
+/// one fixed 10 s sleep that only *usually* covered both the delayed
+/// `started` and the cap).
+const STRANGER_PAUSED: &str = "stranger-paused";
+
+/// #1155 fix-r3 review P1-1: the signal the tests publish — atomically, again
+/// — to explicitly resume a helper parked at its paused poll. The resumption,
+/// not a sleep duration, is what moves the helper on to its saw write, so the
+/// moment of that write is by construction after everything the test has
+/// already observed: the pause receipt, the stranger's `started`, and (when
+/// the scenario needs it) the cap deadline having been crossed.
+const STRANGER_RESUME: &str = "stranger-resume";
+
 /// The panic the `spawned` hook of the panic test below raises once the
 /// stranger has started; comparing the caught payload against it keeps a
 /// hook that failed earlier — a stranger that never signalled — from passing
@@ -326,13 +345,16 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
 fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     let scratch = Scratch::new("helper-dead-stranger");
     let marker = scratch.path().join(STRANGER_EOF);
-    // The go, started, and saw signals are test machinery rather than
-    // observations of the publication, so they live in a scratch of their
-    // own and the residue assertion keeps watching the publication's names.
+    // The go, started, paused, resume, and saw signals are test machinery
+    // rather than observations of the publication, so they live in a scratch
+    // of their own and the residue assertion keeps watching the
+    // publication's names.
     let signals = Scratch::new("helper-dead-stranger-signals");
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
     let saw = signals.path().join(STRANGER_SAW);
+    let paused = signals.path().join(STRANGER_PAUSED);
+    let resume = signals.path().join(STRANGER_RESUME);
     // Declared before the publication so every later exit of this test —
     // including a panic from inside the shared helper — unwinds through the
     // guard's Drop (#1141 fix-r1 review P1-1).
@@ -347,7 +369,15 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         0o755,
         deadline,
         |_| {
-            dead_helper_with_a_stranger_reader(&marker, &go, &started, &saw, STRANGER_STARTED_DELAY)
+            dead_helper_with_a_stranger_reader(
+                &marker,
+                &go,
+                &started,
+                &saw,
+                &paused,
+                &resume,
+                STRANGER_STARTED_DELAY,
+            )
         },
         // #1141 fix-r2 review P1-1: the helper runs as its own group leader
         // (`process_group(0)` below), so its spawn-returned id is the group
@@ -361,7 +391,12 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         // the wait below runs inside this hook, and the write deadline
         // starts only after it, so the handshake cannot consume the write
         // budget — which is why the hook's return is where the write phase
-        // begins (`write_began`).
+        // begins (`write_began`). #1155 fix-r3 review P1-1: the helper
+        // parks at its paused poll until this hook — the only place that
+        // knows the handshake is done — releases it, so the saw write always
+        // happens with the `started` signal provably present, never on the
+        // far side of a scheduling pause that skipped the helper's poll
+        // round outright.
         |pid| {
             stranger.adopt(helper_group(pid));
             let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT).expect(
@@ -369,6 +404,7 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
                  before the publication writes",
             );
             stranger.watch(stranger_pid(&started_pid));
+            publish_resume_signal(&resume);
             write_began.set(Some(Instant::now()));
         },
         |status| {
@@ -436,15 +472,20 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
 
 /// #1155 fix-r2b review (Codex P1-1): a `started` that appears after the
 /// helper's cap must not be recorded as seen, even when the helper's poll
-/// was paused across the deadline so the loop resumes to find the file
-/// already there — the saw write re-validates the same deadline the loop
-/// watched, so the file-exists short-circuit cannot skip it. The pause is
-/// controlled, not a load gamble: the helper polls once per ten seconds,
-/// the stranger publishes `started` at its 2-second delay, and the cap is
-/// 1 second, so the loop can only resume long after the deadline with the
-/// file long present — deterministically the interleaving the review's
-/// leak needed, and the one a scheduling-paused `started-cap-hardcoded-short`
-/// mutant could have been judged by.
+/// was paused across the deadline so it resumes to find the file already
+/// there — the saw write re-validates the same deadline the pause straddled,
+/// so the file-exists short-circuit cannot skip it. #1155 fix-r3 review
+/// P1-1: the pause is an explicit event barrier, not a load gamble. The
+/// helper publishes its `paused` receipt once its `end` deadline is computed
+/// and the stranger launched; this test then waits for the stranger's
+/// 2-second delayed `started`, proves the same deadline has been crossed
+/// (`end` was computed before the receipt, so it is at most the receipt's
+/// observation time plus the 1-second cap), and only then resumes the helper
+/// through the atomic `resume` signal. The saw write therefore runs with the
+/// started file provably present and the deadline provably gone — the exact
+/// interleaving the review's missed kill needed, reached by construction
+/// instead of by a 10-second sleep that only usually covers a 2-second delay
+/// and a 1-second cap.
 #[test]
 fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
     // Every signal here is test machinery, so the whole test lives in a
@@ -454,24 +495,50 @@ fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
     let saw = signals.path().join(STRANGER_SAW);
+    let paused = signals.path().join(STRANGER_PAUSED);
+    let resume = signals.path().join(STRANGER_RESUME);
     // Declared before the spawn so every later exit of this test — including
     // a panic from inside the assertions — unwinds through the guard's Drop.
     let mut stranger = StrangerGuard::new();
+    // The cap this scenario crosses is deliberately shorter than the
+    // stranger's 2-second `started` delay; it is a local parameter of the
+    // scenario, not the derived handshake cap of
+    // [`a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll`].
+    const SCENARIO_CAP: Duration = Duration::from_secs(1);
     let mut helper = started_wait_helper(
         &marker,
         &go,
         &started,
         &saw,
+        &paused,
+        &resume,
         Duration::from_secs(2),
-        1,
-        "10",
+        SCENARIO_CAP.as_secs(),
     )
     .spawn()
     .expect("#1155 the late-started helper must spawn");
     stranger.adopt(helper_group(helper.id()));
-    // The helper's single poll round sleeps past both the 1-second cap and
-    // the 2-second delayed `started`, so its loop can only leave through
-    // the file-exists short-circuit — with the deadline long gone.
+    // The barrier receipt: the helper has computed `end`, launched the
+    // stranger, and is now parked at its paused poll.
+    wait_for_signal(&paused, STRANGER_STARTED_TIMEOUT)
+        .expect("#1155 the late-started helper must reach its paused poll");
+    let paused_at = Instant::now();
+    // The stranger did publish `started` — the later refusal must be the
+    // deadline's, not a stranger that never started.
+    let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
+        .expect("#1155 the late-started stranger must still publish its started signal");
+    stranger.watch(stranger_pid(&started_pid));
+    // The same deadline has been crossed: `end` was computed before the
+    // receipt, so `end <= paused_at + SCENARIO_CAP` — waiting that far past
+    // the receipt proves the saw write below runs past the deadline. (The
+    // observed `started` — no earlier than the helper's own 2-second delay,
+    // which outlives the 1-second cap — already implies it; this explicit
+    // wait is the belt to that braces, and costs nothing at these constants.)
+    let crossed_at = paused_at + SCENARIO_CAP;
+    while Instant::now() < crossed_at {
+        thread::sleep(Duration::from_millis(5));
+    }
+    publish_resume_signal(&resume);
     let exited = helper
         .wait()
         .expect("#1155 the late-started helper must exit on its own");
@@ -483,15 +550,70 @@ fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
         !saw.exists(),
         "#1155 a started past the helper's cap must not be recorded as seen after a paused poll"
     );
-    // The stranger did publish `started` — the refusal above was the
-    // deadline's, not a stranger that never started — and the guard ends it
-    // through the same contract as the group tests.
-    let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
-        .expect("#1155 the late-started stranger must still publish its started signal");
-    stranger.watch(stranger_pid(&started_pid));
     stranger
         .end()
         .expect("#1155 the late-started stranger must be killed and reaped by the test's guard");
+}
+
+/// #1155 fix-r3 review P1-1: the other side of the same controlled pause —
+/// a `started` that appears *within* the helper's cap must still be recorded
+/// as seen, and it is the derived cap that makes it so. The helper parks at
+/// the same event barrier; this test waits for the stranger's
+/// [`STRANGER_STARTED_DELAY`]ed `started` (8 s, four fifths of the unified
+/// cap, comfortably past the 5 s a re-hardcoded helper cap would allow) and
+/// resumes it immediately, so the saw write runs while the derived cap —
+/// [`stranger_started_wait_secs`], the one constant both sides of the
+/// handshake derive from — still has budget. A helper whose cap has drifted
+/// back down to a hardcoded 5 s finds its deadline already gone at that same
+/// moment, refuses the saw write, and this test's saw assertion is what
+/// catches it, in the very scenario (`started-cap-hardcoded-short`) rather
+/// than in a different test's timing.
+#[test]
+fn a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll() {
+    let signals = Scratch::new("helper-within-cap-signals");
+    let marker = signals.path().join(STRANGER_EOF);
+    let go = signals.path().join(STRANGER_GO);
+    let started = signals.path().join(STRANGER_STARTED);
+    let saw = signals.path().join(STRANGER_SAW);
+    let paused = signals.path().join(STRANGER_PAUSED);
+    let resume = signals.path().join(STRANGER_RESUME);
+    let mut stranger = StrangerGuard::new();
+    let mut helper = started_wait_helper(
+        &marker,
+        &go,
+        &started,
+        &saw,
+        &paused,
+        &resume,
+        STRANGER_STARTED_DELAY,
+        stranger_started_wait_secs(),
+    )
+    .spawn()
+    .expect("#1155 the within-cap helper must spawn");
+    stranger.adopt(helper_group(helper.id()));
+    wait_for_signal(&paused, STRANGER_STARTED_TIMEOUT)
+        .expect("#1155 the within-cap helper must reach its paused poll");
+    let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
+        .expect("#1155 the within-cap stranger must publish its started signal");
+    stranger.watch(stranger_pid(&started_pid));
+    // Resume right away: the derived cap (11 s) still holds budget at the
+    // 8-second `started`, so a healthy helper records the saw, while one
+    // whose cap was re-hardcoded to 5 s has already lost its deadline.
+    publish_resume_signal(&resume);
+    let exited = helper
+        .wait()
+        .expect("#1155 the within-cap helper must exit on its own");
+    assert!(
+        exited.success(),
+        "#1155 the within-cap helper must exit cleanly: {exited}"
+    );
+    assert!(
+        saw.exists(),
+        "#1155 a started within the helper's cap must still be recorded as seen after a paused poll"
+    );
+    stranger
+        .end()
+        .expect("#1155 the within-cap stranger must be killed and reaped by the test's guard");
 }
 
 /// #1141 fix-r2 review P1-1 (Codex): the stranger must be owned from the
@@ -508,13 +630,15 @@ fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
 fn a_panic_while_the_stranger_runs_still_ends_it() {
     let scratch = Scratch::new("helper-panic-stranger");
     // The panic never reaches the publication's assertions, so the marker,
-    // go, and started signals all live in a scratch of their own and the
-    // residue assertion watches the publication's names alone.
+    // go, started, paused, and resume signals all live in a scratch of their
+    // own and the residue assertion watches the publication's names alone.
     let signals = Scratch::new("helper-panic-stranger-signals");
     let marker = signals.path().join(STRANGER_EOF);
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
     let saw = signals.path().join(STRANGER_SAW);
+    let paused = signals.path().join(STRANGER_PAUSED);
+    let resume = signals.path().join(STRANGER_RESUME);
     let mut stranger = StrangerGuard::new();
     let (kill_sent, _kill_reported) = mpsc::channel();
     let body = "\n".repeat(256 * 1024);
@@ -524,7 +648,17 @@ fn a_panic_while_the_stranger_runs_still_ends_it() {
             &body,
             0o755,
             Duration::from_millis(1500),
-            |_| dead_helper_with_a_stranger_reader(&marker, &go, &started, &saw, Duration::ZERO),
+            |_| {
+                dead_helper_with_a_stranger_reader(
+                    &marker,
+                    &go,
+                    &started,
+                    &saw,
+                    &paused,
+                    &resume,
+                    Duration::ZERO,
+                )
+            },
             |pid| {
                 stranger.adopt(helper_group(pid));
                 let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
@@ -605,10 +739,14 @@ fn stalled_without_reading() -> process::Command {
 /// counted on the wall clock, because a round count is only an upper bound
 /// on time under load (#1155 fix-r1 review: the negative control re-hardcodes
 /// 5 s, and a stretched round count could out-wait the delayed `started`).
+/// #1155 fix-r3 review P1-1: the wait is an explicit pause — the helper
+/// publishes its `paused` receipt and parks until the test releases it — so
+/// the helper cannot skip its poll round to the far side of a scheduling
+/// stall, and the saw write's moment is chosen by the test's events, not by
+/// a sleep duration.
 /// #1155 fix-r2b review (Codex P1-1): the cap's wall clock is re-checked at
 /// the saw write itself, so a `started` that only appears after the cap —
-/// even when a paused poll resumes to find the file already there, the
-/// loop's file-exists short-circuit having skipped the time check — is not
+/// even when a paused poll resumes to find the file already there — is not
 /// recorded as seen.
 /// The helper runs as its own process-group leader (`process_group(0)`), so
 /// the stranger — and everything it runs — stays in a group the test alone
@@ -626,6 +764,8 @@ fn dead_helper_with_a_stranger_reader(
     go: &Path,
     started: &Path,
     saw: &Path,
+    paused: &Path,
+    resume: &Path,
     delay: Duration,
 ) -> process::Command {
     started_wait_helper(
@@ -633,29 +773,40 @@ fn dead_helper_with_a_stranger_reader(
         go,
         started,
         saw,
+        paused,
+        resume,
         delay,
         stranger_started_wait_secs(),
-        "0.05",
     )
 }
 
 /// The helper shape of [`dead_helper_with_a_stranger_reader`] with the
 /// started-wait parameters factored out (#1155 fix-r2b review Codex P1-1):
 /// `wait_secs` is the wall-clock cap — derived from the one test-side
-/// constant — and `poll_secs` the sleep between poll rounds, the
-/// controllable pause of the late-started test below. The `end` the cap
-/// resolves to is computed before the stranger is launched, so both sides
-/// count from before its start, and the saw write re-validates that same
-/// deadline: a `started` that appeared after it is not recorded as seen
-/// just because the file already exists when a paused poll resumes.
+/// constant — and the pause is an explicit event barrier (#1155 fix-r3
+/// review P1-1): the helper computes its `end` deadline, launches the
+/// stranger, publishes the `paused` receipt (`$5`), and parks until the
+/// test's `resume` signal (`$6`) appears. The park is bounded by its own
+/// 30-second safety — deliberately *not* by `end`, because the whole point
+/// of the barrier is that the saw write can be made to run after the
+/// deadline, which a deadline-bounded pause would pre-empt by exiting the
+/// wait early; the tests resume the helper long before the safety runs out,
+/// and every guard or `ReapGuard` that owns the helper kills it on the way
+/// out of a failing or panicking test. The `end` the cap resolves to is
+/// computed before the stranger is launched, so both sides count from
+/// before its start, and the saw write re-validates that same deadline: a
+/// `started` that appeared after it is not recorded as seen just because
+/// the file already exists when the paused poll resumes.
+#[allow(clippy::too_many_arguments)]
 fn started_wait_helper(
     marker: &Path,
     go: &Path,
     started: &Path,
     saw: &Path,
+    paused: &Path,
+    resume: &Path,
     delay: Duration,
     wait_secs: u64,
-    poll_secs: &str,
 ) -> process::Command {
     let delay_ms = delay.as_millis();
     let mut helper = process::Command::new("/bin/sh");
@@ -665,7 +816,9 @@ fn started_wait_helper(
             "exec 3<&0
                end=$(( $(date +%s) + {wait_secs} ))
                python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" {delay_ms} <&3 &
-               while [ ! -e \"$3\" ] && [ \"$(date +%s)\" -lt \"$end\" ]; do /bin/sleep {poll_secs}; done
+               printf paused >\"$5.staging\"; mv \"$5.staging\" \"$5\"
+               pause_end=$(( $(date +%s) + 30 ))
+               while [ ! -e \"$6\" ] && [ \"$(date +%s)\" -lt \"$pause_end\" ]; do /bin/sleep 0.05; done
                if [ -e \"$3\" ] && [ \"$(date +%s)\" -lt \"$end\" ]; then printf saw >\"$4.staging\"; mv \"$4.staging\" \"$4\"; fi
                exit 0"
         ))
@@ -674,6 +827,8 @@ fn started_wait_helper(
         .arg(go)
         .arg(started)
         .arg(saw)
+        .arg(paused)
+        .arg(resume)
         .stdin(process::Stdio::piped())
         .process_group(0);
     helper
@@ -1361,6 +1516,15 @@ fn publish_go_signal(go: &Path) {
     let staging = go.with_extension("staging");
     fs::write(&staging, b"go").expect("#1141 write the go signal's staging file");
     fs::rename(&staging, go).expect("#1141 publish the go signal");
+}
+
+/// #1155 fix-r3 review P1-1: publish the resume signal the same atomic way,
+/// so a helper parked at its paused poll wakes on a complete file, never on
+/// a partially written one.
+fn publish_resume_signal(resume: &Path) {
+    let staging = resume.with_extension("staging");
+    fs::write(&staging, b"resume").expect("#1155 write the resume signal's staging file");
+    fs::rename(&staging, resume).expect("#1155 publish the resume signal");
 }
 
 /// The guard's kill report is the only liveness evidence used (#1125

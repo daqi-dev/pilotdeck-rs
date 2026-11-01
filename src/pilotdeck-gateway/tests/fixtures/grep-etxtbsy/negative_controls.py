@@ -34,7 +34,9 @@ fail-closed branches (`boundary-fdinfo-read-error` /
 review boundary P2), the subreaper lease (`stranger-subreaper-removed`),
 the group reaping (`stranger-reap-removed`), and the pid-mode guard's
 kill (`stranger-pid-kill-removed`, #1155 fix-r2b review boundary P3 —
-the pid-mode test itself is Linux-only). The other fourteen must kill on
+the pid-mode test itself is Linux-only, and bound by its module-qualified
+`pid_mode::…` name since fix-r3 review P1-2: `--exact` matches nothing
+without the prefix). The other fourteen must kill on
 every unix host — `stranger-retention-reverted` included: bash (the macOS `/bin/sh`)
 keeps the pipe behind an explicit `<&0`, so `started` still appears, but
 the reverted helper writes no `saw` marker and the #1155 r4 saw assertion
@@ -76,15 +78,21 @@ on the first blocked write, so the measured floor fails, or the
 already-past expiry collapses the writer-exit grace and that assert fires
 first — one anchor list for the two outcomes); the helper's and the
 test's started-wait caps are one derived constant
-(`started-cap-hardcoded-short`, r4 review P2 — a re-hardcoded 5-second
-wall clock gives up 3 s of real time before the 8-second delayed `started`
-on any host, so the helper dies without its saw marker), and a `started`
-that appears after the cap is not recorded as seen at all
+(`started-cap-hardcoded-short`, r4 review P2, bound since fix-r3 to the
+within-cap event-barrier test the fix-r3 review P1-1 asked for — the
+helper parks at an explicit pause the test releases the moment the
+8-second delayed `started` appears, so a derived 11-second cap still
+records its saw marker while a re-hardcoded 5-second wall clock finds
+its deadline already gone at that same controlled moment), and a
+`started` that appears after the cap is not recorded as seen at all
 (`saw-write-skips-the-cap`, #1155 fix-r2b review Codex P1-1 — the saw
-write re-validates the same deadline the loop watched, so even a poll
-paused across the cap that resumes to find the file already there
-refuses it; the late-started test controls the pause instead of gambling
-on load); the
+write re-validates the same deadline the pause straddled; the fix-r3
+review P1-1 replaced the timed 10-second poll with an event barrier: the
+late-started test waits for the helper's `paused` receipt, the 2-second
+delayed `started`, and proof the 1-second cap's deadline has been
+crossed before it publishes `resume`, so the saw write runs with the
+file provably present and the deadline provably gone — no scheduling
+stall can skip the poll round and dodge the kill); the
 return-boundary scan flags write ends only
 (`boundary-write-end-filter-removed`, r3 review P2-1 — without the
 access-mode filter the stranger's read end fails the healthy path; bound
@@ -117,7 +125,13 @@ unread = 'a_helper_that_never_reads_hits_the_write_deadline'
 dead_stranger = 'a_dead_helper_with_a_stranger_reader_still_closes_the_write_end'
 panic_stranger = 'a_panic_while_the_stranger_runs_still_ends_it'
 late_started = 'a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll'
-pid_stranger = 'a_stranger_on_the_read_end_still_hits_the_write_deadline'
+within_cap = 'a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll'
+# #1155 fix-r3 review P1-2: the test lives inside the `pid_mode` module, and
+# the executor below always passes `--exact`, so the binding needs the
+# module-qualified name — the bare name matched zero tests and the mutant
+# never reached its own assertion (cb8: positive run rejected by passed(),
+# the whole row INVALID).
+pid_stranger = 'pid_mode::a_stranger_on_the_read_end_still_hits_the_write_deadline'
 fdinfo_unit = 'an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd'
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
@@ -443,7 +457,9 @@ cases = [
      '''            "exec 3<&0
                end=$(( $(date +%s) + {wait_secs} ))
                python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" {delay_ms} <&3 &
-               while [ ! -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; do /bin/sleep {poll_secs}; done
+               printf paused >\\"$5.staging\\"; mv \\"$5.staging\\" \\"$5\\"
+               pause_end=$(( $(date +%s) + 30 ))
+               while [ ! -e \\"$6\\" ] && [ \\"$(date +%s)\\" -lt \\"$pause_end\\" ]; do /bin/sleep 0.05; done
                if [ -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; then printf saw >\\"$4.staging\\"; mv \\"$4.staging\\" \\"$4\\"; fi
                exit 0"''',
      '''            "python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" 0 <&0 &
@@ -471,31 +487,35 @@ cases = [
      ['#1155 the write phase must last its full deadline',
       '#1125 helper writer did not exit by its deadline']),
     # #1155 r4 review P2: the helper's started-wait cap is derived from the
-    # test-side `STRANGER_STARTED_TIMEOUT` — one cap, not two. The mutant
-    # re-hardcodes the old 5 s on the helper's wall clock (the wait itself
-    # is `date +%s`-based, so the bound is real time and load cannot
-    # stretch it, #1155 fix-r1 review), so against the 8-second delayed
-    # `started` the helper gives up first, dies without leaving its `saw`
-    # marker, and the dead-helper test's saw assertion kills; the
-    # publication itself still behaves, which is exactly the r4 finding
-    # (the drift was invisible to every other assertion). #1155 fix-r2b
-    # review: the derivation now adds the `+ 1` truncation compensation —
-    # the anchor covers it — and the saw write re-validates the deadline,
-    # so the 5 s mutant is refused there too even if a paused poll resumes
-    # to find the file already present.
+    # test-side `STRANGER_STARTED_TIMEOUT` — one cap, not two. #1155 fix-r3
+    # review P1-1: the mutant is bound to the within-cap event-barrier test,
+    # the controlled path the review asked for. That test resumes the helper
+    # the moment the stranger's 8-second delayed `started` appears, so the
+    # saw write runs while the derived 11-second cap still has budget and
+    # the healthy helper records its `saw` marker; a re-hardcoded 5-second
+    # cap has already lost its deadline by that same moment, refuses the saw
+    # write, and the saw-exists assertion kills with its dedicated message.
+    # The mutant still fails the old dead-helper timing too (an 8 s started
+    # against a 5 s cap leaves no `saw` there either), but the binding now
+    # proves it inside the scenario that controls the pause, not beside it.
     ('started-cap-hardcoded-short', publication,
      '''    STRANGER_STARTED_TIMEOUT.as_secs() + 1''',
      '''    5''',
-     publication_target, dead_stranger,
-     "#1155 the helper must observe the stranger's started signal before it dies"),
+     publication_target, within_cap,
+     "#1155 a started within the helper's cap must still be recorded as seen after a paused poll"),
     # #1155 fix-r2b review (Codex P1-1): a started that appears after the
     # helper's cap must not be recorded as seen — even when the helper's poll
-    # was paused across the deadline so the loop resumes to find the file
-    # already there (the file-exists short-circuit skipped the time check).
-    # The mutant drops the deadline re-check at the saw write, so the
-    # late-started test — one ten-second poll round, cap 1 s, started at the
-    # 2 s delay, all controlled, no load gamble — records the late started as
-    # seen and its saw assertion kills, deterministically on any unix host.
+    # was paused across the deadline so it resumes to find the file already
+    # there (the file-exists short-circuit skipped the time check).
+    # #1155 fix-r3 review P1-1: the pause is an explicit event barrier, not
+    # a sleep that only usually covers the delay. The test waits for the
+    # helper's `paused` receipt, then the 2-second delayed `started`, then
+    # proves the 1-second cap's deadline has been crossed (`end` was computed
+    # before the receipt, so it is at most receipt-time + cap), and only then
+    # publishes `resume`; the saw write therefore runs with the started file
+    # provably present and the deadline provably gone — the mutant's dropped
+    # re-check records it as seen and the saw assertion kills,
+    # deterministically on any unix host.
     ('saw-write-skips-the-cap', publication,
      '''               if [ -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; then printf saw''',
      '''               if [ -e \\"$3\\" ]; then printf saw''',
