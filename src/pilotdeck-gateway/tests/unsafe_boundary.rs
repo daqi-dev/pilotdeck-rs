@@ -7,7 +7,8 @@
 //! rust-toolchain.toml 钉住 channel、或 channel 加上运行中 cargo 报告的真实
 //! host triple 时放行），以及 #448 在 Linux 上经 /proc 读到的真实调用上下文：
 //! 父进程（cargo / cargo-nextest 本尊）的 cwd 到根的 Cargo 配置链、其 argv
-//! 与祖先链上每个名为 cargo 的进程的 argv 里的 `--config` 覆盖（cb8 实测
+//! 与祖先链上每个名为 cargo 的进程的 argv 里的 `--config` 覆盖及其 cwd 到根
+//! 的 Cargo 配置链（cb8 实测
 //! cargo 会 exec 成外部子命令：真跑 `cargo nextest run` 时 cargo 本尊已不
 //! 存在、其 argv 随之消失，归头注登记的人工评审边界；祖先扫描覆盖 cargo
 //! 存活的一切布局，如 `cargo test` 派生的 harness-free runner 再拉起本守
@@ -46,8 +47,11 @@
 //! 那些平台上的树外调用目录 `.cargo/config*`、`cargo --config` 与
 //! `[env]` CARGO 覆盖不可核实——静默放行等于假 PASS，因此非 Linux 默认测试
 //! 失败并说明原因，仅显式设置 `PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1`
-//! 时以可辨认的 stderr skip 行放行（CI 全是 ubuntu 作业，无需设置）；
-//! 祖先链走到 init 为止，`/proc/<pid>/exe`（或 stat）读失败时区分「进程
+//! 时以可辨认的 stderr skip 行放行（skip 行经 stderr 句柄直写，不被
+//! libtest 捕获，默认 `cargo test` 输出即可见；CI 全是 ubuntu 作业，无需
+//! 设置）；初始父进程即使就是 pid 1（容器入口即 cargo 的布局）也照常核
+//! 验，只有向上走才在 init 之前停止，`/proc/<pid>/exe`（或 stat）读失败时
+//! 区分「进程
 //! 已退出」（停止）与「无权限等其它错误」（stderr 打 note 后停止，到达
 //! root 属主的合法祖先如 sshd 即此情形，再往上的 cargo 不可核实，与 CI
 //! 脚本替换编译器同归人工评审）；`RUSTUP_HOME`（rustup 会为子进程导出，
@@ -864,7 +868,7 @@ fn cargo_configuration_locations_boundary(manifest: &Path) {
                 let entry = entry.expect("read Cargo home entry");
                 assert!(
                     !entry.file_name().to_string_lossy().starts_with("config"),
-                    "Cargo home config* can replace the compiler or override lint policy and is forbidden: {}. For this guard test only, set CARGO_HOME to a config-free Cargo home with dependencies cached, or run the compiled guard binary with that CARGO_HOME",
+                    "Cargo home config* can replace the compiler or override lint policy and is forbidden: {}. For this guard test only, set CARGO_HOME to a config-free Cargo home with dependencies cached, or run the compiled guard binary with that CARGO_HOME and CARGO naming the cargo executable",
                     entry.path().display()
                 );
             }
@@ -1055,24 +1059,27 @@ fn cargo_invocation_boundary() {
     // boundary; with any cargo ancestry visible, CARGO must name one of
     // those ancestors.
     let cargo = PathBuf::from(
-        std::env::var_os("CARGO")
-            .expect("#448 the guard environment must name its cargo through CARGO"),
+        std::env::var_os("CARGO").expect(
+            "#448 the guard environment must name its cargo through CARGO; when running the compiled guard binary directly (e.g. the CARGO_HOME remedy), export CARGO=<cargo executable> first",
+        ),
     );
     let mut saw_cargo = false;
     let mut verified = false;
+    // The starting pid is examined even when it is init (pid 1): in a
+    // container whose entrypoint is cargo, the guard's direct parent is
+    // pid 1 itself, and skipping it would silently drop the identity and
+    // --config audits for exactly that layout. Only the upward walk stops
+    // before init (next > 1 below).
     let mut pid = ppid;
     loop {
-        if pid <= 1 {
-            break;
-        }
         let exe = match fs::read_link(format!("/proc/{pid}/exe")) {
             Ok(exe) => exe,
             // The process exited before the guard could read it.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
             Err(error) => {
-                eprintln!(
-                    "#448 note: the ancestry walk stopped at pid {pid}: /proc/{pid}/exe cannot be read ({error}); any cargo above it stays unverified (declared manual-review boundary)"
-                );
+                stderr_boundary_line(&format!(
+                    "#448 note: the ancestry walk stopped at pid {pid}: /proc/{pid}/exe cannot be read ({error}); any cargo above it stays unverified (declared manual-review boundary)\n"
+                ));
                 break;
             }
         };
@@ -1089,6 +1096,24 @@ fn cargo_invocation_boundary() {
                 ),
             };
             assert_no_config_cli_overrides(&runner_argv);
+            // The cargo ancestor's own invocation directory is on no cwd
+            // chain the direct-parent walk can see: cargo discovers
+            // .cargo/config* from the directory it is invoked in, while the
+            // runner below it (the guard's direct parent) runs from the
+            // package root.
+            let runner_cwd = match fs::read_link(format!("/proc/{pid}/cwd")) {
+                Ok(cwd) => cwd,
+                // The process exited before the guard could read it.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => panic!(
+                    "#448 the cargo ancestor's working directory must be readable to audit its invocation directory Cargo configuration (pid {pid}): {error}"
+                ),
+            };
+            assert_no_ancestor_cargo_configuration(
+                &runner_cwd,
+                "#448 cargo ancestor invocation directory Cargo configuration (the direct parent's cwd chain cannot see where that cargo was invoked from)",
+                "For this guard test only, invoke every cargo ancestor from a directory whose ancestors have no .cargo/config or .cargo/config.toml",
+            );
         }
         match parent_process_id(pid) {
             Ok(next) if next > 1 && next != pid => pid = next,
@@ -1096,9 +1121,9 @@ fn cargo_invocation_boundary() {
             // The process exited before the guard could read it.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
             Err(error) => {
-                eprintln!(
-                    "#448 note: the ancestry walk stopped at pid {pid}: /proc/{pid}/stat cannot be read ({error}); any cargo above it stays unverified (declared manual-review boundary)"
-                );
+                stderr_boundary_line(&format!(
+                    "#448 note: the ancestry walk stopped at pid {pid}: /proc/{pid}/stat cannot be read ({error}); any cargo above it stays unverified (declared manual-review boundary)\n"
+                ));
                 break;
             }
         }
@@ -1110,16 +1135,45 @@ fn cargo_invocation_boundary() {
     );
 }
 
-// #448 declared boundary (module header): without /proc the invocation
-// directory chain, the runner argv and the runner image are unavailable to
-// the test process. A silent no-op would report the same green as a verified
-// run, so the default is fail-closed; the explicit opt-out prints a
-// recognizable skip line and keeps the manual-review boundary.
+// #448: the acknowledgement must be exactly "1" — unset, empty, "0", or any
+// other value refuses, so a typo or an inherited empty value cannot silently
+// acknowledge the boundary. Pure and unit-tested on every platform because
+// the non-Linux branch it gates cannot run under CI's ubuntu hosts.
+fn acknowledges_non_linux_boundary(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
+}
+
+// #448 boundary lines must reach default `cargo test` output: libtest
+// captures the eprintln! macro for a passing test, so skip and note lines
+// are written through the stderr handle directly (probed on rustc 1.99.1:
+// handle writes bypass the capture; the macro's output does not).
+fn stderr_boundary_line(text: &str) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(text.as_bytes());
+    let _ = std::io::stderr().flush();
+}
+
+#[test]
+fn non_linux_acknowledgement_gate() {
+    assert!(acknowledges_non_linux_boundary(Some(std::ffi::OsStr::new(
+        "1"
+    ))));
+    assert!(!acknowledges_non_linux_boundary(None));
+    for rejected in ["0", "", "true", "1 ", " 1"] {
+        assert!(
+            !acknowledges_non_linux_boundary(Some(std::ffi::OsStr::new(rejected))),
+            "#448 only the exact value 1 may acknowledge the non-Linux boundary: {rejected:?}"
+        );
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 fn cargo_invocation_boundary() {
-    if std::env::var_os("PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX").is_some_and(|value| value == "1") {
-        eprintln!(
-            "#448 skip: the /proc invocation boundary is Linux-only; PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1 acknowledges the manual-review boundary (invocation directory chain, runner argv and CARGO identity are unverified on this platform)"
+    if acknowledges_non_linux_boundary(
+        std::env::var_os("PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX").as_deref(),
+    ) {
+        stderr_boundary_line(
+            "#448 skip: the /proc invocation boundary is Linux-only; PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1 acknowledges the manual-review boundary (invocation directory chain, runner argv and CARGO identity are unverified on this platform)\n",
         );
         return;
     }
