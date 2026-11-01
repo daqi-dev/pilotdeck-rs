@@ -40,12 +40,12 @@ fn retry_after_dialects_match_node_in_two_timezones() {
     );
     assert_eq!(
         oracle["icu"].as_str(),
-        Some("77.1"),
+        Some("78.2"),
         "#360-2 oracle icu runtime"
     );
     assert_eq!(
         oracle["tzdata"].as_str(),
-        Some("2025b"),
+        Some("2025c"),
         "#360-2 oracle tzdata runtime"
     );
     let zones = oracle["zones"].as_array().expect("#360-2 zone table");
