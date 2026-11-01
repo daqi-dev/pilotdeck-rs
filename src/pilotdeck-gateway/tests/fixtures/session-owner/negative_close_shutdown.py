@@ -3,7 +3,9 @@
 
 The TS contract (`SessionRouter.ts:327-338, 421-454`, pinned by the real-router
 probes ``_tmp/20261026-issue-1245/probe/close-during-shutdown.out`` and
-``_tmp/20261026-issue-1245/fix-r1/probe/close-first-same-tick.out``, Node
+``_tmp/20261026-issue-1245/fix-r1/probe/close-first-same-tick.out`` — in the
+author tree under ``_tmp/20261026-issue-1245/``, in the delivered round copy
+under the same directory's ``remote-run/artifacts/round/probe/``, Node
 v22.22.0): a ``SessionOwner::close`` that finds no cached record awaits the
 key's registered in-flight eviction — a close task, the idle sweep or a
 shutdown drain — and transmits that eviction's own result; no entry means
@@ -65,6 +67,14 @@ CLOSE_THEN_SHUTDOWN = (
 SHUTDOWN_THEN_CLOSE = (
     "runtime::session::owner::tests::"
     "shutdown_then_close_same_tick_fulfills_matches_ts"
+)
+SKIP_ONLY_CLOSING = (
+    "runtime::session::owner::tests::"
+    "shutdown_skips_only_closing_keys_and_drains_the_rest_matches_ts"
+)
+DRAIN_PANIC = (
+    "runtime::session::owner::tests::"
+    "shutdown_drain_panic_settles_the_keys_closing_entry"
 )
 
 
@@ -179,6 +189,71 @@ MUTATIONS = {
         [
             "#1245 a close that starts before a same-tick shutdown must reject "
             "with its own dispose failure",
+        ],
+    ),
+    # #1245 fix-r2: the skip must not stop the drain list — breaking out of
+    # the order loop leaves the plain key's record cached forever (the order
+    # vec was already taken), undisposed and undrained, while shutdown still
+    # succeeds through the closing key's aggregate.
+    "shutdown-skip-stops-draining": (
+        owner,
+        """            if unsettled_closing(&mut state, &key).is_some() {
+                continue;
+            }""",
+        """            if unsettled_closing(&mut state, &key).is_some() {
+                break;
+            }""",
+        [SKIP_ONLY_CLOSING],
+        [
+            "#1245 the shutdown drain must still dispose the plain key after "
+            "skipping the closing key",
+        ],
+    ),
+    # #1245 fix-r2: the per-key drain loses its completion guard — a panicked
+    # disposal then settles nothing: the entry hangs unsettled (all senders
+    # dropped), the aggregate only sees wait_result's lifecycle-stopped
+    # stand-in, and a later record-less close answers that same error instead
+    # of falling back to the post-shutdown branch.
+    "drain-guard-removed": (
+        owner,
+        """                    super::super::cleanup_task::spawn_with_error(
+                        &tokio::runtime::Handle::current(),
+                        drain_done,
+                        RuntimeError::new(
+                            "Session disposal task was dropped or panicked before completion.",
+                        ),
+                        async move {
+                            // #1055 ②: fold each record's unconsumed creation or
+                            // cleanup error into the shutdown aggregate, aggregated
+                            // beside a failed disposal's own error, so neither is
+                            // dropped.
+                            let pending = record.unreported_creation_error.clone();
+                            combine_pending_error(
+                                owner.evict(&key, record, EvictionReason::Shutdown).await,
+                                pending,
+                            )
+                        },
+                    );""",
+        """                    let settle = drain_done.clone();
+                    let _unguarded = drain_done;
+                    tokio::spawn(async move {
+                        // #1055 ②: fold each record's unconsumed creation or
+                        // cleanup error into the shutdown aggregate, aggregated
+                        // beside a failed disposal's own error, so neither is
+                        // dropped.
+                        let pending = record.unreported_creation_error.clone();
+                        let result = combine_pending_error(
+                            owner.evict(&key, record, EvictionReason::Shutdown).await,
+                            pending,
+                        );
+                        settle.send_replace(Some(result));
+                    });""",
+        [DRAIN_PANIC],
+        [
+            "#1245 a close after a panicked drain must settle through the "
+            "completion guard",
+            "#1245 a record-less close after shutdown must fulfill like TS "
+            "await undefined",
         ],
     ),
 }
