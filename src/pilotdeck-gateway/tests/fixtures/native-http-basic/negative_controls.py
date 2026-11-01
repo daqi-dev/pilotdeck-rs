@@ -42,7 +42,8 @@ switches = [
     # connection open across stop like TS server.close(); the mutant
     # force-closes it, so the late request never gets its response.
     ('native-http-unserved-close', SOURCE_PROXY, 'stop_serves_late_request_and_waits_like_ts_close', '#1209 the late request is still served after stop'),
-    # fix-r3: Node's 5 s keep-alive idle close is in force with or without a
+    # fix-r3: Node's effective 6 s keep-alive idle close (keepAliveTimeout 5 s
+    # + the fixed 1 s keepAliveTimeoutBuffer) is in force with or without a
     # stop (probe `probe-fixr3-a.out` A); the mutant disables it, so a served
     # connection never reaches EOF.
     ('native-http-keep-alive-timeout-off', SOURCE_PROXY, 'keep_alive_idle_close_matches_ts', '#1209 the served connection reaches EOF at the keep-alive idle close'),
@@ -63,20 +64,33 @@ switches = [
     # #1250: Node closes an idle keep-alive connection at keepAliveTimeout 5 s
     # plus the fixed 1 s keepAliveTimeoutBuffer (6 s, while the response still
     # advertises the bare timeout=5); the mutant drops the buffer, so the close
-    # lands at the bare 5 s.
-    ('native-http-idle-close-buffer-off', SOURCE_PROXY, 'keep_alive_idle_close_lands_at_six_seconds', "#1250 the idle connection stays open at +5.46 s: Node closes at keepAliveTimeout + the fixed 1 s keepAliveTimeoutBuffer (6 s), never at the bare 5 s"),
+    # lands at the bare 5 s — inside the test's still-open probe window.
+    ('native-http-idle-close-buffer-off', SOURCE_PROXY, 'keep_alive_idle_close_lands_at_six_seconds', "#1250 the idle connection stays open at +5.99 s: Node closes at keepAliveTimeout + the fixed 1 s keepAliveTimeoutBuffer (6 s), never at the bare 5 s or a shortened buffer"),
+    # #1250 fix-r1: the buffer is the fixed 1 s default, not any value in
+    # (0, 2) s; a 500 ms buffer closes at 5.5 s, again inside the test's
+    # still-open probe window (the pre-#1250 mutant above pins the 5 s floor,
+    # this one pins the full second).
+    ('native-http-idle-close-buffer-half', SOURCE_PROXY, 'keep_alive_idle_close_lands_at_six_seconds', "#1250 the idle connection stays open at +5.99 s: Node closes at keepAliveTimeout + the fixed 1 s keepAliveTimeoutBuffer (6 s), never at the bare 5 s or a shortened buffer"),
     # #1250: the idle deadline arms at the response's end-of-frames, not at
     # handler return; the mutant releases the in-flight slot and re-arms at
     # handler return, so the connection closes right after the body ends.
-    ('native-http-inflight-body-off', SOURCE_PROXY, 'idle_close_waits_for_streaming_body', "#1250 the streaming connection stays open at +5.46 s after its body ended: Node arms the idle deadline at response finish, not at handler return"),
+    ('native-http-inflight-body-off', SOURCE_PROXY, 'idle_close_waits_for_streaming_body', "#1250 the streaming connection stays open at +5.99 s after its body ended: Node arms the idle deadline at response finish, not at handler return"),
     # #1250: every read segment refreshes the idle deadline; the mutant stops
     # refreshing on reads, so the previous response's deadline closes the
     # connection while the follow-up head is still arriving.
     ('native-http-read-refresh-off', SOURCE_PROXY, 'idle_close_refreshes_on_read_segments', "#1250 the half-arrived follow-up head keeps the connection open past the pre-segment deadline: a read segment refreshes Node's idle deadline"),
+    # #1250 fix-r1: a read before any request was served (a first head
+    # arriving in segments) arms no keep-alive deadline — Node's timer exists
+    # only after a response finished, and the first head is bounded by
+    # headersTimeout instead (probe `node-first-head-segmented.out`); the
+    # mutant refreshes on any read, so the deadline poisons the socket and the
+    # completed first head is answered `Connection: close`.
+    ('native-http-unserved-read-arms-idle', SOURCE_PROXY, 'idle_state_no_request_stays_open', "#1250 the segmented first head is answered keep-alive: Node arms no idle timer before the first response finish, got"),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
     ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs',
+    ROOT / 'src/pilotdeck-gateway/src/http_proxy_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',

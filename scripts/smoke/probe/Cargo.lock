@@ -954,6 +954,7 @@ dependencies = [
  "base64",
  "bytes",
  "html5ever",
+ "http-body",
  "http-body-util",
  "httpdate",
  "hyper",
