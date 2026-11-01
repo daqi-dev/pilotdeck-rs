@@ -28,7 +28,7 @@ struct TaskFile {
 /// The `taskFileMutationTails` map: one tail per tasks file, process-wide.
 static TASK_FILE_TAILS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
 
-fn task_file_tail(tasks_file: &Path) -> Arc<Mutex<()>> {
+pub(super) fn task_file_tail(tasks_file: &Path) -> Arc<Mutex<()>> {
     let registry = TASK_FILE_TAILS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut tails = registry
         .lock()
@@ -40,16 +40,26 @@ fn task_file_tail(tasks_file: &Path) -> Arc<Mutex<()>> {
 /// its tail is still the map's value — no later mutation chained against it,
 /// which here means no other thread holds a clone of the mutex. A waiting
 /// thread keeps the entry (and its serialization) intact.
-fn release_task_file_tail(tasks_file: &Path, tail: &Arc<Mutex<()>>) {
+///
+/// The decision takes ownership so it can drop this mutation's own clone
+/// *under the registry lock*, before counting the rest: two finishing
+/// mutations serialized here each re-read the count after their own drop, so
+/// the last one out removes the entry. A check that counted first and
+/// dropped later (the pre-fix-r3 shape) let both finishers observe the
+/// other's still-live clone (`strong_count == 3`) and leave the sole
+/// registry-owned reference behind with no one left to clean it up.
+pub(super) fn release_task_file_tail(tasks_file: &Path, tail: Arc<Mutex<()>>) {
     let registry = TASK_FILE_TAILS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut tails = registry
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if tails
-        .get(tasks_file)
-        .is_some_and(|current| Arc::ptr_eq(current, tail) && Arc::strong_count(current) == 2)
+    if let Some(current) = tails.get(tasks_file)
+        && Arc::ptr_eq(current, &tail)
     {
-        tails.remove(tasks_file);
+        drop(tail);
+        if Arc::strong_count(current) == 1 {
+            tails.remove(tasks_file);
+        }
     }
 }
 
@@ -65,7 +75,7 @@ fn mutate_task_file<T>(
         let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         mutation()
     };
-    release_task_file_tail(tasks_file, &tail);
+    release_task_file_tail(tasks_file, tail);
     result
 }
 
