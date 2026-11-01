@@ -39,6 +39,8 @@ impl Requests {
         method: &str,
         params: &JsValue,
     ) -> Option<Result<JsValue, RequestError>> {
+        // Keep this gate in sync with methods/management.rs::METHODS;
+        // methods::tests::registry_management_gate_agrees binds both paths.
         if !matches!(
             method,
             "snapshot_list"

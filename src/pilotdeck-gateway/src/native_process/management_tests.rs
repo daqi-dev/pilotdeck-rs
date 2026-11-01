@@ -78,7 +78,7 @@ fn expand(value: &Value, root: &Path) -> JsValue {
     )
     .expect("#1231 expanded JSON")
 }
-struct Scratch(PathBuf);
+pub(super) struct Scratch(PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -118,7 +118,7 @@ fn context(project: &Path) -> SessionContext {
         disallowed_tools: None,
     }
 }
-fn setup() -> (Scratch, requests::Requests) {
+pub(super) fn setup() -> (Scratch, requests::Requests) {
     let root = std::env::temp_dir().join(format!("pdrs-1231-{}", uuid::Uuid::new_v4()));
     for dir in ["home", "project/.pilotdeck/commands"] {
         std::fs::create_dir_all(root.join(dir)).expect("#1231 scratch directory");
