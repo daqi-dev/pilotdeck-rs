@@ -18,6 +18,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from collections import deque
 from types import ModuleType
 import unittest
 from unittest.mock import patch
@@ -341,6 +342,179 @@ class SharedInvalidationTests(unittest.TestCase):
 
 
 SESSION_SOURCE = (FIXTURES / 'session-factory/negative_controls.py').read_text()
+SESSION_RUNNER = 'src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py'
+SESSION_OWNER = 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
+SESSION_FACTORY_FILE = 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
+SESSION_LIVE = 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
+SESSION_PREFIX = 'runtime::session::factory::tests::'
+
+
+class SessionRunnerTests(unittest.TestCase):
+    """#1210/#1055 session-factory runner behavior over a mocked temp tree.
+
+    No cargo runs and no product source outside the temporary root is read or
+    written; the exec'ed runner sees only mock guards and mock results, exactly
+    like SessionFactoryTests above.
+    """
+
+    def run_session_runner(self, source_text, names, files, bound, *,
+                           fault=None, on_negative=None, classify=None):
+        """Exec the runner source against a temp tree; return (code, rows, ...).
+
+        ``bound`` orders the (test, assertion) pairs the way the table orders
+        the selected rows: source-group rows first, then switch-group rows.
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-1218-runner-') as directory:
+            root = Path(directory).resolve()
+            script = root / SESSION_RUNNER
+            snapshots = {}
+            for relative, content in files.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+                snapshots[path] = content.encode()
+            output = root / 'evidence'
+            guard_calls = []
+
+            @contextlib.contextmanager
+            def guard(actual_root, requested, **_kwargs):
+                self.assertEqual(actual_root, root, '#1218 runner guard must own the temp root')
+                guard_calls.append(tuple(requested))
+                if fault == 'switch-exit' and not requested:
+                    yield {}
+                    raise RuntimeError('#1210 injected switch guard exit failure')
+                try:
+                    yield {path: snapshots[path] for path in requested}
+                finally:
+                    for path in requested:
+                        path.write_bytes(snapshots[path])
+
+            stages = deque((test, assertion, stage) for test, assertion in bound
+                           for stage in ('positive', 'negative', 'restored'))
+
+            def run_owned(command, **_kwargs):
+                if '--no-run' in command:
+                    return subprocess.CompletedProcess(command, 0, 'compiling\n', '')
+                test, assertion, stage = stages.popleft()
+                if stage == 'negative':
+                    if on_negative is not None:
+                        on_negative(root)
+                    return subprocess.CompletedProcess(command, 101,
+                        f'test {test} ... FAILED\n'
+                        f"thread '{test}' panicked at owner.rs:1:1:\n{assertion}\n"
+                        'test result: FAILED. 0 passed; 1 failed;\n', '')
+                return subprocess.CompletedProcess(command, 0,
+                    f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;\n', '')
+
+            stack = contextlib.ExitStack()
+            with stack:
+                stack.enter_context(patch.object(negative_process, 'mutating_sources', guard))
+                stack.enter_context(patch.object(negative_process, 'run_owned', run_owned))
+                stack.enter_context(patch.object(negative_process, 'wait_for_slot',
+                                                  return_value=subprocess.CompletedProcess([], 0, '', '')))
+                if classify is not None:
+                    stack.enter_context(patch.object(negative_suite, 'classify', classify))
+                stack.enter_context(patch.dict(os.environ, {
+                    'CARGO_TARGET_DIR': str(root / 'unused-target'),
+                    'PDRS_BASELINE': str(root / 'unused-baseline')}))
+                stack.enter_context(patch.object(sys, 'argv',
+                                                 ['negative_controls.py', str(output), *names]))
+                stack.enter_context(patch.object(sys, 'path',
+                                                 [str(FIXTURES / 'turn-runner'), *sys.path]))
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                with self.assertRaises(SystemExit, msg='#1218 runner must exit with a status') as caught:
+                    exec(compile(source_text, str(script), 'exec'),
+                         {'__file__': str(script), '__name__': '__main__'})
+            rows = json.loads((output / 'summary.json').read_text())['controls']
+            restored_files = {relative: (root / relative).read_bytes() == snapshots[root / relative]
+                             for relative in files}
+            return caught.exception.code, rows, guard_calls, restored_files
+
+    def test_same_file_changes_accumulate(self):
+        source = changed_text(
+            SESSION_SOURCE,
+            "    ('same-key-concurrent', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_concurrent', '#745 same-key-concurrent conclusion'),",
+            "    dict(name='same-key-concurrent',\n"
+            "         changes=[(owner, 'dirty: false,', 'dirty: true,'),\n"
+            "                  (owner, 'second_anchor_1218', 'second_anchor_1218_mutated')],\n"
+            "         test=prefix+'same_key_concurrent', assertion='#745 same-key-concurrent conclusion'),")
+        captured = {}
+        code, rows, _guard_calls, restored_files = self.run_session_runner(
+            source, ['same-key-concurrent'],
+            {SESSION_OWNER: 'dirty: false,\nsecond_anchor_1218\n'},
+            [(SESSION_PREFIX + 'same_key_concurrent', '#745 same-key-concurrent conclusion')],
+            on_negative=lambda root: captured.update(
+                owner=(root / SESSION_OWNER).read_text()))
+        self.assertTrue(rows[0]['status'] == 'KILLED',
+                        '#1210 same-file changes must compose into one mutant')
+        self.assertTrue('dirty: true,' in captured['owner'] and
+                        'second_anchor_1218_mutated' in captured['owner'],
+                        '#1210 same-file changes must compose into one mutant')
+        self.assertEqual(code, 0, '#1210 accumulated mutant run must succeed')
+        self.assertTrue(all(restored_files.values()), '#1210 temp sources must be restored')
+
+    def test_switch_rows_accept_dict_changes_and_pristine_check(self):
+        source = changed_text(
+            SESSION_SOURCE,
+            "    ('r3-owner-replays-drained-busy', owner, 'option_env!(\"PDRS_1022_R3_REPLAY_DRAINED_BUSY\").is_none()', 'false', None, prefix+'recreation_cancelled_timeout_retries_after_drain', '#1022 r3 completed drain must discard abandoned BUSY'),",
+            "    dict(name='r3-owner-replays-drained-busy',\n"
+            "         changes=[(owner, 'option_env!(\"PDRS_1022_R3_REPLAY_DRAINED_BUSY\").is_none()', 'false'),\n"
+            "                  (factory, 'fn can_recreate(&self) -> bool {', 'fn can_recreate_mutated(&self) -> bool {')],\n"
+            "         test=prefix+'recreation_cancelled_timeout_retries_after_drain',\n"
+            "         assertion='#1022 r3 completed drain must discard abandoned BUSY'),")
+        code, rows, guard_calls, restored_files = self.run_session_runner(
+            source, ['r3-owner-replays-drained-busy'],
+            {SESSION_OWNER: 'option_env!("PDRS_1022_R3_REPLAY_DRAINED_BUSY").is_none()\n',
+             SESSION_FACTORY_FILE: 'fn can_recreate(&self) -> bool {\n'},
+            [(SESSION_PREFIX + 'recreation_cancelled_timeout_retries_after_drain',
+              '#1022 r3 completed drain must discard abandoned BUSY')])
+        self.assertTrue(rows[0]['status'] == 'KILLED',
+                        '#1210 switch group must accept dict change rows')
+        self.assertTrue(any(call == () for call in guard_calls),
+                        '#1055 switch-only run must pass the pristine guard')
+        self.assertEqual(code, 0, '#1210 dict switch row must run clean')
+        self.assertTrue(all(restored_files.values()), '#1210 temp sources must be restored')
+
+    def test_switch_guard_failure_keeps_source_verdicts(self):
+        code, rows, _guard_calls, restored_files = self.run_session_runner(
+            SESSION_SOURCE,
+            ['same-key-concurrent', 'r3-owner-replays-drained-busy'],
+            {SESSION_OWNER: 'dirty: false,\noption_env!("PDRS_1022_R3_REPLAY_DRAINED_BUSY").is_none()\n'},
+            [(SESSION_PREFIX + 'same_key_concurrent', '#745 same-key-concurrent conclusion'),
+             (SESSION_PREFIX + 'recreation_cancelled_timeout_retries_after_drain',
+              '#1022 r3 completed drain must discard abandoned BUSY')],
+            fault='switch-exit')
+        by_name = {row['mutation']: row for row in rows}
+        self.assertTrue(by_name['same-key-concurrent']['status'] == 'KILLED',
+                        '#1210 switch guard failure must not revoke source verdicts')
+        self.assertTrue(by_name['r3-owner-replays-drained-busy']['status'] == 'INVALID' and
+                        'source guard: #1210 injected switch guard exit failure'
+                        in by_name['r3-owner-replays-drained-busy']['reason'],
+                        '#1210 switch guard failure must still void its own rows')
+        self.assertEqual(code, 1, '#1210 switch guard failure must exit nonzero')
+        self.assertTrue(all(restored_files.values()), '#1210 temp sources must be restored')
+
+    def test_classifier_receives_every_change(self):
+        captured = []
+        real_classify = negative_suite.classify
+
+        def classify(result, case):
+            captured.append(case)
+            return real_classify(result, case)
+
+        code, rows, _guard_calls, restored_files = self.run_session_runner(
+            SESSION_SOURCE, ['recreate-disposed'],
+            {SESSION_LIVE: 'if self.disposed {\n',
+             SESSION_FACTORY_FILE: 'if self.disposed.load(Ordering::SeqCst) {\n'},
+            [(SESSION_PREFIX + 'recreate_disposed', '#745 recreate expected failure')],
+            classify=classify)
+        self.assertTrue(rows[0]['status'] == 'KILLED',
+                        '#1210 multi-file row must still classify')
+        self.assertTrue(captured and captured[0].changes is not None and
+                        len(captured[0].changes) == 2,
+                        '#1210 Case must carry every change of the row')
+        self.assertEqual(code, 0, '#1210 multi-file row must run clean')
+        self.assertTrue(all(restored_files.values()), '#1210 temp sources must be restored')
 
 
 class SessionFactoryTests(unittest.TestCase):
@@ -385,7 +559,7 @@ class SessionFactoryTests(unittest.TestCase):
 
 
 TEST_CLASSES = (McpRestoreTests, MasksRestoreTests, NodeRestoreTests, RealGuardTests,
-                SharedInvalidationTests, SessionFactoryTests)
+                SharedInvalidationTests, SessionFactoryTests, SessionRunnerTests)
 
 
 def tests(test_class):
@@ -398,6 +572,15 @@ def changed_source(path, old, new):
         raise ValueError(f'#1037 stale Python anchor; expected exactly one: {old!r}')
     source = source.replace(old, new, 1)
     compile(source, str(path), 'exec')
+    return source
+
+
+def changed_text(source, old, new):
+    """#1218: same single-anchor replacement, but from an in-memory source."""
+    if source.count(old) != 1:
+        raise ValueError(f'#1210 stale Python anchor; expected exactly one: {old!r}')
+    source = source.replace(old, new, 1)
+    compile(source, '<session-runner>', 'exec')
     return source
 
 
@@ -447,7 +630,52 @@ def negative_controls():
          {(SessionFactoryTests, 'test_guard_exit_revokes_compiled'): '#1037 session guard failure must exit nonzero'},
          lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
              FIXTURES / 'session-factory/negative_controls.py',
-             "    invalidate_completed(results, f'source guard: {error}')", '    pass')})),
+             "    scope = {row_name(case) for case in group}\n"
+             "    invalidate_completed([row for row in results if row['mutation'] in scope],\n"
+             "                          f'source guard: {error}')",
+             '    pass')})),
+        # #1210/#1055: reverse negatives for the session runner behavior the
+        # new SessionRunnerTests pin (accumulation, dict switch rows, switch
+        # pristine check, scoped guard failure, classifier change list).
+        ('session-accumulate-removed', (SessionRunnerTests,),
+         {(SessionRunnerTests, 'test_same_file_changes_accumulate'): '#1210 same-file changes must compose into one mutant'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             '                        current=texts.get(path, originals[path].decode())',
+             '                        current=originals[path].decode()')})),
+        ('session-switch-unpack-reverted', (SessionRunnerTests,),
+         {(SessionRunnerTests, 'test_switch_rows_accept_dict_changes_and_pristine_check'): '#1210 switch group must accept dict change rows'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             '            for case in switch_cases:\n'
+             '                name,changes,scope,test,assertion = row_parts(case)',
+             '            for name,path,old,new,scope,test,assertion in switch_cases:\n'
+             '                changes = [(path,old,new)]')})),
+        # Bypassing the empty-set guard window also un-faults the switch group
+        # of test_switch_guard_failure_keeps_source_verdicts (its r3 row is a
+        # legacy 7-tuple that still runs), so both tests must fail.
+        ('session-switch-pristine-removed', (SessionRunnerTests,),
+         {(SessionRunnerTests, 'test_switch_rows_accept_dict_changes_and_pristine_check'): '#1055 switch-only run must pass the pristine guard',
+          (SessionRunnerTests, 'test_switch_guard_failure_keeps_source_verdicts'): '#1210 switch guard failure must still void its own rows'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             '        with mutating_sources(root, []):',
+             '        for _bypassed_pristine_1218 in [0]:')})),
+        ('session-guard-scope-reverted', (SessionRunnerTests,),
+         {(SessionRunnerTests, 'test_switch_guard_failure_keeps_source_verdicts'): '#1210 switch guard failure must not revoke source verdicts'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             "    scope = {row_name(case) for case in group}\n"
+             "    invalidate_completed([row for row in results if row['mutation'] in scope],\n"
+             "                          f'source guard: {error}')",
+             "    invalidate_completed(results, f'source guard: {error}')")})),
+        ('session-case-first-change-only', (SessionRunnerTests,),
+         {(SessionRunnerTests, 'test_classifier_receives_every_change'): '#1210 Case must carry every change of the row'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             "        status,reason=classify(run(name+'-negative',test),\n"
+             "                               Case(name,first_path,first_old,first_new,test,assertion,scope,changes))",
+             "        status,reason=classify(run(name+'-negative',test),Case(name,first_path,first_old,first_new,test,assertion,scope))")})),
     ])
     for label, test, old, new in [
         ('write', 'test_restore_write_failure',

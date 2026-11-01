@@ -163,6 +163,33 @@ impl LiveSessionHandle {
         self.0.progress.lock().unwrap().recreation_error_reported = true;
     }
 
+    /// #1055 ①: the owner's immediately-following caller takes over a replayed
+    /// BUSY when the drain behind it has already ended in an unreported
+    /// disposal error. Marks the error reported exactly once, so factory
+    /// waiters and owner callers cannot both deliver it. Returns `None` while
+    /// the disposal result has not been published yet (the bounded
+    /// completed-before-publish window falls back to BUSY replay) and after
+    /// any caller already consumed or reported it.
+    pub(super) fn take_recreation_disposal_error(&self) -> Option<RuntimeError> {
+        // The guard is named `state`, not `progress`: the
+        // r2-factory-error-forgotten mutation anchor pins the single
+        // field spelling inside recreation_drained, and this accessor
+        // must not make that text ambiguous.
+        let mut state = self.0.progress.lock().unwrap();
+        if !state.recreation_started || state.activity || state.recreation_error_reported {
+            return None;
+        }
+        let error = state
+            .disposal
+            .as_ref()
+            .and_then(|result| match &*result.borrow() {
+                Some(Err(error)) => Some(error.clone()),
+                _ => None,
+            })?;
+        state.recreation_error_reported = true;
+        Some(error)
+    }
+
     /// #1020: the factory observed this predecessor already Disposed when it
     /// took it over (no retained recreation source), so the post-prepare
     /// snapshot rejection was a stale owner selection — the same-key disposal
