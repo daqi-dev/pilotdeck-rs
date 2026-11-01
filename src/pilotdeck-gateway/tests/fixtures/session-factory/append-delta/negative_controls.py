@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """#1253 source mutations; execute on the committed delivery, never a shadow HEAD."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -87,6 +88,19 @@ mutations = [
     ('tail-collector-outside-owned-root', 'src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/generate.mts',
      "const workspace=path.join(runDir,'collector',c.name);", "const workspace=path.join(ROOT,'collector',c.name);",
      'tail_generator_cleans_only_owned_work', '#1253 foreign collector contains only its original file'),
+    ('duplicate-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', 'field(existing, "sequence").as_number() >= field(entry, "sequence").as_number()', 'field(existing, "sequence").as_number() > field(entry, "sequence").as_number()', 'duplicate_sequence_append_is_idempotent', '#1253 duplicate sequence does not double count'),
+    ('stale-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', 'field(existing, "sequence").as_number() >= field(entry, "sequence").as_number()', 'field(existing, "sequence").as_number() == field(entry, "sequence").as_number()', 'out_of_order_append_is_idempotent', '#1253 lower sequence does not double count'),
+    ('racing-restore-index-lost', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', '*lock(&self.projection.completed_turns) = completed_turns(&entries);', '*lock(&self.projection.completed_turns) = completed_turns(&entries[..0]);', 'restore_racing_completion_keeps_late_message', '#1253 racing restore preserves completed turn late message'),
+    ('racing-completion-recounted', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', 'if !already_projected {', 'if !already_projected || is(field(entry, "type"), "turn_result") {', 'restore_racing_completion_keeps_late_message', '#1253 racing restore counts completion once'),
+    ('checkpoint-metadata-suffix-dropped', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', 'merge_metadata(&mut metadata, &next.metadata);', 'if sequence(entry) < 0.0 { merge_metadata(&mut metadata, &next.metadata); }', 'checkpoint_metadata_suffix_equals_replay', '#1253 checkpoint metadata suffix equals TS replay'),
+    ('permutation-incomplete-visible', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '.any(|name| is(kind, name))\n        && done', '.any(|name| is(kind, name))\n        && !done', 'delta_event_permutations_equal_replay', '#1253 all event permutations equal full replay'),
+    ('probe-work-left-behind', 'src/pilotdeck-gateway/tests/fixtures/session-factory/probe.mts', 'if(!parentOwned)fs.rmSync(runDir,{recursive:true,force:true});', 'void runDir;', 'factory_generators_clean_only_owned_work', '#1253 factory generator removes only owned scratch'),
+    ('probe-foreign-work-deleted', 'src/pilotdeck-gateway/tests/fixtures/session-factory/probe.mts', 'if(!parentOwned)fs.rmSync(runDir,{recursive:true,force:true});', "if(!parentOwned)for(const name of fs.readdirSync(ROOT))if(name.startsWith('run-'))fs.rmSync(path.join(ROOT,name),{recursive:true,force:true});", 'factory_generators_clean_only_owned_work', '#1253 factory generator removes only owned scratch'),
+    ('snapshot-work-left-behind', 'src/pilotdeck-gateway/tests/fixtures/session-factory/file-snapshot-test.mts', '}finally{fs.rmSync(root,{recursive:true,force:true});}', '}finally{void root;}', 'factory_generators_clean_only_owned_work', '#1253 factory generator removes only owned scratch'),
+    ('snapshot-foreign-work-deleted', 'src/pilotdeck-gateway/tests/fixtures/session-factory/file-snapshot-test.mts', '}finally{fs.rmSync(root,{recursive:true,force:true});}', "}finally{for(const name of fs.readdirSync(output))if(name.startsWith('snapshot-contract-'))fs.rmSync(path.join(output,name),{recursive:true,force:true});}", 'factory_generators_clean_only_owned_work', '#1253 factory generator removes only owned scratch'),
+    ('parent-probe-work-left-behind', 'src/pilotdeck-gateway/tests/fixtures/session-factory/generate.mts', 'for(const work of ownedProbeRoots)fs.rmSync(work,{recursive:true,force:true});', 'void ownedProbeRoots;', 'factory_generators_clean_only_owned_work', '#1253 factory generator removes only owned scratch'),
+    ('parent-foreign-work-deleted', 'src/pilotdeck-gateway/tests/fixtures/session-factory/generate.mts', 'for(const work of ownedProbeRoots)fs.rmSync(work,{recursive:true,force:true});', "for(const name of fs.readdirSync(output))if(name.startsWith('run-'))fs.rmSync(path.join(output,name),{recursive:true,force:true});", 'factory_generators_clean_only_owned_work', '#1253 factory generator removes only owned scratch'),
+    ('tail-collector-oracle-drift', 'src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/generate.mts', "sources.map(p=>'src/'+p)),rows,collectorRows};", "sources.map(p=>'src/'+p)),rows,collectorRows:[]};", 'tail_generator_cleans_only_owned_work', '#1253 random collector root preserves oracle bytes'),
 ]
 
 
@@ -110,12 +124,14 @@ def input_paths():
                gateway / 'tests/baseline_source_guard.mjs', root / 'scripts/cargo-slots.sh']
     inputs += [p for p in Path(__file__).parent.iterdir() if p.is_file()]
     inputs += [gateway / 'tests/fixtures/turn-runner-tail/generate.mts', gateway / 'tests/fixtures/turn-runner-tail/oracle.json']
+    inputs += [p for p in (gateway / 'tests/fixtures/session-factory').iterdir()
+               if p.is_file() and p.suffix in {'.mts', '.json', '.py'}]
     return inputs
 
 
-def run(out, env):
+def run(out, env, selected_mutations):
     compilation = []
-    for name, filename, old, new, _, _ in mutations:
+    for name, filename, old, new, _, _ in selected_mutations:
         target = root / filename
         try:
             with mutating_sources(root, [target]) as originals:
@@ -131,7 +147,7 @@ def run(out, env):
             compilation.append({'mutation': name, 'compiled': False, 'reason': str(error)})
     prefix = 'runtime::session::factory::projection_delta_tests::'
     selected = [Case(name, root / filename, old, new, prefix + test, assertion)
-                for name, filename, old, new, test, assertion in mutations]
+                for name, filename, old, new, test, assertion in selected_mutations]
     run_cases(root, selected, out, env, mutate, timeout=900, script=__file__)
     results = json.loads((out / 'summary.json').read_text())['controls']
     for control, compile_result in zip(results, compilation):
@@ -150,25 +166,28 @@ def main():
     if sys.argv[1:] == ['--audit']:
         print(f'PASS: #1253 {len(mutations)} unique effective mutation anchors (static only)')
         return 0
-    if len(sys.argv) != 2:
-        raise SystemExit('usage: negative_controls.py OUT | --audit | --inputs')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('out')
+    parser.add_argument('--only', choices=[row[0] for row in mutations])
+    args = parser.parse_args()
+    selected_mutations = [row for row in mutations if args.only is None or row[0] == args.only]
     if not os.environ.get('CARGO_TARGET_DIR') or not os.environ.get('PDRS_BASELINE'):
         raise SystemExit('#1253 caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
-    out = Path(sys.argv[1]).resolve()
+    out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     guarded = out / 'guarded-run'
     guarded.mkdir()
     try:
         with mutating_sources(root, input_paths()):
-            results, compilation = run(guarded, env)
+            results, compilation = run(guarded, env, selected_mutations)
     except Exception as error:
         results = [{'mutation': name, 'test': 'runtime::session::factory::projection_delta_tests::' + test,
                      'assertion': assertion, 'compiled': False, 'status': 'INVALID',
                      'reason': f'#1253 input/restore guard refused: {error}'}
-                    for name, _, _, _, test, assertion in mutations]
+                    for name, _, _, _, test, assertion in selected_mutations]
         compilation = [{'mutation': name, 'compiled': False, 'reason': str(error)}
-                       for name, *_ in mutations]
+                       for name, *_ in selected_mutations]
     publish_summary(out, results)
     (out / 'compilation.json').write_text(json.dumps(compilation, indent=2) + '\n')
     return int(any(row['status'] != 'KILLED' for row in results))

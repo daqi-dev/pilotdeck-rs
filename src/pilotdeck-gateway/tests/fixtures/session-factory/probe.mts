@@ -37,7 +37,12 @@ const requested=process.argv.slice(2);if(requested.some(n=>!names.includes(n)))t
 const selected=requested.length?names.filter(n=>requested.includes(n)):coreNames;
 const output=process.env.MATRIX_OUTPUT??'raw';assert.match(output,/^[a-z0-9-]+$/);
 const negative=process.env.MATRIX_NEGATIVE==='1';
-const runDir=fs.mkdtempSync(path.join(ROOT,'run-'));const outDir=path.join(ROOT,output);fs.mkdirSync(outDir,{recursive:true});
+// A parent generator may retain its own root for check.py's post-exit audit.
+// Standalone probes own and clean their root, including output-write failures.
+const parentOwned=process.env.MATRIX_WORK_ROOT;
+const runDir=parentOwned??fs.mkdtempSync(path.join(ROOT,'run-'));
+try {
+const outDir=path.join(ROOT,output);fs.mkdirSync(outDir,{recursive:true});
 const clone=(x:any)=>JSON.parse(JSON.stringify(x));
 const err=(e:any):any=>({name:e?.name??typeof e,message:e?.message??String(e),...(e?.code?{code:e.code}:{}),...(e?.errors?{errors:[...e.errors].map(err)}:{}),...(e?.cause?{cause:err(e.cause)}:{})});
 function deferred(){let resolve!:(x?:any)=>void,reject!:(e:any)=>void;const promise=new Promise<any>((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject};}
@@ -195,3 +200,7 @@ for(const name of selected){
 }
 fs.writeFileSync(path.join(outDir,'index.json'),JSON.stringify({baseline,node:process.version,negative,runDir:path.relative(ROOT,runDir),results:index,forbidden},null,2)+'\n',{flag:'wx'});
 if(index.some(r=>r.status==='INVALID')||forbidden.length)process.exitCode=1;
+
+} finally {
+ if(!parentOwned)fs.rmSync(runDir,{recursive:true,force:true});
+}
