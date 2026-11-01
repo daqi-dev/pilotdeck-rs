@@ -26977,7 +26977,7 @@
       },
       "cleanupExit": null,
       "stdout": "",
-      "stderrRaw": "(node:20517) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:28311) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "error": null,
       "initial": {
         ".": {
@@ -27249,13 +27249,13 @@
           "connection": 1,
           "frame": {
             "type": "request",
-            "id": "1850af98-6155-441c-a3f5-543a67329d76",
+            "id": "89aae896-f6e2-4859-ac8f-dbfa563c3f61",
             "method": "new_session",
             "params": {
               "channelKey": "cli"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"1850af98-6155-441c-a3f5-543a67329d76\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"89aae896-f6e2-4859-ac8f-dbfa563c3f61\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
           "cleanup": false
         },
         {
@@ -27264,13 +27264,13 @@
           "connection": 1,
           "frame": {
             "type": "response",
-            "id": "1850af98-6155-441c-a3f5-543a67329d76",
+            "id": "89aae896-f6e2-4859-ac8f-dbfa563c3f61",
             "ok": true,
             "result": {
               "sessionKey": "d1-session"
             }
           },
-          "raw": "{\"type\":\"response\",\"id\":\"1850af98-6155-441c-a3f5-543a67329d76\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "raw": "{\"type\":\"response\",\"id\":\"89aae896-f6e2-4859-ac8f-dbfa563c3f61\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
           "cleanup": false
         },
         {
@@ -27316,13 +27316,13 @@
           "connection": 2,
           "frame": {
             "type": "request",
-            "id": "2799dcdc-cb22-4262-a41a-903389c2b290",
+            "id": "95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d",
             "method": "resume_session",
             "params": {
               "sessionKey": "d1-session"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"2799dcdc-cb22-4262-a41a-903389c2b290\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
           "cleanup": false
         },
         {
@@ -27331,13 +27331,13 @@
           "connection": 2,
           "frame": {
             "type": "response",
-            "id": "2799dcdc-cb22-4262-a41a-903389c2b290",
+            "id": "95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d",
             "ok": true,
             "result": {
               "sessionKey": "d1-session"
             }
           },
-          "raw": "{\"type\":\"response\",\"id\":\"2799dcdc-cb22-4262-a41a-903389c2b290\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "raw": "{\"type\":\"response\",\"id\":\"95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
           "cleanup": false
         },
         {
@@ -27346,7 +27346,7 @@
           "connection": 2,
           "frame": {
             "type": "request",
-            "id": "11207936-4998-4fca-bed6-0c7e706c2d56",
+            "id": "d96f4d48-b5ee-4a1a-9216-77ba5c617fa2",
             "method": "submit_turn",
             "params": {
               "sessionKey": "d1-session",
@@ -27354,10 +27354,10 @@
               "message": "fixture prompt",
               "canPrompt": false,
               "canElicit": false,
-              "runId": "4d96b2d6-5538-404b-98e2-9d72560a875f"
+              "runId": "f1616be7-9eec-451b-a16c-9dc2121215d5"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"11207936-4998-4fca-bed6-0c7e706c2d56\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"4d96b2d6-5538-404b-98e2-9d72560a875f\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"d96f4d48-b5ee-4a1a-9216-77ba5c617fa2\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"f1616be7-9eec-451b-a16c-9dc2121215d5\"}}",
           "cleanup": false
         },
         {
@@ -27366,29 +27366,29 @@
           "connection": 2,
           "frame": {
             "type": "request",
-            "id": "675bd31a-d95e-40ed-8807-18ee433ae799",
+            "id": "9ac841c0-f604-4a67-adfc-0af31d1ffedb",
             "method": "abort_turn",
             "params": {
               "sessionKey": "d1-session",
-              "runId": "4d96b2d6-5538-404b-98e2-9d72560a875f",
+              "runId": "f1616be7-9eec-451b-a16c-9dc2121215d5",
               "reason": "CLI interrupted"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"675bd31a-d95e-40ed-8807-18ee433ae799\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"4d96b2d6-5538-404b-98e2-9d72560a875f\",\"reason\":\"CLI interrupted\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"9ac841c0-f604-4a67-adfc-0af31d1ffedb\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"f1616be7-9eec-451b-a16c-9dc2121215d5\",\"reason\":\"CLI interrupted\"}}",
           "cleanup": false
         },
         {
           "seq": 23,
           "kind": "socket-close",
-          "connection": 1,
+          "connection": 2,
           "code": 1006,
           "reason": "",
           "cleanup": false
         },
         {
-          "seq": 24,
+          "seq": 25,
           "kind": "socket-close",
-          "connection": 2,
+          "connection": 1,
           "code": 1006,
           "reason": "",
           "cleanup": false
@@ -27398,15 +27398,15 @@
         {
           "seq": 23,
           "kind": "socket-close",
-          "connection": 1,
+          "connection": 2,
           "code": 1006,
           "reason": "",
           "cleanup": false
         },
         {
-          "seq": 24,
+          "seq": 25,
           "kind": "socket-close",
-          "connection": 2,
+          "connection": 1,
           "code": 1006,
           "reason": "",
           "cleanup": false
@@ -27493,13 +27493,13 @@
           "connection": 1,
           "frame": {
             "type": "request",
-            "id": "1850af98-6155-441c-a3f5-543a67329d76",
+            "id": "89aae896-f6e2-4859-ac8f-dbfa563c3f61",
             "method": "new_session",
             "params": {
               "channelKey": "cli"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"1850af98-6155-441c-a3f5-543a67329d76\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"89aae896-f6e2-4859-ac8f-dbfa563c3f61\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
           "cleanup": false
         },
         {
@@ -27508,13 +27508,13 @@
           "connection": 1,
           "frame": {
             "type": "response",
-            "id": "1850af98-6155-441c-a3f5-543a67329d76",
+            "id": "89aae896-f6e2-4859-ac8f-dbfa563c3f61",
             "ok": true,
             "result": {
               "sessionKey": "d1-session"
             }
           },
-          "raw": "{\"type\":\"response\",\"id\":\"1850af98-6155-441c-a3f5-543a67329d76\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "raw": "{\"type\":\"response\",\"id\":\"89aae896-f6e2-4859-ac8f-dbfa563c3f61\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
           "cleanup": false
         },
         {
@@ -27599,13 +27599,13 @@
           "connection": 2,
           "frame": {
             "type": "request",
-            "id": "2799dcdc-cb22-4262-a41a-903389c2b290",
+            "id": "95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d",
             "method": "resume_session",
             "params": {
               "sessionKey": "d1-session"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"2799dcdc-cb22-4262-a41a-903389c2b290\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
           "cleanup": false
         },
         {
@@ -27614,13 +27614,13 @@
           "connection": 2,
           "frame": {
             "type": "response",
-            "id": "2799dcdc-cb22-4262-a41a-903389c2b290",
+            "id": "95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d",
             "ok": true,
             "result": {
               "sessionKey": "d1-session"
             }
           },
-          "raw": "{\"type\":\"response\",\"id\":\"2799dcdc-cb22-4262-a41a-903389c2b290\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "raw": "{\"type\":\"response\",\"id\":\"95495cb2-3aaa-4b3f-be1e-7ae3819dbf6d\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
           "cleanup": false
         },
         {
@@ -27629,7 +27629,7 @@
           "connection": 2,
           "frame": {
             "type": "request",
-            "id": "11207936-4998-4fca-bed6-0c7e706c2d56",
+            "id": "d96f4d48-b5ee-4a1a-9216-77ba5c617fa2",
             "method": "submit_turn",
             "params": {
               "sessionKey": "d1-session",
@@ -27637,10 +27637,10 @@
               "message": "fixture prompt",
               "canPrompt": false,
               "canElicit": false,
-              "runId": "4d96b2d6-5538-404b-98e2-9d72560a875f"
+              "runId": "f1616be7-9eec-451b-a16c-9dc2121215d5"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"11207936-4998-4fca-bed6-0c7e706c2d56\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"4d96b2d6-5538-404b-98e2-9d72560a875f\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"d96f4d48-b5ee-4a1a-9216-77ba5c617fa2\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"f1616be7-9eec-451b-a16c-9dc2121215d5\"}}",
           "cleanup": false
         },
         {
@@ -27688,15 +27688,15 @@
           "connection": 2,
           "frame": {
             "type": "request",
-            "id": "675bd31a-d95e-40ed-8807-18ee433ae799",
+            "id": "9ac841c0-f604-4a67-adfc-0af31d1ffedb",
             "method": "abort_turn",
             "params": {
               "sessionKey": "d1-session",
-              "runId": "4d96b2d6-5538-404b-98e2-9d72560a875f",
+              "runId": "f1616be7-9eec-451b-a16c-9dc2121215d5",
               "reason": "CLI interrupted"
             }
           },
-          "raw": "{\"type\":\"request\",\"id\":\"675bd31a-d95e-40ed-8807-18ee433ae799\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"4d96b2d6-5538-404b-98e2-9d72560a875f\",\"reason\":\"CLI interrupted\"}}",
+          "raw": "{\"type\":\"request\",\"id\":\"9ac841c0-f604-4a67-adfc-0af31d1ffedb\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"f1616be7-9eec-451b-a16c-9dc2121215d5\",\"reason\":\"CLI interrupted\"}}",
           "cleanup": false
         },
         {
@@ -27708,24 +27708,24 @@
         {
           "seq": 23,
           "kind": "socket-close",
-          "connection": 1,
-          "code": 1006,
-          "reason": "",
-          "cleanup": false
-        },
-        {
-          "seq": 24,
-          "kind": "socket-close",
           "connection": 2,
           "code": 1006,
           "reason": "",
           "cleanup": false
         },
         {
-          "seq": 25,
+          "seq": 24,
           "kind": "child-exit",
           "code": null,
           "signal": "SIGTERM",
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1006,
+          "reason": "",
           "cleanup": false
         }
       ]

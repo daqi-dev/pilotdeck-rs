@@ -19,7 +19,7 @@ export function validateFiles(source, directory, baseline) {
   }
 }
 
-export const DATA_MUTATIONS = 61;
+export const DATA_MUTATIONS = 62;
 export const EXTRA_CONTROLS = 11;
 export const TOTAL_CONTROLS = DATA_MUTATIONS + EXTRA_CONTROLS;
 export function validateControlCount(mutations, results) {
@@ -93,6 +93,8 @@ export function validate(source, definitions) {
     for (const event of [...row.hooks, ...row.wire, ...row.closes]) {
       assert.deepEqual(event, row.trace[event.seq], '#1145 evidence projections preserve original trace');
     }
+    assert.ok(row.closes.every((event, index) => index === 0 || row.closes[index - 1].seq < event.seq),
+      '#1145 closes follow trace order (#1252)');
     const milestones = milestonesFromTrace(row);
     assert.deepEqual(row.milestones, milestones, '#1145 milestones bound to original trace');
     assert.ok(Object.values(milestones).every(Boolean), '#1145 original trace reaches all required milestones');

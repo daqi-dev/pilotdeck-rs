@@ -21,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const NEGATIVE_CONTROLS: u64 = 72;
+const NEGATIVE_CONTROLS: u64 = 73;
 
 fn fixture_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-signals")
@@ -459,11 +459,15 @@ fn verify_control_summary(output: &[u8]) {
 
 #[test]
 fn signal_negative_summary_rejects_missing_controls() {
-    let valid = json!({"total":72,"counts":{"KILLED":72,"SURVIVED":0,"INVALID":0}});
+    let valid = json!({"total":NEGATIVE_CONTROLS,"counts":{"KILLED":NEGATIVE_CONTROLS,"SURVIVED":0,"INVALID":0}});
     verify_control_summary(valid.to_string().as_bytes());
     for (key, value, marker) in [
         ("total", 0, "#1145 fixed negative total"),
-        ("KILLED", 71, "#1145 every registered control killed"),
+        (
+            "KILLED",
+            NEGATIVE_CONTROLS - 1,
+            "#1145 every registered control killed",
+        ),
         ("SURVIVED", 1, "#1145 no surviving controls"),
         ("INVALID", 1, "#1145 no invalid controls"),
     ] {

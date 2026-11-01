@@ -695,6 +695,55 @@ fn stderr_matches_for_case(id: &str, ts: &str, rust: &[u8]) -> bool {
     }
 }
 
+const UNORDERED_CLOSE_CASES: &[&str] = &[
+    "run--query-resume-hold-sigint",
+    "run--query-model-hold-sigint",
+    "run--abort-error-sigint",
+    "run--second-sigint",
+    "run--second-sigint-sigterm",
+    "run--terminal-consumed-failed-sigint",
+    "run--terminal-during-abort-final-sigint",
+    "run--query-resume-hold-sigterm",
+    "run--abort-error-sigterm",
+    "run--second-sigterm-sigint",
+    "run--terminal-during-abort-final-sigterm",
+    "run--query-resume-pending",
+    "run--query-model-pending",
+    "resume--query-resume-hold-sigint",
+    "resume--query-resume-release-sigint",
+    "resume--query-model-hold-sigint",
+    "resume--abort-error-sigint",
+    "resume--abort-hold-sigint",
+    "resume--second-sigint",
+    "resume--second-sigint-sigterm",
+    "resume--terminal-during-abort-final-sigint",
+    "resume--query-resume-hold-sigterm",
+    "resume--query-resume-release-sigterm",
+    "resume--query-model-hold-sigterm",
+    "resume--abort-error-sigterm",
+    "resume--abort-hold-sigterm",
+    "resume--second-sigterm",
+    "resume--second-sigterm-sigint",
+    "resume--terminal-during-abort-final-sigterm",
+    "resume--query-resume-pending",
+    "resume--query-model-pending",
+];
+
+fn close_rows_match(id: &str, expected: &[Value], actual: &Value) -> bool {
+    let Some(actual) = actual.as_array() else {
+        return false;
+    };
+    if !UNORDERED_CLOSE_CASES.contains(&id) {
+        return actual.as_slice() == expected;
+    }
+    // D1-SDK-WS-CLOSE-ORDER-001: compare complete records, never deduplicate.
+    let mut expected = expected.to_vec();
+    let mut actual = actual.clone();
+    expected.sort_by_key(|row| row["connection"].as_u64());
+    actual.sort_by_key(|row| row["connection"].as_u64());
+    actual == expected
+}
+
 fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
     let mut closes = expected["closes"]
         .as_array()
@@ -705,7 +754,7 @@ fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
             "reason":row["reason"],"cleanup":row["cleanup"]})
         })
         .collect::<Vec<_>>();
-    if *actual == json!(closes) {
+    if close_rows_match(id, &closes, actual) {
         return true;
     }
     let approved = matches!(
@@ -728,7 +777,7 @@ fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
             }
         }
     }
-    *actual == json!(closes)
+    close_rows_match(id, &closes, actual)
 }
 
 async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
@@ -1127,6 +1176,7 @@ pub(super) fn run(id: &str) {
         &json!({"id":id,"differences":differences,
         "normalization":"TS SQLite prefix and complete business-prefixed Node v22.22.0 tail only; UUID bytes stay literal",
         "acceptedDifferences":["D1-SDK-WS-CLOSE-REASON-001 (four query-hello-reject cells only)",
+            "D1-SDK-WS-CLOSE-ORDER-001 (31 measured UNSTABLE cells; order only)",
             "D1-SDK-SIGNAL-UNHANDLED-REJECTION-001 (eight exact signal cells; stderr only)"]}),
         id,
     );
@@ -1853,6 +1903,210 @@ mod comparison_tests {
         assert!(
             replay.active.is_empty(),
             "#1252 every observed connection removed"
+        );
+    }
+
+    fn registered_unordered_close_ids() -> Vec<String> {
+        let ledger =
+            include_str!("../../../../specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md");
+        let (_, tail) = ledger
+            .split_once("<!-- close-order-ids:start -->\n```json\n")
+            .expect("#1252 close-order ledger start");
+        let (ids, _) = tail
+            .split_once("\n```\n<!-- close-order-ids:end -->")
+            .expect("#1252 close-order ledger end");
+        serde_json::from_str(ids).expect("#1252 close-order ledger IDs")
+    }
+
+    #[test]
+    fn unordered_close_scope_equals_registration() {
+        let registered = registered_unordered_close_ids();
+        assert_eq!(
+            registered.len(),
+            31,
+            "#1252 measured unordered close denominator"
+        );
+        let actual: Vec<_> = UNORDERED_CLOSE_CASES
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect();
+        assert_eq!(
+            actual, registered,
+            "#1252 unordered close scope equals measured registration"
+        );
+        let unique: BTreeSet<_> = registered.iter().collect();
+        assert_eq!(
+            unique.len(),
+            registered.len(),
+            "#1252 unique unordered close IDs"
+        );
+        let source: Value =
+            serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
+                .expect("#1252 close scope original JSON");
+        for id in registered {
+            assert_eq!(
+                source["captures"]
+                    .as_array()
+                    .expect("#1252 close scope captures")
+                    .iter()
+                    .filter(|row| row["input"]["id"] == id
+                        && row["closes"]
+                            .as_array()
+                            .expect("#1252 close scope observations")
+                            .len()
+                            >= 2)
+                    .count(),
+                1,
+                "#1252 unordered registration is an exact multiclose cell: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_multiclose_cells_follow_registered_order_semantics() {
+        let source: Value =
+            serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
+                .expect("#1252 multiclose original JSON");
+        let registered = registered_unordered_close_ids();
+        let mut total = 0;
+        let mut timeout = 0;
+        for expected in source["captures"]
+            .as_array()
+            .expect("#1252 multiclose captures")
+        {
+            let closes = expected["closes"]
+                .as_array()
+                .expect("#1252 multiclose observations");
+            if closes.len() < 2 {
+                continue;
+            }
+            total += 1;
+            timeout += usize::from(expected["status"] == "OBSERVED_TIMEOUT");
+            let id = expected["input"]["id"]
+                .as_str()
+                .expect("#1252 multiclose ID");
+            assert_eq!(closes.len(), 2, "#1252 multiclose recorded pair: {id}");
+            assert!(
+                closes[0]["seq"]
+                    .as_u64()
+                    .expect("#1252 multiclose first seq")
+                    < closes[1]["seq"]
+                        .as_u64()
+                        .expect("#1252 multiclose second seq"),
+                "#1252 multiclose original trace order: {id}"
+            );
+            let actual = json!(
+                closes
+                    .iter()
+                    .map(|row| json!({
+                        "connection": row["connection"], "code": row["code"],
+                        "reason": row["reason"], "cleanup": row["cleanup"]
+                    }))
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                closes_match(id, expected, &actual),
+                "#1252 multiclose exact positive: {id}"
+            );
+            let mut reversed = actual.clone();
+            reversed
+                .as_array_mut()
+                .expect("#1252 multiclose reverse array")
+                .swap(0, 1);
+            if registered.iter().any(|entry| entry == id) {
+                assert!(
+                    closes_match(id, expected, &reversed),
+                    "#1252 unordered close swap must pass: {id}"
+                );
+            } else {
+                assert!(
+                    !closes_match(id, expected, &reversed),
+                    "#1252 stable close swap must fail: {id}"
+                );
+            }
+            for unregistered in [
+                String::new(),
+                "not-a-registered-signal-cell".to_owned(),
+                format!("{id}-unregistered"),
+                format!("unregistered-{id}"),
+            ] {
+                assert!(
+                    !closes_match(&unregistered, expected, &reversed),
+                    "#1252 unknown close ID stays strict: {id} {unregistered}"
+                );
+            }
+            // Test both positions: order tolerance never drops or coalesces a record.
+            for index in 0..2 {
+                for (field, value) in [
+                    ("connection", json!(99)),
+                    ("code", json!(4999)),
+                    ("reason", json!("#1252 changed close reason")),
+                    (
+                        "cleanup",
+                        json!(
+                            !actual[index]["cleanup"]
+                                .as_bool()
+                                .expect("#1252 multiclose cleanup")
+                        ),
+                    ),
+                    ("extra", json!(true)),
+                ] {
+                    let mut bad = actual.clone();
+                    assert_ne!(
+                        bad[index][field], value,
+                        "#1252 multiclose field mutation changes input: {id}"
+                    );
+                    bad[index][field] = value;
+                    assert!(
+                        !closes_match(id, expected, &bad),
+                        "#1252 close fields remain exact: {id} {index} {field}"
+                    );
+                    bad.as_array_mut()
+                        .expect("#1252 bad close reverse array")
+                        .swap(0, 1);
+                    assert!(
+                        !closes_match(id, expected, &bad),
+                        "#1252 reordered close fields remain exact: {id} {index} {field}"
+                    );
+                }
+                let mut missing = actual.clone();
+                missing
+                    .as_array_mut()
+                    .expect("#1252 missing close array")
+                    .remove(index);
+                assert!(
+                    !closes_match(id, expected, &missing),
+                    "#1252 missing close must fail: {id}"
+                );
+                let mut duplicate = actual.clone();
+                duplicate[1 - index] = duplicate[index].clone();
+                assert!(
+                    !closes_match(id, expected, &duplicate),
+                    "#1252 duplicate close must fail: {id}"
+                );
+                let mut extra = actual.clone();
+                extra
+                    .as_array_mut()
+                    .expect("#1252 extra close array")
+                    .push(actual[index].clone());
+                assert!(
+                    !closes_match(id, expected, &extra),
+                    "#1252 extra close must fail: {id}"
+                );
+            }
+            assert!(
+                !closes_match(id, expected, &Value::Null),
+                "#1252 non-array closes must fail: {id}"
+            );
+            assert!(
+                closes_match(id, expected, &actual),
+                "#1252 multiclose restored positive: {id}"
+            );
+        }
+        assert_eq!(
+            (total, timeout),
+            (88, 26),
+            "#1252 all multiclose and death-window cells covered"
         );
     }
 
