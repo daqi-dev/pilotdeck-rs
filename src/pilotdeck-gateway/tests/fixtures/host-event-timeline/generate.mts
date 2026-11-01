@@ -4,7 +4,10 @@
 // A wire step pushes one module event frame; a host step queues host events
 // that only a pump tick or the final drains (wire payloads never drain the
 // host buffer in Rust, so every host step is followed by a tick before the
-// next wire step; the final drains in both).
+// next wire step; the final drains in both). The host-pending-wire-same-tick
+// case deliberately breaks that rule: it pins the registered #821 deviation
+// where the TS wire branch drains the host buffer before yielding the wire
+// event while the Rust port keeps it buffered for the pump tick.
 import assert from 'node:assert/strict';
 import {mock} from 'node:test';
 import {createRequire, syncBuiltinESMExports} from 'node:module';
@@ -66,19 +69,36 @@ const result = () => ({type: 'success', sessionId: 's', turnId: 't', stopReason:
 const finalPayload = (messages: any[] = [], finalMessage?: any) => ({
   result: finalMessage ? {...result(), finalMessage} : result(), messages,
 });
+const abortedResult = (turns: number) => ({type: 'aborted', sessionId: 's', turnId: 't',
+  stopReason: 'aborted_streaming', usage: {}, permissionDenials: [], turns,
+  startedAt: '1970-01-01T00:00:00.000Z', completedAt: '1970-01-01T00:00:00.000Z'});
 
 type WireStep = {kind: 'wire'; payload: any};
 type HostStep = {kind: 'host'; events: any[]};
 type TickStep = {kind: 'tick'; ms: number};
-type FinalStep = {kind: 'final'; payload: any};
-type Step = WireStep | HostStep | TickStep | FinalStep;
+type CancelStep = {kind: 'cancel'; reason: string};
+type Step = WireStep | HostStep | TickStep | CancelStep;
 const wire = (payload: any): WireStep => ({kind: 'wire', payload});
 const host = (...events: any[]): HostStep => ({kind: 'host', events});
 const tick = (ms: number): TickStep => ({kind: 'tick', ms});
+const cancel = (reason: string): CancelStep => ({kind: 'cancel', reason});
 
 interface Script {
   name: string;
   steps: Step[];
+  // Replaces the default success final; the outcome must match what the
+  // sidecar would legitimately send for this script.
+  final?: any;
+  finalOutcome?: string;
+  // Marks the final as the incomplete compaction final (TS client:1338-1350
+  // replaces it with abortedResult(input) before the terminal).
+  compaction?: boolean;
+  // Loop messages the turn starts with: history plus one accepted user
+  // message carrying `text`. The Rust replay rebuilds the same TurnInput.
+  input?: {history: any[]; text: string};
+  // Pins the registered #821 deviation; the Rust replay asserts the crossed
+  // yield order instead of the straight one.
+  deviation?: 'host-pending-wire-same-tick';
   // Light generation-time guards; the oracle itself records actuals.
   check?: (events: any[], returned: any) => void;
 }
@@ -403,6 +423,96 @@ const scripts: Script[] = [
       assert.equal(started.moduleId, 'fixture', '#1220 session_started moduleId overwritten');
     },
   },
+  {
+    // The issue's "arrives after cancel" scenario: a locatable host event
+    // queued after abort() but before the cancelled final must still be
+    // drained and positioned, and the cancelled final's own messages are
+    // projected like any terminal.
+    name: 'cancel-window-host-drain',
+    steps: [
+      wire({type: 'model_request_started', sessionId: 's', turnId: 't', model: 'm', provider: 'p'}),
+      wire({type: 'model_event', sessionId: 's', turnId: 't', blockId: 'b1', event: {type: 'text_delta', text: 'x'}}),
+      cancel('user_stop'),
+      host({type: 'assistant_message', sessionId: 's', turnId: 't', message: {role: 'assistant',
+        content: [{type: 'text', text: 'during cancel', blockId: 'hb1', timeline: CHILD}],
+        metadata: {model: 'm'}}}),
+      tick(500),
+    ],
+    final: {result: abortedResult(1),
+      messages: [{role: 'assistant', content: [{type: 'text', text: 'final', blockId: 'fb1', timeline: CHILD}]}]},
+    finalOutcome: 'cancelled',
+    check(events, returned) {
+      const [started, delta, hostMessage] = events.slice(0, 3);
+      assert.equal(started.type, 'model_request_started', '#1220 cancel window begins with the wire event');
+      assert.deepEqual(delta.timeline, {version: 1, turnId: 't', id: 'b1', order: 0, revision: 2, offset: 0},
+        '#1220 the wire block before the cancel keeps its position');
+      assert.deepEqual(hostMessage.message.content[0].timeline,
+        {version: 1, turnId: 't', id: 'hb1', previousId: 'b1', order: 1, revision: 4},
+        '#1220 the host event queued after abort is still drained and positioned');
+      assert.equal(hostMessage.message.metadata.moduleId, 'fixture', '#1220 the post-cancel host message is marked');
+      const terminal = events[events.length - 1];
+      assert.equal(terminal.type, 'turn_completed', '#1220 the cancelled final yields the terminal');
+      assert.equal(terminal.result.type, 'aborted', '#1220 the cancelled final result passes through');
+      assert.deepEqual(returned.messages[0].content[0].timeline,
+        {version: 1, turnId: 't', id: 'fb1', previousId: 'hb1', order: 2, revision: 5},
+        '#1220 the cancelled final messages are positioned after the drained host event');
+    },
+  },
+  {
+    // TS client:1338-1350: the incomplete compaction final is replaced by
+    // abortedResult(input) through recordKnownTerminal -> projectTerminal,
+    // so the original input messages get coordinates (unlike the pre-execute
+    // cancels, which never position anything).
+    name: 'compaction-incomplete-final',
+    steps: [
+      wire({type: 'model_request_started', sessionId: 's', turnId: 't', model: 'm', provider: 'p'}),
+      wire({type: 'model_event', sessionId: 's', turnId: 't', blockId: 'b1', event: {type: 'text_delta', text: 'x'}}),
+      cancel('compaction_persistence_failed'),
+      tick(500),
+    ],
+    final: {},
+    finalOutcome: 'cancelled',
+    compaction: true,
+    input: {history: [{role: 'assistant', content: [{type: 'text', text: 'history', blockId: 'h1', timeline: CHILD}],
+      metadata: {model: 'm'}}], text: 'q'},
+    check(events, returned) {
+      const terminal = events[events.length - 1];
+      assert.equal(terminal.type, 'turn_completed', '#1220 the compaction final yields the terminal');
+      assert.equal(terminal.result.type, 'aborted', '#1220 abortedResult(input) is synthesized');
+      assert.equal(terminal.result.turns, 0, '#1220 the synthesized result reports zero turns');
+      assert.equal(terminal.result.stopReason, 'aborted_streaming', '#1220 the synthesized stop reason');
+      assert.deepEqual(returned.messages[0].content[0].timeline,
+        {version: 1, turnId: 't', id: 'h1', previousId: 'b1', order: 1, revision: 3},
+        '#1220 the retained input assistant message is positioned');
+      assert.equal(returned.messages[0].metadata.moduleId, 'fixture', '#1220 the positioned input message is marked');
+      assert.deepEqual(returned.messages[1], {role: 'user', content: [{type: 'text', text: 'q'}]},
+        '#1220 the plain user input message passes through untouched');
+    },
+  },
+  {
+    // The #821 deviation made observable: a locatable host event sits in the
+    // buffer when a wire frame arrives without an intervening tick. TS drains
+    // and yields it before the wire event; Rust keeps it buffered until the
+    // pump tick. Same two events, opposite order, coordinates allocated in
+    // the respective yield order.
+    name: 'host-pending-wire-same-tick',
+    deviation: 'host-pending-wire-same-tick',
+    steps: [
+      host({type: 'assistant_message', sessionId: 's', turnId: 't', message: {role: 'assistant',
+        content: [{type: 'text', text: 'pending', blockId: 'hb1', timeline: CHILD}],
+        metadata: {model: 'm'}}}),
+      wire({type: 'model_event', sessionId: 's', turnId: 't', blockId: 'b10', event: {type: 'text_delta', text: 'x'}}),
+      tick(500),
+    ],
+    check(events) {
+      const [first, second] = events.slice(0, 2);
+      assert.equal(first.type, 'assistant_message', '#1220 TS drains the pending host event first');
+      assert.deepEqual(first.message.content[0].timeline, {version: 1, turnId: 't', id: 'hb1', order: 0, revision: 2},
+        '#1220 the drained host block is positioned before the wire block');
+      assert.deepEqual(second.timeline, {version: 1, turnId: 't', id: 'b10', previousId: 'hb1', order: 1, revision: 4, offset: 0},
+        '#1220 the wire block follows the host block');
+    },
+  },
 ];
 
 const cases: any[] = [];
@@ -455,8 +565,12 @@ for (const script of scripts) {
     turnComposition: () => ({forTurn: () => ({moduleHandlers: {}})})});
   const runner = factory({config: {cwd: output, permissionMode: 'default'},
     capabilities: {transport: {}}, sidecarModules: modules} as any);
-  const iterator = runner.run({sessionId: 's', turnId: 't', messages: [],
-    execution: {runId: 'run', operationId: 'operation'}});
+  const controller = new AbortController();
+  const inputMessages = script.input
+    ? [...script.input.history, {role: 'user', content: [{type: 'text', text: script.input.text}]}]
+    : [];
+  const iterator = runner.run({sessionId: 's', turnId: 't', messages: inputMessages,
+    abortSignal: controller.signal, execution: {runId: 'run', operationId: 'operation'}});
   const events: any[] = [];
   let armed: any;
   let settled = false;
@@ -478,10 +592,10 @@ for (const script of scripts) {
   arm();
   for (let guard = 0; !executeIds && guard < 400; guard++) await flush(50);
   assert.ok(executeIds, `#1220 ${script.name}: the execute request never arrived`);
-  const frame = (payload: any, final = false) => ({kind: 'event', eventType: 'agent_event',
+  const frame = (payload: any, final = false, outcome = 'completed') => ({kind: 'event', eventType: 'agent_event',
     streamId: 'stream', runId: executeIds.runId, operationId: executeIds.operationId,
     requestId: executeIds.requestId, sequence: sequence++, final,
-    ...(final ? {outcome: 'completed'} : {}), payload});
+    ...(final ? {outcome} : {}), payload});
   for (const step of script.steps) {
     if (step.kind === 'wire') {
       steps.push({kind: 'wire', payload: step.payload});
@@ -490,6 +604,10 @@ for (const script of scripts) {
     } else if (step.kind === 'host') {
       steps.push({kind: 'host', events: step.events});
       hostQueue.push(...step.events);
+    } else if (step.kind === 'cancel') {
+      steps.push({kind: 'cancel', reason: step.reason});
+      controller.abort(step.reason);
+      await drain();
     } else if (step.kind === 'tick') {
       let remaining = step.ms;
       while (remaining > 0) {
@@ -501,13 +619,16 @@ for (const script of scripts) {
       }
     }
   }
-  const finalPayloadValue = (script as any).final ?? finalPayload();
-  steps.push({kind: 'final', payload: finalPayloadValue});
+  const finalPayloadValue = script.final ?? finalPayload();
+  const finalOutcomeValue = script.finalOutcome ?? 'completed';
+  steps.push({kind: 'final', payload: finalPayloadValue, outcome: finalOutcomeValue,
+    ...(script.compaction ? {compaction: true} : {})});
   // The pushed final frame resolves the protocol's pending next() without any
   // timer: recordKnownTerminal positions the terminal inside that resolution,
   // then the runner's wire branch drains every pending host event before it
-  // yields turn_completed and returns {result, messages}.
-  push(frame(finalPayloadValue, true));
+  // yields turn_completed and returns {result, messages}. For the incomplete
+  // compaction final the protocol substitutes abortedResult(input) there.
+  push(frame(finalPayloadValue, true, finalOutcomeValue));
   await drain(1000);
   for (let guard = 0; done === undefined && guard < 100; guard++) await drain(200);
   assert.notEqual(done, undefined, `#1220 ${script.name}: the runner never returned`);
@@ -516,7 +637,9 @@ for (const script of scripts) {
   // second time — a deterministic baseline quirk, not a harness artifact.
   assert.equal(closed, 2, `#1220 ${script.name}: the connection closes twice`);
   script.check?.(events, done);
-  cases.push({name: script.name, steps, events, returned: done});
+  cases.push({name: script.name, steps, events, returned: done,
+    ...(script.deviation ? {deviation: script.deviation} : {}),
+    ...(script.input ? {input: script.input} : {})});
   mock.timers.reset();
 }
 writeFileSync(join(output, 'oracle.json'), JSON.stringify({sourceCommit, sourceSha256, cases}) + '\n', {flag: 'wx'});

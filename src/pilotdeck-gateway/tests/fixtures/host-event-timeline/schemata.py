@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """#1220: host-event timeline controls as compile-time switches.
 
-The three coordinate-projection mutations are ``crate::mutants::on`` branches
-compiled into the feature-enabled library test binary; sources are never
-written, so the run is a pure precompiled-switch execution. CARGO_TARGET_DIR
-must be supplied. Use --check for a read-only anchor preflight, or
-NEW_OUTPUT_DIR [switch ...] for the controlled run.
+The coordinate-projection mutations (allocator order, boundary emission,
+derived-status projection, compaction terminal positioning, the #821
+wire-drain deviation, and the two submit() timeline wirings) are
+``crate::mutants::on`` branches compiled into the feature-enabled library
+test binary; sources are never written, so the run is a pure
+precompiled-switch execution. CARGO_TARGET_DIR must be supplied. Use --check
+for a read-only anchor preflight, or NEW_OUTPUT_DIR [switch ...] for the
+controlled run.
 """
 import argparse
 import os
@@ -19,12 +22,24 @@ ROOT = Path(__file__).resolve().parents[5]
 TIMELINE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/timeline.rs'
 LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 # (name, path, test, assertion): the switch site is counted in the target file.
+# Assertions are bound to one case-level cell each, so no variant is judged by
+# another case's panic.
 REPLAY = ('runtime::turn::live::stream_tests::host_timeline_tests::'
           'host_timeline_replay_matches_ts_golden')
+SUBMIT = ('runtime::turn::live::stream_tests::'
+          'submit_assembles_one_timeline_across_wire_host_and_terminal')
 switches = [
-    ('timeline-order-frozen', TIMELINE, REPLAY, '#1220 timeline'),
-    ('timeline-boundary-omitted', TIMELINE, REPLAY, '#1220 timeline'),
-    ('timeline-derived-unprojected', LIVE, REPLAY, '#1220 timeline'),
+    ('timeline-order-frozen', TIMELINE, REPLAY, '#1220 timeline: wire-deltas event 5'),
+    ('timeline-boundary-omitted', TIMELINE, REPLAY, '#1220 timeline: wire-boundaries event 2'),
+    ('timeline-derived-unprojected', LIVE, REPLAY, '#1220 timeline: subagent-derived event 3'),
+    ('timeline-compaction-unpositioned', LIVE, REPLAY,
+     '#1220 timeline: compaction-incomplete-final terminal messages'),
+    ('wire-drains-host', LIVE, REPLAY,
+     '#1220 timeline: host-pending-wire-same-tick wire event body (crossed)'),
+    ('timeline-forwarding-unwired', LIVE, SUBMIT,
+     '#1220 submit timeline: the wire block takes the first position'),
+    ('timeline-terminal-unwired', LIVE, SUBMIT,
+     '#1220 submit timeline: the terminal reuses the wire position without a revision bump'),
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
@@ -32,11 +47,15 @@ GUARDED = [
     LIVE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_timeline_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/execution.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
     ROOT / 'src/Cargo.toml',
     ROOT / 'src/Cargo.lock',
+    ROOT / 'scripts/a6-host/fixture.py',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',

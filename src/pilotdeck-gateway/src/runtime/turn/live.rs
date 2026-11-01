@@ -390,7 +390,11 @@ impl LiveSession for LiveSessionAdapter {
                     events,
                     integrity: hook_integrity,
                     forwarding: Arc::new(Mutex::new(Forwarding {
-                        timeline: Some(timeline.clone()),
+                        timeline: if crate::mutants::on("timeline-forwarding-unwired") {
+                            None
+                        } else {
+                            Some(timeline.clone())
+                        },
                         ..Default::default()
                     })),
                     callback_cancel: Some(cancellation.clone()),
@@ -448,7 +452,11 @@ impl LiveSession for LiveSessionAdapter {
             preflight: 0,
             execute_ready: Some(execute_ready),
             recorded: std::collections::VecDeque::new(),
-            timeline: Some(stream_timeline),
+            timeline: if crate::mutants::on("timeline-terminal-unwired") {
+                None
+            } else {
+                Some(stream_timeline)
+            },
         };
         Ok(Box::new(super::live_session::SessionStream::new(
             turn,
@@ -1011,13 +1019,25 @@ impl LiveTurnStream {
                 self.integrity.observe_aborted()?;
                 self.delivered.observe_aborted()?;
                 // TS synthesizes its aborted result outside the projector
-                // (agentLoopSidecarClient.ts:330/:593/:1348); only a terminal
+                // (agentLoopSidecarClient.ts:330/:593); only a terminal
                 // the sidecar actually sent gets block coordinates.
                 let (terminal, position) = match terminal {
                     Some(terminal) => (terminal, true),
                     None => (self.aborted_result(), false),
                 };
                 Ok(Some(self.completed_event(&terminal, position)?))
+            }
+            Ok(ExecuteResult::AbortedCompaction) => {
+                self.integrity.observe_aborted()?;
+                self.delivered.observe_aborted()?;
+                // TS client:1348 substitutes abortedResult(input) inside
+                // readFinalTerminal and routes it through recordKnownTerminal
+                // -> projectTerminal, so unlike the pre-execute cancels the
+                // original input messages get block coordinates.
+                let position = !crate::mutants::on("timeline-compaction-unpositioned");
+                Ok(Some(
+                    self.completed_event(&self.aborted_result(), position)?,
+                ))
             }
             Ok(ExecuteResult::Rejected(error)) => Err(RuntimeError {
                 message: "Turn execution rejected.".into(),
@@ -1062,8 +1082,10 @@ impl LiveTurnStream {
             && let JsValue::Object(fields) = &mut terminal
         {
             // TS projectTerminal positions every block of the final message
-            // and history messages (agentLoopSidecarClient.ts:1530); the
-            // stream's positions are reused without a revision bump.
+            // and history messages (agentLoopSidecarClient.ts:1530); a block
+            // the stream already located reuses its position without a
+            // revision bump, while a new block allocates one and bumps the
+            // revision like any other located event.
             if let Some(mut result) = fields.get("result").and_then(JsValue::as_object).cloned()
                 && let Some(mut message) = result.get("finalMessage").cloned()
                 && super::submit::truthy(&message)
@@ -1507,7 +1529,9 @@ impl StreamHandler {
         }
         // A received wire payload owns the earlier slot. Leave later host
         // writes for the pump/module boundary instead of prepending them to it.
-        let buffered = if payload.is_some() {
+        // #821 deviation: the TS wire branch drains the host buffer before it
+        // yields the wire event; this port keeps the writes buffered.
+        let buffered = if payload.is_some() && !crate::mutants::on("wire-drains-host") {
             Ok(Vec::new())
         } else {
             self.inner.drain_events()

@@ -1245,7 +1245,7 @@ async fn compaction_abort_fallback_matches_ts_shape_and_three_conditions() {
     ] {
         let (result, handler) = cancel_run(mode).await;
         assert!(
-            matches!(result.unwrap(), ExecuteResult::Aborted { terminal: None }),
+            matches!(result.unwrap(), ExecuteResult::AbortedCompaction),
             "{mode}"
         );
         assert_eq!(

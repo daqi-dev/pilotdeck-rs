@@ -457,9 +457,10 @@ fn model_event_tool_call_end(event: &JsObject) -> bool {
 }
 
 /// projectTerminalMessage: strip child marks, then position every block with
-/// direct assignment (stream positions are reused, never re-revised). The
-/// module-owned marking stays with the caller's existing
-/// `mark_module_message`, which is its TS equivalent.
+/// direct assignment. A block the stream already located reuses its position
+/// without a revision bump; a new block allocates one and bumps the revision
+/// like any other located event. The module-owned marking stays with the
+/// caller's existing `mark_module_message`, which is its TS equivalent.
 pub(crate) fn project_terminal_message(timeline: &mut TurnTimeline, message: &mut JsObject) {
     let mut projected = strip_message(message);
     let queue_item_id = queue_item_id(&projected);

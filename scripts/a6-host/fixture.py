@@ -47,7 +47,7 @@ known_modes.update({
     'ack-eof-recorder-positive',
     'event-order', 'host-cancel-before-acceptance-hang',
     'host-cancel-after-acceptance-hang', 'host-cancel-no-terminal-hang',
-    'host-cancel-late-terminal',
+    'host-cancel-late-terminal', 'timeline-submit',
 })
 if mode not in known_modes:
     sys.exit('unknown fixture mode: ' + mode)
@@ -415,6 +415,37 @@ if mode == 'event-order':
     replies = {read()['inReplyTo'] for _ in range(16)}
     assert replies == {'emit-' + str(number) for number in range(16)}, replies
     send(event(final=True))
+    assert sys.stdin.read() == ''
+    write_receipt()
+    sys.exit(0)
+
+if mode == 'timeline-submit':
+    # #1220: one locatable wire block, one event.emit module boundary (the host
+    # drains its buffer there), then a final whose finalMessage reuses the
+    # wire block's position. The suppressed turn_completed precedes the final
+    # like the real AgentLoop's, and each applied wire event is acked before
+    # the next frame is sent so the peer reads stay deterministic.
+    send(event(sequence=0, payload=dict(type='model_request_started', sessionId=execute['sessionId'],
+                                        turnId=execute['turnId'], model='m', provider='p')))
+    ack = read()
+    assert ack['method'] == 'ack' and ack['lastAppliedSequence'] == 0, ack
+    send(event(sequence=1, payload=dict(type='model_event', sessionId=execute['sessionId'],
+                                        turnId=execute['turnId'], blockId='b1',
+                                        event=dict(type='text_delta', text='x'))))
+    ack = read()
+    assert ack['method'] == 'ack' and ack['lastAppliedSequence'] == 1, ack
+    send(dict(kind='request', messageId='emit-1', method='module_call', module='event',
+              runId=execute['runId'], operationId=execute['operationId'], requestId='callback-request',
+              payload=dict(operation='emit', event=dict(type='probe', sessionId=execute['sessionId'],
+                                                        turnId=execute['turnId'], index=0))))
+    reply = read()
+    assert reply['inReplyTo'] == 'emit-1' and reply['ok'], reply
+    send(event(sequence=2, payload=dict(type='turn_completed', sessionId=execute['sessionId'],
+                                        turnId=execute['turnId'], result=dict(type='success'))))
+    terminal = event(sequence=3, final=True)
+    terminal['payload']['result']['finalMessage'] = dict(role='assistant',
+                                                        content=[dict(type='text', text='done', blockId='b1')])
+    send(terminal)
     assert sys.stdin.read() == ''
     write_receipt()
     sys.exit(0)
