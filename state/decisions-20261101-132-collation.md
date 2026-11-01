@@ -35,3 +35,5 @@ ICU4X 2.1.1 的 `compare_utf16` 将孤立代理项解码为 U+FFFD；Node v22.22
 ## 实测后的必要补充
 
 补充比较矩阵发现仓内 78.2 baked metadata 缺 fr-CA 的 backward-secondary 位（原版 ICU4X 2.1.1 数据有 bits=129，本仓所有 bits 均无 1<<7）。纯合法 `coté/côte` 与带孤立项的重音相对位置都可见，不是 CE 分段造成。为保证移除 host 边界后该 locale 仍保真，选 A 同时暴露原有方向选项，在 `node_collator` 恢复 fr-CA 默认；数据与冻结装置不改。显式 script 的 fr-Latn-CA 经 Node lookup 回退普通法语，emoji/eor 显式 collation 也不套法加默认；补充原件逐对钉住这些行为。此修正可撤回、按真实 Node 判据执行，仍为 AI 代批待人复核。
+
+78.2 baked 数据由 `tools/collation-datagen/` 的锁定 ICU4X 2.1.1 source/export 生成；输入为 `sources.json` 登记哈希的 ICU release-78.2 icuexport 与 CLDR JSON 48.0.0，选择 Unihan，复现命令为 `python3 tools/collation-datagen/regenerate.py --check`（细节见该目录 README）。前置于撤除 `node_collator` 的 fr-CA 补位或下次数据升级：重生成后核对 `collation_metadata_v1` 的 fr-CA backward-secondary 位、locale fallback，并重跑 native-collation 的 Node v22.22.0 / ICU 78.2 全对比较；本轮只补来源与核对点，未重新生成数据。
