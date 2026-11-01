@@ -411,7 +411,10 @@ command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
 def run(label, test, compile=False):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
     (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
-    args = ['--no-run'] if compile else [test, '--', '--exact', '--include-ignored', '--nocapture']
+    # No `--nocapture`: it splices the test's stdout into the
+    # `test <name> ... ok/FAILED` status line (#938 r14) that the shared
+    # negative_suite.passed()/classify() judge matches exactly (#1053).
+    args = ['--no-run'] if compile else [test, '--', '--exact', '--include-ignored']
     result = run_owned(command + args, cwd=root, env=env, timeout=900)
     with (out / (label + '.log')).open('x') as log:
         log.write(result.stdout + result.stderr)

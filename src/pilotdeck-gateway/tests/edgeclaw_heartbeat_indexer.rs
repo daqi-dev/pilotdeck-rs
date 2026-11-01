@@ -67,6 +67,16 @@ const DIVERGED_CASES: [&str; 6] = [
 
 // -- oracle access ---------------------------------------------------------
 
+// #1263 skip lines must reach default `cargo test` output: libtest captures
+// the eprintln! macro for a passing test, so the line is written through the
+// stderr handle directly (the #448 unsafe_boundary precedent, probed there on
+// rustc 1.99.1: handle writes bypass the capture; the macro's output does not).
+fn stderr_skip_line(text: &str) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(text.as_bytes());
+    let _ = std::io::stderr().flush();
+}
+
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value
         .get(key)
@@ -3025,6 +3035,19 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     );
     fs::set_permissions(&manifest, fs::Permissions::from_mode(0o444))
         .expect("#1207 make the workspace manifest read-only");
+    // #1263: 0444 only stops an unprivileged writer. Under a root container
+    // the mode is bypassed (CAP_DAC_OVERRIDE), the `expect_err` below would
+    // fail red for environment reasons, and the re-arm contract would be
+    // reported as broken when it was never exercised — so probe natively
+    // first and skip with a recognizable line when the mode does not bite.
+    if fs::OpenOptions::new().write(true).open(&manifest).is_ok() {
+        let _ = fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644));
+        stderr_skip_line(
+            "#1263 skip: 0444 does not block this caller (root or CAP_DAC_OVERRIDE); \
+             the mid-deletion clear-failure contract needs an unprivileged host\n",
+        );
+        return;
+    }
     let error = lab
         .stores
         .clear_session_memory_data("s1")

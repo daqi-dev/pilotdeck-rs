@@ -78,9 +78,12 @@ def main():
         # No -q: cargo forwards it to libtest as --quiet, and the kill check
         # below needs the per-test "test <name> ... FAILED" line that quiet
         # mode replaces with "<name> --- FAILED".
+        # No `--nocapture`: capture keeps a printing test's stdout out of the
+        # `test <name> ... ok/FAILED` status lines the positive and kill
+        # checks below match exactly (#1053).
         result = run_owned([
             'cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway',
-            '--test', 'transcript_resolve', test, '--', '--exact', '--nocapture',
+            '--test', 'transcript_resolve', test, '--', '--exact',
         ], cwd=root, env=env, timeout=600)
         log = result.stdout + result.stderr
         save(f'{label}.log', log)

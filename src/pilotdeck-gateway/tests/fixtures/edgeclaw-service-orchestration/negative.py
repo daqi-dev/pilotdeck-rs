@@ -585,7 +585,10 @@ def main():
             command.append('--lib')
         else:
             command += ['--test', Path(mutant['test_file']).stem]
-        args = ['--', mutant['test'], '--exact', '--nocapture']
+        # No `--nocapture`: it splices the test's stdout into the
+        # `test <name> ... ok/FAILED` status line (#938 r14) that
+        # passed()/classify() match exactly (#1053).
+        args = ['--', mutant['test'], '--exact']
         with (output / f'{label}.log').open('w') as log:
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
             log.write(gate.stdout + gate.stderr)

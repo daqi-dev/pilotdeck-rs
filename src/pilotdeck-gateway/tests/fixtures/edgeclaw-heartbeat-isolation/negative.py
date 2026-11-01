@@ -94,7 +94,11 @@ def main():
 
             def invoke(label, test, selector, _row):
                 try:
-                    result = run_owned([str(binary), test, '--exact', '--nocapture'],
+                    # No `--nocapture`: it splices the test's stdout into the
+                    # `test <name> ... ok/FAILED` status line (#938 r14) that
+                    # the negative_suite.passed() judge behind
+                    # mutant_switch.execute_suite matches exactly (#1053).
+                    result = run_owned([str(binary), test, '--exact'],
                         cwd=ROOT, env=mutant_switch.selector_environment(env, selector), timeout=120)
                 except Exception as error:
                     (output / (label + '.log')).write_text(mutant_switch.raw_timeout(error)
