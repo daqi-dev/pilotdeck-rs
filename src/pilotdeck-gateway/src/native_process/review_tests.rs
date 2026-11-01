@@ -712,6 +712,7 @@ async fn project_path_boundaries_worker() {
         )),
         options: options.clone(),
         env: options.environment(Env::new()),
+        snapshot_enabled: false,
         coordinator: Arc::default(),
         runs: Arc::new(
             crate::runtime::turn::publish::FileRegistry::new(

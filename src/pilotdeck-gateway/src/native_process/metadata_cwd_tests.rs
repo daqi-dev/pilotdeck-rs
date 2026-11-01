@@ -155,6 +155,7 @@ async fn observe(name: &str) -> (Value, Value) {
         )),
         options: options.clone(),
         env: options.environment(Env::new()),
+        snapshot_enabled: false,
         coordinator: Arc::default(),
         runs: Arc::new(
             crate::runtime::turn::publish::FileRegistry::new(
@@ -470,6 +471,7 @@ async fn observe_archive(name: &str) {
         )),
         options: options.clone(),
         env: options.environment(Env::new()),
+        snapshot_enabled: false,
         coordinator: Arc::default(),
         runs: Arc::new(
             crate::runtime::turn::publish::FileRegistry::new(

@@ -22,6 +22,7 @@ use std::sync::Arc;
 pub struct Requests {
     pub options: Options,
     pub env: crate::config::Env,
+    pub snapshot_enabled: bool,
     pub coordinator: Arc<TurnEventCoordinator>,
     pub runs: Arc<FileRegistry>,
     pub owner: SessionOwner,
@@ -50,10 +51,6 @@ fn read_error(error: read::TurnReadError) -> RequestError {
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
-            let snapshot_enabled =
-                crate::storage::resolve_workspace_snapshot_config(|key| self.env.get(key).cloned())
-                    .map_err(|error| RequestError::new(error.to_string()))?
-                    .is_some();
             Ok(object([
                 ("mode", "in_process".into()),
                 (
@@ -80,7 +77,11 @@ impl GatewayRequests for Requests {
                         ]
                         .into_iter()
                         .filter(|capability| {
-                            snapshot_enabled || !capability.starts_with("snapshot_")
+                            self.snapshot_enabled
+                                || !matches!(
+                                    *capability,
+                                    "snapshot_list" | "snapshot_get" | "snapshot_restore"
+                                )
                         })
                         .map(JsValue::from)
                         .collect(),

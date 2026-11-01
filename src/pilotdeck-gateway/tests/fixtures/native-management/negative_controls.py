@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process/management.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
+ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 REFRESH = ROOT / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 OWNER = ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
 SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/runtime/snapshot.rs'
@@ -28,6 +29,7 @@ ADMISSION = 'native_process::management_tests::admission_and_unwired_families_st
 HOST = 'native_process::management_tests::production_host_management_and_restart'
 SNAPSHOT_TEST = 'native_process::management_tests::snapshot_success_matches_ts'
 IMPORT_TEST = 'native_process::management_tests::skill_import_success_conflict_and_overwrite_match_ts'
+PRODUCTION = 'native_process::management_tests::production_entry_snapshot_capabilities_are_disabled'
 mutations = [
     ('omit-snapshot', SOURCE, 'if method.starts_with("snapshot_") {', 'if method.starts_with("unwired_snapshot_") {', TEST, '#1231 routed first result'),
     ('omit-manager', SOURCE, 'if matches!(method, "manager_sessions" | "manager_browsers") {', 'if matches!(method, "unwired_manager_sessions" | "manager_browsers") {', TEST, '#1231 routed first result'),
@@ -52,7 +54,7 @@ mutations = [
     ('capability-skill_import', REQUESTS, '"commands_list",', '"commands_list", "skill_import",', HOST, '#1231 exact wired capability set'),
     ('capability-skill_validate', REQUESTS, '"commands_list",', '"commands_list", "skill_validate",', HOST, '#1231 exact wired capability set'),
     ('skills-restart-refused', ASSEMBLY, 'if management && name == "skills" {', 'if management && name == "unwired_skills" {', HOST, '#1231 native management boot/restart'),
-    ('snapshot-storage-omitted', ASSEMBLY, 'let project = project_registry(&options, &env);', 'let mut env = env; env.remove("PILOTDECK_STORAGE_ROOT"); let project = project_registry(&options, &env);', HOST, '#1231 production route success'),
+    ('snapshot-storage-omitted', ASSEMBLY, 'let project = project_registry(&options, &env);', 'let mut env = env; env.remove("PILOTDECK_STORAGE_ROOT"); let project = project_registry(&options, &env);', HOST, '#1231 snapshot route with explicit storage'),
     ('oracle-corruption', ORACLE, '"node": "v22.22.0"', '"node": "v0.0.0"', 'native_process::management_tests::regenerates_identically', '#280 native-management/oracle.json differs'),
 ]
 mutations.append(('cursor-array-refused', SOURCE, 'JsValue::Array(items) => encode(items),', 'JsValue::Array(_items) => Err(invalid()),', TEST, '#1231 method wire result'))
@@ -108,8 +110,20 @@ mutations.append(('capability-add-upload_create', REQUESTS, '"commands_list",', 
 mutations.append(('capability-duplicate-run_get', REQUESTS, '                            "run_get",', '                            "run_get", "run_get",', HOST, '#1231 exact wired capability set'))
 mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
-mutations.append(('missing-storage-advertised', REQUESTS, 'snapshot_enabled || !capability.starts_with("snapshot_")', 'snapshot_enabled || true || !capability.starts_with("snapshot_")', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
-mutations.append(('empty-storage-advertised', REQUESTS, 'snapshot_enabled || !capability.starts_with("snapshot_")', 'snapshot_enabled || true || !capability.starts_with("snapshot_")', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
+mutations.append(('missing-storage-advertised', REQUESTS, 'self.snapshot_enabled\n                                || !matches!(', 'self.snapshot_enabled || true\n                                || !matches!(', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
+mutations.append(('empty-storage-advertised', REQUESTS, 'self.snapshot_enabled\n                                || !matches!(', 'self.snapshot_enabled || true\n                                || !matches!(', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
+
+
+# fix-r3: provider-derived advertisement, explicit filter and production boundary.
+mutations.append(('snapshot-state-disabled', ASSEMBLY, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() && false)', HOST, '#1231 exact wired capability set'))
+mutations.append(('snapshot-state-enabled', ASSEMBLY, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() || true)', PRODUCTION, '#1231 production entry exact 10 capabilities'))
+mutations.append(('production-storage-authority-accepted', ENTRY, '        "PILOTDECK_STORAGE_ROOT",', '        "UNWIRED_PILOTDECK_STORAGE_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
+mutations.append(('production-snapshot-authority-accepted', ENTRY, '        "PILOTDECK_SNAPSHOT_ROOT",', '        "UNWIRED_PILOTDECK_SNAPSHOT_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
+mutations.append(('production-blank-authority-accepted', ENTRY, 'env.get(key).is_some_and(|v| !v.is_empty())', 'env.get(key).is_some_and(|v| !v.trim().is_empty())', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
+mutations.append(('snapshot-list-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"unwired_snapshot_list" | "snapshot_get" | "snapshot_restore"', PRODUCTION, '#1231 production entry exact 10 capabilities'))
+mutations.append(('snapshot-get-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "unwired_snapshot_get" | "snapshot_restore"', PRODUCTION, '#1231 production entry exact 10 capabilities'))
+mutations.append(('snapshot-restore-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "snapshot_get" | "unwired_snapshot_restore"', PRODUCTION, '#1231 production entry exact 10 capabilities'))
+mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",', '\n      "unwired_run_get",', HOST, '#1231 wired capabilities are TS subset'))
 
 
 def mutate(case, text):
