@@ -242,8 +242,10 @@ where
 /// `GatewayServer` does not override it and advertises
 /// `Keep-Alive: timeout=5`): an idle keep-alive connection closes 5 s after
 /// its last request/response activity (probe `probe-fixr3-a.out` A). Node
-/// re-checks on a ~1 s cull interval, so the TS close lands at ~6 s; this
-/// port closes at exactly 5 s, never later.
+/// adds the fixed `keepAliveTimeoutBuffer` (1 s), so the TS close lands at
+/// ~6 s; this port replicates the 5 s timeout itself and closes at exactly
+/// 5 s, never later — the unconverged ~1 s buffer is registered in ledger
+/// A8.4-NATIVE-HTTP-001 (alignment tracked in #1250).
 const NODE_KEEP_ALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The native listener's connection serving. TS emits literal header cases
