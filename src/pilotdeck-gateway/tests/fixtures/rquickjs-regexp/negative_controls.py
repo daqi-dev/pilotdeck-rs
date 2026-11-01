@@ -19,6 +19,10 @@ source = root / 'src/pilotdeck-regexp-proto/src/lib.rs'
 tests = root / 'src/pilotdeck-regexp-proto/src/tests.rs'
 fixture = root / 'src/pilotdeck-gateway/tests/fixtures/rquickjs-regexp/oracle.json'
 generator = root / 'src/pilotdeck-gateway/tests/fixtures/rquickjs-regexp/generate.mjs'
+sdk_generator = generator.with_name('generate-sdk.mjs')
+sdk_fixture = fixture.with_name('regress-oracle.json')
+reports = fixture.with_name('report-cases.json')
+regenerator = generator.with_name('regenerate.py')
 mutations = [
     ('disable-interrupt', source, 'handler.interrupt()', 'false && handler.interrupt()',
      'tests::budget_tristate_and_reuse', '#1265 native budget exhausted'),
@@ -67,6 +71,65 @@ mutations = [
      'tests::node_semantics', '#1265 Node provenance'),
     ('generator-version-drift', generator, "process.version, 'v22.22.0'", "process.version, 'v22.22.1'",
      'tests::fixture_regenerates_identically', '#1265 regeneration identical'),
+    ('exhaust-at-limit', source, 'if polls > self.max_polls {', 'if polls >= self.max_polls {',
+     'tests::shared_budget_and_new_request', '#1265 exact poll allowance finishes'),
+    ('skip-decode-cancel-check', source, 'self.budget.check()?;\n            Ok(Outcome {',
+     'if false { self.budget.check()?; }\n            Ok(Outcome {',
+     'tests::cancellation_during_decode', '#1265 decode cancellation wins'),
+    ('configured-stack-default', source, 'runtime.set_max_stack_size(limits.stack_bytes);',
+     'runtime.set_max_stack_size(Limits::default().stack_bytes);',
+     'tests::configured_stack_limit', '#1265 configured stack rejects before exhausting host'),
+    ('pattern-exclusive-limit', source, 'if pattern.len() > limits.pattern_units {',
+     'if pattern.len() >= limits.pattern_units {',
+     'tests::length_limit_boundaries', '#1265 pattern and output exact limits accepted'),
+    ('input-exclusive-limit', source, 'if input.len() > limits.input_units {',
+     'if input.len() >= limits.input_units {',
+     'tests::length_limit_boundaries', '#1265 input exact limit accepted'),
+    ('output-exclusive-limit', source, 'remaining.checked_sub(len).ok_or(Error::Limit("output"))?',
+     'remaining.checked_sub(len).filter(|left| *left > 0).ok_or(Error::Limit("output"))?',
+     'tests::length_limit_boundaries', '#1265 pattern and output exact limits accepted'),
+    ('flags-exclusive-limit', source, 'if flags.len() > 8 {', 'if flags.len() >= 8 {',
+     'tests::flags_limit', '#1265 eight flags reach compiler'),
+    ('memory-minimum-loosened', source, 'limits.memory_bytes < 1024 * 1024',
+     'limits.memory_bytes < 1',
+     'tests::memory_limit_boundary', '#1265 memory below minimum rejected'),
+    ('memory-minimum-exclusive', source, 'limits.memory_bytes < 1024 * 1024',
+     'limits.memory_bytes <= 1024 * 1024',
+     'tests::memory_limit_boundary', '#1265 memory minimum initializes'),
+    ('stack-minimum-loosened', source, '!(16 * 1024..=16 * 1024 * 1024).contains(&limits.stack_bytes)',
+     '!(1..=16 * 1024 * 1024).contains(&limits.stack_bytes)',
+     'tests::stack_limit_boundaries', '#1265 stack below minimum rejected'),
+    ('stack-minimum-exclusive', source, '!(16 * 1024..=16 * 1024 * 1024).contains(&limits.stack_bytes)',
+     '!(16 * 1024 + 1..=16 * 1024 * 1024).contains(&limits.stack_bytes)',
+     'tests::stack_limit_boundaries', '#1265 stack endpoints initialize'),
+    ('stack-maximum-loosened', source, '!(16 * 1024..=16 * 1024 * 1024).contains(&limits.stack_bytes)',
+     '!(16 * 1024..=32 * 1024 * 1024).contains(&limits.stack_bytes)',
+     'tests::stack_limit_boundaries', '#1265 stack above maximum rejected'),
+    ('stack-maximum-exclusive', source, '!(16 * 1024..=16 * 1024 * 1024).contains(&limits.stack_bytes)',
+     '!(16 * 1024..16 * 1024 * 1024).contains(&limits.stack_bytes)',
+     'tests::stack_limit_boundaries', '#1265 stack endpoints initialize'),
+    ('default-memory-too-small', source, 'memory_bytes: 64 * 1024 * 1024,',
+     'memory_bytes: 16 * 1024 * 1024,',
+     'tests::default_input_output_limits', '#1265 default full input and output execute'),
+    ('default-input-too-small', source, 'input_units: 1024 * 1024,',
+     'input_units: 1024 * 1024 - 1,',
+     'tests::default_input_output_limits', '#1265 default full input and output execute'),
+    ('default-output-too-small', source, 'output_units: 1024 * 1024,',
+     'output_units: 1024 * 1024 - 1,',
+     'tests::default_input_output_limits', '#1265 default full input and output execute'),
+    ('oracle-bytes-drift', fixture, '"node": "v22.22.0"', '"node": "v22.22.1"',
+     'tests::fixture_content_hashes', '#1265 fixture digest oracle.json'),
+    ('sdk-oracle-bytes-drift', sdk_fixture, '"sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"',
+     '"sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae86"',
+     'tests::fixture_content_hashes', '#1265 fixture digest regress-oracle.json'),
+    ('generator-bytes-drift', generator, "process.version, 'v22.22.0'", "process.version, 'v22.22.1'",
+     'tests::fixture_content_hashes', '#1265 fixture digest generate.mjs'),
+    ('sdk-generator-bytes-drift', sdk_generator, "process.env.PDRS_BASELINE", "process.env.PDRS_BASELINE_MISSING",
+     'tests::fixture_content_hashes', '#1265 fixture digest generate-sdk.mjs'),
+    ('report-bytes-drift', reports, '"id": "dot-non-u"', '"id": "dot-non-u-drift"',
+     'tests::fixture_content_hashes', '#1265 fixture digest report-cases.json'),
+    ('regenerator-bytes-drift', regenerator, "timeout=300", "timeout=301",
+     'tests::fixture_content_hashes', '#1265 fixture digest regenerate.py'),
 ]
 
 def check(row, original):
@@ -100,7 +163,7 @@ def main():
     env = dict(os.environ)
     command = ['cargo', 'test', '--locked', '--offline', '--manifest-path',
                str(root / 'src/pilotdeck-regexp-proto/Cargo.toml'), '--lib']
-    paths = [source, tests, fixture, generator, Path(__file__).resolve()]
+    paths = list(dict.fromkeys([row[1] for row in mutations] + [tests, Path(__file__).resolve()]))
     results = []
 
     def run(label, test, compile_only=False):

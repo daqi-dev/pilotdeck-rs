@@ -19,6 +19,8 @@ use std::{
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub memory_bytes: usize,
+    /// QuickJS's ceiling, not an allocation of host thread stack. The caller
+    /// must provide more remaining host stack plus Rust/bridge headroom.
     pub stack_bytes: usize,
     pub pattern_units: usize,
     pub input_units: usize,
@@ -27,7 +29,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            memory_bytes: 16 * 1024 * 1024,
+            memory_bytes: 64 * 1024 * 1024,
             stack_bytes: 512 * 1024,
             pattern_units: 4096,
             input_units: 1024 * 1024,
@@ -101,6 +103,8 @@ struct Budget {
     cancellation: Cancellation,
     #[cfg(test)]
     cancel_at_poll: AtomicU64,
+    #[cfg(test)]
+    cancel_at_decode_unit: AtomicU64,
 }
 impl Budget {
     fn check(&self) -> Result<(), Error> {
@@ -121,7 +125,7 @@ impl Budget {
         if self.cancel_at_poll.load(Ordering::SeqCst) == polls {
             self.cancellation.cancel();
         }
-        if polls >= self.max_polls {
+        if polls > self.max_polls {
             self.exhausted.store(true, Ordering::SeqCst);
         }
         self.check().is_err()
@@ -171,7 +175,8 @@ impl Engine {
     }
 
     /// Polls count only native RegExp.exec execution, shared across calls in this
-    /// request. This is cooperative cancellation, not a time or backtrack count.
+    /// request. Exactly max_polls polls are allowed; the next poll aborts.
+    /// This is cooperative cancellation, not a time or backtrack count.
     pub fn request(&mut self, max_polls: u64) -> Request<'_> {
         let budget = Arc::new(Budget {
             max_polls,
@@ -181,6 +186,8 @@ impl Engine {
             cancellation: Cancellation::default(),
             #[cfg(test)]
             cancel_at_poll: AtomicU64::new(0),
+            #[cfg(test)]
+            cancel_at_decode_unit: AtomicU64::new(0),
         });
         let handler = budget.clone();
         self.runtime
@@ -255,8 +262,11 @@ impl Request<'_> {
                 .get("lastIndex")
                 .map_err(|e| engine_error(&ctx, Phase::Decode, e))?;
             let matched = result
-                .map(|array| decode_match(&ctx, array, limits.output_units))
+                .map(|array| decode_match(&ctx, array, limits.output_units, &self.budget))
                 .transpose()?;
+            // Cancellation during UTF-16 decoding must win over a successful
+            // outcome too. This is not a latency bound on native calls.
+            self.budget.check()?;
             Ok(Outcome {
                 matched,
                 last_index,
@@ -309,6 +319,7 @@ fn to_units<'js>(
     ctx: &Ctx<'js>,
     value: Value<'js>,
     remaining: &mut usize,
+    _budget: &Budget,
 ) -> Result<Option<Vec<u16>>, Error> {
     if value.is_undefined() {
         return Ok(None);
@@ -328,6 +339,10 @@ fn to_units<'js>(
             at.call((This(boxed.clone()), index))
                 .map_err(|e| engine_error(ctx, Phase::Decode, e))?,
         );
+        #[cfg(test)]
+        if _budget.cancel_at_decode_unit.load(Ordering::SeqCst) == index as u64 + 1 {
+            _budget.cancellation.cancel();
+        }
     }
     Ok(Some(units))
 }
@@ -335,6 +350,7 @@ fn decode_match<'js>(
     ctx: &Ctx<'js>,
     array: Array<'js>,
     mut remaining: usize,
+    budget: &Budget,
 ) -> Result<Match, Error> {
     let read = |error| engine_error(ctx, Phase::Decode, error);
     let start: usize = array.as_object().get("index").map_err(read)?;
@@ -344,6 +360,7 @@ fn decode_match<'js>(
             ctx,
             array.get(index).map_err(read)?,
             &mut remaining,
+            budget,
         )?);
     }
     let end = start
@@ -360,7 +377,7 @@ fn decode_match<'js>(
                 .props::<String, Value>()
                 .map(|entry| {
                     let (key, value) = entry.map_err(read)?;
-                    Ok((key, to_units(ctx, value, &mut remaining)?))
+                    Ok((key, to_units(ctx, value, &mut remaining, budget)?))
                 })
                 .collect::<Result<Groups, Error>>()
         })

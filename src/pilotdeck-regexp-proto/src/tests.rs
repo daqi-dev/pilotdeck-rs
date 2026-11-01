@@ -159,7 +159,11 @@ fn budget_tristate_and_reuse() {
             Err(Error::BudgetExhausted),
             "#1265 native budget exhausted"
         );
-        assert_eq!(request.polls(), 1, "#1265 native matcher polled");
+        assert_eq!(
+            request.polls(),
+            2,
+            "#1265 native matcher polled past allowance"
+        );
         assert_eq!(
             run(&mut request, "a", "a"),
             Err(Error::BudgetExhausted),
@@ -194,15 +198,16 @@ fn shared_budget_and_new_request() {
     };
     assert!(used > 1, "#1265 calibration observes actual matcher polls");
     {
-        let mut request = engine.request(used + 1);
-        run(&mut request, "^(a+)+$", &bad).expect("#1265 shared first call finishes");
+        let mut request = engine.request(used);
+        run(&mut request, "^(a+)+$", &bad).expect("#1265 exact poll allowance finishes");
+        assert_eq!(request.polls(), used, "#1265 exact poll allowance spent");
         assert_eq!(
             run(&mut request, "^(a+)+$", &bad),
             Err(Error::BudgetExhausted),
             "#1265 shared second call exhausts"
         );
     }
-    let mut request = engine.request(used + 1);
+    let mut request = engine.request(used);
     assert_eq!(request.polls(), 0, "#1265 new request starts fresh");
     assert!(
         run(&mut request, "^(a+)+$", &bad)
@@ -251,6 +256,40 @@ fn cancellation_and_stale_token() {
             .matched
             .is_some(),
         "#1265 after cancel match"
+    );
+}
+#[test]
+fn cancellation_during_decode() {
+    let mut engine = engine();
+    let input = vec![0x4e00; 1024];
+    for unit in [1, 512, 1024] {
+        let mut request = engine.request(1000);
+        request
+            .budget
+            .cancel_at_decode_unit
+            .store(unit, Ordering::SeqCst);
+        assert_eq!(
+            request.exec(&units("[\\s\\S]*"), "", &input, 0),
+            Err(Error::Cancelled),
+            "#1265 decode cancellation wins at unit {unit}"
+        );
+        assert_eq!(
+            request.exec(&units("a"), "", &[97], 0),
+            Err(Error::Cancelled),
+            "#1265 decode cancellation remains sticky"
+        );
+    }
+    let outcome = engine
+        .request(1000)
+        .exec(&units("[\\s\\S]*"), "", &input, 0)
+        .expect("#1265 decode successor succeeds");
+    assert_eq!(
+        outcome
+            .matched
+            .expect("#1265 decode successor matches")
+            .captures,
+        vec![Some(input)],
+        "#1265 decode successor preserves all units"
     );
 }
 #[test]
@@ -460,7 +499,7 @@ fn compilation_resources() {
     let engine = engine();
     assert_eq!(
         engine.runtime.memory_usage().malloc_limit,
-        16 * 1024 * 1024,
+        64 * 1024 * 1024,
         "#1265 configured native memory limit"
     );
     let nested = format!("{}a{}", "(?:".repeat(300), ")".repeat(300));
@@ -542,20 +581,35 @@ fn fixture_regenerates_identically() {
 #[test]
 fn configured_stack_limit() {
     let pattern = format!("{}a{}", "(?:".repeat(300), ")".repeat(300));
-    let mut small = Engine::new(Limits {
+    let small = Engine::new(Limits {
         stack_bytes: 16 * 1024,
         ..Limits::default()
     })
     .expect("#1265 low configured stack engine");
+    // Bypass JS string-bridge calls: at 16 KiB those can fail before RegExp
+    // compilation. This test must observe the parser's own stack check.
+    small
+        .context
+        .with(|ctx| ctx.globals().set("probePattern", pattern.as_str()))
+        .expect("#1265 prepare configured stack pattern");
+    let result = compile_prepared(&small);
+    println!("configured_stack={result:?}");
     assert!(
         matches!(
-            run(&mut small.request(1000), &pattern, "a"),
-            Err(Error::Engine { .. })
+            result,
+            Err(Error::Engine { phase: Phase::Compile, name, detail })
+                if name == "SyntaxError" && detail.contains("stack overflow")
         ),
         "#1265 configured stack rejects before exhausting host"
     );
+    let mut normal = engine();
+    normal
+        .context
+        .with(|ctx| ctx.globals().set("probePattern", pattern.as_str()))
+        .expect("#1265 prepare normal stack pattern");
+    compile_prepared(&normal).expect("#1265 normal stack compiles identical prepared pattern");
     assert!(
-        run(&mut engine().request(1000), &pattern, "a")
+        run(&mut normal.request(1000), &pattern, "a")
             .expect("#1265 normal stack same pattern")
             .matched
             .is_some(),
@@ -565,6 +619,13 @@ fn configured_stack_limit() {
 
 #[test]
 fn flags_limit() {
+    assert!(
+        matches!(
+            engine().request(1000).exec(&units("a"), "dgimsuvy", &units("a"), 0),
+            Err(Error::Engine { phase: Phase::Compile, name, .. }) if name == "SyntaxError"
+        ),
+        "#1265 eight flags reach compiler (u and v conflict)"
+    );
     assert_eq!(
         engine()
             .request(1000)
@@ -630,4 +691,168 @@ fn unanchored_budget() {
             .is_none(),
         "#1265 unanchored no match is distinct"
     );
+}
+
+#[test]
+fn length_limit_boundaries() {
+    let mut engine = Engine::new(Limits {
+        pattern_units: 3,
+        input_units: 3,
+        output_units: 2,
+        ..Limits::default()
+    })
+    .expect("#1265 boundary engine setup");
+    let mut request = engine.request(1000);
+    assert!(
+        run(&mut request, "a", "aaa")
+            .expect("#1265 input exact limit accepted")
+            .matched
+            .is_some(),
+        "#1265 input exact limit matches"
+    );
+    let result =
+        run(&mut request, "(a)", "a").expect("#1265 pattern and output exact limits accepted");
+    assert_eq!(
+        result.matched.expect("#1265 exact output matched").captures,
+        vec![Some(vec![97]), Some(vec![97])],
+        "#1265 output exact limit preserved"
+    );
+}
+
+#[test]
+fn memory_limit_boundary() {
+    assert!(
+        matches!(
+            Engine::new(Limits {
+                memory_bytes: 1024 * 1024 - 1,
+                ..Limits::default()
+            }),
+            Err(Error::InvalidLimits)
+        ),
+        "#1265 memory below minimum rejected"
+    );
+    let mut engine = Engine::new(Limits {
+        memory_bytes: 1024 * 1024,
+        ..Limits::default()
+    })
+    .expect("#1265 memory minimum initializes");
+    assert!(
+        run(&mut engine.request(1000), "a", "a")
+            .expect("#1265 memory minimum executes")
+            .matched
+            .is_some(),
+        "#1265 memory minimum matches"
+    );
+}
+
+#[test]
+fn stack_limit_boundaries() {
+    assert!(
+        matches!(
+            Engine::new(Limits {
+                stack_bytes: 16 * 1024 - 1,
+                ..Limits::default()
+            }),
+            Err(Error::InvalidLimits)
+        ),
+        "#1265 stack below minimum rejected"
+    );
+    assert!(
+        matches!(
+            Engine::new(Limits {
+                stack_bytes: 16 * 1024 * 1024 + 1,
+                ..Limits::default()
+            }),
+            Err(Error::InvalidLimits)
+        ),
+        "#1265 stack above maximum rejected"
+    );
+    // The native ceiling does not grow the host stack. Leave headroom for Rust
+    // and the bridge even when testing the largest permitted configuration.
+    let results = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            [16 * 1024, 16 * 1024 * 1024].map(|stack_bytes| {
+                Engine::new(Limits {
+                    stack_bytes,
+                    ..Limits::default()
+                })
+                .map(|_| ())
+            })
+        })
+        .expect("#1265 stack endpoint thread starts")
+        .join()
+        .expect("#1265 stack endpoint thread joins");
+    for result in results {
+        result.expect("#1265 stack endpoints initialize");
+    }
+}
+
+#[test]
+fn default_input_output_limits() {
+    let input = vec![0x4e00; 1_048_576];
+    let mut engine = engine();
+    let outcome = engine
+        .request(1_000_000)
+        .exec(&units("[\\s\\S]*"), "", &input, 0)
+        .expect("#1265 default full input and output execute");
+    let matched = outcome.matched.expect("#1265 default full input matches");
+    assert_eq!(
+        matched.range,
+        [0, input.len()],
+        "#1265 default full match range"
+    );
+    assert_eq!(
+        matched.captures,
+        vec![Some(input)],
+        "#1265 default full output preserved"
+    );
+}
+
+#[test]
+fn fixture_content_hashes() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../pilotdeck-gateway/tests/fixtures/rquickjs-regexp");
+    // Byte guards run without Node or a baseline checkout. Regeneration still
+    // needs the ignored test; updating these pins requires that evidence.
+    for (name, digest) in [
+        (
+            "oracle.json",
+            "11e65ce0f786f3c8ba2ca7d818d0cccbea705d6990600107f4a21ee702cb4529",
+        ),
+        (
+            "regress-oracle.json",
+            "46506384dd371a8059ac486527896e4f47afc01c652a1c72ffaa116ab7745690",
+        ),
+        (
+            "generate.mjs",
+            "a6e50cd672eec1d954d87a807bf2be18cab88764727a1ae66fbb4af6b6341ac5",
+        ),
+        (
+            "generate-sdk.mjs",
+            "f9f23f11946ef567f2b53987dc5765d2ab6f700cb99348d5236cd5c3b2325592",
+        ),
+        (
+            "report-cases.json",
+            "253b1c1bc4c08eae2eb3469afd8b9fa3fad5b1ad56e48000ac7128341bef6742",
+        ),
+        (
+            "regenerate.py",
+            "8713eb61bca98d485b5c821691b7139c2c8a19d8674d5c20309bc1761303f92c",
+        ),
+    ] {
+        let result = std::process::Command::new("python3")
+            .args(["-I", "-c", "import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())"])
+            .arg(fixture.join(name)).output().expect("#1265 launch fixture digest check");
+        assert!(
+            result.status.success(),
+            "#1265 read fixture digest {name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&result.stdout).trim(),
+            digest,
+            "#1265 fixture digest {name}"
+        );
+    }
 }
