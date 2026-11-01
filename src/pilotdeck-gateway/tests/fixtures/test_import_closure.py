@@ -6,16 +6,18 @@ fail closed instead of being silently skipped, the only allowed computed
 arguments are the two fixed baseline loaders verbatim (never a shape that
 merely mentions baseline), literal dynamic imports — including trailing
 comments and commas — must join the closure, static imports join it in any
-spacing, file: URLs follow the absolute-path rules, the real generators'
+spacing, file: URLs follow the absolute-path rules, node: builtins and bare
+module specifiers skip like a static import while every other scheme and any
+file: URL with a netloc, query or fragment fails closed, the real generators'
 closures stay the documented file sets, and the two runners' closure helpers
 stay synchronized. CriterionCoverageTests rides on the shared #1166
-proc-macro2 scanner instead of a hand-written Rust lexer (#1174): the
-recorder criterion chain is a scanner input set, and the runner's entry
-anchor fails closed when the criterion is not in that set. The scanner tests
-read the prebuilt example binary (build it with
-``cargo build --example workspace_inputs`` first); the fail-closed anchor test
-is a pure mock. Everything here only reads the repository, so an uncommitted
-tree is fine.
+proc-macro2 scanner instead of a hand-written Rust lexer (#1174): the whole
+recorder criterion chain must be in the scanner's input set, and the runner's
+chain anchor fails closed when any chain file is not in that set. The scanner
+tests read the prebuilt example binary (build it with
+``cargo build --example workspace_inputs`` into the same ``CARGO_TARGET_DIR``
+first); the fail-closed anchor test is a pure mock. Everything here only
+reads the repository, so an uncommitted tree is fine.
 """
 import ast
 import importlib.util
@@ -55,7 +57,8 @@ DOCUMENTED_CLOSURES = {
 # The chain rust_criterion_inputs() documents as the recorder criterion:
 # tests/recorder.rs pulls its inputs in through mod/#[path]/include
 # declarations, and mutating_sources proves all of them equal HEAD through
-# the shared #1166 scanner.
+# the shared #1166 scanner. The runner keeps its own copy of this set; the
+# chain test asserts the two stay equal so neither drifts alone.
 CRITERION_CHAIN = {
     'src/pilotdeck-gateway/tests/recorder.rs',
     'src/pilotdeck-gateway/tests/common/baseline.rs',
@@ -201,6 +204,90 @@ class ClosureTests(unittest.TestCase):
                     and 'outside the repository' in error,
                     '#1139: out-of-root file: URL dynamic import must fail closed')
 
+    def test_node_builtin_dynamic_imports_skip_like_static_imports(self):
+        # node: builtins are never repository files: they skip exactly like a
+        # static import — no closure member and no error — and the skip never
+        # widens into accepting a scheme the loader does not allow (#1139).
+        for name in COUNT_RUNNERS:
+            with self.subTest(runner=name):
+                entry = self.entry('generate.mts', "await import('node:fs');")
+                closure = runner(name).local_import_closure(entry, self.root)
+                self.assertTrue(
+                    {path.name for path in closure} == {'generate.mts'},
+                    '#1139: node: dynamic imports must skip like a static import')
+                error = self.closure_error(
+                    name, "await import('data:text/plain,x');")
+                self.assertTrue(
+                    error is not None
+                    and 'unsupported dynamic import scheme' in error,
+                    '#1139: non-file dynamic import schemes must fail closed')
+
+    def test_bare_module_dynamic_imports_skip_like_static_imports(self):
+        # Bare external module specifiers skip like a static import too, and
+        # that skip never swallows the absolute-path rules (#1139).
+        for name in COUNT_RUNNERS:
+            with self.subTest(runner=name):
+                entry = self.entry('generate.mts', "await import('lodash');")
+                closure = runner(name).local_import_closure(entry, self.root)
+                self.assertTrue(
+                    {path.name for path in closure} == {'generate.mts'},
+                    '#1139: bare module dynamic imports must skip like a static import')
+                error = self.closure_error(name, 'await import(\'/etc/hosts\');')
+                self.assertTrue(
+                    error is not None and 'outside the repository' in error,
+                    '#1139: absolute dynamic imports must keep failing closed')
+
+    def test_non_file_dynamic_import_schemes_are_rejected(self):
+        # file: is the only accepted URL scheme; http(s) and data: are errors,
+        # never silently skipped dependencies (#1139).
+        for name in COUNT_RUNNERS:
+            for specifier in ('http://example.invalid/x.mjs',
+                              'https://example.invalid/x.mjs',
+                              'data:text/plain,x'):
+                with self.subTest(runner=name, specifier=specifier):
+                    error = self.closure_error(
+                        name, f"await import('{specifier}');")
+                    self.assertTrue(
+                        error is not None
+                        and 'unsupported dynamic import scheme' in error,
+                        '#1139: non-file dynamic import schemes must fail closed')
+            with self.subTest(runner=name, accepted='file:'):
+                entry = self.entry(
+                    'generate.mts',
+                    f"await import('file://{(self.root / 'abs.mjs').as_posix()}');")
+                self.entry('abs.mjs', 'export const value = 1;\n')
+                closure = runner(name).local_import_closure(entry, self.root)
+                self.assertTrue(
+                    {path.name for path in closure} == {'generate.mts', 'abs.mjs'},
+                    '#1139: file: dynamic imports must keep following absolute rules')
+
+    def test_file_url_netloc_query_or_fragment_is_rejected(self):
+        # A file: URL denotes a local dependency only as a plain local path:
+        # any netloc but localhost, a query or a fragment is an error, never a
+        # silently skipped or misread dependency (#1139).
+        for name in COUNT_RUNNERS:
+            for specifier in (
+                f"file://example.invalid{(self.root / 'abs.mjs').as_posix()}",
+                f"file://{(self.root / 'abs.mjs').as_posix()}?q=1",
+                f"file://{(self.root / 'abs.mjs').as_posix()}#f",
+            ):
+                with self.subTest(runner=name, specifier=specifier):
+                    error = self.closure_error(
+                        name, f"await import('{specifier}');")
+                    self.assertTrue(
+                        error is not None
+                        and 'not a plain local path' in error,
+                        '#1139: file: URLs with netloc, query or fragment must fail closed')
+            with self.subTest(runner=name, accepted='plain local file:'):
+                entry = self.entry(
+                    'generate.mts',
+                    f"await import('file://{(self.root / 'abs.mjs').as_posix()}');")
+                self.entry('abs.mjs', 'export const value = 1;\n')
+                closure = runner(name).local_import_closure(entry, self.root)
+                self.assertTrue(
+                    {path.name for path in closure} == {'generate.mts', 'abs.mjs'},
+                    '#1139: plain local file: URLs must keep joining the closure')
+
     def test_in_repository_absolute_dynamic_import_joins_the_closure(self):
         for name in COUNT_RUNNERS:
             with self.subTest(runner=name):
@@ -269,35 +356,54 @@ class ClosureTests(unittest.TestCase):
 
 
 class CriterionCoverageTests(unittest.TestCase):
-    """recorder's criterion anchor rides on the shared #1166 scanner (#1174)."""
-
-    def test_criterion_entry_is_a_scanner_input(self):
-        module = runner('recorder')
-        self.assertIn(
-            module.CRITERION_ENTRY, module.rust_criterion_inputs(),
-            '#1139: the recorder criterion entry must be a #1166 scanner input')
+    """recorder's criterion chain anchor rides on the shared #1166 scanner (#1174)."""
 
     def test_documented_criterion_chain_is_scanner_covered(self):
         # The whole chain the runner documents — recorder.rs through its
         # mod/#[path]/include declarations down to the masks TSV — must be in
-        # the scanner's input set, so mutating_sources guards all of it.
-        inputs = runner('recorder').rust_criterion_inputs()
+        # the scanner's input set, so mutating_sources guards all of it. The
+        # scanner seeds every tracked .rs under src, so the chain's include_str!
+        # member is what actually proves include_*! edge discovery (#1139);
+        # the runner's chain copy must stay this documented one.
+        module = runner('recorder')
+        self.assertTrue(
+            set(module.CRITERION_CHAIN) == CRITERION_CHAIN,
+            '#1139: the runner criterion chain must stay the documented one')
+        try:
+            inputs = module.rust_criterion_inputs()
+        except RuntimeError as error:
+            self.fail('#1139: criterion chain fell out of the scanner input set: '
+                      + str(error))
         missing = CRITERION_CHAIN - inputs
         self.assertTrue(
             not missing,
             f'#1139: criterion chain fell out of the scanner input set: {sorted(missing)}')
 
-    def test_criterion_entry_outside_scanner_inputs_fails_closed(self):
-        # The entry anchor must error, never silently pass, when the criterion
-        # is not among the scanner's inputs (moved or renamed criterion).
+    def test_criterion_chain_outside_scanner_inputs_fails_closed(self):
+        # The chain anchor must error, never silently pass, when a chain file
+        # is missing from the scanner's inputs: the whole chain gone (criterion
+        # moved out of the tree) and a single dropped file (an edge-discovery
+        # regression) are both errors before any control runs.
         module = runner('recorder')
-        with mock.patch.object(module, '_workspace_literal_inputs',
-                               return_value=()):
-            with self.assertRaises(RuntimeError) as caught:
-                module.rust_criterion_inputs()
-        self.assertIn(
-            'not a #1166 scanner input', str(caught.exception),
-            '#1139: a criterion outside the scanner input set must fail closed')
+        for label, scanned in (
+            ('whole chain', ()),
+            ('chain file dropped',
+             tuple(':(top,literal)' + name for name in sorted(CRITERION_CHAIN)
+                   if not name.endswith('.tsv'))),
+        ):
+            with self.subTest(chain=label):
+                with mock.patch.object(module, '_workspace_literal_inputs',
+                                       return_value=scanned):
+                    try:
+                        module.rust_criterion_inputs()
+                    except RuntimeError as error:
+                        self.assertTrue(
+                            'not covered by #1166 scanner inputs' in str(error),
+                            '#1139: a criterion file outside the scanner '
+                            'input set must fail closed')
+                    else:
+                        self.fail('#1139: a criterion file outside the scanner '
+                                  'input set must fail closed')
 
     def test_runners_keep_no_handwritten_rust_lexer(self):
         # #1174: the #1166 scanner is the only Rust lexer; the reworked
