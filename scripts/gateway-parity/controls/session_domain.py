@@ -184,15 +184,51 @@ LABEL_KNOWN_ACCEPT = {
     'observation-repetition-float-known-accept': ('repetition', 1.0),
 }
 
+# #1140 native deadline-scoring controls.  Each mutates exactly one surface of
+# a synthetic witness-capture directory (receipt hashes re-pinned, so the
+# scoring logic is under test, not the tamper detector) while the rest of the
+# capture stays healthy: a missing sidecar descendant, egress the strace
+# witness lost while the driver's provider ledger still shows the request, a
+# TS gateway in the process tree, one mutated surface of one case's
+# observation, a case row the capture did not execute, a contract that
+# declares only part of the manifest, an emptied observer, and a binding
+# pre-registered before launch, plus the fix-r2 addition: a hello binding
+# damaged after capture, and the fix-r3 addition: a hello binding
+# rewritten to another well-formed value, plus the cap-fix additions: a
+# sidecar the recorder never recorded, a session with two sidecars, and one
+# sidecar whose recorded argv is not the pre-registered sidecar identity
+# (the real assembly spawns exactly one sidecar per session, so the role
+# multiset is host x1 plus sidecar x sessions), plus the fix-r4 addition: a
+# balanced misallocation whose role multiset is unchanged -- one session with
+# two sidecars and another with none -- so only the per-session window
+# attribution can reject it.  The healthy predecessor must
+# score 72/72 native PASS while the whole batch stays NOT_RUN: cells without
+# evidence can never make the deadline suite PASS.
+NATIVE_DEADLINE_CASES = {
+    'native-missing-descendant': 'PROCESS_WITNESS',
+    'native-missing-egress': 'NETWORK_WITNESS',
+    'native-ts-host': 'TS_HOST',
+    'native-surface-mismatch': 'EXPECTATION_MISMATCH',
+    'native-missing-case': 'COVERAGE',
+    'native-empty-observer': 'EMPTY_OBSERVER',
+    'native-preregistered-binding': 'BINDING',
+    'native-shrunk-manifest': 'COVERAGE',
+    'native-forged-hello-binding': 'BINDING',
+    'native-forged-binding-value': 'BINDING',
+    'native-missing-sidecar': 'NATIVE_PROCESS',
+    'native-extra-sidecar': 'NATIVE_PROCESS',
+    'native-sidecar-wrong-argv': 'NATIVE_PROCESS',
+    'native-sidecar-misallocated': 'NATIVE_PROCESS',
+}
+
 CASES = {
     'ts-gateway': 'TS_HOST',
     'hidden-helper': 'HIDDEN_HELPER',
     'missing-group': 'COVERAGE',
-    'fake-unavailable': 'CAPABILITY',
     'dropped-event': 'FRAME_PUBLICATIONS',
     'duplicated-event': 'FRAME_PUBLICATIONS',
     'reordered-event': 'FRAME_PUBLICATIONS',
-    'wrong-binding': 'BINDING',
+    'forged-binding-source': 'BINDING',
     'empty-observer': 'EMPTY_OBSERVER',
     'both-sides-bad': 'FRAME_PUBLICATIONS',
     'exec-identity-mismatch': 'PROCESS_WITNESS',
@@ -204,6 +240,7 @@ CASES = {
     'calibration-unavailable': 'CAPABILITY',
     **CALIBRATION_CASES,
     **EXPECTATION_CASES,
+    **NATIVE_DEADLINE_CASES,
     **{name: 'COVERAGE' for name in LABEL_CASES},
     **{name: None for name in LABEL_KNOWN_ACCEPT},
 }
@@ -224,7 +261,8 @@ def native_fixture(output):
                 'processRoles': ['host', 'sidecar'], 'cases': list(CELLS),
                 'externalEndpoints': ['mock-model'], 'connections': 1,
                 'capabilities': {'model': 'available', 'tools': 'available'},
-                'binding': copy.deepcopy(frame['interactionBinding']), 'observerRows': [row], 'binaries': {}}
+                'binding': copy.deepcopy(frame['interactionBinding']), 'observerRows': [row],
+                'bindingSource': 'observer-hello', 'binaries': {}}
     processes = []
     for pid, role in ((101, 'host'), (102, 'sidecar')):
         identity = {'path': str(binary), 'sha256': digest(binary),
@@ -505,12 +543,346 @@ def expectation_case(name, output, source):
     raise failure
 
 
+def observation_from_expectation(expectation):
+    """Inverse projection: an observation whose three surfaces project onto *expectation*.
+
+    Registered labels are ``type:detail`` strings; rebuild raw events that
+    ``project_observation``/``_session_label`` map back onto exactly those
+    labels, so a fixture built from the rust expectation scores PASS unless a
+    control mutates a surface.
+    """
+    def raw(label):
+        kind, _, detail = label.partition(':')
+        return {'type': kind, 'event': detail}
+    registry = expectation['registry']
+    if registry.get('applicable'):
+        durable_registry = {'applicable': True,
+                            'events': [{'seq': int(item.partition(':')[0]),
+                                        'event': raw(item.partition(':')[2])}
+                                       for item in registry['events']],
+                            'record': {'state': registry['state'],
+                                       'result': None if registry['result'] is None
+                                       else raw(registry['result'])}}
+    else:
+        durable_registry = {'applicable': False}
+    return {'frames': [raw(label) for label in expectation['frames']],
+            'durableStatus': {'entries': [{'event': entry} for entry in expectation['durableStatus']]},
+            'registry': durable_registry}
+
+
+# Receipt keys re-pinned when a control rewrites one capture artifact: the
+# scoring logic is under test, not the tamper detector.
+NATIVE_RECEIPT_KEYS = session_domain_module.native_evidence.NATIVE_RECEIPT_KEYS
+
+
+def control_wire(frame, direction='receive'):
+    payload = json.dumps(frame).encode()
+    size = len(payload)
+    code = size if size < 126 else 126 if size <= 65535 else 127
+    extra = b'' if code < 126 else size.to_bytes(2 if code == 126 else 8, 'big')
+    masked = direction == 'send'
+    mask = b'\x01\x02\x03\x04' if masked else b''
+    data = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload)) if masked else payload
+    wire = bytes([129, code | (128 if masked else 0)]) + extra + mask + data
+    return {'connection': 1, 'direction': direction, 'frame': payload.decode() if masked else frame,
+            'wireHex': wire.hex(), 'wire': {'opcode': 1, 'fin': True, 'rsv': 0,
+                                           'masked': masked, 'lengthCode': code, 'payloadLength': size}}
+
+
+def native_capture_fixture(output):
+    """Complete simulated originals; explicitly ineligible for formal scoring."""
+    n = session_domain_module.native_evidence
+    folder = (output / 'capture-fixture').resolve()
+    home, project = folder / 'home', str(folder / 'project')
+    capture, sessions = folder / 'capture', folder / 'session-domain'
+    capture.mkdir(parents=True)
+    sessions.mkdir()
+    binary = str(Path(sys.executable).resolve())
+    cases = read(SCRIPT / 'fixtures/session-calibration.json')['cases']
+    argv = [binary, '--native', '--listen', '127.0.0.1:28999', '--home', str(home), '--project', project]
+    contract = {'scope': 'SYNTHETIC_CONTROL_ONLY', 'host': 'rust', 'project': project,
+                'processRoles': ['host'] + ['sidecar'] * len(cases),
+                'externalEndpoints': ['127.0.0.1:29000'], 'connections': 1,
+                'capabilities': {'provider': 'loopback-mock', 'tools': []}, 'cases': cases,
+                'binaries': {'host': {'path': binary, 'sha256': digest(Path(binary)), 'argv': argv},
+                             'sidecar': {'path': binary, 'sha256': digest(Path(binary)), 'argv': [binary]}}}
+    def hx(value):
+        return '"' + ''.join(f'\\x{byte:02x}' for byte in value.encode()) + '"'
+    def execute(pid, args):
+        return f'{pid} execve({hx(args[0])}, [{", ".join(hx(arg) for arg in args)}], 0x1 /* 0 vars */) = 0\n'
+    raw = execute(101, argv)
+    binding = {'connectionId': 'fixture-connection', 'generation': 1}
+    observer = [control_wire({'type': 'hello_ok', 'protocolVersion': '1.2', 'interactionBinding': binding})]
+    rows, requests, sources, identities = [], [], [], []
+    expectations = {row['case']: row['rust'] for row in read(SCRIPT / 'fixtures/session-expectations.json')['cases']}
+    for index, case in enumerate(cases, 1):
+        pid, key = 101 + index, n.session_key(case)
+        path = str(home / 'projects' / 'fixture' / 'chats' / (key + '.jsonl'))
+        identity = {'requestId': f'case-{index:02d}', 'runId': f'run-{index:02d}',
+                    'projectKey': project, 'sessionKey': key, 'transcriptPath': path}
+        message = f'[native-witness:{case}] controlled wait'
+        params = {k: identity[k] for k in ('projectKey', 'sessionKey', 'runId')}
+        params['message'] = message
+        observer.append(control_wire({'type': 'request', 'id': identity['requestId'], 'method': 'submit_turn', 'params': params}, 'send'))
+        observation = observation_from_expectation(expectations[case])
+        observation['frames'].append({'type': 'turn_started', 'event': 'completed'})
+        for seq, event in enumerate(observation['frames']):
+            observer.append(control_wire({'type': 'event', 'id': identity['requestId'], 'seq': seq,
+                                          'final': seq == len(observation['frames']) - 1, 'event': event}))
+        entries = [dict(entry, type='agent_status_message') for entry in observation['durableStatus']['entries']]
+        observation['durableStatus']['entries'] = entries
+        registry = observation['registry']
+        if registry['applicable']:
+            registry['record'].update({k: identity[k] for k in ('projectKey', 'sessionKey', 'runId')})
+            runs = {'events': {project + '\0' + key + '\0' + identity['runId']: registry['events']}, 'records': [registry['record']]}
+        else:
+            registry.update(events=[], record={})
+            runs = {'events': {}, 'records': []}
+        source = {'transcriptPath': path, 'transcriptText': ''.join(json.dumps(entry) + '\n' for entry in entries),
+                  'projectMarkerPath': str(home / 'projects/fixture/.cwd'), 'projectMarkerText': project,
+                  'registryPath': str(home / 'runs.json'), 'registryText': json.dumps(runs)}
+        rows.append({'case': case, 'identity': identity, 'observation': observation})
+        sources.append(source)
+        identities.append(identity)
+        requests.append({'case': case, 'path': '/v1/chat/completions',
+                         'raw': json.dumps({'model': 'mock', 'stream': True, 'messages': [{'role': 'user', 'content': message}]})})
+        raw += (f'101 openat(AT_FDCWD, {hx(path)}, O_WRONLY|O_CREAT|O_APPEND, 0644) = 5\n'
+                + f'101 clone(flags=SIGCHLD) = {pid}\n' + execute(pid, [binary])
+                + f'{pid} connect(3, {{sa_family=AF_INET, sin_port=htons(29000), sin_addr=inet_addr({hx("127.0.0.1")})}}, 16) = 0\n'
+                + f'{pid} +++ exited with 0 +++\n')
+    raw += '101 +++ exited with 0 +++\n'
+    launch = dict(contract, launcherPid=100)
+    evidence = dict(n.parse_trace(raw, launch), scope='SYNTHETIC_CONTROL_ONLY')
+    save(capture / 'prelaunch.json', contract)
+    save(capture / 'launch.json', launch)
+    (capture / 'trace.log').write_text(raw)
+    save(capture / 'evidence.json', evidence)
+    save(sessions / 'observer.json', {'connections': 1, 'rows': observer})
+    save(sessions / 'cases.json', {'cases': rows})
+    save(sessions / 'provider.json', {'endpoint': '127.0.0.1:29000', 'requests': requests})
+    save(sessions / 'driver.json', {'binding': binding, 'identities': identities})
+    save(sessions / 'sources.json', sources)
+    save(capture / 'receipt.json', {'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN', 'tracerExitCode': 0,
+                                   **{key: digest(folder / name) for name, key in NATIVE_RECEIPT_KEYS.items()}})
+    return folder
+
+
+def control_deadline_report(folder):
+    """Labelled simulation route; never invoked by the formal deadline entry."""
+    session = session_domain_module
+    capture = session._load_native_artifacts(folder)
+    return session._deadline_report(session._native_deadline_result(capture))
+
+
+def native_deadline_case(name, output):
+    """#1140 native scoring controls: mutate exactly one capture surface.
+
+    The healthy predecessor must score 72/72 native PASS while the whole batch
+    stays NOT_RUN (three cells lack witness evidence and cannot be PASS); the
+    #892 runtime observation -- the published batch status equals what the one
+    shared aggregation returns for the observed cell statuses -- is pinned in
+    test_safety, an aggregation-audit-registered test-only point.
+    """
+    folder = native_capture_fixture(output)
+    session = session_domain_module
+    healthy_capture = session._load_native_artifacts(folder)
+    healthy = control_deadline_report(folder)
+    native = next(cell for cell in healthy['cells'] if (cell['host'], cell['sidecar']) == ('rust', 'rust'))
+    require([cell['status'] for cell in healthy['cells']] == ['NOT_RUN', 'NOT_RUN', 'NOT_RUN', 'PASS']
+            and native['status'] == 'PASS' and healthy['status'] == 'NOT_RUN'
+            and len(native['cases']) == len(native['expectedCases']) == 72
+            and all(row['status'] == 'PASS' for row in native['cases']),
+            'CONTROL_PRECONDITION',
+            'healthy capture must score 72/72 native PASS with a NOT_RUN batch')
+
+    def rewrite(relative, value):
+        save(folder / relative, value)
+        receipt = read(folder / 'capture/receipt.json')
+        receipt[NATIVE_RECEIPT_KEYS[relative]] = digest(folder / relative)
+        save(folder / 'capture/receipt.json', receipt)
+
+    if name == 'native-missing-descendant':
+        # The descendant stays in the process tree; its exec/exit records are
+        # lost, so only the complete exec witness can reject (ps sampling
+        # cannot see short-lived children either).
+        evidence = read(folder / 'capture/evidence.json')
+        evidence['execWitness']['events'] = [e for e in evidence['execWitness']['events'] if e.get('pid') != 102]
+        rewrite('capture/evidence.json', evidence)
+    elif name == 'native-missing-egress':
+        evidence = read(folder / 'capture/evidence.json')
+        evidence['networkWitness']['calls'] = []
+        rewrite('capture/evidence.json', evidence)
+        trace = folder / 'capture/trace.log'
+        trace.write_text(''.join(line for line in trace.read_text().splitlines(True) if ' connect(' not in line))
+        receipt = read(folder / 'capture/receipt.json')
+        receipt['traceSha256'] = digest(trace)
+        save(folder / 'capture/receipt.json', receipt)
+    elif name == 'native-ts-host':
+        evidence = read(folder / 'capture/evidence.json')
+        evidence['processes'][0]['argv'] = ['node', '/baseline/gateway-cli.mjs']
+        rewrite('capture/evidence.json', evidence)
+    elif name == 'native-surface-mismatch':
+        document = read(folder / 'session-domain/cases.json')
+        document['cases'][0]['observation']['frames'][0] = {'type': 'agent_status', 'event': 'gateway_submit_failed'}
+        rewrite('session-domain/cases.json', document)
+    elif name == 'native-missing-case':
+        document = read(folder / 'session-domain/cases.json')
+        document['cases'].pop()
+        rewrite('session-domain/cases.json', document)
+    elif name == 'native-empty-observer':
+        observer = read(folder / 'session-domain/observer.json')
+        observer['rows'] = []
+        observer['connections'] = 0
+        rewrite('session-domain/observer.json', observer)
+    elif name == 'native-preregistered-binding':
+        # A binding known before launch: prelaunch and launch both carry it,
+        # so only the provenance rule can reject it.
+        binding = {'connectionId': 'pre-registered', 'generation': 1}
+        prelaunch = read(folder / 'capture/prelaunch.json')
+        launch = read(folder / 'capture/launch.json')
+        prelaunch['binding'] = copy.deepcopy(binding)
+        launch['binding'] = copy.deepcopy(binding)
+        rewrite('capture/prelaunch.json', prelaunch)
+        rewrite('capture/launch.json', launch)
+    elif name == 'native-shrunk-manifest':
+        # The capture contract declares only 71 of the 72 manifest cases: the
+        # loader's provenance require fires before any scoring can shrink the
+        # denominator.
+        prelaunch = read(folder / 'capture/prelaunch.json')
+        launch = read(folder / 'capture/launch.json')
+        prelaunch['cases'].pop()
+        launch['cases'].pop()
+        rewrite('capture/prelaunch.json', prelaunch)
+        rewrite('capture/launch.json', launch)
+    elif name == 'native-forged-hello-binding':
+        # The observer's hello binding is damaged after capture (wire bytes
+        # recomputed, receipt re-pinned).  The fix-r2 deleted evidence/contract
+        # equality can no longer catch it; the observer-side gates must:
+        # _observer_binding's hello shape check on the rows themselves.
+        observer = read(folder / 'session-domain/observer.json')
+        row = observer['rows'][0]
+        row['frame'].pop('interactionBinding')
+        payload = json.dumps(row['frame']).encode()
+        prefix = bytes([0x81, 126]) + len(payload).to_bytes(2, 'big') if len(payload) >= 126 else bytes([0x81, len(payload)])
+        row['wireHex'] = (prefix + payload).hex()
+        row['wire']['lengthCode'] = 126 if len(payload) >= 126 else len(payload)
+        row['wire']['payloadLength'] = len(payload)
+        rewrite('session-domain/observer.json', observer)
+    elif name == 'native-forged-binding-value':
+        # #1140 fix-r3: the hello binding is rewritten to another well-formed
+        # value (wire bytes recomputed, receipt re-pinned).  Every observer-side
+        # comparison is self-consistent with the rewritten rows, so only the
+        # driver-recorded hello anchor can reject it: a value change must be a
+        # BINDING failure, never a 72/72 PASS.
+        observer = read(folder / 'session-domain/observer.json')
+        row = observer['rows'][0]
+        row['frame']['interactionBinding'] = {'connectionId': 'forged-connection', 'generation': 2}
+        payload = json.dumps(row['frame']).encode()
+        prefix = bytes([0x81, 126]) + len(payload).to_bytes(2, 'big') if len(payload) >= 126 else bytes([0x81, len(payload)])
+        row['wireHex'] = (prefix + payload).hex()
+        row['wire']['lengthCode'] = 126 if len(payload) >= 126 else len(payload)
+        row['wire']['payloadLength'] = len(payload)
+        rewrite('session-domain/observer.json', observer)
+    elif name == 'native-missing-sidecar':
+        # #1140 cap-fix 漏记: one session's sidecar exec was never recorded
+        # (process and events both absent), so the role multiset loses one
+        # sidecar and only the count comparison against the declared contract
+        # can reject it.
+        evidence = read(folder / 'capture/evidence.json')
+        pid = min(p['pid'] for p in evidence['processes'] if p['role'] == 'sidecar')
+        evidence['processes'] = [p for p in evidence['processes'] if p['pid'] != pid]
+        evidence['execWitness']['events'] = [e for e in evidence['execWitness']['events']
+                                             if e.get('pid') != pid]
+        rewrite('capture/evidence.json', evidence)
+    elif name == 'native-extra-sidecar':
+        # #1140 cap-fix 多出: one session spawned two sidecars, so the role
+        # multiset carries an extra sidecar the pre-launch contract never
+        # declared (fresh pid, parented by the host, fully witnessed).
+        evidence = read(folder / 'capture/evidence.json')
+        host = next(p for p in evidence['processes'] if p['role'] == 'host')
+        template = next(p for p in evidence['processes'] if p['role'] == 'sidecar')
+        pid = max(p['pid'] for p in evidence['processes']) + 1
+        process = dict(copy.deepcopy(template), pid=pid, ppid=host['pid'])
+        evidence['processes'] = evidence['processes'] + [process]
+        events = [e for e in evidence['execWitness']['events'] if e['event'] != 'exit'
+                  or e['pid'] != host['pid']]
+        evidence['execWitness']['events'] = (events + [{'event': 'exec', **copy.deepcopy(process)},
+                                                       {'event': 'exit', 'pid': pid},
+                                                       {'event': 'exit', 'pid': host['pid']}])
+        rewrite('capture/evidence.json', evidence)
+    elif name == 'native-sidecar-wrong-argv':
+        # #1140 cap-fix 错配-身份: one recorded sidecar's argv is not the
+        # pre-registered sidecar identity, so the per-process identity check
+        # rejects what the role counts alone would accept.
+        evidence = read(folder / 'capture/evidence.json')
+        pid = min(p['pid'] for p in evidence['processes'] if p['role'] == 'sidecar')
+        forged = [str(Path(sys.executable).resolve()), 'synthetic-sidecar-forged']
+        for process in evidence['processes']:
+            if process['pid'] == pid:
+                process['argv'] = list(forged)
+        for event in evidence['execWitness']['events']:
+            if event.get('pid') == pid and event['event'] == 'exec':
+                event['argv'] = list(forged)
+        rewrite('capture/evidence.json', evidence)
+    elif name == 'native-sidecar-misallocated':
+        # #1140 fix-r4 P1-1 平衡错配: one session spawned two sidecars and
+        # another session none -- the role multiset is unchanged (host x1
+        # plus sidecar x72) and every argv/ppid/identity check passes, so only
+        # the per-session window attribution over the host's transcript opens
+        # can reject the capture.  Shifting one marker's afterExecs by one
+        # empties its window and doubles its predecessor's, the exact shape
+        # a real balanced misallocation leaves in the trace order.
+        evidence = read(folder / 'capture/evidence.json')
+        opens = evidence['transcriptWitness']['opens']
+        opens[len(opens) // 2]['afterExecs'] += 1
+        rewrite('capture/evidence.json', evidence)
+
+    def mutated_report():
+        # Stage-local audit/comparison controls deliberately start with an
+        # authenticated labelled fixture. Formal raw-to-ledger regression
+        # tests live in test_chain.py, so replay cannot mask these branches.
+        if name in ('native-surface-mismatch', 'native-missing-sidecar', 'native-extra-sidecar',
+                    'native-sidecar-wrong-argv', 'native-sidecar-misallocated', 'native-ts-host'):
+            capture = copy.deepcopy(healthy_capture)
+            capture['evidence'].update(read(folder / 'capture/evidence.json'))
+            capture['rows'] = read(folder / 'session-domain/cases.json')['cases']
+            for surface in capture['evidence']['surfaces'].values():
+                for artifact in surface['artifacts']:
+                    artifact['sha256'] = digest(Path(artifact['path']))
+            return session._deadline_report(session._native_deadline_result(capture))
+        return control_deadline_report(folder)
+
+    if name == 'native-surface-mismatch':
+        # A scoring mismatch is an honest FAIL result, not an audit rejection:
+        # exactly one case must fail on exactly the mutated surface.
+        report = mutated_report()
+        cell = next(c for c in report['cells'] if (c['host'], c['sidecar']) == ('rust', 'rust'))
+        verdict = next((row for row in cell['cases'] if row['status'] != 'PASS'), None)
+        require(report['status'] == 'FAIL' and cell['status'] == 'FAIL' and verdict is not None
+                and verdict['rule'] == 'EXPECTATION_MISMATCH' and verdict['surfaces'] == ['frames']
+                and sum(1 for row in cell['cases'] if row['status'] == 'PASS') == 71,
+                'CONTROL_EXPECTATION',
+                'a single mutated surface must fail exactly one case on that surface')
+        raise EvidenceError('EXPECTATION_MISMATCH',
+                            f"{verdict['case']}: frames differ from the registered rust expectation")
+    try:
+        mutated_report()
+    except EvidenceError as error:
+        require(error.rule == CASES[name], 'CONTROL_EXPECTATION',
+                f'expected {CASES[name]}, got {getattr(error, "rule", None)}: {error}')
+        raise
+    require(False, 'CONTROL_EXPECTATION', 'mutation accepted')
+
+
 def check_case(name, output, source=None):
     if name in CALIBRATION_CASES:
         calibration_case(name, output, source)
         return
     if name in EXPECTATION_CASES:
         expectation_case(name, output, source)
+        return
+    if name in NATIVE_DEADLINE_CASES:
+        native_deadline_case(name, output)
         return
     evidence, contract = native_fixture(output)
     observation = observation_fixture(source)
@@ -543,16 +915,16 @@ def check_case(name, output, source=None):
         evidence['networkWitness']['calls'].append({'ownerPid': 101, 'target': 'internal-ts-helper'})
     elif name == 'missing-group':
         evidence['executedCases'].pop()
-    elif name == 'fake-unavailable':
-        evidence['capabilities']['model'] = 'unavailable'
     elif name == 'dropped-event':
         observation['frames'].pop()
     elif name == 'duplicated-event':
         observation['frames'].append(copy.deepcopy(observation['frames'][-1]))
     elif name == 'reordered-event':
         observation['frames'][0], observation['frames'][1] = observation['frames'][1], observation['frames'][0]
-    elif name == 'wrong-binding':
-        evidence['binding']['generation'] += 1
+    elif name == 'forged-binding-source':
+        # A binding source claimed at pre-registration time: only the #1140
+        # provenance rule can reject it, the binding itself is healthy.
+        contract['bindingSource'] = 'pre-registered'
     elif name == 'empty-observer':
         evidence['observer']['rows'] = []
         evidence['observer']['connections'] = 0

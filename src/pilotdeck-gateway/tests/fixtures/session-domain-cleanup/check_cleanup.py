@@ -846,6 +846,7 @@ AGGREGATION_POINTS = {
     ('scripts/gateway-parity/controls/session_domain.py', 'run_all'): 'controls-run-all',
     ('scripts/gateway-parity/controls/session_domain.py', 'main'): 'controls-main',
     ('scripts/gateway-parity/session_domain.py', 'main'): 'calibrate-main',
+    ('scripts/gateway-parity/session_domain.py', '_deadline_report'): 'deadline-report',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'summarize_results'): 'fixture-summarize',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
@@ -870,8 +871,6 @@ NON_AGGREGATION_POINTS = {
         'domain mapping VERIFIED->PASS else PASS_WITH_CLEANUP_UNVERIFIED; one cleanup status, not a child summary',
     ('scripts/gateway-parity/session_domain.py', 'run_fixture'):
         'launcher audit status DONE/FAIL for one run, not a batch',
-    ('scripts/gateway-parity/session_domain.py', 'deadline_report'):
-        'four-cell NOT_RUN structure only; main maps NOT_RUN to exit 3 (#166)',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'batch_aggregation_control'):
         'test-only; calls the shared function to assert the order',

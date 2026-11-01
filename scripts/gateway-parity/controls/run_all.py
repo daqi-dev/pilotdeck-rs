@@ -80,13 +80,14 @@ DEFAULT_OUT = common.DEFAULT_OUT
 save = common.save
 compare_module = _load('compare', common.SCRIPT / 'compare.py')
 compare = compare_module.compare
+jsonl_lines = compare_module.jsonl_lines
 prerequisites_module = _load('prerequisites', common.SCRIPT / 'controls/prerequisites.py')
 ROOT = prerequisites_module.ROOT
 run_prerequisites = prerequisites_module.run_prerequisites
 
 
 def rows(folder, name='auth'):
-    return [json.loads(line) for line in (folder / f'scenarios/{name}/frames.jsonl').read_text().splitlines()]
+    return [json.loads(line) for line in jsonl_lines((folder / f'scenarios/{name}/frames.jsonl').read_text())]
 
 
 def write_rows(folder, value, name='auth', footer=False):
@@ -100,6 +101,13 @@ def write_rows(folder, value, name='auth', footer=False):
         complete['records'] = len(value)
         save(path.parent / 'complete.json', complete)
 
+
+def corrupt_fingerprint(folder):
+    path = next((folder / 'home').rglob('*gateway-parity-permission.jsonl'))
+    data = [json.loads(line) for line in jsonl_lines(path.read_text())]
+    event = next(row['event'] for row in data if row.get('type') == 'model_stream_event' and 'requestFingerprint' in row['event'])
+    event['requestFingerprint'] = '0' * 64
+    path.write_text(''.join(json.dumps(row) + '\n' for row in data))
 
 def run_controls(source, output, proxy_source=None):
     if compare(source, source)['status'] != 'PASS':
@@ -191,13 +199,6 @@ def run_controls(source, output, proxy_source=None):
         row['frame']['id'] = 'unknown-request-id'
         row['raw'] = json.dumps(row['frame'])
         write_rows(folder, data, 'readonly')
-
-    def corrupt_fingerprint(folder):
-        path = next((folder / 'home').rglob('*gateway-parity-permission.jsonl'))
-        data = [json.loads(line) for line in path.read_text().splitlines()]
-        event = next(row['event'] for row in data if row.get('type') == 'model_stream_event' and 'requestFingerprint' in row['event'])
-        event['requestFingerprint'] = '0' * 64
-        path.write_text(''.join(json.dumps(row) + '\n' for row in data))
 
     def both_bad_disk(folder):
         (folder / 'project/written.txt').write_text('WRONG_HTTP_DURABLE_WRITE\n')

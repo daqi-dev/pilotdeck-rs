@@ -141,23 +141,34 @@ class WireClient:
         frame = header + mask + bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
         self.socket.settimeout(self.remaining())
         self.socket.sendall(frame)
-        self.rows.append({'direction': 'send', 'wireHex': frame.hex(), 'frame': value, 'connection': 1})
+        # The recorder contract the frozen audit reads (#1140 fix-r1): every row
+        # carries wire metadata for compare.wire_frame, and a sent row's frame
+        # is the payload text -- only received frames are recorded decoded.
+        self.rows.append({'direction': 'send', 'wireHex': frame.hex(),
+                          'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': True,
+                                   'lengthCode': 126 if 126 <= size <= 65535 else 127 if size > 65535 else size,
+                                   'payloadLength': size},
+                          'frame': payload.decode(), 'connection': 1})
 
     def receive(self):
         head = self.read(2)
-        w.need(head[0] == 0x81 and head[1] & 0x80 == 0, 'unexpected/fragmented WS frame')
-        length = head[1] & 127
+        w.native.ws_profile('receive', {'opcode': head[0] & 15, 'fin': bool(head[0] & 128),
+                                         'rsv': (head[0] >> 4) & 7, 'masked': bool(head[1] & 128)})
+        code = head[1] & 127
+        length = code
         extra = self.read(2 if length == 126 else 8) if length >= 126 else b''
         length = int.from_bytes(extra, 'big') if extra else length
         w.need(length <= 4 * 1024 * 1024, 'oversized WS frame')
         payload = self.read(length)
         value = json.loads(payload)
         self.rows.append({'direction': 'receive', 'wireHex': (head + extra + payload).hex(),
+                          'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                                   'lengthCode': code, 'payloadLength': length},
                           'frame': value, 'connection': 1})
         return value
 
 
-def native_run(gateway, sidecar, output, port=28999):
+def native_run(gateway, sidecar, output, port=28999, session_domain=False):
     w.need(sys.platform == 'linux', 'Linux only; macOS eslogger + root deferred')
     w.need(28999 <= port <= 29008, 'gateway port must be in 28999 series')
     with lease_signals(), ExitStack() as lease:
@@ -169,8 +180,9 @@ def native_run(gateway, sidecar, output, port=28999):
         # The shared lease spans the bind handoff and provider cleanup.
         for candidate, reuse_address in ((port, False), (port + 1, True)):
             probe_bind(candidate, reuse_address=reuse_address)
-        result = _native_run(gateway, sidecar, output, port)
-    print(json.dumps({'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN', 'output': str(Path(output).resolve())}))
+        result = _native_run(gateway, sidecar, output, port, session_domain=session_domain)
+    print(json.dumps({'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN',
+                      'sessionDomain': bool(session_domain), 'output': str(Path(output).resolve())}))
     return result
 
 
@@ -179,6 +191,111 @@ def validate_smoke(contract, evidence, requests, home):
     w.need(bool(evidence['networkWitness']['calls']) and bool(requests), 'real provider egress missing')
     w.need(all(c['target'] in contract['externalEndpoints'] for c in evidence['networkWitness']['calls']), 'unexpected native egress')
     w.need(bool(list(home.rglob('*.jsonl'))), 'durable native output missing')
+
+
+# #1140 session-domain collection budget: 72 cases through one gateway, each
+# with a settle pause and (for the timeout-first variants) a delayed provider
+# response, must fit one capture window far below the tracer's own limits.
+SESSION_LIMIT_SECONDS = 900
+SESSION_TIMEOUT_MS = 400
+SESSION_ORDERING_TIMEOUT_MS = 30000
+SESSION_PROVIDER_DELAY = 1.5
+SESSION_SETTLE_SECONDS = 0.5
+SESSION_ORDERING_VARIANTS = ('known-final-first', 'unknown-first', 'after-complete',
+                              'known-final-before-timeout-pending')
+
+
+def session_manifest():
+    """The frozen 72-case E1 manifest the native capture must declare in full."""
+    path = Path(__file__).resolve().parents[2] / 'scripts/gateway-parity/fixtures/session-calibration.json'
+    with open(path, encoding='utf-8') as stream:
+        cases = json.load(stream)['cases']
+    w.need(bool(cases) and len(set(cases)) == len(cases), 'session manifest is empty or has duplicates')
+    return cases
+
+
+session_key = w.native.session_key
+
+
+def case_plan(case):
+    """Timeout/provider plan mirroring the preregistered variant topology.
+
+    Ordering variants let the turn finish before the deadline; every other
+    variant is timeout-first, so the provider answers after the gateway's
+    timeout has fired. The native host cannot reproduce the TS harness's
+    controlled slow/failed durable writes; observed mismatches with the
+    registered rust expectations are honest FAILs, never wiring failures.
+    """
+    variant = case.split('/')[1]
+    if variant in SESSION_ORDERING_VARIANTS:
+        return {'timeoutMs': SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0}
+    return {'timeoutMs': SESSION_TIMEOUT_MS, 'delay': SESSION_PROVIDER_DELAY}
+
+
+def read_observation(home, project, session, run_id, received, request_id=None, *, retain=False):
+    """Read the exact project's originals and derive this request's observation."""
+    home = Path(home).resolve()
+    markers = [p for p in (home / 'projects').glob('*/.cwd') if p.read_text().strip() == project]
+    w.need(len(markers) == 1, 'expected exactly one project marker for ' + project)
+    marker = markers[0].resolve()
+    transcript = marker.parent / 'chats' / (session + '.jsonl')
+    w.need(transcript.is_file(), 'expected exactly one transcript for session ' + session)
+    request_id = request_id or run_id
+    w.need(all(frame.get('id') == request_id for frame in received), 'frame belongs to another request')
+    identity = {'projectKey': project, 'sessionKey': session, 'runId': run_id,
+                'requestId': request_id, 'transcriptPath': str(transcript)}
+    document = home / 'runs.json'
+    source = {'projectMarkerPath': str(marker), 'projectMarkerText': marker.read_text(),
+              'transcriptPath': str(transcript), 'transcriptText': transcript.read_text(),
+              'registryPath': str(document), 'registryText': document.read_text() if document.is_file() else None}
+    observation = w.native.disk_observation(source, identity, str(home))
+    observation['frames'] = [frame['event'] for frame in received if isinstance(frame.get('event'), dict)]
+    return (observation, identity, source) if retain else observation
+
+
+def publish_session_domain(output, observer, rows, requests, endpoint, driver, sources=None):
+    """Atomically publish the session-domain artifacts, then extend the receipt.
+
+    Every artifact lands through a staging directory and os.replace; the
+    receipt is rewritten last, so a partial publish can never score: the
+    #1140 frozen loader fails closed on the first missing or altered hash.
+    The driver record (#1140 fix-r3) is the driver's own hello answer, kept
+    separate from the observer rows so a binding value rewritten there (wire
+    bytes and receipt hashes recomputed) still disagrees with an anchor.
+    """
+    w.need(isinstance(driver.get('binding'), dict), 'driver hello binding record missing')
+    folder, staging = output / 'session-domain', output / 'session-domain.partial'
+    staging.mkdir(exist_ok=False)
+    w.save(staging / 'observer.json', observer)
+    w.save(staging / 'cases.json', {'cases': rows})
+    w.save(staging / 'provider.json', {'endpoint': endpoint, 'requests': requests})
+    w.save(staging / 'driver.json', driver)
+    w.save(staging / 'sources.json', sources if sources is not None else [])
+    folder.mkdir(exist_ok=False)
+    for name in ('observer.json', 'cases.json', 'provider.json', 'driver.json', 'sources.json'):
+        os.replace(staging / name, folder / name)
+    staging.rmdir()
+    receipt = json.loads((output / 'capture/receipt.json').read_text())
+    receipt.update({key: w.sha(folder / name)
+                    for name, key in w.native.receipt_artifacts('session-domain').items()})
+    temporary = output / 'capture/receipt.partial.json'
+    w.save(temporary, receipt)
+    os.replace(temporary, output / 'capture/receipt.json')
+
+
+def validate_session(launch, evidence, rows, requests, cases):
+    """Pre-receipt invariants specific to a session-domain capture.
+
+    The frozen audit already rejects a missing sidecar role or an undeclared
+    egress target; here the driver ledger must attribute any provider traffic and
+    the observed rows must cover the frozen manifest exactly. Each row's
+    transcript was already required to exist while the turn was driven.
+    """
+    w.need([row['case'] for row in rows] == cases,
+           'session-domain rows must cover the manifest exactly; no denominator shrink')
+    w.native.session_profile(launch, cases)
+    w.native.session_windows(evidence, cases, [row['identity']['transcriptPath'] for row in rows])
+    w.native.provider_cases(requests, cases)
 
 
 def wait_ready(tracer, folder, port, deadline):
@@ -195,13 +312,19 @@ def wait_ready(tracer, folder, port, deadline):
         time.sleep(0.01)
 
 
-def _native_run(gateway, sidecar, output, port):
+def _native_run(gateway, sidecar, output, port, session_domain=False):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     home, project = output / 'home', output / 'project'
     home.mkdir()
     project.mkdir()
     requests = []
+    cases = session_manifest() if session_domain else None
+    rows, observer_rows, sources = [], [], []
+    # The driver's own record of the gateway's hello answer (#1140 fix-r3),
+    # written at receive time and published as its own receipt-pinned
+    # artifact; it anchors the binding value independently of the rows.
+    driver_hello = {}
 
     class Provider(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -210,8 +333,16 @@ def _native_run(gateway, sidecar, output, port):
         def do_POST(self):
             length = int(self.headers.get('Content-Length', '0'))
             w.need(0 < length <= 1024 * 1024, 'provider request size')
-            body = json.loads(self.rfile.read(length))
-            requests.append({'path': self.path, 'body': body})
+            raw = self.rfile.read(length)
+            body = json.loads(raw)
+            # The driver's own request ledger: keyed by the case marker the
+            # submitted message carries, recorded before any delay, so a
+            # request the gateway abandoned after a timeout is still ledged.
+            marker = re.search(r'\[native-witness:([^\]]+)\]'.encode(), raw)
+            case = marker.group(1).decode() if marker else None
+            requests.append({'case': case, 'path': self.path, 'raw': raw.decode('utf-8')})
+            if case is not None:
+                time.sleep(case_plan(case)['delay'])
             if body.get('stream'):
                 data = ''.join('data: ' + json.dumps({'id': 'witness', 'choices': [{'index': 0, 'delta': delta,
                                         'finish_reason': finish}]}) + '\n\n'
@@ -261,9 +392,17 @@ def _native_run(gateway, sidecar, output, port):
         gateway, sidecar = str(Path(gateway).resolve(strict=True)), str(Path(sidecar).resolve(strict=True))
         argv = [gateway, '--native', '--home', str(home), '--project', str(project), '--listen',
                 f'127.0.0.1:{port}', '--token-file', str(home / 'token'), '--sidecar', sidecar, '--drain-ms', '1500']
-        contract = {'host': 'rust', 'project': str(project), 'processRoles': ['host', 'sidecar'],
+        # The real gateway assembly spawns one sidecar per session, and the
+        # session-domain driver gives every case its own session, so the
+        # declared roles must be host x1 plus one sidecar per manifest case —
+        # the exact multiset the frozen audit compares Counter against (#1140
+        # cap-fix; the old ['host', 'sidecar'] failed closed on real captures).
+        contract = {'host': 'rust', 'project': str(project),
+                    'processRoles': (['host'] + ['sidecar'] * len(cases)) if session_domain else ['host', 'sidecar'],
                     'binaries': {'host': w.identity(gateway, argv), 'sidecar': w.identity(sidecar, [sidecar])},
-                    'externalEndpoints': [f'127.0.0.1:{port + 1}'], 'cases': ['native-witness-smoke'],
+                    'externalEndpoints': [f'127.0.0.1:{port + 1}'],
+                    'connections': 1,
+                    'cases': cases if session_domain else ['native-witness-smoke'],
                     'capabilities': {'provider': 'loopback-mock', 'tools': []}}
 
         def exercise(tracer, folder, deadline):
@@ -274,35 +413,106 @@ def _native_run(gateway, sidecar, output, port):
                              'clientVersion': 'native-witness', 'token': 'native-witness-fixture'})
                 hello = client.receive()
                 w.need(hello.get('type') == 'hello_ok', 'native hello failed')
-                client.send({'type': 'request', 'id': 'witness', 'method': 'submit_turn', 'params': {
-                    'projectKey': str(project), 'sessionKey': 'witness-session', 'runId': 'witness-run',
-                    'channelKey': 'probe', 'message': 'hello native witness', 'allowedTools': []}})
-                frames = []
-                while True:
-                    frame = client.receive()
-                    frames.append(frame)
-                    w.need(frame.get('event', {}).get('type') != 'error', 'native submit reported error')
-                    if frame.get('id') == 'witness' and frame.get('final'):
-                        w.need(frame.get('event', {}).get('finishReason') == 'completed', 'native turn incomplete')
-                        break
-                w.need(any(f.get('event', {}).get('text') == 'native witness text' for f in frames), 'provider text absent')
-                w.save(output / 'driver.json', {'binding': hello['interactionBinding'], 'rows': client.rows,
-                                               'upgrade': client.upgrade, 'requests': requests})
+                if session_domain:
+                    driver_hello['binding'] = hello['interactionBinding']
+                    driver_hello['identities'] = []
+                    # One connection, one hello, 72 sequential turns: every
+                    # case gets its own session and run, so per-case surfaces
+                    # never alias. Timeout-first variants answer after the
+                    # gateway's timeout has fired; ordering variants complete.
+                    for index, case in enumerate(cases, start=1):
+                        run_id = f'run-{index:02d}'
+                        request_id = f'case-{index:02d}'
+                        key = session_key(case)
+                        client.send({'type': 'request', 'id': request_id, 'method': 'submit_turn', 'params': {
+                            'projectKey': str(project), 'sessionKey': key, 'runId': run_id,
+                            'channelKey': 'session-domain', 'message': f'[native-witness:{case}] controlled wait',
+                            'allowedTools': [], 'timeoutMs': case_plan(case)['timeoutMs']}})
+                        received = []
+                        while True:
+                            frame = client.receive()
+                            received.append(frame)
+                            if frame.get('id') == request_id and frame.get('final'):
+                                break
+                        # Durable writes settle after the final frame; the
+                        # three surfaces are observed, never raced.
+                        time.sleep(SESSION_SETTLE_SECONDS)
+                        observation, identity, source = read_observation(
+                            home, str(project), key, run_id, received, request_id, retain=True)
+                        rows.append({'case': case, 'identity': identity, 'observation': observation})
+                        driver_hello['identities'].append(identity)
+                        sources.append(source)
+                else:
+                    client.send({'type': 'request', 'id': 'witness', 'method': 'submit_turn', 'params': {
+                        'projectKey': str(project), 'sessionKey': 'witness-session', 'runId': 'witness-run',
+                        'channelKey': 'probe', 'message': 'hello native witness', 'allowedTools': []}})
+                    frames = []
+                    while True:
+                        frame = client.receive()
+                        frames.append(frame)
+                        w.need(frame.get('event', {}).get('type') != 'error', 'native submit reported error')
+                        if frame.get('id') == 'witness' and frame.get('final'):
+                            w.need(frame.get('event', {}).get('finishReason') == 'completed', 'native turn incomplete')
+                            break
+                    w.need(any(f.get('event', {}).get('text') == 'native witness text' for f in frames), 'provider text absent')
+                    w.save(output / 'driver.json', {'binding': hello['interactionBinding'], 'rows': client.rows,
+                                                   'upgrade': client.upgrade, 'requests': requests})
             finally:
                 client.socket.close()
             root_exec = re.search(r'^(\d+)\s+execve\(', w.read_trace(folder / 'trace.log'), re.M)
             w.need(root_exec is not None, 'host exec is absent from trace')
             w.stop_host(tracer, int(root_exec[1]))
+            observer_rows.extend(client.rows)
 
         def validate(launch, evidence):
-            validate_smoke(launch, evidence, requests, home)
+            if session_domain:
+                validate_session(launch, evidence, rows, requests, cases)
+            else:
+                validate_smoke(launch, evidence, requests, home)
             # Complete owned provider cleanup before capture publishes success.
             stop_provider()
 
-        return w.capture(contract, output / 'capture', {'HOME': str(home), 'PILOT_HOME': str(home),
-                         'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}, exercise=exercise, validate=validate)
+        launch, evidence = w.capture(contract, output / 'capture',
+                                      {'HOME': str(home), 'PILOT_HOME': str(home),
+                                       'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+                                      timeout=SESSION_LIMIT_SECONDS if session_domain else w.LIMIT_SECONDS,
+                                      limit=SESSION_LIMIT_SECONDS,
+                                      exercise=exercise, validate=validate, ownership=common.LIVE_GROUPS)
+        if session_domain:
+            publish_session_domain(output, {'connections': 1, 'rows': observer_rows},
+                                   rows, requests, f'127.0.0.1:{port + 1}',
+                                   driver_hello, sources)
+        return launch, evidence
     finally:
-        stop_provider()
+        original_error = sys.exception()
+        try:
+            stop_provider()
+        except BaseException as cleanup_error:
+            if original_error is None:
+                raise
+            original_error.add_note('#1140 provider cleanup: ' + repr(cleanup_error))
+            failure_path = output / 'capture/failure.json'
+            try:
+                failure = json.loads(failure_path.read_text()) if failure_path.is_file() else {
+                    'status': 'INCOMPLETE', 'error': repr(original_error), 'cleanupErrors': []}
+                failure['cleanupErrors'].append('provider: ' + repr(cleanup_error))
+                failure['cleanupPending'] = sorted(common.LIVE_GROUPS)
+                w.save(failure_path, failure)
+            except BaseException as publish_error:
+                original_error.add_note('#1140 provider failure publication: ' + repr(publish_error))
+        else:
+            # capture records its own cleanup before this outer provider cleanup.
+            # Refresh the diagnostic while still inside the caller's lease.
+            failure_path = output / 'capture/failure.json'
+            if original_error is not None and failure_path.is_file():
+                try:
+                    failure = json.loads(failure_path.read_text())
+                    failure['cleanupPending'] = sorted(common.LIVE_GROUPS)
+                    temporary = failure_path.with_suffix('.partial.json')
+                    w.save(temporary, failure)
+                    os.replace(temporary, failure_path)
+                except BaseException as publish_error:
+                    original_error.add_note('#1140 final cleanup publication: ' + repr(publish_error))
 
 
 def main():
@@ -311,9 +521,13 @@ def main():
     parser.add_argument('--sidecar', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--port', type=int, default=28999)
+    parser.add_argument('--session-domain', action='store_true',
+                        help='#1140 drive the frozen 72-case E1 manifest through one gateway '
+                             'and publish observer rows plus per-case three-surface observations '
+                             '(session-domain/) for the deadline scoring suite')
     args = parser.parse_args()
     try:
-        native_run(args.gateway, args.sidecar, args.output, args.port)
+        native_run(args.gateway, args.sidecar, args.output, args.port, session_domain=args.session_domain)
     except Blocked as error:
         print(json.dumps({'status': 'BLOCKED', 'scoring': 'NOT_RUN', 'error': str(error)}))
         return 2

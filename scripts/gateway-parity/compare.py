@@ -82,6 +82,8 @@ DEFAULT_OUT = common.DEFAULT_OUT
 READ_METHODS = common.READ_METHODS
 SCENARIOS = common.SCENARIOS
 save = common.save
+native_evidence = _load('native_evidence', _apparatus / 'native_evidence.py')
+jsonl_lines = native_evidence.jsonl_lines
 
 UUID = re.compile(r'\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', re.I)
 
@@ -292,7 +294,7 @@ def validate(path, local_methods=()):
                     raw = (folder / 'frames.jsonl').read_text()
                     if not raw.endswith('\n'):
                         fail('G2.recording', f'{name}: truncated final line')
-                    rows = [json.loads(line) for line in raw.splitlines()]
+                    rows = [json.loads(line) for line in jsonl_lines(raw)]
                     if any(not isinstance(row, dict) for row in rows):
                         raise ValueError('recorder rows must be objects')
                     if not rows:
@@ -473,7 +475,7 @@ def validate(path, local_methods=()):
                 raw_upstream = (path / 'upstream.jsonl').read_text()
                 if not raw_upstream or not raw_upstream.endswith('\n'):
                     raise ValueError('empty/truncated upstream recording')
-                upstream = [json.loads(line) for line in raw_upstream.splitlines()]
+                upstream = [json.loads(line) for line in jsonl_lines(raw_upstream)]
                 if any(not isinstance(row, dict) or ('frame' in row and not isinstance(row['frame'], dict)) for row in upstream):
                     raise ValueError('invalid upstream row')
             except (OSError, ValueError, TypeError) as error:
@@ -521,7 +523,7 @@ def disk(path, normalize):
                     if item.suffix == '.jsonl':
                         if text and not text.endswith('\n'):
                             raise ValueError(f'truncated durable jsonl: {relative}')
-                        content = transcript_projection([json.loads(line) for line in text.splitlines()], normalize)
+                        content = transcript_projection([json.loads(line) for line in jsonl_lines(text)], normalize)
                     elif item.suffix == '.json':
                         content = json.loads(text)
                     else:
@@ -553,7 +555,7 @@ def entity_normalizer(path, frames):
             if item.suffix == '.json':
                 normalizer.index(load(item, (dict, list)))
             elif item.suffix == '.jsonl':
-                for line in item.read_text().splitlines():
+                for line in jsonl_lines(item.read_text()):
                     normalizer.index(json.loads(line))
     return normalizer
 

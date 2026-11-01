@@ -460,6 +460,56 @@
         "traceback": false,
         "stderr_last": ""
       }
+    },
+    "native_evidence.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TypeError: #991 controlled ordinary"
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TimeoutError: #991 controlled timeout"
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "PermissionError: #991 controlled permission"
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "subprocess.TimeoutExpired: Command '['#991 controlled child']' timed out after 5 seconds"
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "common.ApparatusVerificationError: #991 controlled apparatus"
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "RuleOnly: #991 controlled rule-only"
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
     }
   }
 }
