@@ -1478,6 +1478,65 @@ async fn shutdown_drain_panic_settles_the_keys_closing_entry() {
         .expect("#1245 a record-less close after shutdown must fulfill like TS await undefined");
 }
 
+/// #1245 fix-r3: the settle-before-release ordering has machine evidence. The
+/// close task stages its outcome in a guard that settles the key's closing
+/// entry strictly before the serial ticket is released; the order probe
+/// records both events on this thread, and the settle write must come first
+/// even though the window between the two has no await point an external task
+/// could gate on. `take()` before the close drops the fixture creation's own
+/// ticket-release record: that task ends its final poll before the awaited
+/// creation future resumes.
+#[tokio::test]
+async fn close_settles_its_closing_entry_before_releasing_the_ticket() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let key = JsString::from("a");
+    bounded(owner.get_or_create(context("a")))
+        .await
+        .expect("#1245 the fixture creation must complete before the close starts");
+    let _ = settle_order::take();
+    bounded(owner.close(&key))
+        .await
+        .expect("#1245 the close must fulfill with a succeeding disposal");
+    let events = settle_order::take();
+    assert_eq!(
+        events,
+        ["closing-settled", "ticket-released"],
+        "#1245 the close task must settle its closing entry before releasing the serial ticket"
+    );
+    assert!(
+        owner.current_handle(&key).is_none(),
+        "#1245 the closed key must leave no cached record"
+    );
+}
+
+/// #1245 fix-r3: the same settle-before-release witness for the idle sweep's
+/// eviction task. `sweep_idle` spawns the task unpollled; `until` returns only
+/// after its final poll recorded both events.
+#[tokio::test]
+async fn idle_sweep_settles_its_closing_entry_before_releasing_the_ticket() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let key = JsString::from("a");
+    bounded(owner.get_or_create(context("a")))
+        .await
+        .expect("#1245 the fixture creation must complete before the idle sweep");
+    probe.time(101);
+    let _ = settle_order::take();
+    owner.sweep_idle();
+    until(|| probe.seen("evict:a:idle")).await;
+    let events = settle_order::take();
+    assert_eq!(
+        events,
+        ["closing-settled", "ticket-released"],
+        "#1245 the idle sweep task must settle its closing entry before releasing the serial ticket"
+    );
+    assert!(
+        owner.current_handle(&key).is_none(),
+        "#1245 the swept key must leave no cached record"
+    );
+}
+
 #[tokio::test]
 async fn project_close_during_creation_is_local_matches_ts() {
     let probe = Probe::default();
