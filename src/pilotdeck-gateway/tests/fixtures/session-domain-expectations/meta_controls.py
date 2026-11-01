@@ -18,6 +18,22 @@ could run:
   now be ``BINDING DRIFT``.
 * ``readme-stale-count`` -- the fixture README pins a wrong count again; the
   doc scan must refuse it as ``COUNT DRIFT``.
+* fix-r2 (r2 review P2-1): ``malformed-state-bound`` (a 1-tuple entry),
+  ``non-sequence-state-bound`` (a non-sequence ``BOUND`` value) and
+  ``malformed-state-mutation-row`` (a 3-tuple ``MUTATIONS`` row) used to
+  raise an unpacking traceback; the gate must report each as its own
+  ``BINDING DRIFT`` instead.
+* fix-r2 (r2 review P3-2): ``duplicate-state-mutation-row`` repeats one
+  ``MUTATIONS`` row; the gate must refuse the duplicated name.
+* fix-r2 (r2 review P2-4): ``readme-stale-count-ge`` pins the count with the
+  个 unit the old ``COUNT_PHRASE`` could not read; the scan must refuse it.
+* fix-r2 (r2 review P2-2): ``unscanned-freeze-event`` writes a new event
+  file into ``specs/gateway-parity/frozen/`` -- the doc-scan set is derived
+  from that directory's glob, so the gate must refuse the file's stale
+  count and pass again once it is removed.  The file is a fixture created
+  and deleted inside this run (never a tracked product source; ``specs/``
+  is outside the tree guard and outside the anchor grammar), so it is not a
+  text-replacement row and lives in ``CREATED`` with ``old`` None.
 
 Every mutant is compiled before it runs.  All selected rows run to
 completion; each records KILLED / SURVIVED / INVALID with its reason and the
@@ -60,6 +76,58 @@ MUTATIONS = [
     ('readme-stale-count', README,
      "里的 canonical `require`，清单以该表为准",
      "里的全部七条 canonical `require`"),
+    # r2 review P2-1: the BOUND entry loses a column; the gate must refuse
+    # the malformed (case,) shape instead of unpacking it.
+    ('malformed-state-bound', NEGCTL,
+     "    'drop-registry-state-require': (\n"
+     "        ('expectations-rust-registry-state', 'EXPECTATION_RUST_DERIVATION'),\n"
+     "    ),\n",
+     "    'drop-registry-state-require': (\n"
+     "        ('expectations-rust-registry-state',),\n"
+     "    ),\n"),
+    # r2 review P2-1: the whole BOUND value stops being a sequence; the gate
+    # must report it, not crash on ``list(BOUND[name])``.
+    ('non-sequence-state-bound', NEGCTL,
+     "    'drop-registry-state-require': (\n"
+     "        ('expectations-rust-registry-state', 'EXPECTATION_RUST_DERIVATION'),\n"
+     "    ),\n",
+     "    'drop-registry-state-require': 42,\n"),
+    # r2 review P2-1 (sibling of the BOUND entry): the MUTATIONS row loses
+    # its replacement column; the gate must refuse the 3-tuple shape.
+    ('malformed-state-mutation-row', NEGCTL,
+     "     \"                    case + ': rust registry state differs from the D4-B canonical output')\\n\",\n"
+     "     \"\"),\n",
+     "     \"                    case + ': rust registry state differs from the D4-B canonical output')\\n\"),\n"),
+    # r2 review P3-2: the same MUTATIONS row is added twice; a duplicated
+    # name must not silently pass with a larger mutationRows count.
+    ('duplicate-state-mutation-row', NEGCTL,
+     "    ('drop-registry-state-require', SESSION,\n"
+     "     \"            require(registry['state'] == canonical['state'], 'EXPECTATION_RUST_DERIVATION',\\n\"\n"
+     "     \"                    case + ': rust registry state differs from the D4-B canonical output')\\n\",\n"
+     "     \"\"),\n",
+     "    ('drop-registry-state-require', SESSION,\n"
+     "     \"            require(registry['state'] == canonical['state'], 'EXPECTATION_RUST_DERIVATION',\\n\"\n"
+     "     \"                    case + ': rust registry state differs from the D4-B canonical output')\\n\",\n"
+     "     \"\"),\n"
+     "    ('drop-registry-state-require', SESSION,\n"
+     "     \"            require(registry['state'] == canonical['state'], 'EXPECTATION_RUST_DERIVATION',\\n\"\n"
+     "     \"                    case + ': rust registry state differs from the D4-B canonical output')\\n\",\n"
+     "     \"\"),\n"),
+    # r2 review P2-4: the same stale count pinned with the 个 unit.
+    ('readme-stale-count-ge', README,
+     "里的 canonical `require`，清单以该表为准",
+     "里的全部 7 个 canonical `require`"),
+]
+
+# Create-only fixtures (r2 review P2-2): the file must not exist yet, the
+# gate must refuse it, and the fixture is deleted afterwards.  ``old`` is None
+# to mark a row that is not a text replacement.
+CREATED = [
+    ('unscanned-freeze-event',
+     ROOT / 'specs/gateway-parity/frozen/20261101-1190-r99.md',
+     None,
+     '# 负控夹具（unscanned-freeze-event，绝不提交；落在 frozen/ 通配内必须被拒）\n'
+     '本事件钉死了七条 canonical require。\n'),
 ]
 
 # Each mutant is bound to the exact drift message that names it; a bare
@@ -71,6 +139,21 @@ MARKERS = {
         'BOUND[drop-registry-state-require] is empty',
     'readme-stale-count':
         "'七条' pins 7 but derived mutationRows is 6",
+    'malformed-state-bound':
+        "drop-registry-state-require: BOUND entry is not a (case, rule) "
+        "pair of nonempty strings: ('expectations-rust-registry-state',)",
+    'non-sequence-state-bound':
+        'BOUND[drop-registry-state-require] is not a sequence of '
+        '(case, rule) pairs: 42',
+    'malformed-state-mutation-row':
+        'MUTATIONS row is not a (name, source, old, new) row with a nonempty '
+        "name: ('drop-registry-state-require',",
+    'duplicate-state-mutation-row':
+        'MUTATIONS names are not unique: drop-registry-state-require',
+    'readme-stale-count-ge':
+        "'7 个' pins 7 but derived mutationRows is 6",
+    'unscanned-freeze-event':
+        "20261101-1190-r99.md:2: '七条' pins 7 but derived mutationRows is 6",
 }
 
 
@@ -103,11 +186,12 @@ def main():
                              'the delivered post-commit run (a dirty rehearsal may '
                              'pass git stash create)')
     args = parser.parse_args()
-    known = {row[0] for row in MUTATIONS}
+    rows = [*MUTATIONS, *CREATED]
+    known = {row[0] for row in rows}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
         print('unknown or duplicate --only name', file=sys.stderr)
         return 2
-    selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
+    selected = [row for row in rows if not args.only or row[0] in args.only]
     out = new_output_directory(args.output)
     results = []
     try:
@@ -117,11 +201,16 @@ def main():
                 row = {'mutation': name, 'status': 'INVALID', 'reason': 'not executed'}
                 evidence = {'positive': None, 'mutant': None, 'restored': None}
                 try:
-                    original = originals[source].decode()
-                    if original.count(old) != 1:
-                        raise ValueError(f'anchor expired: count={original.count(old)}')
-                    mutant = original.replace(old, new, 1)
-                    if source.suffix == '.py':
+                    if old is None:
+                        if source.exists():
+                            raise ValueError(f'fixture already exists: {source}')
+                        original = None
+                    else:
+                        original = originals[source].decode()
+                        if original.count(old) != 1:
+                            raise ValueError(f'anchor expired: count={original.count(old)}')
+                    mutant = new if original is None else original.replace(old, new, 1)
+                    if original is not None and source.suffix == '.py':
                         compile(mutant, str(source), 'exec')
                     positive = run_gate(out, f'{name}-positive')
                     if not gate_ok(positive):
@@ -143,7 +232,12 @@ def main():
                 except Exception as error:
                     row['status'], row['reason'] = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    source.write_bytes(originals[source])
+                    if old is None:
+                        source.unlink(missing_ok=True)
+                        if source.exists():
+                            raise RuntimeError(f'fixture was not removed: {source}')
+                    else:
+                        source.write_bytes(originals[source])
                 if row['status'] == 'KILLED':
                     restored = run_gate(out, f'{name}-restored')
                     if gate_ok(restored):
