@@ -57,10 +57,11 @@ class R11Tests(unittest.TestCase):
         self.clock += duration
         self.sleeps.append(duration)
 
-    def wait(self, on_sleep=None, deadline=10, received=()):
+    def wait(self, on_sleep=None, deadline=10, received=(), expectation=None):
         with patch.object(c.time, 'monotonic', side_effect=lambda: self.clock), \
                 patch.object(c.time, 'sleep', side_effect=on_sleep or self.sleep):
-            return c.wait_observation(self.home, self.project, self.session, self.run, received, 'request', deadline)
+            return c.wait_observation(self.home, self.project, self.session, self.run, received, 'request', deadline,
+                                      expectation=expectation)
 
     def test_settle_three_samples(self):
         marker = '#1140 r11 terminal files require three stable samples'
@@ -106,11 +107,152 @@ class R11Tests(unittest.TestCase):
             caught = error
         self.assertTrue(isinstance(caught, c.Blocked) and '落盘未完成' in str(caught), marker)
         cancelled = None
+        self.write('completed')
+        original_read = Path.read_text
+        def interrupted_read(path, *args, **kwargs):
+            if path == self.chat:
+                raise KeyboardInterrupt('controlled transcript read cancellation')
+            return original_read(path, *args, **kwargs)
         try:
-            self.wait(lambda _: (_ for _ in ()).throw(KeyboardInterrupt()), deadline=1)
+            with patch.object(Path, 'read_text', interrupted_read):
+                self.wait(deadline=0.11)
         except (Exception, KeyboardInterrupt) as error:
             cancelled = error
         self.assertTrue(isinstance(cancelled, KeyboardInterrupt), marker)
+
+    def test_settle_registry_inapplicable(self):
+        marker = '#1140 r12 inapplicable registry settles terminal transcript promptly'
+        try:
+            expectations = c.session_expectations()
+            inapplicable = [row for row in expectations.values() if row['registry']['applicable'] is False]
+            self.assertTrue(len(inapplicable) == 18 and any(not row['durableStatus'] for row in inapplicable), marker)
+            for expected in inapplicable:
+                self.clock, self.sleeps = 0.0, []
+                self.chat.write_text(''.join(json.dumps({'type': 'agent_status_message', 'event': label}) + '\n'
+                                             for label in expected['durableStatus']))
+                (self.home / 'runs.json').write_text('{"records": [], "events": {}}')
+                final = [{'id': 'request', 'final': True}]
+                observed, _, _ = self.wait(received=final, expectation=expected)
+                self.assertTrue(observed is not None and observed['registry']['applicable'] is False
+                                and self.sleeps == [0.05, 0.05], marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_settle_registry_expected_not_observed(self):
+        marker = '#1140 r12 missing required registry is not an inapplicable case'
+        try:
+            self.write('completed', 'turn_timeout')
+            (self.home / 'runs.json').write_text('{"records": [], "events": {}}')
+            expected = {'registry': {'applicable': True}, 'durableStatus': ['turn_timeout']}
+            observed, _, source = self.wait(deadline=0.11, received=[{'id': 'request', 'final': True}],
+                                             expectation=expected)
+            self.assertTrue(observed is None and source['collectionError'] == '落盘未完成'
+                            and self.clock == 0.11, marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_settle_inapplicable_transcript_pending(self):
+        marker = '#1140 r12 inapplicable registry still waits for transcript finality'
+        expected = {'registry': {'applicable': False}, 'durableStatus': ['turn_timeout']}
+        try:
+            for frames in ([], [{'id': 'request', 'final': False}]):
+                self.clock, self.sleeps = 0.0, []
+                self.write('completed', 'turn_timeout')
+                observed, _, _ = self.wait(deadline=0.11, received=frames, expectation=expected)
+                self.assertTrue(observed is None, marker)
+            self.clock, self.sleeps = 0.0, []
+            self.chat.write_text('')
+            (self.home / 'runs.json').write_text('{"records": [], "events": {}}')
+            def tick(duration):
+                self.sleep(duration)
+                if len(self.sleeps) == 3:
+                    # A different terminal status is a product scoring difference,
+                    # not an excuse to report this readable case as NOT_RUN.
+                    self.chat.write_text(json.dumps({'type': 'agent_status_message', 'event': 'turn_failed'}) + '\n')
+            observed, _, _ = self.wait(tick, received=[{'id': 'request', 'final': True}], expectation=expected)
+            self.assertTrue(observed is not None and len(self.sleeps) == 5
+                            and observed['durableStatus']['entries'][0]['event'] == 'turn_failed', marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_settle_missing_registry_file(self):
+        marker = '#1140 r12 absent registry file affects only its case'
+        try:
+            for applicable in (False, True):
+                self.clock, self.sleeps = 0.0, []
+                self.write('completed', 'turn_timeout')
+                (self.home / 'runs.json').unlink()
+                expected = {'registry': {'applicable': applicable}, 'durableStatus': ['turn_timeout']}
+                observed, _, source = self.wait(deadline=0.11, received=[{'id': 'request', 'final': True}],
+                                                 expectation=expected)
+                self.assertTrue((observed is None) == applicable and source['registryText'] is None
+                                and self.clock == (0.11 if applicable else 0.1), marker)
+            # A later case can still collect after the required case timed out.
+            self.clock, self.sleeps = 0.0, []
+            self.write('completed')
+            self.assertTrue(self.wait()[0] is not None, marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_settle_inapplicable_completed_transcript(self):
+        marker = '#1140 r12 completed transcript differences remain scoreable with Unicode JSONL'
+        try:
+            self.chat.write_text(json.dumps({'type': 'turn_result', 'text': 'complete\u2028result'}, ensure_ascii=False) + '\n')
+            (self.home / 'runs.json').unlink()
+            expected = {'registry': {'applicable': False}, 'durableStatus': ['turn_timeout']}
+            observed, _, _ = self.wait(received=[{'id': 'request', 'final': True}], expectation=expected)
+            self.assertTrue(observed is not None and not observed['durableStatus']['entries']
+                            and self.sleeps == [0.05, 0.05], marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_settle_missing_signature_transitions(self):
+        marker = '#1140 r12 file absence is a distinct signature and other stat errors propagate'
+        try:
+            registry = self.home / 'runs.json'
+            present = c.file_signatures((self.chat, registry))
+            registry.unlink()
+            absent = c.file_signatures((self.chat, registry))
+            registry.write_text('{"records": [], "events": {}}')
+            restored = c.file_signatures((self.chat, registry))
+            self.assertTrue(absent[1] is None and present[1] != absent[1] and restored[1] != absent[1], marker)
+            with patch.object(Path, 'stat', side_effect=PermissionError('controlled stat permission')):
+                with self.assertRaises(PermissionError, msg=marker):
+                    c.file_signatures((registry,))
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_collector_inapplicable_without_registry_file(self):
+        marker = '#1140 r12 first registry-free cases collect without blocking the capture'
+        try:
+            e2e = load('r12_registry_e2e', Path(__file__).parent.parent / 'native-session-e2e/test_e2e.py')
+            fixture = e2e.E2ETests
+            fixture.host, fixture.sidecar = self.home / 'host', self.home / 'sidecar'
+            fixture.host.write_bytes(b'\x7fELF controlled host')
+            fixture.sidecar.write_bytes(b'\x7fELF controlled sidecar')
+            expected = c.session_expectations()
+            selected = c.session_manifest()[:2]
+            expected = {case: expected[case] for case in selected}
+            self.assertTrue(all(row['registry']['applicable'] is False for row in expected.values()), marker)
+            replace = Path.replace
+            def without_registry(path, target):
+                if Path(target).name == 'runs.json':
+                    path.unlink()  # Model the registry's first lazy creation, not a corrupt file.
+                    return Path(target)
+                return replace(path, target)
+            output = self.home / 'collector-no-registry'
+            with patch.object(e2e.c, 'session_manifest', return_value=selected), \
+                    patch.object(e2e, 'load_expectations', return_value=expected), \
+                    patch.object(Path, 'replace', without_registry), \
+                    patch.object(e2e.c, 'SESSION_SETTLE_LIMIT_SECONDS', 0.5):
+                fixture._collect(output, real_settle=True)
+            rows = json.loads((output / 'session-domain/cases.json').read_text())['cases']
+            receipt = json.loads((output / 'capture/receipt.json').read_text())
+            self.assertTrue(len(rows) == 2 and all(row['observation'] is not None for row in rows)
+                            and not (output / 'home/runs.json').exists()
+                            and receipt['status'] == 'WITNESS_CAPTURED', marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
 
     def test_settle_mock_final_before_disk(self):
         marker = '#1140 r11 post-final mock waits for complete durable files'
@@ -420,7 +562,7 @@ class R11Tests(unittest.TestCase):
         fixture.host, fixture.sidecar = self.home / 'host', self.home / 'sidecar'
         fixture.host.write_bytes(b'\x7fELF controlled host')
         fixture.sidecar.write_bytes(b'\x7fELF controlled sidecar')
-        case = c.session_manifest()[0]
+        case = next(case for case, expected in c.session_expectations().items() if expected['registry']['applicable'])
         expectations = {case: {'frames': [], 'durableStatus': ['done'],
                               'registry': {'applicable': True, 'state': 'completed', 'events': [], 'result': None}}}
         release = threading.Event()

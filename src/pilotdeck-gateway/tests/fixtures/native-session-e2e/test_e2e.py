@@ -161,7 +161,7 @@ class E2ETests(unittest.TestCase):
                                   mock.patch.object(c.w.subprocess, 'Popen', side_effect=spawn),
                                   mock.patch.object(c.w, 'stop_host'),
                                   mock.patch.object(c, 'wait_observation', side_effect=c.wait_observation if real_settle else
-                                                    lambda home, project, key, run, frames, request, deadline:
+                                                    lambda home, project, key, run, frames, request, deadline, **kwargs:
                                                     c.read_observation(home, project, key, run, frames, request, retain=True)),
                                   mock.patch.object(c, 'SESSION_PROVIDER_DELAY', 0.0)):
                         stack.enter_context(patch)
