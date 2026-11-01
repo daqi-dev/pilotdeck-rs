@@ -585,6 +585,10 @@ def main():
         # per-test "test <name> ... ok/FAILED" lines this script's pass/kill
         # criteria are written against (a quiet pass is a lone "." and a quiet
         # failure is "<name> --- FAILED").
+        # No `--nocapture` (#1053): capture keeps a printing parent's stdout
+        # (the dateparse rows echo their child's stdout) out of the
+        # "test <name> ... ok/FAILED" status line that passed()/classify()
+        # match exactly (#938 r14).
         # --test-threads=2 (#942 fix-r1): single-threaded libtest prints the
         # test name before the body runs, so a printing parent (the dateparse
         # rows echo their child's stdout) would splice its output into the
@@ -593,7 +597,7 @@ def main():
         result = run_owned([
             'cargo', 'test', '--manifest-path', 'src/Cargo.toml', *CARGO_TARGETS[test],
             *(['--no-run'] if compile_only else [
-                '--', '--exact', test, '--nocapture', '--test-threads=2',
+                '--', '--exact', test, '--test-threads=2',
                 *(['--ignored'] if test in IGNORED_PARENTS else []),
             ]),
         ], cwd=root, env=env, timeout=900)

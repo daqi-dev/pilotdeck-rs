@@ -56,11 +56,14 @@ ROWS = [
 
 
 def command(test):
+    # No `--nocapture`: it splices the test's stdout into the
+    # `test <name> ... ok/FAILED` status line (#938 r14) that
+    # passed()/classify() match exactly (#1053).
     return [
         'cargo', 'test', '--offline', '--locked',
         '--manifest-path', str(ROOT / 'src/Cargo.toml'),
         '-p', 'pilotdeck-gateway', '--test', 'regeneration_masks',
-        test, '--', '--exact', '--nocapture',
+        test, '--', '--exact',
     ]
 
 
