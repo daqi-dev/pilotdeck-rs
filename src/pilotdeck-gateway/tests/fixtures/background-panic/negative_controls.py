@@ -38,7 +38,7 @@ flush_outcome = (
 )
 flush_swallow = '                let _ = tokio::spawn(async move { store.flush().await }).await;'
 mutants = [
-    ('write-join', source, r'(tokio::spawn\(\s*async move \{ Self::persist_entry_static\(&store, &entry\).await \},?\s*\)\s*\.await);', r'\1.unwrap();', snapshot, 'background panic completion deadline'),
+    ('write-join', source, r'(tokio::spawn\(\s*async move \{\s*Self::persist_entry_static\(&store, &entry, u64::MAX\)\.await\s*\},?\s*\)\s*\.await);', r'\1.unwrap();', snapshot, 'background panic completion deadline'),
     ('flush-join', source, re.escape(flush_outcome), flush_swallow, 'snapshot_flush_pair::zero_before_sync', 'disposal outcome'),
     ('continue-writes', source, re.escape('for entry in &entries {\n                    let (store, entry)'), 'for entry in entries.iter().take(1) {\n                    let (store, entry)', snapshot, 'continue after failure'),
     # With no live receiver, send() drops the outcome instead of storing it,

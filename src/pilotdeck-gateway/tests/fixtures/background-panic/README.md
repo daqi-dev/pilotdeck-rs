@@ -26,9 +26,10 @@ Node 10 秒、Rust 每次等待 2 秒。subagent 六格覆盖独立 sync/poll �
 正文写 20）；扩展后有 36 格，均为 write-a/write-b 的三个失败模式。
 
 calls 对比仅针对本夹具的受控序列：TS 写入来自 settleEntry，Rust 来自 dispose
-最终写入，不能据此声称两个调用点或持久化生命周期全面等价。flush 失败时 TS
-拒绝并停在 draining，Rust 继续 Disposed/返回 ()；此已有差异仍然**未批准，非已接受差异**，
-详见 `specs/gateway-parity/diffs/A6.5-BACKGROUND-PANIC-001.md` 及其 R1 更正。
+最终写入，不能据此声称两个调用点或持久化生命周期全面等价。flush 失败契约的原登记
+差异（Rust 吞错返回 ()/Disposed）**已由 R2 消除**：dispose 现在拒绝并保持
+draining，详见 `specs/gateway-parity/diffs/A6.5-BACKGROUND-PANIC-001.md` 及其
+R1 / R2 更正（R3 更正记录笔误与证据路径）。
 
 全体 102 个 case ID 必须与显式笛卡尔积严格相等；先校验全集，再选择单格，因此
 未知 family、漏格、重格都不能静默跳过。`background_panic_regenerates_identically`

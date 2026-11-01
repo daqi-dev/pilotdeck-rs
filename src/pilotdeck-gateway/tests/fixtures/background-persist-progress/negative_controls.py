@@ -53,9 +53,13 @@ mutations = [
      '                task.pid = pid;',
      '                task.pid = None;',
      'test_unsettled_task_restored_as_cancelled', '#978 start acknowledged the child PID'),
+    # #1233 fix-r1 inserted the persist sequence bump between the two lines;
+    # the mutation still zeroes the settle-time output count.
     ('spill-count-incomplete', source,
-     '            state.task.output_bytes = state.output.total;\n            let task = &state.task;',
-     '            state.task.output_bytes = 0;\n            let task = &state.task;',
+     '            state.task.output_bytes = state.output.total;\n'
+     '            // #1233 fix-r1: assigned under the lock with the terminal state,',
+     '            state.task.output_bytes = 0;\n'
+     '            // #1233 fix-r1: assigned under the lock with the terminal state,',
      'test_output_spill_write_and_read', '#978 spill producer delivered all bytes'),
     ('spill-read-skipped', output,
      '        let path = &self.spill.as_ref()?.path;',

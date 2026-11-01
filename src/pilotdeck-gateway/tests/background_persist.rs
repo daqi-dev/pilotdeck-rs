@@ -468,8 +468,9 @@ impl BackgroundTaskSnapshotStore for FlushFailureStore {
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
+        seq: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
-        self.inner.write(snapshot)
+        self.inner.write(snapshot, seq)
     }
     fn flush(&self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         if self.sync {
@@ -1138,6 +1139,7 @@ impl BackgroundTaskSnapshotStore for InvalidTaskStore {
     fn write(
         &self,
         _snapshot: PersistedBackgroundTask,
+        _seq: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         Box::pin(async { Ok(()) })
     }
@@ -1195,6 +1197,111 @@ async fn restart_invalid_task_fails_closed() {
             && payload.contains("Invalid task status: bogus"),
         "#1233 unrestorable-task message: {payload}"
     );
+}
+
+/// A6.5-BACKGROUND-PERSIST-001-R3 (P1-2): a corrupted snapshot file fails the
+/// store constructor closed on every defect the baseline rejects. The TS
+/// goldens come from the fixture's `corrupt-*` cases (real Node v22.22.0);
+/// two Rust message differences are registered in the R3 ledger: the bad-JSON
+/// rejection carries the parser detail, and the invalid-status rejection
+/// phrases the same failure differently.
+#[test]
+fn corrupted_snapshot_file_fails_closed() {
+    let task = |status: &str| {
+        serde_json::json!({
+            "taskId": "task-a", "type": "local_bash", "kind": "bash",
+            "command": "printf abcdef", "cwd": "/",
+            "status": status, "completionStatusSentInAttachment": false,
+            "lastReportedTotalLines": 0, "isBackgrounded": true,
+            "interrupted": false,
+            "startedAt": "2026-10-24T00:00:00.000Z",
+            "endedAt": "2026-10-24T00:00:01.000Z", "exitCode": 0,
+            "outputBytes": 0,
+        })
+    };
+    let output = serde_json::json!({ "totalBytes": 0, "persisted": false });
+    let bad_json = "{ not json".to_owned();
+    let version_2 =
+        serde_json::json!({ "version": 2, "tasks": [{ "task": task("completed"), "output": output }] })
+            .to_string();
+    let duplicate = serde_json::json!({
+        "version": 1,
+        "tasks": [
+            { "task": task("completed"), "output": output },
+            { "task": task("completed"), "output": output },
+        ],
+    })
+    .to_string();
+    let invalid_status =
+        serde_json::json!({ "version": 1, "tasks": [{ "task": task("banana"), "output": output }] })
+            .to_string();
+    let cases = [
+        ("bad-json", bad_json),
+        ("version-2", version_2),
+        ("duplicate-id", duplicate),
+        ("invalid-status", invalid_status),
+    ];
+    for (variant, payload) in cases {
+        let scratch = scratch::Scratch::new("1233-corrupt-snapshot");
+        let state = scratch.path().join("state");
+        std::fs::create_dir_all(&state).expect("#1233 create state directory");
+        std::fs::write(state.join("state.json"), payload)
+            .expect("#1233 write the corrupted snapshot");
+        let error = match JsonFileBackgroundTaskSnapshotStore::new(state.join("state.json")) {
+            Ok(_) => panic!("#1233 corrupt-{variant} must fail the store constructor"),
+            Err(error) => error.to_string(),
+        };
+        let path = state.join("state.json").display().to_string();
+        // The exact Rust rejection text for this defect.
+        let expected = match variant {
+            "bad-json" => format!(
+                "Background task snapshot {path} is not valid JSON; \
+                 recovery is required: Invalid JSON: key must be a string at line 1 column 3"
+            ),
+            "version-2" => format!(
+                "Background task snapshot {path} has an unsupported schema; recovery is required."
+            ),
+            "duplicate-id" => format!(
+                "Background task snapshot {path} repeats taskId \"task-a\"; recovery is required."
+            ),
+            "invalid-status" => format!(
+                "Background task snapshot {path} has invalid task at index 0: status is invalid."
+            ),
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            error, expected,
+            "#1233 corrupt-{variant} fails closed with the exact Rust message"
+        );
+        // The exact TS golden, as the fixture generator normalized it.
+        let oracle = persist_case(&format!("corrupt-{variant}"));
+        let ts_message = oracle["restart"]["message"]
+            .as_str()
+            .expect("#1233 oracle corrupt message");
+        let ts_expected = match variant {
+            "bad-json" => {
+                "Background task snapshot <state>/state.json is not valid JSON; \
+                 recovery is required."
+            }
+            "version-2" => {
+                "Background task snapshot <state>/state.json has an unsupported schema; \
+                 recovery is required."
+            }
+            "duplicate-id" => {
+                "Background task snapshot <state>/state.json repeats taskId \"task-a\"; \
+                 recovery is required."
+            }
+            "invalid-status" => {
+                "Background task snapshot <state>/state.json has an invalid task at index 0; \
+                 recovery is required."
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            ts_message, ts_expected,
+            "#1233 corrupt-{variant} TS golden is pinned"
+        );
+    }
 }
 
 /// A6.5-BACKGROUND-PERSIST-001-R2 (D5, registered deviation): a terminal
@@ -1321,6 +1428,7 @@ impl BackgroundTaskSnapshotStore for TerminalWriteFailureStore {
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
+        seq: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         if matches!(
             snapshot.task.status.as_str(),
@@ -1328,7 +1436,7 @@ impl BackgroundTaskSnapshotStore for TerminalWriteFailureStore {
         ) {
             return Box::pin(async { Err(io::Error::other("#1233 settle write refused")) });
         }
-        self.inner.write(snapshot)
+        self.inner.write(snapshot, seq)
     }
     fn flush(&self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         self.inner.flush()

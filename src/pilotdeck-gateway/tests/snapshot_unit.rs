@@ -45,7 +45,7 @@ async fn test_snapshot_store_write_and_load() {
         },
     };
 
-    store.write(task.clone()).await.expect("write task");
+    store.write(task.clone(), 0).await.expect("write task");
     store.flush().await.expect("flush");
 
     // Verify file exists

@@ -139,6 +139,7 @@ impl BackgroundTaskSnapshotStore for Store {
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
+        _seq: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         self.operation(format!("write:{}", snapshot.task.task_id))
     }
