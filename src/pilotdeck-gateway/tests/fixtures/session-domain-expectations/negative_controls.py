@@ -43,32 +43,10 @@ set -- a deleted or renamed mutation row, an emptied or malformed binding
 entry is ``BINDING DRIFT`` (exit 2) before any row executes, never a later
 ``IndexError`` that voids the whole table.
 
-fix-r1 (#1190 review P2-2): the registration documents that describe these
-controls (the fixture README, the A19-HOST-001-R1 diff entry and every #1190
-freeze event) are scanned on every run: a Chinese or Arabic count phrase
-(条/档/项/个/处) that disagrees with ``derived-counts.json`` -- or cannot be
-mapped to a derivable counter at all -- is ``COUNT DRIFT`` (exit 2), so the
-prose cannot pin a count the tables no longer have.  ``meta_controls.py`` binds
-both drift gates: deleting a mutation row, emptying a ``BOUND`` entry and
-re-pinning a stale count in the README must each be refused.
-
-fix-r2 (#1190 r2 review P2-1/P2-2/P2-4, P3-2/P3-3): a malformed ``BOUND``
-container or entry and a malformed or duplicated ``MUTATIONS`` row are all a
-clean ``BINDING DRIFT`` (the entry unpacking used to raise a traceback), the
-scanned event set is derived from the ``frozen/`` directory glob so a new
-event file can never be silently left out, and the count units include
-个/处.
-
-fix-r3 (#1190 r3 review P1, coordinator-escalated "ruler false PASS"): the
-glob-derived scan set is no longer trusted alone.  ``check_scan_set`` pins
-the committed #1190 events by name and refuses any ``frozen/`` file whose
-name carries 1190 but matches no scan glob, so a deleted or renamed-away
-event is ``COUNT DRIFT`` (exit 2) instead of a silently green gate.
-
-fix-r5: doc_counts/check_docs/check_scan_set and the binding checker are
-pure functions over in-memory inputs. The CLI reads only the real frozen/
-directory, rejecting nonregular entries without following links. Meta controls
-construct corruptions in memory; there is no alternate-directory CLI option.
+#1190 fix-r6: documentation does not maintain numeric copies. ``--list``
+prints the current panel names, mutation names and derived counts without
+creating evidence or executing controls. There is no prose parser, document
+scan, frozen-directory adapter or document meta-control entry point.
 
 Per-row results live in memory only.  ``summary.json`` is published exactly
 once, after ``mutating_sources`` restored every guarded file and verified it
@@ -79,12 +57,8 @@ summary, and the payload is written to a sibling temp file and renamed.
 """
 import argparse
 import ast
-import fnmatch
 import json
-import os
-import stat
 from pathlib import Path
-import re
 import sys
 
 sys.dont_write_bytecode = True
@@ -97,103 +71,6 @@ SESSION = ROOT / 'scripts/gateway-parity/session_domain.py'
 COMMON = ROOT / 'scripts/gateway-parity/common.py'
 PANEL = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 RUN_CONTROL = Path(__file__).resolve().with_name('run_control.py')
-
-# Only this adapter knows filesystem paths. All drift checks below use maps.
-DOCUMENTS = {
-    'README': Path(__file__).resolve().with_name('README.md'),
-    'A19-HOST-001-R1': ROOT / 'specs/gateway-parity/diffs/A19-HOST-001-R1.md',
-}
-SCAN_GLOBS = ('*-1190.md', '*-1190-*.md')
-KNOWN_EVENTS = ('20261101-1190.md', '20261101-1190-r2.md')
-
-
-def read_frozen():
-    """Read the fixed real directory, never links, subdirectories or devices.
-
-    Open each directory component relative to its parent's descriptor with
-    O_NOFOLLOW. Reject nonregular children before opening, and recheck the
-    opened descriptor; O_NONBLOCK also prevents a raced FIFO from hanging.
-    The returned bytes are reused by the meta-control read-only regression.
-    """
-    descriptor = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        for component in ('specs', 'gateway-parity', 'frozen'):
-            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                            dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = child
-        data = {}
-        for name in sorted(os.listdir(descriptor)):
-            if not stat.S_ISREG(os.stat(name, dir_fd=descriptor,
-                                       follow_symlinks=False).st_mode):
-                raise ValueError(f'#1190 FROZEN INPUT: nonregular entry {name}')
-            child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                            dir_fd=descriptor)
-            with os.fdopen(child, 'rb') as stream:
-                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                    raise ValueError(f'#1190 FROZEN INPUT: nonregular opened entry {name}')
-                data[name] = stream.read()
-        return data
-    finally:
-        os.close(descriptor)
-
-
-def read_documents():
-    return {label: path.read_text(encoding='utf-8') for label, path in DOCUMENTS.items()}
-
-
-def decode_frozen(data):
-    return {name: content.decode('utf-8') for name, content in data.items()}
-
-
-def doc_counts(documents, frozen):
-    """Select registered prose from memory using the single scan-glob source."""
-    return {**documents, **{name: frozen[name] for name in sorted(frozen)
-                           if any(fnmatch.fnmatchcase(name, pattern)
-                                  for pattern in SCAN_GLOBS)}}
-
-# <number>(条|档|项|个|处): the count units of the drifted phrases the
-# reviews found.  The number must stand alone (no adjacent alphanumerics); a
-# space between the number and the unit ("24 项") still pins the count.
-COUNT_PHRASE = re.compile(
-    r'(?<![0-9A-Za-z])([0-9]{1,4}|[零一二两三四五六七八九十百]{1,5})[ ]?(条|档|项|个|处)(?![A-Za-z])')
-
-_CHINESE_DIGITS = {'零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
-                   '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
-
-# Which derivable counter a line's count phrase claims, by keyword.  The first
-# matching row wins; a line no row matches has no derivable counter, so its
-# count is prose drift (reword to reference the table or derived-counts.json).
-COUNT_CATEGORIES = (
-    ('calibrationCases', ('calibration', 'CALIBRATION', '校准')),
-    ('derivationExpectationCases', ('EXPECTATION_RUST_DERIVATION', 'derivation')),
-    ('expectationCases', ('EXPECTATION_CASES', '数据负控', '期望控制')),
-    ('mutationRows', ('MUTATIONS', '变异', 'canonical', 'require', '元负控')),
-)
-
-
-def _count_value(text):
-    """Arabic or simple Chinese numeral (up to 999) as an int, else None."""
-    if text.isdigit():
-        return int(text)
-    total, pending = 0, None
-    for character in text:
-        if character in _CHINESE_DIGITS:
-            pending = _CHINESE_DIGITS[character]
-            continue
-        unit = {'十': 10, '百': 100}.get(character)
-        if unit is None:
-            return None
-        total += (pending if pending is not None else 1) * unit
-        pending = None
-    return total + (pending or 0)
-
-
-def _count_category(line):
-    for category, keywords in COUNT_CATEGORIES:
-        if any(keyword in line for keyword in keywords):
-            return category
-    return None
 
 MUTATIONS = [
     # The registry-events canonical-output require (D2's no-S(T) assertion and
@@ -364,42 +241,6 @@ def check_bindings(expectation_cases, mutations, bound, unaffected):
     return errors
 
 
-def check_docs(counts, documents, frozen):
-    """Pure count-phrase check of the selected registration prose."""
-    errors = []
-    for label, text in doc_counts(documents, frozen).items():
-        for number, line in enumerate(text.splitlines(), 1):
-            for match in COUNT_PHRASE.finditer(line):
-                value = _count_value(match[1])
-                category = _count_category(line)
-                if value is None:
-                    errors.append(f"{label}:{number}: '{match[0]}' is not a "
-                                  'number this check can read')
-                elif category is None:
-                    errors.append(f"{label}:{number}: '{match[0]}' has no derivable "
-                                  'count category on its line; reference the table '
-                                  'or derived-counts.json instead')
-                elif value != counts[category]:
-                    errors.append(f"{label}:{number}: '{match[0]}' pins {value} "
-                                  f'but derived {category} is {counts[category]} '
-                                  '(runtime-derived counts, recorded to '
-                                  'derived-counts.json)')
-    return errors
-
-
-def check_scan_set(frozen):
-    """Pure floor and reverse-coverage check, including unscanned event names."""
-    errors = []
-    scanned = set(doc_counts({}, frozen))
-    for name in KNOWN_EVENTS:
-        if name not in scanned:
-            errors.append(f'event file {name} is missing from the doc scan set')
-    for name in sorted(frozen):
-        if '1190' in name and name not in scanned:
-            errors.append(f'frozen event {name} matches no doc scan glob')
-    return errors
-
-
 def derived_counts(expectation_cases, calibration_cases, mutations):
     return {'expectationCases': len(expectation_cases),
             'derivationExpectationCases':
@@ -475,32 +316,28 @@ def main():
                         help='fresh A5.2a calibration output (six-cells raw data)')
     parser.add_argument('--only', action='append')
     parser.add_argument('--check-anchors', action='store_true')
+    parser.add_argument('--list', action='store_true',
+                        help='print current control/mutation names and counts; read-only')
     parser.add_argument('--baseline', default='HEAD',
                         help='tree-ish the guarded sources must equal; HEAD for '
                              'the delivered post-commit run (a dirty rehearsal may '
                              'pass git stash create)')
     args = parser.parse_args()
     expectation_cases = panel_table('EXPECTATION_CASES')
-    # Counts are derived, never pinned in prose (#1190): the same
-    # EXPECTATION_CASES table this runner machine-checks is the authority for
-    # how many controls exist, and the mutation table for how many requires
-    # are covered.  Both drift gates run in every mode (including
-    # --check-anchors) before any mutation row executes.
-    counts = derived_counts(expectation_cases, panel_table('CALIBRATION_CASES'), MUTATIONS)
-    try:
-        frozen = decode_frozen(read_frozen())
-        documents = read_documents()
-    except (OSError, UnicodeError, ValueError) as error:
-        print(f'COUNT DRIFT: #1190 registration input: {error}', file=sys.stderr)
-        return 2
+    calibration_cases = panel_table('CALIBRATION_CASES')
+    counts = derived_counts(expectation_cases, calibration_cases, MUTATIONS)
     drift = [('BINDING DRIFT', message) for message in
              check_bindings(expectation_cases, MUTATIONS, BOUND, UNAFFECTED)]
-    drift += [('COUNT DRIFT', message) for message in check_docs(counts, documents, frozen)]
-    drift += [('COUNT DRIFT', message) for message in check_scan_set(frozen)]
     if drift:
         for prefix, message in drift:
             print(prefix + ': ' + message, file=sys.stderr)
         return 2
+    if args.list:
+        print(json.dumps({'EXPECTATION_CASES': expectation_cases,
+                          'CALIBRATION_CASES': calibration_cases,
+                          'MUTATIONS': [row[0] for row in MUTATIONS],
+                          'counts': counts}, indent=2, ensure_ascii=False))
+        return 0
     print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
@@ -510,7 +347,7 @@ def main():
     if args.check_anchors:
         return check_anchors(selected)
     if args.output is None or args.source is None:
-        print('--output and --source are required unless --check-anchors is used',
+        print('--output and --source are required unless --list or --check-anchors is used',
               file=sys.stderr)
         return 2
     out = new_output_directory(args.output)
