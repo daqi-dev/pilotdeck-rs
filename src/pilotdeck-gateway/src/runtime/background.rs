@@ -201,6 +201,12 @@ struct EntryState {
     task: BackgroundBashTask,
     output: OutputStore,
     child: Option<ChildState>,
+    /// #1233 fix-r1: monotonically increasing sequence number, assigned under
+    /// this lock at each event that persists (append, settle, restore
+    /// reconciliation). The snapshot store drops a write whose sequence is
+    /// older than the newest accepted one for the task, so a late persist
+    /// cannot overwrite a newer snapshot (#1233 P0-1).
+    persist_seq: u64,
 }
 
 struct Entry {
@@ -212,10 +218,14 @@ struct Entry {
 }
 
 impl Entry {
-    fn append(&self, chunk: &[u8]) {
+    /// #1233 fix-r1: returns the event-time sequence number assigned under
+    /// the lock, so callers can hand it to the snapshot store.
+    fn append(&self, chunk: &[u8]) -> u64 {
         let mut state = self.state.lock().unwrap();
         state.output.append(chunk);
         state.task.output_bytes = state.output.total;
+        state.persist_seq += 1;
+        state.persist_seq
     }
     fn snapshot(&self) -> BackgroundBashTask {
         self.state.lock().unwrap().task.clone()
@@ -639,13 +649,19 @@ impl BackgroundTaskRuntime {
                     use crate::runtime::background_snapshot::{
                         PersistedBackgroundTask, PersistedOutput, persist_task,
                     };
-                    store.write(PersistedBackgroundTask {
-                        task: persist_task(&entry),
-                        output: PersistedOutput {
-                            total_bytes: 0,
-                            persisted: false,
+                    store.write(
+                        PersistedBackgroundTask {
+                            task: persist_task(&entry),
+                            output: PersistedOutput {
+                                total_bytes: 0,
+                                persisted: false,
+                            },
                         },
-                    })
+                        // No entry exists yet: the initial metadata write is
+                        // older than any later event write, and seq 0 is
+                        // exactly the store's "nothing accepted yet" floor.
+                        0,
+                    )
                 })
             },
             "Background initial snapshot construction failed.",
@@ -702,6 +718,7 @@ impl BackgroundTaskRuntime {
                     task,
                     output,
                     child,
+                    persist_seq: 0,
                 }),
                 done: watch::channel(false).0,
                 closed: watch::channel(false).0,
@@ -778,13 +795,18 @@ impl BackgroundTaskRuntime {
                             use crate::runtime::background_snapshot::{
                                 PersistedBackgroundTask, PersistedOutput, persist_task,
                             };
-                            drop(store.write(PersistedBackgroundTask {
-                                task: persist_task(&task),
-                                output: PersistedOutput {
-                                    total_bytes: 0,
-                                    persisted: false,
+                            drop(store.write(
+                                PersistedBackgroundTask {
+                                    task: persist_task(&task),
+                                    output: PersistedOutput {
+                                        total_bytes: 0,
+                                        persisted: false,
+                                    },
                                 },
-                            }));
+                                // Same floor as the initial Pending write; the
+                                // entry's later settle bumps past it.
+                                0,
+                            ));
                         }
                     },
                     "Background failed snapshot construction failed.",
@@ -969,6 +991,7 @@ impl BackgroundTaskRuntime {
                     task,
                     output,
                     child: None,
+                    persist_seq: 0,
                 }),
                 done: watch::channel(true).0,
                 closed: watch::channel(false).0,
@@ -984,8 +1007,13 @@ impl BackgroundTaskRuntime {
             if was_unsettled {
                 let store = Arc::clone(store);
                 let entry_clone = Arc::clone(&entry);
+                let persist_seq = {
+                    let mut entry_state = entry_clone.state.lock().unwrap();
+                    entry_state.persist_seq += 1;
+                    entry_state.persist_seq
+                };
                 tokio::spawn(async move {
-                    let _ = Self::persist_entry_static(&store, &entry_clone).await;
+                    let _ = Self::persist_entry_static(&store, &entry_clone, persist_seq).await;
                 });
             }
         }
@@ -994,6 +1022,7 @@ impl BackgroundTaskRuntime {
     async fn persist_entry_static(
         store: &Arc<dyn crate::runtime::background_snapshot::BackgroundTaskSnapshotStore>,
         entry: &Arc<Entry>,
+        seq: u64,
     ) -> std::io::Result<()> {
         use crate::runtime::background_snapshot::{
             PersistedBackgroundTask, PersistedOutput, persist_task,
@@ -1024,14 +1053,7 @@ impl BackgroundTaskRuntime {
             },
         };
 
-        store.write(snapshot).await
-    }
-
-    #[allow(dead_code)]
-    async fn persist_entry(&self, entry: &Arc<Entry>) {
-        if let Some(store) = &self.inner.snapshot_store {
-            let _ = Self::persist_entry_static(store, entry).await;
-        }
+        store.write(snapshot, seq).await
     }
 
     /// `dispose()`: refuse new tasks, settle accepted starts, stop every
@@ -1098,11 +1120,10 @@ impl BackgroundTaskRuntime {
                     let (store, entry) = (Arc::clone(store), Arc::clone(entry));
                     // Isolate both future construction and polling. A panic is
                     // best-effort failure, just like io::Err: continue draining.
-                    let _ =
-                        tokio::spawn(
-                            async move { Self::persist_entry_static(&store, &entry).await },
-                        )
-                        .await;
+                    let _ = tokio::spawn(async move {
+                        Self::persist_entry_static(&store, &entry, u64::MAX).await
+                    })
+                    .await;
                 }
                 let store = Arc::clone(store);
                 // Isolate both future construction and polling: a panicking
@@ -1168,21 +1189,28 @@ impl Inner {
     /// `appendOutput`: record the chunk, then persist best-effort so a crash
     /// before settlement still leaves a restartable running snapshot.
     fn append_output(&self, entry: &Arc<Entry>, chunk: &[u8]) {
-        entry.append(chunk);
+        // #1233 fix-r1: the sequence number is assigned under the entry lock
+        // at the append, not when the spawned persist runs, so a slow older
+        // write cannot win over a newer snapshot.
+        let seq = entry.append(chunk);
         if let Some(store) = &self.snapshot_store {
             let store = Arc::clone(store);
             let entry = Arc::clone(entry);
             tokio::spawn(async move {
-                let _ = BackgroundTaskRuntime::persist_entry_static(&store, &entry).await;
+                let _ = BackgroundTaskRuntime::persist_entry_static(&store, &entry, seq).await;
             });
         }
     }
 
     /// `settleEntry` + `notifyCompletion`, then resolve `done`.
     fn settle(&self, entry: &Arc<Entry>) {
-        let (event, should_persist) = {
+        let (event, should_persist, persist_seq) = {
             let mut state = entry.state.lock().unwrap();
             state.task.output_bytes = state.output.total;
+            // #1233 fix-r1: assigned under the lock with the terminal state,
+            // so the terminal persist outranks every earlier append persist.
+            state.persist_seq += 1;
+            let persist_seq = state.persist_seq;
             let task = &state.task;
             let should_persist = task.status.is_terminal();
             let event = match task.ended_at {
@@ -1209,7 +1237,7 @@ impl Inner {
                 }
                 _ => None,
             };
-            (event, should_persist)
+            (event, should_persist, persist_seq)
         };
         if let (Some(event), Some(handler)) = (event, &self.on_completion) {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(event)));
@@ -1221,7 +1249,8 @@ impl Inner {
             let entry = Arc::clone(entry);
             tokio::spawn(async move {
                 // Call write() to queue the persist, it will be flushed on dispose
-                let _ = BackgroundTaskRuntime::persist_entry_static(&store, &entry).await;
+                let _ =
+                    BackgroundTaskRuntime::persist_entry_static(&store, &entry, persist_seq).await;
             });
         }
         entry.done.send_replace(true);
@@ -1865,6 +1894,10 @@ pub fn background_tasks_in_registry(
 mod panic_tests;
 
 #[cfg(test)]
+#[path = "background/persist_order_tests.rs"]
+mod persist_order_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1878,6 +1911,7 @@ mod tests {
         fn write(
             &self,
             _: crate::runtime::background_snapshot::PersistedBackgroundTask,
+            _: u64,
         ) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
             let first = self.first_write.lock().unwrap().take();
             if let Some(first) = first {
@@ -2989,6 +3023,7 @@ mod tests {
             fn write(
                 &self,
                 snapshot: crate::runtime::background_snapshot::PersistedBackgroundTask,
+                _: u64,
             ) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
                 lock(&self.0).push(snapshot.task.status);
                 Box::pin(std::future::pending())

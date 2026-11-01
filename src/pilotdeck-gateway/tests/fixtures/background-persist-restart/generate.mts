@@ -304,6 +304,38 @@ for (const mode of ['ok', 'write-failure'] as const) {
   await fs.rm(root, { recursive: true, force: true });
 }
 
+// G. Corrupted snapshot files: every defect that a crash-style partial write
+//    can leave behind must fail the store constructor closed (bad JSON, an
+//    unsupported version, a repeated taskId, an invalid status). Each variant
+//    keeps every other field fully valid, so only the named defect rejects.
+for (const variant of ['bad-json', 'version-2', 'duplicate-id', 'invalid-status'] as const) {
+  const root = await fs.mkdtemp(join(tmpdir(), 'pdrs-1233-g-'));
+  const stateDir = join(root, 'state');
+  await fs.mkdir(stateDir, { recursive: true });
+  const task = (taskId: string, status: string) => ({
+    taskId, type: 'local_bash', kind: 'bash', command: 'printf abcdef', cwd: '/',
+    status, completionStatusSentInAttachment: false, lastReportedTotalLines: 0,
+    isBackgrounded: true, interrupted: false,
+    startedAt: '2026-10-24T00:00:00.000Z', endedAt: '2026-10-24T00:00:01.000Z',
+    exitCode: 0, outputBytes: 0,
+  });
+  const output = { totalBytes: 0, persisted: false };
+  const payloads: Record<string, () => string> = {
+    'bad-json': () => '{ not json',
+    'version-2': () => JSON.stringify({ version: 2, tasks: [{ task: task('task-a', 'completed'), output }] }),
+    'duplicate-id': () => JSON.stringify({ version: 1, tasks: [{ task: task('task-a', 'completed'), output }, { task: task('task-a', 'completed'), output }] }),
+    'invalid-status': () => JSON.stringify({ version: 1, tasks: [{ task: task('task-a', 'banana'), output }] }),
+  };
+  await fs.writeFile(join(stateDir, 'state.json'), payloads[variant]());
+  let restart: any;
+  try {
+    reopen(stateDir);
+    restart = 'constructed';
+  } catch (error: any) { restart = { name: error.name, message: normText(error.message, stateDir, {}) }; }
+  cases.push({ id: `corrupt-${variant}`, restart });
+  await fs.rm(root, { recursive: true, force: true });
+}
+
 clearTimeout(deadline);
 assertBaseline(baseline);
 assert.deepEqual(await baselineSourceHashes(baseline, sources), sourceSha256);
