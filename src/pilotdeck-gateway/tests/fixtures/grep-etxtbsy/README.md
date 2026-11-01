@@ -43,9 +43,20 @@ ENOENT（fd 中途消失）允许 continue，其余错误、以及 flags 行缺�
 `waitpgid` 收割组内全部死者；expiry 起点移到 `spawned(helper_id)` 之后，
 钩子等待不吃写预算。fix-r1 再收紧：`STRANGER_STARTED_DELAY` 6s→8s，helper
 的 started 等待由轮数改为墙钟（`date +%s`，负载拉不长），测试侧 10s 上限
-单一来源派生。
+单一来源派生。fix-r2b（#1155 r2 评审）：helper 的截止秒数 `+ 1` 补偿
+`date +%s` 整秒截断（仍单一来源派生，真实预算不低于测试侧上限）；
+`end` 在启动 stranger 之前算出（计时起点统一）；**saw 写入前复检同一截止**
+（Codex P1-1——轮询跨截止点暂停后恢复、文件已存在也不能把迟到 started 记
+成 seen，新增受控用例 `a_started_past_the_helper_cap_is_not_seen_after_a_
+paused_poll`：单轮 10s 轮询 + 1s 上限 + 2s 延迟，全部受控不赌负载）；fdinfo
+读失败不再按 errno 分类放过——**复检 fd 本身的 readlink**，fd 仍在且仍指向
+管道则 fail-closed，fd 已消失（任何 errno：ENOENT/ESRCH/EACCES，本机 6.17
+实测：僵尸 fdinfo→ENOENT 而 fd 链接→EACCES、setuid exec 后→EACCES）即释放
+（`fdinfo_unreadable`，配 Linux 单元测试）；pid 模式 stranger 由 `sleep 5`
+改为停驻 `sleep 30`（与组模式一致，只有守卫 kill 能终结），kill 契约因此可
+判杀。
 
-变异体（20 个；绑定测试如无说明均在 `--test scratch_publication`）：
+变异体（23 个；绑定测试如无说明均在 `--test scratch_publication`）：
 
 - `script-direct-write`（`--lib`）：`Scratch::script` 退回修前 `fs::write` +
   chmod（进程内直写被 exec 的路径）——须在 Linux 压测下以 `#1125 etxtbsy`
@@ -105,11 +116,16 @@ ENOENT（fd 中途消失）允许 continue，其余错误、以及 flags 行缺�
   `#1155 the write phase must last its full deadline` 下界断言失败（elapsed
   ≈ 0）；若 expiry 已过导致 writer-exit 竞态先行，则以 `#1125 helper writer
   did not exit by its deadline` 判杀（双锚点，确定性）；
-- `started-cap-hardcoded-short`（#1155 r4 评审 P2，fix-r1 改形状）：helper
+- `started-cap-hardcoded-short`（#1155 r4 评审 P2，fix-r1 改形状，fix-r2b
+  锚点带 `+ 1` 截断补偿）：helper
   侧 started 等待秒数退回字面量 `5`（墙钟，`date +%s` 基准）——8s 延迟的
   `started` 出现前 helper 先放弃（真实余量 3s，与负载无关），死时无 `saw`
   标记，`#1155 the helper must observe the stranger's started signal before it
-  dies` 判杀（确定性）；
+  dies` 判杀（确定性；fix-r2b 起 saw 复检让轮询暂停后恢复的场景同样拒写）；
+- `saw-write-skips-the-cap`（fix-r2b 新增，Codex P1-1）：saw 写入的截止
+  复检被删——受控用例的单轮 10s 轮询跨过 1s 上限与 2s 延迟后恢复、文件
+  已在，迟到 started 被记成 seen，`#1155 a started past the helper's cap
+  must not be recorded as seen after a paused poll` 判杀（任意 unix 确定性）；
 - `boundary-write-end-filter-removed`（#1155 r3 评审 P2-1；fix-r1 改绑，
   DeepSeek P2-2）：扫描去掉 O_WRONLY/O_RDWR 访问模式过滤——健康路径上陌生
   进程的读端（同为 `pipe:[inode]` fd）误报为存活写端，扫描错误进 dead-helper
@@ -122,6 +138,10 @@ ENOENT（fd 中途消失）允许 continue，其余错误、以及 flags 行缺�
 - `boundary-fdinfo-parse-error`（fix-r1 新增，同上）：`strip_prefix`
   破坏 → flags 行永不可解析 → 走通 fail-closed 解析分支，绑定 `has no
   parsable flags line`（Linux 契约）；
+- `boundary-fdinfo-unknown-passed`（fix-r2b 新增，boundary P2 / concurrency
+  P3）：`fdinfo_unreadable` 的 fd 复检改成永不确定——单元测试的活 fd 半边
+  在 expect 处失败，`#1155 an unreadable fdinfo behind a live fd must fail
+  the scan closed` 判杀；其消失 fd 半边钉住释放侧（Linux 契约：/proc）；
 - `stranger-subreaper-removed`（#1155 r3 评审 P2-2，Linux）：subreaper 获取
   改 no-op——孤儿陌生进程落到 PID 1，守卫的 NOWAIT `waitid` 确认得 `ECHILD`，
   严格 Linux 路径把它变成错误（`#1155 the stranger was not reparented to
@@ -129,7 +149,14 @@ ENOENT（fd 中途消失）允许 continue，其余错误、以及 flags 行缺�
 - `stranger-reap-removed`（#1155 r3 评审 P2-2，Linux）：`waitpgid` 组收割
   循环删除——租约下没有 init 兜底，僵尸留在进程组里，组永不为空，
   `#1141 the stranger's process group survived the guard's kill` 超时报错，
-  守卫 end() 的 expect 判杀。
+  守卫 end() 的 expect 判杀；
+- `stranger-pid-kill-removed`（fix-r2b 新增，boundary P3，Linux）：pid 模式
+  守卫的 kill 被删——stranger 停驻 `sleep 30` 不再自行退出，重挂确认 5s
+  超时报 `#1155 the stranger did not die by the guard's kill`，pid 模式用例
+  end() 的 expect `#1155 the stranger must be killed and reaped by the test's
+  guard, not PID 1's` 判杀。kill 错误传播（fix-r1 P2-1 收紧的另一半）为
+  无变异体的防御层：租约下僵尸钉住 pid，真实 kill 不会 ESRCH，本二进制
+  可达路径上无失败可绑定（边界记录于 cases 内联注释与 fix-r2b RESULT）。
 
 `tests/scratch_publication.rs` 是专用集成测试二进制：`tests/common/
 scratch.rs` 被约 35 个集成测试 crate 以 `#[path]` 各编一份，共享文件里不
@@ -148,20 +175,22 @@ etxtbsy` 标记，其他 exec 错误（如 EAGAIN）发 `#1125 exec-error`，在
 
 ```sh
 CARGO_TARGET_DIR=<绝对路径> python3 -I negative_controls.py NEW_OUT_DIR
-# 锚点新鲜度预检（须打印 `20 anchors: ok` 后退出 0）
+# 锚点新鲜度预检（须打印 `23 anchors: ok` 后退出 0）
 python3 -I negative_controls.py --check-anchors
 ```
 
 每个变异体自带 cargo target：两个 ETXTBSY 竞态变异体跑 `--lib`（绑定
-grep 压测），其余 18 个跑 `--test scratch_publication`。
+grep 压测），其余 21 个跑 `--test scratch_publication`。
 
 平台契约：macOS 的 std::process 走 posix_spawn，观察不到继承描述符窗口，
 `script-direct-write` / `helper-in-process-write` 在该平台预期 SURVIVED
 （或因无关失败 INVALID）——这两个竞态负控是 **Linux 契约**，判杀只在
 Linux 宿主（cb8 / CI）上成立；`boundary-write-end-filter-removed` /
 `boundary-fdinfo-read-error` / `boundary-fdinfo-parse-error` /
-`stranger-subreaper-removed` / `stranger-reap-removed` 依赖 `/proc` 与
-`PR_SET_CHILD_SUBREAPER`，同为 **Linux 契约**（非 Linux 内核上扫描与收割
-被 cfg 掉，宿主预期 SURVIVED）；其余 13 个变异体在任意 unix 宿主上确定性
+`boundary-fdinfo-unknown-passed` / `stranger-subreaper-removed` /
+`stranger-reap-removed` / `stranger-pid-kill-removed` 依赖 `/proc` 与
+`PR_SET_CHILD_SUBREAPER`（后两个中前者绑定 cfg linux 的单元测试、后者绑定
+pid_mode 专属件），同为 **Linux 契约**（非 Linux 内核上扫描与收割
+被 cfg 掉，宿主预期 SURVIVED）；其余 14 个变异体在任意 unix 宿主上确定性
 判杀（unix 平台无关，非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
