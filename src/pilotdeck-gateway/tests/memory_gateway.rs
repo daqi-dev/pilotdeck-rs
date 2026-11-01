@@ -125,7 +125,7 @@ fn gateway_replays_real_ts_wrapper_oracle() {
         .expect("#1214 gatewayCases must be an array");
     assert_eq!(
         cases.len(),
-        9,
+        10,
         "#1214 the committed gateway case corpus is pinned"
     );
     let mut replayed_steps = 0;
@@ -237,7 +237,7 @@ fn gateway_replays_real_ts_wrapper_oracle() {
         }
     }
     assert_eq!(
-        replayed_steps, 66,
+        replayed_steps, 74,
         "#1214 the committed gateway step corpus is pinned"
     );
 }

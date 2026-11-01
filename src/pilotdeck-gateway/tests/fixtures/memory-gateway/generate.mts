@@ -285,6 +285,11 @@ await gatewayCase(
 // U+200B are not (Node v22.22.0, fix-r1 whitespace-probe.log). The blank
 // projectKey and sessionKey rows record the rejection; the non-whitespace
 // rows pass validation and keep their raw units through the seams.
+// #1226: five more projectKey cells cover the units the #1214 corpus left
+// unpinned — the OGHAM space and both bounds plus the two single narrow
+// spaces (full set measured again on Node v22.22.0 in the #1226 delivery
+// evidence). Appended at the tail so the #1214 step indices above stay
+// stable for the committed negative-control anchors.
 await gatewayCase('whitespace-trim-boundary', { capability: 'available', management: 'available' }, [
   { op: 'memoryList', input: { projectKey: '\u00a0' } },
   { op: 'memoryList', input: { projectKey: '\ufeff' } },
@@ -305,6 +310,22 @@ await gatewayCase('whitespace-trim-boundary', { capability: 'available', managem
   // scope check and reaches clearSession with its raw units.
   { op: 'memoryWipe', input: { projectKey: PROJECT, scope: 'session', sessionKey: '\u00a0' } },
   { op: 'memoryWipe', input: { projectKey: PROJECT, scope: 'session', sessionKey: '\u200b' } },
+  // #1226: the previously unpinned whitespace units as a blank projectKey.
+  { op: 'memoryList', input: { projectKey: '\u1680' } },
+  { op: 'memoryList', input: { projectKey: '\u2000' } },
+  { op: 'memoryList', input: { projectKey: '\u200a' } },
+  { op: 'memoryList', input: { projectKey: '\u202f' } },
+  { op: 'memoryList', input: { projectKey: '\u205f' } },
+]);
+
+// #1226: a projectKey with leading and trailing whitespace around a real key
+// passes `requireManagementProjectKey` — the wrapper only trims to check
+// emptiness (InProcessGateway.ts:3144-3148) — and the seams receive the raw
+// padded key, ASCII-padded and Zs-padded alike.
+await gatewayCase('project-key-padded-passthrough', { capability: 'available', management: 'available' }, [
+  { op: 'memoryList', input: { projectKey: `  ${PROJECT}  ` } },
+  { op: 'memoryList', input: { projectKey: `\u2003${PROJECT}\u2009` } },
+  { op: 'memoryWipe', input: { projectKey: `\u1680${PROJECT}\u205f`, scope: 'session', sessionKey: 's1' } },
 ]);
 
 const oracle = {

@@ -6,6 +6,10 @@ integration test that must turn red, and restored byte-for-byte. The runner
 never stops at the first failure: it records KILLED / SURVIVED / INVALID with
 a reason for every row and exits non-zero if any row is not KILLED.
 
+#1226 rows bind the exhaustive `js_is_space_unit` / `require_management_project_key`
+lib unit tests (`runtime::memory::gateway::tests`), so the bound-test runner and
+the compile check cover the `--lib` target next to the integration replay.
+
 The new files this lane adds (`runtime/memory/gateway.rs`, the fixture and
 `tests/memory_gateway.rs`) are not in HEAD yet, so ``mutating_sources`` refuses
 to open its window until the delivery is committed; the coordinator runs this
@@ -19,6 +23,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,6 +36,11 @@ SOURCE = ROOT / "src/pilotdeck-gateway/src"
 FIXTURES = ROOT / "src/pilotdeck-gateway/tests/fixtures"
 TEST_TARGET = "memory_gateway"
 TEST = "gateway_replays_real_ts_wrapper_oracle"
+# #1226: full libtest names of the two lib unit tests bound by the rows below.
+LIB_TESTS = {
+    "runtime::memory::gateway::tests::js_is_space_unit_pins_the_ts_trim_whitespace_set",
+    "runtime::memory::gateway::tests::require_management_project_key_only_trims_for_emptiness",
+}
 
 # (name, path, before, after, marker, bound test). The marker is the
 # dedicated per-cell message that proves the intended assertion fired, not
@@ -135,6 +145,60 @@ mutations = [
         "#1214 whitespace-trim-boundary step 1 (memory_list): wire error must match the TS fixture",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
+    # #1226: the replay corpus only pinned 6 of the 25 trim units; these rows
+    # bind the exhaustive lib unit test so every dropped unit or moved range
+    # bound is caught by name.
+    (
+        "whitespace-range-end-shrunk",
+        SOURCE / "runtime/memory/mod.rs",
+        "0x2000..=0x200A",
+        "0x2000..=0x2009",
+        "#1226 js_is_space_unit drifted from the TS trim whitespace set",
+        "runtime::memory::gateway::tests::js_is_space_unit_pins_the_ts_trim_whitespace_set",
+    ),
+    (
+        "whitespace-range-start-shrunk",
+        SOURCE / "runtime/memory/mod.rs",
+        "0x0009..=0x000D",
+        "0x000A..=0x000D",
+        "#1226 js_is_space_unit drifted from the TS trim whitespace set",
+        "runtime::memory::gateway::tests::js_is_space_unit_pins_the_ts_trim_whitespace_set",
+    ),
+    (
+        "whitespace-unit-1680-dropped",
+        SOURCE / "runtime/memory/mod.rs",
+        "            | 0x1680\n",
+        "",
+        "#1226 js_is_space_unit drifted from the TS trim whitespace set",
+        "runtime::memory::gateway::tests::js_is_space_unit_pins_the_ts_trim_whitespace_set",
+    ),
+    (
+        "whitespace-unit-202f-dropped",
+        SOURCE / "runtime/memory/mod.rs",
+        "            | 0x202F\n",
+        "",
+        "#1226 js_is_space_unit drifted from the TS trim whitespace set",
+        "runtime::memory::gateway::tests::js_is_space_unit_pins_the_ts_trim_whitespace_set",
+    ),
+    (
+        "whitespace-unit-205f-dropped",
+        SOURCE / "runtime/memory/mod.rs",
+        "            | 0x205F\n",
+        "",
+        "#1226 js_is_space_unit drifted from the TS trim whitespace set",
+        "runtime::memory::gateway::tests::js_is_space_unit_pins_the_ts_trim_whitespace_set",
+    ),
+    # #1226: the validator must return the raw key, not the trimmed one
+    # (requireManagementProjectKey only trims to check emptiness).
+    (
+        "project-key-returned-trimmed",
+        SOURCE / "runtime/memory/gateway.rs",
+        "        JsValue::String(text) if !js_trim_units(text.units()).is_empty() => Ok(text.clone()),\n",
+        "        JsValue::String(text) if !js_trim_units(text.units()).is_empty() =>\n"
+        "            Ok(JsString::from_utf16(js_trim_units(text.units()).to_vec())),\n",
+        "#1226 U+0009-padded projectKey must keep its raw units",
+        "runtime::memory::gateway::tests::require_management_project_key_only_trims_for_emptiness",
+    ),
 ]
 
 ORACLE = FIXTURES / "memory-gateway/oracle.json"
@@ -157,11 +221,26 @@ def cargo(target, args):
 
 
 def run_bound_test(test):
+    # #1226: two bound tests live in the lib's unit-test binary, not in the
+    # integration replay target.
+    if test in LIB_TESTS:
+        return cargo("lib", [test, "--", "--exact"])
     return cargo(TEST_TARGET, [test, "--", "--exact"])
 
 
 def compile_check():
-    return cargo(TEST_TARGET, ["--no-run"])
+    """Compile every target the bound tests run in.
+
+    #1226: the table binds lib unit tests next to the integration replay, and
+    the lib's ``#[cfg(test)]`` code only compiles under ``--lib``.
+    """
+    results = [cargo(target, ["--no-run"]) for target in ("lib", TEST_TARGET)]
+    return subprocess.CompletedProcess(
+        ["compile-check"],
+        max(result.returncode for result in results),
+        "".join(result.stdout + result.stderr for result in results),
+        "",
+    )
 
 
 ENV = os.environ.copy()
