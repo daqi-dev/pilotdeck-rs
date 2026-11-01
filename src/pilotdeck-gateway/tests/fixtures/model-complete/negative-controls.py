@@ -71,7 +71,7 @@ LIB_RESPONSE_BYTES_TEST = (
 )
 LIB_RESPONSE_DRAIN_TEST = "runtime::model::http::tests::complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error"
 
-CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP", "4"))
+CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP") or os.environ.get("PDRS_CARGO_SLOTS") or "4")  # #1287：宿主按主机配置名额
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
 TEST_TIMEOUT = float(os.environ.get("NEGCTL_TEST_TIMEOUT", "600"))
 TERM_GRACE = float(os.environ.get("NEGCTL_TERM_GRACE", "10"))

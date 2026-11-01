@@ -8,6 +8,9 @@
 # decisions-20261101-host-throughput.md（_tmp/20261101-1140-speedup/）。
 set -uo pipefail
 CAP="${1:-${PDRS_CARGO_SLOTS:-4}}"
+# 只接受正整数（去掉首尾空白）；0、负数、非数字一律报错退出 2，不静默变成「永远满」（#1287 r1 P2-1）
+CAP="${CAP//[[:space:]]/}"
+case "$CAP" in ''|*[!0-9]*|0*) echo "cargo-slots: 上限必须是正整数（参数或 PDRS_CARGO_SLOTS），实际「${CAP}」" >&2; exit 2;; esac
 n=$(ps -axo command= | awk '{print $1}' | grep -cE '(^|/)cargo(-[a-z]+)?$' || true)
 echo "cargo-slots: 在跑 $n / 上限 $CAP"
 [ "$n" -lt "$CAP" ]
