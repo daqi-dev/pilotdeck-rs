@@ -885,3 +885,302 @@ fn recurring_nonnorthern_and_nonhour_rules_keep_former_offsets() {
         );
     }
 }
+
+// -- #1324: ZonedPartsResolver (parse once, resolve per minute) --------------
+
+/// Pinned gold parts observed on Node v22.22.0 / ICU 78.2 (probe originals in
+/// the round directory). `parts_at` must reproduce them exactly; the instants
+/// straddle real 2026 DST transitions at ±1ms so a wrong offset rule or a
+/// wall-time conversion slip cannot pass. The values are stable rules (US
+/// 2007+, EU 1996+, Lord Howe/Chatham 2008+): any tzdata of this century
+/// agrees.
+#[test]
+fn resolver_parts_match_zoned_datetime_parts_across_zones_and_transitions() {
+    // (zone, epoch ms, offset seconds, year, month, day, hour, minute, second,
+    //  weekday 0=Sunday)
+    type GoldRow<'a> = (&'a str, i64, i32, i64, u32, u32, u32, u32, u32, u32);
+    let gold: &[GoldRow] = &[
+        // America/New_York, spring forward 2026-03-08T07:00:00Z.
+        (
+            "America/New_York",
+            1_772_953_199_999,
+            -18_000,
+            2026,
+            3,
+            8,
+            1,
+            59,
+            59,
+            0,
+        ),
+        (
+            "America/New_York",
+            1_772_953_200_000,
+            -14_400,
+            2026,
+            3,
+            8,
+            3,
+            0,
+            0,
+            0,
+        ),
+        // America/New_York, fall back 2026-11-01T06:00:00Z.
+        (
+            "America/New_York",
+            1_793_512_799_999,
+            -14_400,
+            2026,
+            11,
+            1,
+            1,
+            59,
+            59,
+            0,
+        ),
+        (
+            "America/New_York",
+            1_793_512_800_000,
+            -18_000,
+            2026,
+            11,
+            1,
+            1,
+            0,
+            0,
+            0,
+        ),
+        // Europe/Berlin, spring forward 2026-03-29T01:00:00Z.
+        (
+            "Europe/Berlin",
+            1_774_745_999_999,
+            3_600,
+            2026,
+            3,
+            29,
+            1,
+            59,
+            59,
+            0,
+        ),
+        (
+            "Europe/Berlin",
+            1_774_746_000_000,
+            7_200,
+            2026,
+            3,
+            29,
+            3,
+            0,
+            0,
+            0,
+        ),
+        // Europe/Berlin, fall back 2026-10-25T01:00:00Z.
+        (
+            "Europe/Berlin",
+            1_792_889_999_999,
+            7_200,
+            2026,
+            10,
+            25,
+            2,
+            59,
+            59,
+            0,
+        ),
+        (
+            "Europe/Berlin",
+            1_792_890_000_000,
+            3_600,
+            2026,
+            10,
+            25,
+            2,
+            0,
+            0,
+            0,
+        ),
+        // Australia/Lord_Howe, DST end 2026-04-04T15:00:00Z (+11 → +10:30).
+        (
+            "Australia/Lord_Howe",
+            1_775_314_799_999,
+            39_600,
+            2026,
+            4,
+            5,
+            1,
+            59,
+            59,
+            0,
+        ),
+        (
+            "Australia/Lord_Howe",
+            1_775_314_800_000,
+            37_800,
+            2026,
+            4,
+            5,
+            1,
+            30,
+            0,
+            0,
+        ),
+        // Pacific/Chatham, DST end 2026-04-04T14:00:00Z (+13:45 → +12:45).
+        (
+            "Pacific/Chatham",
+            1_775_311_199_999,
+            49_500,
+            2026,
+            4,
+            5,
+            3,
+            44,
+            59,
+            0,
+        ),
+        (
+            "Pacific/Chatham",
+            1_775_311_200_000,
+            45_900,
+            2026,
+            4,
+            5,
+            2,
+            45,
+            0,
+            0,
+        ),
+        // Asia/Shanghai: +08:00 modern, pre-1901 LMT +08:05:43 (ICU prints the
+        // BC-era year as 271822; the proleptic year is -271821, ECMAScript's
+        // minimum Date).
+        ("Asia/Shanghai", 0, 28_800, 1970, 1, 1, 8, 0, 0, 4),
+        (
+            "Asia/Shanghai",
+            -8_640_000_000_000_000,
+            29_143,
+            -271_821,
+            4,
+            20,
+            8,
+            5,
+            43,
+            2,
+        ),
+        // Fixed-offset and case-insensitive admissions.
+        ("UTC", 0, 0, 1970, 1, 1, 0, 0, 0, 4),
+        (
+            "UTC",
+            -8_640_000_000_000_000,
+            0,
+            -271_821,
+            4,
+            20,
+            0,
+            0,
+            0,
+            2,
+        ),
+        ("+05:30", 0, 19_800, 1970, 1, 1, 5, 30, 0, 4),
+        (
+            "+05:30",
+            8_640_000_000_000_000,
+            19_800,
+            275_760,
+            9,
+            13,
+            5,
+            30,
+            0,
+            6,
+        ),
+        ("-0800", 0, -28_800, 1969, 12, 31, 16, 0, 0, 3),
+        (
+            "-0800",
+            8_640_000_000_000_000,
+            -28_800,
+            275_760,
+            9,
+            12,
+            16,
+            0,
+            0,
+            5,
+        ),
+        ("etc/gmt+5", 0, -18_000, 1969, 12, 31, 19, 0, 0, 3),
+    ];
+    for &(zone, epoch, offset, year, month, day, hour, minute, second, weekday) in gold {
+        let resolver = system_clock::ZonedPartsResolver::new(zone)
+            .unwrap_or_else(|error| panic!("#1324 {zone} @ {epoch}: admission failed: {error:?}"));
+        let parts = resolver
+            .parts_at(epoch)
+            .unwrap_or_else(|error| panic!("#1324 {zone} @ {epoch}: {error:?}"));
+        assert_eq!(
+            parts.offset_seconds, offset,
+            "#1324 {zone} @ {epoch}: offset differs from the pinned gold"
+        );
+        assert_eq!(
+            (
+                parts.year,
+                parts.month,
+                parts.day,
+                parts.hour,
+                parts.minute,
+                parts.second,
+                parts.weekday
+            ),
+            (year, month, day, hour, minute, second, weekday),
+            "#1324 {zone} @ {epoch}: local parts differ from the pinned gold"
+        );
+    }
+}
+
+#[test]
+fn resolver_weekday_agrees_with_gregorian_calendar() {
+    // 1970-01-01 was a Thursday; weekday 0 is Sunday (matches the
+    // Intl weekday index the cron matcher consumes).
+    let utc = system_clock::ZonedPartsResolver::new("UTC").unwrap();
+    for (epoch, weekday) in [
+        (0i64, 4u32),           // 1970-01-01, Thursday
+        (86_400_000, 5),        // 1970-01-02, Friday
+        (259_200_000, 0),       // 1970-01-04, Sunday
+        (345_600_000, 1),       // 1970-01-05, Monday
+        (1_767_225_600_000, 4), // 2026-01-01, Thursday
+        (1_767_484_800_000, 0), // 2026-01-04, Sunday
+        (1_767_308_400_000, 4), // 2026-01-01 23:00Z, Thursday
+        (-1, 3),                // 1969-12-31T23:59:59.999Z, Wednesday
+    ] {
+        assert_eq!(utc.parts_at(epoch).unwrap().weekday, weekday, "{epoch}");
+    }
+    // A zone ahead of UTC can roll the same instant onto the next day.
+    let kiritimati = system_clock::ZonedPartsResolver::new("Pacific/Kiritimati").unwrap();
+    assert_eq!(utc.parts_at(36_000_000).unwrap().weekday, 4); // 1970-01-01 10:00Z
+    // 2026-01-01 10:10Z: +14 rolls it to 2026-01-02 (a Friday). The same
+    // instant in 1970 was still -10:30 there; the zone's own history decides.
+    assert_eq!(utc.parts_at(1_767_262_200_000).unwrap().weekday, 4);
+    assert_eq!(kiritimati.parts_at(1_767_262_200_000).unwrap().weekday, 5);
+}
+
+#[test]
+fn resolver_rejects_zones_the_host_tree_lacks() {
+    assert!(system_clock::ZonedPartsResolver::new("Not/AZone").is_err());
+    assert!(system_clock::ZonedPartsResolver::new("").is_err());
+    assert!(system_clock::ZonedPartsResolver::new("Z").is_err());
+}
+
+#[test]
+fn resolver_fixed_offset_zone_never_shifts() {
+    let ist = system_clock::ZonedPartsResolver::new("+05:30").unwrap();
+    for epoch in [
+        0i64,
+        1_767_225_600_000,
+        1_799_999_999_999,
+        -1_767_225_600_000,
+    ] {
+        let parts = ist.parts_at(epoch).unwrap();
+        assert_eq!(parts.offset_seconds, 19_800, "{epoch}");
+        assert_eq!(
+            (epoch.div_euclid(1000) + 19_800) / 86_400,
+            (epoch + 19_800_000) / 86_400_000
+        );
+    }
+}

@@ -117,7 +117,10 @@ pub fn parse_node22_date_with_local(
         .contains(&utc)
         .then_some(utc as f64))
 }
-fn resolve_local(wall: i64) -> Result<i64, JsString> {
+/// The production local-wall resolver: the process-TZ TZif bytes (see
+/// `system_tzif`), exported so downstream ports can inject the same policy
+/// into `parse_node22_date_with_local`.
+pub fn resolve_local(wall: i64) -> Result<i64, JsString> {
     let bytes = system_tzif().ok_or_else(|| JsString::from(
         "NODE22_DATE_LOCAL_SYSTEM_TZIF_UNSUPPORTED: no readable safe system TZif establishes the offset for this valid local date."
     ))?;
@@ -236,7 +239,8 @@ fn resolve_zone_local(wall: i64, zone: tz::TimeZoneRef<'_>) -> Result<i64, JsStr
 /// One local wall-clock reading in an admitted IANA zone or fixed offset.
 /// The same checked TZif profile that backs local date parsing is used, so the
 /// gateway never re-parses timezone files or guesses an offset. `weekday` is
-/// derived by the caller; month/day are 1-based.
+/// 0=Sunday..=6=Saturday (Intl `weekday: "short"` order); month/day are
+/// 1-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)] // constructed in main crate; flagged dead in test-only #[path] include
 pub struct ZonedDateTimeParts {
@@ -246,7 +250,73 @@ pub struct ZonedDateTimeParts {
     pub hour: u32,
     pub minute: u32,
     pub second: u32,
+    pub weekday: u32,
     pub offset_seconds: i32,
+}
+
+/// A timezone admitted once and reused across many instants: the same
+/// admission rules and data source as [`zoned_datetime_parts`] (an ICU
+/// UTC-offset identifier, or an IANA name matched case-insensitively against
+/// the system zoneinfo tree), with the TZif bytes parsed a single time.
+/// #1324's minute-granular cron scan resolves a zone once and then walks up
+/// to 366*24*60 candidates over it, so the per-instant entry point's
+/// read-and-parse-per-call cost is not acceptable there.
+#[derive(Clone)]
+#[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
+pub enum ZonedPartsResolver {
+    FixedOffset(i32),
+    SystemZone(tz::TimeZone),
+}
+
+#[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
+impl ZonedPartsResolver {
+    pub fn new(timezone: &str) -> Result<Self, JsString> {
+        match parse_offset_timezone(timezone) {
+            Some(offset) => Ok(Self::FixedOffset(offset)),
+            None => {
+                let bytes = timezone_tzif(timezone)
+                    .ok_or_else(|| JsString::from("Invalid time zone specified"))?;
+                Ok(Self::SystemZone(
+                    tz::TimeZone::from_tz_data(&bytes)
+                        .map_err(|_| JsString::from("Invalid time zone specified"))?,
+                ))
+            }
+        }
+    }
+
+    fn offset_seconds(&self, epoch_ms: i64) -> Result<i32, JsString> {
+        match self {
+            Self::FixedOffset(offset) => Ok(*offset),
+            Self::SystemZone(zone) => zone
+                .find_local_time_type(epoch_ms.div_euclid(1000))
+                .map_err(|_| JsString::from("Invalid time zone specified"))
+                .map(|time_type| time_type.ut_offset()),
+        }
+    }
+
+    pub fn parts_at(&self, epoch_ms: i64) -> Result<ZonedDateTimeParts, JsString> {
+        let offset_seconds = self.offset_seconds(epoch_ms)?;
+        let local_seconds = epoch_ms
+            .div_euclid(1000)
+            .checked_add(i64::from(offset_seconds))
+            .ok_or_else(|| JsString::from("Invalid time value"))?;
+        let days = local_seconds.div_euclid(86_400);
+        let time = local_seconds.rem_euclid(86_400);
+        let (year, month, day) = civil_from_days(days);
+        // 1970-01-01 was a Thursday; weekday 0 is Sunday.
+        let weekday = (days + 4).rem_euclid(7);
+        Ok(ZonedDateTimeParts {
+            year,
+            month: u32::try_from(month).map_err(|_| JsString::from("Invalid time value"))?,
+            day: u32::try_from(day).map_err(|_| JsString::from("Invalid time value"))?,
+            hour: u32::try_from(time / 3_600).map_err(|_| JsString::from("Invalid time value"))?,
+            minute: u32::try_from(time / 60 % 60)
+                .map_err(|_| JsString::from("Invalid time value"))?,
+            second: u32::try_from(time % 60).map_err(|_| JsString::from("Invalid time value"))?,
+            weekday: u32::try_from(weekday).map_err(|_| JsString::from("Invalid time value"))?,
+            offset_seconds,
+        })
+    }
 }
 
 /// Local fields for one UTC instant. `timezone` is an IANA name (matched
@@ -256,34 +326,7 @@ pub struct ZonedDateTimeParts {
 /// than silently formatted as UTC.
 #[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 pub fn zoned_datetime_parts(epoch_ms: i64, timezone: &str) -> Result<ZonedDateTimeParts, JsString> {
-    let offset_seconds = match parse_offset_timezone(timezone) {
-        Some(offset) => offset,
-        None => {
-            let bytes = timezone_tzif(timezone)
-                .ok_or_else(|| JsString::from("Invalid time zone specified"))?;
-            let zone = tz::TimeZone::from_tz_data(&bytes)
-                .map_err(|_| JsString::from("Invalid time zone specified"))?;
-            zone.find_local_time_type(epoch_ms.div_euclid(1000))
-                .map_err(|_| JsString::from("Invalid time zone specified"))?
-                .ut_offset()
-        }
-    };
-    let local_seconds = epoch_ms
-        .div_euclid(1000)
-        .checked_add(i64::from(offset_seconds))
-        .ok_or_else(|| JsString::from("Invalid time value"))?;
-    let days = local_seconds.div_euclid(86_400);
-    let time = local_seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    Ok(ZonedDateTimeParts {
-        year,
-        month: u32::try_from(month).map_err(|_| JsString::from("Invalid time value"))?,
-        day: u32::try_from(day).map_err(|_| JsString::from("Invalid time value"))?,
-        hour: u32::try_from(time / 3_600).map_err(|_| JsString::from("Invalid time value"))?,
-        minute: u32::try_from(time / 60 % 60).map_err(|_| JsString::from("Invalid time value"))?,
-        second: u32::try_from(time % 60).map_err(|_| JsString::from("Invalid time value"))?,
-        offset_seconds,
-    })
+    ZonedPartsResolver::new(timezone)?.parts_at(epoch_ms)
 }
 
 #[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
@@ -363,7 +406,7 @@ fn days_from_civil(year: i32, month: i32, day: i32) -> i64 {
     let doy = (153 * m + 2) / 5 + i64::from(day) - 1;
     era * 146097 + y * 365 + y / 4 - y / 100 + doy - 719468
 }
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
+pub fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097;
