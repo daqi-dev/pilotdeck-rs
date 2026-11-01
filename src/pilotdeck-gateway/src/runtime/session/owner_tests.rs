@@ -1288,6 +1288,108 @@ async fn close_issued_before_shutdown_keeps_its_own_eviction_for_later_closes_ma
     );
 }
 
+/// D1/D1b (fix-r1 probe1/probe2): a close issued before `shutdown()` in the
+/// same tick — the close's eviction registered but its task not yet run —
+/// keeps the key's own eviction: a failing dispose rejects the close per-key
+/// and joins the shutdown aggregate; a succeeding dispose fulfills both, and
+/// the eviction reason stays `closed`.
+#[tokio::test]
+async fn close_then_shutdown_same_tick_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    probe.0.dispose_failures.lock().unwrap().insert(id(&a));
+    let close_a = owner.close(&"a".into());
+    let shutdown = owner.shutdown();
+    let error = bounded(close_a)
+        .await
+        .expect_err("#1245 a close that starts before a same-tick shutdown must reject with its own dispose failure");
+    assert!(
+        error.message == "Failed to dispose agent handle.",
+        "#1245 the pre-shutdown close transmits the per-key dispose aggregate: got {}",
+        error.message
+    );
+    let shutdown_error = bounded(shutdown)
+        .await
+        .expect_err("#1245 the shutdown must aggregate the close's failed disposal");
+    assert!(
+        shutdown_error.message == "Failed to shut down all agent sessions.",
+        "#1245 the whole-shutdown aggregate stays shutdown's own answer: got {}",
+        shutdown_error.message
+    );
+    assert!(
+        probe.seen("evict:a:closed"),
+        "#1245 the same-tick close keeps its closed reason"
+    );
+    assert!(
+        !probe.seen("evict:a:shutdown"),
+        "#1245 the shutdown must not steal the closed eviction's reason"
+    );
+
+    let probe = Probe::default();
+    let owner = probe.owner();
+    owner.get_or_create(context("b")).await.unwrap();
+    let close_b = owner.close(&"b".into());
+    let shutdown = owner.shutdown();
+    bounded(close_b)
+        .await
+        .expect("#1245 a same-tick close with a succeeding disposal must fulfill");
+    bounded(shutdown)
+        .await
+        .expect("#1245 the shutdown must fulfill when the close's disposal succeeds");
+    assert!(
+        probe.seen("evict:b:closed"),
+        "#1245 the succeeding same-tick close keeps its closed reason"
+    );
+}
+
+/// D2/D2b (fix-r1 probe3/probe4): a close in the same tick as a preceding
+/// `shutdown()` — the per-key drain not yet registered — fulfills even when
+/// the drain's dispose fails; the failure stays in shutdown's own aggregate,
+/// and the drain keeps its `shutdown` reason.
+#[tokio::test]
+async fn shutdown_then_close_same_tick_fulfills_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    probe.0.dispose_failures.lock().unwrap().insert(id(&a));
+    let shutdown = owner.shutdown();
+    bounded(owner.close(&"a".into()))
+        .await
+        .expect("#1245 a same-tick close after shutdown must fulfill before the drain registers");
+    let shutdown_error = bounded(shutdown)
+        .await
+        .expect_err("#1245 the failing drain must still fail the shutdown");
+    assert!(
+        shutdown_error.message == "Failed to shut down all agent sessions.",
+        "#1245 the shutdown-first aggregate keeps its own message: got {}",
+        shutdown_error.message
+    );
+    assert!(
+        probe.seen("evict:a:shutdown"),
+        "#1245 the drain keeps its shutdown reason"
+    );
+    assert!(
+        !probe.seen("evict:a:closed"),
+        "#1245 a close without a record must not fabricate a closed eviction"
+    );
+
+    let probe = Probe::default();
+    let owner = probe.owner();
+    owner.get_or_create(context("b")).await.unwrap();
+    let shutdown = owner.shutdown();
+    bounded(owner.close(&"b".into()))
+        .await
+        .expect("#1245 a same-tick close after shutdown must fulfill on a succeeding drain too");
+    bounded(shutdown)
+        .await
+        .expect("#1245 the shutdown must fulfill when the drain succeeds");
+    assert!(
+        probe.seen("evict:b:shutdown"),
+        "#1245 the succeeding drain keeps its shutdown reason"
+    );
+}
+
 #[tokio::test]
 async fn project_close_during_creation_is_local_matches_ts() {
     let probe = Probe::default();
