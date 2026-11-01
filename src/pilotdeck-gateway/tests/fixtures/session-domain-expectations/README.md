@@ -38,22 +38,31 @@
   （#1190 fix-r3）：`check_scan_set` 把已提交的 #1190 事件按文件名钉为
   下限，且 `frozen/` 下凡文件名含 `1190` 的文件必须落在扫描集内——已知
   事件被删 / 被改名脱出通配时，门禁以专属 `COUNT DRIFT` 拒绝而不是静默
-  缩小扫描集后仍绿。`mutating_sources`（带
+  缩小扫描集后仍绿。fix-r4 起扫描目录可作为参数传入（`--frozen-dir`，默认
+  仍是仓库真实目录），供 `meta_controls.py` 在临时副本上构造上述文件系统
+  情形而不触碰仓库目录。`mutating_sources`（带
   common.py 与 parity 租约）守源码并逐字节还原，summary 原子发布、guard
   失败全 INVALID（#979/#1037）。
-- `meta_controls.py` — 元负控的元负控（#1190 fix-r1，fix-r2 扩容，fix-r3
-  修所有权）：原地变异 `negative_controls.py` 自身的绑定表与被扫描的
+- `meta_controls.py` — 元负控的元负控（#1190 fix-r1，fix-r2 扩容，fix-r4
+  改设计）：原地变异 `negative_controls.py` 自身的绑定表与被扫描的
   README，要求上述漂移闸门各自拒绝——删除 `drop-registry-state-require`
   变异行、清空其 `BOUND` 条目、变形其条目 / 容器 / 变异行、整行重复、
-  README 钉回与推导计数不符的数字（含个单位形式）、在 `frozen/` 里新建
-  携带过期计数的冻结事件夹具，以及删除 / 改名已提交的 #1190 冻结事件
-  （fix-r3 新增的文件系统行，事件文件进 `mutating_sources` 守卫集，行内
-  从守卫快照还原字节）——都必须以 exit 2 加各自专属漂移消息失败；恢复后
-  `--check-anchors` 闸门复绿。夹具行经独占创建（`open(..., 'x')`）取得
-  所有权：预存文件只报 INVALID、原字节不动，`finally` 只删本轮真正创建
-  的文件，守卫窗口外另有按字节核对的兜底清理，任何情况下不删非本轮创建
-  的文件（fix-r3，r3 评审 P0/P2）。逐行记
-  KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出。
+  README 钉回与推导计数不符的数字（含个单位形式）——都必须以 exit 2 加
+  各自专属漂移消息失败；恢复后 `--check-anchors` 闸门复绿。文件系统情形
+  ——在 `frozen/` 通配内新建携带过期计数的冻结事件夹具、删除 / 改名已提交
+  的 #1190 冻结事件（fix-r3 引入的行）——自 fix-r4 起全部改在
+  `tempfile.TemporaryDirectory()` 里 `shutil.copytree` 出来的 `frozen/`
+  副本上构造，再经闸门的 `--frozen-dir` 参数指向该副本检查：仓库的
+  `specs/gateway-parity/frozen/` 不被创建、改名或删除任何目录项，副本由
+  `with` 负责清理（进程被杀也只残留在 /tmp）；rename 对目标位置的任意既有
+  目录项（含 `Path.exists()` 看不见的悬空符号链接）拒绝覆盖；行引用的事件
+  名与闸门自己的 `KNOWN_EVENTS` 下限钉死为单源，不在其中即拒跑；主跑在
+  守卫窗口前后对真实 `frozen/` 做符号链接感知的逐字节快照（悬空链接按其
+  目标字符串入快照），跑完不一致即全表 INVALID、exit 2。`--self-test`
+  三场景回归：子进程真实跑全部文件系统行（全 KILLED）且真实 `frozen/`
+  逐字节不变；快照检出悬空链接被删 / 改目标、符号链接改目标、文件内容
+  变化与新增文件；rename 目标被悬空链接或常规文件占用时拒绝且原状保留。
+  逐行记 KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出。
 
 ## 运行
 
