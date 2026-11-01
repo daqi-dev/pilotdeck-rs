@@ -42,6 +42,8 @@ class Blocked(w.Incomplete):
 def lease_signals():
     """Install before acquiring the lease; restore only after its cleanup."""
     def cancel(signum, _frame):
+        if isinstance(sys.exception(), KeyboardInterrupt):
+            return
         raise KeyboardInterrupt(f'#1140 collection cancelled by signal {signum}')
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
@@ -344,8 +346,9 @@ def publish_session_domain(output, observer, rows, requests, endpoint, driver, s
     receipt is rewritten last, so a partial publish can never score: the
     #1140 frozen loader fails closed on the first missing or altered hash.
     The driver record (#1140 fix-r3) is the driver's own hello answer, kept
-    separate from the observer rows so a binding value rewritten there (wire
-    bytes and receipt hashes recomputed) still disagrees with an anchor.
+    separate from the observer rows to detect an observer-only rewrite (wire
+    bytes and receipt hashes recomputed). #1206: both records and the receipt
+    can be rewritten together; this is not an independently signed anchor.
     """
     w.need(isinstance(driver.get('binding'), dict), 'driver hello binding record missing')
     folder, staging = output / 'session-domain', output / 'session-domain.partial'
@@ -409,7 +412,7 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
     rows, observer_rows, sources = [], [], []
     # The driver's own record of the gateway's hello answer (#1140 fix-r3),
     # written at receive time and published as its own receipt-pinned
-    # artifact; it anchors the binding value independently of the rows.
+    # artifact; #1206 this is a same-collector consistency copy of the rows.
     driver_hello = {}
 
     class Provider(http.server.BaseHTTPRequestHandler):

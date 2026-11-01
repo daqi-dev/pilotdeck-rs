@@ -324,7 +324,8 @@ class E2ETests(unittest.TestCase):
         # #1140 fix-r3: the hello binding rewritten to another well-formed
         # value (wire bytes recomputed, receipt re-pinned) must be rejected on
         # BINDING -- every observer-side comparison is self-consistent with
-        # the rewritten rows, so the driver's own hello record is the anchor.
+        # the rewritten rows, so the unchanged driver copy catches this edit.
+        # #1206: a writer changing both copies and receipt is outside this control.
         folder = self._mutated('forged-binding-value')
 
         def corrupt(document):

@@ -6,7 +6,7 @@
 The shared lease contract is the same as #990 A2 (`run_round.py` +
 `common.py`) and #1015 A1/B2: a run registers every process group it starts,
 defers SIGINT/SIGTERM across spawn/registration and cleanup, and removes a pgid
-from `common.LIVE_GROUPS` only after the group probe proves absence **and** the
+from `common.LIVE_GROUPS` only after absence is proven **and** the
 leader is reaped **and** no cleanup step failed.  If any of those is unproven,
 `common.parity_lock` publishes `owner.json.cleanupPending` and keeps the lease;
 dead-pid/expired takeover must not reclaim it.
@@ -28,10 +28,17 @@ Each test uses its own temporary lease root, so the real
 `/tmp/pdrs-parity.lock` is never touched.  `run_fixture` is driven with a fake
 child for the failure injections and once with a real empty process group
 (`python3 -I -c pass`) to prove the gate also releases when the host probe
-returns `VERIFIED`.
+returns `VERIFIED` on Darwin or retains `BLOCKED` elsewhere. #1221 additionally
+proves lease-only absence with signal 0 returning ESRCH after the held leader
+was reaped; it never sends TERM/KILL after reap. An existing group is polled
+for at most two seconds, and EPERM/errors retain the lease.
+
+The paired #1221 controls live in `../session-lease/`; they cover BLOCKED,
+nonzero exit, cancellation/deadline cleanup and successor acquisition without
+changing scoring or allowing stale cleanupPending takeover.
 
 Covered cells: spawn/registration under blocked signals, cleanup under blocked
-signals, verified empty group releases, `GROUP_NOT_EMPTY` retains with explicit
+signals, verified empty group releases, `GROUP_NOT_EMPTY` without a separate lease proof retains with explicit
 `cleanupPending`, probe `OSError` retains, a leader that was not reaped retains,
 a refused leader kill (`cleanupBlocked`) retains while `processTreeCleanup`
 stays `VERIFIED` (main's scoring), a cleanup helper that raises after the leader
