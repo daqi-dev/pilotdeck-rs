@@ -14,7 +14,7 @@
 
 七格：文本、真实 read、模型流取消、read 执行中取消、sequence 缺号、重复、提前 final。重复帧等待客户端原子可见标记再发送；工具取消等待真实 read 进入后取消。mock 挂起最长 10 秒、MITM I/O 有界、Rust 流最长 45 秒、TS capture 最长 70 秒。前驱不完成时依靠取消/截止退出，不用任意 sleep 充当业务进度。
 
-比较包含完整 GatewayEvent JSON 字节、registry 所有事件和终态、模型/步骤/消息 transcript、重新打开的会话历史与进程回收。随机 entry identity 先验证非空唯一、sequence/parent 连续，再去除；时间只在已验证的持久化 envelope、registry 和本地错误时间处规范化；请求 fingerprint 必须先用原始有序请求重算。原生 session metadata 两条独立严格校验。case 路径、loopback 端口和已核实 owner PID 是环境身份，不参与跨进程值比较。
+比较包含完整 GatewayEvent JSON 字节、registry 所有事件和终态、模型/步骤/消息 transcript、重新打开的会话历史与进程回收。随机 entry identity 先验证非空唯一、sequence/parent 连续，再去除；时间只在已验证的持久化 envelope、registry 和本地错误时间处规范化；请求 fingerprint 必须先用原始有序请求重算。原生 session metadata 两条独立严格校验。case 路径、loopback 端口和已核实 owner PID 是环境身份，不参与跨进程值比较。model_request 系统提示里的 `platform:` 行也是宿主身份（#1204）：金样录的是记录宿主（darwin），sidecar 写各自宿主的 `process.platform`（Linux 宿主为 linux），两侧先各自验 token 再掩成同一 `platform: <PLATFORM>` 比较，其余字节仍逐字精确。
 
 提前 final 的 TS 金样保留其成功行为；Rust 按 #748 明确要求拒绝，差异依据 `specs/gateway-parity/diffs/A7.2-TURN-EARLYFINAL-001-R2.md`。该格错误期望从 TS duplicate 格的完整错误形状派生，生成器不读 Rust 输出。
 

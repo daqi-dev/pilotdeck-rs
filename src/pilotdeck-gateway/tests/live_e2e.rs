@@ -505,6 +505,9 @@ fn durable_entries(transcript: &Value, native: bool) -> Value {
         for key in ["entryId", "parentEntryId", "sequence"] {
             primary.remove(key);
         }
+        if kind == "model_request" {
+            mask_request_platform(&mut primary["request"]);
+        }
         if kind == "session_metadata" {
             if !mutants::on("live-metadata") {
                 metadata.push(Value::Object(primary));
@@ -546,6 +549,39 @@ fn durable_entries(transcript: &Value, native: bool) -> Value {
         );
     }
     Value::Array(selected)
+}
+/// #1204: a `model_request`'s system prompt carries the recording host in its
+/// ``platform:`` line — the committed goldens say ``platform: darwin`` while the
+/// sidecar writes ``process.platform`` (``linux`` on the cb8 hosts). That line
+/// is a host fact, not gateway behavior, so both sides of the golden comparison
+/// are masked to the same token; every other system-prompt byte stays exact.
+fn mask_request_platform(request: &mut Value) {
+    let prompt = request["systemPrompt"]
+        .as_str()
+        .expect("#748 request system prompt")
+        .to_owned();
+    let platforms: Vec<&str> = prompt
+        .lines()
+        .filter_map(|line| line.strip_prefix("platform: "))
+        .collect();
+    negative_assert_eq!(
+        platforms.len(),
+        1,
+        "#748 request system-prompt platform line"
+    );
+    negative_assert!(
+        [
+            "aix", "android", "cygwin", "darwin", "freebsd", "haiku", "linux", "netbsd", "openbsd",
+            "sunos", "win32"
+        ]
+        .contains(&platforms[0]),
+        "#748 request system-prompt platform token"
+    );
+    request["systemPrompt"] = json!(prompt.replacen(
+        &format!("platform: {}", platforms[0]),
+        "platform: <PLATFORM>",
+        1,
+    ));
 }
 fn mask_timestamp(value: &mut Value) {
     let valid = value.as_str().is_some_and(|text| {
