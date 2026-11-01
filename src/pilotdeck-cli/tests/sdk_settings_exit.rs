@@ -478,13 +478,16 @@ async fn replay_matrix(local_only: bool, selected: Option<&str>) {
 
 // D1-SDK-SETTINGS-NESTING-DEPTH-001: Rust's explicit-stack JSON codec accepts
 // arbitrarily deep settings where V8 overflows (TS crashes above ~10k levels).
-// argv cannot carry a deeper payload than this (MAX_ARG_STRLEN 131072 bytes),
-// so the codec-level 100k guard lives in pilotdeck-protocol/tests/codec.rs.
+// 65,529 is the deepest nesting argv can express: the payload is 2*d+12 bytes
+// (`{"nested":` + d*'[' + '0' + d*']' + '}') and Linux MAX_ARG_STRLEN=131,072
+// includes the terminating NUL, so 65,530 levels (131,072 bytes + NUL) fails
+// with E2BIG. Depths past this argv ceiling stay guarded at the codec level
+// in pilotdeck-protocol/tests/codec.rs.
 #[tokio::test(flavor = "current_thread")]
 async fn settings_set_accepts_extreme_nesting() {
     let _port = PORT.lock().await;
     let _lock = ParityLock::acquire().await;
-    let depth = 64_000;
+    let depth = 65_529;
     let deep = format!("{{\"nested\":{}0{}}}", "[".repeat(depth), "]".repeat(depth));
     let expected = format!(
         "{{\"type\":\"request\",\"id\":\"<request>\",\"method\":\"update_settings\",\"params\":{{\"source\":\"localSettings\",\"settings\":{deep}}}}}"
