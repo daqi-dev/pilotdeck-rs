@@ -70,38 +70,14 @@ pub(super) async fn start_observed(
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> Result<TurnGateway, ProxyError> {
-    validate_profile(&options, &env).await?;
+    // Management can inspect existing skills; turn admission still checks that
+    // unsupported skill prompt/tool composition is not silently omitted.
+    validate_profile_inner(&options, &env, true).await?;
+    let mut env = env;
+    env.entry("PILOTDECK_STORAGE_ROOT".into())
+        .or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());
     register_project(&options)?;
-    let project = Arc::new(ProjectRuntimeRegistry::new(
-        options.project.clone(),
-        Arc::new(ProjectResourcesFactory::new(ProjectResourcesOptions {
-            pilot_home: options.home.clone(),
-            cwd: options.project.clone(),
-            env: env.clone(),
-            homedir: Some(options.home.clone()),
-            builtin_skills_root: None,
-            now: Arc::new(SystemTime::now),
-            telemetry: None,
-            config_version: None,
-            runtime_profile_overrides: RuntimeProfileOverrides::default(),
-            families: Families {
-                lsp: Some(Arc::new(LspFamily)),
-                session_title: Some(Arc::new(TitleFamily)),
-                ..Families::unwired()
-            }
-            .with_native_models()
-            .with_context_memory()
-            .with_tools_mcp()
-            .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
-                project_root: options.project.clone(),
-                pilot_home: options.home.clone(),
-                builtin_skills_root: None,
-                builtin_plugins: vec![],
-                builtin_plugins_enabled: HashMap::new(),
-            })
-            .with_interaction(),
-        })),
-    ));
+    let project = project_registry(&options, &env);
     // Validate real families before claiming readiness. Partial staging belongs
     // to this registry and must drain even when construction returns an error.
     if let Err(error) = project.acquire(None) {
@@ -333,12 +309,13 @@ pub(super) async fn start_observed(
             };
             let services = Arc::new(super::services::Services {
                 options: options.clone(),
-                project: build_project,
+                project: build_project.clone(),
                 env: env.clone(),
                 recorders,
                 owner: owner.clone(),
             });
             let requests = Arc::new(super::requests::Requests {
+                project: build_project,
                 options,
                 env,
                 coordinator: coordinator.clone(),
@@ -458,6 +435,14 @@ pub(super) fn register_project_at(
 /// read tools. Refuse configured integrations before admitting a turn instead
 /// of silently dropping their tools/hooks or launching an implicit helper.
 pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(), ProxyError> {
+    validate_profile_inner(options, env, false).await
+}
+
+async fn validate_profile_inner(
+    options: &Options,
+    env: &Env,
+    management: bool,
+) -> Result<(), ProxyError> {
     struct Captured<'a>(&'a Env, &'a std::path::Path);
     impl crate::runtime::mcp::protocol::McpEnvironment for Captured<'_> {
         fn env(&self, name: &JsString) -> Option<JsString> {
@@ -477,6 +462,9 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     }
     for base in [&options.home, &options.project.join(".pilotdeck")] {
         for name in ["plugins", "skills"] {
+            if management && name == "skills" {
+                continue;
+            }
             match std::fs::read_dir(base.join(name)) {
                 Ok(entries) => {
                     if entries.count() != 0 {
@@ -553,4 +541,37 @@ pub(super) fn turn_ports(
     signal: crate::runtime::hooks::Cancellation,
 ) -> crate::runtime::turn::host_factory::SessionPorts {
     ports.turn(identity, recorder, signal)
+}
+
+pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
+    Arc::new(ProjectRuntimeRegistry::new(
+        options.project.clone(),
+        Arc::new(ProjectResourcesFactory::new(ProjectResourcesOptions {
+            pilot_home: options.home.clone(),
+            cwd: options.project.clone(),
+            env: env.clone(),
+            homedir: Some(options.home.clone()),
+            builtin_skills_root: None,
+            now: Arc::new(SystemTime::now),
+            telemetry: None,
+            config_version: None,
+            runtime_profile_overrides: RuntimeProfileOverrides::default(),
+            families: Families {
+                lsp: Some(Arc::new(LspFamily)),
+                session_title: Some(Arc::new(TitleFamily)),
+                ..Families::unwired()
+            }
+            .with_native_models()
+            .with_context_memory()
+            .with_tools_mcp()
+            .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
+                project_root: options.project.clone(),
+                pilot_home: options.home.clone(),
+                builtin_skills_root: None,
+                builtin_plugins: vec![],
+                builtin_plugins_enabled: HashMap::new(),
+            })
+            .with_interaction(),
+        })),
+    ))
 }

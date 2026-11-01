@@ -70,6 +70,7 @@ mod options;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginRuntimeError {
     pub message: String,
+    pub code: Option<&'static str>,
     pub causes: Vec<PluginRuntimeError>,
 }
 
@@ -77,7 +78,14 @@ impl PluginRuntimeError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            code: None,
             causes: Vec::new(),
+        }
+    }
+    pub fn gateway(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code: Some(code),
+            ..Self::new(message)
         }
     }
     pub fn aggregate(
@@ -89,6 +97,7 @@ impl PluginRuntimeError {
             1 => Err(errors.into_iter().next().unwrap()),
             _ => Err(PluginRuntimeError {
                 message: message.into(),
+                code: None,
                 causes: errors,
             }),
         }
@@ -97,6 +106,7 @@ impl PluginRuntimeError {
     pub fn aggregate_js(message: &str, causes: Vec<PluginRuntimeError>) -> PluginRuntimeError {
         PluginRuntimeError {
             message: message.into(),
+            code: None,
             causes,
         }
     }

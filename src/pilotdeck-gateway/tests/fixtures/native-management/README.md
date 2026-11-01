@@ -1,0 +1,25 @@
+# #1231 原生 A8 管理路由金样
+
+固定只读 TS cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85、Node v22.22.0 / ICU 78.2 / en-US。运行真实 createLocalGateway、registry、SessionRouter、GatewayRuntimeRefreshBundle 和各族领域组件；不调用模型。隔离 HOME、PILOT_HOME、XDG 与 storage，输出目录递归创建，oracle 独占写入。
+
+U3 snapshot、U4 manager、U5 commands、U11 skills 每族都有调用 → 显式 reloadExtensions → 再读，同时观察真实 generation 身份与 dirty 导致的会话替换。RPC 本身没有通知；reload 的顺序为 invalidate → dirty → config_changed。测试中的 session factory 是无 provider 的最小会话，缓存与 dirty 逻辑仍是真实 SessionRouter/SessionOwner。
+
+fs.watch 只替换为静默 EventEmitter，避免 OS 调度和沙箱 EMFILE；此金样不验证 watcher。Rust 复用现有 RefreshBundle seam 驱动这段序列；原生进程的外部 reload/watch 控制面不在四族请求路由范围。生产宿主测试另行验证真实组合根、describe、四族请求及 skill_create 后重启。
+
+路径替换为 <root>；mtime 先断言为有限数字再替换为 <mtime>；nextCursor 双层 base64 解码后逐字段比较。cursorForm 行按当前运行的项目目录重建真实字节数组、Buffer JSON 或 arraylike，避免将随机路径编码进金样。其余 params 原样重放。
+
+FIFO pendingIo 序列令真实 skill_read 保持未完成，snapshot_list 必须在 3 秒内独立完成，随后原子替换 FIFO 路径并释放 writer。Rust 还丢弃调用方响应等待器，验证任务仍完成。物理阻塞 IO 不支持强制取消；host 的 drain deadline 可以返回错误，但不能声称 blocking worker 和资源已经释放。
+
+## 重生成与负控
+
+设置 PDRS_BASELINE 指向固定 TS 检出，PATH 的 node 必须是固定版本，运行 generate.mts NEW_OUTPUT；Rust ignored regenerates_identically 测试调用共享重生成守卫。生成两次必须逐字节一致。
+
+negative_controls.py --check 仅检查锚点。实际负控命令为 negative_controls.py NEW_OUTPUT [mutation ...]，必须由调用方设置 CARGO_TARGET_DIR 与 PDRS_BASELINE，使用共享 HEAD 守卫、进程所有权和最终汇总。每项先正控，再编译变异，再判杀，恢复后复跑；过期锚点及无法编译都是 INVALID，继续执行后续项。未提交源码不能运行，不得使用副本仓库绕过；预计超过 20 分钟时由协调者在宿主运行。
+
+manager_browsers 已分发到现有组件；原生没有 browser provider，因此返回 CAPABILITY_UNAVAILABLE，describe 不广告。U2/U6 保持未接。技能管理可使用持久化技能目录；turn admission 仍拒绝未接的技能执行组合。snapshot 只在配置项目内恢复；host-dependent JS 路径形状明确拒绝。
+
+manager_sessions 金样读取固定时间戳的真实非空 JSONL transcript（session.jsonl），验证配置项目的 chat 目录映射。管理写入不会自动刷新执行资源；原生 turn admission 仍明确拒绝配置了技能的项目，生产宿主用例对此断言。commands 只将同步 acquire 放进 blocking job，后续复用 catalog 自有异步 loader/list，避免持有外层 blocking 线程等待内层。限额线程池用例通过 channel 占用一席，不制造 CPU 压力。sourceSha256 是共享生成器计算的依赖闭包，不仅限于入口文件。
+
+U4 在 TS 注入真实 listProjectSessions 作为 sessionCatalog（与 Rust 已合入的 TranscriptSessionCatalog 提供同一 JSONL provider）；未注入固定返回值。TS 默认 sessionDataPlane 的底层存储选择与原生 JSONL provider 不同，不把两者混为同一部署。
+
+queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+FFFD。固定命令 replacement�.md 用于区分有损替换；typed callers 继续沿已有字符串接口，wire caller 使用同一 catalog 的 UTF-16 入口。限额线程池测试覆盖四族，describe 的13项新能力分别配漏报变异。

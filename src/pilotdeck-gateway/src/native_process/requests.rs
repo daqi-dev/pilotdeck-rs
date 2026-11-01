@@ -18,12 +18,14 @@ use crate::{
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Requests {
     pub options: Options,
     pub env: crate::config::Env,
     pub coordinator: Arc<TurnEventCoordinator>,
     pub runs: Arc<FileRegistry>,
     pub owner: SessionOwner,
+    pub project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
 }
 fn field(value: &JsValue, name: &str) -> JsValue {
     value.get(name).cloned().unwrap_or(JsValue::Undefined)
@@ -66,6 +68,19 @@ impl GatewayRequests for Requests {
                             "model_catalog_list",
                             "session_model_get",
                             "supported_agents",
+                            "snapshot_list",
+                            "snapshot_get",
+                            "snapshot_restore",
+                            "manager_sessions",
+                            "commands_list",
+                            "skill_list",
+                            "skill_read",
+                            "skill_write",
+                            "skill_create",
+                            "skill_delete",
+                            "skill_import",
+                            "skill_validate",
+                            "skill_scan",
                         ]
                         .into_iter()
                         .map(JsValue::from)
@@ -89,6 +104,11 @@ impl GatewayRequests for Requests {
                 && crate::native_archive::ARCHIVE_METHODS.contains(&name.as_str())
             {
                 crate::native_archive::fill_default_project_key(&mut params, &self.options.project);
+            }
+            if let Ok(name) = method.to_utf8()
+                && let Some(result) = self.management_request(&name, &params).await
+            {
+                return result;
             }
             if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())
                 && !project

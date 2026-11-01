@@ -215,7 +215,7 @@ pub(crate) fn execute<F: Files>(
         ),
     ]))
 }
-fn trim(s: &JsString) -> JsString {
+pub(crate) fn trim(s: &JsString) -> JsString {
     let white = |c: &u16| matches!(*c,9..=13|32|160|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff);
     let u = s.units();
     let a = u.iter().position(|c| !white(c)).unwrap_or(u.len());
