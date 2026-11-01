@@ -278,6 +278,188 @@ async fn bounded_prompt<F: Future>(future: F) -> F::Output {
         .await
         .expect("#741 prompt live bound")
 }
+
+/// `completed_event` stamps the bound module id into the metadata of
+/// non-durable terminal messages (TS markModuleOwnedEvent); that projection
+/// is orthogonal to what the execute-snapshot test below pins, so both sides
+/// are compared with it stripped. An emptied metadata object is dropped
+/// entirely: the captured payload carries no metadata on the bare input
+/// message.
+fn stripped_of_module_id(messages: &JsValue) -> JsValue {
+    let JsValue::Array(entries) = messages else {
+        panic!("#1220 prompt live messages array");
+    };
+    JsValue::Array(
+        entries
+            .iter()
+            .map(|message| {
+                let Some(object) = message.as_object() else {
+                    return message.clone();
+                };
+                let mut rebuilt = JsObject::new();
+                for (name, value) in object.entries() {
+                    if name.equals_str("metadata")
+                        && let Some(metadata) = value.as_object()
+                    {
+                        let mut fields = JsObject::new();
+                        for (field, item) in metadata.entries() {
+                            if !field.equals_str("moduleId") {
+                                fields.insert(field.clone(), item.clone());
+                            }
+                        }
+                        if !fields.entries().is_empty() {
+                            rebuilt.insert(name.clone(), JsValue::Object(fields));
+                        }
+                        continue;
+                    }
+                    rebuilt.insert(name.clone(), value.clone());
+                }
+                JsValue::Object(rebuilt)
+            })
+            .collect(),
+    )
+}
+
+/// #1220 fix-r3: the aborted terminal of a hooked interaction turn reports
+/// exactly the execute-time payload. The turn's execute already happened
+/// when the cancel arrives, so the synthesized aborted terminal must be
+/// built from the execute snapshot (live.rs `execute_messages`) — including
+/// the UserPromptSubmit hook's injected context message, never the bare
+/// loop input and never the in-turn durable assistant message the peer
+/// streams afterwards. The peer itself captures the payload it received at
+/// execute time and echoes it to a file, so the comparison is independent
+/// of the projection path under test.
+#[tokio::test]
+async fn prompt_host_aborted_terminal_reports_the_execute_payload_with_hook_context() {
+    let scratch = Scratch::new();
+    let registry = Arc::new(interaction_registry(&scratch));
+    let runtime = registry.resolve(None).expect("#1220 prompt live runtime");
+    let started = Arc::new(AtomicUsize::new(0));
+    let calls = started.clone();
+    let owner = registry.clone();
+    let cwd = scratch.0.clone();
+    let peer_scratch = scratch.0.clone();
+    let session = LiveSessionAdapter::with_interaction(
+        test_recorder(),
+        Vec::new,
+        move |identity, _| {
+            let lease = owner.acquire(None).expect("#1220 prompt live lease");
+            let calls = calls.clone();
+            let cwd = cwd.clone();
+            let peer_scratch = peer_scratch.clone();
+            Box::pin(async move {
+                let mut input = options();
+                input.permission.context.cwd = cwd.to_string_lossy().as_ref().into();
+                input.hooks = command_hook_settings(
+                    "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"extra\"}}'",
+                );
+                input.hooks[0].0 = "UserPromptSubmit".into();
+                Ok(InteractionHost {
+                    client: Box::pin(async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        client_with_arg("live-prompt-compaction", &peer_scratch.to_string_lossy())
+                            .await
+                    }),
+                    lease,
+                    router: router(&identity),
+                    input,
+                })
+            })
+        },
+    );
+    let raw = parse_json(r#"{"type":"text","text":"probe"}"#).expect("#1220 prompt live input");
+    let mut turn = session
+        .submit_turn_for_test(raw, wire_options())
+        .expect("#1220 prompt live submit");
+    for expected in [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "model_request_started",
+        "assistant_message",
+    ] {
+        let event = bounded_prompt(turn.next())
+            .await
+            .expect("#1220 prompt live next")
+            .expect("#1220 prompt live preflight");
+        assert_eq!(
+            event.get("type"),
+            Some(&expected.into()),
+            "#1220 prompt live preflight order"
+        );
+    }
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "#1220 prompt live execute happened"
+    );
+    // The peer echoes the exact execute payload atomically once the
+    // assistant_message above (published after the echo) was consumed, so
+    // the file is already there; read it rather than inferring the payload
+    // from consumed events.
+    let payload = parse_json(
+        &std::fs::read_to_string(scratch.0.join("execute-messages.json"))
+            .expect("#1220 prompt live execute payload file"),
+    )
+    .expect("#1220 prompt live execute payload JSON");
+    let JsValue::Array(payload_messages) = &payload else {
+        panic!("#1220 prompt live execute payload array");
+    };
+    assert_eq!(
+        payload_messages.len(),
+        2,
+        "#1220 prompt live execute payload carries the hook context"
+    );
+    assert_eq!(
+        payload_messages
+            .get(1)
+            .expect("#1220 prompt live context message")
+            .get("metadata")
+            .and_then(|metadata| metadata.get("purpose")),
+        Some(&"hook_context".into()),
+        "#1220 prompt live execute payload carries the hook context"
+    );
+    session
+        .abort(&"compaction_persistence_failed".into())
+        .expect("#1220 prompt live abort");
+    let terminal = bounded_prompt(turn.next())
+        .await
+        .expect("#1220 prompt live terminal next")
+        .expect("#1220 prompt live aborted terminal");
+    assert_eq!(
+        terminal.get("type"),
+        Some(&"turn_completed".into()),
+        "#1220 prompt live aborted terminal type"
+    );
+    assert_eq!(
+        terminal.get("result").and_then(|result| result.get("type")),
+        Some(&"aborted".into()),
+        "#1220 prompt live aborted terminal result"
+    );
+    assert_eq!(
+        stripped_of_module_id(
+            terminal
+                .get("messages")
+                .expect("#1220 prompt live terminal messages")
+        ),
+        stripped_of_module_id(&payload),
+        "#1220 prompt live aborted terminal reports exactly the execute payload messages"
+    );
+    assert!(
+        matches!(bounded_prompt(turn.next()).await, Ok(None)),
+        "#1220 prompt live one terminal only"
+    );
+    drop(turn);
+    bounded_prompt(async {
+        while runtime.lease_count() != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    bounded_prompt(registry.dispose())
+        .await
+        .expect("#1220 prompt live registry cleanup");
+}
 macro_rules! case {
     ($name:ident,$mode:literal) => {
         #[tokio::test]

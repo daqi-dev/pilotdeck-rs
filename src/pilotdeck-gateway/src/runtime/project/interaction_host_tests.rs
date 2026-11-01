@@ -139,6 +139,28 @@ fn wire_options_for(turn: &str) -> JsValue {
 async fn client(mode: &str) -> Result<HostClient, HostError> {
     client_with_close_timeout(mode, Limits::default().close_timeout).await
 }
+/// `client` for a peer mode that takes an extra scratch-directory argument
+/// the test and the peer synchronize on through files.
+async fn client_with_arg(mode: &str, argument: &str) -> Result<HostClient, HostError> {
+    let mut command = Command::new("python3");
+    command
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/live-session/peer.py"
+        ))
+        .arg(mode)
+        .arg(argument);
+    HostClient::spawn(
+        &mut command,
+        Some(&"fixture".into()),
+        Limits {
+            execution_timeout: Some(Duration::from_secs(5)),
+            close_timeout: Limits::default().close_timeout,
+            ..Default::default()
+        },
+    )
+    .await
+}
 async fn client_with_close_timeout(
     mode: &str,
     close_timeout: Duration,

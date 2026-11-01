@@ -628,6 +628,12 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
 }
 
 async fn spawn_client(mode: &str) -> Result<HostClient, HostError> {
+    spawn_client_with(mode, None).await
+}
+
+/// `spawn_client` for a peer mode that takes an extra argument — the scratch
+/// directory the test and the peer synchronize on through signal files.
+async fn spawn_client_with(mode: &str, argument: Option<&str>) -> Result<HostClient, HostError> {
     let mut command = Command::new("python3");
     if mode.starts_with("live-") {
         command
@@ -636,6 +642,9 @@ async fn spawn_client(mode: &str) -> Result<HostClient, HostError> {
                 "/tests/fixtures/live-session/peer.py"
             ))
             .arg(mode);
+        if let Some(argument) = argument {
+            command.arg(argument);
+        }
     } else {
         command
             .arg(concat!(
@@ -658,6 +667,29 @@ async fn spawn_client(mode: &str) -> Result<HostClient, HostError> {
 
 async fn session(mode: &str, handler: Arc<Handler>) -> LiveSessionAdapter {
     session_with_final(mode, handler).await.0
+}
+
+/// `session` for a peer mode that takes an extra scratch-directory argument.
+async fn session_with_peer_arg(
+    mode: &str,
+    argument: &str,
+    handler: Arc<Handler>,
+) -> LiveSessionAdapter {
+    let mode = mode.to_owned();
+    let argument = argument.to_owned();
+    LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
+        let mode = mode.clone();
+        let argument = argument.clone();
+        let handler = handler.clone();
+        Box::pin(async move {
+            let client = spawn_client_with(&mode, Some(&argument)).await?;
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                handler as Arc<dyn HostHandler>,
+                test_lease(),
+            ))
+        })
+    })
 }
 
 /// `session`, plus the host-side "the module final entered the application
@@ -1681,16 +1713,27 @@ async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
     assert_reaped(child).await;
 }
 
-/// #1220: the cancel window on a real session. The peer holds a wire block,
-/// the session aborts, a host event arrives only after that abort, and the
-/// peer then delivers one more wire delta plus its cancelled final. The pump
-/// must keep draining across the cancellation signal — the post-abort host
-/// event still yields and positions before the post-cancel wire delta, and
-/// the terminal keeps its own position chain across all of them.
+/// #1220: the cancel window on a real session, with every ordering
+/// dependency replaced by causal signals (fix-r3). The peer holds a wire
+/// block, the session aborts, and two host events arrive after that abort on
+/// two separate pump ticks; the peer's post-cancel wire delta waits for a
+/// release file this test publishes only after the second host event was
+/// drained, so hb1 -> hb2 -> b2 is a causal chain, never a wall-clock
+/// window. The pump must keep draining across the cancellation signal — both
+/// post-abort host events still yield and position before the post-cancel
+/// wire delta, and the terminal keeps its own position chain across them.
 #[tokio::test]
 async fn session_abort_still_drains_and_positions_post_cancel_events() {
     let handler = Arc::new(Handler::default());
-    let session = session("live-cancel-window-timeline", handler.clone()).await;
+    let scratch =
+        std::env::temp_dir().join(format!("pdrs-1220-cancel-window-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&scratch).expect("#1220 cancel window: scratch directory");
+    let session = session_with_peer_arg(
+        "live-cancel-window-timeline",
+        &scratch.to_string_lossy(),
+        handler.clone(),
+    )
+    .await;
     let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in ["turn_started", "input_accepted", "user_prompt_submitted"] {
         let event = next(turn.as_mut()).await.unwrap().unwrap();
@@ -1723,9 +1766,10 @@ async fn session_abort_still_drains_and_positions_post_cancel_events() {
         "#1220 cancel window: the pre-cancel wire block takes the first position"
     );
     session.abort(&"user-stop".into()).unwrap();
-    // The peer holds its remaining frames for 2.5 s after this abort, so the
-    // post-abort host event below is drained by the 500 ms pump tick long
-    // before the post-cancel wire delta can arrive.
+    // Two host events queued after the abort, one per pump tick: the pump must
+    // drain both across the cancellation signal, and the two waits below are
+    // bounded so a mutated pump fails at the anchor message, not a silent
+    // 15 s timeout.
     queue_host_events(
         &handler,
         &[parse_json(
@@ -1733,11 +1777,15 @@ async fn session_abort_still_drains_and_positions_post_cancel_events() {
         )
         .expect("#1220 cancel window: host event must parse")],
     );
-    let host = next(turn.as_mut()).await.unwrap().unwrap();
+    let host = timeout(Duration::from_secs(3), turn.as_mut().next())
+        .await
+        .expect("#1220 cancel window: the first post-abort host event is still drained by the pump")
+        .expect("#1220 cancel window: draining the first post-abort host event must not fail")
+        .expect("#1220 cancel window: the first post-abort host event must not end the stream");
     assert_eq!(
         host.get("type"),
         Some(&"assistant_message".into()),
-        "#1220 cancel window: the host event queued after the abort is still drained and positioned"
+        "#1220 cancel window: the first host event queued after the abort is drained and positioned"
     );
     let host_block = host
         .get("message")
@@ -1755,8 +1803,51 @@ async fn session_abort_still_drains_and_positions_post_cancel_events() {
             )
             .expect("#1220 cancel window: literal must parse")
         ),
-        "#1220 cancel window: the post-abort host block chains after the wire block"
+        "#1220 cancel window: the first post-abort host block chains after the wire block"
     );
+    queue_host_events(
+        &handler,
+        &[parse_json(
+            r#"{"type":"assistant_message","sessionId":"session","turnId":"turn","message":{"role":"assistant","content":[{"type":"text","text":"still during cancel","blockId":"hb2"}],"metadata":{"model":"m"}}}"#,
+        )
+        .expect("#1220 cancel window: host event must parse")],
+    );
+    let second = timeout(Duration::from_secs(3), turn.as_mut().next())
+        .await
+        .expect(
+            "#1220 cancel window: the second post-abort host event is still drained by the pump",
+        )
+        .expect("#1220 cancel window: draining the second post-abort host event must not fail")
+        .expect("#1220 cancel window: the second post-abort host event must not end the stream");
+    assert_eq!(
+        second.get("type"),
+        Some(&"assistant_message".into()),
+        "#1220 cancel window: the second host event queued after the abort is drained and positioned"
+    );
+    let second_block = second
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(|content| match content {
+            JsValue::Array(blocks) => blocks.first(),
+            _ => None,
+        })
+        .and_then(|block| block.get("timeline"));
+    assert_eq!(
+        second_block,
+        Some(
+            &parse_json(
+                r#"{"version":1,"turnId":"turn","id":"hb2","previousId":"hb1","order":2,"revision":6}"#
+            )
+            .expect("#1220 cancel window: literal must parse")
+        ),
+        "#1220 cancel window: the second post-abort host block chains after the first"
+    );
+    // Only now may the peer send its post-cancel wire delta: the release
+    // file is the deterministic handshake, and b2 must still chain after hb2.
+    let marker = scratch.join("release-wire.tmp");
+    std::fs::write(&marker, b"").expect("#1220 cancel window: the release marker must be written");
+    std::fs::rename(&marker, scratch.join("release-wire"))
+        .expect("#1220 cancel window: the release marker must be published");
     let after = next(turn.as_mut()).await.unwrap().unwrap();
     assert_eq!(
         after.get("type"),
@@ -1767,11 +1858,11 @@ async fn session_abort_still_drains_and_positions_post_cancel_events() {
         after.get("timeline"),
         Some(
             &parse_json(
-                r#"{"version":1,"turnId":"turn","id":"b2","previousId":"hb1","order":2,"revision":6,"offset":0}"#
+                r#"{"version":1,"turnId":"turn","id":"b2","previousId":"hb2","order":3,"revision":8,"offset":0}"#
             )
             .expect("#1220 cancel window: literal must parse")
         ),
-        "#1220 cancel window: the post-cancel wire block chains after the host block"
+        "#1220 cancel window: the post-cancel wire block chains after the second host block"
     );
     let completed = next(turn.as_mut()).await.unwrap().unwrap();
     assert_eq!(
@@ -1779,7 +1870,9 @@ async fn session_abort_still_drains_and_positions_post_cancel_events() {
         Some(&"turn_completed".into()),
         "#1220 cancel window: the peer's cancelled terminal completes the turn"
     );
-    let result = completed.get("result").unwrap();
+    let result = completed
+        .get("result")
+        .expect("#1220 cancel window: the cancelled terminal result");
     assert_eq!(
         result.get("type"),
         Some(&"aborted".into()),
@@ -1806,7 +1899,7 @@ async fn session_abort_still_drains_and_positions_post_cancel_events() {
         final_block,
         Some(
             &parse_json(
-                r#"{"version":1,"turnId":"turn","id":"fb1","previousId":"b2","order":3,"revision":7}"#
+                r#"{"version":1,"turnId":"turn","id":"fb1","previousId":"b2","order":4,"revision":9}"#
             )
             .expect("#1220 cancel window: literal must parse")
         ),
@@ -1823,6 +1916,7 @@ async fn session_abort_still_drains_and_positions_post_cancel_events() {
         "#1220 cancel window: the request, both wire deltas and the final were applied"
     );
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    std::fs::remove_dir_all(&scratch).expect("#1220 cancel window: scratch cleanup");
 }
 
 #[tokio::test]

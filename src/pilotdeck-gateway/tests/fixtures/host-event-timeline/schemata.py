@@ -3,7 +3,8 @@
 
 The coordinate-projection mutations (allocator order, boundary emission,
 derived-status projection, compaction terminal positioning, the #821
-wire-drain deviation, and the two submit() timeline wirings) are
+wire-drain deviation, the two submit() timeline wirings, the aborted-terminal
+message snapshot, and the two cancel-window pump checkpoints) are
 ``crate::mutants::on`` branches compiled into the feature-enabled library
 test binary; sources are never written, so the run is a pure
 precompiled-switch execution. CARGO_TARGET_DIR must be supplied. Use --check
@@ -48,9 +49,20 @@ switches = [
     ('live-abort-finish-messages', LIVE, REPLAY,
      '#1220 timeline: compaction-incomplete-final terminal messages'),
     # fix-r2 P2-1: a cancelled turn must keep pumping — post-abort host events
-    # are still drained and positioned at the next tick.
+    # are still drained and positioned at the next tick. fix-r3: the failing
+    # assertion moved into the bounded wait itself, so the mutated pump dies at
+    # the timeout anchor, not a 15 s silent no-message timeout.
     ('timeline-cancel-stops-pump', LIVE, CANCEL_WINDOW,
-     '#1220 cancel window: the host event queued after the abort is still drained and positioned'),
+     '#1220 cancel window: the first post-abort host event is still drained by the pump'),
+    # fix-r3 DS P2-1: the loop-top twin of the in-tick checkpoint above — the
+    # shape a cancel assembly would most naturally take, checked beside the
+    # `stopped` flag. The iteration already in flight when the abort lands
+    # still drains one more host batch, so the second post-abort host event
+    # catches it; the anchor list is the alternate set for the race where the
+    # abort is observed at the very top and the first event is lost instead.
+    ('timeline-cancel-parks-pump', LIVE, CANCEL_WINDOW,
+     ['#1220 cancel window: the first post-abort host event is still drained by the pump',
+      '#1220 cancel window: the second post-abort host event is still drained by the pump']),
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [

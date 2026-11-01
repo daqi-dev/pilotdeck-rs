@@ -31,8 +31,16 @@ switches = [
      '#741 prompt live context forwarded'),
     ('prompt-gate', LIVE, HOST + 'prompt_host_pass',
      '#741 prompt live submitted'),
-    ('prompt-execute-context', LIVE, HOST + 'prompt_host_pass',
-     '#741 prompt live context forwarded'),
+    # fix-r3 DS P2-2: the execute-time snapshot the aborted terminal reports.
+    # All-cells: the pass case kills it on the loop payload the sidecar echoes
+    # in its final; the #1220 case kills it on the payload the peer itself
+    # captured at execute time and echoed to a file, before the synthesized
+    # aborted terminal is compared against that capture.
+    ('prompt-execute-context', LIVE,
+     [HOST + 'prompt_host_pass',
+      HOST + 'prompt_host_aborted_terminal_reports_the_execute_payload_with_hook_context'],
+     ['#741 prompt live context forwarded',
+      '#1220 prompt live execute payload carries the hook context']),
     ('prompt-abort-context', LIVE, HOST + 'prompt_host_context_abort',
      '#741 prompt live context forwarded'),
     ('prompt-block-gate', LIVE, HOST + 'prompt_host_block',
@@ -64,6 +72,7 @@ GUARDED = [
     PROMPT,
     PROMPT_TESTS,
     BASELINE,
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_prompt_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
@@ -72,6 +81,7 @@ GUARDED = [
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',
+    FIXTURES / 'live-session/peer.py',
     Path(__file__).resolve(),
 ]
 
