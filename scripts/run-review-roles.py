@@ -58,7 +58,9 @@ LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走
 # 网关对 GLM 在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；只放行已实测的这一对，其余仍须逐字一致
 # （10-25 实测 claude-opus-5-5 / claude-sonnet-5-5 经 llm-center 原样回显，原件 _tmp/20261025-anth-runner/smoke-*）
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3"}
-DEFAULT_MODEL = {"zai": "glm-5.3-mb", "anthropic": "claude-sonnet-5-5"}  # 通道正本见 state/memory/20261015-model-runners.md
+DEFAULT_MODEL = {"zai": "glm-5.3-mb", "anthropic": "claude-opus-5-5"}  # 通道正本见 state/memory/20261015-model-runners.md
+# 每角色默认超时按通道给：opus 实测 ~6 min/角色（10-25），600 s 余量不足；GLM 维持原值
+DEFAULT_TIMEOUT = {"zai": 600, "anthropic": 1200}
 
 
 def env_candidates() -> list[Path]:
@@ -244,8 +246,9 @@ def main() -> int:
     ap.add_argument("--roles", default=",".join(ROLES), help="逗号分隔，默认四个全跑")
     ap.add_argument("--runner", choices=["zai", "anthropic"], default="zai",
                     help="zai=GLM（默认，经智谱 Anthropic 兼容接口）；anthropic=Claude 模型")
-    ap.add_argument("--model", default=None, help="默认 zai→glm-5.3-mb，anthropic→claude-sonnet-5-5")
-    ap.add_argument("--timeout", type=int, default=600, help="每角色秒数；实测 sonnet ~3min、opus ~6min")
+    ap.add_argument("--model", default=None, help="默认 zai→glm-5.3-mb，anthropic→claude-opus-5-5")
+    ap.add_argument("--timeout", type=int, default=None,
+                    help="每角色秒数；默认 zai→600，anthropic→1200（实测 sonnet ~3min、opus ~6min）")
     ap.add_argument("--budget-usd", type=float, default=3.0, help="每角色 --max-budget-usd（按 Anthropic 价目估算，zai 通道仅作上限）")
     ap.add_argument("--claude-bin", default="claude", help="测试时可换成假 CLI")
     ap.add_argument("--env-file", type=Path, default=None, help="取钥文件；默认本检出或主仓根的 .env.local（测试用隔离 fixture）")
@@ -253,6 +256,8 @@ def main() -> int:
     ap.add_argument("--serial", action="store_true",
                     help="角色逐个顺序跑（同一进程、同一 diff，产出单个四角色结果块）；并行全跑在本机会挂起时用")
     a = ap.parse_args()
+    if a.timeout is None:
+        a.timeout = DEFAULT_TIMEOUT[a.runner]
 
     wt = Path(a.worktree).resolve()
     out = Path(a.out).resolve()

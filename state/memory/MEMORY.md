@@ -7,7 +7,7 @@
 
 
 - [Grok Bot 通道](20261019-grokbot-channel.md) — 本机可直连调用（scripts/grokbot-call.py + CURSOR_ACCESS_TOKEN）；未定为评审谱系
-- [模型通道正本](20261015-model-runners.md) — 2026-10-22 起优先 glm-5.3-mb + deepseek-v4.1-flash-mb（llm-center）；各入口、unrecognized_model 非失败等已知坑；10-25 起 --runner anthropic 经 llm-center 可用
+- [模型通道正本](20261015-model-runners.md) — 2026-10-22 起优先 glm-5.3-mb + deepseek-v4.1-flash-mb（llm-center）；各入口、unrecognized_model 非失败等已知坑；10-25 起 --runner anthropic 经 llm-center 可用，11-01 起默认 claude-opus-5-5（此前「opus」块实为 sonnet，看 model 字段）、Claude 闸门同时 ≤ 2
 
 - [基线源码锚点](20261016-source-anchors.md) — 入口枚举先定位真实源码表达式，锚点失配不靠猜名或放松匹配解决。
 
