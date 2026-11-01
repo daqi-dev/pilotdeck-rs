@@ -24,20 +24,26 @@
   (case, rule) 字符串对，`BOUND` / `UNAFFECTED` / `MUTATIONS` 三表键集
   完全一致，每条 `EXPECTATION_RUST_DERIVATION` 控制必须出现在某个 BOUND
   行里；任何缺失 / 多余 / 变形都是 `BINDING DRIFT`（exit 2），先于任何
-  变异执行，主循环不会因此 IndexError（#1190 fix-r1）。`evidence` 在进入
+  变异执行，主循环不会因此 IndexError（#1190 fix-r1）；变形的具体形状
+  ——非序列 `BOUND` 容器、非 (case, rule) 对的条目、非
+  (name, source, old, new) 的 `MUTATIONS` 行、重名变异行——同样以专属
+  漂移消息拒绝而不是 traceback（#1190 fix-r2）。`evidence` 在进入
   守卫窗口前初始化（#1190）。计数不在叙述里钉死：运行时由 `ast` 解析
-  （不执行）面板推导并写 `derived-counts.json` 入证据目录；三份登记
-  文档（本 README、`specs/gateway-parity/diffs/A19-HOST-001-R1.md`、
-  `specs/gateway-parity/frozen/20261101-1190.md`）中的中文 / 阿拉伯数字
-  计数短语（条 / 档 / 项）同样与推导计数机检，不一致或无法归类即
-  `COUNT DRIFT`（exit 2）（#1190 fix-r1）。`mutating_sources`（带
+  （不执行）面板推导并写 `derived-counts.json` 入证据目录；登记文档
+  （本 README、`specs/gateway-parity/diffs/A19-HOST-001-R1.md` 与
+  `specs/gateway-parity/frozen/` 下全部 #1190 冻结事件，按目录通配推导，
+  新增事件不漏扫）中的中文 / 阿拉伯数字计数短语（条 / 档 / 项 / 个 / 处）
+  同样与推导计数机检，不一致或无法归类即 `COUNT DRIFT`（exit 2）
+  （#1190 fix-r1，fix-r2 扩单位与扫描集）。`mutating_sources`（带
   common.py 与 parity 租约）守源码并逐字节还原，summary 原子发布、guard
   失败全 INVALID（#979/#1037）。
-- `meta_controls.py` — 元负控的元负控（#1190 fix-r1）：原地变异
-  `negative_controls.py` 自身的绑定表与被扫描的 README，要求上述两道
-  漂移闸门各自拒绝——删除 `drop-registry-state-require` 变异行、清空其
-  `BOUND` 条目、README 钉回与推导计数不符的数字，都必须以 exit 2 加
-  各自专属漂移消息失败；恢复后 `--check-anchors` 闸门复绿。逐行记
+- `meta_controls.py` — 元负控的元负控（#1190 fix-r1，fix-r2 扩容）：
+  原地变异 `negative_controls.py` 自身的绑定表与被扫描的 README，要求
+  上述两道漂移闸门各自拒绝——删除 `drop-registry-state-require` 变异行、
+  清空其 `BOUND` 条目、变形其条目 / 容器 / 变异行、整行重复、README 钉回
+  与推导计数不符的数字（含个单位形式）、以及在 `frozen/` 里新建携带过期
+  计数的冻结事件夹具（用后删除），都必须以 exit 2 加各自专属漂移消息
+  失败；恢复后 `--check-anchors` 闸门复绿。逐行记
   KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出。
 
 ## 运行

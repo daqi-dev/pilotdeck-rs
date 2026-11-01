@@ -43,14 +43,21 @@ set -- a deleted or renamed mutation row, an emptied or malformed binding
 entry is ``BINDING DRIFT`` (exit 2) before any row executes, never a later
 ``IndexError`` that voids the whole table.
 
-fix-r1 (#1190 review P2-2): the three registration documents that describe
-these controls (the fixture README, the A19-HOST-001-R1 diff entry and the
+fix-r1 (#1190 review P2-2): the registration documents that describe these
+controls (the fixture README, the A19-HOST-001-R1 diff entry and every #1190
 freeze event) are scanned on every run: a Chinese or Arabic count phrase
-(条/档/项) that disagrees with ``derived-counts.json`` -- or cannot be mapped
-to a derivable counter at all -- is ``COUNT DRIFT`` (exit 2), so the prose
-cannot pin a count the tables no longer have.  ``meta_controls.py`` binds
+(条/档/项/个/处) that disagrees with ``derived-counts.json`` -- or cannot be
+mapped to a derivable counter at all -- is ``COUNT DRIFT`` (exit 2), so the
+prose cannot pin a count the tables no longer have.  ``meta_controls.py`` binds
 both drift gates: deleting a mutation row, emptying a ``BOUND`` entry and
 re-pinning a stale count in the README must each be refused.
+
+fix-r2 (#1190 r2 review P2-1/P2-2/P2-4, P3-2/P3-3): a malformed ``BOUND``
+container or entry and a malformed or duplicated ``MUTATIONS`` row are all a
+clean ``BINDING DRIFT`` (the entry unpacking used to raise a traceback), the
+scanned event set is derived from the ``frozen/`` directory glob so a new
+event file can never be silently left out, and the count units include
+个/处.
 
 Per-row results live in memory only.  ``summary.json`` is published exactly
 once, after ``mutating_sources`` restored every guarded file and verified it
@@ -77,21 +84,26 @@ PANEL = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 RUN_CONTROL = Path(__file__).resolve().with_name('run_control.py')
 
 # The registration documents whose narrative must reference derived counts
-# instead of pinning them (#1190 review P2-2).  Anything they say about how
-# many requires / controls / cases exist is a claim about the tables this
-# runner parses, so the scan below reconciles the prose with the same derived
-# counters that ``derived-counts.json`` records.
+# instead of pinning them (#1190 review P2-2, r2 review P2-2).  Anything they
+# say about how many requires / controls / cases exist is a claim about the
+# tables this runner parses, so the scan below reconciles the prose with the
+# same derived counters that ``derived-counts.json`` records.  The freeze
+# events are derived from the directory glob, so a new #1190 event file can
+# never be silently left out of the scan (other issues' events keep their own
+# counts and stay out).
 DOC_COUNTS = (
     (Path(__file__).resolve().with_name('README.md'), 'README'),
     (ROOT / 'specs/gateway-parity/diffs/A19-HOST-001-R1.md', 'A19-HOST-001-R1'),
-    (ROOT / 'specs/gateway-parity/frozen/20261101-1190.md', '20261101-1190'),
+    *((path, path.name) for path in sorted({
+        event for pattern in ('*-1190.md', '*-1190-*.md')
+        for event in (ROOT / 'specs/gateway-parity/frozen').glob(pattern)})),
 )
 
-# <number>(条|档|项): the count units of the drifted phrases the review found.
-# The number must stand alone (no adjacent alphanumerics); a space between the
-# number and the unit ("24 项") still pins the count.
+# <number>(条|档|项|个|处): the count units of the drifted phrases the
+# reviews found.  The number must stand alone (no adjacent alphanumerics); a
+# space between the number and the unit ("24 项") still pins the count.
 COUNT_PHRASE = re.compile(
-    r'(?<![0-9A-Za-z])([0-9]{1,4}|[零一二两三四五六七八九十百]{1,5})[ ]?(条|档|项)(?![A-Za-z])')
+    r'(?<![0-9A-Za-z])([0-9]{1,4}|[零一二两三四五六七八九十百]{1,5})[ ]?(条|档|项|个|处)(?![A-Za-z])')
 
 _CHINESE_DIGITS = {'零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
                    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
@@ -245,10 +257,23 @@ def check_bindings(expectation_cases):
     nonempty strings, and ``BOUND``/``UNAFFECTED``/``MUTATIONS`` name exactly
     the same mutation set.  A deleted or renamed mutation row, an emptied or
     malformed binding is reported here (exit 2) instead of passing the gate
-    or crashing the row loop later.
+    or crashing the row loop later.  fix-r2 (r2 review P2-1, P3-2): a
+    malformed ``MUTATIONS`` row, a duplicated mutation name and a ``BOUND``
+    value that is not a sequence of pairs are the same clean ``BINDING
+    DRIFT`` -- the entry unpacking used to raise a traceback before any
+    drift message could be printed.
     """
     errors = []
-    names = {row[0] for row in MUTATIONS}
+    names = set()
+    for row in MUTATIONS:
+        if (not isinstance(row, tuple) or len(row) != 4
+                or not isinstance(row[0], str) or not row[0]):
+            errors.append(f'MUTATIONS row is not a (name, source, old, new) '
+                          f'row with a nonempty name: {row!r}')
+            continue
+        if row[0] in names:
+            errors.append(f'MUTATIONS names are not unique: {row[0]}')
+        names.add(row[0])
     for label, table in (('BOUND', BOUND), ('UNAFFECTED', UNAFFECTED)):
         for extra in sorted(set(table) - names):
             errors.append(f'{label} names unknown mutation {extra}')
@@ -256,12 +281,19 @@ def check_bindings(expectation_cases):
             errors.append(f'{label} has no entry for mutation {missing}')
     bound_exercised = set()
     for name in sorted(names & set(BOUND) & set(UNAFFECTED)):
-        if not BOUND[name]:
-            errors.append(f'BOUND[{name}] is empty')
-        for entry in list(BOUND[name]) + [UNAFFECTED[name]]:
+        if isinstance(BOUND[name], (list, tuple)):
+            entries = list(BOUND[name])
+            if not entries:
+                errors.append(f'BOUND[{name}] is empty')
+        else:
+            errors.append(f'BOUND[{name}] is not a sequence of (case, rule) '
+                          f'pairs: {BOUND[name]!r}')
+            entries = []
+        for table, entry in ([('BOUND', entry) for entry in entries]
+                             + [('UNAFFECTED', UNAFFECTED[name])]):
             if (not isinstance(entry, tuple) or len(entry) != 2
                     or not all(isinstance(part, str) and part for part in entry)):
-                errors.append(f'{name}: binding entry is not a (case, rule) '
+                errors.append(f'{name}: {table} entry is not a (case, rule) '
                               f'pair of nonempty strings: {entry!r}')
                 continue
             case, rule = entry
@@ -269,7 +301,8 @@ def check_bindings(expectation_cases):
             if registered != rule:
                 errors.append(f'{name}: {case} is claimed as {rule} '
                               f'but registered as {registered}')
-        bound_exercised.update(case for case, _rule in BOUND[name])
+            if table == 'BOUND':
+                bound_exercised.add(case)
     missing = sorted(case for case, rule in expectation_cases.items()
                      if rule == 'EXPECTATION_RUST_DERIVATION' and case not in bound_exercised)
     if missing:
@@ -281,11 +314,11 @@ def check_bindings(expectation_cases):
 def check_docs(counts):
     """The registration prose must not pin a count the tables have drifted from.
 
-    #1190 review P2-2: the README, the diff entry and the freeze event claim
-    that counts are derived, so every count phrase (条/档/项) they contain is
-    reconciled with ``derived-counts.json``.  A phrase whose line cannot be
-    mapped to a derivable counter is drift too: reword it to reference the
-    table (or ``derived-counts.json``) instead of a number.
+    #1190 review P2-2: the README, the diff entry and the freeze events claim
+    that counts are derived, so every count phrase (条/档/项/个/处) they
+    contain is reconciled with ``derived-counts.json``.  A phrase whose line
+    cannot be mapped to a derivable counter is drift too: reword it to
+    reference the table (or ``derived-counts.json``) instead of a number.
     """
     errors = []
     for path, label in DOC_COUNTS:
@@ -304,7 +337,8 @@ def check_docs(counts):
                 elif value != counts[category]:
                     errors.append(f"{label}:{number}: '{match[0]}' pins {value} "
                                   f'but derived {category} is {counts[category]} '
-                                  '(derived-counts.json)')
+                                  '(runtime-derived counts, recorded to '
+                                  'derived-counts.json)')
     return errors
 
 
