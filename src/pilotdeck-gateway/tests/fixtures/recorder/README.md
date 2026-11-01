@@ -29,14 +29,18 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 共 **28** 个真实 TS 场景。生成器与 Rust 默认测试 `real_ts_scenarios_match_outcomes_and_bytes` 均断言场景数精确等于 28，防止金样再生或合并时静默缩水；新增或删除场景须同步更新两处计数与本 README。Rust 逐场景重放，把步骤结果与整份 transcript 文件序列化后与 oracle 逐字节比较。归一化只有两条：场景目录 → `<dir>`；v4 UUID → `<id-N>`（按整份场景文本首次出现顺序）。
 
-计数负控（仓库根执行）：
+计数负控须提交后独占本树运行：
 
 ```sh
-CARGO_TARGET_DIR="$PWD/_build/cargo-target" PDRS_BASELINE=/absolute/path/to/PilotDeck timeout 600 python3 \
-  src/pilotdeck-gateway/tests/fixtures/recorder/fix3-negative.py
+export PDRS_BASELINE=/absolute/path/to/PilotDeck
+timeout 1860 python3 src/pilotdeck-gateway/tests/fixtures/recorder/fix3-negative.py
 ```
 
-脚本要求沿用启动器的本树 `CARGO_TARGET_DIR=.../_build/cargo-target`，串行执行：先跑 Rust 正控，在 `/tmp` 独占副本中删除一条 oracle 场景，通过仅测试可见的 `PDRS_RECORDER_ORACLE` 确认 Rust 以 27/28 转红；再让生成器副本少发布一条场景，确认真实 TS 以 27/28 拒绝写出 oracle；最后用完整 oracle 副本跑正控。脚本不改工作树文件、不在本树 `_tmp` 建目录；正常结束、异常及 SIGTERM 均回收子进程并删除临时目录，SIGKILL 只可能留下 `/tmp` 副本。每个子进程限时 240 s、整套父进程限时 580 s，原始输出打印至 stdout，可由调用者留证。
+`fix3-negative.py` 复用 `../_shared/negative_control.py`、`../negative_process.py` 和 `../negative_suite.py`，仅在 `/tmp` 副本对 Rust 读入的 oracle 和 TS 待发布的 scenarios 分别增加 / 删除 1 项，四项均须因 `recorder oracle scenario count` 计数断言失败；Rust 变异保留 `cargo test --no-run` 编译回执，TS 生成器变异只记 node 运行回执（cargo 编译的是未变异 Rust）。生成器失败不得发布 oracle，恢复后正控须通过。全部处理并完成守卫恢复后打印逐项 JSON 与 `SUMMARY:`，任一非 KILLED 即非零退出。Rust 仅测试构建经仅测试可见的 `PDRS_RECORDER_ORACLE` 读入副本，其余快照仍取本目录。变异只写副本，沿用调用方的 `CARGO_TARGET_DIR`；所有 cargo 调用（含第一次正控的冷编译）一律 900 秒编译级超时，node 运行 240 秒。
+
+同一树锁窗口内，先校验 oracle、生成器、脚本自身与共享 Python 裁决依赖均等于 HEAD——`mutating_sources` 经 #1166 共享 proc-macro2 扫描器证明全部 workspace 字面构建输入等于 HEAD，Rust 判据链（`tests/recorder.rs` 经 `mod`/`#[path]`/`include_*!` 编入的 `tests/common/baseline.rs` → `regeneration_masks.rs` → `_shared/regeneration-masks.tsv`）随之在守卫内，脚本不携带任何手写 Rust 词法器（#1174），只锚定判据入口 `tests/recorder.rs` 必在扫描器输入集内，判据挪出即在任何正控前报错——再发现并校验生成器的完整本地 import 闭包（`generate.mts` → `../_shared/baseline.mts` → `./generator_guard.mjs` 与 `../../baseline_source_guard.mjs`，#1139），随后按原仓库相对布局复制到 scratch。闭包追踪 fail-closed：注释分隔或无插值模板的字面量动态 import 仍收编（含尾随注释与尾逗号），模板插值 / 变量 / 拼接 / 仓库外绝对路径一律拒跑；唯一允许的计算式参数是逐字匹配 `BASELINE_LOADERS` 白名单的两条固定基线加载器（提及 baseline 不算数，其源码 SHA-256 记录在 oracle.json）；`file:` URL 按绝对路径规则处理，`node:` 内建与裸模块名按静态 import 跳过，其余 scheme 拒跑。守卫覆盖 `negative_control.py`、`negative_process.py`、`negative_suite.py`、`negative_panic.py`、`pending_reanchor.py`。子进程阶段的套件向 scratch 传 **1800 秒**总预算，外层 **1860 秒**保留 60 秒清理余量。fail-closed，不产生假 PASS。
+
+闭包与守卫语义由 `../test_import_closure.py` 单测覆盖（纯函数 + #1166 扫描器输入集断言，无需树锁、不启动 cargo；扫描器用例需先 `cargo build --example workspace_inputs` 预构建），`../closure_guard_negative.py` 在共享源码守卫内——守卫同时覆盖两个被变异 runner 与被绑定判据 `test_import_closure.py` 本身——对闭包分类与判据锚做十八项变异（含 run-registry 镜像、helper 漂移与判据锚探针）、进程内跑被绑定单测并断言命中专属失败消息，任一非 KILLED 即非零退出；`--check-anchors` 只验锚点唯一与变异体可解析，不进树锁；SIGTERM/SIGHUP 会经 finally 恢复被变异源码。
 
 交叉测试 `real_ts_and_rust_continue_each_others_transcripts` 由 `generate.mts <dir> --cross-ts-write` / `--cross-ts-verify` 驱动：
 
