@@ -86,10 +86,15 @@ class DriftTests(unittest.TestCase):
                 bound, unaffected = copy.deepcopy(gate.BOUND), copy.deepcopy(gate.UNAFFECTED)
                 if extended:
                     expectations['listing-probe'] = 'EXPECTATION_LISTING_PROBE'
+                    expectations['listing-derivation-probe'] = 'EXPECTATION_RUST_DERIVATION'
                     calibration['listing-probe'] = 'CALIBRATION_LISTING_PROBE'
                     require_rows.append(('listing-probe', gate.SESSION, 'old', 'new'))
-                    bound['listing-probe'] = (('listing-probe', 'EXPECTATION_LISTING_PROBE'),)
-                    unaffected['listing-probe'] = ('listing-probe', 'EXPECTATION_LISTING_PROBE')
+                    bound['listing-probe'] = (
+                        ('listing-probe', 'EXPECTATION_LISTING_PROBE'),
+                        ('listing-derivation-probe', 'EXPECTATION_RUST_DERIVATION'),
+                    )
+                    unaffected['listing-probe'] = ('listing-derivation-probe',
+                                                  'EXPECTATION_RUST_DERIVATION')
                 tables = {'EXPECTATION_CASES': expectations, 'CALIBRATION_CASES': calibration}
                 with patch.object(sys, 'argv', ['negative_controls.py', '--list']), \
                         patch.object(gate, 'panel_table', side_effect=tables.__getitem__), \
@@ -107,12 +112,58 @@ class DriftTests(unittest.TestCase):
                                 '#1190 list: calibration names and rules must come from the live table')
                 self.assertTrue(listing.get('MUTATIONS') == [row[0] for row in require_rows],
                                 '#1190 list: mutation names must come from the live table')
+                self.assertTrue(listing.get('counts', {}).get('derivationExpectationCases')
+                                == (10 if extended else 9),
+                                '#1190 list: derivation probe must raise count from 9 to 10')
                 self.assertTrue(listing.get('counts') == {
                     'expectationCases': len(expectations),
                     'derivationExpectationCases': sum(rule == 'EXPECTATION_RUST_DERIVATION'
                                                      for rule in expectations.values()),
                     'calibrationCases': len(calibration), 'mutationRows': len(require_rows)},
                     '#1190 list: counts must be derived from the live tables')
+
+    def test_list_rejects_invalid_only(self):
+        known = gate.MUTATIONS[0][0]
+        for names in (['bogus'], [known, known]):
+            with self.subTest(names=names), \
+                    patch.object(sys, 'argv', ['negative_controls.py', '--list'] +
+                                 [arg for name in names for arg in ('--only', name)]), \
+                    contextlib.redirect_stdout(io.StringIO()) as output, \
+                    contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertTrue(gate.main() == 2,
+                                '#1190 list-only: invalid selection must reject listing')
+                self.assertTrue('unknown or duplicate --only name' in errors.getvalue()
+                                and not output.getvalue(),
+                                '#1190 list-only: diagnostic must precede listing')
+
+    def test_list_runs_anchor_checks(self):
+        selected = gate.MUTATIONS[:1]
+        with patch.object(sys, 'argv', ['negative_controls.py', '--list', '--check-anchors',
+                                      '--only', selected[0][0]]), \
+                patch.object(gate, 'check_anchors', wraps=gate.check_anchors) as anchors, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertTrue(gate.main() == 0,
+                            '#1190 list-anchors: valid anchors and listing must pass')
+        self.assertTrue(anchors.call_count == 1 and anchors.call_args.args == (selected,),
+                        '#1190 list-anchors: selected anchors must execute before listing')
+        report, separator, payload = output.getvalue().partition('\n')
+        self.assertTrue(report == '1 anchors: ok' and bool(separator),
+                        '#1190 list-anchors: anchor report must precede listing')
+        try:
+            listing = json.loads(payload)
+        except ValueError as error:
+            self.fail(f'#1190 list-anchors: JSON listing must follow anchor report: {error}')
+        self.assertTrue(listing.get('MUTATIONS') == [row[0] for row in gate.MUTATIONS],
+                        '#1190 list-anchors: combined invocation must also list live tables')
+
+    def test_list_rejects_failed_anchors(self):
+        with patch.object(sys, 'argv', ['negative_controls.py', '--list', '--check-anchors']), \
+                patch.object(gate, 'check_anchors', return_value=2) as anchors, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertTrue(gate.main() == 2,
+                            '#1190 list-anchors: failed anchors must reject listing')
+        self.assertTrue(anchors.call_count == 1 and not output.getvalue(),
+                        '#1190 list-anchors: failed anchors must not print listing')
 
     def test_list_is_read_only(self):
         active = False
@@ -203,6 +254,24 @@ def negative_checks():
         ('wrong-mutation-count', 'derived_counts', 'len(mutations)', 'len(mutations) + 1',
          'test_list_reports_live_tables_and_counts',
          '#1190 list: counts must be derived from the live tables'),
+        ('constant-derivation-count', 'derived_counts',
+         "sum(rule == 'EXPECTATION_RUST_DERIVATION'\n"
+         "                    for rule in expectation_cases.values())", '9',
+         'test_list_reports_live_tables_and_counts',
+         '#1190 list: derivation probe must raise count from 9 to 10'),
+        ('skip-only-validation', 'main',
+         'if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):',
+         'if False:', 'test_list_rejects_invalid_only',
+         '#1190 list-only: invalid selection must reject listing'),
+        ('skip-list-anchors', 'main', 'if args.check_anchors:',
+         'if args.check_anchors and not args.list:', 'test_list_runs_anchor_checks',
+         '#1190 list-anchors: selected anchors must execute before listing'),
+        ('return-before-listing', 'main', 'if anchor_status != 0 or not args.list:',
+         'if True:', 'test_list_runs_anchor_checks',
+         '#1190 list-anchors: JSON listing must follow anchor report'),
+        ('ignore-anchor-failure', 'main', 'if anchor_status != 0 or not args.list:',
+         'if not args.list:', 'test_list_rejects_failed_anchors',
+         '#1190 list-anchors: failed anchors must reject listing'),
         ('write-during-list', 'main', '    if args.list:',
          "    if args.list:\n        sys.audit('os.mkdir', '/unused', 511, -1)",
          'test_list_is_read_only', '#1190 list: filesystem writes forbidden'),
