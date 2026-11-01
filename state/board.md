@@ -2649,3 +2649,27 @@ updated: 2026-11-01 05:35 · by Claude Code 协调者
 - 10:42 #1218 r1：opus 0/0；DeepSeek P1（evict 失败时丢掉未消费的 pending 错误，与 R6 shutdown 句相反）+ P2×4（矩阵 cell 6 / 12 无负控、R6 探针路径、test_restore 阶段队列残留）→ fix-r1 GLM cb8。
 - 10:42 #1220 GLM 7200 s 时限（只完成 TS 金样，Rust 未开始）→ WIP 打包、树复位 → resume1 GLM cb8。#1216 GLM 交付 bef440b9d，auto-receive 推送中（两个实例并跑，未杀，待核无重复提交）。
 - 10:56 **两小时交接** → `_tmp/20261101-handoff-1055.md`。
+- 10:59 #1154 本机 r4l 完成（plugin-loader 96/96、定向 17、lib 3039 passed）→ 宿主证据齐，PR #1186 正文就绪（check-pr-gate PASS）；合 main 后全仓锚点 + --no-run 通过即自动 ready 入队（后台）。
+- 11:04 事故人已确认：VPN 与 Safari 被关闭，人已手动重启；PilotDeck 由 launchd 自动拉起，未报告异常。暂停杀进程的承诺解除，停进程只按明确 pid / 树路径。
+- 11:14 人问 4 台机器满载与约束放宽 → 实测与方案 `_tmp/20261101-capacity-v2/PLAN.md`（cb8 / mbp2 约 20%、macmini 近 0、本机过载且磁盘 205 GiB 超限；Codex 已恢复）。先派与在途不同模块的 #1207 → macmini、#360 → cb8；P2 组 A 因与 #1140 同文件延后；Codex 凭据放 cb8 待人批。
+- 11:20 本机磁盘 211 GiB 超限 → 删 wt-1154 / 1166 / 1145 / 1140 的 cargo-target（可重建，均无进程在用；这几棵树不再在本机编译）。#1186（#1154）合 main 检查通过 → ready 入队。
+- 11:27 合入 #1172（#1166 M6 树锁）、#1186（#1154 原生 Metadata cwd）、#1230（state）；邮箱 noreply，#1166 / #1154 关，两树归档回收，远端构建目录共删约 185G。解锁：#1139（等 #1166）、#1140 cb8 真实采集与 #132 第二三步（等 #1154）、A8 接线车道（等 #1154 + #1011）、M6 P2 组 C。
+- 11:27 人批 Codex 放 mbp2（暂不放 cb8），人已在 mbp2 自行登录 Codex CLI；mbp2 上用既有安装（未新下载）试跑 rc=0。#1216 r1 DeepSeek P0（相对 pilot_home 空桶覆盖）+ 并发 put 无串行（升 P0）+ P1×2（金样用了 v22.22.1、读错误中止迁移）→ fix-r1 GLM cb8。远端 worker 的 PATH 改为固定 v22.22.0 优先（cb8 默认 node 是 v22.22.1）。
+- 11:39 #1140 rebase 到含 #1154 的 main（8 提交无冲突）→ 全仓锚点 errors=0、check_frozen PASS、parity README 哈希一致、test_safety OK、--no-run 通过 → b7f66bc6c → cb8 真实采集任务（GLM，只采集交证据，不改代码）。#1215 fix-r1 已按延后派单自动派 cb8。
+- 11:39 #1218 fix-r1 4f13bb706（evict 失败时 pending 与 evict 错误聚合、矩阵 cell 6 / 12 补测试与负控、test_restore 队列修正）→ r2 opus + DeepSeek + mbp2 宿主；共享件对 merge-base 无改动（对 origin/main 的差异来自 #1166）；入队前须合 main 做锚点 + --no-run 检查。
+- 11:55 #1140 cb8 真实采集：采集成功（WITNESS_CAPTURED），但 deadline 判分在审计处 fail-closed——collect.py 合同写死 host / sidecar 各 1，真实网关每 session 起 1 个 sidecar（72 个）；另 1 负控 INVALID → 尺子 P1 cap-fix GLM cb8（走冻结程序 + 真实数据复算）。
+- 11:55 本机 Codex 401（与 mbp2 共用过同一 ChatGPT 令牌，mbp2 刷新后本机失效）→ 待人在本机重新 codex login。remote-worker 加 codex 通道（只允许 mbp2，人批）→ #132 第二三步首单冒烟：mbp2 上 codex exec 已在读源码。新派 #1044（cb8）、#201（macmini）。
+- 11:58 #1218 r2：opus 0/0（覆盖 4f13bb706）、DeepSeek 0/0，P2 一条（BUSY + 销毁失败分支无用例无变异）→ 只修 P2 的 fix-r2 GLM cb8；排队中的 mbp2 r2m（旧 head）按明确 pid 停掉。
+- 12:30 人：cb8 vllm 已停、mbp2 已关睡眠、合并队列为空，要求在安全稳定前提下更充分并发。放宽：worker cargo 名额按核数（cb8 2 → 8，mac 3；原 rw.sh 固定 2 把 cb8 压成 2 个并发编译）；cb8 车道 5 → 8、mbp2 2 → 3（另存 lane3 / host-only v3，登记处切换，旧链不动）；在审上限 16（人在 #1222：12–18，可加 Grok bot）；worktree 24 → 40（PR #1236，人同意）。
+- 12:30 子代理扫活（_tmp/20261101-work-scan/SCAN.md）→ 关 #245 #935 #1151 #1191 #149（main 核证据）、关旧 PR #150 #275 #629（分支保留）；新开 #1231（A8 接线 pr1，Codex 本机）#1232 #1233（#1162 拆包）；新派 #1190 #1233 #1139（重做，分支重置到 main）#1232 #265（Codex mbp2）；#132（Codex mbp2 首单）交付 → r1；#1216 fix-r1 → r2；#360 → r1；#1215 r2 DeepSeek P1（shutdown 分支可区分）→ fix-r2。
+- 12:36 #1220 resume1 交付（10 文件：金样 15 格、负控 3/3、lib 3086）手工收货 32634b0e0 → 草稿 PR #1237 → r1 opus + DeepSeek + mbp2 宿主。#1209 fix-r3 已按延后派单派 cb8。
+- 12:36 #1145 r10m：sdk-cli-lifecycle 84 KILLED、neg exit=0；targeted rc=101 是我传参错（sdk_signal_exit 属 pilotdeck-cli，宿主链写死 -p pilotdeck-gateway）→ 本机单跑 CLI 定向，lib 在 mbp2 等结果。
+- 12:36 #265（Codex mbp2）：三项在 main 上已有实现与测试（证据见 RESULT），零补丁；lib 8 个非绿里 4 个是 mbp2 worker 沙箱禁 pgrep，另 4 个根因未定 → 本机复跑判定，再决定关单。在审上限 16 写进 round-start。
+- 12:40 #1216 r2：opus 0/0（覆盖 1506b1d3a）、DeepSeek 0/0；P2-2 非 UTF-8 home 折成 U+FFFD 又造出同目录双 key（丢数据）→ 协调者升 P1 → fix-r2 GLM cb8（worker 树与 runner 树分开，旧 head 宿主不停，结果留作中间证据）。#265 关单（三项 main 已有；mbp2 沙箱 8 个非绿本机全过）。
+- 12:51 #1140 cap-fix 收货：check_frozen --write 由协调者补提交（冻结程序）→ 08b887eb2 → r5 两家；cb8 真实复算 72/72 executed、审计不再 fail-closed、逐格 FAIL=72（差异形状交评审判读）。#1157 待人总表补 11-01 人批记录（此前漏更新）。
+- 12:51 #132 r1：opus 0/0；DeepSeek P1——vendored icu_collator 的 databake(path = 模块路径) 被 #1166 源码扫描器误判为文件 path 边，所有 mutating_sources 负控变异前即 INVALID（宿主 38 全 INVALID）→ fix-r1 Codex mbp2（扫描器只认字符串字面量 path）。#360 r1 两家 0/0 → 只修 P2 fix-r1 GLM macmini。#1044 交付（PR #1238）→ r1 + cb8 宿主（与 #1148 同改 sdk-* 负控，#1148 先合）。
+- 12:52 #1220 r1：opus 0/0；DeepSeek P1×2（取消后到达零覆盖、合成 aborted 定位与 TS 相反）+ P2×3 → fix-r1 GLM cb8（以 TS 实测为准）。
+- 12:58 #1140 r5：opus 0/0（覆盖 08b887eb2）；DeepSeek 复读截断未交卷（exit=1，无 VERDICT），中断前线索：cap-fix 的 neg-probe/summary.json 里 driver-unbounded-trace 实为 INVALID → r5x 改由 Codex 作第二家并专门复现该负控。
+- 12:58 #1226 交付 → PR #1239 → r1 + mbp2 宿主；#1207 交付 → PR #1240 → r1 + cb8 宿主（10 套 edgeclaw 负控）。
+- 12:58 #1218 r3（只修 P2，全量）：DeepSeek 0/0/0、opus 四角色 0/0（覆盖 05c911b10）→ 评审收敛；mbp2 r3m 宿主在跑；合 main 检查脚本已备（宿主过后执行 → PR #1228 ready 入队）。
+- 13:02 **两小时交接** → `_tmp/20261101-handoff-1301.md`。
