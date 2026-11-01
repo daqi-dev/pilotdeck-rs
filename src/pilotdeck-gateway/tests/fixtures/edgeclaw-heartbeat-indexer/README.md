@@ -117,7 +117,13 @@ between them and is deleted unrecorded) and reverting the per-row generation
 map to the accumulating set (a row whose deleting clear predates the
 baseline reads as cleared-since it), plus a third that drops the baseline
 comparison outright — the re-captured turn is silently dropped behind the
-stale entry.
+stale entry. The #1207 fix-r1 review adds a fourth: dropping the re-arm from
+the clear's abort path (`clear-abort-rearm-dropped`), so an indexed row whose
+file the failed clear already removed is never re-listed and the file is
+lost. Both blocking-witness tests (`concurrent_capture_cannot_land_between_
+l0_id_selection_and_delete` and `commit_segment_blocks_concurrent_clear_
+until_writes_complete`) judge on completion-signal events, not wall clocks,
+so host load cannot false-green their bound mutants.
 After commit:
 
 ```sh

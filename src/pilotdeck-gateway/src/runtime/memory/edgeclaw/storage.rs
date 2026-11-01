@@ -916,6 +916,24 @@ impl EdgeClawStorage {
         Ok(())
     }
 
+    /// #1207 fix-r1 (review P1): a `clearSession` that aborted after
+    /// `delete_memory_entries` already removed the session's memory files
+    /// re-arms its still-present L0 rows — `indexed` back to 0 — so the next
+    /// heartbeat re-lists them and regenerates the files. Without this an
+    /// indexed row keeps its file deleted forever while its L0 row survives:
+    /// nothing ever re-lists an indexed row. No TS twin (`sqlite.ts:1985-2002`
+    /// runs the statements back-to-back on one synchronous connection, so TS
+    /// has no mid-tail failure face to recover from); this covers the
+    /// Rust-only abort faces (the clearSession seams and a mid-tail storage
+    /// error).
+    pub fn rearm_l0_indexed_for_session(&self, session_key: &str) -> Result<(), StorageError> {
+        self.conn()?.execute(
+            "UPDATE l0_sessions SET indexed = 0 WHERE session_key = ?1",
+            [session_key],
+        )?;
+        Ok(())
+    }
+
     /// `sqlite.ts:1055-1064`: filtered/deduped ids, newest first.
     pub fn get_l0_by_ids(&self, ids: &[String]) -> Result<Vec<L0SessionRecord>, StorageError> {
         let ids = unique_non_blank_ids(ids);

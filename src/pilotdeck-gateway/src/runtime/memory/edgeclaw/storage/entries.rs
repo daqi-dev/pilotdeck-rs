@@ -453,59 +453,25 @@ impl EdgeClawFileStores {
                     .collect(),
             );
             let deleted = self.delete_memory_entries(&ids)?;
-            // #917 fix-r3 (review P2) seam: the session's memory files are
-            // already removed but its L0 rows are not — the "bump after the
-            // file removal, before the L0 DELETE" half-fix position. A hook
-            // that parks here observes the partial-clear state (generation
-            // still at its baseline, rows still present); one that errors
-            // aborts the clear with the files already gone, which must still
-            // leave the generation untouched and the L0 rows in place.
-            // Production never installs a hook.
-            let hook = self
-                .clear_session_hook
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            if let Some(hook) = hook {
-                hook(ClearSessionStage::BeforeDeleteL0, session)?;
-            }
-            // #917 fix-r3 (review P0): remember exactly which L0 rows this
-            // clear deletes, selected immediately before the DELETE inside
-            // the same exclusive snapshot operation — a row that somehow
-            // lands between the selection and the DELETE escapes the record
-            // and can only be resurrected (the TS shape), never silently
-            // dropped.
-            // #1207: the selection and the DELETE must also share one
-            // connection guard (the `insert_l0_session_if_new` shape). As two
-            // `conn()?` statements the guard dropped in between, so a
-            // concurrent capture could insert a row this DELETE then removed
-            // without recording — a heartbeat that had already listed it
-            // re-checked `removed_since` as false and resurrected it. Under
-            // one guard that insert lands only after the DELETE, as new
-            // data: exactly the TS shape, where `clearSessionMemoryData` runs
-            // the two statements back-to-back on one synchronous connection.
-            let conn = self.storage.conn()?;
-            let removed_l0_ids: Vec<String> = conn
-                .prepare("SELECT l0_index_id FROM l0_sessions WHERE session_key = ?")?
-                .query_map([session], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            // #1207 seam: fires between the id selection and the DELETE, with
-            // the connection guard held. A hook that parks here keeps the
-            // guarded segment open, so a capture that started meanwhile blocks
-            // until the clear releases the guard; one that errors aborts the
-            // clear with the L0 rows still present and the generation
-            // untouched (the same shape as a `BeforeDeleteL0` failure).
-            // Production never installs a hook; like the other seams it is
-            // cloned out of its slot before the call.
-            let hook = self
-                .clear_session_hook
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            if let Some(hook) = hook {
-                hook(ClearSessionStage::L0IdsSelected, session)?;
-            }
-            conn.execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
+            // #1207 fix-r1 (review P1): everything below can still fail while
+            // the session's memory files are already gone. It runs in a
+            // helper whose connection guard is released when the helper
+            // returns — the recovery in the error arm must not reenter a
+            // guard this thread still holds (the conn mutex is not reentrant).
+            let removed_l0_ids = match self.clear_session_l0_tail(session) {
+                Ok(ids) => ids,
+                Err(error) => {
+                    // The clear aborted with the session's memory files
+                    // already removed but its L0 rows still present. An
+                    // indexed row would keep its file deleted forever —
+                    // nothing ever re-lists an indexed row — so re-arm the
+                    // session's rows: `indexed` back to 0 lets the next
+                    // heartbeat re-list them and regenerate the files, the
+                    // same recovery an unindexed row already gets.
+                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    return Err(error);
+                }
+            };
             // #917 fix-r2 (review P1-1): the generation means "this session's
             // clear completed", never "it started". Bump only after the L0 rows
             // are actually gone: a clear that fails anywhere above must leave
@@ -527,6 +493,68 @@ impl EdgeClawFileStores {
                 array(field(&deleted, "deletedProjectIds").clone()).len(),
             ))
         })
+    }
+    /// #1207 fix-r1 (review P1): the tail of [`Self::clear_session_memory_data`]
+    /// between the session's file removal and the bump — the `BeforeDeleteL0`
+    /// and `L0IdsSelected` seams, the removed-id selection and the L0 DELETE —
+    /// as one unit, so an error at any of them makes the caller re-arm the
+    /// still-present rows instead of leaving an indexed row whose file is
+    /// already gone.
+    fn clear_session_l0_tail(&self, session: &str) -> Result<Vec<String>> {
+        // #917 fix-r3 (review P2) seam: the session's memory files are
+        // already removed but its L0 rows are not — the "bump after the
+        // file removal, before the L0 DELETE" half-fix position. A hook
+        // that parks here observes the partial-clear state (generation
+        // still at its baseline, rows still present); one that errors
+        // aborts the clear with the files already gone, which must still
+        // leave the generation untouched and the L0 rows in place.
+        // Production never installs a hook.
+        let hook = self
+            .clear_session_hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(hook) = hook {
+            hook(ClearSessionStage::BeforeDeleteL0, session)?;
+        }
+        // #917 fix-r3 (review P0): remember exactly which L0 rows this
+        // clear deletes, selected immediately before the DELETE inside
+        // the same exclusive snapshot operation — a row that somehow
+        // lands between the selection and the DELETE escapes the record
+        // and can only be resurrected (the TS shape), never silently
+        // dropped.
+        // #1207: the selection and the DELETE must also share one
+        // connection guard (the `insert_l0_session_if_new` shape). As two
+        // `conn()?` statements the guard dropped in between, so a
+        // concurrent capture could insert a row this DELETE then removed
+        // without recording — a heartbeat that had already listed it
+        // re-checked `removed_since` as false and resurrected it. Under
+        // one guard that insert lands only after the DELETE, as new
+        // data: exactly the TS shape, where `clearSessionMemoryData` runs
+        // the two statements back-to-back on one synchronous connection.
+        let conn = self.storage.conn()?;
+        let removed_l0_ids: Vec<String> = conn
+            .prepare("SELECT l0_index_id FROM l0_sessions WHERE session_key = ?")?
+            .query_map([session], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        // #1207 seam: fires between the id selection and the DELETE, with
+        // the connection guard held. A hook that parks here keeps the
+        // guarded segment open, so a capture that started meanwhile blocks
+        // until the clear releases the guard; one that errors aborts the
+        // clear with the L0 rows still present and the generation
+        // untouched (the same shape as a `BeforeDeleteL0` failure).
+        // Production never installs a hook; like the other seams it is
+        // cloned out of its slot before the call.
+        let hook = self
+            .clear_session_hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(hook) = hook {
+            hook(ClearSessionStage::L0IdsSelected, session)?;
+        }
+        conn.execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
+        Ok(removed_l0_ids)
     }
     /// #917 fix-r1: the clear generation a heartbeat run captured as its
     /// baseline; see [`SessionClears`].

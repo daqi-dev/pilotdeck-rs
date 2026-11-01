@@ -40,7 +40,8 @@ out.mkdir(parents=True, exist_ok=True)
 # #917 fix-r1: the two recheck layers (the pre-loop `session_cleared` helper
 # call and the in-lock per-candidate recheck) plus the commit-segment scope
 # binding, all verbatim from `process_session` / `session_cleared`. fix-r3:
-# both layers discriminate per row via the removed-id set the clear records.
+# both layers discriminate per row via the removed record (row id → the
+# generation of the clear that deleted it).
 # The anchors below must stay byte-identical to the source or the run refuses
 # to start (AnchorExpired).
 BEFORE_CLASSIFY_FIRE = '            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'
@@ -166,14 +167,16 @@ BUMP_LINE_ONLY = '            self.session_clears.bump(session, &[]);\n'
 # gone. Bumping here (still claiming the rows) is the "bump after
 # delete_memory_entries, before the L0 DELETE" half-fix: a clear whose DELETE
 # then fails has advanced the generation with the rows still in place.
-BEFORE_DELETE_L0_SEAM = '''            let hook = self
-                .clear_session_hook
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            if let Some(hook) = hook {
-                hook(ClearSessionStage::BeforeDeleteL0, session)?;
-            }
+# #1207 fix-r1: the seam block lives in `clear_session_l0_tail` (method-body
+# indentation) since the abort-path re-arm extraction.
+BEFORE_DELETE_L0_SEAM = '''        let hook = self
+            .clear_session_hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(hook) = hook {
+            hook(ClearSessionStage::BeforeDeleteL0, session)?;
+        }
 '''
 
 BUMP_BEFORE_L0_SEAM = CLAIMED_L0_IDS + BEFORE_DELETE_L0_SEAM
@@ -192,20 +195,22 @@ DROPPED_SCOPE = '''                let commit_scopes = self
 # acquisitions. A capture that starts while the clear is parked at the
 # `L0IdsSelected` seam lands between the two statements, is deleted
 # unrecorded, and a heartbeat that already listed it would resurrect it.
-GAP_SELECT = '''            let conn = self.storage.conn()?;
-            let removed_l0_ids: Vec<String> = conn
+# fix-r1: the guarded segment lives in `clear_session_l0_tail` (method-body
+# indentation) since the abort-path re-arm extraction.
+GAP_SELECT = '''        let conn = self.storage.conn()?;
+        let removed_l0_ids: Vec<String> = conn
 '''
 
-GAP_SELECT_SPLIT = '''            let removed_l0_ids: Vec<String> = self
-                .storage
-                .conn()?
+GAP_SELECT_SPLIT = '''        let removed_l0_ids: Vec<String> = self
+            .storage
+            .conn()?
 '''
 
-GAP_DELETE = '            conn.execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;\n'
+GAP_DELETE = '        conn.execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;\n'
 
-GAP_DELETE_SPLIT = '''            self.storage
-                .conn()?
-                .execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
+GAP_DELETE_SPLIT = '''        self.storage
+            .conn()?
+            .execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
 '''
 
 # #1207 fix-2: the per-row generation record back to the accumulating set
@@ -363,7 +368,7 @@ cases = [
      SCOPE_BINDING,
      DROPPED_SCOPE,
      'commit_segment_blocks_concurrent_clear_until_writes_complete',
-     "#917 a concurrent clearSession must block until the commit segment's writes complete"),
+     "#917 a concurrent clearSession must stay blocked on the commit segment's snapshot locks until its writes complete"),
     # #917 fix-r1: the fail-open arm flipped. Treating a Closed lookup as
     # cleared skips the file write in the close cells and drifts them away
     # from the TS baseline (TS writes the file, then rejects at
@@ -610,13 +615,14 @@ cases = [
     # #1207 fix-1: the guarded segment split back into two connection
     # acquisitions. A capture that starts while the clear is parked at the
     # `L0IdsSelected` seam lands between the two statements and is deleted
-    # unrecorded — the bound test sees the insert complete before the release
-    # and the row swallowed by the DELETE.
+    # unrecorded — the bound test's event criterion sees the insert complete
+    # inside the pre-release window (fix-r1 review P1: wall clocks could
+    # false-green under host load) and the row is swallowed by the DELETE.
     dict(name='clear-gap-insert-swallowed',
          changes=[(entries, GAP_SELECT, GAP_SELECT_SPLIT),
                   (entries, GAP_DELETE, GAP_DELETE_SPLIT)],
          test='concurrent_capture_cannot_land_between_l0_id_selection_and_delete',
-         assertion='#1207 the capture started inside the guarded segment may complete only after the clear released the storage guard'),
+         assertion='#1207 the capture started while the clear is parked inside the guarded segment must stay blocked on the connection guard until the clear releases it'),
     # #1207 fix-2: the per-row generation record back to the accumulating set
     # with the session-level comparison — a row whose deleting clear predates
     # the baseline reads as cleared-since it, and the re-captured turn is
@@ -635,6 +641,16 @@ cases = [
          changes=[(file_memory, REMOVED_MAP_SINCE, REMOVED_BASELINE_DROPPED)],
          test='recaptured_turn_survives_unrelated_later_clear',
          assertion='#1207 the re-captured turn must be persisted, not silently dropped behind the stale removed entry'),
+    # #1207 fix-r1 (review P1): the re-arm dropped from the abort path — an
+    # indexed row keeps its file deleted forever while its L0 row survives
+    # (nothing ever re-lists an indexed row). The bound test's re-arm
+    # assertion goes red.
+    ('clear-abort-rearm-dropped',
+     entries,
+     '                    self.storage.rearm_l0_indexed_for_session(session)?;\n',
+     '',
+     'clear_failing_after_l0_ids_selected_rearms_indexed_rows',
+     '#1207 the clear that failed with the files already removed must re-arm its still-present indexed row'),
 ]
 only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
 

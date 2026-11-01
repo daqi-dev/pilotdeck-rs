@@ -440,7 +440,9 @@ pub enum ClearSessionStage {
     /// guarded segment the selection and the deletion must share. A hook
     /// that parks here keeps the guard open (a concurrent capture blocks
     /// until the clear releases it); one that errors aborts the clear with
-    /// the L0 rows still present and the generation untouched. Production
+    /// the L0 rows still present and the generation untouched. A hook must
+    /// not touch the same store's connection here: the conn mutex is not
+    /// reentrant on one thread, so it would self-deadlock. Production
     /// never installs a hook.
     L0IdsSelected,
 }

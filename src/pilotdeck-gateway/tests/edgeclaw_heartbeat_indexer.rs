@@ -2114,32 +2114,44 @@ async fn commit_segment_blocks_concurrent_clear_until_writes_complete() {
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("#917 the heartbeat must park inside the commit segment");
     let clear_stores = lab.stores.clone();
+    let (clear_done_tx, clear_done_rx) = std::sync::mpsc::channel::<()>();
     let clear = thread::spawn(move || {
-        let start = std::time::Instant::now();
         clear_stores
             .clear_session_memory_data("s1")
             .expect("#917 the concurrent clear must succeed after the commit segment");
-        start.elapsed()
+        clear_done_tx
+            .send(())
+            .expect("#917 the concurrent clear must signal its completion");
     });
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    // Event criterion, not wall clocks (the #1207 fix-r1 review P1 shape): the
+    // parked commit segment holds the snapshot operation locks `clearSession`
+    // also takes, so while the segment stays parked the clear can only be
+    // blocked — its completion signal must not arrive within the window. The
+    // dropped-scope mutant lets the clear finish while the segment is parked.
+    assert!(
+        matches!(
+            clear_done_rx.recv_timeout(std::time::Duration::from_secs(5)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "#917 a concurrent clearSession must stay blocked on the commit segment's snapshot locks until its writes complete"
+    );
     release_tx
         .send(())
         .expect("#917 the release signal must reach the commit hook");
+    clear_done_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#917 the blocked clear must complete once the commit segment released the snapshot locks");
     let stats = heartbeat
         .join()
         .expect("#917 the heartbeat thread must not panic")
         .expect(
             "#917 runHeartbeat must not reject when a concurrent clear waits on the commit segment",
         );
-    let clear_elapsed = clear.join().expect("#917 the clear thread must not panic");
+    clear.join().expect("#917 the clear thread must not panic");
     assert_eq!(
         fired.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "#917 the commit hook must fire exactly once"
-    );
-    assert!(
-        clear_elapsed >= std::time::Duration::from_millis(250),
-        "#917 a concurrent clearSession must block until the commit segment's writes complete, but it returned after {clear_elapsed:?}"
     );
     assert_eq!(
         (
@@ -2774,6 +2786,148 @@ async fn clear_failing_before_l0_delete_keeps_generation_and_turn() {
     lab.server.close().await;
 }
 
+// #1207 fix-r1 (review P1): a clear that aborts at the `L0IdsSelected` seam
+// has already removed the session's memory files; for an *indexed* row the
+// pre-fix state was silent loss — the row survives with indexed=1, so
+// `list_unindexed_l0_by_session` never re-lists it and the file is never
+// re-derived. The abort must re-arm the session's still-present rows
+// (indexed back to 0), which is exactly the recovery an unindexed row already
+// gets: the following heartbeat re-lists, re-classifies and regenerates the
+// file.
+#[tokio::test]
+async fn clear_failing_after_l0_ids_selected_rearms_indexed_rows() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-fails-at-l0-ids-selected", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "indexed before a clear that fails at the L0 id selection",
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1207 the first heartbeat must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1207 the first heartbeat must index the turn and write its file"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the first heartbeat");
+    assert!(
+        rows[0].indexed,
+        "#1207 the row must be indexed before the failing clear starts"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1207 the turn's file must exist before the failing clear starts, got {paths:?}"
+    );
+    lab.stores
+        .set_clear_session_hook(Arc::new(|stage, session| {
+            assert_eq!(
+                session, "s1",
+                "#1207 the failing-clear hook must fire on the target session"
+            );
+            if stage != ClearSessionStage::L0IdsSelected {
+                return Ok(());
+            }
+            Err(FileMemoryError::Invalid(
+                "#1207 injected failure after the L0 id selection".into(),
+            ))
+        }));
+    let error = lab
+        .stores
+        .clear_session_memory_data("s1")
+        .expect_err("#1207 the clear must fail with the injected error");
+    assert!(
+        error
+            .to_string()
+            .contains("#1207 injected failure after the L0 id selection"),
+        "#1207 the clear must fail with the injected error, got {error}"
+    );
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#1207 the failed clear must not advance the generation"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        !paths.iter().any(|path| path.starts_with("Project/")),
+        "#1207 the failed clear removed the session's files; only the re-arm can bring them back, got {paths:?}"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the failed clear");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1207 the failed clear must leave the session's L0 row in place"
+    );
+    assert!(
+        !rows[0].indexed,
+        "#1207 the clear that failed with the files already removed must re-arm its still-present indexed row"
+    );
+    let pending = lab
+        .stores
+        .storage
+        .list_unindexed_l0_by_session("s1")
+        .expect("#1207 list unindexed rows after the failed clear");
+    assert_eq!(
+        pending.len(),
+        1,
+        "#1207 the re-armed row must be re-listable so the next heartbeat regenerates its file"
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1207 the heartbeat after the re-armed clear failure must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1207 the heartbeat after the re-armed clear failure must re-index the row and regenerate its file"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the second heartbeat");
+    assert!(
+        rows[0].indexed,
+        "#1207 the re-armed row must be indexed again alongside the regenerated file"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1207 the heartbeat after the re-armed clear failure must regenerate the session's file, got {paths:?}"
+    );
+    lab.server.close().await;
+}
+
 // #1207 fix-1: the L0 id selection and the DELETE inside `clearSession` must
 // share one connection guard. A capture that starts while the clear is parked
 // at the `L0IdsSelected` seam must not land inside the guarded segment: with
@@ -2844,6 +2998,7 @@ fn concurrent_capture_cannot_land_between_l0_id_selection_and_delete() {
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("#1207 the clear must park between the id selection and the DELETE");
     let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+    let (inserted_tx, inserted_rx) = std::sync::mpsc::channel::<()>();
     let insert_stores = stores.clone();
     let insert = thread::spawn(move || {
         started_tx
@@ -2853,23 +3008,39 @@ fn concurrent_capture_cannot_land_between_l0_id_selection_and_delete() {
             .storage
             .insert_l0_session(&row("s1_b_raw", "2026-10-22T00:00:02.000Z"))
             .expect("#1207 the guarded-segment insert must not fail");
-        std::time::Instant::now()
+        inserted_tx
+            .send(())
+            .expect("#1207 the guarded-segment insert must signal its completion");
     });
     started_rx
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("#1207 the guarded-segment insert thread must start");
-    thread::sleep(std::time::Duration::from_millis(400));
-    let release_at = std::time::Instant::now();
+    // Event criterion, not wall clocks (fix-r1 review P1): while the clear
+    // stays parked inside the guarded segment the capture can only be blocked
+    // on the connection guard, so its completion signal must not arrive
+    // within the window — the two-guard shape lets the insert finish while
+    // the clear is parked, and receiving it here is the deterministic kill.
+    // A host slow enough to keep even the mutant's insert unfinished for the
+    // whole window cannot make the fixed shape fail: it never completes
+    // before the release.
+    assert!(
+        matches!(
+            inserted_rx.recv_timeout(std::time::Duration::from_secs(5)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "#1207 the capture started while the clear is parked inside the guarded segment must stay blocked on the connection guard until the clear releases it"
+    );
     release_tx
         .send(())
         .expect("#1207 the release signal must reach the parked clear");
-    let inserted_at = insert
+    inserted_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect(
+            "#1207 the blocked capture must complete once the clear released the storage guard",
+        );
+    insert
         .join()
         .expect("#1207 the guarded-segment insert thread must not panic");
-    assert!(
-        inserted_at >= release_at,
-        "#1207 the capture started inside the guarded segment may complete only after the clear released the storage guard"
-    );
     clear
         .join()
         .expect("#1207 the parked clear thread must not panic");
