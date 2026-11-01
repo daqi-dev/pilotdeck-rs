@@ -45,7 +45,8 @@
   - `locations.md`：每个配置的文件路径与行号
   - `README.md`：清单用途与维护约定
   - 本机协调工具（10-31 人认可）：在仓库外 `~/ws/pdrs-ops/`（本地 git，不入库、不评审，只做编排不做判定）；入口与当前版本以其 `registry.tsv` 为准。宿主 Node 基线：本机 homebrew node@22（ICU 78.2 / libuv 1.52.1），cb8 / mbp2 / macmini 已从源码对齐（`state/decisions-20261031-node-baseline.md`）。
-  - 2026-10-31 现状：Codex 额度用尽（11-04 恢复）；实现以 GLM 为主，评审 opus + DeepSeek。GLM / DeepSeek 的 llm-center key 已放 cb8 / mbp2 / macmini（人批 #1191，DeepSeek 可高并发），实现默认派远端。
+  - 2026-11-01 现状：Codex 已恢复，凭据只在本机与 mbp2（人批：暂不放 cb8），远端 Codex 只派 mbp2；GLM / DeepSeek 的 llm-center key 在 cb8 / mbp2 / macmini（人批 #1191）。实现默认 GLM 远端、难单 Codex；评审 opus + 第二家（排除作者家族后按 DeepSeek → Codex → GLM 取，协调者入口已机检）。DeepSeek 在负控 / 证据多的大评审上会复读截断，这类第二家用 Codex。
+  - 硬件（11-01 人放宽）：cb8 20 核 / 约 119 GB，vllm 已停，宿主车道 8、worker cargo 名额 8；mbp2 10 核笔记本已关睡眠，车道 3；macmini 10 核 / 24 GB，进程启动偶发卡 12–35 s，不放超时敏感的宿主；本机只做协调。在审上限 16（人在 #1222：至少 12–18）；worktree 上限 40。
 - 硬件 / 网络：
 - 人手：Claude 协调，尽量把活派给其他智能体，智能体可以支持并发。
 
