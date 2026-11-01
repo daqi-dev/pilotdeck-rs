@@ -1,12 +1,15 @@
 //! Port of TS `src/cron/storage/CronTaskStore.ts` (250 lines; line refs
 //! below). Synchronous where the TS class chains per-file promise tails
-//! (`taskFileMutationTails`, CronTaskStore.ts:13,158-173): a single-threaded
-//! caller serializes the same mutations in call order, which is what the
-//! promise chain guarantees.
+//! (`taskFileMutationTails`, CronTaskStore.ts:13,158-173): every read-modify-
+//! write mutation holds this module's per-`tasksFile` mutex across the whole
+//! read→write span, which is what the promise chain guarantees — including
+//! across separate store instances, since the TS map is module-level.
 use std::{
+    collections::HashMap,
     fs,
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
     time::SystemTime,
 };
 
@@ -20,6 +23,20 @@ use crate::{js_value, metadata::js_trim, project_files::node_compare_utf16};
 /// functions re-attach.
 struct TaskFile {
     tasks: Vec<JsValue>,
+}
+
+/// The `taskFileMutationTails` map: one tail per tasks file, process-wide.
+/// Entries are never removed — the TS code drops a tail only when it is still
+/// the last queued promise, and the set of tasks files is bounded by the set
+/// of project keys in the process.
+static TASK_FILE_TAILS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+
+fn task_file_tail(tasks_file: &Path) -> Arc<Mutex<()>> {
+    let registry = TASK_FILE_TAILS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut tails = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    tails.entry(tasks_file.to_path_buf()).or_default().clone()
 }
 
 pub struct CronTaskStore {
@@ -51,6 +68,8 @@ impl CronTaskStore {
 
     /// CronTaskStore.ts:26-37.
     pub fn put_task(&self, task: &JsValue) -> Result<(), CronStoreError> {
+        let tail = task_file_tail(&self.paths.tasks_file);
+        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut file = self.read_task_file()?;
         let wanted = task.get("taskId");
         match file
@@ -67,6 +86,8 @@ impl CronTaskStore {
 
     /// CronTaskStore.ts:39-50.
     pub fn replace_task(&self, task: &JsValue) -> Result<bool, CronStoreError> {
+        let tail = task_file_tail(&self.paths.tasks_file);
+        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut file = self.read_task_file()?;
         let wanted = task.get("taskId");
         let Some(index) = file
@@ -90,6 +111,8 @@ impl CronTaskStore {
         task_id: &str,
         update: impl Fn(&JsValue) -> Option<JsValue>,
     ) -> Result<Option<JsValue>, CronStoreError> {
+        let tail = task_file_tail(&self.paths.tasks_file);
+        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let wanted = JsValue::String(JsString::from(task_id));
         let file = self.read_task_file()?;
         let mut tasks = Vec::with_capacity(file.tasks.len());
@@ -114,6 +137,8 @@ impl CronTaskStore {
 
     /// CronTaskStore.ts:67-76.
     pub fn delete_task(&self, task_id: &str) -> Result<bool, CronStoreError> {
+        let tail = task_file_tail(&self.paths.tasks_file);
+        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let wanted = JsValue::String(JsString::from(task_id));
         let file = self.read_task_file()?;
         let before = file.tasks.len();
@@ -266,8 +291,10 @@ fn parse_task_file(raw: &str) -> Vec<JsValue> {
 }
 
 /// CronTaskStore.ts:176-178. Stable sort by `nextRunAt ?? ""` under
-/// `localeCompare`. A non-string, non-nullish `nextRunAt` has no
-/// `localeCompare` in JS, so it is a `TypeError` here.
+/// `localeCompare`. V8 throws the `TypeError` only when the comparator is
+/// actually invoked with a non-string first operand — a single-element array
+/// never calls it — while this port rejects any non-string, non-nullish
+/// `nextRunAt` up front, so it is stricter on that invalid shape.
 fn sort_tasks(tasks: &mut [JsValue]) -> Result<(), CronStoreError> {
     let collator = super::collator()?;
     for task in tasks.iter() {

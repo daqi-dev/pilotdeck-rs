@@ -670,7 +670,7 @@
     "src/web/client/protocol.ts": "d36eb220a30c04a58a77116a6ba0f1b54d250b5cf204b155ed065c4a52ef38f9",
     "src/web/client/webMessage.ts": "ada604e1438867fc15907e2dcd45daf3339c09c31e07d0cf595cd30fa9eb54a4"
   },
-  "node": "v22.22.1",
+  "node": "v22.22.0",
   "collator": "en-US",
   "paths": [
     {
@@ -2667,6 +2667,8 @@
     {
       "name": "no-cron-dir",
       "home": "migration-no-cron-dir",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [],
       "warnings": [],
       "error": null,
@@ -2681,6 +2683,8 @@
     {
       "name": "empty-projects-dir",
       "home": "migration-empty-projects-dir",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/.keep",
@@ -2704,6 +2708,8 @@
     {
       "name": "tasks-without-projectkey-stay",
       "home": "migration-tasks-without-projectkey-stay",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -2752,6 +2758,8 @@
     {
       "name": "tasks-move-to-projectkey-dir",
       "home": "migration-tasks-move-to-projectkey-dir",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -2780,6 +2788,8 @@
     {
       "name": "runs-by-explicit-projectkey",
       "home": "migration-runs-by-explicit-projectkey",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -2821,6 +2831,8 @@
     {
       "name": "runs-by-unique-task-project",
       "home": "migration-runs-by-unique-task-project",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -2858,6 +2870,8 @@
     {
       "name": "runs-ambiguous-task-stay",
       "home": "migration-runs-ambiguous-task-stay",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -2901,6 +2915,8 @@
     {
       "name": "blocked-dir-keeps-source-tasks",
       "home": "migration-blocked-dir-keeps-source-tasks",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/beta/tasks.json",
@@ -2962,6 +2978,8 @@
     {
       "name": "blocked-dir-tasks-not-array",
       "home": "migration-blocked-dir-tasks-not-array",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/beta/tasks.json",
@@ -3005,6 +3023,8 @@
     {
       "name": "invalid-run-lines-preserved",
       "home": "migration-invalid-run-lines-preserved",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -3044,6 +3064,8 @@
     {
       "name": "run-events-merge-and-move",
       "home": "migration-run-events-merge-and-move",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -3097,6 +3119,8 @@
     {
       "name": "duplicate-tasks-dedupe",
       "home": "migration-duplicate-tasks-dedupe",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -3166,6 +3190,8 @@
     {
       "name": "duplicate-runs-dedupe",
       "home": "migration-duplicate-runs-dedupe",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -3205,6 +3231,8 @@
     {
       "name": "missing-tasks-file-is-writable",
       "home": "migration-missing-tasks-file-is-writable",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/run-history.jsonl",
@@ -3239,8 +3267,236 @@
       "twice": null
     },
     {
+      "name": "relative-home-same-dir-projectkey",
+      "home": "migration-relative-home-same-dir-projectkey",
+      "pilotHomeRelative": true,
+      "chmod000": null,
+      "input": [
+        {
+          "path": "cron/projects/w-same/tasks.json",
+          "text": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"projectKey\": \"/w/same\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+          "bytes": null
+        }
+      ],
+      "warnings": [
+        {
+          "message": "cron migration resolved duplicate task",
+          "meta": {
+            "taskId": "a1",
+            "projectDir": "{HOME}/cron/projects/w-same"
+          }
+        }
+      ],
+      "error": null,
+      "once": {
+        "files": {
+          "cron/projects/w-same/run-history.jsonl": "",
+          "cron/projects/w-same/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbCiAgICB7CiAgICAgICJzY2hlbWFWZXJzaW9uIjogMSwKICAgICAgInRhc2tJZCI6ICJhMSIsCiAgICAgICJtZXNzYWdlIjogImhlbGxvIiwKICAgICAgInNjaGVkdWxlIjogewogICAgICAgICJ0eXBlIjogImNyb24iLAogICAgICAgICJleHByZXNzaW9uIjogIiovNSAqICogKiAqIgogICAgICB9LAogICAgICAic3RhdHVzIjogInNjaGVkdWxlZCIsCiAgICAgICJzZXNzaW9uS2V5IjogInNlc3MtMSIsCiAgICAgICJjaGFubmVsS2V5IjogImltIiwKICAgICAgInByb2plY3RLZXkiOiAiL3cvc2FtZSIsCiAgICAgICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIiwKICAgICAgInVwZGF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMFoiCiAgICB9CiAgXQp9Cg==",
+          "cron/store-migration-v1.json": "ewogICJ2ZXJzaW9uIjogMSwKICAiY29tcGxldGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIgp9Cg=="
+        },
+        "dirs": [
+          "cron",
+          "cron/projects",
+          "cron/projects/w-same"
+        ]
+      },
+      "twice": null
+    },
+    {
+      "name": "relative-home-blocked-dir",
+      "home": "migration-relative-home-blocked-dir",
+      "pilotHomeRelative": true,
+      "chmod000": null,
+      "input": [
+        {
+          "path": "cron/projects/w-proj-b/tasks.json",
+          "text": "{\"schemaVersion\": 1, \"tasks\": [",
+          "bytes": null
+        },
+        {
+          "path": "cron/projects/w-proj-b/run-history.jsonl",
+          "text": "{\"schemaVersion\":1,\"runId\":\"rb\",\"taskId\":\"t1\",\"sessionKey\":\"sess-1\",\"startedAt\":\"2026-01-01T00:00:00.000Z\"}\n",
+          "bytes": null
+        },
+        {
+          "path": "cron/projects/alpha/tasks.json",
+          "text": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"projectKey\": \"/w/proj-b\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    },\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a2\",\n      \"message\": \"hello\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+          "bytes": null
+        },
+        {
+          "path": "cron/projects/alpha/run-history.jsonl",
+          "text": "{\"schemaVersion\":1,\"runId\":\"r1\",\"taskId\":\"t1\",\"sessionKey\":\"sess-1\",\"projectKey\":\"/w/proj-b\",\"startedAt\":\"2026-01-01T00:00:00.000Z\"}\n{\"schemaVersion\":1,\"runId\":\"r2\",\"taskId\":\"t1\",\"sessionKey\":\"sess-1\",\"startedAt\":\"2026-01-01T00:00:00.000Z\"}\n",
+          "bytes": null
+        }
+      ],
+      "warnings": [
+        {
+          "message": "cron migration preserved an unreadable task store",
+          "meta": {
+            "projectDir": "{HOME}/cron/projects/w-proj-b"
+          }
+        },
+        {
+          "message": "cron migration resolved duplicate task",
+          "meta": {
+            "taskId": "a1",
+            "projectDir": "{HOME}/cron/projects/alpha"
+          }
+        },
+        {
+          "message": "cron migration resolved duplicate task",
+          "meta": {
+            "taskId": "a2",
+            "projectDir": "{HOME}/cron/projects/alpha"
+          }
+        }
+      ],
+      "error": null,
+      "once": {
+        "files": {
+          "cron/projects/alpha/run-history.jsonl": "eyJzY2hlbWFWZXJzaW9uIjoxLCJydW5JZCI6InIxIiwidGFza0lkIjoidDEiLCJzZXNzaW9uS2V5Ijoic2Vzcy0xIiwicHJvamVjdEtleSI6Ii93L3Byb2otYiIsInN0YXJ0ZWRBdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiJ9Cnsic2NoZW1hVmVyc2lvbiI6MSwicnVuSWQiOiJyMiIsInRhc2tJZCI6InQxIiwic2Vzc2lvbktleSI6InNlc3MtMSIsInN0YXJ0ZWRBdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiJ9Cg==",
+          "cron/projects/alpha/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbCiAgICB7CiAgICAgICJzY2hlbWFWZXJzaW9uIjogMSwKICAgICAgInRhc2tJZCI6ICJhMSIsCiAgICAgICJtZXNzYWdlIjogImhlbGxvIiwKICAgICAgInNjaGVkdWxlIjogewogICAgICAgICJ0eXBlIjogImNyb24iLAogICAgICAgICJleHByZXNzaW9uIjogIiovNSAqICogKiAqIgogICAgICB9LAogICAgICAic3RhdHVzIjogInNjaGVkdWxlZCIsCiAgICAgICJzZXNzaW9uS2V5IjogInNlc3MtMSIsCiAgICAgICJjaGFubmVsS2V5IjogImltIiwKICAgICAgInByb2plY3RLZXkiOiAiL3cvcHJvai1iIiwKICAgICAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMFoiLAogICAgICAidXBkYXRlZEF0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIKICAgIH0sCiAgICB7CiAgICAgICJzY2hlbWFWZXJzaW9uIjogMSwKICAgICAgInRhc2tJZCI6ICJhMiIsCiAgICAgICJtZXNzYWdlIjogImhlbGxvIiwKICAgICAgInNjaGVkdWxlIjogewogICAgICAgICJ0eXBlIjogImNyb24iLAogICAgICAgICJleHByZXNzaW9uIjogIiovNSAqICogKiAqIgogICAgICB9LAogICAgICAic3RhdHVzIjogInNjaGVkdWxlZCIsCiAgICAgICJzZXNzaW9uS2V5IjogInNlc3MtMSIsCiAgICAgICJjaGFubmVsS2V5IjogImltIiwKICAgICAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMFoiLAogICAgICAidXBkYXRlZEF0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIKICAgIH0KICBdCn0K",
+          "cron/projects/w-proj-b/run-history.jsonl": "eyJzY2hlbWFWZXJzaW9uIjoxLCJydW5JZCI6InJiIiwidGFza0lkIjoidDEiLCJzZXNzaW9uS2V5Ijoic2Vzcy0xIiwic3RhcnRlZEF0IjoiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIn0K",
+          "cron/projects/w-proj-b/tasks.json": "eyJzY2hlbWFWZXJzaW9uIjogMSwgInRhc2tzIjogWw==",
+          "cron/store-migration-v1.json": "ewogICJ2ZXJzaW9uIjogMSwKICAiY29tcGxldGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIgp9Cg=="
+        },
+        "dirs": [
+          "cron",
+          "cron/projects",
+          "cron/projects/alpha",
+          "cron/projects/w-proj-b"
+        ]
+      },
+      "twice": null
+    },
+    {
+      "name": "blocked-dir-tasks-eacces",
+      "home": "migration-blocked-dir-tasks-eacces",
+      "pilotHomeRelative": null,
+      "chmod000": [
+        "cron/projects/beta/tasks.json"
+      ],
+      "input": [
+        {
+          "path": "cron/projects/beta/tasks.json",
+          "text": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"b1\",\n      \"message\": \"hello\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+          "bytes": null
+        },
+        {
+          "path": "cron/projects/alpha/tasks.json",
+          "text": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"projectKey\": \"/w/proj-b\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+          "bytes": null
+        }
+      ],
+      "warnings": [
+        {
+          "message": "cron migration preserved an unreadable task store",
+          "meta": {
+            "projectDir": "{HOME}/cron/projects/beta"
+          }
+        }
+      ],
+      "error": null,
+      "once": {
+        "files": {
+          "cron/projects/alpha/run-history.jsonl": "",
+          "cron/projects/alpha/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbXQp9Cg==",
+          "cron/projects/beta/run-history.jsonl": "",
+          "cron/projects/beta/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbCiAgICB7CiAgICAgICJzY2hlbWFWZXJzaW9uIjogMSwKICAgICAgInRhc2tJZCI6ICJiMSIsCiAgICAgICJtZXNzYWdlIjogImhlbGxvIiwKICAgICAgInNjaGVkdWxlIjogewogICAgICAgICJ0eXBlIjogImNyb24iLAogICAgICAgICJleHByZXNzaW9uIjogIiovNSAqICogKiAqIgogICAgICB9LAogICAgICAic3RhdHVzIjogInNjaGVkdWxlZCIsCiAgICAgICJzZXNzaW9uS2V5IjogInNlc3MtMSIsCiAgICAgICJjaGFubmVsS2V5IjogImltIiwKICAgICAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMFoiLAogICAgICAidXBkYXRlZEF0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIKICAgIH0KICBdCn0K",
+          "cron/projects/w-proj-b/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbCiAgICB7CiAgICAgICJzY2hlbWFWZXJzaW9uIjogMSwKICAgICAgInRhc2tJZCI6ICJhMSIsCiAgICAgICJtZXNzYWdlIjogImhlbGxvIiwKICAgICAgInNjaGVkdWxlIjogewogICAgICAgICJ0eXBlIjogImNyb24iLAogICAgICAgICJleHByZXNzaW9uIjogIiovNSAqICogKiAqIgogICAgICB9LAogICAgICAic3RhdHVzIjogInNjaGVkdWxlZCIsCiAgICAgICJzZXNzaW9uS2V5IjogInNlc3MtMSIsCiAgICAgICJjaGFubmVsS2V5IjogImltIiwKICAgICAgInByb2plY3RLZXkiOiAiL3cvcHJvai1iIiwKICAgICAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMFoiLAogICAgICAidXBkYXRlZEF0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIKICAgIH0KICBdCn0K",
+          "cron/store-migration-v1.json": "ewogICJ2ZXJzaW9uIjogMSwKICAiY29tcGxldGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIgp9Cg=="
+        },
+        "dirs": [
+          "cron",
+          "cron/projects",
+          "cron/projects/alpha",
+          "cron/projects/beta",
+          "cron/projects/w-proj-b"
+        ]
+      },
+      "twice": null
+    },
+    {
+      "name": "blocked-dir-tasks-isdir",
+      "home": "migration-blocked-dir-tasks-isdir",
+      "pilotHomeRelative": null,
+      "chmod000": null,
+      "input": [
+        {
+          "path": "cron/projects/beta/tasks.json/keep",
+          "text": "x",
+          "bytes": null
+        },
+        {
+          "path": "cron/projects/alpha/tasks.json",
+          "text": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"projectKey\": \"/w/proj-b\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+          "bytes": null
+        }
+      ],
+      "warnings": [
+        {
+          "message": "cron migration preserved an unreadable task store",
+          "meta": {
+            "projectDir": "{HOME}/cron/projects/beta"
+          }
+        }
+      ],
+      "error": null,
+      "once": {
+        "files": {
+          "cron/projects/alpha/run-history.jsonl": "",
+          "cron/projects/alpha/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbXQp9Cg==",
+          "cron/projects/beta/run-history.jsonl": "",
+          "cron/projects/beta/tasks.json/keep": "eA==",
+          "cron/projects/w-proj-b/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbCiAgICB7CiAgICAgICJzY2hlbWFWZXJzaW9uIjogMSwKICAgICAgInRhc2tJZCI6ICJhMSIsCiAgICAgICJtZXNzYWdlIjogImhlbGxvIiwKICAgICAgInNjaGVkdWxlIjogewogICAgICAgICJ0eXBlIjogImNyb24iLAogICAgICAgICJleHByZXNzaW9uIjogIiovNSAqICogKiAqIgogICAgICB9LAogICAgICAic3RhdHVzIjogInNjaGVkdWxlZCIsCiAgICAgICJzZXNzaW9uS2V5IjogInNlc3MtMSIsCiAgICAgICJjaGFubmVsS2V5IjogImltIiwKICAgICAgInByb2plY3RLZXkiOiAiL3cvcHJvai1iIiwKICAgICAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMFoiLAogICAgICAidXBkYXRlZEF0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIKICAgIH0KICBdCn0K",
+          "cron/store-migration-v1.json": "ewogICJ2ZXJzaW9uIjogMSwKICAiY29tcGxldGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIgp9Cg=="
+        },
+        "dirs": [
+          "cron",
+          "cron/projects",
+          "cron/projects/alpha",
+          "cron/projects/beta",
+          "cron/projects/beta/tasks.json",
+          "cron/projects/w-proj-b"
+        ]
+      },
+      "twice": null
+    },
+    {
+      "name": "lone-surrogate-projectkey",
+      "home": "migration-lone-surrogate-projectkey",
+      "pilotHomeRelative": null,
+      "chmod000": null,
+      "input": [
+        {
+          "path": "cron/projects/alpha/tasks.json",
+          "text": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"s1\",\n      \"message\": \"hello\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"projectKey\": \"/w/\\ud800x\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+          "bytes": null
+        }
+      ],
+      "warnings": [],
+      "error": null,
+      "once": {
+        "files": {
+          "cron/projects/alpha/run-history.jsonl": "",
+          "cron/projects/alpha/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbXQp9Cg==",
+          "cron/projects/w-x/tasks.json": "ewogICJzY2hlbWFWZXJzaW9uIjogMSwKICAidGFza3MiOiBbCiAgICB7CiAgICAgICJzY2hlbWFWZXJzaW9uIjogMSwKICAgICAgInRhc2tJZCI6ICJzMSIsCiAgICAgICJtZXNzYWdlIjogImhlbGxvIiwKICAgICAgInNjaGVkdWxlIjogewogICAgICAgICJ0eXBlIjogImNyb24iLAogICAgICAgICJleHByZXNzaW9uIjogIiovNSAqICogKiAqIgogICAgICB9LAogICAgICAic3RhdHVzIjogInNjaGVkdWxlZCIsCiAgICAgICJzZXNzaW9uS2V5IjogInNlc3MtMSIsCiAgICAgICJjaGFubmVsS2V5IjogImltIiwKICAgICAgInByb2plY3RLZXkiOiAiL3cvXHVkODAweCIsCiAgICAgICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIiwKICAgICAgInVwZGF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMFoiCiAgICB9CiAgXQp9Cg==",
+          "cron/store-migration-v1.json": "ewogICJ2ZXJzaW9uIjogMSwKICAiY29tcGxldGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIgp9Cg=="
+        },
+        "dirs": [
+          "cron",
+          "cron/projects",
+          "cron/projects/alpha",
+          "cron/projects/w-x"
+        ]
+      },
+      "twice": null
+    },
+    {
       "name": "non-directory-entries-skipped",
       "home": "migration-non-directory-entries-skipped",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/plain-file",
@@ -3281,6 +3537,8 @@
     {
       "name": "migration-twice-is-idempotent",
       "home": "migration-migration-twice-is-idempotent",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -3337,6 +3595,8 @@
     {
       "name": "stale-lock-removed",
       "home": "migration-stale-lock-removed",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",
@@ -3378,6 +3638,8 @@
     {
       "name": "fresh-lock-times-out",
       "home": "migration-fresh-lock-times-out",
+      "pilotHomeRelative": null,
+      "chmod000": null,
       "input": [
         {
           "path": "cron/projects/alpha/tasks.json",

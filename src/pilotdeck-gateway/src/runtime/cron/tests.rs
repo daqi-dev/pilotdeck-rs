@@ -16,13 +16,14 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read as _, Write as _},
-    path::Path,
-    sync::LazyLock,
+    path::{Path, PathBuf},
+    sync::{Arc, Barrier, LazyLock},
+    thread,
     time::{Duration, UNIX_EPOCH},
 };
 
 use base64::Engine as _;
-use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 
 use super::paths::{cron_run_events_path, resolve_cron_paths};
 use super::{CronRuntimeLogger, CronTaskStore, MigrationInput, migrate_cron_stores};
@@ -259,7 +260,7 @@ fn oracle_matrix_counts_match_generator() {
         ("paths", 9),
         ("eventsPaths", 10),
         ("store", 33),
-        ("migration", 18),
+        ("migration", 23),
     ] {
         assert_eq!(
             cells(section).len(),
@@ -693,13 +694,50 @@ fn seed_lock(home: &Path, age_ms: f64) {
         .unwrap_or_else(|error| panic!("#1216 stamp lock {}: {error}", lock.display()));
 }
 
-fn migration_input<'a>(home: &Path, logger: &'a WarningRecorder) -> MigrationInput<'a> {
+fn migration_input<'a>(pilot_home: PathBuf, logger: &'a WarningRecorder) -> MigrationInput<'a> {
     MigrationInput {
-        pilot_home: home.to_path_buf(),
+        pilot_home,
         logger: Some(logger),
         now_ms: PINNED_NOW_MS,
         lock_retry_delay: Duration::from_millis(1),
     }
+}
+
+/// Lexical `path.relative(cwd, home)`: a caller that passes a relative
+/// pilotHome, which the entry resolve must fold back to the same physical
+/// home (fix-r1 P0).
+fn relative_pilot_home(home: &Path) -> PathBuf {
+    let cwd = std::env::current_dir()
+        .unwrap_or_else(|error| panic!("#1216 migration relative home: current_dir: {error}"));
+    let cwd: Vec<_> = cwd.components().collect();
+    let target: Vec<_> = home.components().collect();
+    let mut shared = 0;
+    while shared < cwd.len() && shared < target.len() && cwd[shared] == target[shared] {
+        shared += 1;
+    }
+    let mut out = PathBuf::new();
+    for _ in shared..cwd.len() {
+        out.push("..");
+    }
+    for component in &target[shared..] {
+        out.push(component.as_os_str());
+    }
+    assert!(
+        !out.as_os_str().is_empty(),
+        "#1216 migration relative home: the scratch home must differ from the cwd"
+    );
+    out
+}
+
+/// chmod 000 / 0644 helpers mirroring the generator's read-error seeds: the
+/// blocked file's bytes are recorded through the restore, because the
+/// migration leaves a blocked store untouched.
+#[cfg(unix)]
+fn set_readable(path: &Path, readable: bool) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(if readable { 0o644 } else { 0o000 });
+    fs::set_permissions(path, permissions)
 }
 
 fn compare_warnings(recorder: &WarningRecorder, entry: &JsValue, home: &str) {
@@ -747,8 +785,51 @@ fn replay_migration_cell(entry: &JsValue) {
         "fresh-lock-times-out" => seed_lock(&home, 60_000.0),
         _ => {}
     }
+    // A relative pilotHome cell passes the scratch home the way a caller
+    // would: relative to the process cwd.
+    let pilot_home = if entry
+        .get("pilotHomeRelative")
+        .is_some_and(|value| !matches!(value, JsValue::Null | JsValue::Bool(false)))
+    {
+        relative_pilot_home(&home)
+    } else {
+        home.to_path_buf()
+    };
+    // The generator's `chmod000` seeds: unreadable before the migration,
+    // restored before the tree is recorded.
+    let chmod000: Vec<String> = match entry.get("chmod000") {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .map(|value| {
+                js_lossy(value.as_string().unwrap_or_else(|| {
+                    panic!("#1216 migration {name}: chmod000 entries must be strings")
+                }))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    #[cfg(unix)]
+    for path in &chmod000 {
+        let full = home.join(path);
+        set_readable(&full, false).unwrap_or_else(|error| {
+            panic!(
+                "#1216 migration {name}: chmod 000 {}: {error}",
+                full.display()
+            )
+        });
+    }
     let recorder = WarningRecorder::default();
-    let outcome = migrate_cron_stores(&migration_input(&home, &recorder));
+    let outcome = migrate_cron_stores(&migration_input(pilot_home, &recorder));
+    #[cfg(unix)]
+    for path in &chmod000 {
+        let full = home.join(path);
+        set_readable(&full, true).unwrap_or_else(|error| {
+            panic!(
+                "#1216 migration {name}: chmod 644 {}: {error}",
+                full.display()
+            )
+        });
+    }
     match (
         &outcome,
         entry
@@ -782,7 +863,7 @@ fn replay_migration_cell(entry: &JsValue) {
         .get("twice")
         .filter(|value| !matches!(value, JsValue::Null))
     {
-        migrate_cron_stores(&migration_input(&home, &recorder))
+        migrate_cron_stores(&migration_input(home.to_path_buf(), &recorder))
             .unwrap_or_else(|error| panic!("#1216 migration {name}: second run failed: {error}"));
         compare_tree(&home, twice, &format!("migration {name} twice"));
     }
@@ -844,6 +925,27 @@ fn migration_missing_tasks_file_is_writable_matches_ts() {
     replay_migration_cell(cell("migration", "missing-tasks-file-is-writable"));
 }
 #[test]
+fn migration_relative_home_same_dir_projectkey_matches_ts() {
+    replay_migration_cell(cell("migration", "relative-home-same-dir-projectkey"));
+}
+#[test]
+fn migration_relative_home_blocked_dir_matches_ts() {
+    replay_migration_cell(cell("migration", "relative-home-blocked-dir"));
+}
+#[cfg(unix)]
+#[test]
+fn migration_blocked_dir_tasks_eacces_matches_ts() {
+    replay_migration_cell(cell("migration", "blocked-dir-tasks-eacces"));
+}
+#[test]
+fn migration_blocked_dir_tasks_isdir_matches_ts() {
+    replay_migration_cell(cell("migration", "blocked-dir-tasks-isdir"));
+}
+#[test]
+fn migration_lone_surrogate_projectkey_matches_ts() {
+    replay_migration_cell(cell("migration", "lone-surrogate-projectkey"));
+}
+#[test]
 fn migration_non_directory_entries_skipped_matches_ts() {
     replay_migration_cell(cell("migration", "non-directory-entries-skipped"));
 }
@@ -858,6 +960,81 @@ fn migration_stale_lock_removed_matches_ts() {
 #[test]
 fn migration_fresh_lock_times_out_matches_ts() {
     replay_migration_cell(cell("migration", "fresh-lock-times-out"));
+}
+
+// ------------------------------------------------------- fix-r1 added guards
+
+/// fix-r1: `rm(lockPath, {force: true})` on both the stale-removal path and
+/// the `finally` release tolerates a lock file another migrator already
+/// removed; an ENOENT there must not fail the migration.
+#[test]
+fn lock_removal_tolerates_a_vanished_lock_file() {
+    let scratch = Scratch::new("cron-lock-removal");
+    let missing = scratch.path().join(".store-migration.lock");
+    super::migration::remove_lock(&missing).unwrap_or_else(|error| {
+        panic!("#1216 remove_lock must tolerate a vanished lock file: {error}")
+    });
+}
+
+/// A CronTask record in the canonical key order, for tests that build their
+/// own tasks instead of replaying a recorded one.
+fn fresh_task(task_id: &str) -> JsValue {
+    let raw = format!(
+        r#"{{"schemaVersion":1,"taskId":"{task_id}","message":"m","schedule":{{"type":"cron","expression":"* * * * *"}},"status":"scheduled","sessionKey":"s","channelKey":"im","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}}"#
+    );
+    parse_json(&raw).unwrap_or_else(|error| {
+        panic!("#1216 concurrent store: task {task_id} must parse: {error:?}")
+    })
+}
+
+/// fix-r1 P0: `taskFileMutationTails` serializes every read-modify-write over
+/// one tasks file process-wide (across store instances), so concurrent
+/// callers must not lose updates. Every thread starts at one barrier and
+/// drives its own store over the same tasks file, exactly like concurrent
+/// requests over shared gateway state.
+#[test]
+fn store_concurrent_puts_across_threads_keep_every_task() {
+    let scratch = Scratch::new("cron-store-concurrent");
+    let home = Arc::new(scratch.path().join("home").to_string_lossy().into_owned());
+    const THREADS: usize = 8;
+    const ROUNDS: usize = 24;
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let mut handles = Vec::new();
+    for thread in 0..THREADS {
+        let home = Arc::clone(&home);
+        let barrier = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            let paths = resolve_cron_paths(&home, "/w/my-project").unwrap_or_else(|error| {
+                panic!("#1216 concurrent store: resolveCronPaths failed: {error}")
+            });
+            let store = CronTaskStore::new(paths);
+            barrier.wait();
+            for round in 0..ROUNDS {
+                store
+                    .put_task(&fresh_task(&format!("t-{thread:02}-{round:02}")))
+                    .unwrap_or_else(|error| {
+                        panic!("#1216 concurrent store: thread {thread} put {round}: {error}")
+                    });
+            }
+        }));
+    }
+    for (index, handle) in handles.into_iter().enumerate() {
+        handle
+            .join()
+            .unwrap_or_else(|_| panic!("#1216 concurrent store: worker {index} panicked"));
+    }
+    let paths = resolve_cron_paths(&home, "/w/my-project")
+        .unwrap_or_else(|error| panic!("#1216 concurrent store: resolveCronPaths failed: {error}"));
+    let listed = CronTaskStore::new(paths)
+        .list_tasks()
+        .unwrap_or_else(|error| panic!("#1216 concurrent store: listTasks failed: {error}"));
+    assert_eq!(
+        listed.len(),
+        THREADS * ROUNDS,
+        "#1216 concurrent store: lost updates — only {} of {} tasks survived concurrent puts",
+        listed.len(),
+        THREADS * ROUNDS
+    );
 }
 
 // --------------------------------------------------------- locale-gated cells
