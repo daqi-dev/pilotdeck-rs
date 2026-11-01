@@ -1,0 +1,8265 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/mcp/client/McpClient.ts": "d99e1494bd2e7a28f967e23d8de2e03ce1a019ae33ebc8c917e680c4915a4e91",
+    "src/mcp/protocol/types.ts": "8176ead2cf6d407d93caf96d6b882cf959b81a6f172857dafeae188a82b4e5aa",
+    "src/mcp/runtime/sanitize.ts": "53851ed8c64e37496a98291b5f630c27b5d4231b849a8b6af939f59dc988945a",
+    "src/mcp/runtime/truncate.ts": "b28e609f9df3d7173e92c0570cd75ea1c1e82a3a796d7692f7482bd877c7651b",
+    "src/mcp/runtime/wireName.ts": "311952c3359f583082c440a6bbb99d89bffd75b03cf23b4a6190eb74ac12e630",
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+  },
+  "regexCompilation": [
+    {
+      "pattern": "^sdk_flag_probe$",
+      "flags": "u"
+    },
+    {
+      "pattern": "^sdk_key_probe$",
+      "flags": "u"
+    }
+  ],
+  "sdk": [
+    {
+      "id": "lookbehind/positive/value/positive",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            7,
+            12
+          ],
+          "captures": [
+            [
+              118,
+              97,
+              108,
+              117,
+              101
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookbehind/positive/key/positive",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            7,
+            12
+          ],
+          "captures": [
+            [
+              118,
+              97,
+              108,
+              117,
+              101
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookbehind/positive/value/negative",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        111,
+        116,
+        104,
+        101,
+        114,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookbehind/positive/key/negative",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        111,
+        116,
+        104,
+        101,
+        114,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookbehind/negative/value/positive",
+      "pattern": [
+        40,
+        63,
+        60,
+        33,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        111,
+        116,
+        104,
+        101,
+        114,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            6,
+            11
+          ],
+          "captures": [
+            [
+              118,
+              97,
+              108,
+              117,
+              101
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookbehind/negative/key/positive",
+      "pattern": [
+        40,
+        63,
+        60,
+        33,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        111,
+        116,
+        104,
+        101,
+        114,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            6,
+            11
+          ],
+          "captures": [
+            [
+              118,
+              97,
+              108,
+              117,
+              101
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookbehind/negative/value/negative",
+      "pattern": [
+        40,
+        63,
+        60,
+        33,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookbehind/negative/key/negative",
+      "pattern": [
+        40,
+        63,
+        60,
+        33,
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        41,
+        118,
+        97,
+        108,
+        117,
+        101,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        112,
+        114,
+        101,
+        102,
+        105,
+        120,
+        58,
+        118,
+        97,
+        108,
+        117,
+        101
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookbehind/reverse-captures/value/positive",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        40,
+        91,
+        97,
+        98,
+        93,
+        43,
+        41,
+        40,
+        91,
+        98,
+        99,
+        93,
+        43,
+        41,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98,
+        99
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            3,
+            3
+          ],
+          "captures": [
+            [],
+            [
+              97
+            ],
+            [
+              98,
+              99
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookbehind/reverse-captures/key/positive",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        40,
+        91,
+        97,
+        98,
+        93,
+        43,
+        41,
+        40,
+        91,
+        98,
+        99,
+        93,
+        43,
+        41,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98,
+        99
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            3,
+            3
+          ],
+          "captures": [
+            [],
+            [
+              97
+            ],
+            [
+              98,
+              99
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookbehind/reverse-captures/value/negative",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        40,
+        91,
+        97,
+        98,
+        93,
+        43,
+        41,
+        40,
+        91,
+        98,
+        99,
+        93,
+        43,
+        41,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        120,
+        121,
+        122
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookbehind/reverse-captures/key/negative",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        40,
+        91,
+        97,
+        98,
+        93,
+        43,
+        41,
+        40,
+        91,
+        98,
+        99,
+        93,
+        43,
+        41,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        120,
+        121,
+        122
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookahead/positive/value/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        61,
+        97,
+        41,
+        97,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              97
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookahead/positive/key/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        61,
+        97,
+        41,
+        97,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              97
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookahead/positive/value/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        61,
+        97,
+        41,
+        97,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookahead/positive/key/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        61,
+        97,
+        41,
+        97,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookahead/negative/value/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        33,
+        97,
+        41,
+        98,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              98
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookahead/negative/key/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        33,
+        97,
+        41,
+        98,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              98
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "lookahead/negative/value/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        33,
+        97,
+        41,
+        98,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "lookahead/negative/key/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        33,
+        97,
+        41,
+        98,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/number/value/positive",
+      "pattern": [
+        94,
+        40,
+        97,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        97
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              97,
+              97
+            ],
+            [
+              97
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/number/key/positive",
+      "pattern": [
+        94,
+        40,
+        97,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        97
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              97,
+              97
+            ],
+            [
+              97
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/number/value/negative",
+      "pattern": [
+        94,
+        40,
+        97,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/number/key/negative",
+      "pattern": [
+        94,
+        40,
+        97,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/name/value/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        91,
+        97,
+        45,
+        122,
+        93,
+        43,
+        41,
+        58,
+        92,
+        107,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98,
+        99,
+        58,
+        97,
+        98,
+        99
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            7
+          ],
+          "captures": [
+            [
+              97,
+              98,
+              99,
+              58,
+              97,
+              98,
+              99
+            ],
+            [
+              97,
+              98,
+              99
+            ]
+          ],
+          "groups": {
+            "word": [
+              97,
+              98,
+              99
+            ]
+          },
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/name/key/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        91,
+        97,
+        45,
+        122,
+        93,
+        43,
+        41,
+        58,
+        92,
+        107,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98,
+        99,
+        58,
+        97,
+        98,
+        99
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            7
+          ],
+          "captures": [
+            [
+              97,
+              98,
+              99,
+              58,
+              97,
+              98,
+              99
+            ],
+            [
+              97,
+              98,
+              99
+            ]
+          ],
+          "groups": {
+            "word": [
+              97,
+              98,
+              99
+            ]
+          },
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/name/value/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        91,
+        97,
+        45,
+        122,
+        93,
+        43,
+        41,
+        58,
+        92,
+        107,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98,
+        99,
+        58,
+        97,
+        98,
+        100
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/name/key/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        91,
+        97,
+        45,
+        122,
+        93,
+        43,
+        41,
+        58,
+        92,
+        107,
+        60,
+        119,
+        111,
+        114,
+        100,
+        62,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98,
+        99,
+        58,
+        97,
+        98,
+        100
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/forward/value/positive",
+      "pattern": [
+        94,
+        92,
+        49,
+        40,
+        97,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              97
+            ],
+            [
+              97
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/forward/key/positive",
+      "pattern": [
+        94,
+        92,
+        49,
+        40,
+        97,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              97
+            ],
+            [
+              97
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/forward/value/negative",
+      "pattern": [
+        94,
+        92,
+        49,
+        40,
+        97,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/forward/key/negative",
+      "pattern": [
+        94,
+        92,
+        49,
+        40,
+        97,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/unmatched/value/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        58,
+        40,
+        97,
+        41,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              98
+            ],
+            null
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/unmatched/key/positive",
+      "pattern": [
+        94,
+        40,
+        63,
+        58,
+        40,
+        97,
+        41,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              98
+            ],
+            null
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "backreference/unmatched/value/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        58,
+        40,
+        97,
+        41,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98,
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "backreference/unmatched/key/negative",
+      "pattern": [
+        94,
+        40,
+        63,
+        58,
+        40,
+        97,
+        41,
+        124,
+        98,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        98,
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/currency/value/positive",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        36,
+        8364
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              36,
+              8364
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/currency/key/positive",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        36,
+        8364
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              36,
+              8364
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/currency/value/negative",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/currency/key/negative",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/script-extensions/value/positive",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        114,
+        105,
+        112,
+        116,
+        95,
+        69,
+        120,
+        116,
+        101,
+        110,
+        115,
+        105,
+        111,
+        110,
+        115,
+        61,
+        72,
+        105,
+        114,
+        97,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        12540,
+        12354
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              12540,
+              12354
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/script-extensions/key/positive",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        114,
+        105,
+        112,
+        116,
+        95,
+        69,
+        120,
+        116,
+        101,
+        110,
+        115,
+        105,
+        111,
+        110,
+        115,
+        61,
+        72,
+        105,
+        114,
+        97,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        12540,
+        12354
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              12540,
+              12354
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/script-extensions/value/negative",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        114,
+        105,
+        112,
+        116,
+        95,
+        69,
+        120,
+        116,
+        101,
+        110,
+        115,
+        105,
+        111,
+        110,
+        115,
+        61,
+        72,
+        105,
+        114,
+        97,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/script-extensions/key/negative",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        99,
+        114,
+        105,
+        112,
+        116,
+        95,
+        69,
+        120,
+        116,
+        101,
+        110,
+        115,
+        105,
+        111,
+        110,
+        115,
+        61,
+        72,
+        105,
+        114,
+        97,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/complement/value/positive",
+      "pattern": [
+        94,
+        92,
+        80,
+        123,
+        65,
+        83,
+        67,
+        73,
+        73,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        233,
+        55357,
+        56832
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            3
+          ],
+          "captures": [
+            [
+              233,
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/complement/key/positive",
+      "pattern": [
+        94,
+        92,
+        80,
+        123,
+        65,
+        83,
+        67,
+        73,
+        73,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        233,
+        55357,
+        56832
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            3
+          ],
+          "captures": [
+            [
+              233,
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/complement/value/negative",
+      "pattern": [
+        94,
+        92,
+        80,
+        123,
+        65,
+        83,
+        67,
+        73,
+        73,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/complement/key/negative",
+      "pattern": [
+        94,
+        92,
+        80,
+        123,
+        65,
+        83,
+        67,
+        73,
+        73,
+        125,
+        43,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/surrogate/value/positive",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        117,
+        114,
+        114,
+        111,
+        103,
+        97,
+        116,
+        101,
+        125,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/surrogate/key/positive",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        117,
+        114,
+        114,
+        111,
+        103,
+        97,
+        116,
+        101,
+        125,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "property/surrogate/value/negative",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        117,
+        114,
+        114,
+        111,
+        103,
+        97,
+        116,
+        101,
+        125,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65533
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "property/surrogate/key/negative",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        83,
+        117,
+        114,
+        114,
+        111,
+        103,
+        97,
+        116,
+        101,
+        125,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65533
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/lone-high/value/positive",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        48,
+        48,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/lone-high/key/positive",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        48,
+        48,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/lone-high/value/negative",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        48,
+        48,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65533
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/lone-high/key/negative",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        48,
+        48,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65533
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/lone-low/value/positive",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        70,
+        70,
+        70,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        57343
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              57343
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/lone-low/key/positive",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        70,
+        70,
+        70,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        57343
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              57343
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/lone-low/value/negative",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        70,
+        70,
+        70,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/lone-low/key/negative",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        70,
+        70,
+        70,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/dot-lone/value/positive",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/dot-lone/key/positive",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/dot-lone/value/negative",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/dot-lone/key/negative",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/astral-unit/value/positive",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/astral-unit/key/positive",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/astral-unit/value/negative",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832,
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/astral-unit/key/negative",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832,
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/lone-is-not-pair/value/positive",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        51,
+        68,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/lone-is-not-pair/key/positive",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        51,
+        68,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/lone-is-not-pair/value/negative",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        51,
+        68,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/lone-is-not-pair/key/negative",
+      "pattern": [
+        94,
+        92,
+        117,
+        68,
+        56,
+        51,
+        68,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/surrogate-backreference/value/positive",
+      "pattern": [
+        94,
+        40,
+        46,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296,
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55296,
+              55296
+            ],
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/surrogate-backreference/key/positive",
+      "pattern": [
+        94,
+        40,
+        46,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296,
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55296,
+              55296
+            ],
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/surrogate-backreference/value/negative",
+      "pattern": [
+        94,
+        40,
+        46,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296,
+        57343
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/surrogate-backreference/key/negative",
+      "pattern": [
+        94,
+        40,
+        46,
+        41,
+        92,
+        49,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296,
+        57343
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/raw-lone-pattern/value/positive",
+      "pattern": [
+        94,
+        55296,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/raw-lone-pattern/key/positive",
+      "pattern": [
+        94,
+        55296,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "error": "URIError"
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "utf16/raw-lone-pattern/value/negative",
+      "pattern": [
+        94,
+        55296,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65533
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "utf16/raw-lone-pattern/key/negative",
+      "pattern": [
+        94,
+        55296,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65533
+      ],
+      "expected": {
+        "error": "URIError"
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/intersection/value/positive",
+      "pattern": [
+        94,
+        91,
+        97,
+        38,
+        38,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        38
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              38
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/intersection/key/positive",
+      "pattern": [
+        94,
+        91,
+        97,
+        38,
+        38,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        38
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              38
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/intersection/value/negative",
+      "pattern": [
+        94,
+        91,
+        97,
+        38,
+        38,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        99
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/intersection/key/negative",
+      "pattern": [
+        94,
+        91,
+        97,
+        38,
+        38,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        99
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/double-tilde/value/positive",
+      "pattern": [
+        94,
+        91,
+        97,
+        126,
+        126,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        126
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              126
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/double-tilde/key/positive",
+      "pattern": [
+        94,
+        91,
+        97,
+        126,
+        126,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        126
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              126
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/double-tilde/value/negative",
+      "pattern": [
+        94,
+        91,
+        97,
+        126,
+        126,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        99
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/double-tilde/key/negative",
+      "pattern": [
+        94,
+        91,
+        97,
+        126,
+        126,
+        98,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        99
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/empty-class/value/positive",
+      "pattern": [
+        94,
+        91,
+        94,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/empty-class/key/positive",
+      "pattern": [
+        94,
+        91,
+        94,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/empty-class/value/negative",
+      "pattern": [
+        94,
+        91,
+        94,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/empty-class/key/negative",
+      "pattern": [
+        94,
+        91,
+        94,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/nested-open/value/positive",
+      "pattern": [
+        94,
+        91,
+        91,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        91
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              91
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/nested-open/key/positive",
+      "pattern": [
+        94,
+        91,
+        91,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        91
+      ],
+      "expected": {
+        "matched": true
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              91
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "u-not-v/nested-open/value/negative",
+      "pattern": [
+        94,
+        91,
+        91,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "u-not-v/nested-open/key/negative",
+      "pattern": [
+        94,
+        91,
+        91,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "matched": false
+      },
+      "regexp": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "syntax/class-string/value",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        82,
+        71,
+        73,
+        95,
+        69,
+        109,
+        111,
+        106,
+        105,
+        125,
+        36
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/class-string/key",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        82,
+        71,
+        73,
+        95,
+        69,
+        109,
+        111,
+        106,
+        105,
+        125,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/class-string-q/value",
+      "pattern": [
+        94,
+        91,
+        92,
+        113,
+        123,
+        97,
+        98,
+        124,
+        99,
+        100,
+        125,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/class-string-q/key",
+      "pattern": [
+        94,
+        91,
+        92,
+        113,
+        123,
+        97,
+        98,
+        124,
+        99,
+        100,
+        125,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/nested-set/value",
+      "pattern": [
+        94,
+        91,
+        91,
+        97,
+        93,
+        45,
+        45,
+        91,
+        98,
+        93,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/nested-set/key",
+      "pattern": [
+        94,
+        91,
+        91,
+        97,
+        93,
+        45,
+        45,
+        91,
+        98,
+        93,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/inline-v-flag/value",
+      "pattern": [
+        40,
+        63,
+        118,
+        58,
+        97,
+        41
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/inline-v-flag/key",
+      "pattern": [
+        40,
+        63,
+        118,
+        58,
+        97,
+        41
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/u-identity-escape/value",
+      "pattern": [
+        94,
+        92,
+        97,
+        36
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/u-identity-escape/key",
+      "pattern": [
+        94,
+        92,
+        97,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/u-identity-in-class/value",
+      "pattern": [
+        94,
+        91,
+        92,
+        113,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "syntax/u-identity-in-class/key",
+      "pattern": [
+        94,
+        91,
+        92,
+        113,
+        93,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "expected": {
+        "error": "SyntaxError"
+      },
+      "regexp": {
+        "error": "SyntaxError"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "report/dot-non-u",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "report/dot-u",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/dot-half",
+      "pattern": [
+        46
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/dot-whole",
+      "pattern": [
+        46
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/lone-high",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/lone-low",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        56320
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              56320
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/surrogate-escape",
+      "pattern": [
+        92,
+        117,
+        68,
+        56,
+        48,
+        48
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/fixed-lookbehind",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        97,
+        41,
+        98
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            1,
+            2
+          ],
+          "captures": [
+            [
+              98
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/variable-lookbehind",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        97,
+        43,
+        41,
+        98
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        97,
+        97,
+        98
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            3,
+            4
+          ],
+          "captures": [
+            [
+              98
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/backward-captures",
+      "pattern": [
+        40,
+        63,
+        60,
+        61,
+        40,
+        91,
+        97,
+        98,
+        93,
+        43,
+        41,
+        40,
+        91,
+        98,
+        99,
+        93,
+        43,
+        41,
+        41,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        98,
+        99
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            3,
+            3
+          ],
+          "captures": [
+            [],
+            [
+              97
+            ],
+            [
+              98,
+              99
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/named-backref",
+      "pattern": [
+        40,
+        63,
+        60,
+        120,
+        62,
+        97,
+        41,
+        92,
+        107,
+        60,
+        120,
+        62
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        97
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              97,
+              97
+            ],
+            [
+              97
+            ]
+          ],
+          "groups": {
+            "x": [
+              97
+            ]
+          },
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/unset-backref",
+      "pattern": [
+        94,
+        40,
+        97,
+        124,
+        40,
+        98,
+        41,
+        41,
+        92,
+        50,
+        99,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        97,
+        99
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              97,
+              99
+            ],
+            [
+              97
+            ],
+            null
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/ascii-word",
+      "pattern": [
+        94,
+        92,
+        119,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        233
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "report/ascii-digit",
+      "pattern": [
+        94,
+        92,
+        100,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        1633
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "report/bom-space",
+      "pattern": [
+        94,
+        92,
+        115,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        65279
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              65279
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/line-separator",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "",
+      "input": [
+        8232
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "report/carriage-return",
+      "pattern": [
+        94,
+        46,
+        36
+      ],
+      "flags": "",
+      "input": [
+        13
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "report/end-before-newline",
+      "pattern": [
+        97,
+        36
+      ],
+      "flags": "",
+      "input": [
+        97,
+        10
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "report/identity-escape",
+      "pattern": [
+        94,
+        92,
+        113,
+        36
+      ],
+      "flags": "",
+      "input": [
+        113
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              113
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/invalid-u-escape",
+      "pattern": [
+        94,
+        92,
+        113,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        113
+      ],
+      "start": 0,
+      "expected": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "report/unicode-set",
+      "pattern": [
+        94,
+        91,
+        92,
+        112,
+        123,
+        65,
+        83,
+        67,
+        73,
+        73,
+        125,
+        38,
+        38,
+        92,
+        112,
+        123,
+        76,
+        101,
+        116,
+        116,
+        101,
+        114,
+        125,
+        93,
+        43,
+        36
+      ],
+      "flags": "v",
+      "input": [
+        65,
+        122
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              65,
+              122
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/unicode-property",
+      "pattern": [
+        94,
+        92,
+        112,
+        123,
+        69,
+        109,
+        111,
+        106,
+        105,
+        125,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/empty-match",
+      "pattern": [
+        40,
+        63,
+        58,
+        41
+      ],
+      "flags": "u",
+      "input": [
+        97
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            0
+          ],
+          "captures": [
+            []
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/named-capture",
+      "pattern": [
+        40,
+        63,
+        60,
+        120,
+        62,
+        97,
+        43,
+        41
+      ],
+      "flags": "u",
+      "input": [
+        122,
+        97,
+        97
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            1,
+            3
+          ],
+          "captures": [
+            [
+              97,
+              97
+            ],
+            [
+              97,
+              97
+            ]
+          ],
+          "groups": {
+            "x": [
+              97,
+              97
+            ]
+          },
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "report/negative-lookbehind",
+      "pattern": [
+        40,
+        63,
+        60,
+        33,
+        97,
+        41,
+        98
+      ],
+      "flags": "u",
+      "input": [
+        99,
+        98
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            1,
+            2
+          ],
+          "captures": [
+            [
+              98
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start//0",
+      "pattern": [
+        46
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start//1",
+      "pattern": [
+        46
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start//2",
+      "pattern": [
+        46
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start//3",
+      "pattern": [
+        46
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start//4",
+      "pattern": [
+        46
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 4,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/u/0",
+      "pattern": [
+        46
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/u/1",
+      "pattern": [
+        46
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/u/2",
+      "pattern": [
+        46
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/u/3",
+      "pattern": [
+        46
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/u/4",
+      "pattern": [
+        46
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 4,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/v/0",
+      "pattern": [
+        46
+      ],
+      "flags": "v",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/v/1",
+      "pattern": [
+        46
+      ],
+      "flags": "v",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/v/2",
+      "pattern": [
+        46
+      ],
+      "flags": "v",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/v/3",
+      "pattern": [
+        46
+      ],
+      "flags": "v",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/v/4",
+      "pattern": [
+        46
+      ],
+      "flags": "v",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 4,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/g/0",
+      "pattern": [
+        46
+      ],
+      "flags": "g",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/g/1",
+      "pattern": [
+        46
+      ],
+      "flags": "g",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            1,
+            2
+          ],
+          "captures": [
+            [
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/g/2",
+      "pattern": [
+        46
+      ],
+      "flags": "g",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            2,
+            3
+          ],
+          "captures": [
+            [
+              120
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/g/3",
+      "pattern": [
+        46
+      ],
+      "flags": "g",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/g/4",
+      "pattern": [
+        46
+      ],
+      "flags": "g",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/gu/0",
+      "pattern": [
+        46
+      ],
+      "flags": "gu",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/gu/1",
+      "pattern": [
+        46
+      ],
+      "flags": "gu",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/gu/2",
+      "pattern": [
+        46
+      ],
+      "flags": "gu",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            2,
+            3
+          ],
+          "captures": [
+            [
+              120
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/gu/3",
+      "pattern": [
+        46
+      ],
+      "flags": "gu",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/gu/4",
+      "pattern": [
+        46
+      ],
+      "flags": "gu",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/gv/0",
+      "pattern": [
+        46
+      ],
+      "flags": "gv",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/gv/1",
+      "pattern": [
+        46
+      ],
+      "flags": "gv",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/gv/2",
+      "pattern": [
+        46
+      ],
+      "flags": "gv",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            2,
+            3
+          ],
+          "captures": [
+            [
+              120
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/gv/3",
+      "pattern": [
+        46
+      ],
+      "flags": "gv",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/gv/4",
+      "pattern": [
+        46
+      ],
+      "flags": "gv",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/y/0",
+      "pattern": [
+        46
+      ],
+      "flags": "y",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/y/1",
+      "pattern": [
+        46
+      ],
+      "flags": "y",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            1,
+            2
+          ],
+          "captures": [
+            [
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/y/2",
+      "pattern": [
+        46
+      ],
+      "flags": "y",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            2,
+            3
+          ],
+          "captures": [
+            [
+              120
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/y/3",
+      "pattern": [
+        46
+      ],
+      "flags": "y",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/y/4",
+      "pattern": [
+        46
+      ],
+      "flags": "y",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/uy/0",
+      "pattern": [
+        46
+      ],
+      "flags": "uy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/uy/1",
+      "pattern": [
+        46
+      ],
+      "flags": "uy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/uy/2",
+      "pattern": [
+        46
+      ],
+      "flags": "uy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            2,
+            3
+          ],
+          "captures": [
+            [
+              120
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/uy/3",
+      "pattern": [
+        46
+      ],
+      "flags": "uy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/uy/4",
+      "pattern": [
+        46
+      ],
+      "flags": "uy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/vy/0",
+      "pattern": [
+        46
+      ],
+      "flags": "vy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/vy/1",
+      "pattern": [
+        46
+      ],
+      "flags": "vy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/vy/2",
+      "pattern": [
+        46
+      ],
+      "flags": "vy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            2,
+            3
+          ],
+          "captures": [
+            [
+              120
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "start/vy/3",
+      "pattern": [
+        46
+      ],
+      "flags": "vy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/vy/4",
+      "pattern": [
+        46
+      ],
+      "flags": "vy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/dgy/0",
+      "pattern": [
+        46
+      ],
+      "flags": "dgy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55357
+            ]
+          ],
+          "groups": null,
+          "indices": {
+            "captures": [
+              [
+                0,
+                1
+              ]
+            ],
+            "groups": null
+          }
+        }
+      }
+    },
+    {
+      "id": "start/dgy/1",
+      "pattern": [
+        46
+      ],
+      "flags": "dgy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            1,
+            2
+          ],
+          "captures": [
+            [
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": {
+            "captures": [
+              [
+                1,
+                2
+              ]
+            ],
+            "groups": null
+          }
+        }
+      }
+    },
+    {
+      "id": "start/dgy/2",
+      "pattern": [
+        46
+      ],
+      "flags": "dgy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 2,
+      "expected": {
+        "lastIndex": 3,
+        "matched": {
+          "range": [
+            2,
+            3
+          ],
+          "captures": [
+            [
+              120
+            ]
+          ],
+          "groups": null,
+          "indices": {
+            "captures": [
+              [
+                2,
+                3
+              ]
+            ],
+            "groups": null
+          }
+        }
+      }
+    },
+    {
+      "id": "start/dgy/3",
+      "pattern": [
+        46
+      ],
+      "flags": "dgy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 3,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "start/dgy/4",
+      "pattern": [
+        46
+      ],
+      "flags": "dgy",
+      "input": [
+        55357,
+        56832,
+        120
+      ],
+      "start": 4,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "pattern//55296",
+      "pattern": [
+        94,
+        55296,
+        36
+      ],
+      "flags": "",
+      "input": [
+        55296
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern//57343",
+      "pattern": [
+        94,
+        57343,
+        36
+      ],
+      "flags": "",
+      "input": [
+        57343
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              57343
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern//55357-56832",
+      "pattern": [
+        94,
+        55357,
+        56832,
+        36
+      ],
+      "flags": "",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern/u/55296",
+      "pattern": [
+        94,
+        55296,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55296
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern/u/57343",
+      "pattern": [
+        94,
+        57343,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        57343
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              57343
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern/u/55357-56832",
+      "pattern": [
+        94,
+        55357,
+        56832,
+        36
+      ],
+      "flags": "u",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern/v/55296",
+      "pattern": [
+        94,
+        55296,
+        36
+      ],
+      "flags": "v",
+      "input": [
+        55296
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              55296
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern/v/57343",
+      "pattern": [
+        94,
+        57343,
+        36
+      ],
+      "flags": "v",
+      "input": [
+        57343
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              57343
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "pattern/v/55357-56832",
+      "pattern": [
+        94,
+        55357,
+        56832,
+        36
+      ],
+      "flags": "v",
+      "input": [
+        55357,
+        56832
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              55357,
+              56832
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "flags/ims",
+      "pattern": [
+        94,
+        97,
+        46,
+        98,
+        36
+      ],
+      "flags": "ims",
+      "input": [
+        122,
+        10,
+        65,
+        10,
+        66,
+        10,
+        121
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            2,
+            5
+          ],
+          "captures": [
+            [
+              65,
+              10,
+              66
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "flags/iu-kelvin",
+      "pattern": [
+        94,
+        107,
+        36
+      ],
+      "flags": "iu",
+      "input": [
+        8490
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            1
+          ],
+          "captures": [
+            [
+              8490
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "flags/i-kelvin",
+      "pattern": [
+        94,
+        107,
+        36
+      ],
+      "flags": "i",
+      "input": [
+        8490
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "flags/v-intersection",
+      "pattern": [
+        94,
+        91,
+        92,
+        112,
+        123,
+        65,
+        83,
+        67,
+        73,
+        73,
+        125,
+        38,
+        38,
+        92,
+        112,
+        123,
+        76,
+        101,
+        116,
+        116,
+        101,
+        114,
+        125,
+        93,
+        43,
+        36
+      ],
+      "flags": "v",
+      "input": [
+        97,
+        98,
+        99
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            3
+          ],
+          "captures": [
+            [
+              97,
+              98,
+              99
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "flags/v-subtraction",
+      "pattern": [
+        94,
+        91,
+        97,
+        45,
+        122,
+        45,
+        45,
+        91,
+        97,
+        101,
+        105,
+        111,
+        117,
+        93,
+        93,
+        43,
+        36
+      ],
+      "flags": "v",
+      "input": [
+        120,
+        121,
+        122
+      ],
+      "start": 0,
+      "expected": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "flags/v-string",
+      "pattern": [
+        94,
+        91,
+        92,
+        113,
+        123,
+        97,
+        98,
+        124,
+        99,
+        100,
+        125,
+        93,
+        36
+      ],
+      "flags": "v",
+      "input": [
+        97,
+        98
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            2
+          ],
+          "captures": [
+            [
+              97,
+              98
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "flags/invalid-uv",
+      "pattern": [
+        46
+      ],
+      "flags": "uv",
+      "input": [
+        97
+      ],
+      "start": 0,
+      "expected": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "flags/duplicate",
+      "pattern": [
+        46
+      ],
+      "flags": "gg",
+      "input": [
+        97
+      ],
+      "start": 0,
+      "expected": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "flags/unknown",
+      "pattern": [
+        46
+      ],
+      "flags": "x",
+      "input": [
+        97
+      ],
+      "start": 0,
+      "expected": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "captures/named-indices",
+      "pattern": [
+        40,
+        63,
+        60,
+        102,
+        105,
+        114,
+        115,
+        116,
+        62,
+        97,
+        41,
+        40,
+        63,
+        60,
+        117,
+        110,
+        115,
+        101,
+        116,
+        62,
+        98,
+        41,
+        63
+      ],
+      "flags": "dg",
+      "input": [
+        122,
+        97
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 2,
+        "matched": {
+          "range": [
+            1,
+            2
+          ],
+          "captures": [
+            [
+              97
+            ],
+            [
+              97
+            ],
+            null
+          ],
+          "groups": {
+            "first": [
+              97
+            ],
+            "unset": null
+          },
+          "indices": {
+            "captures": [
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                2
+              ],
+              null
+            ],
+            "groups": {
+              "first": [
+                1,
+                2
+              ],
+              "unset": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "captures/repeated",
+      "pattern": [
+        40,
+        97,
+        40,
+        98,
+        41,
+        63,
+        41,
+        43
+      ],
+      "flags": "d",
+      "input": [
+        97,
+        98,
+        97
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            3
+          ],
+          "captures": [
+            [
+              97,
+              98,
+              97
+            ],
+            [
+              97
+            ],
+            null
+          ],
+          "groups": null,
+          "indices": {
+            "captures": [
+              [
+                0,
+                3
+              ],
+              [
+                2,
+                3
+              ],
+              null
+            ],
+            "groups": null
+          }
+        }
+      }
+    },
+    {
+      "id": "empty/zero-length-global",
+      "pattern": [
+        40,
+        63,
+        58,
+        41
+      ],
+      "flags": "dg",
+      "input": [
+        97
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            1,
+            1
+          ],
+          "captures": [
+            []
+          ],
+          "groups": null,
+          "indices": {
+            "captures": [
+              [
+                1,
+                1
+              ]
+            ],
+            "groups": null
+          }
+        }
+      }
+    },
+    {
+      "id": "empty/end-sticky",
+      "pattern": [
+        36
+      ],
+      "flags": "dy",
+      "input": [
+        97
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 1,
+        "matched": {
+          "range": [
+            1,
+            1
+          ],
+          "captures": [
+            []
+          ],
+          "groups": null,
+          "indices": {
+            "captures": [
+              [
+                1,
+                1
+              ]
+            ],
+            "groups": null
+          }
+        }
+      }
+    },
+    {
+      "id": "empty/failed-sticky",
+      "pattern": [
+        98
+      ],
+      "flags": "dy",
+      "input": [
+        97
+      ],
+      "start": 1,
+      "expected": {
+        "lastIndex": 0,
+        "matched": null
+      }
+    },
+    {
+      "id": "injection/pattern",
+      "pattern": [
+        39,
+        41,
+        59,
+        103,
+        108,
+        111,
+        98,
+        97,
+        108,
+        84,
+        104,
+        105,
+        115,
+        46,
+        105,
+        110,
+        106,
+        101,
+        99,
+        116,
+        101,
+        100,
+        61,
+        116,
+        114,
+        117,
+        101,
+        59,
+        47,
+        47
+      ],
+      "flags": "",
+      "input": [
+        39,
+        41,
+        59,
+        103,
+        108,
+        111,
+        98,
+        97,
+        108,
+        84,
+        104,
+        105,
+        115,
+        46,
+        105,
+        110,
+        106,
+        101,
+        99,
+        116,
+        101,
+        100,
+        61,
+        116,
+        114,
+        117,
+        101,
+        59,
+        47,
+        47
+      ],
+      "start": 0,
+      "expected": {
+        "error": "SyntaxError"
+      }
+    },
+    {
+      "id": "injection/input",
+      "pattern": [
+        94,
+        46,
+        42,
+        36
+      ],
+      "flags": "",
+      "input": [
+        39,
+        41,
+        59,
+        103,
+        108,
+        111,
+        98,
+        97,
+        108,
+        84,
+        104,
+        105,
+        115,
+        46,
+        105,
+        110,
+        106,
+        101,
+        99,
+        116,
+        101,
+        100,
+        61,
+        116,
+        114,
+        117,
+        101,
+        59,
+        47,
+        47
+      ],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            30
+          ],
+          "captures": [
+            [
+              39,
+              41,
+              59,
+              103,
+              108,
+              111,
+              98,
+              97,
+              108,
+              84,
+              104,
+              105,
+              115,
+              46,
+              105,
+              110,
+              106,
+              101,
+              99,
+              116,
+              101,
+              100,
+              61,
+              116,
+              114,
+              117,
+              101,
+              59,
+              47,
+              47
+            ]
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    }
+  ],
+  "boundaries": [
+    {
+      "id": "captures/254",
+      "pattern": [
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41
+      ],
+      "flags": "u",
+      "input": [],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            0
+          ],
+          "captures": [
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    },
+    {
+      "id": "captures/255",
+      "pattern": [
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41,
+        40,
+        41
+      ],
+      "flags": "u",
+      "input": [],
+      "start": 0,
+      "expected": {
+        "lastIndex": 0,
+        "matched": {
+          "range": [
+            0,
+            0
+          ],
+          "captures": [
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "groups": null,
+          "indices": null
+        }
+      }
+    }
+  ]
+}
