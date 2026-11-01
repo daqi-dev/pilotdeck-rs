@@ -17,6 +17,7 @@ ENTRIES = (
     'scripts/gateway-parity/check_ruler.py',
     'scripts/gateway-parity/build_proxy.py',
     'scripts/gateway-parity/observer.py',
+    'scripts/gateway-parity/native_evidence.py',
     'scripts/gateway-parity/session_domain.py',
     'scripts/gateway-parity/test_safety.py',
     'scripts/gateway-parity/controls/run_all.py',
@@ -74,15 +75,15 @@ class EntryGuardTests(unittest.TestCase):
                 for spelling in spellings:
                     with self.subTest(directory=str(target), spelling=spelling):
                         result = self.probe(relative, spelling, cwd=target)
-                        self.assertEqual(
-                            (result.returncode, result.stdout, result.stderr.strip()),
+                        self.assertTrue(
+                            (result.returncode, result.stdout, result.stderr.strip()) ==
                             (1, '', REINSERT),
                             f'#1066 {relative}: reinsertion must stop before stdlib')
 
     def preflight(self, relative, premise):
         result = self.probe(relative, premise=premise)
-        self.assertEqual(
-            (result.returncode, result.stdout, result.stderr.strip()),
+        self.assertTrue(
+            (result.returncode, result.stdout, result.stderr.strip()) ==
             (1, '', PREFLIGHT),
             f'#1066 {relative}: {premise} must stop before os import')
 

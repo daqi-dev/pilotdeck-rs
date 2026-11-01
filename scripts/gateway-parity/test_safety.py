@@ -565,7 +565,8 @@ class CheckoutProvenance(unittest.TestCase):
     """Static exports bypass only HEAD provenance, never checkout failures."""
 
     ENTRIES = ('build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
-               'run_round.py', 'session_domain.py', 'test_safety.py',
+               'native_evidence.py', 'observer.py', 'run_round.py',
+               'session_domain.py', 'test_safety.py',
                'controls/run_all.py', 'controls/prerequisites.py',
                'controls/session_domain.py')
 
@@ -817,7 +818,8 @@ class ImportIsolation(unittest.TestCase):
         head_verifier = b"def verify_loaded_apparatus(head):\n    raise RuntimeError('#166 controlled HEAD preflight reached')\n"
         for name in ('run_round.py', 'check_ruler.py', 'session_domain.py',
                      'controls/run_all.py', 'controls/session_domain.py',
-                     'check_frozen.py', 'compare.py', 'build_proxy.py', 'observer.py'):
+                     'check_frozen.py', 'compare.py', 'build_proxy.py',
+                     'observer.py', 'native_evidence.py'):
             with self.subTest(entry=name):
                 path = common.SCRIPT / name
                 module = ModuleType('__main__')
@@ -904,7 +906,8 @@ class ImportIsolation(unittest.TestCase):
     def test_tools_cli_preflight_errors_are_blocked(self):
         message = '#166 every CLI preflight failure must produce BLOCKED JSON/2'
         for name in ('check_frozen.py', 'compare.py', 'build_proxy.py', 'run_round.py',
-                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py', 'observer.py'):
+                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py',
+                     'observer.py', 'native_evidence.py'):
             for error in ("ValueError('controlled HEAD drift')", "OSError('controlled missing git')",
                           "subprocess.CalledProcessError(1, ['git'])",
                           "subprocess.TimeoutExpired(['git'], 30)", "KeyboardInterrupt('controlled cancel')"):
@@ -925,7 +928,8 @@ class ImportIsolation(unittest.TestCase):
     def test_tools_cli_dispatch_preserves_exit_codes(self):
         message = '#166 every CLI wrapper must preserve main exit code'
         for name in ('check_frozen.py', 'compare.py', 'build_proxy.py', 'run_round.py',
-                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py', 'observer.py'):
+                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py',
+                     'observer.py', 'native_evidence.py'):
             for status, code in (('PASS', 0), ('FAIL', 1), ('BLOCKED', 2), ('NOT_RUN', 3)):
                 with self.subTest(entry=name, status=status):
                     body = ("def _verify_cli_imports(): pass\n"
@@ -957,11 +961,11 @@ class ImportIsolation(unittest.TestCase):
                             f"def main(): raise {contract['errors'][label]}\n")
                     result = self.session_dispatch_process(body, name)
                     self.assertEqual(result.returncode, expected['exit'], message + ': exit: ' + result.stderr)
-                    self.assertEqual(result.stdout, expected['stdout'], message + ': exact stdout')
+                    self.assertTrue(result.stdout == expected['stdout'], message + ': exact stdout')
                     self.assertEqual('Traceback (most recent call last):' in result.stderr,
                                      expected['traceback'], message + ': traceback disposition')
                     last = result.stderr.splitlines()[-1] if result.stderr else ''
-                    self.assertEqual(last, expected['stderr_last'], message + ': exact exception diagnostic')
+                    self.assertTrue(last == expected['stderr_last'], message + ': exact exception diagnostic')
 
     def test_guard_exit_codes_use_shared_mapping(self):
         message = '#991 guard must use shared exit codes including historical BLOCKED/1'
@@ -1762,7 +1766,9 @@ class ApparatusInputs(unittest.TestCase):
         from contextlib import nullcontext, redirect_stdout
         import io
         entry = _load('session_domain', common.SCRIPT / 'session_domain.py')
-        with tempfile.TemporaryDirectory(prefix='pdrs-166-deadline-') as folder:
+        # Isolate status aggregation from the separately tested frozen gate.
+        with tempfile.TemporaryDirectory(prefix='pdrs-166-deadline-') as folder, \
+                patch.object(entry, 'frozen_check', return_value={'exitCode': 0}):
             output = Path(folder) / 'deadline'
             with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
                     patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline', '--output', str(output)]), \
@@ -1782,6 +1788,38 @@ class ApparatusInputs(unittest.TestCase):
                     redirect_stdout(io.StringIO()):
                 code = entry.main()
             self.assertEqual(code, 2, '#166 BLOCKED remains distinct from NOT_RUN')
+            # #1140 native scoring wiring: a witness capture scores the
+            # rust-host/rust-sidecar cell against the registered A19-HOST
+            # expectations while the three cells without evidence stay NOT_RUN,
+            # so the batch cannot be PASS.  The observed batch status is also
+            # re-derived through the one shared aggregator (#892 runtime
+            # observation, never a static exit proof).
+            controls = _load('session_controls', common.SCRIPT / 'controls/session_domain.py')
+            with tempfile.TemporaryDirectory(prefix='pdrs-1140-native-') as native:
+                fixture = controls.native_capture_fixture(Path(native))
+                output = Path(native) / 'deadline-native'
+                with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
+                        patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline',
+                                                   '--native-capture', str(fixture),
+                                                   '--output', str(output)]), \
+                        redirect_stdout(io.StringIO()):
+                    code = entry.main()
+                self.assertTrue(code == 1 and json.loads((output / 'report.json').read_text())['failure']['rule'] == 'NATIVE_CAPTURE',
+                                '#1140 synthetic control cannot become formal native evidence')
+                report = controls.control_deadline_report(fixture)
+                self.assertTrue(report['status'] == common.aggregate_status(*[cell['status'] for cell in report['cells']])[0],
+                                '#892 observed batch status equals the one shared aggregation')
+                self.assertTrue(report['cells'][-1]['status'] == 'PASS' and report['status'] == 'NOT_RUN',
+                                '#1140 labelled control only tests native cell aggregation')
+                with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
+                        patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline',
+                                                   '--native-capture', str(Path(native) / 'missing-capture'),
+                                                   '--output', str(Path(native) / 'deadline-blocked')]), \
+                        redirect_stdout(io.StringIO()):
+                    code = entry.main()
+                self.assertEqual(code, 2, '#1140 a missing capture directory is BLOCKED')
+                self.assertFalse((Path(native) / 'deadline-blocked').exists(),
+                                 '#1140 BLOCKED creates no output directory')
         for status, code in [('PASS', 0), ('FAIL', 1), ('PASS_WITH_SKIPS', 1),
                              ('BLOCKED', 2), ('NOT_RUN', 3)]:
             self.assertEqual(common.aggregate_status(status), (status, code), '#166 shared exit contract')
@@ -1865,18 +1903,18 @@ class ApparatusInputs(unittest.TestCase):
             start = text.find(BOOTSTRAP_START)
             self.assertNotEqual(start, -1, f'#701 {name}: missing apparatus bootstrap')
             end = text.find(BOOTSTRAP_END, start)
-            self.assertNotEqual(end, -1, f'{name}: unterminated apparatus bootstrap')
+            self.assertNotEqual(end, -1, f'#1140 {name}: unterminated apparatus bootstrap')
             blocks[name] = text[start:end + len(BOOTSTRAP_END)]
             prefix = text[:start]
-            self.assertNotRegex(prefix, r'sys[.]path[.]insert', name)
-            self.assertNotRegex(prefix, APPARATUS_IMPORT, name)
-        self.assertEqual(sorted(blocks), sorted([
+            self.assertNotRegex(prefix, r'sys[.]path[.]insert', '#1140 no path insertion before bootstrap: ' + name)
+            self.assertNotRegex(prefix, APPARATUS_IMPORT, '#1140 no apparatus import before bootstrap: ' + name)
+        self.assertTrue(sorted(blocks) == sorted([
             'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
-            'observer.py', 'run_round.py', 'session_domain.py', 'test_safety.py',
+            'native_evidence.py', 'observer.py', 'run_round.py', 'session_domain.py', 'test_safety.py',
             'controls/run_all.py', 'controls/prerequisites.py',
-            'controls/session_domain.py']))
+            'controls/session_domain.py']), '#1140 complete standard bootstrap entry set')
         self.assertEqual(len(set(blocks.values())), 1,
-                         'apparatus bootstrap differs between entries')
+                         '#1140 apparatus bootstrap differs between entries')
         block = next(iter(blocks.values()))
         self.assertIn('sys.flags.isolated', block)
         self.assertLess(block.index('sys.flags.isolated'),

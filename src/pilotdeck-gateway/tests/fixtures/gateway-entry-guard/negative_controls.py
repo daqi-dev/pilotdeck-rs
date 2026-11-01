@@ -127,6 +127,15 @@ MUTATIONS = [
     ('policy-observer-unified', ROOT / 'scripts/gateway-parity/observer.py',
      "    run_entry(main, 'traceback')",
      "    run_entry(main, 'ruler')"),
+    ('native_evidence-checkout-head-skipped', ROOT / 'scripts/gateway-parity/native_evidence.py',
+     '_verify_cli_imports = _guard.verify_cli_imports',
+     '_verify_cli_imports = lambda: None'),
+    ('native_evidence-bootstrap-drift', ROOT / 'scripts/gateway-parity/native_evidence.py',
+     'sys.dont_write_bytecode = True',
+     'sys.dont_write_bytecode = False'),
+    ('policy-native_evidence-unified', ROOT / 'scripts/gateway-parity/native_evidence.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(main, 'ruler')"),
     ('policy-run_round-unified', ROOT / 'scripts/gateway-parity/run_round.py',
      "    run_entry(main, 'round')",
      "    run_entry(main, 'ruler')"),
@@ -167,6 +176,15 @@ MUTATIONS = [
      "    run_entry(main, 'traceback')",
      "    try:\n        run_entry(main, 'traceback')\n    except SystemExit as error:\n        raise SystemExit(1 if error.code == 2 else error.code)"),
     ('observer-normal-exit-zero', ROOT / 'scripts/gateway-parity/observer.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(lambda: (main(), 0)[1], 'traceback')"),
+    ('native_evidence-preflight-removed', ROOT / 'scripts/gateway-parity/native_evidence.py',
+     "    run_entry(main, 'traceback')",
+     '    raise SystemExit(main())'),
+    ('native_evidence-preflight-exit-one', ROOT / 'scripts/gateway-parity/native_evidence.py',
+     "    run_entry(main, 'traceback')",
+     "    try:\n        run_entry(main, 'traceback')\n    except SystemExit as error:\n        raise SystemExit(1 if error.code == 2 else error.code)"),
+    ('native_evidence-normal-exit-zero', ROOT / 'scripts/gateway-parity/native_evidence.py',
      "    run_entry(main, 'traceback')",
      "    run_entry(lambda: (main(), 0)[1], 'traceback')"),
     ('entry-suite-parity-lock-bypassed', ROOT / 'src/pilotdeck-gateway/tests/fixtures/negative_process.py',
@@ -280,6 +298,15 @@ CHECKS = {
     'policy-observer-unified': (
         'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
         '#991 every entry must preserve its measured main exception contract'),
+    'native_evidence-checkout-head-skipped': (
+        'CheckoutProvenance.test_checkout_metadata_never_skips_head',
+        '#166 checkout metadata must require HEAD'),
+    'native_evidence-bootstrap-drift': (
+        'ApparatusInputs.test_a2_entries_share_one_verbatim_path_bootstrap',
+        '#1140 apparatus bootstrap differs between entries'),
+    'policy-native_evidence-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
     'policy-run_round-unified': (
         'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
         '#991 every entry must preserve its measured main exception contract'),
@@ -320,6 +347,15 @@ CHECKS = {
         'ImportIsolation.test_tools_cli_preflight_errors_are_blocked',
         '#166 every CLI preflight failure must produce BLOCKED JSON/2'),
     'observer-normal-exit-zero': (
+        'ImportIsolation.test_tools_cli_dispatch_preserves_exit_codes',
+        '#166 every CLI wrapper must preserve main exit code'),
+    'native_evidence-preflight-removed': (
+        'ImportIsolation.test_cli_dispatch_verifies_before_main',
+        '#166 CLI dispatch must verify HEAD imports before main'),
+    'native_evidence-preflight-exit-one': (
+        'ImportIsolation.test_tools_cli_preflight_errors_are_blocked',
+        '#166 every CLI preflight failure must produce BLOCKED JSON/2'),
+    'native_evidence-normal-exit-zero': (
         'ImportIsolation.test_tools_cli_dispatch_preserves_exit_codes',
         '#166 every CLI wrapper must preserve main exit code'),
     'entry-suite-parity-lock-bypassed': (
