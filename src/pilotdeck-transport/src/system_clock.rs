@@ -117,7 +117,10 @@ pub fn parse_node22_date_with_local(
         .contains(&utc)
         .then_some(utc as f64))
 }
-fn resolve_local(wall: i64) -> Result<i64, JsString> {
+/// The production local-wall resolver: the process-TZ TZif bytes (see
+/// `system_tzif`), exported so downstream ports can inject the same policy
+/// into `parse_node22_date_with_local`.
+pub fn resolve_local(wall: i64) -> Result<i64, JsString> {
     let bytes = system_tzif().ok_or_else(|| JsString::from(
         "NODE22_DATE_LOCAL_SYSTEM_TZIF_UNSUPPORTED: no readable safe system TZif establishes the offset for this valid local date."
     ))?;
@@ -403,7 +406,7 @@ fn days_from_civil(year: i32, month: i32, day: i32) -> i64 {
     let doy = (153 * m + 2) / 5 + i64::from(day) - 1;
     era * 146097 + y * 365 + y / 4 - y / 100 + doy - 719468
 }
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
+pub fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097;

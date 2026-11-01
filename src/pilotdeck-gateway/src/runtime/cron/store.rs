@@ -441,7 +441,14 @@ pub(crate) fn normalize_task(value: &JsValue) -> Option<JsValue> {
         .get("scheduleComputationVersion")
         .and_then(JsValue::as_number)
     {
-        Some(number) if number == 2.0 || number == 3.0 => JsValue::Number(number),
+        // `2` is the pre-#1324 store schema, kept accepted on purpose; the
+        // current version is the ported `CRON_SCHEDULE_COMPUTATION_VERSION`
+        // (CronSchedule.ts:4, pinned against the oracle).
+        Some(number)
+            if number == 2.0 || number == f64::from(super::CRON_SCHEDULE_COMPUTATION_VERSION) =>
+        {
+            JsValue::Number(number)
+        }
         _ => JsValue::Undefined,
     };
     let mut out = JsObject::new();

@@ -1,0 +1,43 @@
+"UTC" true
+"utc" true
+"Asia/Shanghai" true
+"asia/shanghai" true
+"ASIA/SHANGHAI" true
+"US/Pacific" true
+"EST" true
+"PST8PDT" true
+"Etc/GMT+5" true
+"+05:30" true
+"+05" true
+"-0800" true
+"+050" false
+"-08:0" false
+"+24:00" false
+"+23:59" true
+"-12:00" true
+"UTC+8" false
+"UTC0" false
+"GMT" true
+"GMT0" true
+"Zulu" true
+"Iceland" true
+"Factory" false
+"CET" true
+"W-SU" true
+"localtime" false
+"EST5EDT" true
+"Bogus/Zone" false
+"" false
+"Asia/Shanghai " false
+"Etc/GMT+13" false
+"Etc/GMT-14" true
+"America/Nuuk" true
+"America/Argentina/Buenos_Aires" true
+"Etc/UTC" true
+"UCT" true
+"US/Eastern" true
+"Australia/Lord_Howe" true
+"Pacific/Kiritimati" true
+node v22.22.0 icu 78.2
+throw: RangeError Invalid time value
+

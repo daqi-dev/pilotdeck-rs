@@ -655,6 +655,7 @@
   },
   "node": "v22.22.0",
   "icu": "78.2",
+  "computationVersion": 3,
   "nextRuns": [
     {
       "name": "once/iso-z",
@@ -1111,6 +1112,18 @@
       "error": null
     },
     {
+      "name": "delay/sub-ms-negative-after",
+      "schedule": {
+        "type": "delay",
+        "amount": 0.0005,
+        "unit": "second"
+      },
+      "afterMs": -1,
+      "fallback": "UTC",
+      "result": 0,
+      "error": null
+    },
+    {
       "name": "delay/one-millisecond",
       "schedule": {
         "type": "delay",
@@ -1519,6 +1532,18 @@
       "error": null
     },
     {
+      "name": "cron/offset-hour-only",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 9 * * *",
+        "timezone": "+05"
+      },
+      "afterMs": 1768447860000,
+      "fallback": "UTC",
+      "result": 1768449600000,
+      "error": null
+    },
+    {
       "name": "cron/etc-gmt-plus-5",
       "schedule": {
         "type": "cron",
@@ -1647,6 +1672,42 @@
       "afterMs": 1768003200000,
       "fallback": "UTC",
       "result": 1769990400000,
+      "error": null
+    },
+    {
+      "name": "cron/leap-day-after-year-0050",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 0 29 2 *",
+        "timezone": "UTC"
+      },
+      "afterMs": -60589296000000,
+      "fallback": "UTC",
+      "result": -562982400000,
+      "error": null
+    },
+    {
+      "name": "cron/leap-day-after-year-0000",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 0 29 2 *",
+        "timezone": "UTC"
+      },
+      "afterMs": -62167219200000,
+      "fallback": "UTC",
+      "result": -2077747200000,
+      "error": null
+    },
+    {
+      "name": "cron/leap-day-after-year-1999",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 0 29 2 *",
+        "timezone": "UTC"
+      },
+      "afterMs": 928195200000,
+      "fallback": "UTC",
+      "result": 951782400000,
       "error": null
     },
     {
@@ -1858,6 +1919,54 @@
       "schedule": {
         "type": "cron",
         "expression": "*/0 * * * *",
+        "timezone": "UTC"
+      },
+      "afterMs": 1767225600000,
+      "fallback": "UTC",
+      "result": null,
+      "error": null
+    },
+    {
+      "name": "cron/infinite-step-rejected",
+      "schedule": {
+        "type": "cron",
+        "expression": "*/9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999 * * * *",
+        "timezone": "UTC"
+      },
+      "afterMs": 1767225600000,
+      "fallback": "UTC",
+      "result": null,
+      "error": null
+    },
+    {
+      "name": "cron/infinite-step-dow-rejected",
+      "schedule": {
+        "type": "cron",
+        "expression": "* * * * */9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+        "timezone": "UTC"
+      },
+      "afterMs": 1767225600000,
+      "fallback": "UTC",
+      "result": null,
+      "error": null
+    },
+    {
+      "name": "cron/huge-finite-step",
+      "schedule": {
+        "type": "cron",
+        "expression": "*/99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999 * * * *",
+        "timezone": "UTC"
+      },
+      "afterMs": 1767225600000,
+      "fallback": "UTC",
+      "result": 1767229200000,
+      "error": null
+    },
+    {
+      "name": "cron/dot-leading-step-rejected",
+      "schedule": {
+        "type": "cron",
+        "expression": "*/.5 * * * *",
         "timezone": "UTC"
       },
       "afterMs": 1767225600000,
@@ -2286,6 +2395,16 @@
       "name": "36-Z",
       "timezone": "Z",
       "expect": false
+    },
+    {
+      "name": "37-05",
+      "timezone": "+05",
+      "expect": true
+    },
+    {
+      "name": "38-00",
+      "timezone": "+00",
+      "expect": true
     }
   ],
   "resolveTimezones": [

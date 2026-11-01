@@ -8,7 +8,7 @@ mod model;
 mod modules;
 pub mod permission;
 mod router;
-pub(crate) mod sections;
+mod sections;
 pub mod session_overrides;
 pub mod session_value;
 pub mod settings;
@@ -21,6 +21,9 @@ use pilotdeck_yaml::{Options, parse_document};
 use std::collections::HashMap;
 use value::*;
 pub(crate) use value::{builtin_property, string_coercible};
+// Only `valid_timezone` leaves the config tree (the #1324 cron schedule
+// validity check); the `sections` module itself stays private.
+pub(crate) use sections::valid_timezone;
 pub type Env = HashMap<String, String>;
 pub struct Config {
     pub(crate) providers: Vec<model::Provider>,

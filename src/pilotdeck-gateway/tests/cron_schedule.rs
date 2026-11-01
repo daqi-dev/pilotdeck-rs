@@ -1,7 +1,7 @@
 //! #1324 cron schedule replay guard. The per-cell unit replay lives in
 //! `src/runtime/cron/schedule_tests.rs`; this target only carries the
-/// `#[ignore]` regeneration guard that re-runs the generator against the real
-/// TS baseline and requires a byte-identical oracle.json.
+//! `#[ignore]` regeneration guard that re-runs the generator against the real
+//! TS baseline and requires a byte-identical oracle.json.
 #[path = "common/baseline.rs"]
 #[allow(dead_code)]
 mod baseline;

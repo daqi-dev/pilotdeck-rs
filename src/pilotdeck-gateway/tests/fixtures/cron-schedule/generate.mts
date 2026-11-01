@@ -37,7 +37,8 @@ async function load(source: string, imports: Record<string, any> = {}) {
 }
 const timezoneMod = await load(sources[1]);
 const scheduleMod = await load(sources[0], { '../CronTimezone.js': timezoneMod });
-const { computeNextRunAt, cronDayFieldsUseOr, delayToMilliseconds } = scheduleMod;
+const { computeNextRunAt, cronDayFieldsUseOr, delayToMilliseconds,
+  CRON_SCHEDULE_COMPUTATION_VERSION } = scheduleMod;
 const { isValidCronTimezone, resolveCronTimezone } = timezoneMod;
 
 const out = resolve(process.argv[2]);
@@ -103,6 +104,7 @@ const nextRunCells: NextRunCell[] = [
   { name: 'delay/nan-after-zero-amount', delay: [0, 'day'], after: null },
   { name: 'delay/two-and-a-half-days', delay: [2.5, 'day'], after: 1735689600000 },
   { name: 'delay/pre-epoch', delay: [1, 'second'], after: -1 },
+  { name: 'delay/sub-ms-negative-after', delay: [0.0005, 'second'], after: -1 },
   { name: 'delay/one-millisecond', delay: [0.001, 'second'], after: 0 },
   // -- cron: alignment, day-field semantics --------------------------------
   { name: 'cron/daily-9am-before', cron: '0 9 * * *', tz: 'UTC', after: Date.UTC(2026, 0, 15, 8, 59, 0, 1) },
@@ -140,6 +142,7 @@ const nextRunCells: NextRunCell[] = [
   { name: 'cron/ist-9am-same-day', cron: '0 9 * * *', tz: 'Asia/Kolkata', after: Date.UTC(2026, 0, 15, 3, 0, 0, 1) },
   { name: 'cron/ist-9am-next-day', cron: '0 9 * * *', tz: 'Asia/Kolkata', after: Date.UTC(2026, 0, 15, 3, 30, 0, 1) },
   { name: 'cron/offset-identifier', cron: '0 9 * * *', tz: '+05:30', after: Date.UTC(2026, 0, 15, 3, 31) },
+  { name: 'cron/offset-hour-only', cron: '0 9 * * *', tz: '+05', after: Date.UTC(2026, 0, 15, 3, 31) },
   { name: 'cron/etc-gmt-plus-5', cron: '0 9 * * *', tz: 'Etc/GMT+5', after: Date.UTC(2026, 0, 15, 13, 30) },
   { name: 'cron/lowercase-zone', cron: '0 9 * * *', tz: 'america/new_york', after: Date.UTC(2026, 0, 15, 13, 30) },
   { name: 'cron/fallback-timezone-used', cron: '0 9 * * *', after: Date.UTC(2026, 0, 15, 13, 30), fallback: 'America/New_York' },
@@ -152,6 +155,9 @@ const nextRunCells: NextRunCell[] = [
   { name: 'cron/leap-day-ny-midnight', cron: '0 0 29 2 *', tz: 'America/New_York', after: Date.UTC(2028, 1, 28, 20, 0, 0, 1) },
   { name: 'cron/leap-day-kiritimati', cron: '0 0 29 2 *', tz: 'Pacific/Kiritimati', after: Date.UTC(2028, 1, 29) },
   { name: 'cron/leap-day-dow-breaks-shortcut', cron: '0 0 29 2 1', tz: 'UTC', after: Date.UTC(2026, 0, 10) },
+  { name: 'cron/leap-day-after-year-0050', cron: '0 0 29 2 *', tz: 'UTC', after: Date.parse('0050-01-01T00:00:00.000Z') },
+  { name: 'cron/leap-day-after-year-0000', cron: '0 0 29 2 *', tz: 'UTC', after: Date.parse('0000-01-01T00:00:00.000Z') },
+  { name: 'cron/leap-day-after-year-1999', cron: '0 0 29 2 *', tz: 'UTC', after: Date.UTC(1999, 5, 1) },
   { name: 'cron/leap-day-nan-after', cron: '0 0 29 2 *', tz: 'UTC', after: null },
   // -- cron: scan edges (RangeError / exhausted search) ----------------------
   { name: 'cron/nan-after-throws', cron: '0 9 * * *', tz: 'UTC', after: null },
@@ -172,6 +178,10 @@ const nextRunCells: NextRunCell[] = [
   { name: 'cron/month-out-of-range', cron: '* * * 13 *', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
   { name: 'cron/dow-out-of-range', cron: '* * * * 8', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
   { name: 'cron/zero-step', cron: '*/0 * * * *', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
+  { name: 'cron/infinite-step-rejected', cron: `*/${'9'.repeat(400)} * * * *`, tz: 'UTC', after: Date.UTC(2026, 0, 1) },
+  { name: 'cron/infinite-step-dow-rejected', cron: `* * * * */${'9'.repeat(400)}`, tz: 'UTC', after: Date.UTC(2026, 0, 1) },
+  { name: 'cron/huge-finite-step', cron: `*/${'9'.repeat(308)} * * * *`, tz: 'UTC', after: Date.UTC(2026, 0, 1) },
+  { name: 'cron/dot-leading-step-rejected', cron: '*/.5 * * * *', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
   { name: 'cron/too-many-fields', cron: '* * * * * *', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
   { name: 'cron/too-few-fields', cron: '* * * *', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
   { name: 'cron/empty-expression', cron: '', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
@@ -243,7 +253,7 @@ const validTimezoneCells = [
   'Asia/Tokyo', 'Europe/Berlin', 'Australia/Lord_Howe', 'Pacific/Chatham',
   'Pacific/Kiritimati', 'America/Sao_Paulo', 'america//new_york',
   '+05:30', '+0530', '-00:00', '+05:30:00', '+5:30', '05:30', '+99:00', '+24:00', '+00:60',
-  '', ' ', 'Not/AZone', 'Z',
+  '', ' ', 'Not/AZone', 'Z', '+05', '+00',
 ];
 const slug = (text: string) => text.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'blank';
 const validTimezones = validTimezoneCells.map((timezone, index) => ({
@@ -299,9 +309,9 @@ const delayMs = delayCells.map((cell) => ({
 // The matrix shape is frozen: the Rust replay asserts the same five counts
 // before replaying, so adding or removing a cell must update both sides.
 for (const [label, actual, expected] of [
-  ['nextRuns', nextRuns.length, 117],
+  ['nextRuns', nextRuns.length, 126],
   ['dayOr', dayOr.length, 13],
-  ['validTimezones', validTimezones.length, 37],
+  ['validTimezones', validTimezones.length, 39],
   ['resolveTimezones', resolveTimezones.length, 12],
   ['delayMs', delayMs.length, 12],
 ] as const) {
@@ -310,6 +320,7 @@ for (const [label, actual, expected] of [
 
 const oracle = {
   sourceCommit, sourceSha256, node: process.version, icu: process.versions.icu,
+  computationVersion: CRON_SCHEDULE_COMPUTATION_VERSION,
   nextRuns, dayOr, validTimezones, resolveTimezones, delayMs,
 };
 await writeFile(join(out, 'oracle.json'), JSON.stringify(oracle, null, 2) + '\n', { flag: 'wx' });
