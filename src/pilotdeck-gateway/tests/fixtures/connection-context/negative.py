@@ -93,6 +93,28 @@ ticket_patches = {
         }"""),
     ],
 }
+
+
+def workspace_patches():
+    # #132: vendored crates (icu_collator) are [patch.crates-io] entries of the
+    # workspace. A scratch crate that depends on pilotdeck-gateway must carry them,
+    # or it builds against registry sources without the vendored APIs and every
+    # type control below fails to compile for the wrong reason (INVALID).
+    text = (rust / "Cargo.toml").read_text()
+    block = re.search(r'^\[patch\.crates-io\]\n(.*?)(?=^\[|\Z)', text, re.M | re.S)
+    if not block:
+        return ""
+    lines = ["[patch.crates-io]"]
+    for row in block.group(1).splitlines():
+        row = row.split("#", 1)[0].strip()
+        if not row:
+            continue
+        entry = re.fullmatch(r'([A-Za-z0-9_-]+)\s*=\s*\{\s*path\s*=\s*"([^"]+)"\s*\}', row)
+        assert entry, f"#132 unsupported [patch.crates-io] row: {row!r}"
+        lines.append(f'{entry.group(1)}={{path={json.dumps(str(rust / entry.group(2)))}}}')
+    return "\n".join(lines) + "\n"
+
+
 summary = []
 failures = []
 with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as temp:
@@ -178,7 +200,7 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
         destination = (scratch / "tests/fixtures/connection-context" if file == "oracle.json"
                        else scratch / "src/runtime/connection")
         (destination / file).write_text(content)
-    (scratch / "Cargo.toml").write_text(manifest + f'pilotdeck-gateway={{path={json.dumps(str(rust / "pilotdeck-gateway"))}}}\n')
+    (scratch / "Cargo.toml").write_text(manifest + f'pilotdeck-gateway={{path={json.dumps(str(rust / "pilotdeck-gateway"))}}}\n' + workspace_patches())
     for name, statement in [
         ("project-runtime-as-binding-generation", 'let _: u64 = runtime;'),
         ("binding-generation-as-project-runtime", 'let _: std::sync::Arc<pilotdeck_gateway::runtime::project::ProjectRuntime> = binding.generation();'),
