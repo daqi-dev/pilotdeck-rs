@@ -124,7 +124,7 @@ class E2ETests(unittest.TestCase):
                 + '100 exit_group(0) = ?\n100 +++ exited with 0 +++\n')
 
     @classmethod
-    def _collect(cls, output, *, real_settle=False, after_final=None):
+    def _collect(cls, output, *, real_settle=False, after_final=None, synthetic_stimuli=True):
         # The all-expectations projection fixture includes intentionally absent
         # registries; it reads them directly. test_r11.test_collector_wait_wired
         # uses real_settle=True and a final-before-disk socket gateway to cover
@@ -154,6 +154,13 @@ class E2ETests(unittest.TestCase):
                               load_expectations(ROOT), after_final=after_final)
             try:
                 with contextlib.ExitStack() as stack:
+                    if synthetic_stimuli:
+                        # #1368 this gateway replays registered outputs; it is
+                        # not a real stimulus adapter. Keep these existing
+                        # scorer surface controls explicitly synthetic. The
+                        # real collection gate is tested below without this tap.
+                        stack.enter_context(mock.patch.object(c.stimuli, 'execution', return_value={
+                            'status': 'WITNESSED', 'scope': 'SYNTHETIC_CONTROL_ONLY'}))
                     for patch in (mock.patch.object(sys, 'platform', 'linux'),
                                   mock.patch.object(c.w.shutil, 'which', return_value='/strace'),
                                   mock.patch.object(c.w.subprocess, 'run',
@@ -178,6 +185,26 @@ class E2ETests(unittest.TestCase):
             provider_guard.close()
 
     # ---- scoring helpers ---------------------------------------------------
+    def test_unwitnessed_stimuli_are_not_executed(self):
+        folder = self.folder / 'unwitnessed-capture'
+        self._collect(folder, synthetic_stimuli=False)
+        marker = '#1368 captured requests without target witnesses all score NOT_RUN'
+        report = self._score(folder, marker)
+        candidates = [cell for cell in report['cells'] if cell.get('cases')]
+        self.assertTrue(len(candidates) == 1, marker)
+        cell = candidates[0]
+        self.assertTrue(len(cell['cases']) == 72
+                        and all(row['status'] == 'NOT_RUN' for row in cell['cases'])
+                        and cell['executedCases'] == [], marker)
+        rows = json.loads((folder / 'session-domain/cases.json').read_text())['cases']
+        sources = json.loads((folder / 'session-domain/sources.json').read_text())
+        self.assertTrue(len(sources) == 72
+                        and all(isinstance(source['transcriptText'], str)
+                                and Path(source['transcriptPath']).is_file() for source in sources)
+                        and all(row['stimulus']['status'] == 'NOT_RUN' and row['stimulus']['missing']
+                                and '未执行' in row['reason'] for row in rows),
+                        '#1368 NOT_RUN retains all raw originals and missing target reasons')
+
     def _score(self, folder, marker):
         """Score one capture; any broad failure becomes this test's own
         assertion failure, so a source mutant kills its bound test instead

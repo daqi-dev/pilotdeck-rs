@@ -86,6 +86,26 @@ deadline 判分入口只接受 `receipt.status == WITNESS_CAPTURED`、全部 rec
 
 ## 开发检查
 
+#1368 起 `stimulus_plan.py` 为 72 格逐项声明 TS preregistration 的 registry、phase、fault、order
+及真实写入/队列/fence 边界见证。`case_plan` 的 timeout/provider delay 仅保留旧采集预算，
+不能证明刺激已执行。s2–s4 受控入口尚未实现：`session_row` 把所有未见证格的 scoring
+observation 置空、附 `stimulus.plan/missing` 与「未执行」原因；72 请求、identity、observer
+与原始 sources 仍保留，冻结评分器沿用既有 `NOT_RUN` 行为，不缩分母、不改期望。
+`stimuli.execution` 是后续接入点；只有 case/run 绑定的原始边界收据才可在未来实现中放行，
+同名请求、provider 成功或终态与登记相同都不能代替收据。已有合成评分用例明确 mock 此接入点，
+新增真实采集逻辑测试不 mock 它并要求 72 格均 NOT_RUN。
+
+新增计划检查（固定 Node v22.22.0 / ICU 78.2，无下载）：
+
+```sh
+python3 -I src/pilotdeck-gateway/tests/fixtures/native-stimulus-plan/test_plan.py
+python3 -I src/pilotdeck-gateway/tests/fixtures/native-stimulus-plan/negative_controls.py --check-anchors
+# 对原 TS harness 本次运行的 raw/，核对全部见证及删除事件/倒序负控：
+python3 -I src/pilotdeck-gateway/tests/fixtures/native-stimulus-plan/verify_measurement.py <TS_OUTPUT>/raw
+# 提交后，源码等于 HEAD 且调用方设置 CARGO_TARGET_DIR：
+python3 -I src/pilotdeck-gateway/tests/fixtures/native-stimulus-plan/negative_controls.py <NEW_OUTPUT>
+```
+
 ```sh
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/negative.py --check-anchors
