@@ -47,12 +47,14 @@ impl NativeWsServer {
         if !crate::mutants::on("native-ws-token-policy") && token.trim().is_empty() {
             return Err("native WS requires an explicit nonempty token".into());
         }
-        // The bind policy admits only 127.0.0.1, so the native listener is
-        // always the TS loopback case for /auth/local-token; non-loopback
-        // routing is covered directly by the native_http router tests.
+        // The token route's loopback gate is derived from the bind address
+        // (TS: host === "127.0.0.1" || host === "localhost"), not asserted:
+        // a future non-loopback bind policy must not leak /auth/local-token.
+        // The test-only loopback:false routing goes through the native_http
+        // router tests' own Config construction.
         let http = native_http::Config {
             token: token.clone(),
-            loopback: true,
+            loopback: address.ip().is_loopback(),
             static_root: None,
         };
         Ok(Self {

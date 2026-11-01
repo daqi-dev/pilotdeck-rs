@@ -1133,8 +1133,11 @@ async fn cancelled_server_stops_retained_host() {
 #[tokio::test]
 async fn native_configuration() {
     let host = native_ws_fixture(Arc::new(Requests::default()));
+    // The non-loopback addresses must be refused before any Config derives
+    // `loopback: address.ip().is_loopback()` from them (#1209 fix-r2).
     for (address, token) in [
         ("0.0.0.0:0", "token"),
+        ("192.0.2.1:0", "token"),
         ("127.0.0.1:80", "token"),
         ("127.0.0.1:0", ""),
     ] {

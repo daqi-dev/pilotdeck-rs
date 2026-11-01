@@ -248,9 +248,14 @@ where
 /// `stop` mirrors Node's `server.close()` semantics (probe `probe-fixr1.out`
 /// B): connections that have served at least one request are closed (idle ones
 /// immediately, in-flight ones after the response) while connections that
-/// never sent bytes are left alone; `graceful_shutdown` is hyper's equivalent
-/// and is a no-op for an already-upgraded connection. A dropped sender means
-/// no stop signal, and the connection simply runs to its natural end.
+/// never sent bytes are left alone — and that includes serving requests they
+/// send only after the stop: Node answers those with the normal keep-alive
+/// response and never force-closes them; its `close()` promise waits for the
+/// socket's own idle timeout or the peer (probe `probe-fixr2.out` D, the
+/// runner's bounded drain error is the equivalent). `graceful_shutdown` is
+/// hyper's equivalent and is a no-op for an already-upgraded connection. A
+/// dropped sender means no stop signal, and the connection simply runs to its
+/// natural end.
 pub(crate) async fn serve_connection_native_with_shutdown<S, F, Fut>(
     stream: S,
     handler: F,
@@ -301,11 +306,14 @@ where
     if native {
         builder.title_case_headers(true).auto_date_header(false);
         if !crate::mutants::on("native-http-header-count-off") {
-            // llhttp has no header-count limit (its binding constraint is the
-            // 16 KiB request-line+names+values budget); hyper's default of 100
-            // 431s requests TS serves. 2048 keeps the allocation bounded; the
-            // residual count and byte limits are registered parse-layer diffs.
-            builder.max_headers(2048);
+            // Node v22.22.0 has no header-count limit: its binding constraint
+            // is the 16384-byte URL+header-names+values budget the router
+            // replicates, and a header's name is at least one of those bytes,
+            // so at most ~16377 headers can ever be served. A count cap of
+            // 16384 therefore never binds before that budget; it only bounds
+            // hyper's per-parse smallvec allocation. hyper's default of 100
+            // would 431 requests TS serves.
+            builder.max_headers(16384);
         }
     }
     let connection = builder
@@ -319,7 +327,8 @@ where
         result = &mut connection => return result,
         changed = stop.wait_for(|stopped| *stopped) => {
             if changed.is_ok()
-                && served.load(Ordering::Relaxed)
+                && (served.load(Ordering::Relaxed)
+                    || crate::mutants::on("native-http-unserved-close"))
                 && !crate::mutants::on("native-http-idle-close-off")
             {
                 connection.as_mut().graceful_shutdown();

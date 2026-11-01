@@ -30,7 +30,15 @@ switches = [
     ('native-http-connection-close-off', SOURCE, 'health_get', '#1209 cell health-get normalized response'),
     ('native-http-root-normalize-off', SOURCE, 'trailing_separator_root_still_serves', '#1209 trailing-separator root serves after normalization'),
     ('native-http-idle-close-off', SOURCE_PROXY, 'stop_closes_idle_keep_alive_connections', '#1209 stop closes idle keep-alive connections within the drain budget'),
-    ('native-http-header-count-off', SOURCE_PROXY, 'header_counts_within_ts_bounds_stay_served', '#1209 150 small headers stay served like TS'),
+    # fix-r2: the count cap is a bound on hyper's per-parse allocation, pinned
+    # at the 2049-header TS-served boundary (Node has no count limit; its
+    # binding constraint is the byte budget the row below covers).
+    ('native-http-header-count-off', SOURCE_PROXY, 'header_counts_within_ts_bounds_stay_served', '#1209 2049 small headers stay served like TS'),
+    ('native-http-header-budget-off', SOURCE, 'header_budget_431s_like_ts', '#1209 a 16384-byte single header is the TS 431'),
+    # fix-r2: the served-only guard is what keeps a connected-but-silent
+    # connection open across stop like TS server.close(); the mutant
+    # force-closes it, so the late request never gets its response.
+    ('native-http-unserved-close', SOURCE_PROXY, 'stop_serves_late_request_and_waits_like_ts_close', '#1209 the late request is still served after stop'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
