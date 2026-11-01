@@ -680,6 +680,40 @@ def _cleanup_fixture(child, audit, leader_state, output):
         audit['fixtureReadError'] = f'{type(error).__name__}: {error}'
 
 
+def fixture_lease_stopped(child, audit):
+    """Prove lease release separately from the frozen cleanup score (#1221).
+
+    A non-Darwin census stays BLOCKED even after a clean exit. Like A2's
+    stop_owned, only final ESRCH after reaping our held leader proves that its
+    group is gone. This is a signal-0 observation, never TERM/KILL after reap;
+    PID reuse can only retain the lease conservatively. No stale lease takeover
+    or scoring field is changed. Unknown ownership/cleanup errors fail closed.
+    """
+    probe = audit.get('processGroupProbe', {})
+    if (child.pid not in common.LIVE_GROUPS
+            or child.returncode is None
+            or probe.get('pgid') != child.pid
+            or probe.get('leaderUnreaped') is not True
+            or probe.get('leaderReaped') is not True
+            or audit.get('cleanupBlocked')
+            or audit.get('cleanupRaised')):
+        return False
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            audit['leaseGroupProbe'] = 'ESRCH after held leader reap'
+            return True
+        except OSError as error:
+            audit['leaseGroupProbe'] = f'unverified: {type(error).__name__}: {error}'
+            return False
+        if time.monotonic() >= deadline:
+            audit['leaseGroupProbe'] = 'group still exists after 2 seconds'
+            return False
+        time.sleep(.02)
+
+
 def run_fixture(output, baseline, command=None):
     # ``command`` is a test seam for the cleanup controls; production always
     # launches the frozen A5.2a fixture.
@@ -761,6 +795,10 @@ def run_fixture(output, baseline, command=None):
                                 and child.returncode is not None
                                 and not audit.get('cleanupBlocked')
                                 and not audit.get('cleanupRaised'))
+                    # BLOCKED/GROUP_NOT_EMPTY still describe the observation,
+                    # while an independently proven empty group may release its
+                    # lease. Do not promote the frozen score after remediation.
+                    verified = verified or fixture_lease_stopped(child, audit)
                     audit['allStopped'] = verified
                     if verified:
                         common.LIVE_GROUPS.discard(child.pid)
@@ -1270,11 +1308,10 @@ def _load_native_artifacts(folder):
     require(bool(observer['rows']), 'EMPTY_OBSERVER', 'empty independent observer')
     contract = dict(launch, binding=_observer_binding(observer['rows']),
                     observerRows=observer['rows'], bindingSource='observer-hello')
-    # #1140 fix-r3: the driver's own hello record is the independent anchor for
-    # the binding's value.  The observer rows are the wire record the audit
-    # replays; rewriting a hello binding there to another well-formed value
-    # (wire bytes recomputed, receipt re-pinned) must not audit, because the
-    # driver recorded the gateway's answer separately, at hello time.
+    # #1140/#1206: compare two records from the same collector. This detects
+    # an observer-only binding rewrite (including wire/receipt re-pinning),
+    # not an adversarial writer rewriting driver, observer and receipt together.
+    # The driver record is a consistency copy, not an independently signed anchor.
     driver = read(folder / 'session-domain/driver.json')
     require(isinstance(driver, dict) and driver.get('binding') == contract['binding'], 'BINDING',
             'driver-recorded hello binding disagrees with the observer hello record')

@@ -149,6 +149,8 @@ def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=No
     owned = None
     deferred, pending = False, []
     def cancel(signum, _frame):
+        if isinstance(sys.exception(), KeyboardInterrupt):
+            return
         if deferred:
             pending.append(signum)
         else:

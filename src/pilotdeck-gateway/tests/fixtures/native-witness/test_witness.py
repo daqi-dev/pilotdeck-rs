@@ -1185,6 +1185,83 @@ class WitnessTests(unittest.TestCase):
         self.assertTrue(tracer.kill.call_count == 1, '#1140 timeout kills only owned tracer')
         self.assertFalse((self.folder / 'timeout/receipt.json').exists(), '#1140 timeout publishes no complete receipt')
 
+    def _assert_cancel_unwind(self, first, second, marker):
+        reached, caught = [], None
+        try:
+            try:
+                os.kill(os.getpid(), first)
+            finally:
+                os.kill(os.getpid(), second)
+                reached.append('cleanup-completed')
+        except KeyboardInterrupt as error:
+            caught = error
+        self.assertTrue(reached == ['cleanup-completed'] and caught is not None
+                        and f'signal {first}' in str(caught), marker)
+        # Suppression lasts only as long as that exception is active.
+        with self.assertRaises(KeyboardInterrupt, msg=marker):
+            os.kill(os.getpid(), first)
+        with self.assertRaises(KeyboardInterrupt, msg=marker):
+            try:
+                raise ValueError('unrelated failure')
+            finally:
+                os.kill(os.getpid(), second)
+
+    def test_collection_cancel_unwind(self):
+        marker = '#1194 collection preserves first cancellation and cleanup'
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        with c.lease_signals():
+            for first, second in ((signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT)):
+                self._assert_cancel_unwind(first, second, marker)
+        self.assertTrue(all(signal.getsignal(sig) == handler for sig, handler in previous.items()), marker)
+
+    def test_shutdown_cancel_unwind(self):
+        marker = '#1194 shutdown preserves first cancellation and cleanup'
+        previous = signal.getsignal(signal.SIGTERM)
+        try:
+            c.common.install_shutdown()
+            self._assert_cancel_unwind(signal.SIGTERM, signal.SIGTERM, marker)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+
+    def test_capture_cancel_unwind(self):
+        marker = '#1194 capture preserves first cancellation and cleanup'
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        for first, second in ((signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT)):
+            tracer = mock.Mock(pid=123)
+            tracer.wait.return_value = -9
+            contract = copy.deepcopy(self.contract)
+            contract['project'] = str(self.folder)
+            reached, ownership, caught = [], set(), None
+
+            def exercise(*_):
+                try:
+                    os.kill(os.getpid(), first)
+                finally:
+                    os.kill(os.getpid(), second)
+                    reached.append('cleanup-completed')
+
+            output = self.folder / f'unwind-{first}'
+            with mock.patch.object(sys, 'platform', 'linux'), \
+                    mock.patch.object(w.shutil, 'which', return_value='/strace'), \
+                    mock.patch.object(w.subprocess, 'run', return_value=mock.Mock(stdout='--kill-on-exit')), \
+                    mock.patch.object(w.subprocess, 'Popen', return_value=tracer):
+                try:
+                    w.capture(contract, output, {}, exercise=exercise, ownership=ownership)
+                except KeyboardInterrupt as error:
+                    caught = error
+                except Exception as error:
+                    self.fail(marker + ': ' + repr(error))
+            self.assertTrue(reached == ['cleanup-completed'] and caught is not None
+                            and f'signal {first}' in str(caught), marker)
+            self.assertTrue(tracer.kill.call_count == 1 and tracer.wait.call_count == 1
+                            and not ownership, marker)
+            try:
+                failure = json.loads((output / 'failure.json').read_text())
+            except Exception as error:
+                self.fail(marker + ': ' + repr(error))
+            self.assertTrue(failure['error'] == repr(caught) and not failure['cleanupPending'], marker)
+            self.assertTrue(all(signal.getsignal(sig) == handler for sig, handler in previous.items()), marker)
+
     def test_cancel_kills_owned_tracer(self):
         tracer = mock.Mock(pid=123)
         tracer.poll.return_value = None

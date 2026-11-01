@@ -19,6 +19,9 @@ fixture = Path(__file__).with_name('test_witness.py')
 native = root / 'scripts/gateway-parity/native_evidence.py'
 common = root / 'scripts/gateway-parity/common.py'
 cases = [
+    ('collect-raises-twice', collector, 'if isinstance(sys.exception(), KeyboardInterrupt):', 'if isinstance(None, KeyboardInterrupt):', 'test_collection_cancel_unwind'),
+    ('capture-raises-twice', source, 'if isinstance(sys.exception(), KeyboardInterrupt):', 'if isinstance(None, KeyboardInterrupt):', 'test_capture_cancel_unwind'),
+    ('shutdown-raises-twice', common, 'if isinstance(sys.exception(), KeyboardInterrupt):', 'if isinstance(None, KeyboardInterrupt):', 'test_shutdown_cancel_unwind'),
     ('probe-scope-too-wide', collector, 'with socket.socket() as probe:', 'with fixed_port_bind(), socket.socket() as probe:', 'test_bind_error_scope'),
     ('all-bind-errors-blocked', collector, 'if error.errno == errno.EADDRINUSE:', 'if True:', 'test_bind_error_scope'),
     ('trace-cap-changed', native, 'TRACE_LIMIT = 64 * 1024 * 1024', 'TRACE_LIMIT = 63 * 1024 * 1024', 'test_trace_size_precheck'),
@@ -94,6 +97,9 @@ cases = [
     ('drop-transcript-witness-shape', native, "    need(isinstance(witness, dict) and witness.get('complete') is True\n         and witness.get('source') == 'strace-openat' and isinstance(witness.get('opens'), list),\n         'session capture must carry the complete transcript-open witness')", "    if not isinstance(witness, dict) or 'opens' not in witness:\n        return", 'test_validate_session_covers_manifest'),
 ]
 messages = {
+    'collect-raises-twice': '#1194 collection preserves first cancellation and cleanup',
+    'capture-raises-twice': '#1194 capture preserves first cancellation and cleanup',
+    'shutdown-raises-twice': '#1194 shutdown preserves first cancellation and cleanup',
     'probe-scope-too-wide': '#1169 socket creation error is not BLOCKED',
     'all-bind-errors-blocked': '#1169 non-conflict bind error propagates',
     'trace-cap-changed': '#1169 trace production cap is 64 MiB',

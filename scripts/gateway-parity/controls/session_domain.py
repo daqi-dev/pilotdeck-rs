@@ -772,8 +772,8 @@ def native_deadline_case(name, output):
         # #1140 fix-r3: the hello binding is rewritten to another well-formed
         # value (wire bytes recomputed, receipt re-pinned).  Every observer-side
         # comparison is self-consistent with the rewritten rows, so only the
-        # driver-recorded hello anchor can reject it: a value change must be a
-        # BINDING failure, never a 72/72 PASS.
+        # unchanged driver copy can reject this observer-only edit as BINDING.
+        # #1206: rewriting the driver and receipt too is outside this control.
         observer = read(folder / 'session-domain/observer.json')
         row = observer['rows'][0]
         row['frame']['interactionBinding'] = {'connectionId': 'forged-connection', 'generation': 2}
