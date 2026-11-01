@@ -4,10 +4,12 @@
 
 ``compiler_enforces_gateway_boundary`` now rejects cargo configuration that the
 test process cwd cannot see: an out-of-tree ``.cargo/config.toml`` on the
-invocation directory chain, ``--config`` overrides in the runner argv (the
-direct parent's and every live cargo ancestor's — cargo exec-replaces into
-external subcommands, so a real ``cargo nextest run`` has no live cargo; the
-constructed nextest layout keeps a cargo grandparent alive), the
+invocation directory chain (the direct parent's, and every live cargo
+ancestor's own invocation directory), ``--config`` overrides in the runner
+argv (the direct parent's and every live cargo ancestor's — cargo
+exec-replaces into external subcommands, so a real ``cargo nextest run`` has
+no live cargo; the constructed two-layer cargo-test-runner layout keeps a
+cargo grandparent alive), the
 toolchain-selection variables (RUSTDOC / RUSTC_BOOTSTRAP /
 a RUSTUP_TOOLCHAIN that does not come from this repository's pinned
 rust-toolchain.toml — accepted only as the pinned channel or that channel plus
@@ -30,7 +32,7 @@ context through /proc instead of the test cwd.
 Positive controls frame the attacks: cargo-mode and direct execution of the
 compiled guard binary (the mode the guard's own remedy messages direct a human
 to), the toolchain-file allow branch (pinned channel plus host triple), and
-the two-layer nextest ancestry with a matching cargo grandparent; a restored
+the two-layer cargo-test-runner ancestry with a matching cargo grandparent; a restored
 cargo-mode baseline at the end proves the out-of-tree attack left no lasting
 effect on the shared target directory. Every scenario runs before the summary;
 a scenario that cannot start, times out, fails to compile, or fails at any
@@ -39,7 +41,9 @@ row outside its expected state makes the exit code non-zero.
 
 Usage (Linux only; the /proc invocation boundary is Linux-specific, and on
 other platforms the guard itself fails closed unless
-PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1 is set):
+PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1 is set). rustup is required to locate
+the real toolchain cargo (the from-file, linked, and cargo-test-runner-layout
+scenarios need it; the runner currently refuses to start without it):
     CARGO_TARGET_DIR=... python3 negative_controls.py NEW_OUTPUT_DIR [scenario ...]
 """
 import json
@@ -113,7 +117,7 @@ TOOLCHAIN_ENV_KEYS = ('RUSTUP_TOOLCHAIN', 'RUSTUP_TOOLCHAIN_SOURCE', 'RUSTDOC', 
 # The real toolchain cargo (not the PATH wrapper or the rustup shim): the
 # guard's own `cargo metadata` must still succeed under the injected
 # RUSTUP_TOOLCHAIN values, which the shim would refuse to resolve, and the
-# nextest-layout grandparent must be an ELF that can answer it.
+# cargo-test-runner-layout grandparent must be an ELF that can answer it.
 rustup = shutil.which('rustup')
 toolchain_cargo = None
 if rustup:
@@ -192,9 +196,9 @@ def direct_environment(extra=None):
     return child
 
 
-def run_direct(label, extra=None, launcher=None, timeout=900):
+def run_direct(label, extra=None, launcher=None, timeout=900, cwd=None):
     command = launcher or [str(guard), '--exact', TEST]
-    result = run_owned(command, cwd=package, env=direct_environment(extra), timeout=timeout)
+    result = run_owned(command, cwd=cwd or package, env=direct_environment(extra), timeout=timeout)
     (out / f'{label}.log').write_text(result.stdout + result.stderr)
     return result
 
@@ -383,20 +387,23 @@ def scenario_cargo_out_of_tree_config_bare():
     return out_of_tree_config_attack('cargo-out-of-tree-config-bare', 'config')
 
 
-# The `cargo nextest run` ancestry: the guard's parent is cargo-nextest and a
-# cargo process above it, so its argv (and any `--config` overrides in it) is
-# only reachable through the ancestor walk. cb8 has no nextest installed, and
-# `cargo nextest` is an exec'd external subcommand anyway, so the layout is
-# reproduced where cargo provably spawns a child: a copy of the real cargo
-# binary (an ELF named cargo that can also answer the guard's own
-# `cargo metadata` and `-vV` calls) running `cargo test` on a one-target
-# sleeper whose harness-free test binary is named cargo-nextest and spawns
-# the guard — cargo waits on it as the grandparent, the sleeper is the
-# parent, and no exec optimization collapses the two layers.
-def nextest_layout_runner():
+# A two-layer runner layout in which a real cargo process stays alive above
+# the guard's direct parent (the shape `cargo test` produces when a test
+# target itself runs test binaries). This is NOT the real `cargo nextest run`
+# ancestry: cb8 probes show cargo exec-replaces into external subcommands,
+# so by test time the cargo process (and the `--config` overrides in its
+# argv) is gone — that absence is the guard module header's declared
+# manual-review boundary. This scenario only covers the layouts where a
+# cargo IS alive: a copy of the real cargo binary (an ELF named cargo that
+# can also answer the guard's own `cargo metadata` and `-vV` calls) running
+# `cargo test` on a one-target sleeper whose harness-free test binary is
+# named cargo-nextest and spawns the guard — cargo waits on it as the
+# grandparent, the sleeper is the parent, and no exec optimization collapses
+# the two layers.
+def cargo_test_runner_layout():
     if toolchain_cargo is None:
         raise RuntimeError('rustup is unavailable to locate the real toolchain cargo')
-    directory = out / 'nextest-layout'
+    directory = out / 'cargo-test-runner-layout'
     if not directory.is_dir():
         directory.mkdir()
         fake_cargo = directory / 'cargo'
@@ -405,7 +412,7 @@ def nextest_layout_runner():
         sleeper = directory / 'sleeper'
         (sleeper / 'src').mkdir(parents=True)
         (sleeper / 'Cargo.toml').write_text(
-            '[package]\nname = "pdrs448-nextest-layout"\nversion = "0.0.0"\n'
+            '[package]\nname = "pdrs448-cargo-test-runner-layout"\nversion = "0.0.0"\n'
             'edition = "2021"\n\n[[test]]\nname = "cargo-nextest"\n'
             'path = "src/cargo_nextest.rs"\nharness = false\n')
         # The sleeper hands the guard back the shared target directory it was
@@ -418,8 +425,19 @@ def nextest_layout_runner():
         def rust_string(value):
             return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
+        # The cfg marker makes an effective out-of-tree rustflags injection
+        # observable in the scenario log: the sleeper prints it only when the
+        # grandparent cargo actually built it under the injected
+        # --cfg pdrs_448_negative_control
+        # (cargo-test-runner-layout-config-file).
         (sleeper / 'src' / 'cargo_nextest.rs').write_text(
+            '#[cfg(pdrs_448_negative_control)]\n'
+            'fn attack_rustflags_marker() {\n'
+            '    eprintln!("#448 attack rustflags were applied to this build (out-of-tree .cargo/config.toml is in effect)");\n'
+            '}\n'
             'fn main() {\n'
+            '    #[cfg(pdrs_448_negative_control)]\n'
+            '    attack_rustflags_marker();\n'
             f'    let status = std::process::Command::new({rust_string(str(guard))})\n'
             f'        .args(["--exact", {rust_string(TEST)}])\n'
             f'        .env("CARGO_TARGET_DIR", {rust_string(shared_target)})\n'
@@ -437,27 +455,53 @@ def nextest_layout_runner():
     return fake_cargo, manifest, environment
 
 
-def scenario_nextest_layout_baseline():
-    fake_cargo, manifest, environment = nextest_layout_runner()
+def scenario_cargo_test_runner_layout_baseline():
+    fake_cargo, manifest, environment = cargo_test_runner_layout()
     launcher = [str(fake_cargo), 'test', '--manifest-path', str(manifest), '--offline']
-    result = run_direct('nextest-layout-baseline', environment, launcher=launcher,
+    result = run_direct('cargo-test-runner-layout-baseline', environment, launcher=launcher,
                         timeout=1200)
     return pass_verdict(result, 'guard passed under a cargo-nextest parent and a '
                                 'matching cargo grandparent')
 
 
-def scenario_nextest_layout_config():
-    # The CI shape: cargo --config <override> <subcommand> ... — the override is
-    # in the grandparent's argv, which the direct-parent scan cannot see. The
-    # injected value is harmless so the pre-fix guard can be shown accepting
-    # the whole run; the token rejection itself is value-agnostic.
-    fake_cargo, manifest, environment = nextest_layout_runner()
+def scenario_cargo_test_runner_layout_config():
+    # cargo --config <override> test ... with the override in the cargo
+    # grandparent's argv, which the direct-parent scan cannot see (the real
+    # `cargo nextest run` shape cannot be used: cargo exec-replaces into
+    # external subcommands, so no live cargo carries the token — see the
+    # cargo_test_runner_layout comment). The injected value is harmless so
+    # the pre-fix guard can be shown accepting the whole run; the token
+    # rejection itself is value-agnostic.
+    fake_cargo, manifest, environment = cargo_test_runner_layout()
     launcher = [str(fake_cargo), '--config', 'build.jobs=7',
                 'test', '--manifest-path', str(manifest), '--offline']
-    result = run_direct('nextest-layout-config', environment, launcher=launcher,
+    result = run_direct('cargo-test-runner-layout-config', environment, launcher=launcher,
                         timeout=1200)
     return verdict(result, '#448 cargo --config overrides',
                    extra=lambda evidence: QUOTED('--config') in evidence)
+
+
+def scenario_cargo_test_runner_layout_config_file():
+    # An out-of-tree `.cargo/config.toml` on the cargo grandparent's own
+    # invocation directory: cargo discovers configuration from the directory
+    # it is invoked in, the guard's direct parent (the sleeper) runs from the
+    # package root, and the cargo ancestor's cwd is on no cwd chain the
+    # direct-parent scan walks — only the ancestor walk reading
+    # /proc/<pid>/cwd can see it.
+    fake_cargo, manifest, environment = cargo_test_runner_layout()
+    attack = Path(tempfile.mkdtemp(prefix='pdrs448-ancestor-'))
+    try:
+        (attack / '.cargo').mkdir()
+        config = attack / '.cargo' / 'config.toml'
+        config.write_text('[build]\nrustflags = ["--cfg", "pdrs_448_negative_control"]\n')
+        (out / 'cargo-test-runner-layout-config-file-attack.toml').write_text(config.read_text())
+        launcher = [str(fake_cargo), 'test', '--manifest-path', str(manifest), '--offline']
+        result = run_direct('cargo-test-runner-layout-config-file', environment,
+                            launcher=launcher, cwd=attack, timeout=1200)
+    finally:
+        shutil.rmtree(attack, ignore_errors=True)
+    return verdict(result, '#448 cargo ancestor invocation directory Cargo configuration',
+                   extra=lambda evidence: str(config) in evidence)
 
 
 def scenario_baseline_restored():
@@ -479,8 +523,9 @@ SCENARIOS = {
     'cargo-identity-fake': scenario_cargo_identity_fake,
     'cargo-out-of-tree-config': scenario_cargo_out_of_tree_config,
     'cargo-out-of-tree-config-bare': scenario_cargo_out_of_tree_config_bare,
-    'nextest-layout-baseline': scenario_nextest_layout_baseline,
-    'nextest-layout-config': scenario_nextest_layout_config,
+    'cargo-test-runner-layout-baseline': scenario_cargo_test_runner_layout_baseline,
+    'cargo-test-runner-layout-config': scenario_cargo_test_runner_layout_config,
+    'cargo-test-runner-layout-config-file': scenario_cargo_test_runner_layout_config_file,
     'baseline-cargo-restored': scenario_baseline_restored,
 }
 
@@ -490,7 +535,7 @@ PASS_SCENARIOS = frozenset({
     'baseline-cargo',
     'baseline-direct',
     'env-rustup-toolchain-from-file',
-    'nextest-layout-baseline',
+    'cargo-test-runner-layout-baseline',
     'baseline-cargo-restored',
 })
 
