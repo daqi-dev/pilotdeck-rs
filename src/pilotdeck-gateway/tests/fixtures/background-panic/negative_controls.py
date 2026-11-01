@@ -17,12 +17,37 @@ source = 'src/pilotdeck-gateway/src/runtime/background.rs'
 fixture = 'src/pilotdeck-gateway/tests/fixtures/background-panic/oracle.json'
 snapshot = 'snapshot_write_a::zero_before_sync'
 subagent = 'subagent_sync'
+# #1233: dispose's final flush is joined into a memoized outcome; the mutant
+# swallows the rejection so dispose reports fulfilled on a failed flush.
+flush_outcome = (
+    '                outcome = match tokio::spawn(async move { store.flush().await }).await {\n'
+    '                    Ok(Ok(())) => Ok(()),\n'
+    '                    Ok(Err(error)) => Err(Arc::new(BackgroundTaskError::error(JsString::from(\n'
+    '                        error.to_string().as_str(),\n'
+    '                    )))),\n'
+    '                    Err(joined) => {\n'
+    '                        let payload = joined.into_panic();\n'
+    '                        let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())\n'
+    '                            .map(str::to_owned)\n'
+    '                            .unwrap_or_else(|| "Background snapshot flush failed.".to_owned());\n'
+    '                        Err(Arc::new(BackgroundTaskError::error(JsString::from(\n'
+    '                            message.as_str(),\n'
+    '                        ))))\n'
+    '                    }\n'
+    '                };'
+)
+flush_swallow = '                let _ = tokio::spawn(async move { store.flush().await }).await;'
 mutants = [
-    ('write-join', source, r'(tokio::spawn\(\s*async move \{ Self::persist_entry_static\(&store, &entry\).await \},?\s*\)\s*\.await);', r'\1.unwrap();', snapshot, 'background panic completion deadline'),
-    ('flush-join', source, re.escape('tokio::spawn(async move { store.flush().await }).await;'), 'tokio::spawn(async move { store.flush().await }).await.unwrap();', 'snapshot_flush_pair::zero_before_sync', 'background panic completion deadline'),
+    ('write-join', source, r'(tokio::spawn\(\s*async move \{\s*Self::persist_entry_static\(&store, &entry, u64::MAX\)\.await\s*\},?\s*\)\s*\.await);', r'\1.unwrap();', snapshot, 'background panic completion deadline'),
+    ('flush-join', source, re.escape(flush_outcome), flush_swallow, 'snapshot_flush_pair::zero_before_sync', 'disposal outcome'),
     ('continue-writes', source, re.escape('for entry in &entries {\n                    let (store, entry)'), 'for entry in entries.iter().take(1) {\n                    let (store, entry)', snapshot, 'continue after failure'),
-    ('retain-disposed', source, re.escape('self.inner.disposed.send_replace(true);'), 'let _ = self.inner.disposed.send(true);', snapshot, 'retained disposed notification'),
-    ('wake-disposed', source, re.escape('self.inner.disposed.send_replace(true);'), 'self.inner.disposed.send_if_modified(|value| { *value = true; false });', 'snapshot_write_a::three_before_poll', 'every observer notified'),
+    # With no live receiver, send() drops the outcome instead of storing it,
+    # so every later dispose() waits on a watch that never settles.
+    ('retain-disposed', source, re.escape('self.inner.disposed.send_replace(Some(outcome));'), 'let _ = self.inner.disposed.send(Some(outcome));', snapshot, 'background panic completion deadline'),
+    # The closure still stores the outcome but returns false, so no waiter is
+    # woken: the value is already set when the observers poll again, yet the
+    # recorded wakeups stay clear.
+    ('wake-disposed', source, re.escape('self.inner.disposed.send_replace(Some(outcome));'), 'self.inner.disposed.send_if_modified(|value| { *value = Some(outcome); false });', 'snapshot_write_a::three_before_poll', 'every observer notified'),
     ('subagent-prefix', source, r'Some\(std::panic::catch_unwind\(std::panic::AssertUnwindSafe\(\s*\|\| run\(entry.controller.clone\(\)\),\s*\)\)\)', 'Some(Ok::<_, Box<dyn std::any::Any + Send>>(run(entry.controller.clone())))', subagent, 'background panic completion deadline'),
     ('subagent-poll', source, re.escape('Err(subagent_panic_message(error.try_into_panic().ok()))'), 'panic!("uncaught subagent poll")', 'subagent_poll', 'background panic completion deadline'),
     ('subagent-notify', source, re.escape('entry.done.send_replace(true);\n            drop(clock);\n        });'), 'drop(entry.done.subscribe());\n            drop(clock);\n        });', subagent, 'background panic completion deadline'),
@@ -31,7 +56,7 @@ mutants = [
 ]
 # New edge controls each execute exactly one Rust matrix cell.
 mutants.extend([
-    ('empty-flush-join', source, re.escape('tokio::spawn(async move { store.flush().await }).await;'), 'tokio::spawn(async move { store.flush().await }).await.unwrap();', 'snapshot_flush_empty::three_before_poll', 'background panic completion deadline'),
+    ('empty-flush-join', source, re.escape(flush_outcome), flush_swallow, 'snapshot_flush_empty::three_before_poll', 'disposal outcome'),
     ('write-tail-join', source, mutants[0][2], mutants[0][3], 'snapshot_write_b::three_before_poll', 'background panic completion deadline'),
     ('sync-message', source, re.escape('Err(payload) => Err(subagent_panic_message(Some(payload))),'), 'Err(_) => Err(JsString::from("Background subagent task panicked.")),', 'subagent_sync', '#818 subagent'),
     ('poll-message', source, re.escape('Err(subagent_panic_message(error.try_into_panic().ok()))'), 'Err(JsString::from("Background subagent task panicked."))', 'subagent_poll', '#818 subagent'),

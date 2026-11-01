@@ -152,6 +152,10 @@ regeneration!(
     "background-dispose-flush"
 );
 regeneration!(background_panic_regenerates_identically, "background-panic");
+regeneration!(
+    background_persist_restart_regenerates_identically,
+    "background-persist-restart"
+);
 regeneration!(background_tasks_regenerates_identically, "background-tasks");
 regeneration!(bash_session_regenerates_identically, "bash-session");
 regeneration!(bash_tool_regenerates_identically, "bash-tool");

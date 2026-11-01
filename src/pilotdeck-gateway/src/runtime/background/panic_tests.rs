@@ -89,12 +89,17 @@ impl Store {
         if name != self.point {
             return Box::pin(async { Ok(()) });
         }
-        assert_ne!(self.mode, "sync", "snapshot synchronous panic");
+        if self.mode == "sync" {
+            // The baseline's flush() throws before returning a promise.
+            std::panic::panic_any("snapshot failure");
+        }
         let gate = self.gate.lock().unwrap().take().unwrap();
         let mode = self.mode.clone();
         Box::pin(async move {
             let _ = gate.await; // Dropped predecessor also unblocks failure settlement.
-            assert_ne!(mode, "poll", "snapshot poll panic");
+            if mode == "poll" {
+                std::panic::panic_any("snapshot failure");
+            }
             if mode == "err" {
                 Err(io::Error::other("snapshot failure"))
             } else {
@@ -134,6 +139,7 @@ impl BackgroundTaskSnapshotStore for Store {
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
+        _seq: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         self.operation(format!("write:{}", snapshot.task.task_id))
     }
@@ -192,20 +198,30 @@ async fn snapshot_case(family: &str, n: usize, timing: &str, mode: &str) {
     .await;
     if mode != "sync" {
         assert!(
-            !*runtime.inner.disposed.borrow(),
+            runtime.inner.disposed.borrow().is_none(),
             "{id}: bypassed storage gate"
         );
     }
     drop(release); // The storage predecessor never succeeds; cancellation releases it.
-    bounded(async {
-        while runtime.inner.state.lock().unwrap().phase != Phase::Disposed {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(
+    let outcome = bounded(runtime.dispose()).await;
+    assert_eq!(
         *runtime.inner.disposed.borrow(),
-        "{id}: retained disposed notification"
+        Some(outcome.clone()),
+        "{id}: settled watch matches dispose"
+    );
+    let outcome_str = match &outcome {
+        Ok(()) => "fulfilled".to_owned(),
+        Err(error) => String::from_utf16_lossy(error.message.units()),
+    };
+    assert_eq!(
+        outcome_str,
+        case["outcome"].as_str().unwrap_or_default(),
+        "{id}: disposal outcome"
+    );
+    assert_eq!(
+        runtime.inner.state.lock().unwrap().phase.as_str(),
+        case["phase"].as_str().unwrap_or_default(),
+        "{id}: terminal phase"
     );
     assert!(
         wakeups.iter().all(|w| w.0.load(Ordering::SeqCst)),
@@ -215,9 +231,24 @@ async fn snapshot_case(family: &str, n: usize, timing: &str, mode: &str) {
         observers.extend((0..n).map(|_| Box::pin(runtime.dispose())));
     }
     for observer in observers {
-        bounded(observer).await;
+        let observed = bounded(observer).await;
+        match (&outcome, &observed) {
+            (Ok(()), Ok(())) => {}
+            (Err(expected), Err(actual)) => assert!(
+                Arc::ptr_eq(expected, actual),
+                "{id}: observer reuses the memoized rejection"
+            ),
+            _ => panic!("{id}: observer diverges from the settled outcome"),
+        }
     }
-    bounded(runtime.dispose()).await;
+    match (&outcome, &bounded(runtime.dispose()).await) {
+        (Ok(()), Ok(())) => {}
+        (Err(expected), Err(actual)) => assert!(
+            Arc::ptr_eq(expected, actual),
+            "{id}: late dispose reuses the memoized rejection"
+        ),
+        _ => panic!("{id}: late dispose diverges from the settled outcome"),
+    }
     assert_eq!(
         *store.calls.lock().unwrap(),
         case["calls"]
@@ -227,19 +258,6 @@ async fn snapshot_case(family: &str, n: usize, timing: &str, mode: &str) {
             .map(|call| call.as_str().unwrap())
             .collect::<Vec<_>>(),
         "{id}: continue after failure"
-    );
-    let ts_failure = point == "flush" && mode != "ok";
-    assert_eq!(
-        case["outcome"],
-        if ts_failure {
-            "snapshot failure"
-        } else {
-            "fulfilled"
-        }
-    );
-    assert_eq!(
-        case["phase"],
-        if ts_failure { "draining" } else { "disposed" }
     );
 }
 

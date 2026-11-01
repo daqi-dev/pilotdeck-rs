@@ -59,11 +59,19 @@ struct SnapshotFile {
 }
 
 /// `BackgroundTaskSnapshotStore` trait.
+///
+/// #1233 fix-r1 (P0-1): `write` carries the event-time sequence number
+/// assigned under the entry lock when the persisted event happened. A write
+/// whose sequence is older than the newest accepted sequence for the same
+/// task must be dropped by the store, so a slow persist cannot overwrite a
+/// newer snapshot. `u64::MAX` is reserved for the dispose-time final write,
+/// which is never dropped.
 pub trait BackgroundTaskSnapshotStore: Send + Sync {
     fn load(&self) -> Vec<PersistedBackgroundTask>;
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
+        seq: u64,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>>;
     fn flush(
         &self,
@@ -76,6 +84,8 @@ pub struct JsonFileBackgroundTaskSnapshotStore {
     file_path: PathBuf,
     entries: Arc<Mutex<Vec<PersistedBackgroundTask>>>,
     write_tail: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// #1233 fix-r1: newest accepted sequence per task id.
+    accepted: Arc<Mutex<std::collections::HashMap<String, u64>>>,
     #[cfg(test)]
     writes_started: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -87,6 +97,7 @@ impl JsonFileBackgroundTaskSnapshotStore {
             file_path,
             entries: Arc::new(Mutex::new(entries)),
             write_tail: Arc::new(Mutex::new(None)),
+            accepted: Arc::new(Mutex::new(std::collections::HashMap::new())),
             #[cfg(test)]
             writes_started: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
@@ -136,10 +147,25 @@ impl BackgroundTaskSnapshotStore for JsonFileBackgroundTaskSnapshotStore {
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
+        seq: u64,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>> {
         // Accept the update and register its task atomically, before returning
         // a cancellable waiter. Every filesystem write belongs to this chain.
         let mut tail = self.write_tail.lock().unwrap();
+        // #1233 fix-r1 (P0-1): a write superseded by a newer accepted
+        // sequence for the same task is dropped before it can enqueue. The
+        // check and the registration both sit under the write-tail lock, where
+        // writes serialize, so the decision cannot interleave with another
+        // write's registration. Ties pass: an idempotent retry must not lose
+        // the write.
+        {
+            let mut accepted = self.accepted.lock().unwrap();
+            let task_id = snapshot.task.task_id.clone();
+            if seq < accepted.get(&task_id).copied().unwrap_or(0) {
+                return Box::pin(async { Ok(()) });
+            }
+            accepted.insert(task_id, seq);
+        }
         // Update in-memory map
         {
             let mut entries = self.entries.lock().unwrap();
@@ -734,9 +760,9 @@ mod tests {
 
             // Neither accepting a write nor a flush depends on polling its
             // returned future. Cancelling either waiter must keep the chain.
-            drop(store.write(snapshot("first")));
+            drop(store.write(snapshot("first"), 0));
             drop(store.flush());
-            let second = store.write(snapshot("second"));
+            let second = store.write(snapshot("second"), 0);
             let mut flushed = store.flush();
             assert!(
                 tokio::time::timeout(Duration::from_millis(100), &mut flushed)
@@ -767,17 +793,51 @@ mod tests {
         let store = JsonFileBackgroundTaskSnapshotStore::new(path.clone()).unwrap();
         fs::write(&parent, b"not a directory").unwrap();
 
-        assert!(store.write(snapshot("task")).await.is_err());
+        assert!(store.write(snapshot("task"), 0).await.is_err());
         store.flush().await.unwrap();
         assert_eq!(store.writes_started.load(Ordering::SeqCst), 1);
 
         fs::remove_file(parent).unwrap();
         let mut completed = snapshot("task");
         completed.task.status = "completed".to_owned();
-        store.write(completed).await.unwrap();
+        store.write(completed, 1).await.unwrap();
         store.flush().await.unwrap();
         assert_eq!(store.writes_started.load(Ordering::SeqCst), 2);
         let loaded = JsonFileBackgroundTaskSnapshotStore::new(path).unwrap();
         assert_eq!(loaded.load()[0].task.status, "completed");
+    }
+
+    // #1233 fix-r1 (P0-1): the store-level drop rule. A write whose sequence
+    // is older than the newest accepted sequence for the same task must not
+    // overwrite the newer snapshot, whatever order the writes land in.
+    #[tokio::test]
+    async fn superseded_sequence_writes_are_dropped() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let scratch = crate::test_scratch::Scratch::new("1233-snapshot-order");
+            let path = scratch.path().join("snapshot.json");
+            let store = JsonFileBackgroundTaskSnapshotStore::new(path.clone()).unwrap();
+
+            let mut terminal = snapshot("task");
+            terminal.task.status = "completed".to_owned();
+            store.write(terminal, 2).await.unwrap();
+
+            // An older running snapshot arriving later must be dropped.
+            store.write(snapshot("task"), 1).await.unwrap();
+            store.flush().await.unwrap();
+
+            let statuses: Vec<String> = JsonFileBackgroundTaskSnapshotStore::new(path)
+                .unwrap()
+                .load()
+                .into_iter()
+                .map(|entry| entry.task.status)
+                .collect();
+            assert_eq!(
+                statuses,
+                ["completed".to_owned()],
+                "#1233 a superseded snapshot write cannot overwrite the newer state"
+            );
+        })
+        .await
+        .expect("bounded snapshot order probe");
     }
 }

@@ -53,23 +53,29 @@ mutations = [
      '                task.pid = pid;',
      '                task.pid = None;',
      'test_unsettled_task_restored_as_cancelled', '#978 start acknowledged the child PID'),
+    # #1233 fix-r1 inserted the persist sequence bump between the two lines;
+    # the mutation still zeroes the settle-time output count.
     ('spill-count-incomplete', source,
-     '            state.task.output_bytes = state.output.total;\n            let task = &state.task;',
-     '            state.task.output_bytes = 0;\n            let task = &state.task;',
+     '            state.task.output_bytes = state.output.total;\n'
+     '            // #1233 fix-r1: assigned under the lock with the terminal state,',
+     '            state.task.output_bytes = 0;\n'
+     '            // #1233 fix-r1: assigned under the lock with the terminal state,',
      'test_output_spill_write_and_read', '#978 spill producer delivered all bytes'),
     ('spill-read-skipped', output,
      '        let path = &self.spill.as_ref()?.path;',
      '        if offset == 0 { return None; }\n        let path = &self.spill.as_ref()?.path;',
      'test_output_spill_write_and_read', '#978 spill prefix is not truncated'),
+    # #1233 renamed the restore binding; both mutations still target the
+    # was_unsettled gate in the restore loop.
     ('completed-status-lost', source,
-     '            let mut task = task;\n\n            if was_unsettled {',
-     '            let mut task = task;\n'
-     '            if task.status == TaskStatus::Completed { task.status = TaskStatus::Cancelled; }\n\n'
-     '            if was_unsettled {',
+     '            let was_unsettled = matches!(task.status, TaskStatus::Pending | TaskStatus::Running);',
+     '            if task.status == TaskStatus::Completed { task.status = TaskStatus::Cancelled; }\n'
+     '            let was_unsettled = matches!(task.status, TaskStatus::Pending | TaskStatus::Running);',
      'test_snapshot_persistence_and_recovery', '#978 restored completed status'),
     ('cancelled-pid-lost', source,
-     '            let mut task = task;\n\n            if was_unsettled {',
-     '            let mut task = task;\n            task.pid = None;\n\n            if was_unsettled {',
+     '            let was_unsettled = matches!(task.status, TaskStatus::Pending | TaskStatus::Running);',
+     '            task.pid = None;\n'
+     '            let was_unsettled = matches!(task.status, TaskStatus::Pending | TaskStatus::Running);',
      'test_unsettled_task_restored_as_cancelled', '#978 restored cancelled PID'),
 ]
 
