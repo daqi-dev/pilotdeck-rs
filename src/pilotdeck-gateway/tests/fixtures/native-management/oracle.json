@@ -2754,5 +2754,577 @@
         }
       }
     }
+  },
+  "contract": {
+    "capabilities": [
+      "upload_create",
+      "upload_get",
+      "upload_part",
+      "upload_complete",
+      "upload_cancel",
+      "run_get",
+      "run_events",
+      "run_reattach",
+      "project_files_list",
+      "commands_list",
+      "model_catalog_list",
+      "session_model_get",
+      "session_model_set",
+      "session_model_clear",
+      "delete_session",
+      "session_transcript_archive",
+      "native_transcript_archive",
+      "native_transcript_archive_artifact",
+      "memory_list",
+      "memory_wipe",
+      "manager_sessions",
+      "snapshot_list",
+      "snapshot_get",
+      "snapshot_restore",
+      "mcp_server_status",
+      "set_mcp_servers",
+      "mcp_server_reconnect",
+      "mcp_server_toggle",
+      "set_mcp_permission_mode_override",
+      "project_file_read",
+      "set_permission_mode",
+      "apply_flag_settings",
+      "update_settings",
+      "resolve_settings",
+      "set_session_thinking",
+      "output_styles_list",
+      "set_output_style",
+      "reload_output_styles",
+      "usage_snapshot",
+      "model_usage_snapshot",
+      "async_hook_result",
+      "user_dialog_list",
+      "permission_list",
+      "permission_decide",
+      "rewind_files",
+      "background_task_stop",
+      "background_tasks",
+      "seed_read_state",
+      "sdk_session_config",
+      "supported_agents"
+    ],
+    "emptyStorage": {
+      "config": null,
+      "result": {
+        "error": {
+          "code": "CAPABILITY_UNAVAILABLE",
+          "message": "Gateway snapshot provider is unavailable."
+        }
+      }
+    }
+  },
+  "snapshotSuccess": {
+    "storageFiles": [
+      {
+        "path": "objects/sha256/b6/a9/b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+        "text": "alpha\n"
+      },
+      {
+        "path": "objects/sha256/f2/c8/f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad",
+        "text": "beta\n"
+      },
+      {
+        "path": "workspaces/a8-main/sessions/a8-snapshot/snapshots/a531b79d38891690bf7f490a7957e74d554127958f28b7f8638b778cd971eb4c/_COMMITTED",
+        "text": ""
+      },
+      {
+        "path": "workspaces/a8-main/sessions/a8-snapshot/snapshots/a531b79d38891690bf7f490a7957e74d554127958f28b7f8638b778cd971eb4c/manifest.json",
+        "text": "{\n  \"snapshotId\": \"a531b79d38891690bf7f490a7957e74d554127958f28b7f8638b778cd971eb4c\",\n  \"workspaceId\": \"a8-main\",\n  \"sessionId\": \"a8-snapshot\",\n  \"turnId\": \"own\",\n  \"runId\": \"a8-run\",\n  \"phase\": \"pre_user\",\n  \"abnormal\": false,\n  \"entries\": [\n    {\n      \"path\": \"alpha.txt\",\n      \"entryType\": \"file\",\n      \"size\": 6,\n      \"digest\": \"b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060\",\n      \"objectKey\": \"objects/sha256/b6/a9/b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060\"\n    },\n    {\n      \"path\": \"nested/beta.txt\",\n      \"entryType\": \"file\",\n      \"size\": 5,\n      \"digest\": \"f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad\",\n      \"objectKey\": \"objects/sha256/f2/c8/f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad\"\n    }\n  ],\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\"\n}"
+      },
+      {
+        "path": "workspaces/a8-other/sessions/a8-snapshot/snapshots/94e5803c19cde21c8aacddeb1776b60873c0754f7d826e3150c3f9e0a56793ba/_COMMITTED",
+        "text": ""
+      },
+      {
+        "path": "workspaces/a8-other/sessions/a8-snapshot/snapshots/94e5803c19cde21c8aacddeb1776b60873c0754f7d826e3150c3f9e0a56793ba/manifest.json",
+        "text": "{\n  \"snapshotId\": \"94e5803c19cde21c8aacddeb1776b60873c0754f7d826e3150c3f9e0a56793ba\",\n  \"workspaceId\": \"a8-other\",\n  \"sessionId\": \"a8-snapshot\",\n  \"turnId\": \"foreign\",\n  \"runId\": \"a8-run\",\n  \"phase\": \"pre_user\",\n  \"abnormal\": false,\n  \"entries\": [\n    {\n      \"path\": \"alpha.txt\",\n      \"entryType\": \"file\",\n      \"size\": 6,\n      \"digest\": \"b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060\",\n      \"objectKey\": \"objects/sha256/b6/a9/b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060\"\n    },\n    {\n      \"path\": \"nested/beta.txt\",\n      \"entryType\": \"file\",\n      \"size\": 5,\n      \"digest\": \"f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad\",\n      \"objectKey\": \"objects/sha256/f2/c8/f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad\"\n    }\n  ],\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\"\n}"
+      }
+    ],
+    "requests": [
+      {
+        "method": "snapshot_get",
+        "params": {
+          "projectKey": "<root>/project",
+          "snapshotId": "a531b79d38891690bf7f490a7957e74d554127958f28b7f8638b778cd971eb4c"
+        },
+        "result": {
+          "ok": {
+            "snapshot": {
+              "snapshotId": "a531b79d38891690bf7f490a7957e74d554127958f28b7f8638b778cd971eb4c",
+              "workspaceId": "a8-main",
+              "sessionId": "a8-snapshot",
+              "turnId": "own",
+              "runId": "a8-run",
+              "phase": "pre_user",
+              "abnormal": false,
+              "entries": [
+                {
+                  "path": "alpha.txt",
+                  "entryType": "file",
+                  "size": 6,
+                  "digest": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+                  "objectKey": "objects/sha256/b6/a9/b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060"
+                },
+                {
+                  "path": "nested/beta.txt",
+                  "entryType": "file",
+                  "size": 5,
+                  "digest": "f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad",
+                  "objectKey": "objects/sha256/f2/c8/f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad"
+                }
+              ],
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      {
+        "method": "snapshot_get",
+        "params": {
+          "projectKey": "<root>/project",
+          "snapshotId": "94e5803c19cde21c8aacddeb1776b60873c0754f7d826e3150c3f9e0a56793ba"
+        },
+        "result": {
+          "error": {
+            "code": "SNAPSHOT_NOT_FOUND",
+            "message": "Snapshot 94e5803c19cde21c8aacddeb1776b60873c0754f7d826e3150c3f9e0a56793ba was not found."
+          }
+        }
+      }
+    ],
+    "restore": {
+      "params": {
+        "projectKey": "<root>/project",
+        "snapshotId": "a531b79d38891690bf7f490a7957e74d554127958f28b7f8638b778cd971eb4c",
+        "targetProjectKey": "<root>/project"
+      },
+      "result": {
+        "ok": {
+          "restored": true,
+          "workspaceKey": "<root>/project/.pilotdeck-restore-<random>"
+        }
+      },
+      "files": [
+        {
+          "path": "alpha.txt",
+          "text": "alpha\n"
+        },
+        {
+          "path": "nested/beta.txt",
+          "text": "beta\n"
+        }
+      ]
+    }
+  },
+  "skillImport": {
+    "sourceFiles": [
+      {
+        "path": "SKILL.md",
+        "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\n"
+      },
+      {
+        "path": "assets/note.txt",
+        "text": "attachment one\n"
+      }
+    ],
+    "steps": [
+      {
+        "method": "skill_import",
+        "params": {
+          "projectKey": "<root>/project",
+          "scope": "project",
+          "slug": "imported",
+          "sourcePath": "<root>/imported-source"
+        },
+        "result": {
+          "ok": {
+            "ok": true,
+            "mode": "copy",
+            "scope": "project",
+            "slug": "imported",
+            "sourcePath": "<root>/imported-source",
+            "skillPath": "<root>/project/.pilotdeck/skills/imported",
+            "skill": {
+              "slug": "imported",
+              "name": "Imported",
+              "description": "Fixture import",
+              "version": null,
+              "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+              "skillDir": "<root>/project/.pilotdeck/skills/imported",
+              "scope": "project",
+              "readonly": false,
+              "mtime": "<mtime>"
+            },
+            "validation": {
+              "ok": true,
+              "hardFails": [],
+              "warnings": [
+                {
+                  "code": "description_short",
+                  "message": "Description is short (14 chars). Consider expanding for better discovery."
+                }
+              ],
+              "stats": {
+                "fileCount": 2,
+                "totalBytes": 77
+              },
+              "frontmatter": {
+                "name": "Imported",
+                "description": "Fixture import"
+              }
+            }
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment one\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_read",
+        "params": {
+          "projectKey": "<root>/project",
+          "scope": "project",
+          "slug": "imported"
+        },
+        "result": {
+          "ok": {
+            "content": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\n",
+            "scope": "project",
+            "slug": "imported",
+            "skill": {
+              "slug": "imported",
+              "name": "Imported",
+              "description": "Fixture import",
+              "version": null,
+              "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+              "skillDir": "<root>/project/.pilotdeck/skills/imported",
+              "scope": "project",
+              "readonly": false,
+              "mtime": "<mtime>"
+            }
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment one\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_list",
+        "params": {
+          "projectKey": "<root>/project",
+          "scope": "project"
+        },
+        "result": {
+          "ok": {
+            "builtin": [],
+            "user": [],
+            "project": [
+              {
+                "slug": "imported",
+                "name": "Imported",
+                "description": "Fixture import",
+                "version": null,
+                "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+                "skillDir": "<root>/project/.pilotdeck/skills/imported",
+                "scope": "project",
+                "readonly": false,
+                "mtime": "<mtime>"
+              }
+            ],
+            "projectPath": "<root>/project",
+            "items": [
+              {
+                "slug": "imported",
+                "name": "Imported",
+                "description": "Fixture import",
+                "version": null,
+                "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+                "skillDir": "<root>/project/.pilotdeck/skills/imported",
+                "scope": "project",
+                "readonly": false,
+                "mtime": "<mtime>",
+                "command": "/imported",
+                "matches": []
+              }
+            ]
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment one\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_scan",
+        "params": {
+          "parentPath": "<root>/project/.pilotdeck/skills"
+        },
+        "result": {
+          "ok": {
+            "parentPath": "<root>/project/.pilotdeck/skills",
+            "folders": [
+              {
+                "folderName": "imported",
+                "hasSkillMd": true,
+                "name": "Imported",
+                "description": "Fixture import",
+                "sourcePath": "<root>/project/.pilotdeck/skills/imported",
+                "fileCount": 2,
+                "totalSize": 77
+              }
+            ]
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment one\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_import",
+        "params": {
+          "projectKey": "<root>/project",
+          "scope": "project",
+          "slug": "imported",
+          "sourcePath": "<root>/imported-source"
+        },
+        "writes": [
+          {
+            "path": "assets/note.txt",
+            "text": "attachment two\n"
+          },
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\nUpdated\n"
+          }
+        ],
+        "result": {
+          "error": {
+            "code": "conflict",
+            "message": "Skill already exists at <root>/project/.pilotdeck/skills/imported. Re-run with force=true to overwrite."
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment one\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_import",
+        "params": {
+          "projectKey": "<root>/project",
+          "scope": "project",
+          "slug": "imported",
+          "sourcePath": "<root>/imported-source",
+          "force": true
+        },
+        "result": {
+          "ok": {
+            "ok": true,
+            "mode": "copy",
+            "scope": "project",
+            "slug": "imported",
+            "sourcePath": "<root>/imported-source",
+            "skillPath": "<root>/project/.pilotdeck/skills/imported",
+            "skill": {
+              "slug": "imported",
+              "name": "Imported",
+              "description": "Fixture import",
+              "version": null,
+              "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+              "skillDir": "<root>/project/.pilotdeck/skills/imported",
+              "scope": "project",
+              "readonly": false,
+              "mtime": "<mtime>"
+            },
+            "validation": {
+              "ok": true,
+              "hardFails": [],
+              "warnings": [
+                {
+                  "code": "description_short",
+                  "message": "Description is short (14 chars). Consider expanding for better discovery."
+                }
+              ],
+              "stats": {
+                "fileCount": 2,
+                "totalBytes": 85
+              },
+              "frontmatter": {
+                "name": "Imported",
+                "description": "Fixture import"
+              }
+            }
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\nUpdated\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment two\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_read",
+        "params": {
+          "projectKey": "<root>/project",
+          "scope": "project",
+          "slug": "imported"
+        },
+        "result": {
+          "ok": {
+            "content": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\nUpdated\n",
+            "scope": "project",
+            "slug": "imported",
+            "skill": {
+              "slug": "imported",
+              "name": "Imported",
+              "description": "Fixture import",
+              "version": null,
+              "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+              "skillDir": "<root>/project/.pilotdeck/skills/imported",
+              "scope": "project",
+              "readonly": false,
+              "mtime": "<mtime>"
+            }
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\nUpdated\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment two\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_list",
+        "params": {
+          "projectKey": "<root>/project",
+          "scope": "project"
+        },
+        "result": {
+          "ok": {
+            "builtin": [],
+            "user": [],
+            "project": [
+              {
+                "slug": "imported",
+                "name": "Imported",
+                "description": "Fixture import",
+                "version": null,
+                "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+                "skillDir": "<root>/project/.pilotdeck/skills/imported",
+                "scope": "project",
+                "readonly": false,
+                "mtime": "<mtime>"
+              }
+            ],
+            "projectPath": "<root>/project",
+            "items": [
+              {
+                "slug": "imported",
+                "name": "Imported",
+                "description": "Fixture import",
+                "version": null,
+                "skillFile": "<root>/project/.pilotdeck/skills/imported/SKILL.md",
+                "skillDir": "<root>/project/.pilotdeck/skills/imported",
+                "scope": "project",
+                "readonly": false,
+                "mtime": "<mtime>",
+                "command": "/imported",
+                "matches": []
+              }
+            ]
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\nUpdated\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment two\n"
+          }
+        ]
+      },
+      {
+        "method": "skill_scan",
+        "params": {
+          "parentPath": "<root>/project/.pilotdeck/skills"
+        },
+        "result": {
+          "ok": {
+            "parentPath": "<root>/project/.pilotdeck/skills",
+            "folders": [
+              {
+                "folderName": "imported",
+                "hasSkillMd": true,
+                "name": "Imported",
+                "description": "Fixture import",
+                "sourcePath": "<root>/project/.pilotdeck/skills/imported",
+                "fileCount": 2,
+                "totalSize": 85
+              }
+            ]
+          }
+        },
+        "files": [
+          {
+            "path": "SKILL.md",
+            "text": "---\nname: Imported\ndescription: Fixture import\n---\n# Imported\nUpdated\n"
+          },
+          {
+            "path": "assets/note.txt",
+            "text": "attachment two\n"
+          }
+        ]
+      }
+    ]
   }
 }

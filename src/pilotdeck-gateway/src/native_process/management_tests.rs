@@ -13,6 +13,15 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/native-management/oracle.json");
+const UNWIRED_METHODS: [&str; 7] = [
+    "memory_list",
+    "memory_wipe",
+    "mcp_server_status",
+    "set_mcp_servers",
+    "mcp_server_reconnect",
+    "mcp_server_toggle",
+    "set_mcp_permission_mode_override",
+];
 fn json_value(value: &JsValue) -> Value {
     serde_json::from_str(
         &pilotdeck_protocol::stringify_json(value)
@@ -142,6 +151,13 @@ fn setup() -> (Scratch, requests::Requests) {
         root.join("sidecar").into_os_string(),
     ])
     .expect("#1231 isolated options");
+    std::fs::create_dir_all(options.home.join("projects/a8-main"))
+        .expect("#1231 stable project directory");
+    std::fs::write(
+        options.home.join("projects/a8-main/.cwd"),
+        options.project.to_string_lossy().as_bytes(),
+    )
+    .expect("#1231 stable project marker");
     assembly::register_project(&options).expect("#1231 register project");
     let chat = crate::session_chat_dir(
         &options.home,
@@ -589,26 +605,23 @@ async fn production_host_management_and_restart() {
             "snapshot_restore",
             "manager_sessions",
             "commands_list",
-            "skill_list",
-            "skill_read",
-            "skill_write",
-            "skill_create",
-            "skill_delete",
-            "skill_import",
-            "skill_validate",
-            "skill_scan",
         ] {
             negative_assert!(
                 capabilities.contains(&json!(method)),
                 "#1231 wired method declared"
             );
         }
-        for method in [
-            "manager_browsers",
-            "memory_list",
-            "memory_wipe",
-            "mcp_servers",
-        ] {
+        let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 capability oracle");
+        let ts_capabilities = oracle["contract"]["capabilities"]
+            .as_array()
+            .expect("#1231 TS capabilities");
+        for capability in capabilities {
+            negative_assert!(
+                ts_capabilities.contains(capability),
+                "#1231 capability belongs to TS contract"
+            );
+        }
+        for method in std::iter::once("manager_browsers").chain(UNWIRED_METHODS) {
             negative_assert!(
                 !capabilities.contains(&json!(method)),
                 "#1231 unavailable provider not advertised"
@@ -631,7 +644,14 @@ async fn production_host_management_and_restart() {
 #[tokio::test]
 async fn admission_and_unwired_families_stay_closed() {
     let (scratch, requests) = setup();
-    for method in ["memory_list", "memory_wipe", "mcp_list", "mcp_servers"] {
+    for method in UNWIRED_METHODS {
+        negative_assert!(
+            requests
+                .management_request(method, &crate::metadata::object([]))
+                .await
+                .is_none(),
+            "#1231 unwired family bypasses management"
+        );
         let result = requests
             .request(method.into(), crate::metadata::object([]))
             .await;
@@ -858,4 +878,208 @@ fn management_progress_with_one_available_blocking_thread() {
     });
     runtime.shutdown_timeout(Duration::from_secs(3));
     negative_assert!(result, "#1231 management progress with one blocking slot");
+}
+
+fn seed_files(directory: &Path, files: &Value, root: &Path) {
+    for file in files.as_array().expect("#1231 seed file list") {
+        let path = directory.join(file["path"].as_str().expect("#1231 seed file path"));
+        std::fs::create_dir_all(path.parent().expect("#1231 seed file parent"))
+            .expect("#1231 seed directory");
+        std::fs::write(
+            path,
+            file["text"]
+                .as_str()
+                .expect("#1231 seed file text")
+                .replace("<root>", root.to_str().expect("#1231 seed root")),
+        )
+        .expect("#1231 seed file bytes");
+    }
+}
+
+fn file_tree(directory: &Path) -> Value {
+    fn walk(directory: &Path, relative: &Path, rows: &mut Vec<Value>) {
+        let mut entries = std::fs::read_dir(directory.join(relative))
+            .expect("#1231 observed file tree directory")
+            .map(|entry| entry.expect("#1231 observed file tree entry"))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = relative.join(entry.file_name());
+            let kind = entry.file_type().expect("#1231 observed file type");
+            if kind.is_dir() {
+                walk(directory, &path, rows);
+            } else {
+                negative_assert!(kind.is_file(), "#1231 observed regular file");
+                rows.push(json!({"path":path,"text":std::fs::read_to_string(entry.path()).expect("#1231 observed file bytes")}));
+            }
+        }
+    }
+    let mut rows = vec![];
+    walk(directory, Path::new(""), &mut rows);
+    json!(rows)
+}
+
+#[tokio::test]
+async fn empty_storage_environment_uses_isolated_default() {
+    let (_scratch, requests) = setup();
+    let options = requests.options.clone();
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 empty storage oracle");
+    let expected = &oracle["snapshotSuccess"]["requests"][0];
+    seed_files(
+        &options.home.join("storage"),
+        &oracle["snapshotSuccess"]["storageFiles"],
+        &_scratch.0,
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1231 empty storage unused owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1231 empty storage unused registry disposal");
+    let mut env = crate::config::Env::new();
+    env.insert("PILOTDECK_STORAGE_ROOT".into(), String::new());
+    validate_environment(&env).expect("#1231 empty storage inherited admission");
+    let host = assembly::start(options.clone(), options.environment(env))
+        .await
+        .expect("#1231 empty storage host startup");
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.expect("#1231 empty storage hello");
+    connection.receive(json!({"type":"request","id":"snapshot","method":"snapshot_get","params":{"projectKey":options.project,"snapshotId":expected["params"]["snapshotId"]}}).to_string()).await.expect("#1231 empty storage request");
+    {
+        let frames = text.0.lock().expect("#1231 empty storage frames");
+        let response = frames
+            .iter()
+            .find(|frame| frame["id"] == "snapshot")
+            .expect("#1231 empty storage response");
+        negative_assert_eq!(
+            response["ok"],
+            true,
+            "#1231 empty storage snapshot available"
+        );
+        negative_assert_eq!(
+            normalize(response["result"].clone(), &_scratch.0),
+            expected["result"]["ok"],
+            "#1231 empty storage isolated snapshot data"
+        );
+    }
+    host.shutdown(options.drain_budget)
+        .await
+        .expect("#1231 empty storage host shutdown");
+}
+
+#[tokio::test]
+async fn snapshot_success_matches_ts() {
+    let (scratch, requests) = setup();
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 snapshot oracle");
+    let fixture = &oracle["snapshotSuccess"];
+    seed_files(
+        &requests.options.home.join("storage"),
+        &fixture["storageFiles"],
+        &scratch.0,
+    );
+    for row in fixture["requests"]
+        .as_array()
+        .expect("#1231 snapshot requests")
+    {
+        negative_assert_eq!(
+            call(&requests, &row["method"], &row["params"], &scratch.0).await,
+            row["result"],
+            "#1231 snapshot get success and workspace filter"
+        );
+    }
+    let restore = &fixture["restore"];
+    let mut result = call(
+        &requests,
+        &json!("snapshot_restore"),
+        &restore["params"],
+        &scratch.0,
+    )
+    .await;
+    negative_assert_eq!(
+        result["ok"]["restored"],
+        true,
+        "#1231 snapshot restore success"
+    );
+    let path = PathBuf::from(
+        result["ok"]["workspaceKey"]
+            .as_str()
+            .expect("#1231 snapshot restored path")
+            .replace("<root>", scratch.0.to_str().expect("#1231 snapshot root")),
+    );
+    negative_assert_eq!(
+        path.parent(),
+        Some(requests.options.project.as_path()),
+        "#1231 snapshot restore target parent"
+    );
+    let name = path
+        .file_name()
+        .expect("#1231 snapshot restore name")
+        .to_str()
+        .expect("#1231 snapshot restore name UTF8");
+    negative_assert!(
+        name.strip_prefix(".pilotdeck-restore-")
+            .is_some_and(|suffix| suffix.len() == 6
+                && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())),
+        "#1231 snapshot restore target name"
+    );
+    negative_assert_eq!(
+        file_tree(&path),
+        restore["files"],
+        "#1231 snapshot restored file bytes"
+    );
+    result["ok"]["workspaceKey"] = json!("<root>/project/.pilotdeck-restore-<random>");
+    negative_assert_eq!(
+        result,
+        restore["result"],
+        "#1231 snapshot restore TS result"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1231 snapshot owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1231 snapshot registry disposal");
+}
+
+#[tokio::test]
+async fn skill_import_success_conflict_and_overwrite_match_ts() {
+    let (scratch, requests) = setup();
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 import oracle");
+    let fixture = &oracle["skillImport"];
+    let source = scratch.0.join("imported-source");
+    seed_files(&source, &fixture["sourceFiles"], &scratch.0);
+    for step in fixture["steps"].as_array().expect("#1231 import steps") {
+        if let Some(writes) = step.get("writes") {
+            seed_files(&source, writes, &scratch.0);
+        }
+        negative_assert_eq!(
+            call(&requests, &step["method"], &step["params"], &scratch.0).await,
+            step["result"],
+            "#1231 skill import read list scan and conflict results"
+        );
+        negative_assert_eq!(
+            file_tree(&requests.options.project.join(".pilotdeck/skills/imported")),
+            step["files"],
+            "#1231 skill import copies files and preserves conflict target"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1231 import owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1231 import registry disposal");
 }
