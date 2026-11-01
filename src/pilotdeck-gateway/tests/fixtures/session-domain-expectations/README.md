@@ -7,8 +7,12 @@
 数量以 `negative_controls.py` 中读取的 `EXPECTATION_CASES` / `MUTATIONS`
 为准，`python3 negative_controls.py --list` 打印当前清单与数量。
 `EXPECTATION_CASES` 的定义仍只有控制面板一份；负控用 AST 读取，不执行面板。
-`--list` 同时列出 `CALIBRATION_CASES` 与派生计数，只读输出 JSON，
-不创建证据目录、不执行控制、不修改源码。
+`--list` 同时列出 `CALIBRATION_CASES` 与派生计数，只读、不创建证据目录、
+不执行控制、不修改源码；但组合 `--check-anchors` 时先输出锚点报告
+（如 `6 anchors: ok`）再输出 JSON，stdout 不再是纯 JSON，下游解析需先剥
+锚点行；`--only` 非法或重复时返回 2 且不输出清单，锚点预检失败同样
+返回 2 且不列清单（#1279）。`--check-anchors` 单独调用（不带 `--list`）
+只做锚点预检：打印 `N anchors: ok` 后返回 0，不要求 `--output` / `--source`。
 
 ## 源码 require 负控
 
@@ -48,12 +52,17 @@ AssertionError 才 KILLED，无关异常或编译失败记 INVALID，逐项执�
 ```sh
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py --list
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py --check-anchors
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py --list --check-anchors
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/test_meta_controls.py
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/test_meta_controls.py --negative
 # 提交后，源码 require 变异的正式宿主运行：
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py \
   --output <新证据目录> --source <真实 A5.2a 输出>
 ```
+
+单独 `--check-anchors` 不带 `--list`、`--output`、`--source` 也能跑：先打印
+`derived counts: …` 再打印 `N anchors: ok`，返回 0；组合调用（第 3 行）先跑
+同一预检再列 JSON 清单，预检失败时返回 2 且不输出清单。
 
 `--source` 包含 `raw/` 下的观测与 preregistration / manifest、launch。
 原地源码负控要求 HEAD 与输入一致；不创建副本仓库或构建目录。
