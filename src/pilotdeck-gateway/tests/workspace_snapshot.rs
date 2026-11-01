@@ -46,6 +46,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+// #283: only the Linux-gated non-utf8 test uses `OsStrExt::as_bytes`; on
+// non-Linux runners a shared import is an unused-import error (-D warnings).
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt;
+
 const FIXTURES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/workspace-snapshot"
@@ -334,10 +339,12 @@ fn utf16_cmp(left: &str, right: &str) -> std::cmp::Ordering {
 }
 /// Byte-exact non-UTF-8 names need a byte-transparent filesystem; generate.mts
 /// probes identically and drops the scenario where this fails (APFS/HFS+
-/// reject the bytes with EINVAL, Linux allows them). The committed oracle has
-/// no non-utf8 scenario because it was generated on macOS, and CI never
-/// regenerates the fixtures: this path is currently uncovered. Linux
-/// generation is pending #283.
+/// reject the bytes with EINVAL, Linux allows them). Since #283 the committed
+/// oracle is generated on Linux (cb8, ext4; the fixture README registers the
+/// provenance) and carries the non-utf8 scenario. The replay skips it
+/// wherever this probe fails, and the dedicated Linux gate below
+/// (`non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux`) fails loudly
+/// instead of letting the coverage evaporate silently.
 fn non_utf8_names_writable(dir: &Path) -> bool {
     let probe = dir.join(OsString::from_vec(b"probe-\xff".to_vec()));
     let writable = fs::write(&probe, b"").is_ok();
@@ -590,6 +597,7 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("snapshot-inside", 3, 19),
     ("workspace-missing", 2, 7),
     ("root-equals-workspace", 3, 8),
+    ("non-utf8", 2, 7),
     ("provider-quirks", 36, 46),
     ("provider-null", 3, 7),
     ("provider-order", 8, 17),
@@ -681,6 +689,202 @@ fn scenarios_match_ts_outcomes_and_trees() {
             sentinel.display()
         );
     }
+}
+
+/// #283: the non-utf8 scenario — a raw `bad-\xff.txt` beside `ok.txt` — is
+/// part of the committed oracle (Linux-generated; the fixture README
+/// registers the provenance). The generic replay above covers it wherever the
+/// runtime probe succeeds; this gate is the loud Linux version: if the probe
+/// suddenly failed here (a runner on a filesystem that rejects the bytes),
+/// the 28-scenario replay would silently degrade to 27 and stay green.
+/// Every assertion carries the `#283` tag the negative controls bind to.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux() {
+    let oracle = oracle();
+    let scenarios = arr(field(&oracle, "scenarios"), "scenarios");
+    let scenario = scenarios
+        .iter()
+        .find(|scenario| s(field(scenario, "name")) == "non-utf8")
+        .expect("#283 the committed oracle must carry the non-utf8 scenario");
+    let steps = arr(field(scenario, "steps"), "non-utf8 steps");
+    let capture = steps
+        .last()
+        .expect("#283 the non-utf8 scenario records its capture");
+    let expected = field(capture, "outcome");
+    let guard = Scratch::new();
+    let dir = guard.0.clone();
+    assert!(
+        non_utf8_names_writable(&dir),
+        "#283 this Linux filesystem rejects non-UTF-8 file names, so the non-utf8 scenario cannot replay (byte-transparent generation host pinned in tests/fixtures/workspace-snapshot/README.md)"
+    );
+
+    // Workspace from the scenario spec: the regular file plus the raw name.
+    let spec = field(scenario, "workspace");
+    let workspace = dir.join("workspace");
+    fs::create_dir_all(&workspace).expect("#283 create the workspace directory");
+    for file in arr(field(spec, "files"), "non-utf8 workspace.files") {
+        let path = workspace.join(s(field(file, "path")));
+        fs::write(&path, decode(&s(field(file, "b64"))))
+            .expect("#283 write the regular workspace file");
+    }
+    let raw_files = arr(field(spec, "rawFiles"), "non-utf8 workspace.rawFiles");
+    for raw in raw_files {
+        // Byte-exact non-UTF-8 file names.
+        let name = OsString::from_vec(decode(&s(field(raw, "nameB64"))));
+        fs::write(
+            dir.join(s(field(raw, "dir"))).join(name),
+            decode(&s(field(raw, "b64"))),
+        )
+        .expect("#283 write the raw-named workspace file");
+    }
+    // Raw self-check independent of the decoding under test (#133 style):
+    // exactly the intended bytes exist, so the assertions below prove
+    // behaviour against the raw name, not against a silently renamed file.
+    let mut observed: Vec<Vec<u8>> = fs::read_dir(&workspace)
+        .expect("#283 read the workspace directory")
+        .map(|entry| {
+            entry
+                .expect("#283 read the workspace entry")
+                .file_name()
+                .as_bytes()
+                .to_vec()
+        })
+        .collect();
+    observed.sort();
+    let mut intended: Vec<Vec<u8>> = raw_files
+        .iter()
+        .map(|raw| decode(&s(field(raw, "nameB64"))))
+        .chain(
+            arr(field(spec, "files"), "non-utf8 workspace.files")
+                .iter()
+                .map(|file| s(field(file, "path")).into_bytes()),
+        )
+        .collect();
+    intended.sort();
+    assert_eq!(
+        observed, intended,
+        "#283 raw bytes on disk differ from the scenario specification"
+    );
+
+    let dir_text = dir.to_string_lossy().into_owned();
+    let root = PathBuf::from(s(field(scenario, "snapshotRoot")).replace("<dir>", &dir_text));
+    let root_text = root.to_string_lossy().into_owned();
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(WorkspaceSnapshotConfig {
+        root: root_text.clone(),
+        snapshot_root: root_text,
+    });
+    let input = input_of(field(capture, "input"), &dir);
+    let result = recorder
+        .capture_pre_user(&input)
+        .expect("#283 a failed capture is a result, never a hard error");
+    assert_eq!(
+        result.snapshot_id,
+        s(field(expected, "snapshotId")),
+        "#283 the content-addressed id of the failed capture differs from the gold"
+    );
+    assert_eq!(
+        result.state.as_str(),
+        s(field(expected, "state")),
+        "#283 the lossy lstat ENOENT fails the capture instead of committing"
+    );
+    assert_eq!(
+        result.phase.as_str(),
+        s(field(expected, "phase")),
+        "#283 the failed capture still reports its phase"
+    );
+    assert!(
+        result.manifest_path.is_none(),
+        "#283 a failed capture writes no manifest"
+    );
+    let expected_marker = s(field(expected, "failureMarkerPath")).replace("<dir>", &dir_text);
+    assert_eq!(
+        result.failure_marker_path.as_deref(),
+        Some(expected_marker.as_str()),
+        "#283 the failure marker lands in the failed capture's partition"
+    );
+    let expected_error = s(field(expected, "error")).replace("<dir>", &dir_text);
+    let actual_error = result.error.as_ref().and_then(|error| error.to_utf8().ok());
+    assert_eq!(
+        actual_error.as_deref(),
+        Some(expected_error.as_str()),
+        "#283 the error keeps Node's ENOENT wording for the lossy-decoded name"
+    );
+
+    // The marker bytes must equal the gold's tree row under the replay's own
+    // projection (top-level createdAt masked, scenario directory masked).
+    let marker_path = PathBuf::from(
+        result
+            .failure_marker_path
+            .as_ref()
+            .expect("#283 the failure marker path is set"),
+    );
+    let tree = arr(field(scenario, "tree"), "non-utf8 tree");
+    let marker_row = tree
+        .iter()
+        .find(|row| s(field(row, "path")).ends_with("/_FAILED.json"))
+        .expect("#283 the gold tree records the failure marker");
+    let rel = marker_path
+        .strip_prefix(&root)
+        .expect("#283 the marker lives under the snapshot root")
+        .to_string_lossy()
+        .into_owned();
+    let marker_bytes = fs::read(&marker_path).expect("#283 read the failure marker");
+    let dynamic: HashSet<String> = strs(field(scenario, "dynamicIds"), "non-utf8 dynamicIds")
+        .into_iter()
+        .collect();
+    let projected = tree_bytes(&rel, &marker_bytes, &dir_text, &dynamic);
+    assert_eq!(
+        projected.len(),
+        field(marker_row, "size")
+            .as_number()
+            .expect("#283 the gold tree row records a numeric size") as usize,
+        "#283 the projected marker size differs from the gold tree row"
+    );
+    assert_eq!(
+        sha256_hex(&projected),
+        s(field(marker_row, "sha256")),
+        "#283 the projected marker bytes differ from the gold tree row"
+    );
+    let partition = marker_path
+        .parent()
+        .expect("#283 the marker has a partition directory");
+    assert!(
+        !partition.join("manifest.json").exists(),
+        "#283 a failed capture leaves no manifest"
+    );
+    assert!(
+        !partition.join("_COMMITTED").exists(),
+        "#283 a failed capture leaves no commit marker"
+    );
+    no_temporaries(&dir, &root.join(".staging"));
+}
+
+/// #283: the mirror of the Linux gate above. On filesystems that cannot hold
+/// non-UTF-8 names (macOS APFS/HFS+ reject the bytes with EINVAL) the
+/// non-utf8 scenario cannot replay, and `replay_scenario` skips it with the
+/// same probe the generator uses — that skip is the documented behaviour, not
+/// a silent gap. If the assert below ever fires the other way (the probe
+/// succeeds on a non-Linux host), the coverage belongs under the Linux gate
+/// instead of staying skipped.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn non_utf8_scenario_stays_skipped_where_raw_names_cannot_exist() {
+    let guard = Scratch::new();
+    assert!(
+        !non_utf8_names_writable(&guard.0),
+        "#283 this non-Linux filesystem accepts non-UTF-8 file names; the non-utf8 replay belongs under the Linux gate"
+    );
+    // The gold itself is platform-independent: the scenario stays in the
+    // committed corpus even where it cannot be replayed.
+    let names: Vec<String> = arr(field(&oracle(), "scenarios"), "scenarios")
+        .iter()
+        .map(|scenario| s(field(scenario, "name")))
+        .collect();
+    assert!(
+        names.contains(&"non-utf8".to_owned()),
+        "#283 the committed oracle must carry the non-utf8 scenario"
+    );
 }
 
 /// Round-4 P1 negative control: injecting the legacy fixed-path delete must be
@@ -2210,10 +2414,11 @@ fn replay_scenario(scenario: &JsValue) {
         &format!("{name}: workspace.rawFiles"),
     );
     if !raw_files.is_empty() && !non_utf8_names_writable(&dir) {
-        // generate.mts probes the same way. The committed oracle was generated
-        // on macOS, where APFS/HFS+ reject the bytes and the scenario is
-        // dropped; CI never regenerates the fixtures, so this path currently
-        // has no coverage. Linux generation is pending #283.
+        // generate.mts probes the same way and drops the scenario where the
+        // bytes cannot exist (macOS APFS/HFS+ EINVAL). The committed oracle
+        // carries the scenario since #283, and the dedicated Linux gate below
+        // replays it wherever the probe succeeds; this skip stays only for
+        // filesystems that physically cannot hold the raw name.
         eprintln!("scenario {name}: skipped, filesystem rejects non-UTF-8 file names");
         return;
     }
