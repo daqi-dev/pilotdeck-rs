@@ -186,24 +186,32 @@ class E2ETests(unittest.TestCase):
 
     # ---- scoring helpers ---------------------------------------------------
     def test_unwitnessed_stimuli_are_not_executed(self):
-        folder = self.folder / 'unwitnessed-capture'
-        self._collect(folder, synthetic_stimuli=False)
         marker = '#1368 captured requests without target witnesses all score NOT_RUN'
+        raw_marker = '#1368 NOT_RUN retains all raw originals and missing target reasons'
+        folder = self.folder / 'unwitnessed-capture'
+        try:
+            self._collect(folder, synthetic_stimuli=False)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+        # Check retained originals before scoring: a missing source must hit
+        # this dedicated assertion rather than a later authentication failure.
+        try:
+            rows = json.loads((folder / 'session-domain/cases.json').read_text())['cases']
+            sources = json.loads((folder / 'session-domain/sources.json').read_text())
+            self.assertTrue(len(rows) == len(sources) == 72
+                            and all(isinstance(source['transcriptText'], str)
+                                    and Path(source['transcriptPath']).is_file() for source in sources)
+                            and all(row['stimulus']['status'] == 'NOT_RUN' and row['stimulus']['missing']
+                                    and '未执行' in row['reason'] for row in rows), raw_marker)
+        except Exception as error:
+            self.fail(raw_marker + ': ' + repr(error))
         report = self._score(folder, marker)
         candidates = [cell for cell in report['cells'] if cell.get('cases')]
-        self.assertTrue(len(candidates) == 1, marker)
+        self.assertTrue(len(candidates) == 1, '#1368 NOT_RUN retains exactly one native candidate')
         cell = candidates[0]
         self.assertTrue(len(cell['cases']) == 72
-                        and all(row['status'] == 'NOT_RUN' for row in cell['cases'])
-                        and cell['executedCases'] == [], marker)
-        rows = json.loads((folder / 'session-domain/cases.json').read_text())['cases']
-        sources = json.loads((folder / 'session-domain/sources.json').read_text())
-        self.assertTrue(len(sources) == 72
-                        and all(isinstance(source['transcriptText'], str)
-                                and Path(source['transcriptPath']).is_file() for source in sources)
-                        and all(row['stimulus']['status'] == 'NOT_RUN' and row['stimulus']['missing']
-                                and '未执行' in row['reason'] for row in rows),
-                        '#1368 NOT_RUN retains all raw originals and missing target reasons')
+                        and all(row['status'] == 'NOT_RUN' for row in cell['cases']), marker)
+        self.assertTrue(cell['executedCases'] == [], '#1368 unwitnessed stimuli never count as executed')
 
     def _score(self, folder, marker):
         """Score one capture; any broad failure becomes this test's own

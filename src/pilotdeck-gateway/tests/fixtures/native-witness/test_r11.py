@@ -245,7 +245,7 @@ class R11Tests(unittest.TestCase):
                     patch.object(e2e, 'load_expectations', return_value=expected), \
                     patch.object(Path, 'replace', without_registry), \
                     patch.object(e2e.c, 'SESSION_SETTLE_LIMIT_SECONDS', 0.5):
-                fixture._collect(output, real_settle=True)
+                fixture._collect(output, real_settle=True, synthetic_stimuli=True)
             rows = json.loads((output / 'session-domain/cases.json').read_text())['cases']
             receipt = json.loads((output / 'capture/receipt.json').read_text())
             self.assertTrue(len(rows) == 2 and all(row['observation'] is not None for row in rows)
@@ -591,7 +591,8 @@ class R11Tests(unittest.TestCase):
             with patch.object(e2e.c, 'session_manifest', return_value=[case]), \
                     patch.object(e2e, 'load_expectations', return_value=expectations), \
                     patch.object(e2e.c, 'read_observation', side_effect=observed):
-                fixture._collect(output, real_settle=True, after_final=after_final)
+                fixture._collect(output, real_settle=True, after_final=after_final,
+                                 synthetic_stimuli=True)
             row = json.loads((output / 'session-domain/cases.json').read_text())['cases'][0]
             self.assertTrue(row['observation']['registry']['record']['state'] == 'completed'
                             and row['observation']['durableStatus']['entries'][0]['event'] == 'done', marker)

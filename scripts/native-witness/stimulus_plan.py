@@ -62,16 +62,22 @@ def plan(case):
     matches = [(cell, variant, phase) for cell in CELLS for variant in cell['variants']
                for phase in ('model', 'tool')
                if case == f"{cell['name']}/{variant['name']}/{phase}"]
-    if len(matches) != 1:
-        raise ValueError('#1368 unknown or duplicate stimulus case: ' + str(case))
+    if not matches:
+        raise ValueError('#1368 unknown stimulus case: ' + str(case))
+    if len(matches) > 1:
+        raise ValueError('#1368 duplicate stimulus case: ' + str(case))
     cell, variant, phase = matches[0]
     order = variant.get('order', 'timeout-first')
     prefix = event('client.frame', event={'type': 'tool_call_started' if phase == 'tool' else 'model_request_started'})
+    # The producer emits the prefix before waiting. Client consumption follows
+    # asynchronously; with a registry even queue.enqueue occurs after the wait.
+    emitted = event('registry.append.attempt' if cell['registry'] else 'queue.enqueue',
+                    event=prefix['event'])
     loop_wait = event('loop.wait', phase=phase)
     targets = [
         boundary('registry', 'registry.configure', 'gateway runRegistry injection', [], []),
         boundary('phase', 'loop.phase', 'controlled loop wait after the real phase prefix',
-                 [prefix, loop_wait]),
+                 [emitted, prefix, loop_wait], [(emitted, loop_wait)]),
     ]
     targets[0]['configured'] = cell['registry']
     targets[0]['evidence'] = 'construction receipt + registry applicability; absent file alone is insufficient'
@@ -141,7 +147,10 @@ def plan(case):
             ('failAppend', 'registry.persist.failure', 'registry.persist-fault',
              'after memory mutation, before snapshot, inside mutationChain and file lock')):
         if field in variant:
-            target = boundary(field, hook, location, [event(kind, key=variant[field], error={'code': 'EIO'})])
+            entered = event('status.attempt' if field == 'failStatus' else 'registry.persist.enter',
+                            key=variant[field])
+            failed = event(kind, key=variant[field], error={'code': 'EIO'})
+            target = boundary(field, hook, location, [entered, failed], [(entered, failed)])
             target['occurrence'] = 'first-match-only' if field == 'failAppend' else 'matching-status-write'
             targets.append(target)
     return {'case': case, 'registry': cell['registry'], 'phase': phase,
