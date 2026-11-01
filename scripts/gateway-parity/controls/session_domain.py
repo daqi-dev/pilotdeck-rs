@@ -366,12 +366,21 @@ def expectation_case(name, output, source):
         # expectations-rust-no-registry-registry binds the structure layer),
         # so this control relaxes exactly those two earlier rejections and the
         # canonical output comparison itself must reject a rust registry that
-        # claims applicability without a run registry.
+        # claims applicability without a run registry.  fix-r1 (#1190 review
+        # P3): the relaxation names its target -- only the mutated row's
+        # structure applicability clause, only the target class's scope
+        # surface -- and the failure must be the target require's own
+        # message, so no other row or class is let through and the meta
+        # control's KILLED is attributable to this require.
+        target = 'no-registry-fast/fast/model'
+        target_class = 'no-registry-timeout-final'
+        target_detail = target + ': rust registry must be inapplicable ' \
+                                'without a run registry'
         document = copy.deepcopy(read(fixture))
-        row = next(r for r in document['cases'] if r['case'] == 'no-registry-fast/fast/model')
+        row = next(r for r in document['cases'] if r['case'] == target)
         row['rust']['registry'] = {'applicable': True,
-                                   'events': ['1:agent_status:turn_timeout'],
-                                   'state': 'running', 'result': None}
+                                  'events': ['1:agent_status:turn_timeout'],
+                                  'state': 'running', 'result': None}
 
         def mutated_read(path):
             return copy.deepcopy(document) if Path(path).resolve() == fixture else read(path)
@@ -380,25 +389,33 @@ def expectation_case(name, output, source):
 
         def relaxed_structure(check_row):
             problem = original_structure(check_row)
-            return None if problem == 'registry applicability' else problem
+            if (isinstance(check_row, dict) and check_row.get('case') == target
+                    and problem == 'registry applicability'):
+                return None
+            return problem
 
         failure = None
         with patch('session_domain.read', side_effect=mutated_read), \
                 patch.object(session_domain_module, '_expectation_structure',
                              side_effect=relaxed_structure), \
                 patch.object(session_domain_module, 'A19_ALLOWED_SURFACES',
-                             {label: tuple(surfaces) + ('registry.applicable',)
-                              for label, surfaces in session_domain_module.A19_ALLOWED_SURFACES.items()}):
+                             {label: tuple(surfaces)
+                              + (('registry.applicable',) if label == target_class else ())
+                              for label, surfaces
+                              in session_domain_module.A19_ALLOWED_SURFACES.items()}):
             try:
                 validate_calibration(source, output / name, baseline)
             except EvidenceError as error:
                 failure = error
         save(output / 'expectation-mutation.json',
-             {'case': name, 'firstRule': failure.rule if failure else None,
+             {'case': name, 'targetCase': target,
+              'firstRule': failure.rule if failure else None,
               'detail': str(failure) if failure else 'mutation accepted'})
-        require(failure is not None and failure.rule == CASES[name], 'CONTROL_EXPECTATION',
-                name + ': expected ' + CASES[name]
-                + (', got ' + failure.rule if failure else ', mutation accepted'))
+        require(failure is not None and failure.rule == CASES[name]
+                and str(failure) == target_detail, 'CONTROL_EXPECTATION',
+                name + ': expected ' + CASES[name] + ' with the target require detail '
+                + (repr(target_detail) + ', got ' + repr(str(failure)) if failure
+                   else ', mutation accepted'))
         raise failure
     document = copy.deepcopy(read(fixture))
     row = next(r for r in document['cases'] if r['case'] == 'registry-fast/fast/model')

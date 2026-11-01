@@ -33,10 +33,24 @@ for the post-commit host run; an uncommitted tree is INVALID, never SURVIVED.
 The case counts are never pinned in prose: they are derived from the panel's
 ``EXPECTATION_CASES`` at run time, written to ``derived-counts.json`` in the
 evidence directory, and the binding tables below are machine-checked against
-that same table (every bound/unaffected entry must be registered with its
-claimed rule, and every ``EXPECTATION_RUST_DERIVATION`` control must be
-exercised by at least one mutation), so a renamed, reruled or unbound control
-fails the run instead of silently drifting the documented count.
+that same table, so a renamed, reruled or unbound control fails the run
+instead of silently drifting the documented count.  fix-r1 (#1190 review
+P2-1, escalated P1): ``exercised`` is built from ``BOUND`` alone (a control
+that only ever appears as another row's unaffected witness proves nothing
+about its own require), every ``BOUND`` entry must be nonempty, and
+``BOUND``/``UNAFFECTED``/``MUTATIONS`` must name exactly the same mutation
+set -- a deleted or renamed mutation row, an emptied or malformed binding
+entry is ``BINDING DRIFT`` (exit 2) before any row executes, never a later
+``IndexError`` that voids the whole table.
+
+fix-r1 (#1190 review P2-2): the three registration documents that describe
+these controls (the fixture README, the A19-HOST-001-R1 diff entry and the
+freeze event) are scanned on every run: a Chinese or Arabic count phrase
+(条/档/项) that disagrees with ``derived-counts.json`` -- or cannot be mapped
+to a derivable counter at all -- is ``COUNT DRIFT`` (exit 2), so the prose
+cannot pin a count the tables no longer have.  ``meta_controls.py`` binds
+both drift gates: deleting a mutation row, emptying a ``BOUND`` entry and
+re-pinning a stale count in the README must each be refused.
 
 Per-row results live in memory only.  ``summary.json`` is published exactly
 once, after ``mutating_sources`` restored every guarded file and verified it
@@ -49,6 +63,7 @@ import argparse
 import ast
 import json
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -60,6 +75,60 @@ SESSION = ROOT / 'scripts/gateway-parity/session_domain.py'
 COMMON = ROOT / 'scripts/gateway-parity/common.py'
 PANEL = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 RUN_CONTROL = Path(__file__).resolve().with_name('run_control.py')
+
+# The registration documents whose narrative must reference derived counts
+# instead of pinning them (#1190 review P2-2).  Anything they say about how
+# many requires / controls / cases exist is a claim about the tables this
+# runner parses, so the scan below reconciles the prose with the same derived
+# counters that ``derived-counts.json`` records.
+DOC_COUNTS = (
+    (Path(__file__).resolve().with_name('README.md'), 'README'),
+    (ROOT / 'specs/gateway-parity/diffs/A19-HOST-001-R1.md', 'A19-HOST-001-R1'),
+    (ROOT / 'specs/gateway-parity/frozen/20261101-1190.md', '20261101-1190'),
+)
+
+# <number>(条|档|项): the count units of the drifted phrases the review found.
+# The number must stand alone (no adjacent alphanumerics); a space between the
+# number and the unit ("24 项") still pins the count.
+COUNT_PHRASE = re.compile(
+    r'(?<![0-9A-Za-z])([0-9]{1,4}|[零一二两三四五六七八九十百]{1,5})[ ]?(条|档|项)(?![A-Za-z])')
+
+_CHINESE_DIGITS = {'零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+                   '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+
+# Which derivable counter a line's count phrase claims, by keyword.  The first
+# matching row wins; a line no row matches has no derivable counter, so its
+# count is prose drift (reword to reference the table or derived-counts.json).
+COUNT_CATEGORIES = (
+    ('calibrationCases', ('calibration', 'CALIBRATION', '校准')),
+    ('derivationExpectationCases', ('EXPECTATION_RUST_DERIVATION', 'derivation')),
+    ('expectationCases', ('EXPECTATION_CASES', '数据负控', '期望控制')),
+    ('mutationRows', ('MUTATIONS', '变异', 'canonical', 'require', '元负控')),
+)
+
+
+def _count_value(text):
+    """Arabic or simple Chinese numeral (up to 999) as an int, else None."""
+    if text.isdigit():
+        return int(text)
+    total, pending = 0, None
+    for character in text:
+        if character in _CHINESE_DIGITS:
+            pending = _CHINESE_DIGITS[character]
+            continue
+        unit = {'十': 10, '百': 100}.get(character)
+        if unit is None:
+            return None
+        total += (pending if pending is not None else 1) * unit
+        pending = None
+    return total + (pending or 0)
+
+
+def _count_category(line):
+    for category, keywords in COUNT_CATEGORIES:
+        if any(keyword in line for keyword in keywords):
+            return category
+    return None
 
 MUTATIONS = [
     # The registry-events canonical-output require (D2's no-S(T) assertion and
@@ -169,25 +238,73 @@ def check_bindings(expectation_cases):
     """The binding tables must agree with the panel's registered controls.
 
     #1190 count drift: every bound/unaffected entry names a registered control
-    with the rule the tables claim, and every EXPECTATION_RUST_DERIVATION
-    control is exercised by at least one mutation row, so adding, renaming or
-    reruling a control without updating this runner fails the run instead of
-    silently changing the count the prose used to pin.
+    with the rule the tables claim.  fix-r1 (review P2-1, escalated P1):
+    ``exercised`` is built from ``BOUND`` alone -- a control that only ever
+    appears as another row's unaffected witness is not covered -- every
+    ``BOUND`` entry is nonempty, every entry is a (case, rule) pair of
+    nonempty strings, and ``BOUND``/``UNAFFECTED``/``MUTATIONS`` name exactly
+    the same mutation set.  A deleted or renamed mutation row, an emptied or
+    malformed binding is reported here (exit 2) instead of passing the gate
+    or crashing the row loop later.
     """
     errors = []
-    exercised = set()
-    for name, *_rest in MUTATIONS:
-        for case, rule in list(BOUND[name]) + [UNAFFECTED[name]]:
+    names = {row[0] for row in MUTATIONS}
+    for label, table in (('BOUND', BOUND), ('UNAFFECTED', UNAFFECTED)):
+        for extra in sorted(set(table) - names):
+            errors.append(f'{label} names unknown mutation {extra}')
+        for missing in sorted(names - set(table)):
+            errors.append(f'{label} has no entry for mutation {missing}')
+    bound_exercised = set()
+    for name in sorted(names & set(BOUND) & set(UNAFFECTED)):
+        if not BOUND[name]:
+            errors.append(f'BOUND[{name}] is empty')
+        for entry in list(BOUND[name]) + [UNAFFECTED[name]]:
+            if (not isinstance(entry, tuple) or len(entry) != 2
+                    or not all(isinstance(part, str) and part for part in entry)):
+                errors.append(f'{name}: binding entry is not a (case, rule) '
+                              f'pair of nonempty strings: {entry!r}')
+                continue
+            case, rule = entry
             registered = expectation_cases.get(case)
             if registered != rule:
                 errors.append(f'{name}: {case} is claimed as {rule} '
                               f'but registered as {registered}')
-            exercised.add(case)
+        bound_exercised.update(case for case, _rule in BOUND[name])
     missing = sorted(case for case, rule in expectation_cases.items()
-                     if rule == 'EXPECTATION_RUST_DERIVATION' and case not in exercised)
+                     if rule == 'EXPECTATION_RUST_DERIVATION' and case not in bound_exercised)
     if missing:
-        errors.append('derivation controls not exercised by any mutation: '
+        errors.append('derivation controls not exercised by any BOUND mutation: '
                      + ', '.join(missing))
+    return errors
+
+
+def check_docs(counts):
+    """The registration prose must not pin a count the tables have drifted from.
+
+    #1190 review P2-2: the README, the diff entry and the freeze event claim
+    that counts are derived, so every count phrase (条/档/项) they contain is
+    reconciled with ``derived-counts.json``.  A phrase whose line cannot be
+    mapped to a derivable counter is drift too: reword it to reference the
+    table (or ``derived-counts.json``) instead of a number.
+    """
+    errors = []
+    for path, label in DOC_COUNTS:
+        text = path.read_text(encoding='utf-8')
+        for number, line in enumerate(text.splitlines(), 1):
+            for match in COUNT_PHRASE.finditer(line):
+                value = _count_value(match[1])
+                category = _count_category(line)
+                if value is None:
+                    errors.append(f"{label}:{number}: '{match[0]}' is not a "
+                                  'number this check can read')
+                elif category is None:
+                    errors.append(f"{label}:{number}: '{match[0]}' has no derivable "
+                                  'count category on its line; reference the table '
+                                  'or derived-counts.json instead')
+                elif value != counts[category]:
+                    errors.append(f"{label}:{number}: '{match[0]}' pins {value} "
+                                  f'but derived {category} is {counts[category]} '
+                                  '(derived-counts.json)')
     return errors
 
 
@@ -263,11 +380,25 @@ def main():
                              'pass git stash create)')
     args = parser.parse_args()
     expectation_cases = panel_table('EXPECTATION_CASES')
-    drift = check_bindings(expectation_cases)
+    # Counts are derived, never pinned in prose (#1190): the same
+    # EXPECTATION_CASES table this runner machine-checks is the authority for
+    # how many controls exist, and the mutation table for how many requires
+    # are covered.  Both drift gates run in every mode (including
+    # --check-anchors) before any mutation row executes.
+    counts = {'expectationCases': len(expectation_cases),
+              'derivationExpectationCases':
+                  sum(rule == 'EXPECTATION_RUST_DERIVATION'
+                      for rule in expectation_cases.values()),
+              'calibrationCases': len(panel_table('CALIBRATION_CASES')),
+              'mutationRows': len(MUTATIONS)}
+    drift = [('BINDING DRIFT', message)
+             for message in check_bindings(expectation_cases)]
+    drift += [('COUNT DRIFT', message) for message in check_docs(counts)]
     if drift:
-        for message in drift:
-            print('BINDING DRIFT: ' + message, file=sys.stderr)
+        for prefix, message in drift:
+            print(prefix + ': ' + message, file=sys.stderr)
         return 2
+    print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
         print('unknown or duplicate --only name', file=sys.stderr)
@@ -281,18 +412,7 @@ def main():
         return 2
     out = new_output_directory(args.output)
     source = args.source.resolve()
-    # Counts are derived, never pinned in prose (#1190): the same
-    # EXPECTATION_CASES table this runner just machine-checked is the
-    # authority for how many controls exist, and the mutation table for how
-    # many requires are covered.
-    counts = {'expectationCases': len(expectation_cases),
-              'derivationExpectationCases':
-                  sum(rule == 'EXPECTATION_RUST_DERIVATION'
-                      for rule in expectation_cases.values()),
-              'calibrationCases': len(panel_table('CALIBRATION_CASES')),
-              'mutationRows': len(MUTATIONS)}
     (out / 'derived-counts.json').write_text(json.dumps(counts, sort_keys=True))
-    print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
     results = []
     try:
         # One lease only: mutating_sources acquires the real parity lease

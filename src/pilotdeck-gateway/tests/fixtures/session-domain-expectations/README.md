@@ -13,19 +13,32 @@
   `verify_loaded_apparatus`；直接绑定 `main()` 自己调用的 `check_case` 是
   #209（session-domain-lock-release）已确立的形态。
 - `negative_controls.py` — 源码变异元负控：`MUTATIONS` 各删 / 中和
-  `validate_expectations` 里一条 canonical `require`，覆盖全部六条——
-  frames、durableStatus、registry events / state / result、inapplicable
-  registry（#1177 fix-r1 评审要求三条，#1190 补齐其余三条）。每行要求：
+  `validate_expectations` 里的 canonical `require`，清单以该表为准
+  （frames、durableStatus、registry events / state / result、inapplicable
+  registry；#1177 fix-r1 先行，#1190 补齐其余）。每行要求：
   baseline 未变异时被绑控制按期望规则 FAIL；mutant 下同一控制接受坏
-  fixture（KILLED），仍按同规则 FAIL 记 SURVIVED；另有一条不相关控制在该
+  fixture（KILLED），仍按同规则 FAIL 记 SURVIVED；另有不相关控制在该
   mutant 下仍被杀（防串线）；恢复后复杀。绑定表（BOUND / UNAFFECTED）
-  由 `check_bindings` 与面板的 `EXPECTATION_CASES` 机检（case 与规则都须
-  相符，且每条 `EXPECTATION_RUST_DERIVATION` 控制至少被一档变异行使），
-  漂移即 exit 2；`evidence` 在进入守卫窗口前初始化（#1190）。计数不在
-  叙述里钉死：运行时由 `ast` 解析（不执行）面板推导并写
-  `derived-counts.json` 入证据目录。`mutating_sources`（带 common.py 与
-  parity 租约）守源码并逐字节还原，summary 原子发布、guard 失败全
-  INVALID（#979/#1037）。
+  由 `check_bindings` 与面板的 `EXPECTATION_CASES` 机检：case 与规则都须
+  相符，`exercised` 只由 BOUND 构造，每条 `BOUND` 非空且为
+  (case, rule) 字符串对，`BOUND` / `UNAFFECTED` / `MUTATIONS` 三表键集
+  完全一致，每条 `EXPECTATION_RUST_DERIVATION` 控制必须出现在某个 BOUND
+  行里；任何缺失 / 多余 / 变形都是 `BINDING DRIFT`（exit 2），先于任何
+  变异执行，主循环不会因此 IndexError（#1190 fix-r1）。`evidence` 在进入
+  守卫窗口前初始化（#1190）。计数不在叙述里钉死：运行时由 `ast` 解析
+  （不执行）面板推导并写 `derived-counts.json` 入证据目录；三份登记
+  文档（本 README、`specs/gateway-parity/diffs/A19-HOST-001-R1.md`、
+  `specs/gateway-parity/frozen/20261101-1190.md`）中的中文 / 阿拉伯数字
+  计数短语（条 / 档 / 项）同样与推导计数机检，不一致或无法归类即
+  `COUNT DRIFT`（exit 2）（#1190 fix-r1）。`mutating_sources`（带
+  common.py 与 parity 租约）守源码并逐字节还原，summary 原子发布、guard
+  失败全 INVALID（#979/#1037）。
+- `meta_controls.py` — 元负控的元负控（#1190 fix-r1）：原地变异
+  `negative_controls.py` 自身的绑定表与被扫描的 README，要求上述两道
+  漂移闸门各自拒绝——删除 `drop-registry-state-require` 变异行、清空其
+  `BOUND` 条目、README 钉回与推导计数不符的数字，都必须以 exit 2 加
+  各自专属漂移消息失败；恢复后 `--check-anchors` 闸门复绿。逐行记
+  KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出。
 
 ## 运行
 
@@ -34,6 +47,8 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/nega
   --check-anchors
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py \
   --output <新证据目录> --source <A5.2a 六格原始输出>
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/meta_controls.py \
+  --output <新证据目录>
 ```
 
 `--source` 需要真实 A5.2a 校准输出（`raw/` 下六格 JSON + preregistration /
