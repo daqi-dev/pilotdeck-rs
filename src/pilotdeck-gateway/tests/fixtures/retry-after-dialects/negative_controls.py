@@ -15,6 +15,13 @@ therefore goes through cargo with --nocapture so the children's "#360-2
 PARTIAL" downgrade marker reaches this harness: on such a host the mutants
 are refused as INVALID (an explicit unpaired-host explanation, never a
 silent SURVIVED or a silent pass).
+
+Mutants in TZDATA_PAIRED_HOST_ONLY are killed only through the regeneration
+byte comparison, which the guard (regen-r2, fix C) runs only when this host
+Node's tzdata equals the gold-recorded one. Their positive run goes through
+cargo with --show-output so the guard's captured "#360-2 BLOCKED" skip marker
+reaches this harness: on a tzdata-mismatched host those mutants are refused
+as INVALID too, never a silent SURVIVED.
 """
 import argparse
 import json
@@ -81,6 +88,21 @@ cases = [
     # fix-r2 P3-1: the quick replay must pin the oracle's runtime provenance
     # (node/v8/icu/tzdata), not only the TS source bytes.
     ('oracle-runtime-node', oracle, '"node": "v22.22.0"', '"node": "v22.21.0"', replay, '#360-2'),
+    # regen-r2 P2a (review P2, both reviewers): the icu/tzdata halves of that
+    # pin had no mutants of their own. The tzdata one also carries the BLOCKED
+    # world's other half: with the regeneration guard skipping the byte
+    # comparison whenever the committed tzdata differs from the host Node's,
+    # a tampered committed tzdata line is only killed by this replay pin.
+    ('oracle-runtime-icu', oracle, '"icu": "78.2"', '"icu": "77.1"', replay, '#360-2'),
+    ('oracle-runtime-tzdata', oracle, '"tzdata": "2025c"', '"tzdata": "2025b"', replay, '#360-2'),
+    # regen-r2 P2b→P1 (fix C): prove the byte comparison still kills a changed
+    # case value when the tzdata dimension does match — the Shanghai asctime
+    # 2015 cell (a local-resolving dialect value) plus its expectation is the
+    # unique two-line anchor; the UTC twin of this value stays with 'oracle-asctime'.
+    ('oracle-asctime-2015', oracle,
+     '"value": "Wed Oct 21 07:28:00 2015",\n     "retryAfterMs": 1445383680000',
+     '"value": "Wed Oct 21 07:28:00 2015",\n     "retryAfterMs": 1445383680001',
+     regen, '#280 retry-after-dialects'),
 ]
 
 # fix-r3 P2-3: these mutants only die through the admitted TZ=UTC / Asia/Shanghai
@@ -93,6 +115,15 @@ cases = [
 # or the unpaired None expectation itself) and hold on any host.
 PAIRED_HOST_ONLY = {'production-local-wiring', 'zone-child-admission-false'}
 PARTIAL_MARKER = '#360-2 PARTIAL'
+
+# regen-r2 P2b→P1 (fix C): these mutants die only through the regeneration
+# byte comparison, which the guard now runs only when this host Node's
+# tzdata equals the gold-recorded one; on any other tzdata the guard prints
+# the "#360-2 BLOCKED" skip marker and compares nothing, so the run is
+# refused (INVALID with the BLOCKED evidence) instead of reporting a
+# misleading SURVIVED — the same refusal shape as PAIRED_HOST_ONLY above.
+TZDATA_PAIRED_HOST_ONLY = {'generator-epoch', 'oracle-asctime-2015'}
+BLOCKED_MARKER = '#360-2 BLOCKED'
 
 
 def main():
@@ -120,13 +151,20 @@ def main():
     args.out.mkdir(parents=True, exist_ok=False)
     results = []
 
-    def run(label, test, compile_only=False, nocapture=False):
+    def run(label, test, compile_only=False, nocapture=False, show_output=False):
         command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway']
         command += ['--lib'] if test.startswith('runtime::') else ['--test', 'model_stream']
         try:
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=300)
             (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
             suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored']
+            if show_output:
+                # Only ever the positive run of the regeneration guard:
+                # --show-output replays its captured stdout (where the
+                # "#360-2 BLOCKED" skip marker lives) after the result lines,
+                # without interleaving the `... ok` status line (#938 r14) the
+                # way --nocapture would.
+                suffix.append('--show-output')
             if nocapture:
                 # Only ever the positive run: the parent re-prints each
                 # child's stdout, so --nocapture brings the "#360-2 PARTIAL"
@@ -162,9 +200,25 @@ def main():
                     positive = run(
                         name + '-positive', test,
                         nocapture=test == zone_children,
+                        show_output=test == regen,
                     )
                     if not passed(positive, test):
                         reason = 'bound positive test did not pass'
+                    elif name in TZDATA_PAIRED_HOST_ONLY and BLOCKED_MARKER in (
+                        positive.stdout + positive.stderr
+                    ):
+                        # regen-r2 P2b→P1: explicit tzdata-mismatched host
+                        # refusal — the regeneration guard skipped the byte
+                        # comparison, so a surviving mutant here would be a
+                        # lie about the guard, never a real SURVIVED.
+                        status = 'INVALID'
+                        reason = (
+                            'tzdata-mismatched host: the bound regeneration positive run '
+                            f'printed "{BLOCKED_MARKER}" (this Node\'s tzdata differs '
+                            'from the gold-recorded one), so the byte comparison was '
+                            'skipped and this mutant cannot be killed on this host; run '
+                            'it on the calibrated icu78 / tzdata 2025c chain'
+                        )
                     elif name in PAIRED_HOST_ONLY and PARTIAL_MARKER in (
                         positive.stdout + positive.stderr
                     ):
