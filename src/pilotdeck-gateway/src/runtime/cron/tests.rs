@@ -729,15 +729,22 @@ fn relative_pilot_home(home: &Path) -> PathBuf {
     out
 }
 
-/// chmod 000 / 0644 helpers mirroring the generator's read-error seeds: the
-/// blocked file's bytes are recorded through the restore, because the
-/// migration leaves a blocked store untouched.
+/// chmod 000 seeds mirroring the generator's read-error inputs: the blocked
+/// file's bytes are recorded through the restore, because the migration
+/// leaves a blocked store untouched. The original mode is restored, not a
+/// blanket 0644.
 #[cfg(unix)]
-fn set_readable(path: &Path, readable: bool) -> std::io::Result<()> {
+fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(if readable { 0o644 } else { 0o000 });
+    permissions.set_mode(mode);
     fs::set_permissions(path, permissions)
+}
+
+#[cfg(unix)]
+fn mode_of(path: &Path) -> std::io::Result<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Ok(fs::metadata(path)?.permissions().mode())
 }
 
 fn compare_warnings(recorder: &WarningRecorder, entry: &JsValue, home: &str) {
@@ -796,7 +803,7 @@ fn replay_migration_cell(entry: &JsValue) {
         home.to_path_buf()
     };
     // The generator's `chmod000` seeds: unreadable before the migration,
-    // restored before the tree is recorded.
+    // restored to the saved mode before the tree is recorded.
     let chmod000: Vec<String> = match entry.get("chmod000") {
         Some(JsValue::Array(items)) => items
             .iter()
@@ -809,23 +816,32 @@ fn replay_migration_cell(entry: &JsValue) {
         _ => Vec::new(),
     };
     #[cfg(unix)]
-    for path in &chmod000 {
-        let full = home.join(path);
-        set_readable(&full, false).unwrap_or_else(|error| {
-            panic!(
-                "#1216 migration {name}: chmod 000 {}: {error}",
-                full.display()
-            )
-        });
-    }
+    let blocked_modes: Vec<(PathBuf, u32)> = chmod000
+        .iter()
+        .map(|path| {
+            let full = home.join(path);
+            let mode = mode_of(&full).unwrap_or_else(|error| {
+                panic!(
+                    "#1216 migration {name}: stat chmod seed {}: {error}",
+                    full.display()
+                )
+            });
+            set_mode(&full, 0o000).unwrap_or_else(|error| {
+                panic!(
+                    "#1216 migration {name}: chmod 000 {}: {error}",
+                    full.display()
+                )
+            });
+            (full, mode)
+        })
+        .collect();
     let recorder = WarningRecorder::default();
     let outcome = migrate_cron_stores(&migration_input(pilot_home, &recorder));
     #[cfg(unix)]
-    for path in &chmod000 {
-        let full = home.join(path);
-        set_readable(&full, true).unwrap_or_else(|error| {
+    for (full, mode) in &blocked_modes {
+        set_mode(full, *mode).unwrap_or_else(|error| {
             panic!(
-                "#1216 migration {name}: chmod 644 {}: {error}",
+                "#1216 migration {name}: restore mode {mode:o} {}: {error}",
                 full.display()
             )
         });
@@ -935,6 +951,12 @@ fn migration_relative_home_blocked_dir_matches_ts() {
 #[cfg(unix)]
 #[test]
 fn migration_blocked_dir_tasks_eacces_matches_ts() {
+    if rustix::process::geteuid().as_raw() == 0 {
+        // chmod 000 cannot make the tasks file unreadable for root: the cell
+        // would fail on its recorded warning/tree, not on parity. The read
+        // error itself is still covered by the EISDIR cell below.
+        return;
+    }
     replay_migration_cell(cell("migration", "blocked-dir-tasks-eacces"));
 }
 #[test]
@@ -1034,6 +1056,176 @@ fn store_concurrent_puts_across_threads_keep_every_task() {
         "#1216 concurrent store: lost updates — only {} of {} tasks survived concurrent puts",
         listed.len(),
         THREADS * ROUNDS
+    );
+}
+
+// --------------------------------------------------------- fix-r2 added guards
+
+/// fix-r2 P1: a non-UTF-8 pilot home must keep one physical key. The entry
+/// resolve keeps the raw home bytes; re-parsing the home through a lossy
+/// string would key the same physical directory twice and the later empty
+/// bucket would overwrite the migrated tasks (the `/w/same` projectKey
+/// targets its own source directory).
+#[cfg(unix)]
+#[test]
+fn migration_non_utf8_home_keeps_one_physical_key() {
+    use std::os::unix::ffi::OsStrExt;
+    let scratch = Scratch::new("cron-migration-non-utf8");
+    let home = scratch
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"home-\xff"));
+    let project = home.join("cron/projects/w-same");
+    fs::create_dir_all(&project).unwrap_or_else(|error| {
+        panic!(
+            "#1216 non-UTF-8 home: create {}: {error}",
+            project.display()
+        )
+    });
+    fs::write(
+        project.join("tasks.json"),
+        "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\"type\": \"cron\", \"expression\": \"*/5 * * * *\"},\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"projectKey\": \"/w/same\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+    )
+    .unwrap_or_else(|error| panic!("#1216 non-UTF-8 home: write tasks.json: {error}"));
+    let recorder = WarningRecorder::default();
+    migrate_cron_stores(&migration_input(home.clone(), &recorder))
+        .unwrap_or_else(|error| panic!("#1216 non-UTF-8 home: migration failed: {error}"));
+    let tasks = fs::read(project.join("tasks.json"))
+        .unwrap_or_else(|error| panic!("#1216 non-UTF-8 home: read tasks.json back: {error}"));
+    assert!(
+        String::from_utf8_lossy(&tasks).contains("\"a1\""),
+        "#1216 non-UTF-8 home: the same-directory projectKey must keep one physical key; a lossy re-parse of the home overwrites the source tasks.json with an empty bucket"
+    );
+    assert!(
+        home.join("cron/store-migration-v1.json").is_file(),
+        "#1216 non-UTF-8 home: the migration marker must be written"
+    );
+}
+
+/// fix-r2 P2: an absolute pilot home must not depend on the process cwd.
+/// Node's `resolve(input.pilotHome, "cron")` only consults `process.cwd()`
+/// when no argument is absolute (verified against node v22.22.0: with the cwd
+/// removed, `process.cwd()` throws ENOENT while
+/// `path.resolve("/tmp/abs-home", "cron")` returns normally), so a deleted
+/// cwd must not fail the migration.
+#[test]
+fn migration_absolute_home_survives_deleted_cwd() {
+    crate::test_process::run_cases(
+        "runtime::cron::tests::cron_deleted_cwd_worker",
+        vec![(
+            "absolute-home-deleted-cwd".to_owned(),
+            vec![(
+                "PDRS_CRON_CASE".to_owned(),
+                "absolute-home-deleted-cwd".to_owned(),
+            )],
+        )],
+    );
+}
+
+#[test]
+#[ignore = "only launched by a cwd-controlling parent"]
+fn cron_deleted_cwd_worker() {
+    let case = std::env::var("PDRS_CRON_CASE").unwrap_or_else(|error| {
+        panic!("#1216 cron deleted-cwd worker: PDRS_CRON_CASE must be set: {error}")
+    });
+    assert_eq!(
+        case, "absolute-home-deleted-cwd",
+        "#1216 cron deleted-cwd worker: unknown case {case}"
+    );
+    // Delete this process's own cwd: a cwd-dependent resolve would fail with
+    // ENOENT here, which is exactly what an absolute home must not read.
+    let cwd_scratch = Scratch::new("cron-deleted-cwd");
+    std::env::set_current_dir(cwd_scratch.path()).unwrap_or_else(|error| {
+        panic!("#1216 cron deleted-cwd worker: chdir into the scratch cwd: {error}")
+    });
+    fs::remove_dir_all(cwd_scratch.path()).unwrap_or_else(|error| {
+        panic!("#1216 cron deleted-cwd worker: remove the scratch cwd: {error}")
+    });
+    let home_scratch = Scratch::new("cron-deleted-cwd-home");
+    let home = home_scratch.path().join("home");
+    let project = home.join("cron/projects/alpha");
+    fs::create_dir_all(&project).unwrap_or_else(|error| {
+        panic!(
+            "#1216 cron deleted-cwd worker: create {}: {error}",
+            project.display()
+        )
+    });
+    fs::write(
+        project.join("tasks.json"),
+        "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\"type\": \"cron\", \"expression\": \"*/5 * * * *\"},\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+    )
+    .unwrap_or_else(|error| {
+        panic!("#1216 cron deleted-cwd worker: write tasks.json: {error}")
+    });
+    let recorder = WarningRecorder::default();
+    migrate_cron_stores(&migration_input(home.clone(), &recorder)).unwrap_or_else(|error| {
+        panic!(
+            "#1216 cron deleted-cwd worker: an absolute pilot home must not depend on the process cwd: {error}"
+        )
+    });
+    assert!(
+        home.join("cron/store-migration-v1.json").is_file(),
+        "#1216 cron deleted-cwd worker: the migration marker must be written"
+    );
+    crate::test_process::receipt(&case);
+}
+
+/// fix-r2 P2: the `LockRelease` Drop guard is the `finally` half of the TS
+/// migration (CronStoreMigration.ts:102-105): a panicking body must still
+/// release the migration lock. An unparsable tasks.json marks the store
+/// blocked, so the body warns — and this logger panics inside that warn —
+/// while the lock is held.
+#[test]
+fn panicking_migration_body_still_releases_the_lock() {
+    struct PanickingWarnLogger;
+    impl CronRuntimeLogger for PanickingWarnLogger {
+        fn warn(&self, _message: &str, _meta: &JsObject) {
+            panic!("#1216 lock guard probe: warn() panics like a failing runtime sink");
+        }
+    }
+    let scratch = Scratch::new("cron-lock-panic");
+    let home = scratch.path().join("home");
+    let project = home.join("cron/projects/alpha");
+    fs::create_dir_all(&project)
+        .unwrap_or_else(|error| panic!("#1216 lock guard: create {}: {error}", project.display()));
+    fs::write(project.join("tasks.json"), "not json\n")
+        .unwrap_or_else(|error| panic!("#1216 lock guard: write tasks.json: {error}"));
+    let logger = PanickingWarnLogger;
+    let input = MigrationInput {
+        pilot_home: home.clone(),
+        logger: Some(&logger),
+        now_ms: PINNED_NOW_MS,
+        lock_retry_delay: Duration::from_millis(1),
+    };
+    let lock_path = home.join("cron/.store-migration.lock");
+    let caught =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| migrate_cron_stores(&input)));
+    assert!(
+        caught.is_err(),
+        "#1216 lock guard: the seeded logger must panic inside the migration body"
+    );
+    assert!(
+        !lock_path.exists(),
+        "#1216 lock guard: the Drop guard must release the migration lock after a panic"
+    );
+}
+
+/// fix-r2 P3: `taskFileMutationTails` drops a tail that is still the last
+/// one (CronTaskStore.ts:168-172), so the process-wide registry is bounded by
+/// the in-flight tasks files, not by every file ever touched.
+#[test]
+fn store_tail_entry_removed_after_uncontended_mutation() {
+    let scratch = Scratch::new("cron-store-tail");
+    let home = scratch.path().join("home");
+    let paths = resolve_cron_paths(&home.to_string_lossy(), "/w/my-project")
+        .unwrap_or_else(|error| panic!("#1216 tail removal: resolveCronPaths failed: {error}"));
+    let tasks_file = paths.tasks_file.clone();
+    let store = CronTaskStore::new(paths);
+    store
+        .put_task(&fresh_task("t-tail-1"))
+        .unwrap_or_else(|error| panic!("#1216 tail removal: putTask: {error}"));
+    assert!(
+        !super::store::task_file_tail_registered(&tasks_file),
+        "#1216 tail removal: an uncontended mutation must drop its finished tail from the registry"
     );
 }
 

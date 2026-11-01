@@ -26,9 +26,6 @@ struct TaskFile {
 }
 
 /// The `taskFileMutationTails` map: one tail per tasks file, process-wide.
-/// Entries are never removed — the TS code drops a tail only when it is still
-/// the last queued promise, and the set of tasks files is bounded by the set
-/// of project keys in the process.
 static TASK_FILE_TAILS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
 
 fn task_file_tail(tasks_file: &Path) -> Arc<Mutex<()>> {
@@ -37,6 +34,51 @@ fn task_file_tail(tasks_file: &Path) -> Arc<Mutex<()>> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     tails.entry(tasks_file.to_path_buf()).or_default().clone()
+}
+
+/// CronTaskStore.ts:168-172: the finishing mutation drops the map entry when
+/// its tail is still the map's value — no later mutation chained against it,
+/// which here means no other thread holds a clone of the mutex. A waiting
+/// thread keeps the entry (and its serialization) intact.
+fn release_task_file_tail(tasks_file: &Path, tail: &Arc<Mutex<()>>) {
+    let registry = TASK_FILE_TAILS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut tails = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if tails
+        .get(tasks_file)
+        .is_some_and(|current| Arc::ptr_eq(current, tail) && Arc::strong_count(current) == 2)
+    {
+        tails.remove(tasks_file);
+    }
+}
+
+/// CronTaskStore.ts:157-173 `mutateTaskFile`: serialize the whole
+/// read-modify-write span on the per-file tail, then drop the registry entry
+/// when this mutation is still the last one.
+fn mutate_task_file<T>(
+    tasks_file: &Path,
+    mutation: impl FnOnce() -> Result<T, CronStoreError>,
+) -> Result<T, CronStoreError> {
+    let tail = task_file_tail(tasks_file);
+    let result = {
+        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        mutation()
+    };
+    release_task_file_tail(tasks_file, &tail);
+    result
+}
+
+/// Whether the per-file tail registry currently holds `tasks_file` — only
+/// the mutation-tail removal test observes this process-wide map.
+#[cfg(test)]
+pub(super) fn task_file_tail_registered(tasks_file: &Path) -> bool {
+    TASK_FILE_TAILS.get().is_some_and(|registry| {
+        registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(tasks_file)
+    })
 }
 
 pub struct CronTaskStore {
@@ -68,39 +110,39 @@ impl CronTaskStore {
 
     /// CronTaskStore.ts:26-37.
     pub fn put_task(&self, task: &JsValue) -> Result<(), CronStoreError> {
-        let tail = task_file_tail(&self.paths.tasks_file);
-        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut file = self.read_task_file()?;
-        let wanted = task.get("taskId");
-        match file
-            .tasks
-            .iter()
-            .position(|entry| super::strict_equals(entry.get("taskId"), wanted))
-        {
-            Some(index) => file.tasks[index] = task.clone(),
-            None => file.tasks.push(task.clone()),
-        }
-        sort_tasks(&mut file.tasks)?;
-        self.write_task_file(&file)
+        mutate_task_file(&self.paths.tasks_file, || {
+            let mut file = self.read_task_file()?;
+            let wanted = task.get("taskId");
+            match file
+                .tasks
+                .iter()
+                .position(|entry| super::strict_equals(entry.get("taskId"), wanted))
+            {
+                Some(index) => file.tasks[index] = task.clone(),
+                None => file.tasks.push(task.clone()),
+            }
+            sort_tasks(&mut file.tasks)?;
+            self.write_task_file(&file)
+        })
     }
 
     /// CronTaskStore.ts:39-50.
     pub fn replace_task(&self, task: &JsValue) -> Result<bool, CronStoreError> {
-        let tail = task_file_tail(&self.paths.tasks_file);
-        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut file = self.read_task_file()?;
-        let wanted = task.get("taskId");
-        let Some(index) = file
-            .tasks
-            .iter()
-            .position(|entry| super::strict_equals(entry.get("taskId"), wanted))
-        else {
-            return Ok(false);
-        };
-        file.tasks[index] = task.clone();
-        sort_tasks(&mut file.tasks)?;
-        self.write_task_file(&file)?;
-        Ok(true)
+        mutate_task_file(&self.paths.tasks_file, || {
+            let mut file = self.read_task_file()?;
+            let wanted = task.get("taskId");
+            let Some(index) = file
+                .tasks
+                .iter()
+                .position(|entry| super::strict_equals(entry.get("taskId"), wanted))
+            else {
+                return Ok(false);
+            };
+            file.tasks[index] = task.clone();
+            sort_tasks(&mut file.tasks)?;
+            self.write_task_file(&file)?;
+            Ok(true)
+        })
     }
 
     /// CronTaskStore.ts:52-65. `update` runs for every task whose `taskId`
@@ -111,47 +153,47 @@ impl CronTaskStore {
         task_id: &str,
         update: impl Fn(&JsValue) -> Option<JsValue>,
     ) -> Result<Option<JsValue>, CronStoreError> {
-        let tail = task_file_tail(&self.paths.tasks_file);
-        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let wanted = JsValue::String(JsString::from(task_id));
-        let file = self.read_task_file()?;
-        let mut tasks = Vec::with_capacity(file.tasks.len());
-        let mut updated: Option<JsValue> = None;
-        for task in file.tasks {
-            if !super::strict_equals(task.get("taskId"), Some(&wanted)) {
-                tasks.push(task);
-                continue;
-            }
-            match update(&task) {
-                Some(value) => {
-                    updated = Some(value.clone());
-                    tasks.push(value);
+        mutate_task_file(&self.paths.tasks_file, || {
+            let wanted = JsValue::String(JsString::from(task_id));
+            let file = self.read_task_file()?;
+            let mut tasks = Vec::with_capacity(file.tasks.len());
+            let mut updated: Option<JsValue> = None;
+            for task in file.tasks {
+                if !super::strict_equals(task.get("taskId"), Some(&wanted)) {
+                    tasks.push(task);
+                    continue;
                 }
-                None => updated = None,
+                match update(&task) {
+                    Some(value) => {
+                        updated = Some(value.clone());
+                        tasks.push(value);
+                    }
+                    None => updated = None,
+                }
             }
-        }
-        sort_tasks(&mut tasks)?;
-        self.write_task_file(&TaskFile { tasks })?;
-        Ok(updated)
+            sort_tasks(&mut tasks)?;
+            self.write_task_file(&TaskFile { tasks })?;
+            Ok(updated)
+        })
     }
 
     /// CronTaskStore.ts:67-76.
     pub fn delete_task(&self, task_id: &str) -> Result<bool, CronStoreError> {
-        let tail = task_file_tail(&self.paths.tasks_file);
-        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let wanted = JsValue::String(JsString::from(task_id));
-        let file = self.read_task_file()?;
-        let before = file.tasks.len();
-        let tasks: Vec<JsValue> = file
-            .tasks
-            .into_iter()
-            .filter(|task| !super::strict_equals(task.get("taskId"), Some(&wanted)))
-            .collect();
-        if tasks.len() == before {
-            return Ok(false);
-        }
-        self.write_task_file(&TaskFile { tasks })?;
-        Ok(true)
+        mutate_task_file(&self.paths.tasks_file, || {
+            let wanted = JsValue::String(JsString::from(task_id));
+            let file = self.read_task_file()?;
+            let before = file.tasks.len();
+            let tasks: Vec<JsValue> = file
+                .tasks
+                .into_iter()
+                .filter(|task| !super::strict_equals(task.get("taskId"), Some(&wanted)))
+                .collect();
+            if tasks.len() == before {
+                return Ok(false);
+            }
+            self.write_task_file(&TaskFile { tasks })?;
+            Ok(true)
+        })
     }
 
     /// CronTaskStore.ts:78-81.
@@ -250,7 +292,11 @@ fn append_line(path: &std::path::Path, line: &str) -> Result<(), CronStoreError>
 fn write_task_file_atomic(path: &Path, payload: &str) -> Result<(), CronStoreError> {
     let now_ms = now_millis();
     fs::create_dir_all(parent_of(path)?)?;
-    let temp = format!("{}{}", path.display(), temp_suffix(now_ms));
+    // `${tasksFile}.${suffix}.tmp` on the raw `OsStr`: a non-UTF-8 directory
+    // keeps its bytes instead of folding them to U+FFFD.
+    let mut temp = path.as_os_str().to_os_string();
+    temp.push(temp_suffix(now_ms));
+    let temp = PathBuf::from(temp);
     let result = (|| -> Result<(), CronStoreError> {
         fs::write(&temp, payload)?;
         match fs::rename(&temp, path) {

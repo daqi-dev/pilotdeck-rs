@@ -23,19 +23,33 @@ pub struct CronPaths {
 }
 
 /// CronPaths.ts:17-34. `path.resolve` against the process cwd, like the TS
-/// one-argument resolve on both inputs.
+/// one-argument resolve on both inputs: an absolute argument returns
+/// normalized without consulting the process cwd (so a deleted cwd cannot
+/// fail an absolute home), a relative one resolves against it.
 pub fn resolve_cron_paths(pilot_home: &str, project_key: &str) -> io::Result<CronPaths> {
-    let cwd = std::env::current_dir()?;
-    let home = metadata::resolve_process_path(&cwd, Path::new(pilot_home))?;
-    let key = metadata::resolve_process_path(&cwd, Path::new(project_key))?;
+    let home = metadata::resolve_process_path(Path::new(""), Path::new(pilot_home))?;
+    let key = metadata::resolve_process_path(Path::new(""), Path::new(project_key))?;
+    resolve_cron_paths_from(&home, &key.to_string_lossy())
+}
+
+/// The same resolution over an already-resolved pilot home. The migration
+/// resolves its home once at the entry and every derived key (routing
+/// targets, blocked directories) must come from those exact bytes: a lossy
+/// re-parse would key the same physical directory twice and the later empty
+/// bucket would overwrite the migrated tasks.
+pub(super) fn resolve_cron_paths_from(
+    pilot_home: &Path,
+    project_key: &str,
+) -> io::Result<CronPaths> {
+    let key = metadata::resolve_process_path(Path::new(""), Path::new(project_key))?;
     let project_id = metadata::project_id(&key);
-    let root_dir = metadata::resolve(&home, "cron");
+    let root_dir = metadata::resolve(pilot_home, "cron");
     let project_dir = metadata::resolve(&metadata::resolve(&root_dir, "projects"), &project_id);
     let tasks_file = metadata::resolve(&project_dir, "tasks.json");
     let runs_dir = metadata::resolve(&project_dir, "runs");
     let run_history_file = metadata::resolve(&project_dir, "run-history.jsonl");
     Ok(CronPaths {
-        pilot_home: home,
+        pilot_home: pilot_home.to_path_buf(),
         project_key: key.to_string_lossy().into_owned(),
         project_id,
         root_dir,
