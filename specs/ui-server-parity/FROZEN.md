@@ -29,7 +29,7 @@ Calibration-Evidence: specs/ui-server-parity/approval/calibration-summary.json; 
 Independent-Reviews: specs/ui-server-parity/approval/review-glm.md; specs/ui-server-parity/approval/review-deepseek.md
 
 a1cf65d93b72351eaf5fce8c5356bfaa3b40f56f401d41151123b78582412fc4  ../../rust-toolchain.toml
-f6d385e8da46ed612ba5207dcdf588c8331cfe025a866bdb59bb7e02ff32a7cc  ../../scripts/exp008/compare.py
+a74ff5ede55f337dec3cf24fc426cc8e3333993edf50a7bf5c9dcec220edd27e  ../../scripts/exp008/compare.py
 3b8bec2dbcd28b3e99ee11017e4e37c3e59d873d2800331decf0f90a1fd25b24  ../../scripts/exp008/controls.py
 803783f412eaff275249d0af1750d054b637f83dc8c4137ece5384241e099e02  ../../scripts/exp008/driver.mjs
 3ea3e6f27cb55c194ccf2a456e3fe5241042726f4b0a369cc13597ee108bcaab  ../../scripts/exp008/enumerate_hook.mjs
@@ -39,7 +39,7 @@ f6d385e8da46ed612ba5207dcdf588c8331cfe025a866bdb59bb7e02ff32a7cc  ../../scripts/
 abde68d203a8c76330668554b3606a10a94c1e4a145effcb3cbfc856556aadce  ../../scripts/exp008/proxy/src/main.rs
 89e62305ff30e49caefd8f649657b6aa1a9c968700e37509a705330ec21d8224  ../../scripts/exp008/proxy/tests/node-ws-semantics.cjs
 ed5d447d3ac2e4ba03def27645f355997be981e3d82012427f14b1f1a76870c1  ../../scripts/exp008/reconcile_routes.py
-a60f04b6ce5cccab4c40c75b0a6d8204344977bde85d4931dde213b18ddd126e  ../../scripts/exp008/run.py
+75b5af1eed4d64791cb722a76c7391b6a1fc300fd6169617f479e7295d0436f7  ../../scripts/exp008/run.py
 980130c241a926b0854c719210b8d1ccdbcf294f99bde3beb567a5bfda072d90  ../../scripts/exp008/vite.config.mjs
 c8a21ce64dfa798a64667f82777704175b520115263f1917f56e0010c4b1754b  ../../scripts/ui-server-parity/README.md
 7bab891b7690b21c2442229e7406d8d0d9e4feb2352df267852f61ac9acd9cba  ../../scripts/ui-server-parity/apparatus.py
@@ -47,11 +47,11 @@ c8a21ce64dfa798a64667f82777704175b520115263f1917f56e0010c4b1754b  ../../scripts/
 209743e7db9181f7faa6a645c4859bb71be6b784b40c208fad001dec1babfcf3  ../../scripts/ui-server-parity/calibrate.py
 e8724af2dd0c7536dc514c136ed8b4ae099257aeae461ff8b303fd22111c8f7a  ../../scripts/ui-server-parity/calibrate.sh
 206000021604a6f45890b1a3f8bc919117843452ca08648267de9c851b03ecd6  ../../scripts/ui-server-parity/chat_driver.mjs
-1c25f6b3013f28bfffea29becc0c52a4e452749a1487b6e6fbe8b988ad687879  ../../scripts/ui-server-parity/check_coverage.py
+8db8e2dfa3212cc2e9388c2322910cbeb5e947fe34f1b4a3ef457a226b85d9c1  ../../scripts/ui-server-parity/check_coverage.py
 c2fc65bf4c281efe59bdb5f9aad146d50041a530ab7fe2d5810e91647e62e2f4  ../../scripts/ui-server-parity/check_frozen.py
 2da03a3ce2f10676faec30dec9bb9bb51e57f2830ba22417f8ff3e8b476c54f8  ../../scripts/ui-server-parity/check_ruler.py
 621c35912de50a7c4496a8db589e28d09cbb18ecc42714eca9cb03ad6cc87ba9  ../../scripts/ui-server-parity/common.py
-d67728d6c560ccacfcc87da7a10bc7f68a0369d98eac63e5d9c2f85760e0ed83  ../../scripts/ui-server-parity/compare.py
+070c606a95ff22b8d7614c652b445580b70541a6f426ae0c4bebb8b2f5e8b415  ../../scripts/ui-server-parity/compare.py
 f785d81c732e18a4607eae11a845a1e7015db831150f0fc89a72f0580ebe89f9  ../../scripts/ui-server-parity/controls/README.md
 9aebd4dd53fbc90b541b0fa34b5b326d751f0548431a0b3385a45082702b9d99  ../../scripts/ui-server-parity/controls/identity_paths.py
 acb5b61e5cc1742715a32cf12c3688d40d547b12950e9e32059bcb98e2cf8dc2  ../../scripts/ui-server-parity/controls/multimodal.py
@@ -63,9 +63,9 @@ acdc238631ed73d7558d6a54ff44f3a837c3466af723e5cfc6ede78b2a5c0cb6  ../../scripts/
 79f2e369a60fbf7616c52ea8408a16d23330108b43886a147a911e818633fde1  ../../scripts/ui-server-parity/multimodal.py
 6f820bf09d30dc34af36d9a936c6c124488a08097c6c706596d684c0e0de5c4d  ../../scripts/ui-server-parity/policy.py
 b45b2fff9623f7647adb14d9e1baa73c48da25a10fdbbba52f599313f728f06a  ../../scripts/ui-server-parity/recording.rs
-b8f30d6fd2228734b17569722362c51cc20a7622b000b876c27a899218a0364e  ../../scripts/ui-server-parity/run.py
+48bbbdade425c5d9494084d8fe1c88535815f2a49f14edd8d8d6a320b05e6969  ../../scripts/ui-server-parity/run.py
 bece605c49006c2f13f5de1a5550dc82616c5f469a0d172b164a765f5457cbd6  ../../scripts/ui-server-parity/scenarios.json
-cc6e3a2be2497e900bd55e6fbce0d8c874c663288502cbdcbd8ff8b8bb919cb1  ../../scripts/ui-server-parity/snapshot.py
+24504d1a56451ece8caefc73ec74bcd3828cc41613c80d9cd5eac4429b64ec4d  ../../scripts/ui-server-parity/snapshot.py
 54138118013854a3ad42b51a67cf6ea911b67858e7cbdd719d9c57128be6cac8  ../../scripts/ui-server-parity/summarize_ruler.py
 2606ae90fb8e155c6a7989aca64a2944d9fc12e170be18fc73a7846da64b0945  ../../scripts/ui-server-parity/test_calibrate.py
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
