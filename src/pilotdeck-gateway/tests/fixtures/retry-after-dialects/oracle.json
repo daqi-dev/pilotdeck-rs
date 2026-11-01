@@ -1,0 +1,521 @@
+{
+ "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+ "sourceSha256": {
+  "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf"
+ },
+ "node": "v22.22.0",
+ "v8": "12.4.254.21-node.33",
+ "icu": "77.1",
+ "tzdata": "2025b",
+ "now": 0,
+ "zones": [
+  {
+   "tz": "UTC",
+   "resolvedTz": "UTC",
+   "cases": [
+    {
+     "value": "0",
+     "retryAfterMs": 0
+    },
+    {
+     "value": " 0.0125 ",
+     "retryAfterMs": 13
+    },
+    {
+     "value": "1e2",
+     "retryAfterMs": 100000
+    },
+    {
+     "value": "0x10",
+     "retryAfterMs": 16000
+    },
+    {
+     "value": "  7  ",
+     "retryAfterMs": 7000
+    },
+    {
+     "value": "2015",
+     "retryAfterMs": 2015000
+    },
+    {
+     "value": "-30",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Infinity",
+     "retryAfterMs": null
+    },
+    {
+     "value": "NaN",
+     "retryAfterMs": null
+    },
+    {
+     "value": "1,000",
+     "retryAfterMs": null
+    },
+    {
+     "value": "  ",
+     "retryAfterMs": 0
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:27:00 GMT",
+     "retryAfterMs": 1445412420000
+    },
+    {
+     "value": "Thu, 01 Jan 1970 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Thu, 01 Jan 1970 00:00:01 GMT",
+     "retryAfterMs": 1000
+    },
+    {
+     "value": "Sat, 20 Dec 1969 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:61 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 24:00:00 GMT",
+     "retryAfterMs": 1445472000000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 24:00:01 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 2015 25:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:60:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 32 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 00 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 31 Feb 2015 07:28:00 GMT",
+     "retryAfterMs": 1425367680000
+    },
+    {
+     "value": "Wed, 1 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": 1443684480000
+    },
+    {
+     "value": "Fri, 01 Jan 0 00:00:00 GMT",
+     "retryAfterMs": 946684800000
+    },
+    {
+     "value": "Fri, 01 Jan 0000 00:00:00 GMT",
+     "retryAfterMs": 946684800000
+    },
+    {
+     "value": "Wed, 21 Oct 0099 07:28:00 GMT",
+     "retryAfterMs": 940490880000
+    },
+    {
+     "value": "Fri, 01 Jan 2015 00:00:999999999 GMT",
+     "retryAfterMs": 1420070400000
+    },
+    {
+     "value": "Fri, 01 Jan 2015 999999999:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Fri, 01 Jan 275760 00:00:00 GMT",
+     "retryAfterMs": 8639977881600000
+    },
+    {
+     "value": "Fri, 13 Sep 275760 00:00:00 GMT",
+     "retryAfterMs": 8640000000000000
+    },
+    {
+     "value": "Fri, 14 Sep 275760 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Fri, 01 Jan 999999999 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Fri, 01 Jan 292278995 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 275761 07:28:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wednesday, 21-Oct-15 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Sunday, 06-Nov-94 08:49:37 GMT",
+     "retryAfterMs": 784111777000
+    },
+    {
+     "value": "Wednesday, 21-Oct-2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Sun Nov  6 08:49:37 1994",
+     "retryAfterMs": 784111777000
+    },
+    {
+     "value": "Wed Oct 21 07:28:00 2015",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "2015-10-21T07:28:00Z",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "2015-10-21T07:28:00+08:00",
+     "retryAfterMs": 1445383680000
+    },
+    {
+     "value": "2015-10-21T07:28:00",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "2015-10-21",
+     "retryAfterMs": 1445385600000
+    },
+    {
+     "value": "9999-12-31T23:59:59Z",
+     "retryAfterMs": 253402300799000
+    },
+    {
+     "value": "2015-10-21T00:00:00.500Z",
+     "retryAfterMs": 1445385600500
+    },
+    {
+     "value": "21 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 EST",
+     "retryAfterMs": 1445430480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 UT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 02:28:00 -0500",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Oct 21 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "21-Oct-15 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "2015/10/21 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Oct 21, 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 15 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed Oct 21 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 GMT+05:30",
+     "retryAfterMs": 1445392680000
+    },
+    {
+     "value": "not a date",
+     "retryAfterMs": null
+    },
+    {
+     "value": "",
+     "retryAfterMs": null
+    },
+    {
+     "value": "GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 99 Dec 99999999999 07:28:00 GMT",
+     "retryAfterMs": null
+    }
+   ]
+  },
+  {
+   "tz": "Asia/Shanghai",
+   "resolvedTz": "Asia/Shanghai",
+   "cases": [
+    {
+     "value": "0",
+     "retryAfterMs": 0
+    },
+    {
+     "value": " 0.0125 ",
+     "retryAfterMs": 13
+    },
+    {
+     "value": "1e2",
+     "retryAfterMs": 100000
+    },
+    {
+     "value": "0x10",
+     "retryAfterMs": 16000
+    },
+    {
+     "value": "  7  ",
+     "retryAfterMs": 7000
+    },
+    {
+     "value": "2015",
+     "retryAfterMs": 2015000
+    },
+    {
+     "value": "-30",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Infinity",
+     "retryAfterMs": null
+    },
+    {
+     "value": "NaN",
+     "retryAfterMs": null
+    },
+    {
+     "value": "1,000",
+     "retryAfterMs": null
+    },
+    {
+     "value": "  ",
+     "retryAfterMs": 0
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:27:00 GMT",
+     "retryAfterMs": 1445412420000
+    },
+    {
+     "value": "Thu, 01 Jan 1970 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Thu, 01 Jan 1970 00:00:01 GMT",
+     "retryAfterMs": 1000
+    },
+    {
+     "value": "Sat, 20 Dec 1969 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:61 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 24:00:00 GMT",
+     "retryAfterMs": 1445472000000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 24:00:01 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 2015 25:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:60:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 32 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 00 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 31 Feb 2015 07:28:00 GMT",
+     "retryAfterMs": 1425367680000
+    },
+    {
+     "value": "Wed, 1 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": 1443684480000
+    },
+    {
+     "value": "Fri, 01 Jan 0 00:00:00 GMT",
+     "retryAfterMs": 946684800000
+    },
+    {
+     "value": "Fri, 01 Jan 0000 00:00:00 GMT",
+     "retryAfterMs": 946684800000
+    },
+    {
+     "value": "Wed, 21 Oct 0099 07:28:00 GMT",
+     "retryAfterMs": 940490880000
+    },
+    {
+     "value": "Fri, 01 Jan 2015 00:00:999999999 GMT",
+     "retryAfterMs": 1420070400000
+    },
+    {
+     "value": "Fri, 01 Jan 2015 999999999:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Fri, 01 Jan 275760 00:00:00 GMT",
+     "retryAfterMs": 8639977881600000
+    },
+    {
+     "value": "Fri, 13 Sep 275760 00:00:00 GMT",
+     "retryAfterMs": 8640000000000000
+    },
+    {
+     "value": "Fri, 14 Sep 275760 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Fri, 01 Jan 999999999 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Fri, 01 Jan 292278995 00:00:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 21 Oct 275761 07:28:00 GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wednesday, 21-Oct-15 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Sunday, 06-Nov-94 08:49:37 GMT",
+     "retryAfterMs": 784111777000
+    },
+    {
+     "value": "Wednesday, 21-Oct-2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Sun Nov  6 08:49:37 1994",
+     "retryAfterMs": 784082977000
+    },
+    {
+     "value": "Wed Oct 21 07:28:00 2015",
+     "retryAfterMs": 1445383680000
+    },
+    {
+     "value": "2015-10-21T07:28:00Z",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "2015-10-21T07:28:00+08:00",
+     "retryAfterMs": 1445383680000
+    },
+    {
+     "value": "2015-10-21T07:28:00",
+     "retryAfterMs": 1445383680000
+    },
+    {
+     "value": "2015-10-21",
+     "retryAfterMs": 1445385600000
+    },
+    {
+     "value": "9999-12-31T23:59:59Z",
+     "retryAfterMs": 253402300799000
+    },
+    {
+     "value": "2015-10-21T00:00:00.500Z",
+     "retryAfterMs": 1445385600500
+    },
+    {
+     "value": "21 Oct 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 EST",
+     "retryAfterMs": 1445430480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 UT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 02:28:00 -0500",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Oct 21 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "21-Oct-15 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "2015/10/21 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Oct 21, 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 15 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed Oct 21 2015 07:28:00 GMT",
+     "retryAfterMs": 1445412480000
+    },
+    {
+     "value": "Wed, 21 Oct 2015 07:28:00 GMT+05:30",
+     "retryAfterMs": 1445392680000
+    },
+    {
+     "value": "not a date",
+     "retryAfterMs": null
+    },
+    {
+     "value": "",
+     "retryAfterMs": null
+    },
+    {
+     "value": "GMT",
+     "retryAfterMs": null
+    },
+    {
+     "value": "Wed, 99 Dec 99999999999 07:28:00 GMT",
+     "retryAfterMs": null
+    }
+   ]
+  }
+ ]
+}

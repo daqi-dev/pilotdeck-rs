@@ -68,3 +68,11 @@ async fn count_transport_speaks_https_with_the_shared_connector() {
         "no request after a failed handshake"
     );
 }
+
+/// #360-2: the retry-after dialect oracle regenerates byte-identically from
+/// the real TS baseline (`tests/fixtures/retry-after-dialects/generate.mts`).
+#[test]
+#[ignore = "regeneration guard; needs PDRS_BASELINE and node v22.22.0"]
+fn retry_after_dialects_regenerate_identically() {
+    baseline::regenerates_identically("retry-after-dialects");
+}
