@@ -6,7 +6,8 @@ use pilotdeck_protocol::{JsObject, JsValue};
 // TS serializeAgentLoopSeedStateProjection selects top-level fields, but does
 // not normalize each Map value. Preserve that distinction for JSON.stringify
 // identity: TS clone/restore parses the serialized projection. Rust retains the
-// same wire/in-memory distinction but validates before append (timing: #201).
+// same wire/in-memory distinction but validates before append, registered as
+// A6.2-LEDGER-SEED-WRITE-TIMING-001.
 pub(super) fn serialize_seed(value: Option<&JsValue>) -> Result<Option<JsValue>> {
     let Some(value) = value.filter(|v| truthy(v)) else {
         return Ok(None);

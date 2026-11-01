@@ -1053,12 +1053,257 @@ fn real_ts_seed_admission_matches_on_disk_and_online() {
             );
             // #201: TS writes this invalid terminal before clone/parse fails;
             // Rust validates before publishing. Do not make disk corrupt for parity.
-            assert_eq!(read_transcript(online.path()).unwrap().entries.len(), 2);
+            assert_eq!(
+                read_transcript(online.path()).unwrap().entries.len(),
+                2,
+                "#201 {name}: Rust must not persist the rejected terminal"
+            );
             assert_eq!(
                 l.recover(&id()).unwrap(),
-                Some(OperationRecovery::Incomplete)
+                Some(OperationRecovery::Incomplete),
+                "#201 {name}: memory must stay terminal-free"
             );
         }
+    }
+}
+
+#[test]
+fn corrupt_input_strictness_fails_closed_per_registered_entry() {
+    let fixture = oracle();
+    let JsValue::Array(cases) = field(&fixture, "corruptCases") else {
+        panic!("#201 corrupt cases")
+    };
+    assert_eq!(cases.len(), 9, "#201 corrupt case count");
+    let rust_errors = [
+        ("started-missing-runid", "Invalid operation field: runId."),
+        (
+            "started-missing-operationid",
+            "Invalid operation field: operationId.",
+        ),
+        (
+            "started-missing-requestid",
+            "Invalid operation field: requestId.",
+        ),
+        (
+            "started-binding-fieldless",
+            "Invalid operation field: moduleInstanceId.",
+        ),
+        (
+            "accepted-missing-streamid",
+            "Invalid operation field: streamId.",
+        ),
+        ("outcome-unknown-string", "Invalid terminal outcome."),
+        ("known-string-sequence", "Missing terminal sequence."),
+        (
+            "unknown-string-sequence",
+            "Invalid unknown terminal sequence.",
+        ),
+        (
+            "messages-string",
+            "Restored AgentLoop operation terminal lacks a result projection.",
+        ),
+    ];
+    for case in cases {
+        let name = string(field(case, "name"));
+        let (_, expected) = rust_errors
+            .iter()
+            .find(|(case_name, _)| *case_name == name)
+            .unwrap_or_else(|| panic!("#201 unknown corrupt case {name}"));
+        let file = string(field(case, "file"));
+        let stem = file
+            .strip_suffix(".jsonl")
+            .unwrap_or_else(|| panic!("#201 {name}: fixture file {file}"));
+        // The real TS chain (reader -> runtime -> ledger -> recover) tolerated
+        // the corruption; the golden outcome is the oracle recovery. Rust
+        // fail-closes instead: A6.2-LEDGER-RESTORE-INPUT-STRICTNESS-001.
+        let scratch = Scratch::new();
+        scratch.fixture(stem);
+        let before = fs::read(scratch.path()).expect("#201 fixture copy must be readable");
+        assert!(
+            read_transcript(scratch.path())
+                .expect("#201 {name}: fixture must read")
+                .diagnostics
+                .is_empty(),
+            "#201 {name}: the corrupted line must stay a valid TS envelope"
+        );
+        let error = match JsonlLedgerStore::open(scratch.path(), "session-1") {
+            Ok(_) => panic!("#201 Rust opened TS-tolerated corruption: {name}"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, LedgerError::Invalid(_)),
+            "#201 {name}: {error}"
+        );
+        assert_eq!(error.to_string(), *expected, "#201 {name}");
+        // Refusing to open must not rewrite or truncate the transcript.
+        assert_eq!(
+            fs::read(scratch.path()).expect("#201 {name}: reread must work"),
+            before,
+            "#201 {name}: failed open must not touch disk"
+        );
+    }
+}
+
+#[test]
+fn online_admission_strictness_rejects_ts_accepted_inputs() {
+    let fixture = oracle();
+    let JsValue::Array(cases) = field(&fixture, "deviationCases") else {
+        panic!("#201 deviation cases")
+    };
+    assert_eq!(cases.len(), 3, "#201 deviation case count");
+    for case in cases {
+        let name = string(field(case, "name"));
+        // The real TS ledger accepted this terminal() online and persisted it;
+        // the golden file plus the recorded entryCount prove the TS side.
+        assert_eq!(
+            field(case, "onlineError"),
+            &JsValue::Null,
+            "#201 {name}: TS golden online outcome"
+        );
+        assert_eq!(
+            field(case, "entryCount")
+                .as_number()
+                .expect("#201 {name}: TS golden entry count must be numeric"),
+            3.0,
+            "#201 {name}: TS golden entry count"
+        );
+        // Rust rejects the same input before any write:
+        // A6.2-LEDGER-ONLINE-ADMISSION-STRICTNESS-001.
+        let online = Scratch::new();
+        let mut l =
+            JsonlLedgerStore::open(online.path(), "session-1").expect("#201 fresh store opens");
+        l.start(&id()).expect("#201 start");
+        l.accept(&id(), &"stream-1".into()).expect("#201 accept");
+        let mut terminal = known();
+        match name.as_str() {
+            "string-seed" => {
+                terminal.resolution.seed_state = Some(JsValue::String("not-an-object".into()));
+            }
+            "result-unknown-outcome" => {
+                terminal.resolution.outcome = ModuleOutcome::ResultUnknown;
+            }
+            "result-unknown-outcome-no-stream" => {
+                terminal.resolution.outcome = ModuleOutcome::ResultUnknown;
+                terminal.stream_id = None;
+            }
+            _ => panic!("#201 unknown deviation case {name}"),
+        }
+        let expected = match name.as_str() {
+            "string-seed" => "Invalid sidecar seedState: expected an object.",
+            _ => "Known terminal requires a known outcome.",
+        };
+        let error = match l.terminal(&terminal) {
+            Err(error) => error,
+            Ok(()) => panic!(
+                "#201 {name}: Rust accepted an online terminal that TS persisted as a deviation"
+            ),
+        };
+        assert!(
+            matches!(error, LedgerError::Invalid(_)),
+            "#201 {name}: {error}"
+        );
+        assert_eq!(error.to_string(), expected, "#201 {name}");
+        // Nothing was published: disk keeps start+accept, memory keeps no terminal.
+        assert_eq!(
+            read_transcript(online.path())
+                .expect("#201 {name}: online transcript must read")
+                .entries
+                .len(),
+            2,
+            "#201 {name}: Rust must not persist the rejected terminal"
+        );
+        assert_eq!(
+            l.recover(&id()).expect("#201 {name}: recover must answer"),
+            Some(OperationRecovery::Incomplete),
+            "#201 {name}: memory must stay terminal-free"
+        );
+        // Restoring the TS-persisted file aligns with the recorded TS outcome.
+        let scratch = Scratch::new();
+        let file = string(field(case, "file"));
+        let stem = file
+            .strip_suffix(".jsonl")
+            .unwrap_or_else(|| panic!("#201 {name}: fixture file {file}"));
+        scratch.fixture(stem);
+        let before = fs::read(scratch.path()).expect("#201 fixture copy must be readable");
+        match JsonlLedgerStore::open(scratch.path(), "session-1") {
+            Ok(l) => {
+                assert_eq!(
+                    field(case, "restoreError"),
+                    &JsValue::Null,
+                    "#201 {name}: TS golden restore outcome"
+                );
+                assert_eq!(
+                    recovery_json(l.recover(&id()).expect("#201 {name}: recover must answer")),
+                    *field(case, "recovery"),
+                    "#201 {name}: restored recovery must match the TS golden"
+                );
+            }
+            Err(error) => {
+                assert_eq!(
+                    error.to_string(),
+                    string(field(case, "restoreError")),
+                    "#201 {name}: restore rejection must match the TS message"
+                );
+            }
+        }
+        assert_eq!(
+            fs::read(scratch.path()).expect("#201 {name}: reread must work"),
+            before,
+            "#201 {name}: restoring must not touch disk"
+        );
+    }
+}
+
+#[test]
+fn ledger_open_skips_domain_validation_like_the_ts_constructor() {
+    let fixture = oracle();
+    let scope = field(&fixture, "domainScope");
+    let file = string(field(scope, "file"));
+    let stem = file
+        .strip_suffix(".jsonl")
+        .unwrap_or_else(|| panic!("#201 domain fixture file {file}"));
+    let scratch = Scratch::new();
+    scratch.fixture(stem);
+    let before = fs::read(scratch.path()).expect("#201 fixture copy must be readable");
+    let read = read_transcript(scratch.path()).expect("#201 domain fixture must read");
+    assert!(
+        read.diagnostics.is_empty(),
+        "#201 domain fixture envelopes must parse"
+    );
+    assert_eq!(read.entries.len(), 2, "#201 domain fixture entry count");
+    // The TS ledger constructor accepts this log (oracle records a null
+    // error); the domain rejection belongs to SessionRuntime.restore, which
+    // is not wired to this ledger yet: A6.2-LEDGER-RESTORE-DOMAIN-SCOPE-001.
+    assert_eq!(
+        field(scope, "ledgerConstructorError"),
+        &JsValue::Null,
+        "#201 TS golden: the TS ledger constructor runs no domain validation"
+    );
+    let l = JsonlLedgerStore::open(scratch.path(), "session-1")
+        .expect("#201 the ledger layer must open the domain-invalid log");
+    assert_eq!(
+        l.recover(&id()).expect("#201 recover must answer"),
+        Some(OperationRecovery::Incomplete),
+        "#201 the ledger layer must open the domain-invalid log like the TS constructor"
+    );
+    assert_eq!(
+        fs::read(scratch.path()).expect("#201 reread must work"),
+        before,
+        "#201 opening must not touch disk"
+    );
+    // The ported domain validator rejects the same log with the TS message;
+    // the wiring that runs it on ledger open is the follow-up PR's scope.
+    let log = read.entries.iter().try_fold(
+        super::session_domain::DomainState::default(),
+        |state, entry| state.next(entry),
+    );
+    match log {
+        Ok(_) => panic!("#201 the domain-invalid log must fail domain validation"),
+        Err(error) => assert_eq!(
+            error.to_string(),
+            string(field(scope, "runtimeRestoreError")),
+            "#201 domain rejection message parity with the TS runtime"
+        ),
     }
 }
 

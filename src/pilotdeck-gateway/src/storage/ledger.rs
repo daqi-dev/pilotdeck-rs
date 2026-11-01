@@ -240,7 +240,8 @@ impl<S: TranscriptSink> SessionOperationLedger<S> {
         let serialized_seed = serialize_seed(input.resolution.seed_state.as_ref())?;
         // TS cloneSeedState parses the serialized projection, not the caller's
         // object (e.g. nullable top-level fields are omitted by serialization).
-        // Validate before append; malformed-value failure timing remains #201.
+        // Validate before append; the write-timing deviation is registered as
+        // A6.2-LEDGER-SEED-WRITE-TIMING-001.
         stable.resolution.seed_state = normalize_seed(serialized_seed.as_ref())?;
         let mut event = id.event("agent_loop_operation_terminal");
         optional_string(&mut event, "streamId", input.stream_id.as_ref());
@@ -416,10 +417,14 @@ impl<S: TranscriptSink> SessionOperationLedger<S> {
             .as_string()
             .is_some_and(|s| s.equals_str("result_unknown"))
         {
+            // TS includes the operation id in this restore error.
+            let operation_id = String::from_utf16_lossy(identity.operation_id.units());
             Terminal::Unknown(Box::new(UnknownTerminal {
                 identity,
                 stream_id: stream.clone().filter(|s| !s.is_empty()).ok_or_else(|| {
-                    invalid("Restored AgentLoop operation result_unknown lacks a stream id.")
+                    invalid(format!(
+                        "Restored AgentLoop operation {operation_id} result_unknown lacks a stream id."
+                    ))
                 })?,
                 last_applied_sequence: match sequence {
                     JsValue::Number(n) => Some(*n),

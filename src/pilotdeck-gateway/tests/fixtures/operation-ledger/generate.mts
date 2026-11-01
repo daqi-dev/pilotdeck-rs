@@ -162,6 +162,87 @@ try {
     seedCases.push({ name, file, input, onlineError, restoreError, entryCount: read.entries.length, recovery });
     console.log(`seed-${name}: online=${onlineError ?? 'OK'} restore=${restoreError ?? 'OK'} entries=${read.entries.length}`);
   }
+  // #201: corrupt-input restore cases. Real TS envelopes with one corruption
+  // each; the real reader + runtime + ledger chain decides admission. TS
+  // tolerates every one of these; Rust refuses to open the transcript,
+  // registered as specs/gateway-parity/diffs/A6.2-LEDGER-RESTORE-INPUT-STRICTNESS-001.md.
+  const corruptCases = [];
+  const corruptMutations: Record<string, (entries: any[]) => void> = {
+    'started-missing-runid': (entries) => entries.forEach((entry) => { delete entry.runId; }),
+    'started-missing-operationid': (entries) => entries.forEach((entry) => { delete entry.operationId; }),
+    'started-missing-requestid': (entries) => entries.forEach((entry) => { delete entry.requestId; }),
+    'started-binding-fieldless': (entries) => entries.forEach((entry) => { entry.binding = {}; }),
+    'accepted-missing-streamid': (entries) => { delete entries[1].streamId; },
+    'outcome-unknown-string': (entries) => { entries[2].outcome = 'weird-outcome'; },
+    'known-string-sequence': (entries) => { entries[2].lastAppliedSequence = '4'; },
+    'unknown-string-sequence': (entries) => { entries[2].lastAppliedSequence = '2'; },
+    'messages-string': (entries) => { entries[2].messages = 'not-an-array'; },
+  };
+  for (const [name, mutate] of Object.entries(corruptMutations)) {
+    const source = (await readTranscript(join(output, name === 'unknown-string-sequence' ? 'unknown.jsonl' : 'normal.jsonl'))).entries;
+    const entries = structuredClone(source);
+    mutate(entries);
+    const file = `corrupt-${name}.jsonl`;
+    await writeFile(join(output, file), entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const read = await readTranscript(join(output, file));
+    assert.equal(read.diagnostics.length, 0, `${name}: mutated entries must still parse as envelopes`);
+    let restoreError = null;
+    let recovery = null;
+    try { recovery = projected(restore(read.entries).ledger.recover(identity)); }
+    catch (caught) { restoreError = (caught as Error).message; }
+    assert.equal(restoreError, null, `${name}: the real TS chain must tolerate this corruption`);
+    corruptCases.push({ name, file, recovery });
+    console.log(`corrupt-${name}: TS restore=${restoreError ?? 'OK'} recovery=${recovery === null ? 'absent' : 'present'}`);
+  }
+  // #201: online admission deviations. The real TS ledger accepts these
+  // terminal() inputs and persists them; Rust rejects before any write,
+  // registered as specs/gateway-parity/diffs/A6.2-LEDGER-ONLINE-ADMISSION-STRICTNESS-001.md.
+  const deviationCases = [];
+  for (const [name, mutate] of Object.entries({
+    'string-seed': (input: typeof known) => ({ ...input, seedState: 'not-an-object' as any }),
+    'result-unknown-outcome': (input: typeof known) => ({ ...input, outcome: 'result_unknown' as any }),
+    'result-unknown-outcome-no-stream': (input: typeof known) => ({ ...input, streamId: undefined, outcome: 'result_unknown' as any }),
+  })) {
+    const path = join(scratch, `deviation-${name}.jsonl`);
+    let counter = 0;
+    const w = new Writer({ path, now: () => new Date('2026-10-17T00:00:00.000Z'), uuid: () => `ts-entry-${++counter}` });
+    const l = new Ledger({ sessionId: identity.sessionId, transcript: w });
+    await l.start(identity); await l.accept(identityWithStream());
+    let onlineError = null;
+    try { await l.terminal(mutate(known)); }
+    catch (caught) { onlineError = (caught as Error).message; }
+    assert.equal(onlineError, null, `${name}: the real TS terminal() must accept this input`);
+    await w.close();
+    const file = `deviation-${name}.jsonl`;
+    await writeFile(join(output, file), await readFile(path));
+    const read = await readTranscript(path);
+    assert.equal(read.entries.length, 3, `${name}: TS persists the terminal before any clone`);
+    let restoreError = null;
+    let recovery = null;
+    try { recovery = projected(restore(read.entries).ledger.recover(identity)); }
+    catch (caught) { restoreError = (caught as Error).message; }
+    deviationCases.push({ name, file, onlineError, restoreError, entryCount: read.entries.length, recovery });
+    console.log(`deviation-${name}: online=${onlineError ?? 'OK'} restore=${restoreError ?? 'OK'} entries=${read.entries.length}`);
+  }
+  // #201: the TS ledger constructor runs no domain validation; the restore
+  // chain (SessionRuntime.restore) does. Scope registration
+  // specs/gateway-parity/diffs/A6.2-LEDGER-RESTORE-DOMAIN-SCOPE-001.md.
+  const domainEntries = structuredClone(normal.slice(0, 1));
+  domainEntries.push({ ...structuredClone(normal[0]), type: 'tool_call', sequence: 2, entryId: 'ts-entry-domain', parentEntryId: normal[0].entryId });
+  const domainFile = 'domain-invalid.jsonl';
+  await writeFile(join(output, domainFile), domainEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+  const domainRead = await readTranscript(join(output, domainFile));
+  assert.equal(domainRead.diagnostics.length, 0, 'domain-invalid fixture must still parse as envelopes');
+  let domainRuntimeError = '';
+  try { new SessionRuntime().restore(domainRead.entries); }
+  catch (caught) { domainRuntimeError = (caught as Error).message; }
+  assert.match(domainRuntimeError, /requires an active turn/, 'the real TS restore chain must reject the domain-invalid log');
+  let domainLedgerError = '';
+  try { new Ledger({ sessionId: identity.sessionId, transcript: new Writer({ path: 'unused' }), restoredEntries: domainRead.entries }); }
+  catch (caught) { domainLedgerError = (caught as Error).message; }
+  assert.equal(domainLedgerError, '', 'the TS ledger constructor itself runs no domain validation');
+  const domainScope = { file: domainFile, runtimeRestoreError: domainRuntimeError, ledgerConstructorError: domainLedgerError || null };
+  console.log(`domain-invalid: runtime=${domainRuntimeError} ledgerConstructor=${domainLedgerError || 'OK'}`);
   // Node readFile('utf8') replaces invalid bytes; envelope dates are strings only.
   const utf8Entry = { ...normal[0], createdAt: 'not-a-date', annotation: 'invalid-byte-marker' };
   const utf8Parts = JSON.stringify(utf8Entry).split('invalid-byte-marker');
@@ -183,7 +264,7 @@ try {
     const read = await readTranscript(path);
     readLimits.push({ sizeBytes, entryCount: read.entries.length, diagnostics: read.diagnostics.map(({ code, severity, line }: any) => ({ code, severity, line })) });
   }
-  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, inputs: { identity, known: { ...known, seedState: serializeSeed(known.seedState) }, unknown }, cases, readLimits, rejectedCases, seedCases, utf8Read: { file: utf8File, entries: utf8Read.entries, diagnostics: utf8Read.diagnostics, state: utf8State } }, null, 2) + '\n');
-  console.log(`PASS: generated ${cases.length} real TS ledger fixtures, ${rejectedCases.length} rejected identities, ${seedCases.length} seed cases, UTF-8 case, partial continuation and ${readLimits.length} sparse read limits`);
+  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, inputs: { identity, known: { ...known, seedState: serializeSeed(known.seedState) }, unknown }, cases, readLimits, rejectedCases, seedCases, corruptCases, deviationCases, domainScope, utf8Read: { file: utf8File, entries: utf8Read.entries, diagnostics: utf8Read.diagnostics, state: utf8State } }, null, 2) + '\n');
+  console.log(`PASS: generated ${cases.length} real TS ledger fixtures, ${rejectedCases.length} rejected identities, ${seedCases.length} seed cases, ${corruptCases.length} corrupt cases, ${deviationCases.length} online deviation cases, domain scope case, UTF-8 case, partial continuation and ${readLimits.length} sparse read limits`);
 } finally { await rm(scratch, { recursive: true, force: true }); }
 function identityWithStream() { return { ...identity, streamId: 'stream-1' }; }

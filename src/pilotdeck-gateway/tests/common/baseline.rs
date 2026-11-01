@@ -770,7 +770,13 @@ pub(crate) fn companion_names(fixture: &str, committed: &Path) -> Result<Vec<Str
             Ok(())
         };
         let groups: &[&str] = if fixture == "operation-ledger" {
-            &["cases", "rejectedCases", "seedCases"]
+            &[
+                "cases",
+                "rejectedCases",
+                "seedCases",
+                "corruptCases",
+                "deviationCases",
+            ]
         } else {
             &["scenarios"]
         };
@@ -792,10 +798,11 @@ pub(crate) fn companion_names(fixture: &str, committed: &Path) -> Result<Vec<Str
         }
         if fixture == "operation-ledger" {
             add(oracle.get("utf8Read").and_then(|row| row.get("file")))?;
+            add(oracle.get("domainScope").and_then(|row| row.get("file")))?;
             names.push("partial-continued.jsonl".into());
         }
         let expected = if fixture == "operation-ledger" {
-            34
+            47
         } else {
             49
         };
