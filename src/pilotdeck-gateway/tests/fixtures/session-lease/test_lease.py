@@ -8,7 +8,6 @@ sys.dont_write_bytecode = True
 import importlib.util
 from pathlib import Path
 import signal
-import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -28,6 +27,62 @@ class LeaseTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.folder = Path(temporary.name)
         self.lock = self.folder / 'lock'
+
+    def test_guarded_sources_include_common(self):
+        marker = '#a5b parity mutation guards include common.py'
+        path = Path(__file__).with_name('negative.py')
+        try:
+            spec = importlib.util.spec_from_file_location('lease_negative', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            self.assertTrue(ROOT / 'scripts/gateway-parity/common.py' in module.guarded_sources, marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_documented_release_definition(self):
+        marker = '#1221 allStopped documents lease proof separately from scoring'
+        try:
+            text = Path(__file__).with_name('README.md').read_text()
+            self.assertTrue('#1221 更正 #209 E1 的 `allStopped` 定义' in text, marker)
+            self.assertTrue('`allStopped` 是租约释放证明，不是判分通过' in text, marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_cli_cancel_unwind(self):
+        marker = '#1194 CLI preserves first cancellation and accepts later signals'
+        path = ROOT / 'scripts/cli-parity/run_round.py'
+        spec = importlib.util.spec_from_file_location('cli_cancel_round', path)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            for signum, handler in ((signal.SIGTERM, module.interrupted),
+                                    (signal.SIGALRM, module.lease_expired)):
+                with self.subTest(signal=signum):
+                    previous = signal.signal(signum, handler)
+                    try:
+                        first = None
+                        cleanup_tail = False
+                        try:
+                            try:
+                                signal.raise_signal(signum)
+                                self.fail(marker + ': initial signal ignored')
+                            except KeyboardInterrupt as error:
+                                first = error
+                                raise
+                            finally:
+                                signal.raise_signal(signum)
+                                cleanup_tail = True
+                        except KeyboardInterrupt as caught:
+                            self.assertTrue(caught is first and cleanup_tail, marker)
+                            # A handled cancellation is still active until except exits.
+                            signal.raise_signal(signum)
+                        with self.assertRaises(KeyboardInterrupt, msg=marker) as later:
+                            signal.raise_signal(signum)
+                        self.assertTrue(later.exception is not first, marker)
+                    finally:
+                        signal.signal(signum, previous)
+        except (Exception, KeyboardInterrupt) as error:
+            self.fail(marker + ': ' + repr(error))
 
     def test_blocked_fixture_releases_lease(self):
         marker = '#1221 BLOCKED empty fixture releases lease for successor'
@@ -54,6 +109,7 @@ class LeaseTests(unittest.TestCase):
                     patch.object(s.sys, 'platform', 'linux'):
                 output = self.folder / event
                 output.mkdir()
+                lock = output / 'lock'
                 original_wait = s.wait_exit_unreaped
                 first = True
 
@@ -68,7 +124,7 @@ class LeaseTests(unittest.TestCase):
 
                 caught = None
                 try:
-                    with c.parity_lock(lock=self.lock), patch.object(s, 'wait_exit_unreaped', wait):
+                    with c.parity_lock(lock=lock), patch.object(s, 'wait_exit_unreaped', wait):
                         s.run_fixture(output, output, [sys.executable, '-I', '-c',
                                       'raise SystemExit(7)' if event == 'failure'
                                       else 'import time; time.sleep(5)'])
@@ -77,7 +133,7 @@ class LeaseTests(unittest.TestCase):
                 except Exception as error:
                     self.fail(marker + ': ' + repr(error))
                 self.assertTrue((caught is None) == (event == 'failure'), marker)
-                self.assertFalse(c.LIVE_GROUPS or self.lock.exists(), marker)
+                self.assertFalse(c.LIVE_GROUPS or lock.exists(), marker)
                 audit = c.json.loads((output / 'launch.json').read_text())
                 self.assertTrue(audit['allStopped'], marker)
                 self.assertTrue(audit['processTreeCleanup'] == s.CLEANUP_BLOCKED, marker)
