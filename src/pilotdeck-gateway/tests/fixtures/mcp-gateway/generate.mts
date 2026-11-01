@@ -275,7 +275,13 @@ await run('reconnect-busy', 'mcp_server_reconnect', { sessionKey: 'rb', serverNa
 await run('reconnect-missing-fields', 'mcp_server_reconnect', { sessionKey: 't' });
 await run('toggle-missing-session-key', 'mcp_server_toggle', { serverName: 'alpha', enabled: false });
 await run('toggle-blank-session-key', 'mcp_server_toggle', { sessionKey: '  ', serverName: 'alpha', enabled: false });
+await run('toggle-nonstring-session-key', 'mcp_server_toggle', { sessionKey: 5, serverName: 'alpha', enabled: false });
 await run('reconnect-missing-session-key', 'mcp_server_reconnect', { serverName: 'alpha' });
+await run('reconnect-blank-session-key', 'mcp_server_reconnect', { sessionKey: '  ', serverName: 'alpha' });
+await run('reconnect-nonstring-session-key', 'mcp_server_reconnect', { sessionKey: 5, serverName: 'alpha' });
+await run('reconnect-blank-server-name', 'mcp_server_reconnect', { sessionKey: 't', serverName: '  ' });
+await run('toggle-nonstring-server-name', 'mcp_server_toggle', { sessionKey: 't', serverName: 5, enabled: false });
+await run('reconnect-nonstring-server-name', 'mcp_server_reconnect', { sessionKey: 't', serverName: 5 });
 
 // --- set_mcp_permission_mode_override -----------------------------------------
 await run('override-auto', 'set_mcp_permission_mode_override', { sessionKey: 'v', serverName: 'alpha', mode: 'auto' },
@@ -294,7 +300,10 @@ await run('override-busy-valid', 'set_mcp_permission_mode_override', { sessionKe
 await run('override-busy-invalid-mode', 'set_mcp_permission_mode_override', { sessionKey: 'vb', serverName: 'alpha', mode: 'fast' });
 await run('override-missing-fields', 'set_mcp_permission_mode_override', { sessionKey: 'vb' });
 await run('override-missing-session-key', 'set_mcp_permission_mode_override', { serverName: 'alpha', mode: 'auto' });
+await run('override-blank-session-key', 'set_mcp_permission_mode_override', { sessionKey: '  ', serverName: 'alpha', mode: 'auto' });
 await run('override-nonstring-session-key', 'set_mcp_permission_mode_override', { sessionKey: 5, serverName: 'alpha', mode: 'auto' });
+await run('override-blank-server-name', 'set_mcp_permission_mode_override', { sessionKey: 'v', serverName: '  ', mode: 'auto' });
+await run('override-nonstring-server-name', 'set_mcp_permission_mode_override', { sessionKey: 'v', serverName: 5, mode: 'auto' });
 await run('override-null-params', 'set_mcp_permission_mode_override', null);
 await run('override-close-fault', 'set_mcp_permission_mode_override', { sessionKey: 'f', serverName: 'alpha', mode: 'auto' },
   ['ensure-session:f']);
@@ -397,6 +406,24 @@ assert.equal(byId('toggle-blank-session-key').response.error.message,
 assert.equal(byId('reconnect-missing-session-key').response.error.code, 'INVALID_MCP_SERVER', 'reconnect missing key code');
 assert.equal(byId('reconnect-missing-session-key').response.error.message,
   'sessionKey and serverName are required.', 'reconnect missing key message');
+assert.equal(byId('toggle-nonstring-session-key').response.error.code, 'gateway_request_failed', 'toggle non-string key envelope');
+assert.equal(byId('toggle-nonstring-session-key').response.error.message,
+  'input.sessionKey?.trim is not a function', 'toggle non-string key message');
+assert.equal(byId('reconnect-blank-session-key').response.error.code, 'INVALID_MCP_SERVER', 'reconnect blank key code');
+assert.equal(byId('reconnect-blank-session-key').response.error.message,
+  'sessionKey and serverName are required.', 'reconnect blank key message');
+assert.equal(byId('reconnect-nonstring-session-key').response.error.code, 'gateway_request_failed', 'reconnect non-string key envelope');
+assert.equal(byId('reconnect-nonstring-session-key').response.error.message,
+  'input.sessionKey?.trim is not a function', 'reconnect non-string key message');
+assert.equal(byId('reconnect-blank-server-name').response.error.code, 'INVALID_MCP_SERVER', 'reconnect blank server name code');
+assert.equal(byId('reconnect-blank-server-name').response.error.message,
+  'sessionKey and serverName are required.', 'reconnect blank server name message');
+assert.equal(byId('toggle-nonstring-server-name').response.error.code, 'gateway_request_failed', 'toggle non-string server name envelope');
+assert.equal(byId('toggle-nonstring-server-name').response.error.message,
+  'input.serverName?.trim is not a function', 'toggle non-string server name message');
+assert.equal(byId('reconnect-nonstring-server-name').response.error.code, 'gateway_request_failed', 'reconnect non-string server name envelope');
+assert.equal(byId('reconnect-nonstring-server-name').response.error.message,
+  'input.serverName?.trim is not a function', 'reconnect non-string server name message');
 assert.deepEqual(byId('toggle-missing-session-key').events, [], 'missing key never closes');
 assert.equal(byId('override-auto').response.result.warning,
   'PilotDeck does not expose Claude\'s MCP safety classifier; auto uses conservative ask semantics for this server.',
@@ -430,12 +457,21 @@ assert.equal(byId('override-missing-session-key').response.error.message,
   'sessionKey and serverName are required.', 'override missing key message');
 assert.equal(byId('override-nonstring-session-key').response.error.message,
   'input.sessionKey?.trim is not a function', 'override non-string key message');
+assert.equal(byId('override-blank-session-key').response.error.code, 'INVALID_MCP_SERVER', 'override blank key code');
+assert.equal(byId('override-blank-session-key').response.error.message,
+  'sessionKey and serverName are required.', 'override blank key message');
+assert.equal(byId('override-blank-server-name').response.error.code, 'INVALID_MCP_SERVER', 'override blank server name code');
+assert.equal(byId('override-blank-server-name').response.error.message,
+  'sessionKey and serverName are required.', 'override blank server name message');
+assert.equal(byId('override-nonstring-server-name').response.error.code, 'gateway_request_failed', 'override non-string server name envelope');
+assert.equal(byId('override-nonstring-server-name').response.error.message,
+  'input.serverName?.trim is not a function', 'override non-string server name message');
 assert.equal(byId('override-close-fault').response.error.message, 'Failed to dispose agent handle.',
   'override close fault message');
 assert.deepEqual(byId('override-close-fault').post.ask.f, [
   { source: 'session', behavior: 'ask', toolName: 'mcp__alpha__*', force: true },
 ], 'override commits before the failing close');
-assert.equal(rows.length, 44, 'matrix row count');
+assert.equal(rows.length, 53, 'matrix row count');
 for (const row of capabilityCases) {
   assert.equal(row.response.error.code, 'CAPABILITY_UNAVAILABLE', `${row.method} capability code`);
   assert.equal(row.response.error.message, `${row.method} is unavailable.`, `${row.method} capability message`);
