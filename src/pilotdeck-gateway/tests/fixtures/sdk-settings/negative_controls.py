@@ -62,7 +62,7 @@ mutations = [
     ('coverage', tests, 'cases.len() == 193', 'cases.len() == 192', MATRIX, '#1029 157 registered cells plus 36 live settings boundary cells'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', REGENERATE, '#1029 identical TS fixture sdk-settings'),
     ('source-drift', source, '"raw/node-version.stdout.bin": "v22.22.0\\n"', '"raw/node-version.stdout.bin": "v0.0.0\\n"', REGENERATE, '#1029 identical TS fixture sdk-settings'),
-    ('settings-depth-gate', settings, 'if !matches!(settings, JsValue::Object(_)) {', 'if !matches!(settings, JsValue::Object(_)) || raw.len() > 65_536 {', 'settings_set_accepts_extreme_nesting', '#1044 expected gateway lifecycle settings-extra--set-extreme-nesting'),
+    ('settings-size-gate', settings, 'if !matches!(settings, JsValue::Object(_)) {', 'if !matches!(settings, JsValue::Object(_)) || raw.len() > 65_536 {', 'settings_set_accepts_extreme_nesting', '#1044 expected gateway lifecycle settings-extra--set-extreme-nesting'),
     ('settings-depth-wire', tests, '{deep}}}}}', '{{}}}}}}', 'settings_set_accepts_extreme_nesting', '#1029 hello and request wire settings-extra--set-extreme-nesting'),
 ]
 
