@@ -1,86 +1,75 @@
-# session-domain-expectations 负控（#1177 fix-r1，#1190 补齐 require 覆盖与计数推导）
+# session-domain-expectations 负控（#1177 / #1190）
 
 绑定对象：`scripts/gateway-parity/session_domain.py` 的 `validate_expectations`
-（A19-HOST 逐格期望的结构校验）与
-`scripts/gateway-parity/controls/session_domain.py` 的 `EXPECTATION_CASES`
-数据负控。无 cargo、无全量对拍：控制只离线重放记录在案的 A5.2a 数据。
+与 `scripts/gateway-parity/controls/session_domain.py` 的 `EXPECTATION_CASES`。
+防御性质量加固，不改 A19-HOST 期望或判分语义。数据控制离线重放真实
+A5.2a 数据，不启动全量对拍。
 
-## 文件
+## 源码 require 负控
 
-- `run_control.py` — 单控制运行器：按显式路径加载 controls 条目并调用
-  `check_case`，输出与 controls CLI 相同形状的 verdict JSON。它不走 CLI
-  `main()`：变异中的 `session_domain.py` 与 HEAD 必然不同，而 `main()` 先跑
-  `verify_loaded_apparatus`；直接绑定 `main()` 自己调用的 `check_case` 是
-  #209（session-domain-lock-release）已确立的形态。
-- `negative_controls.py` — 源码变异元负控：`MUTATIONS` 各删 / 中和
-  `validate_expectations` 里的 canonical `require`，清单以该表为准
-  （frames、durableStatus、registry events / state / result、inapplicable
-  registry；#1177 fix-r1 先行，#1190 补齐其余）。每行要求：
-  baseline 未变异时被绑控制按期望规则 FAIL；mutant 下同一控制接受坏
-  fixture（KILLED），仍按同规则 FAIL 记 SURVIVED；另有不相关控制在该
-  mutant 下仍被杀（防串线）；恢复后复杀。绑定表（BOUND / UNAFFECTED）
-  由 `check_bindings` 与面板的 `EXPECTATION_CASES` 机检：case 与规则都须
-  相符，`exercised` 只由 BOUND 构造，每条 `BOUND` 非空且为
-  (case, rule) 字符串对，`BOUND` / `UNAFFECTED` / `MUTATIONS` 三表键集
-  完全一致，每条 `EXPECTATION_RUST_DERIVATION` 控制必须出现在某个 BOUND
-  行里；任何缺失 / 多余 / 变形都是 `BINDING DRIFT`（exit 2），先于任何
-  变异执行，主循环不会因此 IndexError（#1190 fix-r1）；变形的具体形状
-  ——非序列 `BOUND` 容器、非 (case, rule) 对的条目、非
-  (name, source, old, new) 的 `MUTATIONS` 行、重名变异行——同样以专属
-  漂移消息拒绝而不是 traceback（#1190 fix-r2）。`evidence` 在进入
-  守卫窗口前初始化（#1190）。计数不在叙述里钉死：运行时由 `ast` 解析
-  （不执行）面板推导并写 `derived-counts.json` 入证据目录；登记文档
-  （本 README、`specs/gateway-parity/diffs/A19-HOST-001-R1.md` 与
-  `specs/gateway-parity/frozen/` 下全部 #1190 冻结事件，按目录通配推导，
-  新增事件不漏扫）中的中文 / 阿拉伯数字计数短语（条 / 档 / 项 / 个 / 处）
-  同样与推导计数机检，不一致或无法归类即 `COUNT DRIFT`（exit 2）
-  （#1190 fix-r1，fix-r2 扩单位与扫描集）。扫描集本身不再只信通配
-  （#1190 fix-r3）：`check_scan_set` 把已提交的 #1190 事件按文件名钉为
-  下限，且 `frozen/` 下凡文件名含 `1190` 的文件必须落在扫描集内——已知
-  事件被删 / 被改名脱出通配时，门禁以专属 `COUNT DRIFT` 拒绝而不是静默
-  缩小扫描集后仍绿。fix-r4 起扫描目录可作为参数传入（`--frozen-dir`，默认
-  仍是仓库真实目录），供 `meta_controls.py` 在临时副本上构造上述文件系统
-  情形而不触碰仓库目录。`mutating_sources`（带
-  common.py 与 parity 租约）守源码并逐字节还原，summary 原子发布、guard
-  失败全 INVALID（#979/#1037）。
-- `meta_controls.py` — 元负控的元负控（#1190 fix-r1，fix-r2 扩容，fix-r4
-  改设计）：原地变异 `negative_controls.py` 自身的绑定表与被扫描的
-  README，要求上述漂移闸门各自拒绝——删除 `drop-registry-state-require`
-  变异行、清空其 `BOUND` 条目、变形其条目 / 容器 / 变异行、整行重复、
-  README 钉回与推导计数不符的数字（含个单位形式）——都必须以 exit 2 加
-  各自专属漂移消息失败；恢复后 `--check-anchors` 闸门复绿。文件系统情形
-  ——在 `frozen/` 通配内新建携带过期计数的冻结事件夹具、删除 / 改名已提交
-  的 #1190 冻结事件（fix-r3 引入的行）——自 fix-r4 起全部改在
-  `tempfile.TemporaryDirectory()` 里 `shutil.copytree` 出来的 `frozen/`
-  副本上构造，再经闸门的 `--frozen-dir` 参数指向该副本检查：仓库的
-  `specs/gateway-parity/frozen/` 不被创建、改名或删除任何目录项，副本由
-  `with` 负责清理（进程被杀也只残留在 /tmp）；rename 对目标位置的任意既有
-  目录项（含 `Path.exists()` 看不见的悬空符号链接）拒绝覆盖；行引用的事件
-  名与闸门自己的 `KNOWN_EVENTS` 下限钉死为单源，不在其中即拒跑；主跑在
-  守卫窗口前后对真实 `frozen/` 做符号链接感知的逐字节快照（悬空链接按其
-  目标字符串入快照），跑完不一致即全表 INVALID、exit 2。`--self-test`
-  三场景回归：子进程真实跑全部文件系统行（全 KILLED）且真实 `frozen/`
-  逐字节不变；快照检出悬空链接被删 / 改目标、符号链接改目标、文件内容
-  变化与新增文件；rename 目标被悬空链接或常规文件占用时拒绝且原状保留。
-  逐行记 KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出。
+`negative_controls.py` 的 `MUTATIONS` 覆盖 `validate_expectations`
+里的 canonical `require`，清单以该表为准：frames、durableStatus、registry
+的 events / state / result 与 inapplicable 形状。`run_control.py` 按显式路径
+加载面板并调用 `check_case`，保持原有执行方式：
+
+- baseline：被绑控制按期望规则 FAIL。
+- mutant：先编译 Python 变异，再验证同一控制改报 `CONTROL_EXPECTATION` /
+  `mutation accepted`，记 KILLED；仍按原规则 FAIL 记 SURVIVED。
+- unaffected：不同 require 的控制仍按期望规则 FAIL；恢复后被绑控制复杀。
+- 每行在 try 前初始化 `evidence`；异常记 INVALID，继续后继行，末尾汇总。
+
+源码修改仍由共享 `mutating_sources` 守卫（common.py 与 parity 租约），恢复
+核验后由共享 `publish_summary` 原子发布。新目录、未提交 src 输入等不满足
+守卫时，不冒充正式运行；该部分由协调者提交后在宿主跑。
+
+## 内存漂移闸门
+
+`check_bindings(expectations, mutations, bound, unaffected)` 核表的键集、条目
+形状、非空值、重复行、规则与 derivation 控制覆盖；覆盖只来自 BOUND。
+`derived_counts` 从同一面板与变异表推导计数，源码负控记录到
+`derived-counts.json`，文档不维护计数副本。
+
+`doc_counts(documents, frozen)`、`check_docs(counts, documents, frozen)` 与
+`check_scan_set(frozen)` 只接收内存映射。扫描通配 `SCAN_GLOBS` 仅在
+`negative_controls.py` 定义；选择文档与反向覆盖共用它。被扫描内容为本
+README、A19-HOST-001-R1 与通配命中的 #1190 事件；中文 / 阿拉伯数字计数
+短语（条 / 档 / 项 / 个 / 处）必须与推导计数相符。`KNOWN_EVENTS` 钉已登记
+事件下限；含 `1190` 却逃出通配的名称同样报漂移。
+
+正式 CLI 只从真实 `specs/gateway-parity/frozen/` 读取。目录各级按 descriptor
+以 `O_NOFOLLOW` 打开；子项先不跟链 stat，确认普通文件后只读打开并再次
+核类型。所有链接（含悬空链接）、子目录和特殊文件直接 fail-closed，
+`O_NONBLOCK` 防止竞态换成 FIFO 后挂住。不接受替代目录参数。
+
+`meta_controls.py` 的全部情形只在内存中构造：删 / 空 / 变形 / 重复绑定表，
+错误计数，新增事件、删除已知事件、改名逃扫与空扫描集。每行情形绑定
+`meta_controls.check_scenario[情形名]` 及专属漂移消息；异常或无关诊断为
+INVALID，全部行结束才汇总。`--self-test` 逐个把对应闸门替换为 always-pass，
+必须在该情形的 `#1190 … expected drift:` 断言失败，恢复函数后再通过。
+真实目录前后由同一只读适配器比较 bytes 映射；不相等则撤销全部 KILLED。
+
+元负控不写任何文件，也不建临时目录；结果 JSON 只输出到 stdout，由调用方
+重定向保存。旧的副本构造、文件归属记录、独占夹具创建、重命名、删除、
+清理和文件快照实现均已移除。
+
+`test_meta_controls.py` 验证纯函数无 I/O、真实目录不变、类型与 no-follow
+拒绝、禁止替代目录、整表汇总、只读校验失败撤销结果、evidence 提前初始化。
+`--negative` 只在内存编译函数变体，逐项运行被绑 unittest 完整名；仅该测试
+在专属 AssertionError 上失败才 KILLED，编译失败和无关异常一律 INVALID。
 
 ## 运行
 
 ```sh
-python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py \
-  --check-anchors
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py --check-anchors
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/meta_controls.py
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/meta_controls.py --self-test
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/test_meta_controls.py
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/test_meta_controls.py --negative
+# 提交后，源码 require 变异的正式宿主运行：
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/negative_controls.py \
   --output <新证据目录> --source <A5.2a 六格原始输出>
-python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/meta_controls.py \
-  --output <新证据目录>
-python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/meta_controls.py \
-  --output <新证据目录> --self-test
 ```
 
-`--source` 需要真实 A5.2a 校准输出（`raw/` 下六格 JSON + preregistration /
-manifest / launch）。`mutating_sources` 要求被守文件与 `src/` 输入区都等于
-`--baseline`（默认 HEAD）：提交后由协调者在宿主跑；脏树预演用
-`--baseline "$(git stash create)"`（先 `git add` 让索引一致），但不冒充
-HEAD 准入。fixture 数据负控本身（`EXPECTATION_CASES` 全表，计数以运行时
-推导为准）由官方 `controls/session_domain.py --case <name> --source …`
-在提交后跑。
+`--source` 包含 `raw/` 下的观测与 preregistration / manifest、launch。
+原地源码负控要求 HEAD 与输入一致；不为绕过该检查创建副本仓库或构建目录。
+历史登记描述的是当轮事实，fix-r5 的执行方式以本文件和代码为准。
