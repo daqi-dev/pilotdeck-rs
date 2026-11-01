@@ -89,10 +89,16 @@ impl LiveSession for FakeSession {
         let fails = self.key == "f";
         self.probe.event(format!("dispose:{key}"));
         Box::pin(async move {
-            // The TS golden fails key `f` through the real asAgentHandle
-            // AggregateError, whose message the WS layer reports verbatim.
+            // The TS fixture's session throws `Error('fixture dispose
+            // failure')` for key `f`; the real #1011 `LiveSessionHandle`
+            // aggregation (session/handle.rs, the AgentHandle.ts:290
+            // mirror) turns it into the golden's `Failed to dispose agent
+            // handle.` text. The fake feeds the same distinct underlying
+            // error, so the close-fault rows are produced by the real
+            // aggregation instead of echoing the expected bytes (fix-r1
+            // P2-3).
             if fails {
-                Err(RuntimeError::new("Failed to dispose agent handle."))
+                Err(RuntimeError::new("fixture dispose failure"))
             } else {
                 Ok(())
             }
@@ -522,8 +528,8 @@ async fn mcp_gateway_replays_the_real_ts_oracle() {
     };
     assert_eq!(
         cases.len(),
-        37,
-        "#1215 the oracle must carry the full 37-row matrix"
+        44,
+        "#1215 the oracle must carry the full 44-row matrix"
     );
     let harness = harness(&keys);
     let mut failures: Vec<String> = Vec::new();
