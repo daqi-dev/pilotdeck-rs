@@ -65,6 +65,13 @@ the committed #1190 events by name and refuses any ``frozen/`` file whose
 name carries 1190 but matches no scan glob, so a deleted or renamed-away
 event is ``COUNT DRIFT`` (exit 2) instead of a silently green gate.
 
+fix-r4 (#1190 r4 review, coordinator "change the design, not another patch"):
+the scanned ``frozen/`` directory is a parameter (``--frozen-dir``, default
+the repository's own directory), so the drift gates still run their production
+path unmodified while ``meta_controls.py`` creates every fixture scenario on a
+throwaway ``shutil.copytree`` copy under ``tempfile.TemporaryDirectory()`` --
+the repository's ``frozen/`` is never written to.
+
 Per-row results live in memory only.  ``summary.json`` is published exactly
 once, after ``mutating_sources`` restored every guarded file and verified it
 byte-for-byte against the baseline (#979/#1037 + #166 r8 semantics, shared
@@ -89,6 +96,13 @@ COMMON = ROOT / 'scripts/gateway-parity/common.py'
 PANEL = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 RUN_CONTROL = Path(__file__).resolve().with_name('run_control.py')
 
+# fix-r4 (r4 review): the scanned frozen directory is a parameter -- the
+# production default below is the repository's own directory, and
+# ``meta_controls.py`` passes its throwaway copy so its fixture scenarios can
+# exercise the same production scan without writing anything into the
+# repository's ``frozen/``.
+FROZEN = ROOT / 'specs/gateway-parity/frozen'
+
 # The registration documents whose narrative must reference derived counts
 # instead of pinning them (#1190 review P2-2, r2 review P2-2).  Anything they
 # say about how many requires / controls / cases exist is a claim about the
@@ -97,16 +111,19 @@ RUN_CONTROL = Path(__file__).resolve().with_name('run_control.py')
 # events are derived from the directory glob, so a new #1190 event file can
 # never be silently left out of the scan (other issues' events keep their own
 # counts and stay out).
-DOC_COUNTS = (
-    (Path(__file__).resolve().with_name('README.md'), 'README'),
-    (ROOT / 'specs/gateway-parity/diffs/A19-HOST-001-R1.md', 'A19-HOST-001-R1'),
-    *((path, path.name) for path in sorted({
-        event for pattern in ('*-1190.md', '*-1190-*.md')
-        for event in (ROOT / 'specs/gateway-parity/frozen').glob(pattern)})),
-)
+def doc_counts(frozen_dir=None):
+    if frozen_dir is None:
+        frozen_dir = FROZEN
+    return (
+        (Path(__file__).resolve().with_name('README.md'), 'README'),
+        (ROOT / 'specs/gateway-parity/diffs/A19-HOST-001-R1.md', 'A19-HOST-001-R1'),
+        *((path, path.name) for path in sorted({
+            event for pattern in ('*-1190.md', '*-1190-*.md')
+            for event in frozen_dir.glob(pattern)})),
+    )
 
 # fix-r3 (r3 review P1): the floor of the glob-derived scan set.  A shrunk or
-# empty scan set used to read as "no drift" (an all-glob DOC_COUNTS cannot
+# empty scan set used to read as "no drift" (an all-glob doc_counts cannot
 # raise on a file it never saw), so the committed #1190 events are pinned by
 # name and every file in frozen/ whose name carries 1190 must be inside the
 # scan set -- renaming an event out of the glob cannot drop it either.
@@ -324,7 +341,7 @@ def check_bindings(expectation_cases):
     return errors
 
 
-def check_docs(counts):
+def check_docs(counts, frozen_dir=None):
     """The registration prose must not pin a count the tables have drifted from.
 
     #1190 review P2-2: the README, the diff entry and the freeze events claim
@@ -332,9 +349,12 @@ def check_docs(counts):
     contain is reconciled with ``derived-counts.json``.  A phrase whose line
     cannot be mapped to a derivable counter is drift too: reword it to
     reference the table (or ``derived-counts.json``) instead of a number.
+    fix-r4: the event files come from ``doc_counts(frozen_dir)`` -- the
+    repository directory by default, ``meta_controls.py``'s throwaway copy for
+    its scenarios.
     """
     errors = []
-    for path, label in DOC_COUNTS:
+    for path, label in doc_counts(frozen_dir):
         text = path.read_text(encoding='utf-8')
         for number, line in enumerate(text.splitlines(), 1):
             for match in COUNT_PHRASE.finditer(line):
@@ -355,22 +375,23 @@ def check_docs(counts):
     return errors
 
 
-def check_scan_set():
+def check_scan_set(frozen_dir=None):
     """The doc-scan set must cover the known #1190 events (fix-r3, r3 review P1).
 
-    ``DOC_COUNTS`` is glob-derived, so a deleted, renamed-away or otherwise
+    ``doc_counts`` is glob-derived, so a deleted, renamed-away or otherwise
     shrunken scan set used to read as "no drift" and the gate stayed green.
     The committed events in ``KNOWN_EVENTS`` are the floor; and every file
     under ``frozen/`` whose name carries 1190 must be inside the scan set,
     so a name the two globs do not match (``20261101-1190r2.md``) is refused
-    instead of silently left unscanned.
+    instead of silently left unscanned.  fix-r4: the directory is the
+    ``frozen_dir`` argument (the repository's own ``frozen/`` by default).
     """
     errors = []
-    scanned = {path.name for path, _label in DOC_COUNTS}
+    scanned = {path.name for path, _label in doc_counts(frozen_dir)}
     for name in KNOWN_EVENTS:
         if name not in scanned:
             errors.append(f'event file {name} is missing from the doc scan set')
-    directory = ROOT / 'specs/gateway-parity/frozen'
+    directory = FROZEN if frozen_dir is None else frozen_dir
     if not directory.is_dir():
         errors.append(f'frozen event directory is missing: {directory}')
         return errors
@@ -446,11 +467,16 @@ def main():
                         help='fresh A5.2a calibration output (six-cells raw data)')
     parser.add_argument('--only', action='append')
     parser.add_argument('--check-anchors', action='store_true')
+    parser.add_argument('--frozen-dir', type=Path, default=None,
+                        help='directory standing in for specs/gateway-parity/frozen '
+                             '(a meta-controls throwaway copy); default is the '
+                             'repository directory')
     parser.add_argument('--baseline', default='HEAD',
                         help='tree-ish the guarded sources must equal; HEAD for '
                              'the delivered post-commit run (a dirty rehearsal may '
                              'pass git stash create)')
     args = parser.parse_args()
+    frozen_dir = args.frozen_dir.resolve() if args.frozen_dir is not None else None
     expectation_cases = panel_table('EXPECTATION_CASES')
     # Counts are derived, never pinned in prose (#1190): the same
     # EXPECTATION_CASES table this runner machine-checks is the authority for
@@ -465,8 +491,8 @@ def main():
               'mutationRows': len(MUTATIONS)}
     drift = [('BINDING DRIFT', message)
              for message in check_bindings(expectation_cases)]
-    drift += [('COUNT DRIFT', message) for message in check_docs(counts)]
-    drift += [('COUNT DRIFT', message) for message in check_scan_set()]
+    drift += [('COUNT DRIFT', message) for message in check_docs(counts, frozen_dir)]
+    drift += [('COUNT DRIFT', message) for message in check_scan_set(frozen_dir)]
     if drift:
         for prefix, message in drift:
             print(prefix + ': ' + message, file=sys.stderr)
