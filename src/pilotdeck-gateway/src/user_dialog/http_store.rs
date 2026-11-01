@@ -96,6 +96,17 @@ const NODE_431_RESPONSE: &[u8] =
 const NODE_400_RESPONSE: &[u8] = b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 /// Largest raw socket chunk the header guard inspects in one `poll_read`.
 const HEADER_GUARD_BUFFER_BYTES: usize = 8 * 1024;
+/// How far [`TimeoutStream`] keeps reading past what hyper will buffer. Node's
+/// parser scans every byte of a socket read as it arrives, so a pipelined next
+/// request head must be accounted the moment its bytes land, even while hyper
+/// is still busy with the current request (#1232: a 431 that lands after the
+/// in-flight response is a different wire than Node's). hyper's own read
+/// buffer is demand-driven, so the excess bytes are buffered here until hyper
+/// asks for them. The cap must cover the largest burst the guard needs to see
+/// in one go — a head that trips either of its bounds stays under
+/// [`header_guard_raw_limit`] plus one read chunk — and bounds this buffer
+/// against a firehose peer.
+const READ_AHEAD_BYTES: usize = 128 * 1024;
 
 /// hyper's `max_buf_size` while [`HeaderGuard`] owns the 431. A Node-legal head
 /// can use four raw bytes per counted byte (`a:` = one counted name byte plus
@@ -1950,6 +1961,11 @@ struct KeepAliveTimer {
     /// unread bytes; drain the receive side before dropping the last handle so
     /// the kernel does not answer with an RST that discards the response.
     unread_body_close: AtomicBool,
+    /// Node-shaped bytes that must replace hyper's own encoding of the response
+    /// `serve` is about to return (the body `requestTimeout` 408 and the
+    /// `header_bytes` 431 backstop, #1232). `TimeoutStream::poll_write`
+    /// consumes them before hyper's first byte reaches the socket.
+    forced_response: Mutex<Option<&'static [u8]>>,
 }
 impl KeepAliveTimer {
     fn new(
@@ -1971,6 +1987,7 @@ impl KeepAliveTimer {
             lifecycle: Mutex::new(ConnectionLifecycle::default()),
             shutdown_started,
             unread_body_close: AtomicBool::new(false),
+            forced_response: Mutex::new(None),
         }
     }
 
@@ -2008,6 +2025,20 @@ impl KeepAliveTimer {
 
     fn has_unread_body_close(&self) -> bool {
         self.unread_body_close.load(Ordering::SeqCst)
+    }
+
+    /// Replace hyper's encoding of the response `serve` just decided on with
+    /// Node's canned bytes. The placeholder response still flows through the
+    /// service (its `Connection: close` keeps the keep-alive advertisement
+    /// inert), but `TimeoutStream::poll_write` writes these bytes to the
+    /// socket instead and then refuses every hyper write, so nothing of
+    /// hyper's 123-byte error shape follows them (#1232).
+    fn force_node_response(&self, bytes: &'static [u8]) {
+        *self.forced_response.lock().unwrap() = Some(bytes);
+    }
+
+    fn take_forced_response(&self) -> Option<&'static [u8]> {
+        self.forced_response.lock().unwrap().take()
     }
 
     fn store_waker(&self, cx: &Context<'_>) {
@@ -2161,12 +2192,15 @@ impl KeepAliveTimer {
 /// Replays Node v22.22.0's `maxHeaderSize` accounting on the raw request bytes
 /// before hyper's parser can answer with its own 431. Node's
 /// `node_http_parser.cc` `TrackHeader` counts the request target (`on_url`),
-/// every header field name and every header value, then rejects once the
+/// every header field name and every header value — including chunked trailer
+/// fields, which share the same per-message budget — then rejects once the
 /// running total reaches the limit (`>=`, so 16,383 counted bytes pass and
 /// 16,384 fail). The method, the spaces and `:`/CRLF separators are excluded;
 /// whitespace *before* a value is excluded too, while trailing whitespace is
 /// part of the value callback and is counted (probed on v22.22.0:
-/// `_tmp/20261025-issue-699/fix-r1/node/node-header-budget.json`).
+/// `_tmp/20261025-issue-699/fix-r1/node/node-header-budget.json`; the body,
+/// pipelined-head, chunked and trailer shapes re-probed for #1232 in
+/// `_tmp/20261026-issue-1232/node/probe-408-431-shape.json`).
 ///
 /// hyper buffers the whole head before its parser runs, and its `max_buf_size`
 /// would answer with its own 431 shape. The guard therefore also caps the raw
@@ -2176,15 +2210,28 @@ impl KeepAliveTimer {
 /// read chunk. The guard's 67-byte 431 always wins on the normal read path;
 /// hyper's cap is only a backstop.
 ///
-/// The guard only scans while the connection is waiting for a request head
-/// (`InitialHeaders` / `Idle` / `NextHeaders`). Body bytes and a pipelined head
-/// that hyper already buffered are not visible here; those keep the existing
-/// [`serve`] `header_bytes` backstop.
+/// The guard scans the whole connection, not only the request head
+/// (`InitialHeaders` / `Idle` / `NextHeaders`). Node's parser processes a
+/// pipelined next request the moment its bytes arrive — behind a body, inside
+/// the same read callback — and answers an oversized head before an in-flight
+/// handler response can reach the socket (probed: `pipelined-oversized-
+/// single-burst` is 67 bytes, not response1 + 431). The guard therefore tracks
+/// `Content-Length` and canonical chunked framing to skip body bytes without
+/// counting them, resets the per-message budget at every message boundary, and
+/// counts trailer fields like head fields. Framing the guard cannot replay
+/// (duplicate `Content-Length` values, extra transfer codings beyond
+/// `chunked`, malformed chunk-size lines) makes it step aside; hyper still
+/// parses those requests and [`serve`]'s `header_bytes` backstop answers an
+/// oversized pipelined head with the same Node bytes.
 #[derive(Debug)]
 struct HeaderGuard {
     max_header_bytes: usize,
     raw_limit: usize,
     active: bool,
+    /// Body framing of the message being scanned; `None` means the guard is
+    /// between messages, scanning for (or inside) a request head or the trailer
+    /// section.
+    body: BodyFraming,
     line: GuardLine,
     counted_bytes: usize,
     raw_bytes: usize,
@@ -2193,7 +2240,23 @@ struct HeaderGuard {
     request_line_section: u8,
     /// Leading SP/HTAB after the colon is not part of Node's value count.
     discarding_leading_whitespace: bool,
+    /// The current message's head is complete. Only meaningful while the
+    /// guard is scanning one (`body == None`).
     completed: bool,
+    /// Scanning the trailer section of a chunked message: field lines count
+    /// like head fields, but the blank line ends the message instead of
+    /// starting its body.
+    trailer: bool,
+    /// Case-insensitive match state of the field name against the two framing
+    /// field names; trailer fields never match.
+    framing_name: NameMatch,
+    /// Value accumulator for the framing field the name matcher matched.
+    framing_value: FramingValue,
+    /// Clean `Content-Length` value seen in this head.
+    content_length: Option<u64>,
+    /// A `Transfer-Encoding` value consisting of the single token `chunked`
+    /// was seen in this head (hyper also ignores `Content-Length` then).
+    transfer_chunked: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2203,12 +2266,79 @@ enum GuardLine {
     FieldValue,
 }
 
+/// Canonical body framing the guard can replay. Only shapes both parsers agree
+/// on are tracked; anything else steps the guard aside.
+#[derive(Debug)]
+enum BodyFraming {
+    /// Not inside a body.
+    None,
+    /// `Content-Length: n` with `n` bytes of body left.
+    Length(u64),
+    /// Reading the `<hex>[;ext] CRLF` chunk-size line: `size` accumulates hex
+    /// digits (zero means the terminal chunk), `extension` skips bytes after
+    /// the `;`, `saw_cr` expects the LF. Chunk extensions are skipped the way
+    /// llhttp and hyper skip them (probed: `chunkext-pipelined-oversized-
+    /// body-late` is the plain 67-byte 431).
+    ChunkSize {
+        size: u64,
+        extension: bool,
+        saw_cr: bool,
+    },
+    /// Skipping `remaining` bytes of chunk data.
+    ChunkData { remaining: u64 },
+    /// Chunk data done; `saw_cr` expects the LF that closes the chunk.
+    ChunkEnd { saw_cr: bool },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FramingField {
+    ContentLength,
+    TransferEncoding,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NameMatch {
+    /// Nothing decided yet for this field name.
+    None,
+    /// A prefix of the framing field name matched so far.
+    Partial(FramingField, usize),
+    /// The whole framing field name matched.
+    Full(FramingField),
+    /// This field name cannot match a framing field anymore.
+    Dead,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FramingValue {
+    /// Not capturing (the field does not decide framing).
+    None,
+    /// `Content-Length` digits; `invalid` on any other byte (hyper rejects
+    /// those with a 400 of its own).
+    ContentLength { value: u64, invalid: bool },
+    /// `Transfer-Encoding` must be the single token `chunked`; more codings
+    /// or another token make the framing untrackable for the guard (hyper
+    /// accepts some of those, so it keeps parsing and [`serve`]'s backstop
+    /// answers with Node bytes).
+    TransferEncoding { matched: usize, invalid: bool },
+}
+
+/// One hexadecimal chunk-size digit.
+fn hex_digit(byte: u8) -> Option<u64> {
+    match byte {
+        b'0'..=b'9' => Some((byte - b'0') as u64),
+        b'a'..=b'f' => Some((byte - b'a') as u64 + 10),
+        b'A'..=b'F' => Some((byte - b'A') as u64 + 10),
+        _ => None,
+    }
+}
+
 impl HeaderGuard {
     fn new(max_header_bytes: usize) -> Self {
         Self {
             max_header_bytes,
             raw_limit: header_guard_raw_limit(max_header_bytes),
             active: true,
+            body: BodyFraming::None,
             line: GuardLine::RequestLine,
             counted_bytes: 0,
             raw_bytes: 0,
@@ -2216,11 +2346,18 @@ impl HeaderGuard {
             request_line_section: 0,
             discarding_leading_whitespace: false,
             completed: false,
+            trailer: false,
+            framing_name: NameMatch::None,
+            framing_value: FramingValue::None,
+            content_length: None,
+            transfer_chunked: false,
         }
     }
 
-    fn reset(&mut self) {
-        self.active = true;
+    /// Node's `maxHeaderSize` accounting is per message, so the budget, the
+    /// raw bound and the framing bookkeeping all reset at a message boundary.
+    fn begin_next_head(&mut self) {
+        self.body = BodyFraming::None;
         self.line = GuardLine::RequestLine;
         self.counted_bytes = 0;
         self.raw_bytes = 0;
@@ -2228,20 +2365,33 @@ impl HeaderGuard {
         self.request_line_section = 0;
         self.discarding_leading_whitespace = false;
         self.completed = false;
+        self.trailer = false;
+        self.framing_name = NameMatch::None;
+        self.framing_value = FramingValue::None;
+        self.content_length = None;
+        self.transfer_chunked = false;
     }
 
-    /// Reset for a follow-up request only once the previous head completed and
-    /// the connection is back between requests.
+    fn reset(&mut self) {
+        self.active = true;
+        self.begin_next_head();
+    }
+
+    /// The guard scans bodies and pipelined heads too (#1232), so the
+    /// `Request` phase no longer pauses it: a head pipelined behind a body
+    /// must trip before hyper can answer the request it rode in with. Between
+    /// messages (`Idle` / `NextHeaders`) a completed message or an inactive
+    /// guard re-arms — the wire is at a message boundary there — while a
+    /// partially scanned head is kept across polls.
     fn begin(&mut self, phase: TimeoutPhase) {
         match phase {
-            TimeoutPhase::Request => self.active = false,
+            TimeoutPhase::Request | TimeoutPhase::InitialHeaders => {}
             TimeoutPhase::Idle | TimeoutPhase::NextHeaders => {
                 if self.completed || !self.active {
                     self.reset();
                 }
                 self.active = true;
             }
-            TimeoutPhase::InitialHeaders => {}
         }
     }
 
@@ -2263,79 +2413,328 @@ impl HeaderGuard {
             return false;
         }
         for &byte in bytes {
-            self.raw_bytes = self.raw_bytes.saturating_add(1);
-            if self.raw_bytes >= self.raw_limit {
-                self.active = false;
-                return true;
+            if matches!(self.body, BodyFraming::None) {
+                if self.push_head(byte) {
+                    return true;
+                }
+            } else {
+                self.push_body(byte);
             }
-            if byte == b'\r' {
-                continue;
-            }
-            if byte == b'\n' {
-                match self.line {
-                    GuardLine::RequestLine => {
-                        if !self.line_has_content {
-                            // Leading empty lines are tolerated before a
-                            // request line, like hyper's `consume_leading_lines`.
-                            continue;
-                        }
+        }
+        false
+    }
+
+    /// One request-head or trailer-section byte; returns `true` on a trip.
+    fn push_head(&mut self, byte: u8) -> bool {
+        self.raw_bytes = self.raw_bytes.saturating_add(1);
+        if self.raw_bytes >= self.raw_limit {
+            self.active = false;
+            return true;
+        }
+        if byte == b'\r' {
+            return false;
+        }
+        if byte == b'\n' {
+            match self.line {
+                GuardLine::RequestLine => {
+                    if self.line_has_content {
                         self.line = GuardLine::FieldName;
                         self.line_has_content = false;
                         self.request_line_section = 0;
                     }
-                    GuardLine::FieldName | GuardLine::FieldValue => {
-                        if !self.line_has_content {
-                            self.completed = true;
-                            self.active = false;
-                            return false;
-                        }
-                        self.line = GuardLine::FieldName;
-                        self.line_has_content = false;
-                        self.discarding_leading_whitespace = false;
-                    }
+                    // else: leading empty lines are tolerated before a request
+                    // line, like hyper's `consume_leading_lines`.
                 }
-                continue;
+                GuardLine::FieldName | GuardLine::FieldValue => {
+                    if !self.line_has_content {
+                        self.finish_head();
+                        return false;
+                    }
+                    self.finish_field();
+                    self.line = GuardLine::FieldName;
+                    self.line_has_content = false;
+                    self.discarding_leading_whitespace = false;
+                }
             }
-            let at_line_start = !self.line_has_content;
-            self.line_has_content = true;
-            match self.line {
-                GuardLine::RequestLine => {
-                    if byte == b' ' {
-                        if self.request_line_section == 0 {
-                            self.request_line_section = 1;
-                        } else if self.request_line_section == 1 {
-                            self.request_line_section = 2;
-                        }
-                    } else if self.request_line_section == 1 && self.count(1) {
+            return false;
+        }
+        let at_line_start = !self.line_has_content;
+        self.line_has_content = true;
+        match self.line {
+            GuardLine::RequestLine => {
+                if at_line_start {
+                    self.completed = false;
+                }
+                if byte == b' ' {
+                    if self.request_line_section == 0 {
+                        self.request_line_section = 1;
+                    } else if self.request_line_section == 1 {
+                        self.request_line_section = 2;
+                    }
+                } else if self.request_line_section == 1 && self.count(1) {
+                    return true;
+                }
+            }
+            GuardLine::FieldName => {
+                if at_line_start && (byte == b' ' || byte == b'\t') {
+                    // Obsolete line folding: the continuation is value text.
+                    self.line = GuardLine::FieldValue;
+                    self.discarding_leading_whitespace = true;
+                } else if byte == b':' {
+                    self.line = GuardLine::FieldValue;
+                    self.discarding_leading_whitespace = true;
+                    self.start_framing_value();
+                } else {
+                    self.push_field_name_byte(byte, at_line_start);
+                    if self.count(1) {
                         return true;
                     }
                 }
-                GuardLine::FieldName => {
-                    if at_line_start && (byte == b' ' || byte == b'\t') {
-                        // Obsolete line folding: the continuation is value text.
-                        self.line = GuardLine::FieldValue;
-                        self.discarding_leading_whitespace = true;
-                    } else if byte == b':' {
-                        self.line = GuardLine::FieldValue;
-                        self.discarding_leading_whitespace = true;
-                    } else if self.count(1) {
+            }
+            GuardLine::FieldValue => {
+                if self.discarding_leading_whitespace && (byte == b' ' || byte == b'\t') {
+                    // Leading value whitespace is not counted; all-OW
+                    // values count nothing.
+                } else {
+                    self.discarding_leading_whitespace = false;
+                    self.push_framing_value_byte(byte);
+                    if self.count(1) {
                         return true;
-                    }
-                }
-                GuardLine::FieldValue => {
-                    if self.discarding_leading_whitespace && (byte == b' ' || byte == b'\t') {
-                        // Leading value whitespace is not counted; all-OW
-                        // values count nothing.
-                    } else {
-                        self.discarding_leading_whitespace = false;
-                        if self.count(1) {
-                            return true;
-                        }
                     }
                 }
             }
         }
         false
+    }
+
+    /// One body byte. Body bytes are not header bytes — Node's budget never
+    /// counts them and the guard's raw bound tracks heads only — so this never
+    /// trips; it only walks the framing so the guard can find the next request
+    /// head behind the body.
+    fn push_body(&mut self, byte: u8) {
+        match self.body {
+            BodyFraming::None => unreachable!("push_body only runs inside a body"),
+            BodyFraming::Length(remaining) => {
+                if remaining == 1 {
+                    self.begin_next_head();
+                } else {
+                    self.body = BodyFraming::Length(remaining - 1);
+                }
+            }
+            BodyFraming::ChunkSize {
+                size,
+                extension,
+                saw_cr,
+            } => {
+                if saw_cr {
+                    if byte != b'\n' {
+                        self.active = false;
+                    } else if size == 0 {
+                        // Terminal chunk: the trailer field section follows.
+                        // Its blank line ends the message; every field line in
+                        // it is counted like a head field (probed:
+                        // `chunked-oversized-trailer` is the 67-byte 431).
+                        self.body = BodyFraming::None;
+                        self.line = GuardLine::FieldName;
+                        self.line_has_content = false;
+                        self.discarding_leading_whitespace = false;
+                        self.trailer = true;
+                    } else {
+                        self.body = BodyFraming::ChunkData { remaining: size };
+                    }
+                } else if byte == b'\r' {
+                    self.body = BodyFraming::ChunkSize {
+                        size,
+                        extension,
+                        saw_cr: true,
+                    };
+                } else if extension {
+                    // Chunk extension bytes are skipped.
+                } else if byte == b';' {
+                    self.body = BodyFraming::ChunkSize {
+                        size,
+                        extension: true,
+                        saw_cr: false,
+                    };
+                } else if let Some(digit) = hex_digit(byte) {
+                    match size
+                        .checked_mul(16)
+                        .and_then(|size| size.checked_add(digit))
+                    {
+                        Some(size) => {
+                            self.body = BodyFraming::ChunkSize {
+                                size,
+                                extension: false,
+                                saw_cr: false,
+                            };
+                        }
+                        None => self.active = false,
+                    }
+                } else {
+                    self.active = false;
+                }
+            }
+            BodyFraming::ChunkData { remaining } => {
+                if remaining == 1 {
+                    self.body = BodyFraming::ChunkEnd { saw_cr: false };
+                } else {
+                    self.body = BodyFraming::ChunkData {
+                        remaining: remaining - 1,
+                    };
+                }
+            }
+            BodyFraming::ChunkEnd { saw_cr } => {
+                if saw_cr {
+                    if byte == b'\n' {
+                        self.body = BodyFraming::ChunkSize {
+                            size: 0,
+                            extension: false,
+                            saw_cr: false,
+                        };
+                    } else {
+                        self.active = false;
+                    }
+                } else if byte == b'\r' {
+                    self.body = BodyFraming::ChunkEnd { saw_cr: true };
+                } else {
+                    self.active = false;
+                }
+            }
+        }
+    }
+
+    /// The blank line that ends a head (or a trailer section) was seen.
+    fn finish_head(&mut self) {
+        self.completed = true;
+        if self.trailer {
+            self.begin_next_head();
+            return;
+        }
+        if self.transfer_chunked {
+            self.body = BodyFraming::ChunkSize {
+                size: 0,
+                extension: false,
+                saw_cr: false,
+            };
+        } else if let Some(length) = self.content_length {
+            if length == 0 {
+                self.begin_next_head();
+            } else {
+                self.body = BodyFraming::Length(length);
+            }
+        } else {
+            // No body framing: the next request head starts right here.
+            self.begin_next_head();
+        }
+    }
+
+    /// A field line ended; fold the captured framing value in.
+    fn finish_field(&mut self) {
+        match self.framing_value {
+            FramingValue::ContentLength { value, invalid } => {
+                if invalid || self.content_length.is_some() {
+                    // Invalid or duplicate `Content-Length`: hyper answers some
+                    // of these shapes itself and Node others, so the guard
+                    // steps aside and lets `serve`'s backstop own any pipelined
+                    // head (with Node bytes).
+                    self.active = false;
+                } else {
+                    self.content_length = Some(value);
+                }
+            }
+            FramingValue::TransferEncoding { matched, invalid } => {
+                if invalid || matched != b"chunked".len() {
+                    self.active = false;
+                } else {
+                    self.transfer_chunked = true;
+                }
+            }
+            FramingValue::None => {}
+        }
+        self.framing_value = FramingValue::None;
+        self.framing_name = NameMatch::None;
+    }
+
+    /// The `:` ended the field name; start capturing the value if the name
+    /// matched a framing field.
+    fn start_framing_value(&mut self) {
+        self.framing_value = match self.framing_name {
+            NameMatch::Full(FramingField::ContentLength) => FramingValue::ContentLength {
+                value: 0,
+                invalid: false,
+            },
+            NameMatch::Full(FramingField::TransferEncoding) => FramingValue::TransferEncoding {
+                matched: 0,
+                invalid: false,
+            },
+            _ => FramingValue::None,
+        };
+    }
+
+    /// One field-name byte, tracking a case-insensitive prefix match against
+    /// `content-length` / `transfer-encoding`.
+    fn push_field_name_byte(&mut self, byte: u8, first: bool) {
+        if self.trailer {
+            return;
+        }
+        if first {
+            self.framing_name = if byte.eq_ignore_ascii_case(&b'c') {
+                NameMatch::Partial(FramingField::ContentLength, 1)
+            } else if byte.eq_ignore_ascii_case(&b't') {
+                NameMatch::Partial(FramingField::TransferEncoding, 1)
+            } else {
+                NameMatch::Dead
+            };
+            return;
+        }
+        self.framing_name = match self.framing_name {
+            NameMatch::Partial(field, matched) => {
+                let expected: &[u8] = match field {
+                    FramingField::ContentLength => b"content-length",
+                    FramingField::TransferEncoding => b"transfer-encoding",
+                };
+                if matched < expected.len() && byte.eq_ignore_ascii_case(&expected[matched]) {
+                    if matched + 1 == expected.len() {
+                        NameMatch::Full(field)
+                    } else {
+                        NameMatch::Partial(field, matched + 1)
+                    }
+                } else {
+                    NameMatch::Dead
+                }
+            }
+            // The name already matched in full; any further byte (say
+            // `content-lengthx`) makes it a different field.
+            NameMatch::Full(_) => NameMatch::Dead,
+            other => other,
+        };
+    }
+
+    /// One field-value byte (leading whitespace already discarded by the
+    /// caller), folded into the framing accumulators.
+    fn push_framing_value_byte(&mut self, byte: u8) {
+        match &mut self.framing_value {
+            FramingValue::None => {}
+            FramingValue::ContentLength { value, invalid } => {
+                if byte.is_ascii_digit() {
+                    *value = (*value)
+                        .saturating_mul(10)
+                        .saturating_add((byte - b'0') as u64);
+                    if *value == u64::MAX {
+                        *invalid = true;
+                    }
+                } else if byte != b' ' && byte != b'\t' {
+                    *invalid = true;
+                }
+            }
+            FramingValue::TransferEncoding { matched, invalid } => {
+                if *matched < b"chunked".len() && byte.eq_ignore_ascii_case(&b"chunked"[*matched]) {
+                    *matched += 1;
+                } else if byte != b' ' && byte != b'\t' {
+                    *invalid = true;
+                }
+            }
+        }
     }
 }
 
@@ -2351,6 +2750,16 @@ struct TimeoutStream<S> {
     armed_deadline: Option<tokio::time::Instant>,
     header_guard: HeaderGuard,
     read_buffer: Box<[u8]>,
+    /// Bytes the guard already scanned and accepted but hyper has not asked
+    /// for yet (#1232). Node's parser scans its whole read the moment it
+    /// arrives, so `poll_read` keeps draining the socket for the guard even
+    /// while hyper is still consuming the current message; the excess waits
+    /// here. Capped at [`READ_AHEAD_BYTES`].
+    ahead: Vec<u8>,
+    /// The socket hit EOF with `ahead` bytes still undelivered. The EOF is
+    /// surfaced only once they are handed over, so the caller sees the bytes
+    /// and then the end, in order.
+    ahead_eof: bool,
     /// Node error response bytes that still have to be written before the EOF.
     raw_response: Option<&'static [u8]>,
     raw_written: usize,
@@ -2378,6 +2787,8 @@ impl<S> TimeoutStream<S> {
             armed_deadline,
             header_guard: HeaderGuard::new(max_header_bytes),
             read_buffer: vec![0u8; HEADER_GUARD_BUFFER_BYTES].into_boxed_slice(),
+            ahead: Vec::new(),
+            ahead_eof: false,
             raw_response: None,
             raw_written: 0,
             read_eof: false,
@@ -2422,7 +2833,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TimeoutStream<S> {
             }
         }
     }
-
+}
+impl<S: AsyncWrite + Unpin> TimeoutStream<S> {
     /// Write the canned Node error response on the same task that owns the
     /// socket, then report EOF. The bytes stay in the kernel buffer, exactly
     /// like Node's `socket.write(response)` followed by `destroy()`.
@@ -2467,51 +2879,97 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
         if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
             return this.expire(cx);
         }
-        this.header_guard.begin(this.timer.phase());
-        if buffer.remaining() == 0 {
+        if buffer.remaining() == 0 && this.ahead.is_empty() {
             return Poll::Ready(Ok(()));
         }
-        let limit = buffer.remaining().min(this.read_buffer.len());
+        // #1232 read-ahead loop. Node's parser scans every byte of a socket
+        // read the moment it arrives, so one `poll_read` keeps draining the
+        // socket — even after the caller's room is full — until it is exhausted
+        // or the read-ahead cap is hit: a pipelined next head must be accounted
+        // (and its 431 written) before hyper can answer the request it rode in
+        // with. Accepted bytes wait in `ahead` until the caller asks for them.
         let mut response: Option<&'static [u8]> = None;
-        {
+        let mut delivered = false;
+        loop {
+            if this.ahead.is_empty() {
+                if this.ahead_eof {
+                    if delivered {
+                        // This poll already handed bytes over; surfacing the
+                        // EOF now would race hyper's phase bookkeeping (the
+                        // request those bytes belong to has not started
+                        // yet). The next poll sees the latched EOF.
+                        break;
+                    }
+                    // Peer FIN only closes the read half. Node still writes
+                    // a response to a half-closed peer; an incomplete
+                    // request additionally gets the parser's 47-byte 400.
+                    let phase = this.timer.phase();
+                    let incomplete = match phase {
+                        // hyper was still polling the body, so the parser
+                        // saw EOF before `Content-Length`/chunked end.
+                        TimeoutPhase::Request => true,
+                        // Some bytes of a head arrived but the blank line
+                        // never did; an empty head stays silent like Node.
+                        TimeoutPhase::InitialHeaders | TimeoutPhase::NextHeaders => {
+                            !this.header_guard.completed && this.header_guard.raw_bytes > 0
+                        }
+                        // No request in flight: Node's graceful close writes
+                        // nothing.
+                        TimeoutPhase::Idle => false,
+                    };
+                    if incomplete {
+                        this.raw_response = Some(NODE_400_RESPONSE);
+                        this.raw_written = 0;
+                        return this.poll_raw_response(cx);
+                    }
+                    this.read_eof = true;
+                    return Poll::Ready(Ok(()));
+                }
+            } else if buffer.remaining() > 0 {
+                let take = this.ahead.len().min(buffer.remaining());
+                let rest = this.ahead.split_off(take);
+                buffer.put_slice(&this.ahead);
+                this.ahead = rest;
+                delivered = true;
+                continue;
+            } else if this.ahead_eof {
+                // EOF is latched and the caller has no room for the waiting
+                // bytes; the next poll delivers them and then the EOF.
+                break;
+            }
+            // Bytes are waiting and the caller has no room for more: the
+            // guard still has to see everything that arrived, so keep reading
+            // (the trip below must land before hyper can answer the request
+            // the pipelined head rode in with, #1232).
+            this.header_guard.begin(this.timer.phase());
+            let limit = this
+                .read_buffer
+                .len()
+                .min(READ_AHEAD_BYTES - this.ahead.len());
             let mut scratch = ReadBuf::new(&mut this.read_buffer[..limit]);
             match Pin::new(&mut this.inner).poll_read(cx, &mut scratch) {
                 Poll::Ready(Ok(())) => {
                     let filled = scratch.filled();
                     if filled.is_empty() {
-                        // Peer FIN only closes the read half. Node still writes
-                        // a response to a half-closed peer; an incomplete
-                        // request additionally gets the parser's 47-byte 400.
-                        let phase = this.timer.phase();
-                        let incomplete = match phase {
-                            // hyper was still polling the body, so the parser
-                            // saw EOF before `Content-Length`/chunked end.
-                            TimeoutPhase::Request => true,
-                            // Some bytes of a head arrived but the blank line
-                            // never did; an empty head stays silent like Node.
-                            TimeoutPhase::InitialHeaders | TimeoutPhase::NextHeaders => {
-                                !this.header_guard.completed && this.header_guard.raw_bytes > 0
-                            }
-                            // No request in flight: Node's graceful close writes
-                            // nothing.
-                            TimeoutPhase::Idle => false,
-                        };
-                        if incomplete {
-                            this.raw_response = Some(NODE_400_RESPONSE);
-                            this.raw_written = 0;
-                            return this.poll_raw_response(cx);
-                        }
-                        this.read_eof = true;
-                        return Poll::Ready(Ok(()));
+                        // EOF: latch it, then let the loop hand over the
+                        // read-ahead bytes first.
+                        this.ahead_eof = true;
+                        continue;
                     }
                     this.timer.read_activity();
                     if this.header_guard.push(filled) {
                         response = Some(NODE_431_RESPONSE);
-                    } else {
-                        buffer.put_slice(filled);
+                        break;
+                    }
+                    this.ahead.extend_from_slice(filled);
+                    if this.ahead.len() >= READ_AHEAD_BYTES {
+                        break;
                     }
                 }
                 Poll::Pending => {
+                    if delivered {
+                        break;
+                    }
                     this.timer.store_waker(cx);
                     if deadline.is_some() && this.sleep.as_mut().poll(cx).is_ready() {
                         return this.expire(cx);
@@ -2526,7 +2984,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
             this.raw_written = 0;
             return this.poll_raw_response(cx);
         }
-        Poll::Ready(Ok(()))
+        if delivered {
+            return Poll::Ready(Ok(()));
+        }
+        // Only the read-ahead cap lands here with nothing to hand over: park
+        // like the socket arm above.
+        this.timer.store_waker(cx);
+        if deadline.is_some() && this.sleep.as_mut().poll(cx).is_ready() {
+            return this.expire(cx);
+        }
+        Poll::Pending
     }
 }
 impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
@@ -2536,10 +3003,36 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        if this.write_closed || this.raw_response.is_some() {
+        if this.raw_response.is_some() {
+            // #1232: a terminal write from an earlier poll is still in
+            // flight; finish it, then refuse hyper's bytes forever.
+            if this.poll_raw_response(cx).is_pending() {
+                return Poll::Pending;
+            }
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "connection closed",
+            )));
+        }
+        if this.write_closed {
             // The connection already has its terminal bytes; never append a
             // hyper response after Node's canned 400/408/431. A read-side EOF
             // (peer FIN) must not land here: the peer may still be reading.
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "connection closed",
+            )));
+        }
+        if let Some(raw) = this.timer.take_forced_response() {
+            // #1232: `serve` replaced this response's bytes with Node's own
+            // (the body `requestTimeout` 408 and the `header_bytes` 431
+            // backstop). Write them, then break hyper's write so none of its
+            // own encoding reaches the socket.
+            this.raw_response = Some(raw);
+            this.raw_written = 0;
+            if this.poll_raw_response(cx).is_pending() {
+                return Poll::Pending;
+            }
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "connection closed",
@@ -2734,7 +3227,8 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 // will ever reach the socket.
                                 let head_request = request.method() == Method::HEAD;
                                 timer.request_started();
-                                let mut response = serve(handler, request, limits).await;
+                                let mut response =
+                                    serve(handler, request, limits, &timer).await;
                                 // The shutdown decision and the keep-alive
                                 // decision share one lifecycle lock, so a
                                 // request that was already in flight keeps
@@ -3003,6 +3497,7 @@ async fn serve(
     handler: Arc<GatewayUserDialogStoreHttpHandler>,
     request: Request<Incoming>,
     limits: ServeLimits,
+    timer: &KeepAliveTimer,
 ) -> Response<Full<Bytes>> {
     // hyper's `Incoming` reports `exact() == Some(0)` only when the parser
     // decoded an empty body (no Content-Length and no Transfer-Encoding);
@@ -3026,10 +3521,12 @@ async fn serve(
     // Node's `maxHeaderSize` counts the request target plus header field name
     // and value bytes, and rejects once the total reaches the limit (probed on
     // v22.22.0: 2,500 fields of `aaaaa: x` pass, 2,800 fail; 16,383 counted
-    // bytes pass and 16,384 fail). This is the backstop for heads that hyper
-    // already buffered before [`HeaderGuard`] could scan them (a pipelined
-    // request read during a body); the guard owns the normal path and writes
-    // Node's exact 431 bytes. hyper has already trimmed leading/trailing value
+    // bytes pass and 16,384 fail). #1232: [`HeaderGuard`] scans bodies and
+    // pipelined heads too, so this is now only the backstop for framing the
+    // guard cannot track (duplicate `Content-Length`, multi-token
+    // `Transfer-Encoding`): those heads reach hyper's parser unaccounted, and
+    // this branch still answers with Node's exact 431 bytes via
+    // `force_node_response`. hyper has already trimmed leading/trailing value
     // whitespace here; leading OWS matches Node's `on_header_value`, but a
     // pipelined head with trailing value OWS can undercount Node's total in
     // this backstop (the guard, which sees raw bytes, is exact). The
@@ -3043,6 +3540,7 @@ async fn serve(
             .sum::<usize>();
     if header_bytes >= max_header_bytes {
         // Node's parser answers 431 with an empty body and `Connection: close`.
+        timer.force_node_response(NODE_431_RESPONSE);
         return empty_response(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }
     // Node's `createServer` defaults to `joinDuplicateHeaders: false`: the
@@ -3100,7 +3598,9 @@ async fn serve(
         }
         Err(_) => {
             // `requestTimeout` in Node also answers with an empty body and
-            // closes the connection.
+            // closes the connection. #1232: the bytes are Node's 51-byte
+            // constant, not hyper's encoding of this placeholder.
+            timer.force_node_response(NODE_408_RESPONSE);
             return empty_response(StatusCode::REQUEST_TIMEOUT);
         }
     };
