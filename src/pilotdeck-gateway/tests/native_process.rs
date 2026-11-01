@@ -133,7 +133,9 @@ async fn explicit_entry_selects_parser() {
 // observation: a removed call lets the child reach its own listening
 // advertisement before the deadline counts, and a reordered call lets
 // assembly's project registration leave entries under home before the
-// rejection. Launch, pipe and decode failures stay unbound (INVALID).
+// rejection. Launch, pipe, decode and early-exit failures stay unbound
+// (INVALID): a child that exits before the rejection is on stderr says
+// nothing about the gate.
 #[tokio::test]
 async fn native_entry_process_rejects_inherited_authority() {
     let scratch = test_scratch::Scratch::new("1261-native-entry");
@@ -201,10 +203,19 @@ async fn native_entry_process_rejects_inherited_authority() {
                     .expect("#1261 native entry child exit deadline")
                     .expect("#1261 native entry child exit status");
                 let stderr = String::from_utf8_lossy(&collected);
-                negative_assert!(
-                    stderr.contains(&rejection),
-                    "#1261 native entry rejects inherited {key}"
-                );
+                // A child that exits before the entry gate (assembly, config,
+                // dyld, OOM) or between the gate and its listening
+                // advertisement leaves neither the rejection nor the
+                // advertisement on stderr, so this run cannot tell an intact
+                // gate from a displaced one. The plain panic carries no #1261
+                // kill marker: the judge records INVALID instead of a false
+                // KILLED; only the rejection itself reaches the marked
+                // assertions below.
+                if !stderr.contains(&rejection) {
+                    panic!(
+                        "#1261 native entry child exited early; no rejection and no listening advertisement for {key}, cannot judge"
+                    );
+                }
                 negative_assert!(
                     !status.success(),
                     "#1261 native entry rejects inherited {key}"
