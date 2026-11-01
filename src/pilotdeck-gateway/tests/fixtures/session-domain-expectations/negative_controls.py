@@ -332,20 +332,23 @@ def main():
         for prefix, message in drift:
             print(prefix + ': ' + message, file=sys.stderr)
         return 2
-    if args.list:
-        print(json.dumps({'EXPECTATION_CASES': expectation_cases,
-                          'CALIBRATION_CASES': calibration_cases,
-                          'MUTATIONS': [row[0] for row in MUTATIONS],
-                          'counts': counts}, indent=2, ensure_ascii=False))
-        return 0
-    print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
+    if not args.list:
+        print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
         print('unknown or duplicate --only name', file=sys.stderr)
         return 2
     selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
     if args.check_anchors:
-        return check_anchors(selected)
+        anchor_status = check_anchors(selected)
+        if anchor_status != 0 or not args.list:
+            return anchor_status
+    if args.list:
+        print(json.dumps({'EXPECTATION_CASES': expectation_cases,
+                          'CALIBRATION_CASES': calibration_cases,
+                          'MUTATIONS': [row[0] for row in MUTATIONS],
+                          'counts': counts}, indent=2, ensure_ascii=False))
+        return 0
     if args.output is None or args.source is None:
         print('--output and --source are required unless --list or --check-anchors is used',
               file=sys.stderr)
