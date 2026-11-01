@@ -110,6 +110,14 @@ the L0 deletion. Two further fix-r3 mutants make the recheck ignore the
 removed-id set — the mismatch arm unconditionally (dropping the post-clear
 captured turn) and the in-lock recheck comparing generations only — so both
 layers must consult the recorded rows, not just the session generation.
+Two #1207 mutants then guard the clear record itself: splitting the id
+selection and the L0 DELETE back into two connection acquisitions (a capture
+that starts while the clear is parked at the `L0IdsSelected` seam lands
+between them and is deleted unrecorded) and reverting the per-row generation
+map to the accumulating set (a row whose deleting clear predates the
+baseline reads as cleared-since it), plus a third that drops the baseline
+comparison outright — the re-captured turn is silently dropped behind the
+stale entry.
 After commit:
 
 ```sh

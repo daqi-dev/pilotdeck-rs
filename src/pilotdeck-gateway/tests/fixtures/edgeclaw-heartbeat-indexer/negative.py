@@ -12,8 +12,8 @@ or `dict(name=..., changes=[(path, before, after), ...], test=...,
 assertion=...)` when one mutant needs several edits applied together (the
 #917 before-await hoist, the fix-r2 bump move). `changes` apply in order,
 each against the text the previous one produced. Mutated files: the heartbeat
-indexer and (fix-r2) the storage entries module that owns the clear
-generation.
+indexer, (fix-r2) the storage entries module that owns the clear generation
+and (#1207) the file-memory module that owns the removed-row record.
 
 New product files are not in HEAD before the coordinator commits them, so this
 script is normally run after that commit. `NEGATIVE_ONLY=a,b` narrows a sample.
@@ -30,6 +30,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 indexer = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/indexer.rs'
 entries = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/entries.rs'
+file_memory = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
@@ -185,6 +186,89 @@ DROPPED_SCOPE = '''                let commit_scopes = self
                     .snapshot_operation_scope()
                     .map_err(HeartbeatError::File)?;
                 drop(commit_scopes);
+'''
+
+# #1207 fix-1: the guarded segment split back into two connection
+# acquisitions. A capture that starts while the clear is parked at the
+# `L0IdsSelected` seam lands between the two statements, is deleted
+# unrecorded, and a heartbeat that already listed it would resurrect it.
+GAP_SELECT = '''            let conn = self.storage.conn()?;
+            let removed_l0_ids: Vec<String> = conn
+'''
+
+GAP_SELECT_SPLIT = '''            let removed_l0_ids: Vec<String> = self
+                .storage
+                .conn()?
+'''
+
+GAP_DELETE = '            conn.execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;\n'
+
+GAP_DELETE_SPLIT = '''            self.storage
+                .conn()?
+                .execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
+'''
+
+# #1207 fix-2: the per-row generation record back to the accumulating set
+# with the session-level comparison — membership alone cannot tell when a
+# row was deleted, so the stale id from the first clear reads as "cleared
+# since" a baseline that predates it and the re-captured turn is silently
+# dropped.
+REMOVED_MAP_FIELD = '''struct SessionClearState {
+    generation: u64,
+    removed: std::collections::HashMap<String, u64>,
+}
+'''
+
+REMOVED_SET_FIELD = '''struct SessionClearState {
+    generation: u64,
+    removed: std::collections::HashSet<String>,
+}
+'''
+
+REMOVED_MAP_INIT = '''            .or_insert(SessionClearState {
+                generation: 0,
+                removed: std::collections::HashMap::new(),
+            });
+'''
+
+REMOVED_SET_INIT = '''            .or_insert(SessionClearState {
+                generation: 0,
+                removed: std::collections::HashSet::new(),
+            });
+'''
+
+REMOVED_MAP_BUMP = '''        state.generation = next;
+        for id in removed {
+            state.removed.insert(id.clone(), next);
+        }
+'''
+
+REMOVED_SET_BUMP = '''        state.generation = next;
+        state.removed.extend(removed.iter().cloned());
+'''
+
+REMOVED_MAP_SINCE = '''            .is_some_and(|state| {
+                state
+                    .removed
+                    .get(l0_index_id)
+                    .is_some_and(|cleared_at| *cleared_at > baseline)
+            })
+'''
+
+REMOVED_SET_SINCE = '''            .is_some_and(|state| {
+                state.generation != baseline && state.removed.contains(l0_index_id)
+            })
+'''
+
+# #1207 fix-2: the baseline comparison dropped from the per-row record —
+# membership alone answers, so the end-to-end re-captured turn behind the
+# stale entry is dropped and its row marked indexed (silent turn loss).
+REMOVED_BASELINE_DROPPED = '''            .is_some_and(|state| {
+                state
+                    .removed
+                    .get(l0_index_id)
+                    .is_some_and(|_cleared_at| true)
+            })
 '''
 
 # (name, path, before, after, bound test, exact runtime anchor)
@@ -523,6 +607,34 @@ cases = [
                         agent_id: None,''',
      'single_project_cycle_matches_ts',
      '#770 case single-project request method/url/headers/body differs'),
+    # #1207 fix-1: the guarded segment split back into two connection
+    # acquisitions. A capture that starts while the clear is parked at the
+    # `L0IdsSelected` seam lands between the two statements and is deleted
+    # unrecorded — the bound test sees the insert complete before the release
+    # and the row swallowed by the DELETE.
+    dict(name='clear-gap-insert-swallowed',
+         changes=[(entries, GAP_SELECT, GAP_SELECT_SPLIT),
+                  (entries, GAP_DELETE, GAP_DELETE_SPLIT)],
+         test='concurrent_capture_cannot_land_between_l0_id_selection_and_delete',
+         assertion='#1207 the capture started inside the guarded segment may complete only after the clear released the storage guard'),
+    # #1207 fix-2: the per-row generation record back to the accumulating set
+    # with the session-level comparison — a row whose deleting clear predates
+    # the baseline reads as cleared-since it, and the re-captured turn is
+    # silently dropped.
+    dict(name='removed-since-accumulated',
+         changes=[(file_memory, REMOVED_MAP_FIELD, REMOVED_SET_FIELD),
+                  (file_memory, REMOVED_MAP_INIT, REMOVED_SET_INIT),
+                  (file_memory, REMOVED_MAP_BUMP, REMOVED_SET_BUMP),
+                  (file_memory, REMOVED_MAP_SINCE, REMOVED_SET_SINCE)],
+         test='stale_removed_entry_after_later_clear_keeps_since_semantics',
+         assertion='#1207 a row whose deleting clear predates the baseline must not read as cleared-since it'),
+    # #1207 fix-2: the baseline comparison dropped from the per-row record —
+    # membership alone answers, so the end-to-end re-captured turn behind the
+    # stale entry is dropped and its row marked indexed (silent loss).
+    dict(name='removed-since-ignores-baseline',
+         changes=[(file_memory, REMOVED_MAP_SINCE, REMOVED_BASELINE_DROPPED)],
+         test='recaptured_turn_survives_unrelated_later_clear',
+         assertion='#1207 the re-captured turn must be persisted, not silently dropped behind the stale removed entry'),
 ]
 only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
 
@@ -561,7 +673,7 @@ def assertion_failure(log, anchor):
 
 
 killed, survived = [], []
-with mutating_sources(root, [indexer, entries], baseline=baseline) as originals:
+with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) as originals:
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     run = cargo_test(None)
     (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)

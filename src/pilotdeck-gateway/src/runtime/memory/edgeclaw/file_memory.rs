@@ -435,6 +435,14 @@ pub enum ClearSessionStage {
     /// half-fix position). A hook that parks here observes the partial-clear
     /// state; one that errors aborts with the files already gone.
     BeforeDeleteL0,
+    /// #1207: after the session's L0 row ids are selected and before the
+    /// DELETE that removes them, with the connection guard held — the
+    /// guarded segment the selection and the deletion must share. A hook
+    /// that parks here keeps the guard open (a concurrent capture blocks
+    /// until the clear releases it); one that errors aborts the clear with
+    /// the L0 rows still present and the generation untouched. Production
+    /// never installs a hook.
+    L0IdsSelected,
 }
 
 #[doc(hidden)]
@@ -446,19 +454,26 @@ type ClearSessionHookSlot = std::sync::Mutex<Option<ClearSessionHook>>;
 
 /// #917 fix-r1: in-memory per-store clear counter. `generation` is this
 /// `EdgeClawFileStores`' monotone counter; `sessions` records the value each
-/// cleared session key last reached together with the ids of every L0 row its
-/// clears deleted. A reader that captured a baseline before a clear observes a
-/// different value after it, without touching SQLite.
+/// cleared session key last reached together with the generation at which
+/// each of its clears deleted a given L0 row. A reader that captured a
+/// baseline before a clear observes a different value after it, without
+/// touching SQLite.
 pub(crate) struct SessionClears {
     generation: std::sync::atomic::AtomicU64,
     sessions: std::sync::Mutex<std::collections::HashMap<String, SessionClearState>>,
 }
-/// #917 fix-r3 (review P0): the rows a session's clears deleted, accumulated
-/// across clears — a row deleted by an earlier clear can no longer be listed,
-/// so the accumulation only ever grows by the rows the latest clear removed.
+/// #917 fix-r3 (review P0): the rows a session's clears deleted, mapped to
+/// the generation of the clear that deleted each one. #1207: the per-row
+/// generation replaces an accumulating set — membership alone cannot tell
+/// *when* a row was deleted, so once any clear of the session had touched a
+/// row id, every later unrelated clear made that id read as "cleared since" a
+/// baseline that already predates the deleting clear (a re-captured turn was
+/// silently dropped). A row deleted by an earlier clear can no longer be
+/// listed, so each id's entry is only ever re-stamped by a later clear that
+/// deletes the row again.
 struct SessionClearState {
     generation: u64,
-    removed: std::collections::HashSet<String>,
+    removed: std::collections::HashMap<String, u64>,
 }
 impl SessionClears {
     pub(crate) fn new() -> Self {
@@ -471,7 +486,9 @@ impl SessionClears {
     /// (#917 fix-r2: only after the L0 rows are gone, so a clear that fails
     /// midway leaves the generation — and the rows — untouched; fix-r3: the
     /// rows it deleted are recorded with the bump, in one map insert, so a
-    /// reader sees both or neither).
+    /// reader sees both or neither; #1207: each deleted id is stamped with
+    /// this bump's generation, so the record can answer "deleted *after* the
+    /// reader's baseline", not merely "deleted at some point").
     pub(crate) fn bump(&self, session: &str, removed: &[String]) {
         let next = self
             .generation
@@ -485,10 +502,12 @@ impl SessionClears {
             .entry(session.to_string())
             .or_insert(SessionClearState {
                 generation: 0,
-                removed: std::collections::HashSet::new(),
+                removed: std::collections::HashMap::new(),
             });
         state.generation = next;
-        state.removed.extend(removed.iter().cloned());
+        for id in removed {
+            state.removed.insert(id.clone(), next);
+        }
     }
     /// The generation this session key last reached (0 when never cleared).
     pub(crate) fn generation_of(&self, session: &str) -> u64 {
@@ -500,18 +519,25 @@ impl SessionClears {
             .unwrap_or(0)
     }
     /// #917 fix-r3 (review P0): did a clear complete after `baseline` and
-    /// delete this exact L0 row? The generation and the removed-id set are
-    /// read under one lock, so the answer is atomic with the bump. A clear
-    /// that completed after the baseline but never deleted this row (the row
-    /// was captured after the clear finished) answers false: that turn is new
-    /// data, not cleared data.
+    /// delete this exact L0 row? The generation and the removed map are read
+    /// under one lock, so the answer is atomic with the bump. A clear that
+    /// completed after the baseline but never deleted this row (the row was
+    /// captured after the clear finished) answers false: that turn is new
+    /// data, not cleared data. #1207: a clear that deleted this row *before*
+    /// the baseline (`cleared_at <= baseline` — the row was re-captured, or
+    /// the baseline was read after that clear) answers false as well: the
+    /// reader's own listing of the row is not stale, so persisting it is not
+    /// a resurrection.
     pub(crate) fn removed_since(&self, session: &str, baseline: u64, l0_index_id: &str) -> bool {
         self.sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(session)
             .is_some_and(|state| {
-                state.generation != baseline && state.removed.contains(l0_index_id)
+                state
+                    .removed
+                    .get(l0_index_id)
+                    .is_some_and(|cleared_at| *cleared_at > baseline)
             })
     }
 }
