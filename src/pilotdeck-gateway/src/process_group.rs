@@ -54,6 +54,9 @@ impl Drop for GroupGuard {
 }
 
 /// Whether the group still has at least one member (including zombies).
+/// #1155: mirrored by `group_exists` in `tests/scratch_publication.rs` —
+/// the integration crate cannot see this private module — so change the
+/// two copies together.
 pub(crate) fn group_exists(group: Pid) -> bool {
     rustix::process::test_kill_process_group(group).is_ok()
 }
