@@ -778,7 +778,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 Some(JsValue::Bool(true))
             }
             "dispose" => {
-                tasks.dispose().await;
+                tasks.dispose().await.expect("#956 #957 sequence dispose");
                 subagents.shutdown();
                 Some(JsValue::Bool(true))
             }
@@ -1171,7 +1171,8 @@ fn creation_gate_lifecycle() {
                 assert_eq!(mode, "dispose", "#956 #957 lifecycle mode");
                 tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
                     .await
-                    .expect("#956 #957 dispose deadline");
+                    .expect("#956 #957 dispose deadline")
+                    .expect("#956 #957 dispose result");
             }
             let task = tasks
                 .get(&id, None)
@@ -1188,7 +1189,8 @@ fn creation_gate_lifecycle() {
             );
             tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
                 .await
-                .expect("#956 #957 cleanup deadline");
+                .expect("#956 #957 cleanup deadline")
+                .expect("#956 #957 cleanup result");
             for pid in groups.snapshot() {
                 until("#956 #957 gate group exits", || !group_alive(pid)).await;
             }
@@ -1353,7 +1355,8 @@ fn creation_watchdog_case(mode: &str) {
         );
         tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
             .await
-            .expect("#960 watchdog dispose deadline");
+            .expect("#960 watchdog dispose deadline")
+            .expect("#960 watchdog dispose result");
         until("#960 watchdog child drained", || !group_alive(pid)).await;
         groups.disarm();
     });
@@ -1605,7 +1608,7 @@ fn dropped_stop_still_kills_a_term_ignoring_group() {
         })
         .await;
         assert!(tasks.get(&id, None).unwrap().interrupted);
-        tasks.dispose().await;
+        tasks.dispose().await.expect("#960 dropped stop dispose");
     });
 }
 
@@ -1627,7 +1630,8 @@ fn dropped_dispose_still_completes() {
         );
         tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
             .await
-            .expect("a second dispose returns once the first one finishes");
+            .expect("a second dispose returns once the first one finishes")
+            .expect("a second dispose returns successfully");
         assert!(!group_alive(pid));
         let task = tasks.get(&id, None).unwrap();
         assert_eq!(task.status.as_str(), "cancelled");
@@ -1699,7 +1703,8 @@ fn async_spawn_failure_is_settled_by_stop_and_dispose() {
             .unwrap();
         tokio::time::timeout(Duration::from_secs(2), tasks.dispose())
             .await
-            .expect("dispose settles the other pid-less task without waiting");
+            .expect("dispose settles the other pid-less task without waiting")
+            .expect("dispose settles successfully");
         let task = tasks.get(&disposed.task_id, None).unwrap();
         assert_eq!(
             (task.status.as_str(), task.interrupted),

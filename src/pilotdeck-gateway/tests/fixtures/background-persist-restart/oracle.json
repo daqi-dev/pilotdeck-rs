@@ -1,0 +1,282 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/runtime/commandShell.ts": "b350a9cba14836c78ea4773758ec34d237c7abee4a6df1c207da6f8f92e79918",
+    "src/task/protocol/types.ts": "8e6e5533b01237a3857e33d049866a8d6d26a3c38f4162e6f045178406062d44",
+    "src/task/runtime/BackgroundTaskCompletionEvents.ts": "b1aaf63f66b0e4bb73068b39ca47436044b26271819f2550663955ccb974fabb",
+    "src/task/runtime/BackgroundTaskPort.ts": "e2427f34e8f4492f4868b86588f514875e5ca9b9c052cb16e7278c120bb2e61e",
+    "src/task/runtime/BackgroundTaskRuntime.ts": "fe759de9c68ea65edeaea4791c8377f96ac6de40e5108ea61a78decc7d5b30c4",
+    "src/task/storage/BackgroundTaskSnapshotStore.ts": "f16f114ce7df9645c680df533aa6494b5a9c0ee46dd59134eba3c4e7571b7d8d",
+    "src/task/storage/TaskOutputStore.ts": "eaff03430a2f31a09c0e2672479132c3c9e4459afae2c780e0a968a97da3cd66",
+    "src/tool/execution-world/DetachedShellPort.ts": "4c9da257adbecc26baa1a52a66a1e9dac885bc88cb228ad5671db911d7b0f7d4"
+  },
+  "cases": [
+    {
+      "id": "terminal-recovery",
+      "snapshot": [
+        {
+          "taskId": "task-printf",
+          "status": "completed",
+          "exitCode": 0,
+          "hasPid": true,
+          "interrupted": false,
+          "startedAt": "1970-01-01T00:00:00.000Z",
+          "endedAt": "1970-01-01T00:00:00.000Z",
+          "outputBytes": 6,
+          "output": {
+            "totalBytes": 6,
+            "persisted": true
+          }
+        },
+        {
+          "taskId": "task-silent",
+          "status": "completed",
+          "exitCode": 0,
+          "hasPid": true,
+          "interrupted": false,
+          "startedAt": "1970-01-01T00:00:00.000Z",
+          "endedAt": "1970-01-01T00:00:00.000Z",
+          "outputBytes": 0,
+          "output": {
+            "totalBytes": 0,
+            "persisted": true
+          }
+        }
+      ],
+      "restored": [
+        {
+          "taskId": "task-printf",
+          "status": "completed",
+          "exitCode": 0,
+          "hasPid": true,
+          "endedAt": "1970-01-01T00:00:00.000Z",
+          "outputBytes": 6
+        },
+        {
+          "taskId": "task-silent",
+          "status": "completed",
+          "exitCode": 0,
+          "hasPid": true,
+          "endedAt": "1970-01-01T00:00:00.000Z",
+          "outputBytes": 0
+        }
+      ],
+      "readPrintf": {
+        "content": "abcdef",
+        "nextOffset": 6,
+        "totalBytes": 6,
+        "truncated": false
+      },
+      "readSilent": {
+        "content": "",
+        "nextOffset": 0,
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "firstRuntimeEvents": [
+        {
+          "taskId": "task-printf",
+          "status": "completed",
+          "exitCode": 0,
+          "outputPreview": "abcdef",
+          "totalBytes": 6,
+          "startedAt": "1970-01-01T00:00:00.000Z",
+          "endedAt": "1970-01-01T00:00:00.000Z"
+        },
+        {
+          "taskId": "task-silent",
+          "status": "completed",
+          "exitCode": 0,
+          "outputPreview": "",
+          "totalBytes": 0,
+          "startedAt": "1970-01-01T00:00:00.000Z",
+          "endedAt": "1970-01-01T00:00:00.000Z"
+        }
+      ],
+      "secondRuntimeEvents": 0,
+      "secondRuntimeDiagnostics": []
+    },
+    {
+      "id": "crashed-running-recovery",
+      "runningSnapshot": {
+        "taskId": "task-sleep",
+        "status": "running",
+        "exitCode": null,
+        "hasPid": true,
+        "interrupted": false,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "endedAt": null,
+        "outputBytes": 6,
+        "output": {
+          "totalBytes": 6,
+          "persisted": true
+        }
+      },
+      "restored": [
+        {
+          "status": "unknown",
+          "hasPid": false,
+          "exitCode": "absent",
+          "endedAt": "absent",
+          "outputBytes": 6
+        }
+      ],
+      "read": {
+        "content": "abcdef",
+        "nextOffset": 6,
+        "totalBytes": 6,
+        "truncated": false
+      },
+      "waitOutcome": "unknown",
+      "stopError": {
+        "name": "BackgroundTaskStateUnknownError",
+        "message": "Task task-sleep has an unknown restored state and cannot be waited or stopped."
+      },
+      "firstRuntimeEvents": [
+        {
+          "taskId": "task-sleep",
+          "status": "cancelled",
+          "exitCode": null,
+          "outputPreview": "abcdef",
+          "totalBytes": 6,
+          "startedAt": "1970-01-01T00:00:00.000Z",
+          "endedAt": "1970-01-01T00:00:00.000Z"
+        }
+      ],
+      "secondRuntimeEvents": 0,
+      "secondRuntimeDiagnostics": []
+    },
+    {
+      "id": "spill-write-failure",
+      "inMemory": {
+        "content": "abcdef",
+        "nextOffset": 6,
+        "totalBytes": 6,
+        "truncated": false
+      },
+      "completionEvents": [
+        "completed"
+      ],
+      "snapshot": [
+        {
+          "taskId": "task-printf",
+          "status": "completed",
+          "exitCode": 0,
+          "hasPid": true,
+          "interrupted": false,
+          "startedAt": "1970-01-01T00:00:00.000Z",
+          "endedAt": "1970-01-01T00:00:00.000Z",
+          "outputBytes": 6,
+          "output": {
+            "totalBytes": 6,
+            "persisted": true
+          }
+        }
+      ],
+      "restart": {
+        "name": "Error",
+        "message": "Could not restore task output from <state>/output/task-printf.log."
+      }
+    },
+    {
+      "id": "dispose-flush-reject",
+      "outcome": "rejected: #1233 flush refused",
+      "state": "draining",
+      "listed": [
+        {
+          "status": "completed",
+          "exitCode": 0
+        }
+      ],
+      "readAfterDispose": {
+        "content": "",
+        "nextOffset": 0,
+        "totalBytes": 6,
+        "truncated": false
+      },
+      "startError": "Background task runtime is draining; refusing a new task.",
+      "completionEvents": [
+        "completed"
+      ],
+      "diagnostics": []
+    },
+    {
+      "id": "dispose-flush-sync-throw",
+      "outcome": "rejected: #1233 flush refused",
+      "state": "draining",
+      "listed": [
+        {
+          "status": "completed",
+          "exitCode": 0
+        }
+      ],
+      "readAfterDispose": {
+        "content": "",
+        "nextOffset": 0,
+        "totalBytes": 6,
+        "truncated": false
+      },
+      "startError": "Background task runtime is draining; refusing a new task.",
+      "completionEvents": [
+        "completed"
+      ],
+      "diagnostics": []
+    },
+    {
+      "id": "restart-mismatch",
+      "restart": {
+        "name": "Error",
+        "message": "Task output at <state>/output/task-printf.log has 7 bytes; expected 6."
+      }
+    },
+    {
+      "id": "restart-missing",
+      "restart": {
+        "name": "Error",
+        "message": "Could not restore task output from <state>/output/task-printf.log."
+      }
+    },
+    {
+      "id": "settle-ok",
+      "completionEvents": [
+        {
+          "taskId": "task-settle",
+          "status": "completed",
+          "exitCode": 0,
+          "outputPreview": "abcdef",
+          "totalBytes": 6,
+          "startedAt": "1970-01-01T00:00:00.000Z",
+          "endedAt": "1970-01-01T00:00:00.000Z"
+        }
+      ],
+      "diagnostics": [],
+      "onDiskTasks": 1,
+      "restored": [
+        {
+          "status": "completed",
+          "outputBytes": 6
+        }
+      ],
+      "read": {
+        "content": "abcdef",
+        "nextOffset": 6,
+        "totalBytes": 6,
+        "truncated": false
+      },
+      "secondRuntimeDiagnostics": []
+    },
+    {
+      "id": "settle-write-failure",
+      "completionEvents": [],
+      "diagnostics": [
+        "#1233 settle write refused"
+      ],
+      "onDiskTasks": "absent",
+      "restored": [],
+      "read": {
+        "error": "Unknown taskId: task-settle"
+      },
+      "secondRuntimeDiagnostics": []
+    }
+  ]
+}

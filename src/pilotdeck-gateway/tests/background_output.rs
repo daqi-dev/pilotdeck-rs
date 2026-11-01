@@ -29,7 +29,7 @@ async fn configured_runtime_preserves_complete_ts_log_after_dispose() {
         let waited = runtime.wait(&task.task_id, &JsValue::Number(10000.0), None, None).await.expect("#994 background-output setup").expect("#994 background-output setup");
         assert!(!waited.timed_out, "#994 background-output assertion");
         assert_eq!(waited.task.status.as_str(),"completed", "#994 background-output assertion");
-        runtime.dispose().await;
+        runtime.dispose().await.expect("#994 background-output dispose");
         let oracle: serde_json::Value = serde_json::from_str(include_str!("fixtures/background-output/oracle.json")).expect("#994 background-output setup");
         let expected = oracle["cases"][0]["steps"].as_array().expect("#994 background-output setup").iter().rev().find(|step|step["op"]=="disk").expect("#994 background-output setup")["result"].clone();
         let path = state.join("output").join(format!("{}.log",String::from_utf16_lossy(task.task_id.units())));
