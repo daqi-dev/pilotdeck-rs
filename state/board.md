@@ -1,36 +1,36 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-01 15:33 · by Claude Code 协调者
-- #1209 | review | doing | PR #1212 A8.4-pr1 原生 HTTP；r6 两家 0/0（覆盖 e9ea6a94f）→ mbp2 r6m / cb8 r6c 宿主 → 合 main 检查 → 入队
-- #1044 | review | doing | PR #1238 合 main 检查过，已入队
-- #1215 | review | doing | PR #1225 收敛；cb8 r4c 宿主 → 入队
-- #1218 | review | doing | PR #1228 收敛；mbp2 r3m 宿主 → 合 main 检查 → 入队
-- #132 | review | doing | 协调者修两处负控丢 patch（connection-context、yaml）→ r5 GLM + DeepSeek；mbp2 / cb8 宿主
-- #201 | review | doing | PR #1248 r2 收敛；mbp2 / cb8 宿主
-- #1216 | review | doing | PR #1229 第 3 轮后 r4 0 P0/P1（P2 → #1258）；cb8 r4c 宿主 → 入队
-- #1231 | review | doing | 第 3 轮后 r4 0 P0/P1（P2 → #1261）；决策卡措辞本地已改，宿主跑完再推
-- #1140 | impl | doing | PR #1196 fix-r5 GLM cb8（尺子 P1：门控跳过可假通过）
-- #1190 | impl | doing | PR #1243 fix-r3 GLM cb8（P0：预存文件被删）
-- #1220 | impl | doing | PR #1237 fix-r2 GLM macmini
-- #360 | impl | doing | fix-r3（末轮）GLM macmini
-- #1207 | review | doing | PR #1240 r3 opus + DeepSeek；cb8 宿主
-- #1232 | review | doing | PR #1256 r1 opus + DeepSeek；两台宿主
-- #1233 | review | doing | PR #1257 r1 opus + DeepSeek；两台宿主
-- #1252 | review | doing | PR #1259 r1 opus + DeepSeek；mbp2 宿主（严格比较后 36 格关闭顺序 FAIL → #1260）
-- #1139 | impl | doing | 改用 proc-macro2 共享入口，GLM cb8
-- #1260 | impl | blocked | SDK 信号 36 格关闭顺序与 TS 不一致（P1）；等 #1259 合入（同改 signal_replay.rs）
-- #1242 | impl | blocked | native 格刺激对齐；等 #1140 合入（同改 native-witness），挡 #590
-- #1250 | impl | blocked | 原生 HTTP keep-alive 三处偏离；等 #1209 合入，前置于 A8.5
-- #1253 | impl | blocked | #1011 承接；等 #1218 合入（同模块 session-factory）
-- #996 #1245 | impl | blocked | 等 #1218 合入
+updated: 2026-11-01 21:47 · by Claude Code 协调者
+- #1140 | review | doing | PR #1196 fix-r10 收货 b404e5456；r12 GLM 0 P0/P1、opus 待回；压缩 rebase r2（子代理，临时树）→ rebase 机械核对评审 → 合 main（含 check_frozen --base）→ 入队
+- #1209 | review | doing | PR #1212 r6 收敛、cb8 + 本机宿主全过 → 正文 + 合 main 检查（子代理）→ 入队
+- #1278 | review | doing | PR #1283 r4 收敛、macmini 宿主过（lib 1 FAIL 属 #1289）→ 正文 + 合 main 检查（子代理）→ 入队
+- #1139 | review | doing | PR #1170 重做轮（改用 #1166 共享扫描器）→ opus + DeepSeek + macmini 宿主
+- #1245 | review | doing | PR #1286 r2 DeepSeek 0 P0/P1，opus + macmini 宿主待回
+- #1289 | impl | doing | main 的 macOS 回归（#1216 非 UTF-8 用例）GLM macmini
+- #1155 | review | doing | PR #1272 r2 收敛中；cb8 宿主
+- #448 | review | doing | PR #1267 r3 收敛（P2 → #1280）；cb8 新 head 宿主
+- #283 | review | doing | PR #1268 r3 收敛（P2 → #1273）；cb8 新 head 宿主
+- #1220 | review | doing | PR #1237 r4 收敛（P2 → #1274）；cb8 宿主 + 本机 live-e2e 单项复跑
+- #1265 | review | doing | PR #1266 r2 收敛（P2 → #1271）；cb8 宿主 + 本机 native-process 单项复跑
+- #1253 | review | doing | PR #1275 r2 收敛（P2 → #1281）；cb8 宿主
+- #1233 | review | doing | PR #1257 r2 收敛（P2 → #1276）；background-output 负控待 #1278 合入
+- #360 | review | doing | PR #1234 r4 收敛（P2 → #1269）；mbp2 宿主
+- #132 | review | doing | PR #1235 r5 收敛；mbp2 / cb8 宿主；本地 P2 提交待旧 head 宿主完再推
+- #1207 | review | doing | PR #1240 本地提交待 cb8 r3c 宿主后推
+- #1252 | review | doing | PR #1259 r1 收敛；P2 与宿主待收
+- #1260 | impl | blocked | 等 #1259 合入（同改 signal_replay.rs）
+- #1242 | impl | blocked | 等 #1140 合入（同改 native-witness），挡 #590
+- #1221 | impl | blocked | 等 #1140 合入
+- #1194 | impl | blocked | 等 #1140 合入
+- #1250 | impl | blocked | 等 #1209 合入，前置于 A8.5
+- #996 | impl | blocked | 等 #1245 合入
 - #1219 | impl | blocked | 等 #1220 合入
-- #1221 #1194 | impl | blocked | 等 #1140 合入
+- #1099 | impl | blocked | M6 总单：pr4 存量迁移等 #1139
 - #1254 | impl | blocked | 归 M6 #1099 车道
-- #144 | coord | doing | 协调者补决策卡后请人定（#1157）
 - #590 | impl | blocked | 前置 #1140 → #1242
 - #1146 | impl | blocked | D1-P09 前置 A8 + #1260
-- #1099 | impl | doing | M6 总单：pr4 存量迁移等 #1139
+- #144 | coord | doing | 协调者补决策卡后请人定（#1157）
 <!-- READY:END -->
 
 > ## 2026-10-25 03:57 · #589/#590 fix-r4 ACK 收据与安全红探针配方（GLM glm-5.3-mb，wt=issue-589-live-integrity）
@@ -2798,3 +2798,13 @@ updated: 2026-11-01 15:33 · by Claude Code 协调者
 - 21:1x 子代理 983702f：ops-sync 生成的 23 个入口全部先经 sigint-default（顺带修 Python 启动把 SIGPIPE / SIGXFSZ 设忽略经 exec 传给入口的隐患）；lib/sigint-probe.sh（macOS 用 sysctl 读忽略掩码、pid 核对；Linux 读 /proc SigIgn）接进 round-start（`--only-sigint` 可单跑）。冒烟：nohup sleep ignored rc=1、经 sigint-default default rc=0、入口层 nohup 下子进程 default。当前 17 个改动前启动的进程报 ignored，重启后消失。
 - 21:1x #1140 r11 两家无 P0/P1；两家撞上同类：native_evidence 作为第 12 个冻结入口，引导块非逐字、被 test_safety 一致性检查按内容跳过、4 处入口枚举与 #1066 清单 / entry-guard policy 负控未扩 → P2b 当轮修 → fix-r10（Codex）。本机 r11l 已跑完全过（含全仓自检），撤后续。#1231 mbp2 宿主全过 → 推送决策卡措辞 8ef9f334f → 闸门要结果块覆盖当前 head → r5 GLM + DeepSeek 只审该行。#1287（PR）合 main 检查过、入队。
 - 21:15 **两小时交接** → `_tmp/20261101-handoff-2115.md`。
+- 21:2x 另一 agent 的 cb8 分组并行方案（`_tmp/20261101-host-parallel-cb8/PLAN.md`）评估：实测 cb8 7 条链同跑 neg、cargo 恰 4、负载 5.3/20 → 瓶颈是整机名额而非链内串行；先等 #1287（cb8 10）合入量效果，分组并行定位为关键单按需开启的 v3，A/B 只补并行臂（`COORD-REVIEW.md`）。#1231 合 main 检查全过 → ready，等 CI 入队。21:15 交接 state PR #1288。
+- 21:3x #1232（PR #1256）、#1287 合入（邮箱 noreply 已核）→ #1232 收尾自查评论、看板 Done、回收两树、删三台远端 build 目录；cb8 车道临时起的 #1232 旧排队宿主链（本机 + 远端）按 pid 停掉核实。#1231 ready → 队列第 1。
+- 21:3x **main 的 macOS 回归**：#1278 macmini lib 1 FAIL = #1216 的 `migration_non_utf8_home_keeps_one_physical_key`（APFS 拒绝非 UTF-8 文件名，EILSEQ；#1216 只在 cb8 Linux 跑过 lib）→ 开 #1289 派 GLM macmini（测试改 linux-only + cron-store 负控该格非 Linux 报 SKIP）。#1278 background-output 18 KILLED → r4 增量（README 数字是协调者改的，review 守卫拒 opus → glm+dsh）。
+- 21:3x #1140 fix-r10 收货 → frozen-receive 第四次自动重登记 b404e5456；亲核全仓锚点 errors=0、test_safety 87 OK、check_frozen --base PASS → r12（opus + GLM）+ macmini 宿主（2 套负控 + test_safety）。#1245 fix-r1 收货（Node v22.22.0 四格探针）→ r2 opus + DeepSeek + macmini 宿主。
+- 21:3x 人问 .env.local key 更新要不要同步：三台远端只存 ZAI / DEEPSEEK 两个 key，哈希与本机一致；变动的是只在本机用的 key → 无需同步（本机文件 644，建议人 chmod 600）。
+- 21:4x #1140 r12：GLM 四角色 0 P0/P1（simplify 一条建议）、opus 在跑；macmini 宿主两套负控 77 / 56 KILLED、全仓锚点 0 错，test_safety rc=2 = **我的工具缺陷**：neg-for-diff v14 把本机 sigint-default.py 绝对路径写进清单，远端无此文件 → v15 改内联恢复 SIGINT（nohup 冒烟 87 OK，pdrs-ops a0570f0）；同 head test_safety 本机已亲核 87 OK。压缩 rebase r2 交子代理（临时树，不推送）与 opus 并行。#1245 r2 的 macmini 清单同样带 v14 行，test_safety 改在合 main 检查时核。
+- 21:4x #1278 r4 两家 0/0/0 收敛；#1209 r6l 本机 14 套全 KILLED（cb8 同 head 全过）→ 两条正文 + 串行合 main 检查交子代理。
+- 21:5x #1231（PR #1247）、21:15 交接 state PR #1288 合入（邮箱 noreply）→ #1231 收尾自查、Done、回收树与远端 build 目录。
+- 21:5x **漏收交付 8.5 h**：#1139 重做轮 13:08 已交付（补丁应用在树上未提交），守望 v9 按内容哈希判变化，同目录上一轮 glm.exit 同为 `exit=0` → 判未变、没触发 auto-receive（READY 段 15:33 后未更新也让它从视野里消失）。手工收货推送 98c03ab28，PR #1170（随分支重置自动关闭）重开 → 重做轮评审 opus + DeepSeek + macmini 宿主。修复交子代理：守望 v10 键含 mtime；round-start 加「交付未收」兜底扫描。手工全树扫描：无其它漏收。
+- 21:5x #1245 r2 DeepSeek 0 P0/P1（P2 3），opus 与 macmini 宿主待回。
