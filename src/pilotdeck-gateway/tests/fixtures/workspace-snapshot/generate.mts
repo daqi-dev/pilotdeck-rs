@@ -338,10 +338,10 @@ try {
   // Non-UTF-8 file names need a byte-transparent filesystem (Linux ext4 and
   // friends); APFS/HFS+ reject the bytes with EINVAL, so the scenario probes
   // first and both this generator and the Rust replay drop it where the name
-  // cannot exist. The committed oracle was generated on macOS, where the probe
-  // is rejected, so it has no non-utf8 scenario and CI never regenerates the
-  // fixtures: this path is currently uncovered. Linux generation is pending
-  // #283.
+  // cannot exist. Since #283 the committed oracle is generated on Linux
+  // (cb8, ext4; the README in this directory registers the pinned host and
+  // SHA256) and carries the non-utf8 scenario; regenerating on macOS drops
+  // it again, so the regenerates-identically guard is Linux-only.
   const nonUtf8Probe = Buffer.concat([Buffer.from(`${scratch}/probe-`), Buffer.from([0xff])]);
   const nonUtf8Names = await writeFile(nonUtf8Probe, '')
     .then(() => removeOwned(scratch, nonUtf8Probe))
