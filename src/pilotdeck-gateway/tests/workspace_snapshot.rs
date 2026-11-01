@@ -708,8 +708,12 @@ fn non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux() {
         .find(|scenario| s(field(scenario, "name")) == "non-utf8")
         .expect("#283 the committed oracle must carry the non-utf8 scenario");
     let steps = arr(field(scenario, "steps"), "non-utf8 steps");
+    // Locate by op, not by position: the gold is `tick, capture` today, but a
+    // step appended after the capture must not silently become the replayed
+    // capture (same locator the generator itself uses, generate.mts).
     let capture = steps
-        .last()
+        .iter()
+        .find(|step| s(field(step, "op")) == "capture")
         .expect("#283 the non-utf8 scenario records its capture");
     let expected = field(capture, "outcome");
     let guard = Scratch::new();
@@ -730,6 +734,14 @@ fn non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux() {
     }
     let raw_files = arr(field(spec, "rawFiles"), "non-utf8 workspace.rawFiles");
     for raw in raw_files {
+        // The raw self-check below compares the flat listing of `workspace`,
+        // so a raw file recorded in any other directory must fail loudly here
+        // instead of silently comparing the wrong set (r1 review P3).
+        assert_eq!(
+            s(field(raw, "dir")),
+            "workspace",
+            "#283 the non-utf8 scenario records its raw files inside the workspace"
+        );
         // Byte-exact non-UTF-8 file names.
         let name = OsString::from_vec(decode(&s(field(raw, "nameB64"))));
         fs::write(
@@ -2928,9 +2940,13 @@ fn tree_projection_only_masks_runtime_created_at() {
     assert!(text.contains(&format!("\"failureReason\": \"{dir}/keep\"")));
     assert!(text.contains("scandir '<dir>/x'"));
 }
-
-#[test]
-#[ignore = "requires fixed TS baseline and Node/tsx; run with PDRS_BASELINE"]
-fn workspace_snapshot_fixture_regenerates_identically() {
-    baseline::regenerates_identically("workspace-snapshot");
-}
+// #283 fix-r1: this file used to carry its own unguarded
+// `workspace_snapshot_fixture_regenerates_identically` calling
+// `baseline::regenerates_identically("workspace-snapshot")`. Since the gold
+// carries the non-utf8 scenario (28 scenarios, generated on ext4), that guard
+// false-failed on every byte-transparent-incapable host (macOS regenerates 27
+// and the byte comparison panics — reproduced before this deletion). The only
+// regen guard for this fixture is now the Linux-only, Node/ICU-pinned
+// `workspace_snapshot_regenerates_identically` in generator_provenance.rs,
+// which the Linux runner (fixtures/workspace-snapshot-nonutf8/run-linux.sh)
+// executes; nothing regenerates this fixture on macOS by design.

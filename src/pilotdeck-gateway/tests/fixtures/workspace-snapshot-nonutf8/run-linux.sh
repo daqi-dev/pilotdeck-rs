@@ -7,9 +7,10 @@
 # dedicated Linux gate, the 28-scenario main replay, the regenerates-
 # identically guard (Linux-only since #283), and the negative controls. The
 # positives and the compile check also run before the commit; the negative
-# controls require the committed state (mutating_sources refuses untracked
-# src/ files) and are therefore attempted but reported as NOT_RUN when run
-# pre-commit.
+# controls require the committed state (mutating_sources refuses any tree
+# that is not HEAD — tracked diffs or untracked build inputs) and are
+# therefore attempted but reported as NOT_RUN when the running runner itself
+# is not the committed one (pre-commit); post-commit refusals are FAILED.
 #
 # Usage: run-linux.sh <pilotdeck-ts-baseline> [evidence-dir]
 # Required caller environment: CARGO_TARGET_DIR (the caller-owned build tree).
@@ -19,8 +20,9 @@
 # child (the regen guard and the negative controls spawn `node`).
 #
 # Exit codes: 0 = positives verified and all negatives KILLED; 1 = FAILED;
-# 2 = BLOCKED (caller environment); 3 = BLOCKED (pinned Node gate);
-# 77 = positives verified but negatives NOT_RUN (pre-commit; rerun post-commit).
+# 2 = BLOCKED (caller environment); 3 = BLOCKED (pinned Node/locale gate);
+# 77 = positives verified but negatives NOT_RUN (pre-commit only; rerun
+# post-commit).
 set -u
 set -o pipefail
 
@@ -45,6 +47,11 @@ mkdir -p "$evidence"
 # may survive.
 export LANG=C.UTF-8
 unset LC_ALL LC_MESSAGES LC_COLLATE LC_CTYPE LANGUAGE
+# Same normalization for TMPDIR: the dedicated gate's scratch hardcodes /tmp
+# while Node's os.tmpdir()/Rust's temp_dir() follow $TMPDIR, so a caller
+# override would make the byte-transparency probe below vouch for a
+# filesystem the replay never writes its raw names to (r1 review P2).
+unset TMPDIR
 
 # The pinned source-built baseline Node (ICU 78.2 + libuv 1.52.1; the older
 # ~/opt/node-v22.22.0-linux-arm64 is ICU 77.1 / libuv 1.5x and must not be
@@ -96,6 +103,12 @@ export PDRS_BASELINE="$baseline_ts"
 "$node_bin" --version
 "$node_bin" -e 'console.log(JSON.stringify({node: process.version, uv: process.versions.uv, icu: process.versions.icu, platform: process.platform, locale: new Intl.Collator().resolvedOptions().locale}))' | tee "$evidence/node-versions.json"
 "$node_bin" -e 'if (process.version !== "v22.22.0" || process.versions.icu !== "78.2" || process.versions.uv !== "1.52.1") { console.error(`BLOCKED #283: requires Node v22.22.0 / ICU 78.2 / libuv 1.52.1, found ${process.version} / ${process.versions.icu} / ${process.versions.uv}`); process.exit(3); }' || exit 3
+# The recorded provider-order case is locale-sensitive: C.UTF-8 and
+# en_US.UTF-8 record byte-identically (see the fixture README), but a third
+# locale is BLOCKED, not a parity failure — assert it instead of only
+# promising it in the header comment (r1 review P2, same gate as
+# ../project-files-linux-dirent/run-linux.sh).
+"$node_bin" -e 'const l = new Intl.Collator().resolvedOptions().locale; if (l !== "en-US") { console.error(`BLOCKED #283: resolved locale ${l}; run with LANG=C.UTF-8 and no LC_* override`); process.exit(3); }' || exit 3
 # The byte-transparency of this host's filesystem is itself part of the
 # contract: if it rejects non-UTF-8 names the whole lane is meaningless.
 "$node_bin" -e 'const fs=require("fs"),os=require("os"),p=require("path"); const d=fs.mkdtempSync(p.join(os.tmpdir(),"pdrs-283-")); try { fs.writeFileSync(p.join(d, Buffer.concat([Buffer.from("probe-"),Buffer.from([0xff])])), ""); console.log("filesystem: accepts raw non-UTF-8 names"); } catch(e) { console.error(`BLOCKED #283: ${os.tmpdir()} rejects non-UTF-8 file names (${e.code}); this lane needs a byte-transparent filesystem`); process.exit(2); } finally { fs.rmSync(d,{recursive:true,force:true}); }' || exit 2
@@ -153,11 +166,20 @@ neg283=$?
 negatives_not_run=0
 if [ "$neg283" -eq 0 ]; then
   echo "KILLED all #283 mutants"
-elif grep -qE '\((untracked at|differs from) HEAD\)' "$evidence/issue-283-negatives.log"; then
+elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issue-283-negatives.log" \
+  && ! git -C "$repo" show "HEAD:src/pilotdeck-gateway/tests/fixtures/workspace-snapshot-nonutf8/run-linux.sh" 2>/dev/null | cmp -s - "$0"; then
+  # Pre-commit only, and provably so: mutating_sources refused the tree AND
+  # the running runner's own bytes are not what HEAD carries, so an
+  # uncommitted patch is executing (this round's edit, or an earlier round
+  # that added this file outright — `untracked build input at` is
+  # negative_process's actual wording, which the old `untracked at` pattern
+  # never matched). Once this runner IS the committed one, a refusal means a
+  # dirty tree — residue from a killed mutant or a hand edit — and is FAILED,
+  # not a benign rerun-me-later (r1 review P2).
   echo "NOT_RUN: uncommitted/untracked product sources (mutating_sources refuses them); rerun after the commit (coordinator)"
   negatives_not_run=1
 else
-  echo "FAIL: #283 negative controls (rc=$neg283)" >&2
+  echo "FAIL: #283 negative controls (rc=$neg283; see issue-283-negatives.log)" >&2
   failed=1
 fi
 
