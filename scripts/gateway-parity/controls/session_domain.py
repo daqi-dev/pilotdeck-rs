@@ -131,6 +131,8 @@ CALIBRATION_CASES = {
 # registry events/state/result on the weakest class (D3), the U/E(T) frame
 # order (D4), no agent_status:turn_timeout in a status-failed registry (D2),
 # both no-registry durable shapes, and the inapplicable-registry shape.
+# #1190: the counts are never pinned here or in prose; the meta control
+# derives them from this table and machine-checks its bindings against it.
 EXPECTATION_CASES = {
     'expectations-missing-case': 'EXPECTATION_COVERAGE',
     'expectations-extra-case': 'EXPECTATION_COVERAGE',
@@ -148,6 +150,7 @@ EXPECTATION_CASES = {
     'expectations-rust-no-registry-durable': 'EXPECTATION_RUST_DERIVATION',
     'expectations-rust-no-registry-status-durable': 'EXPECTATION_RUST_DERIVATION',
     'expectations-rust-no-registry-registry': 'EXPECTATION_STRUCTURE',
+    'expectations-rust-registry-inapplicable': 'EXPECTATION_RUST_DERIVATION',
 }
 
 # Direct Node-path label controls, paired with the Python calibration-* variants.
@@ -356,6 +359,47 @@ def expectation_case(name, output, source):
         raise failure
 
     fixture = SCRIPT / 'fixtures/session-expectations.json'
+    if name == 'expectations-rust-registry-inapplicable':
+        # #1190: bind the canonical inapplicable-registry require. The same
+        # corrupted shape is rejected earlier by the structure applicability
+        # clause and the registry.applicable scope surface (defense in depth;
+        # expectations-rust-no-registry-registry binds the structure layer),
+        # so this control relaxes exactly those two earlier rejections and the
+        # canonical output comparison itself must reject a rust registry that
+        # claims applicability without a run registry.
+        document = copy.deepcopy(read(fixture))
+        row = next(r for r in document['cases'] if r['case'] == 'no-registry-fast/fast/model')
+        row['rust']['registry'] = {'applicable': True,
+                                   'events': ['1:agent_status:turn_timeout'],
+                                   'state': 'running', 'result': None}
+
+        def mutated_read(path):
+            return copy.deepcopy(document) if Path(path).resolve() == fixture else read(path)
+
+        original_structure = session_domain_module._expectation_structure
+
+        def relaxed_structure(check_row):
+            problem = original_structure(check_row)
+            return None if problem == 'registry applicability' else problem
+
+        failure = None
+        with patch('session_domain.read', side_effect=mutated_read), \
+                patch.object(session_domain_module, '_expectation_structure',
+                             side_effect=relaxed_structure), \
+                patch.object(session_domain_module, 'A19_ALLOWED_SURFACES',
+                             {label: tuple(surfaces) + ('registry.applicable',)
+                              for label, surfaces in session_domain_module.A19_ALLOWED_SURFACES.items()}):
+            try:
+                validate_calibration(source, output / name, baseline)
+            except EvidenceError as error:
+                failure = error
+        save(output / 'expectation-mutation.json',
+             {'case': name, 'firstRule': failure.rule if failure else None,
+              'detail': str(failure) if failure else 'mutation accepted'})
+        require(failure is not None and failure.rule == CASES[name], 'CONTROL_EXPECTATION',
+                name + ': expected ' + CASES[name]
+                + (', got ' + failure.rule if failure else ', mutation accepted'))
+        raise failure
     document = copy.deepcopy(read(fixture))
     row = next(r for r in document['cases'] if r['case'] == 'registry-fast/fast/model')
     if name == 'expectations-missing-case':
