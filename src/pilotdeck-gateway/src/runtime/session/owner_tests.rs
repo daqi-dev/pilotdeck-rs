@@ -982,6 +982,312 @@ async fn same_key_call_order_and_cancelled_waiter_still_drain() {
     );
 }
 
+/// A2/A2b/A3/A4 (TS probe2): close during a shutdown transmits each key's own
+/// in-flight eviction — a failing one rejects with the per-key dispose
+/// aggregate, a succeeding one (and an unregistered/unknown key) fulfills —
+/// and never the whole-shutdown aggregate, which stays shutdown()'s answer.
+#[tokio::test]
+async fn close_during_shutdown_awaits_the_keys_own_eviction_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    let b = owner.get_or_create(context("b")).await.unwrap();
+    let gate = Gate::new();
+    let gate_b = Gate::new();
+    probe
+        .0
+        .disposals
+        .lock()
+        .unwrap()
+        .insert(id(&a), gate.clone());
+    probe.0.dispose_failures.lock().unwrap().insert(id(&a));
+    probe
+        .0
+        .disposals
+        .lock()
+        .unwrap()
+        .insert(id(&b), gate_b.clone());
+    let shutdown = owner.shutdown();
+    until(|| probe.seen("dispose:1") && probe.seen("dispose:2")).await;
+    let mut close_a = owner.close(&"a".into());
+    let close_b = owner.close(&"b".into());
+    let close_c = owner.close(&"c".into());
+    let parked =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(close_a.as_mut().poll(cx).is_ready()))
+            .await;
+    assert!(
+        !parked,
+        "#1245 close of a mid-flight shutdown eviction must await it, not answer early"
+    );
+    gate_b.open();
+    // Open a's gate before the awaits too: like the real probe, every close
+    // promise resolves only after its eviction settles, and holding a gate
+    // closed past an await would hang the whole-shutdown branch instead of
+    // failing it with the per-key assertion.
+    gate.open();
+    bounded(close_b)
+        .await
+        .expect("#1245 a succeeding mid-flight shutdown eviction must fulfill close");
+    bounded(close_c)
+        .await
+        .expect("#1245 an unregistered key must fulfill close during shutdown");
+    let error = bounded(close_a)
+        .await
+        .expect_err("#1245 a failing mid-flight shutdown eviction must reject close");
+    assert!(
+        error.message == "Failed to dispose agent handle.",
+        "#1245 close during shutdown transmits the key's own dispose aggregate: got {}",
+        error.message
+    );
+    let shutdown_error = bounded(shutdown)
+        .await
+        .expect_err("#1245 the failing dispose must still fail the shutdown");
+    assert!(
+        shutdown_error.message == "Failed to shut down all agent sessions.",
+        "#1245 the whole-shutdown aggregate stays shutdown's own answer: got {}",
+        shutdown_error.message
+    );
+}
+
+/// A1 (TS probe1): a close in the same tick as `shutdown()` — the eviction
+/// not yet registered while a pending creation drains — fulfills.
+#[tokio::test]
+async fn close_in_the_shutdown_tick_fulfills_before_evictions_register_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert("a".into(), gate.clone());
+    let creating = owner.get_or_create(context("a"));
+    until(|| probe.seen("create:a:1")).await;
+    let shutdown = owner.shutdown();
+    bounded(owner.close(&"a".into()))
+        .await
+        .expect("#1245 a same-tick close must fulfill before any eviction registers");
+    gate.open();
+    let error = bounded(creating)
+        .await
+        .err()
+        .expect("#1245 the pending creation must fail after the stop-new");
+    assert!(
+        error.message == "Session router shut down during session creation.",
+        "#1245 the drained creation reports its own stop-new error: got {}",
+        error.message
+    );
+    bounded(shutdown)
+        .await
+        .expect("#1245 shutdown with no failed disposal succeeds");
+}
+
+/// A2b/A5/A6 (TS probe3/probe4): a mid-flight succeeding eviction fulfills a
+/// close during the window; after the eviction settles — failing or not —
+/// and after shutdown completes, close still fulfills.
+#[tokio::test]
+async fn close_during_shutdown_fulfills_around_a_settled_eviction_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    let b = owner.get_or_create(context("b")).await.unwrap();
+    let gate = Gate::new();
+    probe
+        .0
+        .disposals
+        .lock()
+        .unwrap()
+        .insert(id(&a), gate.clone());
+    probe.0.dispose_failures.lock().unwrap().insert(id(&b));
+    let shutdown = owner.shutdown();
+    // a's drain stays mid-flight on the gate while b's failing drain settles
+    // (its closing entry publishes before the shutdown aggregate forms).
+    until(|| probe.seen("dispose:1") && probe.seen("evict:b:shutdown")).await;
+    bounded(owner.close(&"b".into()))
+        .await
+        .expect("#1245 a close of an already-settled shutdown eviction must fulfill");
+    // A2b: like the real probe's window cell, the mid-flight close parks on the
+    // key's own eviction and only fulfills once that eviction settles.
+    let mut close_a = owner.close(&"a".into());
+    let parked =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(close_a.as_mut().poll(cx).is_ready()))
+            .await;
+    assert!(
+        !parked,
+        "#1245 the mid-flight close must await the key's own eviction, not answer early"
+    );
+    gate.open();
+    bounded(close_a)
+        .await
+        .expect("#1245 a succeeding mid-flight shutdown eviction must fulfill close");
+    let shutdown_error = bounded(shutdown)
+        .await
+        .expect_err("#1245 the failed disposal of b must fail the shutdown");
+    assert!(
+        shutdown_error.message == "Failed to shut down all agent sessions.",
+        "#1245 the settled failure belongs to the shutdown aggregate: got {}",
+        shutdown_error.message
+    );
+    bounded(owner.close(&"a".into()))
+        .await
+        .expect("#1245 close after the eviction settled and shutdown completed must fulfill");
+    bounded(owner.close(&"b".into()))
+        .await
+        .expect("#1245 close after a failed eviction settled must fulfill");
+}
+
+/// B2/B3 (TS probe6/probe7): a second close of a key whose first close is
+/// mid-flight awaits the first close's eviction and transmits its own
+/// result; after it settles, close fulfills again.
+#[tokio::test]
+async fn second_close_awaits_the_firsts_own_eviction_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    let gate = Gate::new();
+    probe
+        .0
+        .disposals
+        .lock()
+        .unwrap()
+        .insert(id(&a), gate.clone());
+    probe.0.dispose_failures.lock().unwrap().insert(id(&a));
+    let mut first = owner.close(&"a".into());
+    until(|| probe.seen("dispose:1")).await;
+    let mut second = owner.close(&"a".into());
+    let parked = std::future::poll_fn(|cx| {
+        std::task::Poll::Ready(
+            second.as_mut().poll(cx).is_ready() || first.as_mut().poll(cx).is_ready(),
+        )
+    })
+    .await;
+    assert!(
+        !parked,
+        "#1245 both closes must await the mid-flight eviction of the first"
+    );
+    gate.open();
+    for label in ["first", "second"] {
+        let error = bounded(if label == "first" {
+            &mut first
+        } else {
+            &mut second
+        })
+        .await
+        .expect_err(
+            "#1245 each in-flight close of the key must reject with the eviction's own result",
+        );
+        assert!(
+            error.message == "Failed to dispose agent handle.",
+            "#1245 the {label} close must transmit the per-key dispose aggregate: got {}",
+            error.message
+        );
+    }
+    bounded(owner.close(&"a".into()))
+        .await
+        .expect("#1245 a close after the eviction settled must fulfill");
+}
+
+/// B4 (TS probe8): a close arriving while an idle eviction is mid-flight
+/// awaits that eviction and transmits its own result.
+#[tokio::test]
+async fn close_during_idle_eviction_awaits_the_idle_eviction_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    let gate = Gate::new();
+    probe
+        .0
+        .disposals
+        .lock()
+        .unwrap()
+        .insert(id(&a), gate.clone());
+    probe.0.dispose_failures.lock().unwrap().insert(id(&a));
+    probe.time(201);
+    owner.sweep_idle();
+    until(|| probe.seen("dispose:1")).await;
+    let mut closing = owner.close(&"a".into());
+    let parked =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(closing.as_mut().poll(cx).is_ready()))
+            .await;
+    assert!(
+        !parked,
+        "#1245 close during a mid-flight idle eviction must await it, not answer early"
+    );
+    gate.open();
+    let error = bounded(closing)
+        .await
+        .expect_err("#1245 a failing mid-flight idle eviction must reject close");
+    assert!(
+        error.message == "Failed to dispose agent handle.",
+        "#1245 close during an idle eviction transmits the per-key dispose aggregate: got {}",
+        error.message
+    );
+    assert!(
+        probe.seen("evict:a:idle"),
+        "#1245 the awaited eviction keeps its idle reason"
+    );
+}
+
+/// C1 (TS probe9): a close issued before `shutdown()` keeps its own eviction
+/// mid-flight; a same-key close during the shutdown awaits that eviction,
+/// and the shutdown aggregate still carries the failed disposal.
+#[tokio::test]
+async fn close_issued_before_shutdown_keeps_its_own_eviction_for_later_closes_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    let gate = Gate::new();
+    probe
+        .0
+        .disposals
+        .lock()
+        .unwrap()
+        .insert(id(&a), gate.clone());
+    probe.0.dispose_failures.lock().unwrap().insert(id(&a));
+    let mut first = owner.close(&"a".into());
+    until(|| probe.seen("dispose:1")).await;
+    let shutdown = owner.shutdown();
+    let mut second = owner.close(&"a".into());
+    let parked = std::future::poll_fn(|cx| {
+        std::task::Poll::Ready(
+            second.as_mut().poll(cx).is_ready() || first.as_mut().poll(cx).is_ready(),
+        )
+    })
+    .await;
+    assert!(
+        !parked,
+        "#1245 the pre-shutdown close and the close during shutdown must await the eviction"
+    );
+    gate.open();
+    for label in ["pre-shutdown", "during-shutdown"] {
+        let error = bounded(if label == "pre-shutdown" {
+            &mut first
+        } else {
+            &mut second
+        })
+        .await
+        .expect_err("#1245 each close of the key must reject with the eviction's own result");
+        assert!(
+            error.message == "Failed to dispose agent handle.",
+            "#1245 the {label} close transmits the per-key dispose aggregate: got {}",
+            error.message
+        );
+    }
+    let shutdown_error = bounded(shutdown)
+        .await
+        .expect_err("#1245 the shutdown must aggregate the failed disposal");
+    assert!(
+        shutdown_error.message == "Failed to shut down all agent sessions.",
+        "#1245 the shutdown aggregate keeps its own message: got {}",
+        shutdown_error.message
+    );
+    assert!(
+        probe.seen("evict:a:closed"),
+        "#1245 the pre-shutdown close keeps its closed reason"
+    );
+}
+
 #[tokio::test]
 async fn project_close_during_creation_is_local_matches_ts() {
     let probe = Probe::default();
