@@ -27,7 +27,68 @@ common = root / 'scripts/gateway-parity/common.py'
 comparison = root / 'scripts/gateway-parity/compare.py'
 controls_script = root / 'scripts/gateway-parity/controls/run_all.py'
 session_controls = root / 'scripts/gateway-parity/controls/session_domain.py'
+parity_g03 = root / 'scripts/parity/g03_compare.py'
+parity_score = root / 'scripts/parity/score.py'
+parity_controls = root / 'scripts/parity/controls/run_all.py'
+parity_multimodal = root / 'scripts/parity/controls/multimodal.py'
+b1_comparison = root / 'scripts/exp008/compare.py'
+b1_run = root / 'scripts/exp008/run.py'
+ui_comparison = root / 'scripts/ui-server-parity/compare.py'
+ui_snapshot = root / 'scripts/ui-server-parity/snapshot.py'
+ui_run = root / 'scripts/ui-server-parity/run.py'
+ui_coverage = root / 'scripts/ui-server-parity/check_coverage.py'
 cases = [
+    ('settle-ignore-size', collector, '(stat.st_size, stat.st_mtime_ns)', '(0, stat.st_mtime_ns)', 'test_settle_file_signatures'),
+    ('settle-ignore-mtime', collector, '(stat.st_size, stat.st_mtime_ns)', '(stat.st_size, 0)', 'test_settle_file_signatures'),
+    ('settle-ignore-registry-stability', collector, "paths = (Path(source['transcriptPath']), Path(source['registryPath']))", "paths = (Path(source['transcriptPath']),)", 'test_settle_file_signatures'),
+    ('settle-ignore-transcript-stability', collector, "paths = (Path(source['transcriptPath']), Path(source['registryPath']))", "paths = (Path(source['registryPath']),)", 'test_settle_file_signatures'),
+    ('settle-failed-never-terminal', collector, "terminal = terminal or (record.get('state') == 'failed'", "terminal = terminal or (False and record.get('state') == 'failed'", 'test_settle_failed_requires_final_error'),
+    ('settle-failed-without-durable-error', collector, "record['result'].get('type') == 'error'", 'True', 'test_settle_failed_requires_final_error'),
+    ('settle-failed-without-final', collector, "frame.get('final') is True", 'True', 'test_settle_failed_requires_final_error'),
+    ('settle-failed-without-final-error', collector, "frame['event'].get('type') == 'error'", 'True', 'test_settle_failed_requires_final_error'),
+    ('deadline-uncaught-attribute', session, 'TypeError, AttributeError, IndexError, StopIteration,', 'TypeError, IndexError, StopIteration,', 'test_deadline_shape_exception_report'),
+    ('deadline-uncaught-index', session, 'TypeError, AttributeError, IndexError, StopIteration,', 'TypeError, AttributeError, StopIteration,', 'test_deadline_shape_exception_report'),
+    ('sibling-jsonl-ndjson', b1_run, "jsonl_lines(probe['body'])", "probe['body'].splitlines()", 'test_jsonl_sibling_readers'),
+    ('wire-allow-non-object-row', session, "require(isinstance(row, dict), 'OBSERVER_WIRE', 'observer row must be an object')", "require(True, 'OBSERVER_WIRE', 'observer row must be an object')", 'test_non_object_frames'),
+    ('collector-allow-non-object', collector, "w.need(isinstance(value, dict), 'received JSON frame must be an object')", "w.need(True, 'received JSON frame must be an object')", 'test_collector_receive_shape'),
+    ('collector-bypass-settle', collector, 'observation, identity, source = wait_observation(\n                            home, str(project), key, run_id, received, request_id, deadline)', 'observation, identity, source = read_observation(\n                            home, str(project), key, run_id, received, request_id, retain=True)', 'test_collector_wait_wired'),
+    ('settle-swallow-cancel', collector, 'except (OSError, ValueError, KeyError, TypeError):', 'except (OSError, ValueError, KeyError, TypeError, KeyboardInterrupt):', 'test_settle_missing_and_cancelled'),
+    ('settle-accept-failed', collector, "frozenset(('completed', 'aborted', 'interrupted'))", "frozenset(('completed', 'failed', 'aborted', 'interrupted'))", 'test_settle_terminal_states'),
+    ('settle-missing-source-fail', collector, "raise Blocked('#1140 落盘未完成: no readable transcript/registry before deadline')", "raise ValueError('#1140 落盘未完成: no readable transcript/registry before deadline')", 'test_settle_missing_and_cancelled'),
+    ('settle-omit-completed', collector, "frozenset(('completed', 'aborted', 'interrupted'))", "frozenset(('aborted', 'interrupted'))", 'test_settle_terminal_states'),
+    ('settle-omit-aborted', collector, "frozenset(('completed', 'aborted', 'interrupted'))", "frozenset(('completed', 'interrupted'))", 'test_settle_terminal_states'),
+    ('settle-omit-interrupted', collector, "frozenset(('completed', 'aborted', 'interrupted'))", "frozenset(('completed', 'aborted'))", 'test_settle_terminal_states'),
+    ('settle-no-wait', collector, '                if stable >= 3:', '                if stable >= 1:', 'test_settle_three_samples'),
+    ('settle-ignore-append', collector, 'stable = stable + 1 if after == previous else 1', 'stable = stable + 1', 'test_settle_resets_on_write'),
+    ('settle-accept-running', collector, "terminal = record.get('state') in SESSION_TERMINAL_STATES", 'terminal = True', 'test_settle_timeout_not_run'),
+    ('settle-timeout-scores', collector, "return None, identity, dict(source, collectionError='落盘未完成')", "return last[0], identity, dict(source, collectionError='落盘未完成')", 'test_settle_timeout_not_run'),
+    ('settle-ignore-deadline', collector, 'end = min(deadline, time.monotonic() + SESSION_SETTLE_LIMIT_SECONDS)', 'end = time.monotonic() + SESSION_SETTLE_LIMIT_SECONDS', 'test_settle_timeout_not_run'),
+    ('settle-final-means-durable', collector, '    previous, stable, last = None, 0, None', '    return read_observation(home, project, session, run_id, received, request_id, retain=True)\n    previous, stable, last = None, 0, None', 'test_settle_mock_final_before_disk'),
+    ('settle-drop-reason', session, "'detail': reasons.get(case) or 'observation missing'", "'detail': 'observation missing'", 'test_settle_timeout_not_run'),
+    ('wire-allow-non-object', session, "require(isinstance(row.get('frame'), str if row['direction'] == 'send' else dict),", 'require(True,', 'test_non_object_frames'),
+    ('wire-report-uncontrolled', session, "require(isinstance(row.get('frame'), str if row['direction'] == 'send' else dict),", 'require(True,', 'test_deadline_non_object_report'),
+    ('send-allow-non-object', native, "need(isinstance(frame, dict), 'observer JSON frame must be an object')", "need(True, 'observer JSON frame must be an object')", 'test_decoded_send_object'),
+    ('provider-allow-non-object-body', native, "need(isinstance(body, dict), 'provider request body must be an object')", "need(True, 'provider request body must be an object')", 'test_provider_objects'),
+    ('provider-allow-non-object-message', native, "need(isinstance(message, dict), 'provider message must be an object')", "need(True, 'provider message must be an object')", 'test_provider_objects'),
+    ('binding-witness-drift', witness, "need(all(isinstance(binding, dict) for binding in hellos), 'observer hello binding malformed')", "need(True, 'observer hello binding malformed')", 'test_observer_binding_parity'),
+    ('binding-loader-drift', session, 'require(all(isinstance(binding, dict) for binding in bindings),', 'require(True,', 'test_observer_binding_parity'),
+    ('receipt-early-success', witness, "'status': 'INCOMPLETE' if defer_receipt else 'WITNESS_CAPTURED'", "'status': 'WITNESS_CAPTURED'", 'test_deferred_receipt'),
+    ('receipt-no-defer', collector, 'defer_receipt=session_domain', 'defer_receipt=False', 'test_publication_failure'),
+    ('receipt-no-failure-record', collector, "w.save(output / 'capture/failure.json', {'status': 'INCOMPLETE',", "w.save(output / 'capture/ignored-failure.json', {'status': 'INCOMPLETE',", 'test_publication_failure'),
+    ('receipt-no-promotion', collector, "receipt['status'] = 'WITNESS_CAPTURED'", "receipt['status'] = 'INCOMPLETE'", 'test_receipt_promotion'),
+    ('sibling-jsonl-g03', parity_g03, 'jsonl_lines(path.read_text(encoding="utf-8"))', 'path.read_text(encoding="utf-8").splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-score', parity_score, 'G.jsonl_lines(path.read_text())', 'path.read_text().splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-parity-controls', parity_controls, 'G.jsonl_lines(original)', 'original.splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-multimodal-source', parity_multimodal, "G.jsonl_lines((source / f'{sid}.pilotdeck-current-sidecar.jsonl').read_text())", "(source / f'{sid}.pilotdeck-current-sidecar.jsonl').read_text().splitlines()", 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-multimodal-original', parity_multimodal, 'G.jsonl_lines(original)', 'original.splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-multimodal-backup', parity_multimodal, 'G.jsonl_lines(trace_backups[trace_path])', 'trace_backups[trace_path].splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-b1', b1_comparison, 'jsonl_lines(Path(path).read_text())', 'Path(path).read_text().splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-b2-comparison', ui_comparison, 'jsonl_lines(Path(path).read_text())', 'Path(path).read_text().splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-b2-snapshot', ui_snapshot, 'jsonl_lines(text)', 'text.splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-b2-run', ui_run, 'b1_comparator.jsonl_lines(path.read_text())', 'path.read_text().splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-b2-coverage', ui_coverage, 'jsonl_lines(a.evidence.read_text())', 'a.evidence.read_text().splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-helper-parity', parity_g03, "lines = text.split('\\n')", 'lines = text.splitlines()', 'test_jsonl_sibling_readers'),
+    ('sibling-jsonl-helper-b1', b1_comparison, "lines = text.split('\\n')", 'lines = text.splitlines()', 'test_jsonl_sibling_readers'),
     ('omit-provider-output-turn_completed', native, "'turn_completed'", "'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
     ('omit-provider-output-assistant_text_delta', native, "'assistant_text_delta'", "'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
     ('omit-provider-output-assistant_thinking_delta', native, "'assistant_thinking_delta'", "'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
@@ -127,6 +188,57 @@ cases = [
     ('swallow-gateway-close-failure', e2e, 'if not gateway.close(30):', 'if not gateway.close(30) and False:', 'test_failed_gateway_close_is_asserted'),
 ]
 messages = {
+    'settle-ignore-size': '#1140 r11 both files require stable size and mtime',
+    'settle-ignore-mtime': '#1140 r11 both files require stable size and mtime',
+    'settle-ignore-registry-stability': '#1140 r11 both files require stable size and mtime',
+    'settle-ignore-transcript-stability': '#1140 r11 both files require stable size and mtime',
+    'settle-failed-never-terminal': '#1140 r11 failed attempts settle only with persisted and final errors',
+    'settle-failed-without-durable-error': '#1140 r11 failed attempts settle only with persisted and final errors',
+    'settle-failed-without-final': '#1140 r11 failed attempts settle only with persisted and final errors',
+    'settle-failed-without-final-error': '#1140 r11 failed attempts settle only with persisted and final errors',
+    'deadline-uncaught-attribute': '#1140 r11 residual JSON shape exceptions persist FAIL reports',
+    'deadline-uncaught-index': '#1140 r11 residual JSON shape exceptions persist FAIL reports',
+    'sibling-jsonl-ndjson': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'wire-allow-non-object-row': '#1140 r11 non-object JSON wire frames reject on OBSERVER_WIRE',
+    'collector-allow-non-object': '#1140 r11 collector rejects non-object received JSON before dispatch',
+    'collector-bypass-settle': '#1140 r11 real collector waits after final before recording the case',
+    'settle-swallow-cancel': '#1140 r11 missing files block and cancellation propagates',
+    'settle-accept-failed': '#1140 r11 settle accepts exactly terminal run states',
+    'settle-missing-source-fail': '#1140 r11 missing files block and cancellation propagates',
+    'settle-omit-completed': '#1140 r11 settle accepts exactly terminal run states',
+    'settle-omit-aborted': '#1140 r11 settle accepts exactly terminal run states',
+    'settle-omit-interrupted': '#1140 r11 settle accepts exactly terminal run states',
+    'settle-no-wait': '#1140 r11 terminal files require three stable samples',
+    'settle-ignore-append': '#1140 r11 changed files reset the stable sample count',
+    'settle-accept-running': '#1140 r11 unsettled run is NOT_RUN with durable reason',
+    'settle-timeout-scores': '#1140 r11 unsettled run is NOT_RUN with durable reason',
+    'settle-ignore-deadline': '#1140 r11 unsettled run is NOT_RUN with durable reason',
+    'settle-final-means-durable': '#1140 r11 post-final mock waits for complete durable files',
+    'settle-drop-reason': '#1140 r11 unsettled run is NOT_RUN with durable reason',
+    'wire-allow-non-object': '#1140 r11 non-object JSON wire frames reject on OBSERVER_WIRE',
+    'wire-report-uncontrolled': '#1140 r11 deadline persists non-object rejection as FAIL with reason',
+    'send-allow-non-object': '#1140 r11 decoded send JSON must reject with controlled reason',
+    'provider-allow-non-object-body': '#1140 r11 provider bodies and messages reject with controlled reason',
+    'provider-allow-non-object-message': '#1140 r11 provider bodies and messages reject with controlled reason',
+    'binding-witness-drift': '#1140 r11 observer binding implementations agree on values and rejection',
+    'binding-loader-drift': '#1140 r11 observer binding implementations agree on values and rejection',
+    'receipt-early-success': '#1140 r11 deferred capture cannot publish success before session artifacts',
+    'receipt-no-defer': '#1140 r11 session publication failure leaves incomplete receipt and failure record',
+    'receipt-no-failure-record': '#1140 r11 session publication failure leaves incomplete receipt and failure record',
+    'receipt-no-promotion': '#1140 r11 successful session publication alone promotes receipt',
+    'sibling-jsonl-g03': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-score': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-parity-controls': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-multimodal-source': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-multimodal-original': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-multimodal-backup': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-b1': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-b2-comparison': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-b2-snapshot': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-b2-run': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-b2-coverage': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-helper-parity': '#1140 r11 all sibling JSONL readers retain Unicode separators',
+    'sibling-jsonl-helper-b1': '#1140 r11 all sibling JSONL readers retain Unicode separators',
     'omit-provider-output-turn_completed': '#1140 r10 provider requirement follows expectation frame changes',
     'omit-provider-output-assistant_text_delta': '#1140 r10 provider requirement follows expectation frame changes',
     'omit-provider-output-assistant_thinking_delta': '#1140 r10 provider requirement follows expectation frame changes',
@@ -229,7 +341,7 @@ messages = {
 
 def bound(test):
     # Test files have disjoint method names; resolve the full name before run.
-    for filename, classname in (('test_authentication.py', 'AuthenticationTests'), ('test_chain.py', 'ChainTests'),
+    for filename, classname in (('test_r11.py', 'R11Tests'), ('test_authentication.py', 'AuthenticationTests'), ('test_chain.py', 'ChainTests'),
                                 ('../native-session-e2e/test_e2e.py', 'LifecycleTests')):
         path = (Path(__file__).parent / filename).resolve()
         if '    def ' + test + '(' in path.read_text():
@@ -346,6 +458,8 @@ def main():
                 one(row)
         else:
             paths = [native, session, witness, collector, common, comparison, controls_script, session_controls, e2e, gateway, Path(__file__),
+                     parity_g03, parity_score, parity_controls, parity_multimodal, b1_comparison, b1_run,
+                     ui_comparison, ui_snapshot, ui_run, ui_coverage, Path(__file__).with_name('test_r11.py'),
                      Path(__file__).with_name('test_authentication.py'), Path(__file__).with_name('test_chain.py')]
             with mutating_sources(root, paths) as originals:
                 for row in selected:

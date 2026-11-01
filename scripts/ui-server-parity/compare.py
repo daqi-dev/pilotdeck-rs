@@ -75,7 +75,7 @@ from check_coverage import check as check_matrix, matches, Handler, rust_routes
 from policy import (HEADER_OMIT, SSE_ABSOLUTE_NS, SSE_DELAY_NS, field_key, fields, pattern,
                     UUID_VALUE, BLOCK_VALUE, MESSAGE_VALUE, CHAT_FIXTURE_SESSIONS,
                     CLOCK_FORMATS, CLOCK_PAIRS, CLOCK_RESPONSE_ORDER, ISO_MS, SQL_S, EPOCH_MS, MTIME_MS)
-from snapshot import capture
+from snapshot import capture, jsonl_lines
 from common import apparatus_hashes, ClockRefused, validate_clock_check
 
 HERE = Path(__file__).resolve().parent
@@ -91,7 +91,7 @@ def read_json(path):
 
 
 def read_jsonl(path):
-    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in jsonl_lines(Path(path).read_text()) if line.strip()]
 
 
 def decode(value):

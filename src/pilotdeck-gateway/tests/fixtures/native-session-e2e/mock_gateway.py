@@ -40,9 +40,10 @@ def load_expectations(root):
 class Gateway:
     """One real-socket gateway connection serving the 72-case manifest."""
 
-    def __init__(self, port, home, provider, expectations):
+    def __init__(self, port, home, provider, expectations, *, after_final=None):
         self.port, self.home = port, Path(home)
         self.provider, self.expectations = provider, expectations
+        self.after_final = after_final
         self.errors = []
         self.completed = threading.Event()
         self.served_cases = set()
@@ -59,8 +60,8 @@ class Gateway:
         except BaseException:
             self.listener.close()
             raise
-        # runs.json is written by this thread only, always before the turn's
-        # final frame: the collector observes it after the turn settles.
+        # runs.json has one writer. The default replay writes before final;
+        # after_final supplies a deterministic delayed-write test hook.
         self.runs = {'events': {}, 'records': []}
         self.thread = threading.Thread(target=self._serve, daemon=True)
         try:
@@ -177,6 +178,16 @@ class Gateway:
         transcript = self.home / 'projects' / 'mock' / 'chats' / f'{session}.jsonl'
         transcript.parent.mkdir(parents=True, exist_ok=True)
         (transcript.parent.parent / '.cwd').write_text(project)
+        if self.after_final is not None:
+            # Deliberately publish a clean but incomplete state before final.
+            transcript.write_text('')
+            pending = {'events': {}, 'records': [{'projectKey': project,
+                       'sessionKey': session, 'runId': run_id, 'state': 'running'}]}
+            temporary = self.home / 'runs.json.partial'
+            temporary.write_text(json.dumps(pending))
+            temporary.replace(self.home / 'runs.json')
+            self._events(connection, request, expectation)
+            self.after_final()
         with transcript.open('a') as stream:
             for label in expectation['durableStatus']:
                 stream.write(json.dumps({'type': 'agent_status_message', 'event': label}) + '\n')
@@ -192,6 +203,11 @@ class Gateway:
         document, temporary = self.home / 'runs.json', self.home / 'runs.json.partial'
         temporary.write_text(json.dumps(self.runs))
         temporary.replace(document)
+        if self.after_final is None:
+            self._events(connection, request, expectation)
+        return case
+
+    def _events(self, connection, request, expectation):
         for seq, label in enumerate(expectation['frames']):
             self._send_frame(connection, {'type': 'event', 'id': request.get('id'), 'seq': seq,
                                           'final': False, 'event': raw(label)})
@@ -200,7 +216,6 @@ class Gateway:
         self._send_frame(connection, {'type': 'event', 'id': request.get('id'),
                                       'seq': len(expectation['frames']), 'final': True,
                                       'event': {'type': 'turn_started', 'event': 'completed'}})
-        return case
 
     def close(self, timeout=30):
         self.stopping.set()

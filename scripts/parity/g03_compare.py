@@ -48,6 +48,14 @@ from typing import Any
 WORKTREE = Path(__file__).resolve().parents[2]
 
 
+def jsonl_lines(text):
+    """Only LF delimits JSONL; preserve internal blanks for caller validation."""
+    if not text:
+        return []
+    lines = text.split('\n')
+    return lines[:-1] if lines[-1] == '' else lines
+
+
 def baseline_path() -> 'Path':
     # 显式 PDRS_BASELINE 优先（PR #13 第 2 轮评审 P3）；其次本 worktree 的 resources/；再次主仓的 resources/。
     configured = os.environ.get("PDRS_BASELINE")
@@ -389,7 +397,7 @@ def load_aligned(path: 'Path', path_align=()) -> 'list[dict[str, Any]]':
         if isinstance(value, dict):
             return {k: align(v) for k, v in value.items()}
         return value
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(jsonl_lines(path.read_text(encoding="utf-8")), 1):
         if not line.strip():
             continue
         value = json.loads(line)

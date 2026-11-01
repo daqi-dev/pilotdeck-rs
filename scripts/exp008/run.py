@@ -43,7 +43,7 @@ WS_HANDSHAKE_KEY = base64.b64encode(b'exp008-ws-probe1').decode('ascii')
 # Reuse the comparator's normalisation rules instead of keeping a second,
 # drifting copy (the old `equivalence` scenario had its own scrub).
 sys.path.insert(0, str(SCRIPT))
-from compare import Normalizer, compare_sides, normalise_http, diff_http_style, revision_number  # noqa: E402
+from compare import jsonl_lines, Normalizer, compare_sides, normalise_http, diff_http_style, revision_number  # noqa: E402
 
 PROCESSES = []
 RESULTS = {}
@@ -682,7 +682,7 @@ def parse_sse_events(body):
 def probe_sse_events(port, path, headers):
     probe = stream_probe(port, path, headers)
     if 'ndjson' in (probe['contentType'] or ''):
-        return [{'data': line} for line in probe['body'].splitlines() if line.strip()]
+        return [{'data': line} for line in jsonl_lines(probe['body']) if line.strip()]
     return parse_sse_events(probe['body'])
 
 

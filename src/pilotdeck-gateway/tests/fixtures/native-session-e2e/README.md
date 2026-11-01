@@ -22,3 +22,5 @@ Rust 入口 `native_session_e2e.rs` 拉起 Python 套件。正式冻结 CLI 的 
 fix-r7：provider 预留 socket 与 HTTPServer 同用 SO_REUSEADDR，避免正常 HTTP 关闭后的 TIME_WAIT 被误认为活服务；gateway 仍按无复用策略预留。失败的保留尝试关闭两只 socket。Gateway.close 主动关闭 listener/活动连接并有界 join；这里都是本进程线程，没有 provider/gateway 子进程。class cleanup 在 setUpClass 成功前登记，异常也清理临时目录。`LifecycleTests` 覆盖同端口对连续两格、预留失败、未连接/半帧取消、采集异常；新配对变异归 `native-witness/negative_authentication.py`，其 `--memory --case provider-probe-no-reuse` 可在未提交树预演，完整源变异仍留提交后的宿主执行。
 
 fix-r8：close 的 True 同时要求全部 manifest case 已发完最终帧、线程已退出、没有错误；未完成取消即使资源已回收仍返回 False。连接空闲读保留 180 秒，取消靠 shutdown 唤醒而非等待超时。profile 两条负控由 LifecycleTests 显式调用采集 harness，仅将精确的 session profile 异常转成测试专属 AssertionError，不把 setUpClass ERROR 或无关异常算作 KILLED。macOS 生命周期和 SO_REUSEADDR 负控见 fix-r8-res/RESULT.md；Linux 复核待协调者宿主执行。
+
+fix-r11：全期望集保留“不适用 registry”等投影输入，默认直接读这些合成原件；实际落盘等待另由 `native-witness/test_r11.py::R11Tests.test_collector_wait_wired` 以 `real_settle=True` 走完整采集器。mock 的 `after_final` 钩子在 final 发出后暂停写盘，测试读到 running 原件后才释放，验证先读不完整、新实现等待完整的确定性交错。

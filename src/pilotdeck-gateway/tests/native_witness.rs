@@ -3,7 +3,12 @@ use std::{path::PathBuf, process::Command};
 
 #[test]
 fn native_witness_offline_controls() {
-    for filename in ["test_witness.py", "test_authentication.py", "test_chain.py"] {
+    for filename in [
+        "test_witness.py",
+        "test_authentication.py",
+        "test_chain.py",
+        "test_r11.py",
+    ] {
         let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/native-witness")
             .join(filename);

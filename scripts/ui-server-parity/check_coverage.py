@@ -58,6 +58,7 @@ import re
 from pathlib import Path
 from enum import Enum
 from apparatus import approval_valid
+from snapshot import jsonl_lines
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST_ROUTES = ROOT / "specs/ui-server-parity/rust-routes.json"
@@ -184,7 +185,7 @@ def main():
     p.add_argument('--out', type=Path)
     a = p.parse_args()
     try:
-        evidence = [json.loads(line) for line in a.evidence.read_text().splitlines() if line] if a.evidence else None
+        evidence = [json.loads(line) for line in jsonl_lines(a.evidence.read_text()) if line] if a.evidence else None
         result = check(json.loads(a.enumeration.read_text()), json.loads(a.matrix.read_text()), json.loads(a.scenarios.read_text()), evidence)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         result = {'verdict': 'FAIL', 'errors': [f'{type(error).__name__}: {error}']}

@@ -52,6 +52,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def jsonl_lines(text):
+    """Only LF delimits JSONL; preserve internal blanks for caller validation."""
+    if not text:
+        return []
+    lines = text.split('\n')
+    return lines[:-1] if lines[-1] == '' else lines
+
+
 CHANNELS = ('http', 'handshake', 'ws', 'sse', 'close')
 # HTTP-style channels match records by case name; the rest are ordered sequences.
 HTTP_STYLE = ('http', 'handshake')
@@ -212,7 +221,7 @@ def load_jsonl(path):
     records = []
     if not Path(path).exists():
         return records
-    for line in Path(path).read_text().splitlines():
+    for line in jsonl_lines(Path(path).read_text()):
         if line.strip():
             records.append(json.loads(line))
     return records
