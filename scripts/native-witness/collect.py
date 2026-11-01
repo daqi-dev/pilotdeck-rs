@@ -221,6 +221,11 @@ def session_manifest():
     return cases
 
 
+def session_expectations():
+    path = Path(__file__).resolve().parents[1] / 'gateway-parity/fixtures/session-expectations.json'
+    return {row['case']: row['rust'] for row in json.loads(path.read_text())['cases']}
+
+
 session_key = w.native.session_key
 
 
@@ -261,11 +266,19 @@ def read_observation(home, project, session, run_id, received, request_id=None, 
 
 
 def file_signatures(paths):
-    return tuple((stat.st_size, stat.st_mtime_ns) for stat in (p.stat() for p in paths))
+    signatures = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            signatures.append(None)
+        else:
+            signatures.append((stat.st_size, stat.st_mtime_ns))
+    return tuple(signatures)
 
 
-def wait_observation(home, project, session, run_id, received, request_id, deadline):
-    """Wait for a terminal run and three stable size/mtime samples after final.
+def wait_observation(home, project, session, run_id, received, request_id, deadline, *, expectation=None):
+    """Wait for applicable durable completion and three stable samples after final.
 
     No durable-completion frame exists in the current gateway protocol. Poll
     the exact files the observation reads, bracketing each read with stats.
@@ -297,6 +310,17 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
                 and any(frame.get('id') == request_id and frame.get('final') is True
                         and isinstance(frame.get('event'), dict) and frame['event'].get('type') == 'error'
                         for frame in received))
+            if expectation is not None and expectation['registry']['applicable'] is False:
+                # No registry is promised for this registered case. A terminal
+                # transcript status (or a registered empty status surface) and
+                # this request's final frame suffice. Do not compare status
+                # values with the oracle: stable product differences must score.
+                terminal = (not expectation['durableStatus'] or any(
+                    entry.get('event') in ('turn_timeout', 'turn_failed', 'gateway_submit_failed')
+                    for entry in observation['durableStatus']['entries']) or any(
+                        json.loads(line).get('type') == 'turn_result'
+                        for line in w.native.jsonl_lines(source['transcriptText']) if line.strip())) and any(
+                        frame.get('id') == request_id and frame.get('final') is True for frame in received)
             if terminal and before == after:
                 stable = stable + 1 if after == previous else 1
                 previous = after
@@ -381,6 +405,7 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
     project.mkdir()
     requests = []
     cases = session_manifest() if session_domain else None
+    expectations = session_expectations() if session_domain else {}
     rows, observer_rows, sources = [], [], []
     # The driver's own record of the gateway's hello answer (#1140 fix-r3),
     # written at receive time and published as its own receipt-pinned
@@ -496,7 +521,8 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
                             if frame.get('id') == request_id and frame.get('final'):
                                 break
                         observation, identity, source = wait_observation(
-                            home, str(project), key, run_id, received, request_id, deadline)
+                            home, str(project), key, run_id, received, request_id, deadline,
+                            expectation=expectations[case])
                         row = {'case': case, 'identity': identity, 'observation': observation}
                         if observation is None:
                             row['reason'] = source['collectionError']
