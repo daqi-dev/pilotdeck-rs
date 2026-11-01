@@ -680,7 +680,7 @@ fn regeneration_companions_reject_missing_corrupt_and_symlink_files() {
         ("skills-tree-files", usize::from(cfg!(target_os = "macos"))),
         ("user-dialog", 1),
         ("upload", 5),
-        ("operation-ledger", 34),
+        ("operation-ledger", 47),
         ("run-registry", 49),
     ] {
         fs::write(
@@ -750,7 +750,9 @@ fn regeneration_companions_reject_missing_corrupt_and_symlink_files() {
     for (bad, message) in [
         ("{}".to_owned(), "missing cases array"),
         (
-            r#"{"cases":[],"rejectedCases":[],"seedCases":[],"utf8Read":{"file":"tail.jsonl"}}"#
+            // Every declared group stays present but empty, so only the
+            // companion count is wrong with the #201 groups in the manifest.
+            r#"{"cases":[],"rejectedCases":[],"seedCases":[],"corruptCases":[],"deviationCases":[],"utf8Read":{"file":"tail.jsonl"},"domainScope":{"file":"domain-invalid.jsonl"}}"#
                 .to_owned(),
             "manifest count",
         ),

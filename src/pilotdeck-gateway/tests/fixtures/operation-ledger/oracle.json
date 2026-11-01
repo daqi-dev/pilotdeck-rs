@@ -1355,6 +1355,367 @@
       }
     }
   ],
+  "corruptCases": [
+    {
+      "name": "started-missing-runid",
+      "file": "corrupt-started-missing-runid.jsonl",
+      "recovery": null
+    },
+    {
+      "name": "started-missing-operationid",
+      "file": "corrupt-started-missing-operationid.jsonl",
+      "recovery": null
+    },
+    {
+      "name": "started-missing-requestid",
+      "file": "corrupt-started-missing-requestid.jsonl",
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "started-binding-fieldless",
+      "file": "corrupt-started-binding-fieldless.jsonl",
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "accepted-missing-streamid",
+      "file": "corrupt-accepted-missing-streamid.jsonl",
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "outcome-unknown-string",
+      "file": "corrupt-outcome-unknown-string.jsonl",
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "weird-outcome",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "known-string-sequence",
+      "file": "corrupt-known-string-sequence.jsonl",
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown-string-sequence",
+      "file": "corrupt-unknown-string-sequence.jsonl",
+      "recovery": {
+        "state": "result_unknown",
+        "unknown": {
+          "runId": "run-1",
+          "operationId": "op-1",
+          "requestId": "req-1",
+          "sessionId": "session-1",
+          "turnId": "turn-1",
+          "binding": {
+            "moduleInstanceId": "module-1",
+            "connectionGeneration": "generation-1"
+          },
+          "idempotencyKey": "once",
+          "streamId": "stream-1",
+          "lastAppliedSequence": "2",
+          "code": "DISCONNECTED",
+          "error": {
+            "message": "lost"
+          }
+        }
+      }
+    },
+    {
+      "name": "messages-string",
+      "file": "corrupt-messages-string.jsonl",
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": "not-an-array",
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "deviationCases": [
+    {
+      "name": "string-seed",
+      "file": "deviation-string-seed.jsonl",
+      "onlineError": null,
+      "restoreError": null,
+      "entryCount": 3,
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {}
+        }
+      }
+    },
+    {
+      "name": "result-unknown-outcome",
+      "file": "deviation-result-unknown-outcome.jsonl",
+      "onlineError": null,
+      "restoreError": null,
+      "entryCount": 3,
+      "recovery": {
+        "state": "result_unknown",
+        "unknown": {
+          "runId": "run-1",
+          "operationId": "op-1",
+          "requestId": "req-1",
+          "sessionId": "session-1",
+          "turnId": "turn-1",
+          "binding": {
+            "moduleInstanceId": "module-1",
+            "connectionGeneration": "generation-1"
+          },
+          "idempotencyKey": "once",
+          "streamId": "stream-1",
+          "lastAppliedSequence": 4,
+          "code": "OK",
+          "error": null
+        }
+      }
+    },
+    {
+      "name": "result-unknown-outcome-no-stream",
+      "file": "deviation-result-unknown-outcome-no-stream.jsonl",
+      "onlineError": null,
+      "restoreError": "Restored AgentLoop operation op-1 result_unknown lacks a stream id.",
+      "entryCount": 3,
+      "recovery": null
+    }
+  ],
+  "domainScope": {
+    "file": "domain-invalid.jsonl",
+    "runtimeRestoreError": "tool_call requires an active turn turn-1.",
+    "ledgerConstructorError": null
+  },
   "utf8Read": {
     "file": "invalid-utf8.jsonl",
     "entries": [
