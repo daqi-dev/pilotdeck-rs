@@ -1101,12 +1101,14 @@ fn migration_non_utf8_home_keeps_one_physical_key() {
     );
 }
 
-/// fix-r2 P2: an absolute pilot home must not depend on the process cwd.
-/// Node's `resolve(input.pilotHome, "cron")` only consults `process.cwd()`
-/// when no argument is absolute (verified against node v22.22.0: with the cwd
-/// removed, `process.cwd()` throws ENOENT while
-/// `path.resolve("/tmp/abs-home", "cron")` returns normally), so a deleted
-/// cwd must not fail the migration.
+/// fix-r2 P2 + fix-r3 P2: an absolute pilot home and an absolute projectKey
+/// must not depend on the process cwd. Node's `resolve(input.pilotHome,
+/// "cron")` and the one-argument `resolve(projectKey)` only consult
+/// `process.cwd()` when the argument is relative (verified against node
+/// v22.22.0: with the cwd removed, `process.cwd()` throws ENOENT while
+/// `path.resolve("/tmp/abs-home", "cron")` returns normally, and
+/// `resolveCronPaths` + the projectKey-routed `migrateCronStores` complete —
+/// `fix-r3/probes/deleted-cwd-project-key.mjs`).
 #[test]
 fn migration_absolute_home_survives_deleted_cwd() {
     crate::test_process::run_cases(
@@ -1151,17 +1153,37 @@ fn cron_deleted_cwd_worker() {
     });
     fs::write(
         project.join("tasks.json"),
-        "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\"type\": \"cron\", \"expression\": \"*/5 * * * *\"},\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
+        "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"a1\",\n      \"message\": \"hello\",\n      \"schedule\": {\"type\": \"cron\", \"expression\": \"*/5 * * * *\"},\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"sess-1\",\n      \"channelKey\": \"im\",\n      \"projectKey\": \"/w/absolute-project\",\n      \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}\n",
     )
     .unwrap_or_else(|error| {
         panic!("#1216 cron deleted-cwd worker: write tasks.json: {error}")
     });
+    // fix-r3 P2: the public entry must resolve an absolute projectKey with
+    // the process cwd gone — the same one-argument `resolve` the routing
+    // target derives from (paths.rs), verified against node v22.22.0 in
+    // `_tmp/20261026-issue-1216/fix-r3/probes/deleted-cwd-project-key.mjs`.
+    let routed =
+        resolve_cron_paths(&home.to_string_lossy(), "/w/absolute-project").unwrap_or_else(
+            |error| panic!(
+                "#1216 cron deleted-cwd worker: resolveCronPaths must not depend on the process cwd: {error}"
+            ),
+        );
     let recorder = WarningRecorder::default();
     migrate_cron_stores(&migration_input(home.clone(), &recorder)).unwrap_or_else(|error| {
         panic!(
-            "#1216 cron deleted-cwd worker: an absolute pilot home must not depend on the process cwd: {error}"
+            "#1216 cron deleted-cwd worker: absolute cron inputs (pilot home, projectKey) must not depend on the process cwd: {error}"
         )
     });
+    let routed_tasks = fs::read(&routed.tasks_file).unwrap_or_else(|error| {
+        panic!(
+            "#1216 cron deleted-cwd worker: read the routed tasks.json {}: {error}",
+            routed.tasks_file.display()
+        )
+    });
+    assert!(
+        String::from_utf8_lossy(&routed_tasks).contains("\"a1\""),
+        "#1216 cron deleted-cwd worker: the projectKey-routed task must land in the routed project dir without a process cwd"
+    );
     assert!(
         home.join("cron/store-migration-v1.json").is_file(),
         "#1216 cron deleted-cwd worker: the migration marker must be written"
@@ -1226,6 +1248,55 @@ fn store_tail_entry_removed_after_uncontended_mutation() {
     assert!(
         !super::store::task_file_tail_registered(&tasks_file),
         "#1216 tail removal: an uncontended mutation must drop its finished tail from the registry"
+    );
+}
+
+/// fix-r3 P2: two overlapping mutations serialize their finish under the
+/// registry lock (store.rs `release_task_file_tail`). The first finisher must
+/// keep the entry while the sibling's clone is still alive — removing it
+/// there would hand the next mutation a second tail for the same file and
+/// lose the per-file serialization — and the last finisher must remove it.
+/// Both barriers make the interleaving deterministic: both clones exist
+/// before either release starts, and the second release only runs after the
+/// first one returned, whatever the scheduler does inside them.
+#[test]
+fn store_tail_entry_removed_after_contended_mutation_pair() {
+    let scratch = Scratch::new("cron-store-tail-contended");
+    let home = scratch.path().join("home");
+    let paths = resolve_cron_paths(&home.to_string_lossy(), "/w/my-project")
+        .unwrap_or_else(|error| panic!("#1216 tail contended: resolveCronPaths failed: {error}"));
+    let tasks_file = paths.tasks_file.clone();
+    let both_cloned = Arc::new(Barrier::new(2));
+    let first_returned = Arc::new(Barrier::new(2));
+    let mut handles = Vec::new();
+    for early_finisher in [true, false] {
+        let tasks_file = tasks_file.clone();
+        let both_cloned = Arc::clone(&both_cloned);
+        let first_returned = Arc::clone(&first_returned);
+        handles.push(thread::spawn(move || {
+            let tail = super::store::task_file_tail(&tasks_file);
+            both_cloned.wait();
+            if early_finisher {
+                super::store::release_task_file_tail(&tasks_file, tail);
+                first_returned.wait();
+            } else {
+                first_returned.wait();
+                assert!(
+                    super::store::task_file_tail_registered(&tasks_file),
+                    "#1216 tail contended: a finished release must not remove the tail entry while the sibling mutation's clone is still alive"
+                );
+                super::store::release_task_file_tail(&tasks_file, tail);
+            }
+        }));
+    }
+    for handle in handles {
+        handle
+            .join()
+            .unwrap_or_else(|_| panic!("#1216 tail contended: a finishing thread panicked"));
+    }
+    assert!(
+        !super::store::task_file_tail_registered(&tasks_file),
+        "#1216 tail contended: the last finishing mutation must still remove the tail entry after the overlapping finisher kept it"
     );
 }
 

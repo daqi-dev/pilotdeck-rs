@@ -13,7 +13,12 @@ fix-r1 behaviors (per-file put serialization, the absolute-home entry resolve,
 blocked stores on read errors, ENOENT-tolerant lock removal, explicit-
 projectKey run routing, the lone-surrogate projectKey fold); four more pin
 fix-r2: the raw-bytes home key, the cwd-independent absolute home, the
-panic-releasing lock guard, and the finished-tail registry removal.
+panic-releasing lock guard, and the finished-tail registry removal. fix-r3
+adds four cwd-independence rows plus one contended-tail row: the cwd rows bind
+the `cron_deleted_cwd_worker` test itself (`--ignored`, with PDRS_CRON_CASE),
+because a parent test's panic payload embeds the worker's libtest output,
+which the shared verdict truncates at the worker's own FAILED line — the
+marker never reaches the parent's panic block (fix-r3 P1).
 """
 from pathlib import Path
 import json
@@ -28,8 +33,13 @@ from negative_suite import Case, classify, passed
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/cron/store.rs'
 migration = root / 'src/pilotdeck-gateway/src/runtime/cron/migration.rs'
+paths_rs = root / 'src/pilotdeck-gateway/src/runtime/cron/paths.rs'
 tests = root / 'src/pilotdeck-gateway/src/runtime/cron/tests.rs'
 TREE = 'once: replayed file tree differs from the TS oracle'
+# fix-r3 P1: a row carrying this dict runs its bound test directly with
+# `--ignored` plus the listed environment, binding the worker's own panic
+# block instead of a parent that only relays it.
+DELETED_CWD_WORKER = {'ignored': True, 'env': {'PDRS_CRON_CASE': 'absolute-home-deleted-cwd'}}
 mutations = [
     # Migration routing removed: projectKey-routed tasks stay in their source
     # directory, so the recorded move never happens (issue scope 3, 迁移跳过).
@@ -193,16 +203,52 @@ mutations = [
      '    );',
      'runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key',
      '#1216 non-UTF-8 home: the same-directory projectKey must keep one physical key'),
-    # fix-r2 P2: the entry consults the process cwd unconditionally again, so
-    # a deleted cwd fails an absolute-home migration.
+    # fix-r2 P2 / fix-r3 P1: the entry consults the process cwd unconditionally
+    # again, so a deleted cwd fails an absolute-home migration. Bound to the
+    # worker itself, whose panic block carries the marker (the parent's
+    # embedded relay is truncated by the shared verdict and cannot).
     ('entry-cwd-unconditional', migration,
      '    let home = metadata::resolve_process_path(Path::new(""), &input.pilot_home)?;\n'
      '    let root_dir = metadata::resolve(&home, "cron");',
      '    let cwd = std::env::current_dir()?;\n'
      '    let home = metadata::resolve_process_path(&cwd, &input.pilot_home)?;\n'
      '    let root_dir = metadata::resolve(&home, "cron");',
-     'runtime::cron::tests::migration_absolute_home_survives_deleted_cwd',
-     '#1216 cron deleted-cwd worker: an absolute pilot home must not depend on the process cwd'),
+     'runtime::cron::tests::cron_deleted_cwd_worker',
+     '#1216 cron deleted-cwd worker: absolute cron inputs (pilot home, projectKey) must not depend on the process cwd',
+     DELETED_CWD_WORKER),
+    # fix-r3 P2: normalizedProjectKey's one-argument resolve eagerly consults
+    # the cwd again, so a deleted cwd fails the absolute-projectKey routing.
+    ('project-key-cwd-unconditional', migration,
+     '    let resolved = metadata::resolve_process_path(Path::new(""), Path::new(&text))?;',
+     '    let cwd = std::env::current_dir()?;\n'
+     '    let resolved = metadata::resolve_process_path(&cwd, Path::new(&text))?;',
+     'runtime::cron::tests::cron_deleted_cwd_worker',
+     '#1216 cron deleted-cwd worker: absolute cron inputs (pilot home, projectKey) must not depend on the process cwd',
+     DELETED_CWD_WORKER),
+    # fix-r3 P2: resolveCronPathsFrom's absolute key resolve eagerly consults
+    # the cwd again, so the public entry fails on a deleted cwd.
+    ('paths-key-cwd-unconditional', paths_rs,
+     ') -> io::Result<CronPaths> {\n'
+     '    let key = metadata::resolve_process_path(Path::new(""), Path::new(project_key))?;',
+     ') -> io::Result<CronPaths> {\n'
+     '    let cwd = std::env::current_dir()?;\n'
+     '    let key = metadata::resolve_process_path(&cwd, Path::new(project_key))?;',
+     'runtime::cron::tests::cron_deleted_cwd_worker',
+     '#1216 cron deleted-cwd worker: resolveCronPaths must not depend on the process cwd',
+     DELETED_CWD_WORKER),
+    # fix-r3 P2: the public entry's own home/key resolves consult the process
+    # cwd unconditionally again (the same shape as the migration entry row).
+    ('paths-entry-cwd-unconditional', paths_rs,
+     'pub fn resolve_cron_paths(pilot_home: &str, project_key: &str) -> io::Result<CronPaths> {\n'
+     '    let home = metadata::resolve_process_path(Path::new(""), Path::new(pilot_home))?;\n'
+     '    let key = metadata::resolve_process_path(Path::new(""), Path::new(project_key))?;',
+     'pub fn resolve_cron_paths(pilot_home: &str, project_key: &str) -> io::Result<CronPaths> {\n'
+     '    let cwd = std::env::current_dir()?;\n'
+     '    let home = metadata::resolve_process_path(&cwd, Path::new(pilot_home))?;\n'
+     '    let key = metadata::resolve_process_path(&cwd, Path::new(project_key))?;',
+     'runtime::cron::tests::cron_deleted_cwd_worker',
+     '#1216 cron deleted-cwd worker: resolveCronPaths must not depend on the process cwd',
+     DELETED_CWD_WORKER),
     # fix-r2 P2: the Drop guard stops releasing the lock, so a panicking body
     # strands it for the next ten minutes of migrators.
     ('lock-guard-removed', migration,
@@ -212,13 +258,22 @@ mutations = [
      '        let _ = self.0.take();',
      'runtime::cron::tests::panicking_migration_body_still_releases_the_lock',
      '#1216 lock guard: the Drop guard must release the migration lock after a panic'),
-    # fix-r2 P3: the finished tail is never dropped, so the process-wide
-    # registry grows without bound.
+    # fix-r2 P3 / fix-r3: the finished tail is never dropped, so the
+    # process-wide registry grows without bound.
     ('tail-entry-never-removed', source,
-     '        .is_some_and(|current| Arc::ptr_eq(current, tail) && Arc::strong_count(current) == 2)',
-     '        .is_some_and(|current| Arc::ptr_eq(current, tail) && Arc::strong_count(current) == 1)',
+     '        if Arc::strong_count(current) == 1 {',
+     '        if Arc::strong_count(current) == 0 {',
      'runtime::cron::tests::store_tail_entry_removed_after_uncontended_mutation',
      '#1216 tail removal: an uncontended mutation must drop its finished tail from the registry'),
+    # fix-r3 P2: the release counts its own already-dropped clone as one more
+    # live holder, so it removes the entry while the sibling mutation's clone
+    # is still in flight — the next mutation over the same file would chain a
+    # second tail and lose the per-file serialization.
+    ('tail-release-counts-live-sibling', source,
+     '        if Arc::strong_count(current) == 1 {',
+     '        if Arc::strong_count(current) == 2 {',
+     'runtime::cron::tests::store_tail_entry_removed_after_contended_mutation_pair',
+     '#1216 tail contended: a finished release must not remove the tail entry while the sibling mutation\'s clone is still alive'),
 ]
 
 
@@ -252,7 +307,7 @@ def main():
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     summary = []
-    guarded = list(dict.fromkeys([source, migration, tests, Path(__file__).resolve(),
+    guarded = list(dict.fromkeys([source, migration, paths_rs, tests, Path(__file__).resolve(),
         Path(__file__).resolve().parents[1] / 'negative_process.py',
         Path(__file__).resolve().parents[1] / 'negative_suite.py']))
 
@@ -260,15 +315,24 @@ def main():
         with (out / name).open('x') as stream:
             stream.write(text)
 
-    def run(label, test, *, compile=False):
+    def run(label, test, worker=None, *, compile=False):
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600)
         save(label + '.slots.log', slot.stdout + slot.stderr)
         # negative_suite needs libtest's named result lines, including positives.
         command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib']
-        command += ['--no-run'] if compile else [test, '--', '--exact', '--show-output']
+        if compile:
+            command.append('--no-run')
+        else:
+            command += [test, '--', '--exact']
+            if worker and worker.get('ignored'):
+                command.append('--ignored')
+            command.append('--show-output')
         save(label + '.command.json', json.dumps(command) + '\n')
+        run_env = dict(env)
+        for key, value in (worker or {}).get('env', {}).items():
+            run_env[key] = value
         try:
-            result = run_owned(command, cwd=root / 'src', env=env, timeout=300)
+            result = run_owned(command, cwd=root / 'src', env=run_env, timeout=300)
         except Exception as error:
             raw = ''
             if isinstance(error, subprocess.TimeoutExpired):
@@ -280,7 +344,8 @@ def main():
         return result
 
     for row in selected:
-        name, path, old, new, test, assertion = row
+        name, path, old, new, test, assertion = row[:6]
+        worker = row[6] if len(row) > 6 else None
         item = dict(mutation=name, test=test, assertion=assertion,
                     status='INVALID', reason='not executed', compiled=False)
         try:
@@ -288,24 +353,24 @@ def main():
             with mutating_sources(root, guarded) as originals:
                 original = originals[path].decode()
                 check_anchor(row, original)
-                if not compile_only and not passed(run(name + '-positive', test), test):
+                if not compile_only and not passed(run(name + '-positive', test, worker), test):
                     raise RuntimeError('bound positive control did not pass')
                 try:
                     path.write_text(original.replace(old, new, 1))
-                    if run(name + '-compile', test, compile=True).returncode != 0:
+                    if run(name + '-compile', test, worker, compile=True).returncode != 0:
                         raise RuntimeError('mutant failed compilation; not a runtime kill')
                     item['compiled'] = True
                     if compile_only:
                         item.update(status='COMPILED', reason='cargo test --no-run passed')
                     else:
                         case = Case(name, path, old, new, test, assertion)
-                        status, reason = classify(run(name + '-negative', test), case)
+                        status, reason = classify(run(name + '-negative', test, worker), case)
                         item.update(status=status, reason=reason)
                 finally:
                     # Bytes come only from the HEAD-validated guard; it also
                     # restores and verifies every guarded source on exit.
                     path.write_bytes(originals[path])
-                if not passed(run(name + '-restored', test), test):
+                if not passed(run(name + '-restored', test, worker), test):
                     raise RuntimeError('bound restored control did not pass')
         except Exception as error:
             item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
