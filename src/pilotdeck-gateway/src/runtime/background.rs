@@ -23,8 +23,18 @@
 //!
 //! Deliberate deviations (see the fixture README):
 //! - Output spill is enabled by `disk_spill_dir`; `snapshot_store` adds
-//!   restart recovery, including restored `unknown` tasks. Ledger:
-//!   specs/gateway-parity/accepted-diffs.md A6.5-BACKGROUND-PERSIST-001 (unapproved).
+//!   restart recovery, including restored `unknown` tasks. A restart always
+//!   opens the spill log for a configured spill directory and fails closed
+//!   on any mismatch, like the baseline constructor; every appended chunk is
+//!   persisted best-effort, and a failed final flush rejects `dispose()`
+//!   with a memoized error while the runtime keeps draining. Ledger:
+//!   specs/gateway-parity/diffs/A6.5-BACKGROUND-PERSIST-001-R2.md and
+//!   specs/gateway-parity/diffs/A6.5-BACKGROUND-PANIC-001-R2.md.
+//! - A terminal settle whose snapshot write fails still notifies (the
+//!   baseline suppresses the completion and reports through
+//!   `onDiagnostic`), and durable output is only claimed for bytes that
+//!   actually landed. Registered, unapproved deviations; see
+//!   specs/gateway-parity/diffs/A6.5-BACKGROUND-PERSIST-001-R2.md.
 //! - A spawn that Node reports asynchronously (ENOENT, EACCES, ...) never
 //!   emits `exit` in the baseline, so its task stays `running` with no pid
 //!   and `stop` / `dispose` wait forever (`probes/p1.out`). Here the visible
@@ -44,7 +54,8 @@ use crate::{
     process_group::wait_exit_unreaped,
     runtime::{
         project::{
-            DisposeFuture, ProjectRuntime, ProjectRuntimeRegistry, RuntimeError, RuntimeResources,
+            DisposeFuture, ProjectRuntime, ProjectRuntimeRegistry, RuntimeError, RuntimeJsError,
+            RuntimeResources,
         },
         tools::{
             ToolCancellation,
@@ -273,7 +284,9 @@ pub struct BackgroundTaskRuntimeOptions {
 struct Inner {
     state: Mutex<RuntimeState>,
     starts: watch::Sender<usize>,
-    disposed: watch::Sender<bool>,
+    /// `disposePromise`: `None` until the shared disposal settles, then the
+    /// memoized `Ok(())` / rejection every later caller reuses.
+    disposed: watch::Sender<Option<Result<(), Arc<BackgroundTaskError>>>>,
     now: Clock,
     max_tasks: usize,
     on_completion: Option<CompletionHandler>,
@@ -432,7 +445,7 @@ impl BackgroundTaskRuntime {
                     dispose_started: false,
                 }),
                 starts: watch::channel(0).0,
-                disposed: watch::channel(false).0,
+                disposed: watch::channel(None).0,
                 now: options.now.unwrap_or_else(|| Arc::new(system_now)),
                 max_tasks: options.max_tasks.unwrap_or(DEFAULT_MAX_TASKS),
                 on_completion: options.on_completion,
@@ -748,7 +761,8 @@ impl BackgroundTaskRuntime {
                 // `start` resolves before the error event lands.
                 let snapshot = entry.snapshot();
                 let text = concat(&[&units("error: "), message.units(), &units("\n")]);
-                entry.append(String::from_utf16_lossy(text.units()).as_bytes());
+                self.inner
+                    .append_output(&entry, String::from_utf16_lossy(text.units()).as_bytes());
                 Ok(snapshot)
             }
             Err((false, message)) => {
@@ -779,7 +793,8 @@ impl BackgroundTaskRuntime {
                     Some(reservation.call(|| (self.inner.now)(), "Background clock failed.")?);
                 let entry = self.insert(reservation, &task_id, new_entry(task, false, None));
                 let text = concat(&[&units("spawn error: "), message.units(), &units("\n")]);
-                entry.append(String::from_utf16_lossy(text.units()).as_bytes());
+                self.inner
+                    .append_output(&entry, String::from_utf16_lossy(text.units()).as_bytes());
                 self.inner.settle(&entry);
                 Ok(entry.snapshot())
             }
@@ -916,13 +931,13 @@ impl BackgroundTaskRuntime {
         let mut state = self.inner.state.lock().unwrap();
 
         for snapshot in snapshots {
-            let task = match restore_task(&snapshot.task) {
-                Ok(task) => task,
-                Err(_) => continue, // Skip invalid snapshots
-            };
+            // The baseline constructor throws on any invalid snapshot; a
+            // partially restored registry would silently lose tasks (P0).
+            let mut task = restore_task(&snapshot.task).unwrap_or_else(|error| {
+                panic!("Background task snapshot restore failed: {error}");
+            });
 
             let was_unsettled = matches!(task.status, TaskStatus::Pending | TaskStatus::Running);
-            let mut task = task;
 
             if was_unsettled {
                 task.status = TaskStatus::Unknown;
@@ -931,20 +946,23 @@ impl BackgroundTaskRuntime {
                 task.ended_at = None;
             }
 
-            // Restore output from spill file
-            let output = if snapshot.output.persisted {
-                match OutputStore::restore_from_spill(
-                    DEFAULT_MEMORY_BYTES,
-                    output_path(disk_spill_dir, &task.task_id),
-                    snapshot.output.total_bytes,
-                ) {
-                    Ok(store) => store,
-                    // A missing or incomplete log cannot recover this snapshot.
-                    Err(_) => continue,
-                }
-            } else {
-                OutputStore::with_spill(DEFAULT_MEMORY_BYTES, None)
-            };
+            // The baseline always opens the spill log for a configured
+            // diskSpillDir (`restore: { expectedTotalBytes }`), whatever the
+            // persisted flag claimed, and fails closed on any mismatch.
+            let output = OutputStore::restore_from_spill(
+                DEFAULT_MEMORY_BYTES,
+                output_path(disk_spill_dir, &task.task_id),
+                snapshot.output.total_bytes,
+            )
+            .unwrap_or_else(|error| {
+                let path = output_path(disk_spill_dir, &task.task_id);
+                let message = if error.kind() == std::io::ErrorKind::InvalidData {
+                    error.to_string()
+                } else {
+                    format!("Could not restore task output from {}.", path.display())
+                };
+                panic!("{message}");
+            });
 
             let entry = Arc::new(Entry {
                 state: Mutex::new(EntryState {
@@ -1018,8 +1036,10 @@ impl BackgroundTaskRuntime {
 
     /// `dispose()`: refuse new tasks, settle accepted starts, stop every
     /// running task and wait for all to settle, then release the buffers.
-    /// Concurrent calls share one disposal.
-    pub async fn dispose(&self) {
+    /// Concurrent calls share one disposal. A failed final snapshot flush
+    /// rejects every caller with the same error and leaves the runtime
+    /// draining, like the baseline's memoized `disposePromise` rejection.
+    pub async fn dispose(&self) -> Result<(), Arc<BackgroundTaskError>> {
         let first = {
             let mut state = self.inner.state.lock().unwrap();
             let first = !state.dispose_started;
@@ -1036,11 +1056,12 @@ impl BackgroundTaskRuntime {
             drop(tokio::spawn(async move { runtime.dispose_now().await }));
         }
         let mut disposed = self.inner.disposed.subscribe();
-        let _ = disposed.wait_for(|disposed| *disposed).await;
+        let _ = disposed.wait_for(Option::is_some).await;
+        disposed.borrow().clone().unwrap()
     }
 
     async fn dispose_now(&self) {
-        {
+        let outcome = {
             let mut starts = self.inner.starts.subscribe();
             let _ = starts.wait_for(|starts| *starts == 0).await;
             self.kill_all().await;
@@ -1071,6 +1092,7 @@ impl BackgroundTaskRuntime {
             }
 
             // Persist the final, flushed state without relying on spawned-task timing.
+            let mut outcome = Ok(());
             if let Some(store) = &self.inner.snapshot_store {
                 for entry in &entries {
                     let (store, entry) = (Arc::clone(store), Arc::clone(entry));
@@ -1083,12 +1105,30 @@ impl BackgroundTaskRuntime {
                         .await;
                 }
                 let store = Arc::clone(store);
-                let _ = tokio::spawn(async move { store.flush().await }).await;
+                // Isolate both future construction and polling: a panicking
+                // flush rejects dispose() like the baseline's rethrown error.
+                outcome = match tokio::spawn(async move { store.flush().await }).await {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(error)) => Err(Arc::new(BackgroundTaskError::error(JsString::from(
+                        error.to_string().as_str(),
+                    )))),
+                    Err(joined) => {
+                        let payload = joined.into_panic();
+                        let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| "Background snapshot flush failed.".to_owned());
+                        Err(Arc::new(BackgroundTaskError::error(JsString::from(
+                            message.as_str(),
+                        ))))
+                    }
+                };
             }
-
-            self.inner.state.lock().unwrap().phase = Phase::Disposed;
-            self.inner.disposed.send_replace(true);
-        }
+            if outcome.is_ok() {
+                self.inner.state.lock().unwrap().phase = Phase::Disposed;
+            }
+            outcome
+        };
+        self.inner.disposed.send_replace(Some(outcome));
     }
 }
 
@@ -1125,6 +1165,19 @@ async fn settle_never_exits(inner: Arc<Inner>, entry: Arc<Entry>) {
 }
 
 impl Inner {
+    /// `appendOutput`: record the chunk, then persist best-effort so a crash
+    /// before settlement still leaves a restartable running snapshot.
+    fn append_output(&self, entry: &Arc<Entry>, chunk: &[u8]) {
+        entry.append(chunk);
+        if let Some(store) = &self.snapshot_store {
+            let store = Arc::clone(store);
+            let entry = Arc::clone(entry);
+            tokio::spawn(async move {
+                let _ = BackgroundTaskRuntime::persist_entry_static(&store, &entry).await;
+            });
+        }
+    }
+
     /// `settleEntry` + `notifyCompletion`, then resolve `done`.
     fn settle(&self, entry: &Arc<Entry>) {
         let (event, should_persist) = {
@@ -1199,14 +1252,15 @@ async fn read_chunk<R: tokio::io::AsyncRead + Unpin>(
 
 /// Reads what is already buffered in a pipe, bounded by `deadline`.
 async fn drain<R: tokio::io::AsyncRead + Unpin>(
+    inner: &Inner,
     stream: &mut Option<R>,
     buffer: &mut [u8],
-    entry: &Entry,
+    entry: &Arc<Entry>,
     deadline: tokio::time::Instant,
 ) {
     while stream.is_some() {
         match tokio::time::timeout_at(deadline, read_chunk(stream, buffer)).await {
-            Ok(Some(length)) => entry.append(&buffer[..length]),
+            Ok(Some(length)) => inner.append_output(entry, &buffer[..length]),
             Ok(None) | Err(_) => return,
         }
     }
@@ -1233,12 +1287,12 @@ async fn supervise(
             () = async { let _ = closed.wait_for(|closed| *closed).await; } => break,
             length = read_chunk(&mut stdout, &mut out_buffer), if stdout.is_some() => {
                 if let Some(length) = length {
-                    entry.append(&out_buffer[..length]);
+                    inner.append_output(&entry, &out_buffer[..length]);
                 }
             }
             length = read_chunk(&mut stderr, &mut err_buffer), if stderr.is_some() => {
                 if let Some(length) = length {
-                    entry.append(&err_buffer[..length]);
+                    inner.append_output(&entry, &err_buffer[..length]);
                 }
             }
             observed = async {
@@ -1248,8 +1302,8 @@ async fn supervise(
                 }
             }, if !exited => {
                 let deadline = tokio::time::Instant::now() + EXIT_DRAIN;
-                drain(&mut stdout, &mut out_buffer, &entry, deadline).await;
-                drain(&mut stderr, &mut err_buffer, &entry, deadline).await;
+                drain(&inner, &mut stdout, &mut out_buffer, &entry, deadline).await;
+                drain(&inner, &mut stderr, &mut err_buffer, &entry, deadline).await;
                 exited = true;
                 // Recorded before reaping: `terminate` never signals a group
                 // ID that could be reused after the wait below.
@@ -1575,8 +1629,18 @@ impl RuntimeResources for BackgroundResources {
     fn dispose(&self) -> DisposeFuture<'_> {
         Box::pin(async move {
             self.subagents.shutdown();
-            self.tasks.dispose().await;
-            Ok(())
+            // `disposeRuntime` awaits the bundle and lets the rejection reach
+            // the caller; only the draining state itself is not rolled back.
+            self.tasks.dispose().await.map_err(|error| {
+                RuntimeError::new(String::from_utf16_lossy(error.message.units())).with_js_error(
+                    RuntimeJsError {
+                        name: error.name.into(),
+                        code: None,
+                        message: error.message.clone(),
+                        requires_host: false,
+                    },
+                )
+            })
         })
     }
 }
@@ -2104,7 +2168,7 @@ mod tests {
         let disposing = mode == "B4-dispose";
         let operation = tokio::spawn(async move {
             if disposing {
-                owner.dispose().await;
+                let _ = owner.dispose().await;
             } else if no_pid {
                 owner
                     .stop(&id, &JsValue::Number(0.0), None)
@@ -2124,7 +2188,9 @@ mod tests {
         let disposers = if disposing {
             tail_observers(|| {
                 let owner = runtime.clone();
-                async move { owner.dispose().await }
+                async move {
+                    let _ = owner.dispose().await;
+                }
             })
             .await
         } else {
@@ -2221,7 +2287,9 @@ mod tests {
         let mut disposers = vec![];
         for _ in 0..3 {
             let owner = runtime.clone();
-            disposers.push(tokio::spawn(async move { owner.dispose().await }));
+            disposers.push(tokio::spawn(async move {
+                let _ = owner.dispose().await;
+            }));
         }
         for observer in disposers {
             tail_deadline(observer)
@@ -2661,8 +2729,12 @@ mod tests {
                 expected,
                 "clock durable terminal snapshot"
             );
-            tail_deadline(runtime.dispose()).await;
-            tail_deadline(restored.dispose()).await;
+            tail_deadline(runtime.dispose())
+                .await
+                .expect("#818 clock durable dispose");
+            tail_deadline(restored.dispose())
+                .await
+                .expect("#818 clock durable restored dispose");
         }
     }
 
@@ -2726,7 +2798,8 @@ mod tests {
                                 }
                                 poll
                             })
-                            .await;
+                            .await
+                            .expect("#818 clock panic observer dispose");
                         }));
                         tokio::time::timeout(Duration::from_secs(5), ready)
                             .await
@@ -2820,7 +2893,9 @@ mod tests {
                     disposers = (0..3)
                         .map(|_| {
                             let owner = runtime.clone();
-                            tokio::spawn(async move { owner.dispose().await })
+                            tokio::spawn(async move {
+                                let _ = owner.dispose().await;
+                            })
                         })
                         .collect();
                 }
@@ -2898,7 +2973,8 @@ mod tests {
             assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 0);
             tokio::time::timeout(Duration::from_secs(5), runtime.dispose())
                 .await
-                .unwrap();
+                .expect("#818 clock payload drop dispose deadline")
+                .expect("#818 clock payload drop dispose");
         }
     }
 
@@ -2959,7 +3035,8 @@ mod tests {
         assert_eq!(*runtime.inner.starts.borrow(), 0);
         tokio::time::timeout(Duration::from_secs(5), runtime.dispose())
             .await
-            .unwrap();
+            .expect("#818 pending-snapshot dispose deadline")
+            .expect("#818 pending-snapshot dispose");
         let mut expected = clock_oracle()["pendingSnapshotCase"].clone();
         // Rust's store owns writes synchronously; the observer need not finish
         // before spawn validation. CLOCK-START-001-R1 records this boundary.
@@ -3084,7 +3161,8 @@ mod tests {
             for dispose in disposers {
                 tokio::time::timeout(Duration::from_secs(5), dispose)
                     .await
-                    .expect("construction dispose deadline");
+                    .expect("#818 construction dispose deadline")
+                    .expect("#818 construction dispose");
             }
             let actual = serde_json::json!({"id":id, "error":String::from_utf16_lossy(error.message.units()),
                 "released":released, "empty":empty, "notSpawned":not_spawned, "retryAccepted":retry_accepted,
@@ -3124,7 +3202,8 @@ mod tests {
             assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 0);
             tokio::time::timeout(Duration::from_secs(5), runtime.dispose())
                 .await
-                .unwrap();
+                .expect("#818 payload dispose deadline")
+                .expect("#818 payload dispose");
         }
     }
     use tokio::sync::oneshot;
@@ -3165,8 +3244,8 @@ mod tests {
         });
         let recovered = restored.get(&task.task_id, None);
         // Reap the real process before assertions can fail.
-        runtime.dispose().await;
-        restored.dispose().await;
+        let _ = runtime.dispose().await;
+        let _ = restored.dispose().await;
 
         assert_eq!(live_status, TaskStatus::Running);
         assert_eq!(persisted.len(), 1);
@@ -3270,7 +3349,7 @@ mod tests {
                 "#994 background-output assertion"
             );
             release.send(()).expect("#994 background-output setup");
-            dispose.await;
+            dispose.await.expect("#994 background-output gated dispose");
             let written = std::fs::read(path).expect("#994 background-output setup");
             assert_eq!(
                 written, bytes,
@@ -3323,7 +3402,10 @@ mod tests {
                 "#994 background-output assertion"
             );
             assert!(!slice.truncated, "#994 background-output assertion");
-            restored.dispose().await;
+            restored
+                .dispose()
+                .await
+                .expect("#994 background-output restored dispose");
         })
         .await
         .expect("bounded gated dispose probe");
@@ -3503,7 +3585,10 @@ mod tests {
         // Publishing transfers the reservation to the entry; completion
         // frees the capacity so another start can use it.
         let replacement = runtime.start(spec).await;
-        runtime.dispose().await;
+        runtime
+            .dispose()
+            .await
+            .expect("#994 concurrent start dispose");
 
         assert!(
             listed.is_empty(),
@@ -3659,6 +3744,9 @@ mod tests {
             Some(&JsValue::from("abc")),
             "#947 completion preview Math.max must propagate NaN previewBytes like TS"
         );
-        runtime.dispose().await;
+        runtime
+            .dispose()
+            .await
+            .expect("#947 completion preview dispose");
     }
 }

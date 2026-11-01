@@ -36,7 +36,9 @@ cases = [
      '                // mutant: do not cancel the blocked predecessor',
      'creation_gate_lifecycle', '#956 #957 terminal status'),
     ('skip-dispose', source,
-     '                tokio::time::timeout(Duration::from_secs(8), tasks.dispose())\n                    .await\n                    .expect("#956 #957 dispose deadline");',
+     # #1233: dispose() can now reject on a failed flush, so the gate also
+     # asserts the Ok result; the anchor follows the new chained expect.
+     '                tokio::time::timeout(Duration::from_secs(8), tasks.dispose())\n                    .await\n                    .expect("#956 #957 dispose deadline")\n                    .expect("#956 #957 dispose result");',
      '                // mutant: do not dispose the blocked predecessor',
      'creation_gate_lifecycle', '#956 #957 terminal status'),
     ('old-eight-second-cap', source,
