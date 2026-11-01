@@ -23,7 +23,7 @@ from negative_suite import Case, classify, passed
 root = Path(__file__).resolve().parents[5]
 errors = root / 'src/pilotdeck-gateway/src/runtime/model/http/errors.rs'
 http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
-system_clock = root / 'src/pilotdeck-transport/src/system_clock.rs'
+replay_rs = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/retry_after.rs'
 generator = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/generate.mts'
 oracle = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/oracle.json'
 replay = 'runtime::model::http::retry_after_dialect_tests::retry_after_dialects_match_node_in_two_timezones'
@@ -31,7 +31,8 @@ zone_children = 'runtime::model::http::retry_after_dialect_tests::retry_after_di
 huge = 'runtime::model::http::retry_after_dialect_tests::retry_after_dialects_huge_delta_seconds_parse_to_infinity_and_clamp'
 regen = 'retry_after_dialects_regenerate_identically'
 cases = [
-    ('dialect-ignored', errors, '&pilotdeck_transport::system_clock::parse_node22_date,', '&|_| Ok(None),', replay, '#360-2'),
+    ('dialect-ignored', errors, 'retry_after_header_parsed(value, now_ms, &admitted_node22_parse)',
+     'retry_after_header_parsed(value, now_ms, &|_| Ok(None))', replay, '#360-2'),
     ('local-ignored', errors, '&|wall| local(wall))', '&|wall| Ok(wall))', replay, '#360-2'),
     ('delta-strict', errors, '(delta > 0.0).then_some(delta)', '(delta >= 0.0).then_some(delta)', replay, '#360-2'),
     ('seconds-negative', errors, 'if seconds.is_finite() && seconds >= 0.0 {', 'if seconds.is_finite() && seconds > 0.0 {', replay, '#360-2'),
@@ -41,14 +42,25 @@ cases = [
     ('oracle-asctime', oracle, '784082977000', '784082977001', replay, '#360-2'),
     # fix-r1 P2-1: a production entry rewired to a parser that only breaks
     # local resolution keeps the seam replay and the zone-independent cases
-    # green; only the TZ-pinned children catch it.
-    ('production-local-wiring', errors, '&pilotdeck_transport::system_clock::parse_node22_date,',
-     '&|text| pilotdeck_transport::system_clock::parse_node22_date_with_local(text, &|_| Ok(0)),', zone_children, '#360-2'),
-    # fix-r1 P2-1: a failed local resolution (unreadable system TZif) falling
-    # back to UTC instead of counting the dialect as unparseable only breaks
-    # the fail-closed edge of the unsupported-TZ child; the named-zone children
-    # and the seam replay stay green.
-    ('err-utc-fallback', system_clock, 'local(wall)?', 'local(wall).unwrap_or(wall)', zone_children, '#360-2'),
+    # green; only the TZ-pinned children catch it (fix-r2 re-anchored to the
+    # admitted gate).
+    ('production-local-wiring', errors, '&crate::runtime::model::stats::admitted_local_to_utc,',
+     '&|_| Ok(0),', zone_children, '#360-2'),
+    # fix-r2 P1/P2-1: the production entry rewound to the ungated parser
+    # (any readable host TZif, TZ=localtime via /etc/localtime) keeps the seam
+    # replay green; the TZ=localtime child catches it (Node's reading of that
+    # alias is host-dependent, so the admitted subset fail-closes it to None).
+    ('production-gate-bypass', errors, 'retry_after_header_parsed(value, now_ms, &admitted_node22_parse)',
+     'retry_after_header_parsed(value, now_ms, &pilotdeck_transport::system_clock::parse_node22_date)', zone_children, '#360-2'),
+    # fix-r2 (replaces fix-r1 err-utc-fallback, whose anchor left the
+    # retry-after path): a gate error swallowed into a UTC wall keeps the
+    # admitted-zone children green; the fail-closed children catch it.
+    ('production-utc-fallback', errors, '&crate::runtime::model::stats::admitted_local_to_utc,',
+     '&|wall| Ok(crate::runtime::model::stats::admitted_local_to_utc(wall).unwrap_or(wall)),', zone_children, '#360-2'),
+    # fix-r2 P2-2: the zone child's expectations must actually follow the
+    # host-profile admission; forcing it false must fail the admitted children.
+    ('zone-child-admission-false', replay_rs, 'crate::runtime::model::stats::stats_tzif_local(0, &bytes, &zone).is_ok()',
+     'false', zone_children, '#360-2'),
     # fix-r1 P2-2: the non-finite gate and the maxDelayMs clamp behind the
     # huge delta-seconds value.
     ('seconds-nonfinite', errors, 'if seconds.is_finite() && seconds >= 0.0 {', 'if seconds >= 0.0 {', huge, '#360-2'),
@@ -59,6 +71,9 @@ cases = [
      '"sourceCommit": "0000000000000000000000000000000000000000",', replay, '#360-2'),
     ('oracle-source-sha', oracle, '"src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf"',
      '"src/model/protocol/errors.ts": "0000000000000000000000000000000000000000000000000000000000000000"', replay, '#360-2'),
+    # fix-r2 P3-1: the quick replay must pin the oracle's runtime provenance
+    # (node/v8/icu/tzdata), not only the TS source bytes.
+    ('oracle-runtime-node', oracle, '"node": "v22.22.0"', '"node": "v22.21.0"', replay, '#360-2'),
 ]
 
 
