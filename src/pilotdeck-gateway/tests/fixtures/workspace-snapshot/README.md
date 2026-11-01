@@ -48,10 +48,11 @@ Rust 测试 `tests/workspace_snapshot.rs` 逐场景回放：结果按 stringify 
 
 ```sh
 cd src
-PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway workspace_snapshot -- --include-ignored
+PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway \
+  --test workspace_snapshot real_ts_verifies_rust_written_snapshots -- --exact --ignored
 ```
 
-（#283 fix-r1 起该 `--include-ignored` 在 macOS 上只跑反向交叉检查；旧的无平台门 regen 守卫已删，见上方溯源登记——它曾让这条命令在 macOS 上必然假失败。）
+（#283 fix-r2 起验收命令用 `--test` 选测试二进制、完整测试名 + `--exact --ignored` 选目标：`tests/workspace_snapshot.rs` 里没有任何测试名含 `workspace_snapshot`，旧写法 `cargo test … workspace_snapshot -- --include-ignored` 的位置参数是**函数名过滤串**，只匹配到 lib 的 `storage::workspace_snapshot::*` 单元测试（并连带把自 spawn 的 `#[ignore]` 子测试 `write_file_child_over_file_size_limit` 当普通测试直跑而必失败），反向交叉检查从未被选中（r2 评审 P1-1）。`#[ignore]` 的反向测试要 `--ignored`（或 `--include-ignored`）才执行；旧的无平台门 regen 守卫 fix-r1 起已删，见上方溯源登记。）
 
 | 场景 | 覆盖 |
 |---|---|

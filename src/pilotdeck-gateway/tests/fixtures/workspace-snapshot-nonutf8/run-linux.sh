@@ -47,11 +47,16 @@ mkdir -p "$evidence"
 # may survive.
 export LANG=C.UTF-8
 unset LC_ALL LC_MESSAGES LC_COLLATE LC_CTYPE LANGUAGE
-# Same normalization for TMPDIR: the dedicated gate's scratch hardcodes /tmp
-# while Node's os.tmpdir()/Rust's temp_dir() follow $TMPDIR, so a caller
-# override would make the byte-transparency probe below vouch for a
-# filesystem the replay never writes its raw names to (r1 review P2).
-unset TMPDIR
+# Same normalization for the temporary directory: the dedicated gate's scratch
+# hardcodes /tmp while Node's os.tmpdir()/Rust's temp_dir() follow $TMPDIR,
+# and Node keeps reading $TMP / $TEMP when $TMPDIR is unset (v22.22.0: TMP
+# wins over TEMP) — so a caller override on any of the three would make the
+# byte-transparency probe below vouch for a filesystem the replay never
+# writes its raw names to (r1 review P2; r2 review P1-2, unset → export).
+# Pin TMPDIR and clear the fallbacks: every child (Node, cargo, Python
+# negatives) then resolves its temp directory to /tmp like the Scratch.
+export TMPDIR=/tmp
+unset TMP TEMP
 
 # The pinned source-built baseline Node (ICU 78.2 + libuv 1.52.1; the older
 # ~/opt/node-v22.22.0-linux-arm64 is ICU 77.1 / libuv 1.5x and must not be
@@ -111,7 +116,17 @@ export PDRS_BASELINE="$baseline_ts"
 "$node_bin" -e 'const l = new Intl.Collator().resolvedOptions().locale; if (l !== "en-US") { console.error(`BLOCKED #283: resolved locale ${l}; run with LANG=C.UTF-8 and no LC_* override`); process.exit(3); }' || exit 3
 # The byte-transparency of this host's filesystem is itself part of the
 # contract: if it rejects non-UTF-8 names the whole lane is meaningless.
-"$node_bin" -e 'const fs=require("fs"),os=require("os"),p=require("path"); const d=fs.mkdtempSync(p.join(os.tmpdir(),"pdrs-283-")); try { fs.writeFileSync(p.join(d, Buffer.concat([Buffer.from("probe-"),Buffer.from([0xff])])), ""); console.log("filesystem: accepts raw non-UTF-8 names"); } catch(e) { console.error(`BLOCKED #283: ${os.tmpdir()} rejects non-UTF-8 file names (${e.code}); this lane needs a byte-transparent filesystem`); process.exit(2); } finally { fs.rmSync(d,{recursive:true,force:true}); }' || exit 2
+# The raw 0xff name byte is appended as bytes (path.join rejects Buffer
+# arguments outright — the r2 review's probe bug: it threw
+# ERR_INVALID_ARG_TYPE before any fs call and every host, including ext4,
+# read as "filesystem unsupported"), and a failure reports the real
+# code+message instead of asserting a filesystem verdict (on APFS/HFS+ the
+# genuine rejection is EILSEQ). Cleanup deletes the probe file by its exact
+# Buffer bytes (readdir lossy-decodes non-UTF-8 names, so a recursive rm
+# that goes through a directory listing could miss it) and the exit happens
+# after the finally block (process.exit inside catch skips it and leaks the
+# mkdtemp tree).
+"$node_bin" -e 'const fs=require("fs"),os=require("os"),p=require("path"); const d=fs.mkdtempSync(p.join(os.tmpdir(),"pdrs-283-")); const probe=Buffer.concat([Buffer.from(p.join(d,"probe-")),Buffer.from([0xff])]); let rc=0; try { fs.writeFileSync(probe, ""); console.log("filesystem: accepts raw non-UTF-8 names"); } catch(e) { console.error(`BLOCKED #283: non-UTF-8 name probe on ${os.tmpdir()} failed (${e.code}): ${e.message}`); rc=2; } finally { fs.rmSync(probe,{force:true}); fs.rmSync(d,{recursive:true,force:true}); } process.exit(rc);' || exit 2
 git -C "$repo" rev-parse HEAD | tee "$evidence/rust-head.txt"
 
 report "cargo test --no-run (whole tree compiles)"
@@ -176,7 +191,17 @@ elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issu
   # never matched). Once this runner IS the committed one, a refusal means a
   # dirty tree — residue from a killed mutant or a hand edit — and is FAILED,
   # not a benign rerun-me-later (r1 review P2).
+  # Known blind spot (r2 opus P2): the runner-bytes criterion cannot tell
+  # "uncommitted patch" from "uncommitted patch PLUS residue" — a leftover
+  # mutant also makes the runner differ from HEAD and either refusal
+  # wording matches — and the reverse direction (runner committed, rest of
+  # the patch not) reads as FAILED. Restricting NOT_RUN to the `untracked`
+  # wording alone would misjudge the ordinary tracked-file pre-commit form,
+  # so instead the 77 is accompanied by the dirty set; the coordinator
+  # checks it against the expected patch files instead of trusting the 77.
   echo "NOT_RUN: uncommitted/untracked product sources (mutating_sources refuses them); rerun after the commit (coordinator)"
+  echo "-- dirty set (git status --porcelain; must be exactly this patch's files for the 77 to be benign):"
+  git -C "$repo" status --porcelain
   negatives_not_run=1
 else
   echo "FAIL: #283 negative controls (rc=$neg283; see issue-283-negatives.log)" >&2
