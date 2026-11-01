@@ -79,8 +79,10 @@ impl ReloadSource {
         recorder: &Recorder,
         retained: bool,
     ) -> Result<ReloadSnapshot, RuntimeError> {
-        // A synchronous TS snapshot cannot interleave an append. Avoid taking
-        // projection -> writer locks (append takes them in the reverse order).
+        // #1253: live.rs's adapter lock does not exclude recorder appends.
+        // Keep this bounded optimistic read: file_state is a callback that may
+        // itself append, so holding the writer lock across it would deadlock.
+        // This is distinct from the checkpoint capture's three-attempt budget.
         for _ in 0..8 {
             let before = recorder.writer().snapshot_state();
             let snapshot = self.snapshot(before.clone(), retained);
@@ -118,6 +120,9 @@ impl ReloadSource {
 pub struct SessionProjection {
     entries: Mutex<Vec<JsValue>>,
     last_valid: Mutex<DurableSessionState>,
+    // Guarded by entries before access, just like last_valid. Tracks durable
+    // completion even while projection is invalid; rebuilt only on restore.
+    completed_turns: Mutex<HashSet<JsString>>,
     valid: AtomicBool,
     disposed: AtomicBool,
 }
@@ -126,6 +131,7 @@ impl Default for SessionProjection {
         Self {
             entries: Mutex::default(),
             last_valid: Mutex::default(),
+            completed_turns: Mutex::default(),
             valid: AtomicBool::new(true),
             disposed: AtomicBool::new(false),
         }
@@ -433,23 +439,30 @@ impl TranscriptStore for ProjectedStore {
         });
         if !already_projected {
             entries.push(entry.clone());
-            // Only metadata has a bounded standalone delta. Complex events keep
-            // the existing replay semantics, including late turn completion.
-            let state = if self.projection.valid.load(Ordering::SeqCst)
-                && is(field(entry, "type"), "session_metadata")
+            if is(field(entry, "type"), "turn_result")
+                && let Some(turn) = field(entry, "turnId").as_string()
             {
-                project(std::slice::from_ref(entry)).map(|delta| {
-                    let mut state = lock(&self.projection.last_valid).clone();
-                    merge_metadata(&mut state.metadata, &delta.metadata);
-                    state
-                })
-            } else {
-                project(&entries)
-            };
-            self.projection.valid.store(state.is_ok(), Ordering::SeqCst);
-            if let Ok(state) = state {
-                *lock(&self.projection.last_valid) = state;
+                lock(&self.projection.completed_turns).insert(turn.clone());
             }
+            let incremental =
+                self.projection.valid.load(Ordering::SeqCst) && !requires_replay(entry);
+            let result = if incremental {
+                apply_delta(
+                    &mut lock(&self.projection.last_valid),
+                    &lock(&self.projection.completed_turns),
+                    entry,
+                )
+            } else {
+                // Completion can activate earlier messages/context; compact
+                // can discard them. An invalid state can recover when a later
+                // compact boundary hides the malformed historical message.
+                project(&entries).map(|state| {
+                    *lock(&self.projection.last_valid) = state;
+                })
+            };
+            self.projection
+                .valid
+                .store(result.is_ok(), Ordering::SeqCst);
         }
         drop(entries);
         if is(field(entry, "type"), "turn_result") {
@@ -1444,6 +1457,8 @@ fn real_user(message: &JsValue) -> bool {
         }))
 }
 fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
+    #[cfg(test)]
+    PROJECTION_VISITS.with(|visits| visits.set(visits.get() + entries.len()));
     let completed: HashSet<_> = entries
         .iter()
         .filter(|e| is(field(e, "type"), "turn_result"))
@@ -1569,9 +1584,94 @@ fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
 }
 
 #[cfg(test)]
+thread_local! {
+    static PROJECTION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn completed_turns(entries: &[JsValue]) -> HashSet<JsString> {
+    entries
+        .iter()
+        .filter(|entry| is(field(entry, "type"), "turn_result"))
+        .filter_map(|entry| field(entry, "turnId").as_string().cloned())
+        .collect()
+}
+fn requires_replay(entry: &JsValue) -> bool {
+    let kind = field(entry, "type");
+    let boundary = field(entry, "boundary");
+    is(kind, "turn_result")
+        || (is(kind, "control_boundary")
+            && is(field(boundary, "kind"), "compact")
+            && is(field(boundary, "subtype"), "compact_boundary"))
+}
+
+/// Apply events that cannot change the interpretation of earlier entries.
+/// Validate/clone the delta before mutating last_valid so failed projections
+/// retain the entire previous valid state for the live adapter's fallback.
+/// Visibility/metadata branches must stay equivalent to `project`; the
+/// permutation regression checks each prefix against full replay. Events that
+/// reinterpret history must also stay in `requires_replay`.
+fn apply_delta(
+    state: &mut DurableSessionState,
+    completed: &HashSet<JsString>,
+    entry: &JsValue,
+) -> RuntimeResult {
+    let kind = field(entry, "type");
+    let done = field(entry, "turnId")
+        .as_string()
+        .is_some_and(|id| completed.contains(id));
+    if is(kind, "accepted_input") {
+        let messages = clone_messages(field(entry, "messages"))?;
+        state.messages.extend(messages);
+        let selection = field(field(entry, "metadata"), "modelSelection");
+        if is(field(selection, "mode"), "auto")
+            || (is(field(selection, "mode"), "model")
+                && field(selection, "provider").as_string().is_some()
+                && field(selection, "model").as_string().is_some())
+        {
+            state
+                .metadata
+                .insert("modelSelection".into(), selection.clone());
+        }
+    } else if [
+        "assistant_message",
+        "tool_result_message",
+        "durable_message",
+    ]
+    .iter()
+    .any(|name| is(kind, name))
+        && done
+    {
+        let message = field(entry, "message");
+        if field(field(message, "metadata"), "compactReplacement") != &JsValue::Bool(true) {
+            state.messages.push(clone_message(message)?);
+        }
+    } else if is(kind, "context_snapshot") && done {
+        if let JsValue::Array(messages) = field(entry, "runtimeContextMessages") {
+            let messages = clone_messages(&JsValue::Array(messages.clone()))?;
+            let at = state
+                .messages
+                .iter()
+                .rposition(real_user)
+                .unwrap_or(state.messages.len());
+            state.messages.splice(at..at, messages);
+        }
+    } else if is(kind, "session_metadata") {
+        let metadata = field(entry, "metadata");
+        property(metadata, "title")?;
+        property(metadata, "linkedPullRequest")?;
+        merge_metadata(&mut state.metadata, &spread(metadata));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 #[path = "factory_tests.rs"]
 mod tests;
 
 #[cfg(test)]
 #[path = "projection_cache_tests.rs"]
 mod projection_cache_tests;
+
+#[cfg(test)]
+#[path = "projection_delta_tests.rs"]
+mod projection_delta_tests;
