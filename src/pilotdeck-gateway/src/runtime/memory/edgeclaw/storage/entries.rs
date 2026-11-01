@@ -475,15 +475,37 @@ impl EdgeClawFileStores {
             // lands between the selection and the DELETE escapes the record
             // and can only be resurrected (the TS shape), never silently
             // dropped.
-            let removed_l0_ids: Vec<String> = self
-                .storage
-                .conn()?
+            // #1207: the selection and the DELETE must also share one
+            // connection guard (the `insert_l0_session_if_new` shape). As two
+            // `conn()?` statements the guard dropped in between, so a
+            // concurrent capture could insert a row this DELETE then removed
+            // without recording — a heartbeat that had already listed it
+            // re-checked `removed_since` as false and resurrected it. Under
+            // one guard that insert lands only after the DELETE, as new
+            // data: exactly the TS shape, where `clearSessionMemoryData` runs
+            // the two statements back-to-back on one synchronous connection.
+            let conn = self.storage.conn()?;
+            let removed_l0_ids: Vec<String> = conn
                 .prepare("SELECT l0_index_id FROM l0_sessions WHERE session_key = ?")?
                 .query_map([session], |row| row.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            self.storage
-                .conn()?
-                .execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
+            // #1207 seam: fires between the id selection and the DELETE, with
+            // the connection guard held. A hook that parks here keeps the
+            // guarded segment open, so a capture that started meanwhile blocks
+            // until the clear releases the guard; one that errors aborts the
+            // clear with the L0 rows still present and the generation
+            // untouched (the same shape as a `BeforeDeleteL0` failure).
+            // Production never installs a hook; like the other seams it is
+            // cloned out of its slot before the call.
+            let hook = self
+                .clear_session_hook
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(hook) = hook {
+                hook(ClearSessionStage::L0IdsSelected, session)?;
+            }
+            conn.execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
             // #917 fix-r2 (review P1-1): the generation means "this session's
             // clear completed", never "it started". Bump only after the L0 rows
             // are actually gone: a clear that fails anywhere above must leave

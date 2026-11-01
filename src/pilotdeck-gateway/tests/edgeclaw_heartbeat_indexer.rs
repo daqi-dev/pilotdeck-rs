@@ -2773,3 +2773,342 @@ async fn clear_failing_before_l0_delete_keeps_generation_and_turn() {
     );
     lab.server.close().await;
 }
+
+// #1207 fix-1: the L0 id selection and the DELETE inside `clearSession` must
+// share one connection guard. A capture that starts while the clear is parked
+// at the `L0IdsSelected` seam must not land inside the guarded segment: with
+// the pre-fix two-guard shape the insert completed while the clear was
+// parked, the DELETE then removed it without recording it, and a heartbeat
+// that had already listed it would write it back (the resurrection the
+// review flagged). Under one guard the insert lands only after the DELETE,
+// as new data — the row survives and never reads as a recorded removal.
+#[test]
+fn concurrent_capture_cannot_land_between_l0_id_selection_and_delete() {
+    let root = TempDir::new("clear-gap-insert");
+    let home = root.path().join("home");
+    fs::create_dir_all(&home).expect("#1207 create home");
+    let workspace = root.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("#1207 create workspace");
+    let stores = Arc::new(
+        EdgeClawFileStores::with_workspace_clock(
+            root.path().join("control.sqlite"),
+            root.path().join("memory"),
+            root.path().join("root").join("global"),
+            &workspace,
+            home.join(".pilotdeck"),
+            Arc::new(|| NOW.to_string()),
+        )
+        .expect("#1207 open repository"),
+    );
+    let row = |l0_index_id: &str, timestamp: &str| L0SessionRecord {
+        l0_index_id: l0_index_id.into(),
+        session_key: "s1".into(),
+        timestamp: timestamp.into(),
+        messages: JsValue::Array(vec![]),
+        source: String::new(),
+        indexed: false,
+        created_at: String::new(),
+    };
+    stores
+        .storage
+        .insert_l0_session(&row("s1_a_raw", "2026-10-22T00:00:01.000Z"))
+        .expect("#1207 the pre-clear row must insert");
+    let (parked_tx, parked_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    stores.set_clear_session_hook(Arc::new(move |stage, session| {
+        assert_eq!(
+            session, "s1",
+            "#1207 the guarded-segment hook must fire on the target session"
+        );
+        if stage != ClearSessionStage::L0IdsSelected {
+            return Ok(());
+        }
+        parked_tx
+            .send(())
+            .expect("#1207 the parked clear must signal the guarded segment");
+        release_rx
+            .lock()
+            .expect("#1207 parked-clear channel lock")
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("#1207 the parked clear must be released");
+        Ok(())
+    }));
+    let clear_stores = stores.clone();
+    let clear = thread::spawn(move || {
+        clear_stores
+            .clear_session_memory_data("s1")
+            .expect("#1207 the parked clear must complete after its release");
+    });
+    parked_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#1207 the clear must park between the id selection and the DELETE");
+    let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+    let insert_stores = stores.clone();
+    let insert = thread::spawn(move || {
+        started_tx
+            .send(())
+            .expect("#1207 the guarded-segment insert must signal its start");
+        insert_stores
+            .storage
+            .insert_l0_session(&row("s1_b_raw", "2026-10-22T00:00:02.000Z"))
+            .expect("#1207 the guarded-segment insert must not fail");
+        std::time::Instant::now()
+    });
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#1207 the guarded-segment insert thread must start");
+    thread::sleep(std::time::Duration::from_millis(400));
+    let release_at = std::time::Instant::now();
+    release_tx
+        .send(())
+        .expect("#1207 the release signal must reach the parked clear");
+    let inserted_at = insert
+        .join()
+        .expect("#1207 the guarded-segment insert thread must not panic");
+    assert!(
+        inserted_at >= release_at,
+        "#1207 the capture started inside the guarded segment may complete only after the clear released the storage guard"
+    );
+    clear
+        .join()
+        .expect("#1207 the parked clear thread must not panic");
+    assert_eq!(
+        stores.session_clear_generation("s1"),
+        1,
+        "#1207 the released clear must have completed exactly one bump"
+    );
+    assert!(
+        stores.session_clear_removed_since("s1", 0, "s1_a_raw"),
+        "#1207 the row that predates the clear must be recorded as removed"
+    );
+    assert!(
+        !stores.session_clear_removed_since("s1", 0, "s1_b_raw"),
+        "#1207 the capture that landed inside the guarded segment is new data and must never read as a recorded removal"
+    );
+    let rows = stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the guarded clear");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1207 the guarded segment must keep the row inserted inside it; only the pre-clear row may be deleted"
+    );
+    assert_eq!(
+        rows[0].l0_index_id, "s1_b_raw",
+        "#1207 the surviving row must be the one captured inside the guarded segment"
+    );
+}
+
+// #1207 fix-2: `removed_since` must answer "a clear that completed after the
+// baseline deleted this exact row". A row whose deleting clear predates the
+// baseline must read false even while later unrelated clears keep the
+// session's generation moving — the pre-fix accumulating set answered true
+// there (the row was re-captured after its clear, then a non-bumping
+// deletion removed the row so the later clearSession could not re-record
+// it), and the heartbeat silently dropped the turn and marked its row
+// indexed.
+#[test]
+fn stale_removed_entry_after_later_clear_keeps_since_semantics() {
+    let root = TempDir::new("stale-removed-entry");
+    let home = root.path().join("home");
+    fs::create_dir_all(&home).expect("#1207 create home");
+    let workspace = root.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("#1207 create workspace");
+    let stores = Arc::new(
+        EdgeClawFileStores::with_workspace_clock(
+            root.path().join("control.sqlite"),
+            root.path().join("memory"),
+            root.path().join("root").join("global"),
+            &workspace,
+            home.join(".pilotdeck"),
+            Arc::new(|| NOW.to_string()),
+        )
+        .expect("#1207 open repository"),
+    );
+    let row = |l0_index_id: &str, timestamp: &str| L0SessionRecord {
+        l0_index_id: l0_index_id.into(),
+        session_key: "s1".into(),
+        timestamp: timestamp.into(),
+        messages: JsValue::Array(vec![]),
+        source: String::new(),
+        indexed: false,
+        created_at: String::new(),
+    };
+    stores
+        .storage
+        .insert_l0_session(&row("s1_x_raw", "2026-10-22T00:00:01.000Z"))
+        .expect("#1207 the re-captured row must insert first");
+    stores
+        .storage
+        .insert_l0_session(&row("s1_y_raw", "2026-10-22T00:00:02.000Z"))
+        .expect("#1207 the sibling row must insert");
+    stores
+        .clear_session_memory_data("s1")
+        .expect("#1207 the first clear must succeed");
+    assert_eq!(
+        stores.session_clear_generation("s1"),
+        1,
+        "#1207 the first clear must reach generation 1"
+    );
+    stores
+        .storage
+        .insert_l0_session(&row("s1_x_raw", "2026-10-22T00:00:01.000Z"))
+        .expect("#1207 the re-capture of the same id must insert");
+    let baseline = stores.session_clear_generation("s1");
+    assert_eq!(
+        baseline, 1,
+        "#1207 the baseline is the generation the first clear reached"
+    );
+    // The non-bumping deletion path: repair removes the re-captured row
+    // without touching the clear generation or the removed record.
+    let repair = stores
+        .storage
+        .repair_l0_sessions(|_| vec![])
+        .expect("#1207 the repair must succeed");
+    assert_eq!(
+        repair.removed, 1,
+        "#1207 the repair must remove the re-captured row"
+    );
+    assert_eq!(
+        stores.session_clear_generation("s1"),
+        baseline,
+        "#1207 the non-bumping repair must leave the generation at the baseline"
+    );
+    // The later clearSession bumps the generation but cannot re-record the
+    // row: repair already took it, so its id only lives in the first clear's
+    // record, which predates the baseline.
+    stores
+        .clear_session_memory_data("s1")
+        .expect("#1207 the second clear must succeed");
+    assert_eq!(
+        stores.session_clear_generation("s1"),
+        baseline + 1,
+        "#1207 the second clear must advance the generation without re-recording the repaired row"
+    );
+    assert!(
+        !stores.session_clear_removed_since("s1", baseline, "s1_x_raw"),
+        "#1207 a row whose deleting clear predates the baseline must not read as cleared-since it"
+    );
+    // Positive control: a row the later clears really delete still reads
+    // true — the false above comes from the baseline comparison, not from a
+    // disabled check.
+    stores
+        .storage
+        .insert_l0_session(&row("s1_y2_raw", "2026-10-22T00:00:03.000Z"))
+        .expect("#1207 the control row must insert");
+    stores
+        .clear_session_memory_data("s1")
+        .expect("#1207 the third clear must succeed");
+    assert_eq!(
+        stores.session_clear_generation("s1"),
+        baseline + 2,
+        "#1207 the third clear must advance the generation again"
+    );
+    assert!(
+        stores.session_clear_removed_since("s1", baseline, "s1_y2_raw"),
+        "#1207 a row deleted by a clear after the baseline must still read as cleared-since it"
+    );
+}
+
+// #1207 fix-2 end to end: a re-captured turn whose L0 row is removed by the
+// non-bumping repair path while the heartbeat's createNote request is parked,
+// followed by an unrelated clearSession (generation moves, the removed record
+// cannot mention the row) and a third capture of the same id, must still be
+// persisted. The pre-fix accumulated set made the mismatch arm read the stale
+// id as cleared-since the baseline: the candidate was discarded and the
+// re-captured row was marked indexed — the turn was silently lost.
+#[tokio::test]
+async fn recaptured_turn_survives_unrelated_later_clear() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("recapture-later-clear", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            gated(note_response(
+                "Alpha",
+                "Alpha description",
+                "## Summary\nAlpha body",
+            )),
+        ]
+    })
+    .await;
+    let recapture = (
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "recaptured around a stale removed entry",
+    );
+    capture_user_turn(&lab.indexer, recapture.0, recapture.1, recapture.2);
+    lab.stores
+        .clear_session_memory_data("s1")
+        .expect("#1207 the first clear must succeed");
+    capture_user_turn(&lab.indexer, recapture.0, recapture.1, recapture.2);
+    let heartbeat = spawn_heartbeat(&lab.indexer);
+    wait_for_requests(&lab.server, 2).await;
+    // Mid-flight (the createNote response is parked): remove the re-captured
+    // row through the non-bumping repair path, run an unrelated clearSession
+    // (its own selection finds nothing, so the stale id is not re-recorded),
+    // then capture the same turn a third time.
+    let repair = lab
+        .stores
+        .storage
+        .repair_l0_sessions(|_| vec![])
+        .expect("#1207 the mid-flight repair must succeed");
+    assert_eq!(
+        repair.removed, 1,
+        "#1207 the mid-flight repair must remove the re-captured row"
+    );
+    lab.stores
+        .clear_session_memory_data("s1")
+        .expect("#1207 the mid-flight clear must succeed");
+    capture_user_turn(&lab.indexer, recapture.0, recapture.1, recapture.2);
+    lab.server.release(1);
+    let stats = heartbeat
+        .await
+        .expect("#1207 the heartbeat task must not panic")
+        .expect("#1207 runHeartbeat must not reject when the unrelated clear lands mid-flight");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1207 the re-captured turn must be persisted, not silently dropped behind the stale removed entry"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1207 a project memory file must be written for the re-captured turn, got {paths:?}"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the run");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1207 exactly the third capture's row may remain"
+    );
+    assert_eq!(
+        rows[0].session_key, "s1",
+        "#1207 the surviving row belongs to the target session"
+    );
+    assert!(
+        rows[0].indexed,
+        "#1207 the re-captured row may be marked indexed only alongside the persist that really wrote the file"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#1207 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#1207 classify and createNote must still run; only the persist decision differs"
+    );
+}
