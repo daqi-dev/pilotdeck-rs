@@ -40,17 +40,17 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test
 | migration 锁（2） | stale-lock-removed（11 分钟陈旧）、fresh-lock-times-out（60 秒新鲜锁） |
 
 † locale 门控。
-‡ 绑定测试 Linux-only（#1289，APFS/HFS+ 拒绝非 UTF-8 文件名）：非 Linux 宿主该行记 SKIP——不计 KILLED 也不计 INVALID，不使整轮失败。
+‡ 绑定测试 Linux-only（#1289，APFS/HFS+ 拒绝非 UTF-8 文件名）：非 Linux 宿主该行记 SKIPPED——不计 KILLED 也不计 INVALID，不使整轮失败；entry-lossy-home 的杀伤证据须在 Linux 宿主（cb8 / CI Linux）跑出，darwin 记 SKIPPED。
 
 ## 负控
 
-`negative_controls.py` 复用 `../negative_process.py` 和 `../negative_suite.py`，17 项变异各绑定一个具名 cell 重放测试，判杀证据是该测试自身 panic 载荷携带的 `#1216` 消息；编译失败、正控失败、锚点失配、恢复失败均为 INVALID，任一非 KILLED 即非零退出（#1289 起非 Linux 宿主对 Linux-only 行记 SKIP——不计 KILLED 也不计 INVALID，不使整轮失败；但全 SKIP、零 KILLED 仍非零退出：什么都没证明）。守卫覆盖 `store.rs`、`migration.rs`、`tests.rs`、脚本自身与两个共享裁决依赖，任一脏即拒跑；调用方必须提供 `CARGO_TARGET_DIR`（本树构建目录）。
+`negative_controls.py` 复用 `../negative_process.py` 和 `../negative_suite.py`，21 项变异各绑定一个具名测试，判杀证据是该测试自身 panic 载荷携带的 `#1216` 消息；编译失败、正控失败、锚点失配、恢复失败均为 INVALID，任一非 KILLED 即非零退出（#1289 起非 Linux 宿主对 Linux-only 行记 SKIPPED——不计 KILLED 也不计 INVALID，不使整轮失败；但全 SKIPPED、零 KILLED 仍非零退出：什么都没证明）。守卫覆盖 `store.rs`、`migration.rs`、`paths.rs`、`tests.rs`、脚本自身与两个共享裁决依赖，任一脏即拒跑；调用方必须提供 `CARGO_TARGET_DIR`（本树构建目录）。
 
 | 变异 | 绑定测试 | 对应问题范围 |
 |---|---|---|
 | migration-routing-removed（projectKey 路由不再移动） | migration_tasks_move_to_projectkey_dir_matches_ts | 迁移跳过 |
 | run-routing-removed（显式 projectKey 的 run 不再路由） | migration_runs_by_explicit_projectkey_matches_ts | fix-r1 路由 |
-| corrupt-tasks-parse-error / corrupt-tasks-not-array（损坏 tasks.json 不再视为阻塞） | migration_blocked_dir_keeps_source_tasks / _tasks_not_array_matches_ts | 损坏文件不报错 |
+| corrupt-tasks-parse-error / corrupt-tasks-not-array（损坏 tasks.json 不再视为阻塞） | migration_blocked_dir_keeps_source_tasks_matches_ts / migration_blocked_dir_tasks_not_array_matches_ts | 损坏文件不报错 |
 | read-tasks-error-aborts（EACCES/EISDIR 中止迁移而非视为阻塞） | migration_blocked_dir_tasks_isdir_matches_ts | fix-r1 P1（fix-r2 改绑 EISDIR cell：EACCES cell 的测试在 root 下自跳过，EISDIR 与 uid 无关） |
 | non-atomic-task-write（原地写替代 temp+rename） | store_atomic_replace_keeps_old_inode_bytes_matches_ts | 非原子写 |
 | migration-marker-renamed | migration_tasks_without_projectkey_stay_matches_ts | 迁移标记漂移 |
@@ -61,9 +61,15 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test
 | stale-lock-enoent-errors（锁删除不容忍 ENOENT） | lock_removal_tolerates_a_vanished_lock_file | fix-r1 P2 |
 | surrogate-lossy-reverted（严格 UTF-16 拒绝孤立代理 projectKey） | migration_lone_surrogate_projectkey_matches_ts | fix-r1 P3 |
 | entry-lossy-home‡（home 重新经 to_string_lossy 字符串下传，非 UTF-8 home 同目录双键空桶覆盖） | migration_non_utf8_home_keeps_one_physical_key | fix-r2 P1 |
-| entry-cwd-unconditional（入口无条件读 cwd，绝对 home 被已删 cwd 误报） | migration_absolute_home_survives_deleted_cwd | fix-r2 P2 |
+| entry-cwd-unconditional（入口无条件读 cwd，绝对 home 被已删 cwd 误报） | cron_deleted_cwd_worker | fix-r2 P2 / fix-r3 P1 |
+| project-key-cwd-unconditional（normalizedProjectKey 的单参 resolve 再次无条件读 cwd，已删 cwd 下绝对 projectKey 路由失败） | cron_deleted_cwd_worker | fix-r3 P2 |
+| paths-key-cwd-unconditional（resolveCronPathsFrom 的绝对 key 解析再次无条件读 cwd，公共入口在已删 cwd 下失败） | cron_deleted_cwd_worker | fix-r3 P2 |
+| paths-entry-cwd-unconditional（公共入口自身的 home/key 解析再次无条件读 cwd，与迁移入口同形） | cron_deleted_cwd_worker | fix-r3 P2 |
 | lock-guard-removed（Drop guard 不再释放锁，panic 后锁滞留 10 分钟） | panicking_migration_body_still_releases_the_lock | fix-r2 P2 |
 | tail-entry-never-removed（完成的 tail 永不从注册表删除，进程级 map 无界增长） | store_tail_entry_removed_after_uncontended_mutation | fix-r2 P3 |
+| tail-release-counts-live-sibling（release 把自己已释放的克隆计作存活持有者，兄弟变异克隆仍在途时即删条目，同文件下一次变异会链接第二条 tail 丢串行） | store_tail_entry_removed_after_contended_mutation_pair | fix-r3 P2 |
+
+cwd 相关四行直接绑 `#[ignore]` worker `cron_deleted_cwd_worker`（`--ignored` + `PDRS_CRON_CASE=absolute-home-deleted-cwd`）：父测试的 panic 载荷内嵌 worker 的 libtest 输出，共享裁决在 worker 自身的 FAILED 行截断，`#1216` 标记到不了父测试的 panic 块（fix-r3 P1 改绑）。
 
 迁移自身的 `atomic_write`（temp+rename）没有对应变异：绑定 `atomic-replace-keeps-old-inode-bytes` 的读 fd 观测只覆盖 store 写入路径，迁移路径的原子性没有可观测的 oracle 判据（迁移是单线程顺序写，重放树只比较最终字节），固不在负控范围。
 
@@ -72,7 +78,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cron-store/negative_controls.py 
 CARGO_TARGET_DIR=/absolute/build/dir python3 -I src/pilotdeck-gateway/tests/fixtures/cron-store/negative_controls.py /tmp/fresh-cron-store-negative [mutation ...]
 ```
 
-**执行推迟**：本 worker 的 cron 源码未提交，`mutating_sources` 的 HEAD 守卫拒跑，实际变异由协调者提交后运行。本 worker 已用等价脚本（fix-r2 证据目录 `sample_negative.py`，与 fix-r1 的 `manual-mutations.py` 同一序列）手动验证：快照字节 → 应用变异 → `cargo test --no-run` 编译 → 被绑测试 `--exact` 实跑 → 恢复并逐字节校验；fix-r2 抽样 5 项（entry-lossy-home / entry-cwd-unconditional / lock-guard-removed / tail-entry-never-removed / concurrency-serialization-removed）全 KILLED，其余 12 项与 fix-r1 的 13 项一致或仅换锚点，由协调者提交后全量重跑。
+**执行记录**：脚本要求树等于已提交状态（`mutating_sources` 的 HEAD 守卫，任一守卫文件或整个 `src/` 树脏即拒跑）。#1289 提交后在 macOS（darwin）宿主全量实跑一次：20 KILLED、1 行因绑定测试 Linux-only 记跳过（SKIPPED）、EXIT=0（证据见该轮目录）；`entry-lossy-home` 须在 Linux 宿主（cb8 / CI Linux）跑，darwin 记 SKIPPED，Linux 全量预期 21 KILLED。更早轮次源码未提交时曾用等价脚本（fix-r2 证据目录 `sample_negative.py`，与 fix-r1 的 `manual-mutations.py` 同一序列）手动验证：快照字节 → 应用变异 → `cargo test --no-run` 编译 → 被绑测试 `--exact` 实跑 → 恢复并逐字节校验；fix-r2 抽样 5 项（entry-lossy-home / entry-cwd-unconditional / lock-guard-removed / tail-entry-never-removed / concurrency-serialization-removed）全 KILLED。
 
 非 cell 的守卫测试：`migration_non_utf8_home_keeps_one_physical_key`（Linux-only，#1289：APFS/HFS+ 拒绝非 UTF-8 文件名（EILSEQ），macOS 既建不出夹具、真实用户也不存在非 UTF-8 home，故 `#[cfg(target_os = "linux")]`，Linux 宿主与 CI 照跑；非 UTF-8 home + 同目录 projectKey，P1 双 key 回归）、`migration_absolute_home_survives_deleted_cwd`（父测试经 `run_cases` 拉起 `#[ignore]` worker `cron_deleted_cwd_worker`，worker 删除自身 cwd 后以绝对 home 跑迁移）、`panicking_migration_body_still_releases_the_lock`（warn 里 panic 的 logger + `catch_unwind`，断言锁文件已删）、`store_tail_entry_removed_after_uncontended_mutation`（完成 mutation 后 `TASK_FILE_TAILS` 条目删除，对齐 CronTaskStore.ts:168-172；等待者持有克隆时不删，串行性由并发测试守卫）。`blocked-dir-tasks-eacces` 的重放在 `geteuid()==0` 时跳过（root 可读 000 文件，该 cell 会因 warning/tree 不符而误报；读错误分支由 EISDIR cell 与 `read-tasks-error-aborts` 变异覆盖），chmod 恢复按保存的原 mode 而非固定 644。
 

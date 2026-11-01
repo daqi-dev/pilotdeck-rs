@@ -23,7 +23,7 @@ marker never reaches the parent's panic block (fix-r3 P1).
 The raw-bytes home row is Linux-only (#1289): its bound test is
 `#[cfg(target_os = "linux")]` because APFS / HFS+ reject non-UTF-8 filenames
 (EILSEQ), so macOS can neither build the fixture nor host a non-UTF-8 home.
-Non-Linux hosts record that row SKIP — neither KILLED nor INVALID — and the
+Non-Linux hosts record that row SKIPPED — neither KILLED nor INVALID — and the
 drop does not fail the run (same accounting as exact-rerun-receipt's
 DARWIN_ONLY rows).
 """
@@ -51,8 +51,8 @@ DELETED_CWD_WORKER = {'ignored': True, 'env': {'PDRS_CRON_CASE': 'absolute-home-
 # (APFS / HFS+ reject non-UTF-8 filenames with EILSEQ, so macOS can neither
 # build the fixture nor host a non-UTF-8 home): elsewhere the test does not
 # exist, its positive control can never pass, and the row would be INVALID
-# by construction. Non-Linux hosts record the row SKIP — neither KILLED nor
-# INVALID — so a default full run does not fail on a structurally absent
+# by construction. Non-Linux hosts record the row SKIPPED — neither KILLED
+# nor INVALID — so a default full run does not fail on a structurally absent
 # control (same accounting as exact-rerun-receipt's DARWIN_ONLY rows).
 LINUX_ONLY = {'entry-lossy-home'}
 mutations = [
@@ -324,15 +324,15 @@ def main():
     summary = []
     if sys.platform != 'linux':
         # LINUX_ONLY rows cannot run here (the bound test is not compiled on
-        # this platform): record SKIP — neither KILLED nor INVALID — so a
+        # this platform): record SKIPPED — neither KILLED nor INVALID — so a
         # default full run does not fail on a structurally absent control.
         # Default runs record the drop for the evidence directory.
         for row in [row for row in selected if row[0] in LINUX_ONLY]:
-            summary.append(dict(mutation=row[0], test=row[4], assertion=row[5],
-                                status='SKIP', compiled=False,
+            summary.append(dict(name=row[0], test=row[4], assertion=row[5],
+                                status='SKIPPED', compiled=False,
                                 reason='bound test compiles only on Linux '
                                         '(#[cfg(target_os = "linux")], #1289)'))
-            print(f'{row[0]}: SKIP: Linux-only bound test', flush=True)
+            print(f'{row[0]}: SKIPPED: Linux-only bound test', flush=True)
         selected = [row for row in selected if row[0] not in LINUX_ONLY]
     guarded = list(dict.fromkeys([source, migration, paths_rs, tests, Path(__file__).resolve(),
         Path(__file__).resolve().parents[1] / 'negative_process.py',
@@ -373,7 +373,7 @@ def main():
     for row in selected:
         name, path, old, new, test, assertion = row[:6]
         worker = row[6] if len(row) > 6 else None
-        item = dict(mutation=name, test=test, assertion=assertion,
+        item = dict(name=name, test=test, assertion=assertion,
                     status='INVALID', reason='not executed', compiled=False)
         try:
             # No caller-supplied baseline, dirty-file snapshot, or alternate git.
@@ -405,16 +405,16 @@ def main():
         print(f"{name}: {item['status']}: {item['reason']}", flush=True)
     save('summary.json', json.dumps(summary, indent=2) + '\n')
     counts = {state: sum(row['status'] == state for row in summary)
-              for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED', 'SKIP')}
+              for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED', 'SKIPPED')}
     print('summary: ' + ', '.join(f'{key}={value}' for key, value in counts.items()), flush=True)
-    # SKIP (platform-absent, recorded above) is not a failure, but a run
+    # SKIPPED (platform-absent, recorded above) is not a failure, but a run
     # that killed nothing proved nothing: with zero KILLED rows the exit stays
-    # nonzero so a caller cannot read an all-SKIP selection as verified
+    # nonzero so a caller cannot read an all-SKIPPED selection as verified
     # (same rule as exact-rerun-receipt).
     success = 'COMPILED' if compile_only else 'KILLED'
     return int(not summary
                or not counts[success]
-               or any(row['status'] not in (success, 'SKIP') for row in summary))
+               or any(row['status'] not in (success, 'SKIPPED') for row in summary))
 
 
 if __name__ == '__main__':
