@@ -153,6 +153,17 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("zai-ok：密钥不得落盘")
 
         log.write_text("")
+        # 不传 --timeout 时按通道取默认（anthropic 1200 s / zai 600 s）；显式值优先。dry-run 只写 command.txt，不起进程
+        for runner_, extra, want in (("anthropic", [], "timeout=1200s"), ("zai", [], "timeout=600s"),
+                                     ("anthropic", ["--timeout", "77"], "timeout=77s")):
+            dout = out_base / f"dry-{runner_}-{len(extra)}"
+            subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner_, "--claude-bin", str(fake),
+                            "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1",
+                            "--out", str(dout), "--roles", ROLES, "--dry-run", *extra],
+                           capture_output=True, text=True, env=dict(os.environ))
+            cmdtxt = (dout / "command.txt").read_text(encoding="utf-8") if (dout / "command.txt").exists() else ""
+            if want not in cmdtxt:
+                fails.append(f"默认超时：--runner {runner_} {' '.join(extra)} 应记 {want}，实际 {cmdtxt.splitlines()[-1:] }")
         rc, s = run("anthropic-ok", "ok", runner="anthropic")
         calls = [json.loads(x) for x in log.read_text().splitlines()]
         if not calls or any(c["base"] != "https://llm-center.modelbest.co" or c["key_is"] != "anth_file" for c in calls):
