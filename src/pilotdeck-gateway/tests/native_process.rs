@@ -129,9 +129,11 @@ async fn explicit_entry_selects_parser() {
 // #1261: anchor run()'s validate_environment call site, not the function body
 // (production_entry_snapshot_capabilities_are_disabled already mirrors the
 // combination by calling the function directly). Only the real --native child
-// catches a removed or reordered call; the child is bounded so an accepted
-// authority that starts listening still fails the deadline assertion instead
-// of hanging the suite.
+// observes the call site, and each way to displace the call has its own
+// observation: a removed call lets the child reach its own listening
+// advertisement before the deadline counts, and a reordered call lets
+// assembly's project registration leave entries under home before the
+// rejection. Launch, pipe and decode failures stay unbound (INVALID).
 #[tokio::test]
 async fn native_entry_process_rejects_inherited_authority() {
     let scratch = test_scratch::Scratch::new("1261-native-entry");
@@ -145,44 +147,96 @@ async fn native_entry_process_rejects_inherited_authority() {
     let sidecar = scratch.path().join("sidecar");
     std::fs::write(&sidecar, "#1261 never executed before the rejection\n")
         .expect("#1261 native entry sidecar file");
+    // A complete valid profile (the native-management precedent): with the
+    // entry gate displaced, the child must not fail on anything else, so the
+    // observations below are about the gate's position alone.
+    std::fs::write(
+        home.join("pilotdeck.yaml"),
+        "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n",
+    )
+    .expect("#1261 native entry home config file");
+    use tokio::io::AsyncReadExt;
     for key in [
         "PILOTDECK_STORAGE_ROOT",
         "PILOTDECK_SNAPSHOT_ROOT",
         "PILOTDECK_MANAGED_CONFIG",
     ] {
-        let output = tokio::time::timeout(
+        let rejection = format!("native isolated mode does not accept inherited {key}");
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
+            .arg("--native")
+            .arg("--home")
+            .arg(&home)
+            .arg("--project")
+            .arg(&project)
+            .arg("--listen")
+            .arg("127.0.0.1:0")
+            .arg("--token-file")
+            .arg(&token_file)
+            .arg("--sidecar")
+            .arg(&sidecar)
+            .env_clear()
+            .env(key, scratch.path().join("inherited-authority"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("#1261 native entry child launch");
+        let mut stderr = child
+            .stderr
+            .take()
+            .expect("#1261 native entry child stderr pipe");
+        // read_to_end keeps every byte it already collected when the deadline
+        // cancels it, so an advertisement the child printed is still observed.
+        let mut collected = Vec::new();
+        let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            tokio::process::Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
-                .arg("--native")
-                .arg("--home")
-                .arg(&home)
-                .arg("--project")
-                .arg(&project)
-                .arg("--listen")
-                .arg("127.0.0.1:0")
-                .arg("--token-file")
-                .arg(&token_file)
-                .arg("--sidecar")
-                .arg(&sidecar)
-                .env_clear()
-                .env(key, "/1261-inherited/storage-root")
-                .kill_on_drop(true)
-                .output(),
+            stderr.read_to_end(&mut collected),
         )
-        .await
-        .expect("#1261 native entry child rejection deadline")
-        .expect("#1261 native entry child launch");
-        let stderr =
-            String::from_utf8(output.stderr).expect("#1261 native entry child stderr UTF8");
-        negative_assert!(
-            stderr.contains(&format!(
-                "native isolated mode does not accept inherited {key}"
-            )),
-            "#1261 native entry rejects inherited {key}"
-        );
-        negative_assert!(
-            !output.status.success(),
-            "#1261 native entry rejects inherited {key}"
-        );
+        .await;
+        match outcome {
+            // The child exited and closed stderr: judge the rejection itself.
+            Ok(Ok(_eof)) => {
+                let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+                    .await
+                    .expect("#1261 native entry child exit deadline")
+                    .expect("#1261 native entry child exit status");
+                let stderr = String::from_utf8_lossy(&collected);
+                negative_assert!(
+                    stderr.contains(&rejection),
+                    "#1261 native entry rejects inherited {key}"
+                );
+                negative_assert!(
+                    !status.success(),
+                    "#1261 native entry rejects inherited {key}"
+                );
+                // A reordered call reaches assembly before the rejection and
+                // leaves its project registration and run registry under
+                // home; the entry gate leaves home exactly as this test
+                // wrote it (only the config file above).
+                let mut leftover: Vec<_> = std::fs::read_dir(&home)
+                    .expect("#1261 native entry home still readable")
+                    .map(|entry| entry.expect("#1261 native entry home entry").file_name())
+                    .filter(|name| name.as_os_str() != std::ffi::OsStr::new("pilotdeck.yaml"))
+                    .collect();
+                leftover.sort();
+                println!("#1261 leftover under home for {key}: {leftover:?}");
+                negative_assert!(
+                    leftover.is_empty(),
+                    "#1261 native entry rejects inherited {key}"
+                );
+            }
+            Ok(Err(_read)) => panic!("#1261 native entry child stderr read failed"),
+            // Deadline: only the child's own listening advertisement proves
+            // the entry gate accepted the authority; a slow host is not
+            // evidence, so the deadline alone never kills.
+            Err(_deadline) => {
+                let stderr = String::from_utf8_lossy(&collected);
+                negative_assert!(
+                    !stderr.contains("native listening"),
+                    "#1261 native entry rejects inherited {key}"
+                );
+                panic!("#1261 native entry child neither rejected nor advertised listening");
+            }
+        }
     }
 }

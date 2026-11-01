@@ -19,23 +19,36 @@ ROOT = Path(__file__).resolve().parents[5]
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
 TEST = 'native_entry_process_rejects_inherited_authority'
-# The omitted call can fail at the child deadline (an accepted authority that
-# starts listening), the launch/decode steps, or any of the three key
-# assertions; every failure point on the test path carries one of these
-# markers, so the deletion mutant is bound to this test's own assertions.
+# Only the three key assertions kill. Launch, pipe, decode and exit-wait
+# failures cannot be caused by displacing the validate_environment call and
+# stay unbound (INVALID). The deadline branch kills only after the child's
+# own listening advertisement independently proves the entry gate accepted
+# the authority; a slow host alone is not evidence.
 MARKERS = [
-    '#1261 native entry child rejection deadline',
-    '#1261 native entry child launch',
-    '#1261 native entry child stderr UTF8',
     '#1261 native entry rejects inherited PILOTDECK_STORAGE_ROOT',
     '#1261 native entry rejects inherited PILOTDECK_SNAPSHOT_ROOT',
     '#1261 native entry rejects inherited PILOTDECK_MANAGED_CONFIG',
 ]
+ANCHOR = (
+    '    let inherited = capture_environment(std::env::vars_os());\n'
+    '    validate_environment(&inherited)?;\n'
+    '    let env = options.environment(inherited);\n'
+    '    let host = assembly::start(options.clone(), env).await?;\n'
+)
 mutations = [
-    ('run-entry-validate-omitted', ENTRY,
+    ('run-entry-validate-omitted', ENTRY, ANCHOR,
      '    let inherited = capture_environment(std::env::vars_os());\n'
+     '    let env = options.environment(inherited);\n'
+     '    let host = assembly::start(options.clone(), env).await?;\n',
+     TEST, MARKERS),
+    # The realistic reorder threat: validate only after assembly already
+    # consumed the inherited authorities. The rejection message is still
+    # printed, so assembly's own writes under home are the kill evidence.
+    ('run-entry-validate-reordered', ENTRY, ANCHOR,
+     '    let inherited = capture_environment(std::env::vars_os());\n'
+     '    let env = options.environment(inherited.clone());\n'
+     '    let host = assembly::start(options.clone(), env).await?;\n'
      '    validate_environment(&inherited)?;\n',
-     '    let inherited = capture_environment(std::env::vars_os());\n',
      TEST, MARKERS),
 ]
 
@@ -49,8 +62,18 @@ def mutate(case, text):
 def main():
     selected_rows = [Case(*row) for row in mutations]
     if sys.argv[1:] == ['--check']:
+        test_source = TEST_FILE.read_text()
         for case in selected_rows:
             mutate(case, case.path.read_text())
+        # The runtime judge matches substituted messages, so --check can only
+        # bind the shared template and the key list the test iterates; drift
+        # here fails before any cargo run is needed.
+        if '#1261 native entry rejects inherited {key}' not in test_source:
+            raise SystemExit(f'#1261 marker template missing from {TEST}')
+        for key in ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT',
+                    'PILOTDECK_MANAGED_CONFIG'):
+            if f'"{key}"' not in test_source:
+                raise SystemExit(f'#1261 key missing from {TEST}: {key}')
         print(f'#1261 {len(selected_rows)} mutation anchors OK')
         return 0
     if len(sys.argv) < 2:
