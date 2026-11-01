@@ -123,7 +123,13 @@ file the failed clear already removed is never re-listed and the file is
 lost. The fix-r2 review adds a fifth (`clear-abort-delete-rearm-dropped`):
 the same re-arm dropped from the entry-deletion error arm, the failure face
 inside `delete_memory_entries` itself (a later unlink or the manifest repair,
-after the files are already removed). Both blocking-witness tests
+after the files are already removed). That bound test probes its 0444
+injection natively right after `set_permissions` (#1263): when this caller
+can write through the mode (root or CAP_DAC_OVERRIDE) it restores 0644 and
+skips with a recognizable `#1263 skip:` line written straight to the stderr
+handle (libtest captures a passing test's `eprintln!`), so a root host gets
+an honest observable skip — and the row above reports SURVIVED with the skip
+line in the log — instead of an environment red. Both blocking-witness tests
 (`concurrent_capture_cannot_land_between_l0_id_selection_and_delete` and
 `commit_segment_blocks_concurrent_clear_until_writes_complete`) judge through
 doc-hidden lock-wait observers (`EdgeClawStorage::set_process_wait_observer`,
