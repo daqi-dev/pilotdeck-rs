@@ -9,15 +9,25 @@ RFC 850、asctime、ISO（date-only 走 UTC、无时区走本地）、命名时�
 
 生成器父进程分别以 `TZ=UTC` 与 `TZ=Asia/Shanghai` 跑子进程，oracle 不依赖
 生成机的本地时区；本地解析的方言（asctime 两条、无时区 ISO 一条）落在上海的
-平坦 +08:00 年段，回放用固定 −8h 注入解析器。生产入口的本地解析走进程时区
-（`TZ` → 已接纳的系统 TZif 子集，已对拍时区上与 Node `Date.parse` 一致）；
-子集之外的环境（POSIX TZ、自定义路径、TZif 不可读）按不可解析处理、忽略该
-header，而 Node 会回退 UTC 继续解析（Node v22.22.0 实测：`TZ=unsupported-profile`
-下 `Date.parse` 与 `TZ=UTC` 同值）——这是 `specs/gateway-parity/accepted-diffs.md`
-A6.4-STATS-RETENTION-001 登记的保留差异子集，不是「TS 无此态」。子进程测试
+平坦 +08:00 年段，回放用固定 −8h 注入解析器。生产入口的本地解析走进程时区，
+但只经与 stats 保留判定同一道已接纳 TZif 门槛（`stats::admitted_local_to_utc`，
+#360-2 fix-r2）：三标识 allowlist、未设 TZ 时 `/etc/localtime` 规范链接、1 MiB
+读上界、`tests/fixtures/stats-dateparse/local-profiles.json` 的 SHA 配对。子集
+之外的环境（POSIX TZ、自定义路径、TZif 不可读、可读但未对拍、`TZ=localtime`
+等宿主相关别名）按不可解析处理、忽略该 header，而 Node 会继续解析（回退 UTC
+或按宿主 C 库 zone 搜索；Node v22.22.0 实测：`TZ=unsupported-profile`、
+`TZ=:/nonexistent` 下 `Date.parse` 与 `TZ=UTC` 同值；`TZ=localtime` 在有
+`/usr/share/zoneinfo/localtime` 的机器走本地、没有的机器回退 UTC，故不可对拍）
+——这是 provider 侧的保留差异子集，登记于
+`specs/gateway-parity/diffs/A6.4-PROVIDER-RETRY-AFTER-TZ-001.md`（未批准；沿用
+与 A6.4-STATS-RETENTION-001 相同的 TZif 子集，但那条的人批范围只有 stats
+retention，不覆盖本消费侧）。子进程测试
 `retry_after_dialects_production_wiring_matches_node_zone_children` 经生产入口在
-`TZ=UTC` / `TZ=Asia/Shanghai` 子进程里回放全部 62 条，并在不可读 TZ 的子进程上
-断言本地用例 fail-closed、时区无关用例仍等于 UTC 列。
+`TZ=UTC` / `TZ=Asia/Shanghai` 子进程里回放全部 62 条——仅当宿主 TZif 与
+`local-profiles.json` 的 SHA 配对时；未配对的宿主打印降级说明并按 fail-closed
+断言本地用例为 `None`，不冒充 Node 对拍通过（fix-r2 P2-2）。`TZ=localtime`
+（allowlist 拒绝的宿主相关别名）与 `TZ=:/nonexistent`（必为不可读路径，不假设
+宿主缺少某 zone 名）子进程断言本地用例 `None`、时区无关用例等于 UTC 列。
 
 超大 delta-seconds（`"1e308"` / `"1e309"`）不入 oracle：`JSON.stringify(Infinity)`
 是 `null`，与不可解析的 null 无法区分。由
@@ -42,6 +52,6 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test 
 
 生成目录 `recursive:true`、金样 `flag:'wx'`，不覆盖已有输出。回放模块经
 `#[path]` 挂在 `runtime/model/http.rs`（cfg(test)），断言消息带 `#360-2` 绑定
-标记；快速回放同时断言 oracle 的 `sourceCommit` / `sourceSha256`（provenance
-不只依赖 `#[ignore]` 的字节再生守卫）。负控见 `negative_controls.py`（提交后
-宿主串行跑）。
+标记；快速回放同时断言 oracle 的 `sourceCommit` / `sourceSha256` 与
+`node` / `v8` / `icu` / `tzdata`（provenance 不只依赖 `#[ignore]` 的字节再生
+守卫，fix-r2 P3-1）。负控见 `negative_controls.py`（提交后宿主串行跑）。

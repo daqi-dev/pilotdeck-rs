@@ -38,7 +38,10 @@ fn stats_dateparse_matches_real_ts_in_three_timezones() {
         "UTC",
         "America/New_York",
         "Asia/Shanghai",
-        "unsupported-profile",
+        // A leading ':' plus an absolute remainder can never resolve inside
+        // the zoneinfo root, so this zone is guaranteed unreadable without
+        // assuming a host zone name is absent (#360 fix-r2 P3-2).
+        ":/nonexistent",
         "Europe/London",
         "localtime",
         ":Asia/Shanghai",
@@ -79,8 +82,11 @@ fn dateparse_zone_child() {
         // Stats must preserve the row rather than fabricate an old timestamp.
         let local = JsString::from("2000-01-01T00:00:00");
         let shared = pilotdeck_transport::system_clock::parse_node22_date(&local);
-        if zone == "unsupported-profile" {
-            assert!(shared.is_err());
+        if zone == ":/nonexistent" {
+            assert!(
+                shared.is_err(),
+                "#273 unresolvable TZ path must stay unreadable: {zone}"
+            );
         } else {
             assert!(shared.unwrap().is_some());
         }

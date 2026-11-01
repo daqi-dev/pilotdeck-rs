@@ -24,6 +24,30 @@ fn retry_after_dialects_match_node_in_two_timezones() {
         Some("109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf"),
         "#360-2 oracle source sha256"
     );
+    // fix-r2 P3-1: the quick replay pins the oracle's runtime provenance too,
+    // not only the TS source — regenerating with a different V8/ICU/tzdata
+    // while the cases happen to match must not stay green here (byte identity
+    // is separately guarded by the `#[ignore]`d regeneration test).
+    assert_eq!(
+        oracle["node"].as_str(),
+        Some("v22.22.0"),
+        "#360-2 oracle node runtime"
+    );
+    assert_eq!(
+        oracle["v8"].as_str(),
+        Some("12.4.254.21-node.33"),
+        "#360-2 oracle v8 runtime"
+    );
+    assert_eq!(
+        oracle["icu"].as_str(),
+        Some("77.1"),
+        "#360-2 oracle icu runtime"
+    );
+    assert_eq!(
+        oracle["tzdata"].as_str(),
+        Some("2025b"),
+        "#360-2 oracle tzdata runtime"
+    );
     let zones = oracle["zones"].as_array().expect("#360-2 zone table");
     let cases = |index: usize| {
         zones[index]["cases"]
@@ -103,16 +127,20 @@ const ZONE_ENV: &str = "PDRS_RETRY_AFTER_ZONE";
 const ZONE_CHILD: &str =
     "runtime::model::http::retry_after_dialect_tests::retry_after_dialect_zone_child";
 
-/// #360-2 fix-r1: the timezone-dependent dialects (asctime, zone-less ISO)
-/// must also be asserted through the production entry — process `TZ` → the
-/// admitted system TZif resolver — not only through the injected seam, so the
-/// real runtime wiring cannot rot while the seam replay stays green. Each
+/// #360-2 fix-r1 (r2 zones): the timezone-dependent dialects (asctime,
+/// zone-less ISO) must also be asserted through the production entry — process
+/// `TZ` → the shared admitted system TZif gate — not only through the injected
+/// seam, so the real runtime wiring cannot rot while the seam replay stays
+/// green. `TZ=localtime` pins the fail-closed alias edge (Node v22.22.0
+/// resolves it through the C library's zone search, so it is host-dependent
+/// and not an admitted profile), and `TZ=:/nonexistent` pins the unreadable
+/// path edge without assuming a host zone name is absent (r2 P3-2). Each
 /// child inherits its `TZ` before any parsing (no in-process `set_var`); the
-/// libtest receipt proves the child really ran (#273), and `--test-threads=2`
-/// pins the multithreaded receipt layout (#942).
+/// libtest receipt proves the child really ran (#273), and
+/// `--test-threads=2` pins the multithreaded receipt layout (#942).
 #[test]
 fn retry_after_dialects_production_wiring_matches_node_zone_children() {
-    for zone in ["UTC", "Asia/Shanghai", "unsupported-profile"] {
+    for zone in ["UTC", "Asia/Shanghai", "localtime", ":/nonexistent"] {
         let output = Command::new(std::env::current_exe().expect("#360-2 zone child executable"))
             .args(["--exact", ZONE_CHILD, "--nocapture", "--test-threads=2"])
             .env(ZONE_ENV, zone)
@@ -133,14 +161,20 @@ fn retry_after_dialects_production_wiring_matches_node_zone_children() {
 /// [`retry_after_dialects_production_wiring_matches_node_zone_children`].
 ///
 /// `TZ=UTC` / `TZ=Asia/Shanghai` children replay the whole oracle row of that
-/// zone through `errors::retry_after_header` (the 1994/2015 local-resolving
-/// dates sit in Shanghai's flat +08:00 era in every tzdata release, so the
-/// host TZif cannot disagree with the pinned ICU recording). The
-/// `unsupported-profile` child pins the fail-closed edge of the admitted-TZif
-/// subset: its system TZif is unreadable, so the local-resolving dialects
-/// count as unparseable, while zone-independent values keep the UTC column
-/// that Node v22.22.0 itself keeps there (it falls back to UTC — the retained
-/// difference recorded under A6.4-STATS-RETENTION-001).
+/// zone through `errors::retry_after_header` — but only when this host's
+/// `/usr/share/zoneinfo/<zone>` bytes are the SHA-paired
+/// `local-profiles.json` profile (r2 P2-2); the 1994/2015 local-resolving
+/// dates sit in Shanghai's flat +08:00 era, which is exactly why a byte
+/// mismatch would otherwise stay silently green. On an unpaired host the row
+/// is not claimed as a pass: the shared gate itself fail-closes, the
+/// local-resolving dialects are expected as `None`, and the run prints the
+/// downgrade. The `localtime` (host-dependent alias, fail-closed by the
+/// allowlist) and `:/nonexistent` (unreadable path) children pin the edges of
+/// the admitted-TZif subset: local-resolving dialects count as unparseable
+/// and the header is ignored, while zone-independent values keep the UTC
+/// column that Node v22.22.0 itself keeps there (it falls back to UTC — the
+/// retained difference registered for this consumer by
+/// `specs/gateway-parity/diffs/A6.4-PROVIDER-RETRY-AFTER-TZ-001.md`).
 #[test]
 fn retry_after_dialect_zone_child() {
     let Ok(zone) = std::env::var(ZONE_ENV) else {
@@ -182,22 +216,41 @@ fn retry_after_dialect_zone_child() {
             "#360-2 zone child oracle row matches the UTC table"
         );
     }
+    let admitted = match &row {
+        // Pinned column is the expectation only for the SHA-paired host
+        // profile; the production entry applies the very same gate, so an
+        // unpaired host must come out fail-closed, not coincidentally green.
+        Some(_) => {
+            let bytes = std::fs::read(format!("/usr/share/zoneinfo/{zone}"))
+                .expect("#360-2 zone child host TZif read");
+            let verified = crate::runtime::model::stats::stats_tzif_local(0, &bytes, &zone).is_ok();
+            if !verified {
+                println!(
+                    "#360-2 host TZif for TZ={zone} is not the local-profiles.json profile: \
+                     the local-resolving dialects replay fail-closed (None), \
+                     not as a Node-parity pass"
+                );
+            }
+            verified
+        }
+        None => false,
+    };
     for (index, (utc_case, shanghai_case)) in utc.iter().zip(shanghai).enumerate() {
         let value = utc_case["value"]
             .as_str()
             .expect("#360-2 zone child case value");
-        let expected = match &row {
-            Some(row) => row[index]["retryAfterMs"].as_f64(),
-            // Unreadable system TZif: the local-resolving dialects count as
-            // unparseable and the header is ignored; everything else carries
-            // no wall-time dependency and keeps the UTC column.
-            None => {
-                if utc_case != shanghai_case {
-                    None
-                } else {
-                    utc_case["retryAfterMs"].as_f64()
-                }
-            }
+        let expected = if admitted {
+            row.as_ref().expect("#360-2 zone child admitted oracle row")[index]["retryAfterMs"]
+                .as_f64()
+        } else if utc_case != shanghai_case {
+            // Outside the admitted subset (alias like `TZ=localtime`, an
+            // unreadable path, or an unpaired host profile): the
+            // local-resolving dialects count as unparseable and the header
+            // is ignored; everything else carries no wall-time dependency
+            // and keeps the UTC column.
+            None
+        } else {
+            utc_case["retryAfterMs"].as_f64()
         };
         assert_eq!(
             errors::retry_after_header(Some(value), 0.0),
