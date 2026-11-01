@@ -1,29 +1,31 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-02 04:23 · by Claude Code 协调者
-- #1305 | review | doing | A7-W0 原生分发按族拆模块 + 单一注册表：PR #1360 fix-r1 后 r2（opus 大 diff 3600 s）；主链首节点，合入解锁全部 A7 / A8 接线单（MAP _tmp/20261102-a86-path/MAP.md §3.2）
-- #1242 | coord | doing | 次链总单：第 1 步归因已交付（_tmp/20261102-issue-1242-step1/），拆 s0–s5 #1367–#1372 + 决策 #1373；按链推进，合入全部子单后关
-- #1367 | impl | doing | #1242-s0 补齐 native 采集原件 + 8 个必需 provider 格（承接 #1363 第 13 条），GLM cb8；合入解锁 #1368
-- #1221 | review | doing | calibrate BLOCKED 后锁未释放：PR #1374 r1（GLM + DeepSeek + macmini，与 #1194 #1206 同树串行三提交）；合入后 #1140 可关单
-- #1194 | review | doing | 同源取消处理器同步：PR #1374 r1（同 #1221）；前置于 #590
-- #1206 | review | doing | driver 锚不独立：PR #1374 r1（同 #1221）；前置于 #590
-- #1220 | review | doing | PR #1237 r5 macmini 长链宿主；前置于 #589，合入解锁 #1219 #1274
+updated: 2026-11-02 07:55 · by Claude Code 子代理（READY 重写）
+- #1305 | review | doing | A7-W0 原生分发按族拆模块 + 单一注册表：PR #1360 r2（fix-r1 改普通 mod 后）；主链首节点，合入解锁全部 A7 / A8 接线单（MAP _tmp/20261102-a86-path/MAP.md §3.2）
+- #1157 | coord | doing | PR #1387 决策卡 state/decisions-20261102-a-stage-scope.md + A8.4-NATIVE-HTTP-002-R1（落实 #1301 B / #1302 B / #1303 A / #1304 A）：CI 绿后入队
+- #1242 | coord | doing | 次链总单：s0–s5 #1367–#1372 + 决策 #1373；按链推进，合入全部子单后关
+- #1368 | review | doing | #1242-s1 逐格刺激计划与边界见证：PR #1380 r2；合入解锁 #1369
+- #1221 | review | doing | A5 跟进三单 a5b：PR #1374 r2（与 #1194 #1206 同树串行三提交）；合入后 #1140 可关单，解锁 #1363 #1355（同改冻结装置）
+- #1194 | review | doing | 同源取消处理器同步：PR #1374 r2（同 #1221）；前置于 #590
+- #1206 | review | doing | driver 锚不独立：PR #1374 r2（同 #1221）；前置于 #590
+- #1220 | review | doing | PR #1237 r5 macmini 长链宿主重跑（ENOSPC 作废后）；前置于 #589，合入解锁 #1219 #1274
 - #1253 | review | doing | PR #1275 宿主复跑 / 收口；前置于 #589，合入解锁 #1281 #897
-- #1261 | review | doing | PR #1300 r2（DeepSeek 0/0）宿主 cb8 并跑；前置于 #1323 与 A8.5
-- #1359 | impl | doing | native_http static_upper_lower macOS 必败，GLM macmini；前置于 A8.4 收尾，合入解锁 #1292 #1366（同改 native_http）
-- #1324 | review | doing | A8.3-pr1b cron 调度 + 时区：PR #1375 r1，宿主 cb8 并跑；合入解锁 #1325
-- #1318 | impl | doing | A8.1-pr5 U7 settings 写与重载组件，GLM cb8；下游 #1320
-- #1327 | impl | doing | A8.3-ch0 channel 协议核心 + loadEnabledChannels，GLM macmini；挡全部 channel 单
-- #1349 | impl | doing | A8.4-pr3 module-host describe / call 组件，本机 GLM 接续（cb8 7200 s 超时半成品）；合入解锁 #1350
+- #1261 | review | doing | PR #1300 r3（fix-r2 后）；前置于 #1323 与 A8.5
+- #1324 | review | doing | A8.3-pr1b cron 调度 + 时区：PR #1375 fix-r1（r1 DeepSeek P1×2）；合入解锁 #1325
+- #1318 | review | doing | A8.1-pr5 U7 settings 写与重载组件：PR #1384 r2；下游 #1320
+- #1327 | impl | doing | A8.3-ch0 channel 协议核心 + loadEnabledChannels：pr1 本机接续（远端 7200 s 超时）；挡 #1328 #1329 #1333 #1334 #1336 #1339 #1386
+- #1349 | review | doing | A8.4-pr3 module-host describe / call 组件：PR #1378 fix-r1；合入解锁 #1350
+- #1277 | review | doing | #1232 HTTP store 431/408 剩余 P2：PR #1381 收口（r1）；A7.4 收尾，前置于 #1309（W4）
 - #1233 | review | doing | PR #1257 宿主复跑 / 收口（A6.5）；合入解锁 #1311 #1276
-- #360 | review | doing | PR #1234 r6 macmini 长链宿主（A6.4 收尾）；合入解锁 #1269
+- #360 | review | doing | PR #1234 r7 macmini 长链宿主（A6.4 收尾）；合入解锁 #1269
 - #283 | review | doing | PR #1268 宿主复跑 / 收口（A6.6 收尾）；合入解锁 #1273
-- #132 | review | doing | PR #1235 宿主复跑 / 收口；前置于 A8 退役（#1357）
-- #1279 | review | doing | P2 批次 2：PR #1364 r1（DeepSeek 0/0），宿主 cb8 并跑；前置于 #590
+- #132 | review | doing | PR #1235 宿主复跑 / 收口（现 CONFLICTING，需合 main）；前置于 A8 退役（#1357）
+- #1279 | review | doing | P2 批次 2：PR #1364 r1；前置于 #590
 - #1263 | review | doing | P2 批次 2：PR #1364 r1（同 #1279）；A6.6 收尾
 - #1204 | review | doing | P2 批次 2：PR #1364 r1（同 #1279）；A7.2 收尾
-- #1277 | impl | ready | #1232 HTTP store 431/408 剩余 P2；A7.4 收尾，前置于 #1309（W4）；不碰 native_http
+- #1292 | impl | ready | 原生 HTTP 解析预算 / 超时 / loopback 七项：#1359 已合入解锁；与下一行 #1366 同包一单派出（同改 native_http）；第 1–3 项按 #1304 A 继续跟 hyper 上游；1/2/3/6/7 前置于 A8.5，合入解锁 #1351 #1348
+- #1366 | impl | ready | #1250 keep-alive 收口剩余 P2：与上一行 #1292 同包（同改 native_http，不单独派）；前置于 #1353
 - #1244 | impl | ready | transcript_adapter 去空白函数补测试；前置于 #1322（U2 memory 接线）
 - #1365 | impl | ready | #1245 ClosingGuard settle 写入无判据（P1-跟进）+ panic 路径先结算再放票；前置于 #1353；改 owner.rs，与 #996 不并行
 - #1258 | impl | ready | cron store README / panic tail release / 争用测试；与 PR #1375（#1324）同 cron 模块，派前核文件交集，相交则等其合入
@@ -33,14 +35,11 @@ updated: 2026-11-02 04:23 · by Claude Code 协调者
 - #91 | impl | ready | 账本 detail 子码 / stopReason，连同 #120 第 3 条账本已越 1.5 MB；改冻结账本走冻结程序
 - #401 | research | ready | A6.5-pr10b gate7 剩余：先只读核第 1 条（-32001 共用）是否仍有效再定实现
 - #297 | research | ready | A6-recorder 闸门遗留（陈旧快照 restore）：先只读核现场是否仍成立再定实现（A7 收尾）
-- #1301 | coord | human | 决策：E1 新增 host / session / retirement suite 判分语义授权（选项见 issue 正文）；挡 #1314 #1315 #1355
-- #1302 | coord | human | 决策：A8.3 channel 范围（D6-B 复核）；挡 #1331–#1347 的去留
-- #1303 | coord | human | 决策：默认路由切 Rust 是否在 A 阶段内；只影响 #1354 默认值与 #1357 口径
-- #1304 | coord | human | 决策：#1222 的 002「opt-in 期间接受」A8.5 前复核；挡 #1353
 - #1373 | coord | human | 决策：#1242-s5 WS 信封 in-process 投影（改冻结装置 native_evidence.py 观测投影）是否授权；挡 #1372
+- #1367 | impl | blocked | #1242-s0 第 0 行已交付（8 必需格请求均到达，_tmp/20261102-issue-1367-s0/）；剩余 cb8 重采 + 72 格逐项归因等 #1368–#1372 合入
 - #1306 | impl | blocked | A7-W1 S1 会话目录 9 方法接线：等 #1305（PR #1360）
 - #1308 | impl | blocked | A7-W3 S3 历史事务 + U10 接线：等 #1305（#1253 合入后更稳）
-- #1309 | impl | blocked | A7-W4 S4 权限 + user_dialog 接线：等 #1305、#1277
+- #1309 | impl | blocked | A7-W4 S4 权限 + user_dialog 接线：等 #1305、#1277（PR #1381）
 - #1310 | impl | blocked | A7-W5 S5 会话配置 7 方法接线：等 #1305；先核 output styles 归属
 - #1307 | impl | blocked | A7-W2 S2 steer / cancel / abort + U9 接线：等 #1305，#589 宜先关；并发包先矩阵
 - #1311 | impl | blocked | A7-W6 S6 运行时工具与统计接线：等 #1305、#1233
@@ -53,34 +52,20 @@ updated: 2026-11-02 04:23 · by Claude Code 协调者
 - #1323 | impl | blocked | U3 snapshot 生产接线：等 #1261（PR #1300）、#1305
 - #1325 | impl | blocked | A8.3-pr2 CronManager + 6 方法组件：等 #1324（PR #1375）
 - #1326 | impl | blocked | A8 接线 cron 6 方法 + 旧调度器停止：等 #1325、#1305
-- #1328 | impl | blocked | A8.3-ch-weixin U12（mock，不碰真实账号）：等 #1327、#1305
-- #1329 | impl | blocked | A8.3-ch-feishu + /feishu/webhook：等 #1327；native_http.rs 与 #1359 / #1292 / #1348 串行
-- #1331 | impl | blocked | A8.3-ch-wecom：等 #1327；范围看 #1302
-- #1332 | impl | blocked | A8.3-ch-qq：等 #1327；范围看 #1302
-- #1333 | impl | blocked | A8.3-ch-api-server：等 #1327；范围看 #1302
-- #1334 | impl | blocked | A8.3-ch-webhook：等 #1327；范围看 #1302
-- #1335 | impl | blocked | A8.3-ch-homeassistant：等 #1327；范围看 #1302
-- #1336 | impl | blocked | A8.3-ch-wecom-callback：等 #1327；范围看 #1302
-- #1337 | impl | blocked | A8.3-ch-signal：等 #1327；范围看 #1302
-- #1338 | impl | blocked | A8.3-ch-whatsapp：等 #1327；范围看 #1302
-- #1339 | impl | blocked | A8.3-ch-sms：等 #1327；范围看 #1302
-- #1340 | impl | blocked | A8.3-ch-mattermost：等 #1327；范围看 #1302
-- #1341 | impl | blocked | A8.3-ch-email：等 #1327；范围看 #1302
-- #1342 | impl | blocked | A8.3-ch-dingtalk：等 #1327；范围看 #1302
-- #1343 | impl | blocked | A8.3-ch-bluebubbles：等 #1327；范围看 #1302
-- #1344 | impl | blocked | A8.3-ch-slack：等 #1327；范围看 #1302
-- #1345 | impl | blocked | A8.3-ch-matrix：等 #1327；范围看 #1302
-- #1346 | impl | blocked | A8.3-ch-discord：等 #1327；范围看 #1302
-- #1347 | impl | blocked | A8.3-ch-telegram：等 #1327；范围看 #1302
-- #1292 | impl | blocked | 原生 HTTP 解析预算 / 超时 / loopback 七项：#1250 已合入，等 #1359（同改 native_http）；1/2/3/6/7 前置于 A8.5
-- #1366 | impl | blocked | #1250 keep-alive 收口剩余 P2：等 #1359，与 #1292 同文件串行；前置于 #1353
+- #1328 | impl | blocked | A8.3-ch-weixin U12（mock，不碰真实账号；#1302 B 子集内）：等 #1327、#1305
+- #1329 | impl | blocked | A8.3-ch-feishu + /feishu/webhook（#1302 B 子集内）：等 #1327；native_http.rs 与 #1292 / #1366 / #1348 串行
+- #1333 | impl | blocked | A8.3-ch-api-server（自带监听器，#1302 B 子集内）：等 #1327
+- #1334 | impl | blocked | A8.3-ch-webhook（自带监听器，#1302 B 子集内）：等 #1327
+- #1336 | impl | blocked | A8.3-ch-wecom-callback（自带监听器，#1302 B 子集内）：等 #1327
+- #1339 | impl | blocked | A8.3-ch-sms（自带监听器，#1302 B 子集内）：等 #1327
+- #1386 | impl | blocked | A8.3 未迁 13 个 channel 启用即明确拒绝启动 + 13 条差异（#1302 B）：等 #1327（channel 注册入口）；前置于 #1357
+- #1383 | impl | blocked | #1359 收口剩余 P2（账本 CI 措辞 -R1、借用金样前提断言、cell 完备性守卫）：同改 native_http/tests.rs，排在 #1292 / #1366 包之后；前置于 #1348 收尾
 - #1351 | impl | blocked | A8.4-ws WS 升级分支解析预算：等 #1292
 - #1348 | impl | blocked | A8.4-pr2 /api/web 路由组：等 #1292、#1305
 - #1350 | impl | blocked | A8.4-pr4 approvals status / resume：等 #1349（同文件串行）
 - #1140 | coord | blocked | PR #1196 已合入（Refs 未关）：关单等 #1221（PR #1374）
 - #1363 | impl | blocked | #1140 收口剩余 P2（第 13 条由 #1367 承接）：改冻结装置，等 PR #1374 合入后串行
-- #1368 | impl | blocked | #1242-s1 逐格刺激计划：等 #1367
-- #1369 | impl | blocked | #1242-s2 原生装配受控 registry 启闭入口：等 #1368
+- #1369 | impl | blocked | #1242-s2 原生装配受控 registry 启闭入口：等 #1368（PR #1380）
 - #1370 | impl | blocked | #1242-s3 writer append / registry persist barrier 与 EIO 见证：等 #1369
 - #1371 | impl | blocked | #1242-s4 受控 tool 阶段 / fence 释放：等 #1370
 - #1372 | impl | blocked | #1242-s5 WS 信封投影（冻结事件）：等 #1371、#1373 人授权
@@ -93,26 +78,25 @@ updated: 2026-11-02 04:23 · by Claude Code 协调者
 - #1276 | impl | blocked | #1233 r2 剩余 P2：等 #1233（PR #1257）
 - #953 | impl | blocked | 生成器溯源余项：等同改 generator_provenance.rs 的在途 PR 合入（A6 收尾）
 - #589 | impl | blocked | A7.2-pr6a 收尾关单：等 #1219 #1220 #1253 #1281 + macOS live_e2e 复跑
-- #590 | impl | blocked | Rust sidecar 格 + 四格矩阵：等 #1242（s0–s5）#1194 #1206 #1279 #589；真实 provider 冒烟 AI 实测后待人签字
+- #590 | impl | blocked | Rust sidecar 格 + 四格矩阵（#1301 B：即 A6 完成口径，一次性四格账本分格报告）：等 #1242（s0–s5）#1194 #1206 #1279 #589；真实 provider 冒烟 AI 实测后待人签字
 - #727 | impl | blocked | A7.7 deadline 收尾竞态：等 #589、#590
 - #19 | impl | blocked | deadline×2 + budget_limit 冲 53/53：等 #727
 - #1316 | impl | blocked | A7.8-pr1 会话域整域装配：等 #1306–#1313 全部合入
-- #1314 | impl | blocked | E1 --suite host：等 #1301 人授权、#590
-- #1315 | impl | blocked | E1 --suite session：等 #1301、#1314
-- #1317 | impl | blocked | A7.8-pr2 A7 收口：等 #1316 #1314 #1315 #590 #727 #19 #65
+- #1317 | impl | blocked | A7.8-pr2 A7 收口（#1301 B：50 项人工对账表逐项列证据 + E1 --suite deadline）：等 #1316 #590 #727 #19 #65
 - #1352 | impl | blocked | A8.5-pr1 能力合成（含 U4 manager_browsers 绑定核验）：等 #1316 #1319 #1320 #1321 #1322 #1323 #1326 #1328
-- #1353 | impl | blocked | A8.5-pr2 切换状态机：等 #1352、#1292 #1261 #1365 #1366、#1304，及 A8.3 / A8.4 入口单齐；并发包先矩阵
-- #1354 | impl | blocked | A8.5-pr3 代理模式 + 默认路由开关：等 #1353（#1303 只定默认值）
-- #1355 | impl | blocked | E1 --suite retirement：等 #1301；cold-restart / rollback 部分等 #1354
+- #1353 | impl | blocked | A8.5-pr2 切换状态机：等 #1352、#1292 #1261 #1365 #1366，及 A8.3 子集 / A8.4 入口单齐（#1304 A 后不再挂复核）；并发包先矩阵
+- #1354 | impl | blocked | A8.5-pr3 代理模式 + 默认路由开关（#1303 A：只做开关，缺省仍代理，测试钉死缺省值）：等 #1353
+- #1355 | impl | blocked | E1 --suite retirement（#1301 B 已授权，走冻结程序，先只跑 TS 定标）：同改 session_domain.py，等 PR #1374（#1221）合入后串行；cold-restart / rollback 部分等 #1354
 - #1356 | impl | blocked | A8.6-pr1 冷切换 / 回滚隔离演练：等 #1353 #1354 #1308 #1355
-- #1357 | impl | blocked | A8.6-pr2 A 阶段收口：等 #1355 #1356 #1317 #1352 #1353 #1354 #132 #19；真人 Web UI 待验
-- #1252 | review | doing | 非 A：PR #1259 r3（D1 尺子 P1），宿主 cb8 并跑；收口中，不派新单
-- #1155 | review | doing | 非 A：PR #1272 r3 Codex P1×2（尺子类），fix-r3 待派（等 cb8 宿主合成）；收口中，不派新单
+- #1357 | impl | blocked | A8.6-pr2 A 阶段收口（报「gateway 退役验证完成（channel 子集除外）」）：等 #1355 #1356 #1317 #1352 #1353 #1354 #1386 #132 #19；真人 Web UI 待验
+- #1155 | review | doing | 非 A：PR #1272 r4（同一处第 4 次尺子 P1，等 opus + cb8 宿主判 P2b 登记或挂起写卡）；收口中，不派新单
 - #1265 | review | doing | 非 A：PR #1266 cb8 复跑（A6 外围原型，不接生产）；收口中，不派新单
 - #978 | impl | doing | 非 A：wt-978 时序偶发改造（测试基建）；收口中，不派新单
 - #1053 | review | doing | 非 A：P2 批次 2 PR #1364 随批收口；不派新单
 - #1203 | review | doing | 非 A：P2 批次 2 PR #1364 随批收口；不派新单
 - #144 | coord | doing | 非 A：P0 候选，协调者补决策卡后请人定（#1157）；收口中，不派新单
+- #1382 | impl | ready | 非 A：#1252 收口剩余 P2（前置于 #1260 开工）；与下一行 #1260 同包，先做本单；A 链 ready 取完再派
+- #1260 | impl | ready | 非 A：SDK 信号回放关闭顺序差异（#1252 / PR #1259 已合入解锁）：与上一行 #1382 同包；前置于 #1146 / #123
 - #996 | impl | blocked | 非 A（M6 车道）：#1245 已合入解锁，按 #1157 暂停不派新单；恢复时与 #1365 同改 owner.rs 族串行
 <!-- READY:END -->
 
@@ -2933,3 +2917,4 @@ updated: 2026-11-02 04:23 · by Claude Code 协调者
 - 06:35 车道与盘：cb8 / macmini 宿主链被同一处端口判定串行，已修（pdrs-ops f07f2ae）；macmini ENOSPC 作废三条宿主，删已交付 worker 缓存并改收货后即删（505e21e）。#1318 / #1327 远端超时本机接续。
 - 06:35 #1155 同一处第 4 次尺子 P1：不开第 4 轮，等 opus + cb8 宿主，全杀且无同类则 P2b 登记，印证则挂起并写决策卡。在审 19 超上限，_build+_tmp 约 186.5 GiB 需回收。
 - 06:35 **两小时交接** → `_tmp/20261102-handoff-0635.md`。
+- 07:57 READY 重写（按 #1301 B / #1302 B / #1303 A / #1304 A 落实：移出 21 条（已关 #1252 #1359、决策 #1301–#1304、not planned #1314 #1315、[A 之后] channel 13 张）；解锁 #1292 + #1366 同包、#1382 + #1260 同包；加入 #1386 #1383 #1157（PR #1387）；#1368 转 doing；共 96 条，队首 #1292）
