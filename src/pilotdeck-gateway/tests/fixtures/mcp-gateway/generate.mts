@@ -49,9 +49,11 @@ const { GatewayInteractionCoordinator } = await import(pathToFileURL(join(baseli
 const { asAgentHandle } = await import(pathToFileURL(join(baseline, 'src/agent/scope/AgentHandle.ts')).href);
 
 const events: string[] = [];
-// The interaction coordinator is wrapped on the prototype chain so the real
-// closeSession ordering (router.close first, then the coordinator call) stays
-// intact while recording `close-session:<key>:<reason>`.
+// The interaction coordinator is REPLACED on the prototype chain: the record
+// replaces `closeSession`, so the real `GatewayInteractionCoordinator`
+// closeSession side effects never run. Only the reason strings the four
+// methods pass are pinned here; the coordinator layer itself is outside this
+// component's parity scope (P3-2).
 const realCoordinator = new GatewayInteractionCoordinator({});
 const coordinator = Object.create(realCoordinator);
 coordinator.closeSession = (sessionKey: string, reason: string) => {
@@ -207,7 +209,11 @@ const rows: any[] = [];
 async function run(id: string, method: string, params: unknown, setup: string[] = []) {
   for (const step of setup) await runSetup(step);
   const response = await rawRequest(method, params);
-  rows.push({ id, method, params: params ?? null, setup, events: [...events], response, post: postState() });
+  // `undefined` params must stay distinct from `params: null`: the frame is
+  // sent without the key, and TS answers "...of undefined..." vs "...of
+  // null...". Recording `params ?? null` would collapse the two frames into
+  // one golden row (fix-r1 P2-2), so the key is simply omitted.
+  rows.push({ id, method, ...(params === undefined ? {} : { params }), setup, events: [...events], response, post: postState() });
 }
 
 // --- set_mcp_servers ---------------------------------------------------------
@@ -229,7 +235,9 @@ await run('set-reserved-name', 'set_mcp_servers', { sessionKey: 's', projectKey:
 } }, ['ensure-session:s', 'session-plugin:s:pluginOwned']);
 await run('set-blank-session-key', 'set_mcp_servers', { sessionKey: '   ', servers: {} });
 await run('set-null-params', 'set_mcp_servers', null);
+await run('set-params-omitted', 'set_mcp_servers', undefined);
 await run('set-nonstring-session-key', 'set_mcp_servers', { sessionKey: 5, servers: {} });
+await run('set-missing-session-key', 'set_mcp_servers', { servers: {} });
 await run('set-missing-servers', 'set_mcp_servers', { sessionKey: 's', projectKey: '/p' }, ['ensure-session:s']);
 await run('set-whitespace-key', 'set_mcp_servers', { sessionKey: ' w ', projectKey: '/p', servers: {
   alpha: { type: 'stdio', command: 'node' },
@@ -265,6 +273,9 @@ await run('toggle-busy', 'mcp_server_toggle', { sessionKey: 'tb', serverName: 'a
 await run('reconnect-busy', 'mcp_server_reconnect', { sessionKey: 'rb', serverName: 'alpha' },
   ['begin-turn:rb:run-5']);
 await run('reconnect-missing-fields', 'mcp_server_reconnect', { sessionKey: 't' });
+await run('toggle-missing-session-key', 'mcp_server_toggle', { serverName: 'alpha', enabled: false });
+await run('toggle-blank-session-key', 'mcp_server_toggle', { sessionKey: '  ', serverName: 'alpha', enabled: false });
+await run('reconnect-missing-session-key', 'mcp_server_reconnect', { serverName: 'alpha' });
 
 // --- set_mcp_permission_mode_override -----------------------------------------
 await run('override-auto', 'set_mcp_permission_mode_override', { sessionKey: 'v', serverName: 'alpha', mode: 'auto' },
@@ -282,6 +293,8 @@ await run('override-busy-valid', 'set_mcp_permission_mode_override', { sessionKe
   ['begin-turn:vb:run-6']);
 await run('override-busy-invalid-mode', 'set_mcp_permission_mode_override', { sessionKey: 'vb', serverName: 'alpha', mode: 'fast' });
 await run('override-missing-fields', 'set_mcp_permission_mode_override', { sessionKey: 'vb' });
+await run('override-missing-session-key', 'set_mcp_permission_mode_override', { serverName: 'alpha', mode: 'auto' });
+await run('override-nonstring-session-key', 'set_mcp_permission_mode_override', { sessionKey: 5, serverName: 'alpha', mode: 'auto' });
 await run('override-null-params', 'set_mcp_permission_mode_override', null);
 await run('override-close-fault', 'set_mcp_permission_mode_override', { sessionKey: 'f', serverName: 'alpha', mode: 'auto' },
   ['ensure-session:f']);
@@ -326,8 +339,15 @@ assert.deepEqual(byId('set-blank-session-key').events, [], 'blank key never reso
 assert.equal(byId('set-null-params').response.error.code, 'gateway_request_failed', 'null params envelope');
 assert.equal(byId('set-null-params').response.error.message,
   'Cannot read properties of null (reading \'sessionKey\')', 'null params message');
+assert.equal(byId('set-params-omitted').response.error.code, 'gateway_request_failed', 'omitted params envelope');
+assert.equal(byId('set-params-omitted').response.error.message,
+  'Cannot read properties of undefined (reading \'sessionKey\')', 'omitted params message');
+assert.equal(JSON.stringify(byId('set-params-omitted').params), undefined, 'omitted params stays absent');
 assert.equal(byId('set-nonstring-session-key').response.error.message,
   'input.sessionKey?.trim is not a function', 'non-string key message');
+assert.equal(byId('set-missing-session-key').response.error.code, 'INVALID_SESSION_KEY', 'missing key code');
+assert.equal(byId('set-missing-session-key').response.error.message, 'sessionKey is required.', 'missing key message');
+assert.deepEqual(byId('set-missing-session-key').events, [], 'missing key never resolves');
 assert.deepEqual(byId('set-missing-servers').response.result.removed, ['alpha', 'gamma'], 'missing servers removes all');
 assert.equal(registry.sdkSessionMcpServers.has('w'), false, 'whitespace key is not normalized');
 assert.ok(registry.sdkSessionMcpServers.has(' w '), 'whitespace key stores servers under the raw key');
@@ -368,6 +388,16 @@ assert.equal(byId('toggle-missing-server-name').response.error.message,
   'sessionKey and serverName are required.', 'toggle missing fields message');
 assert.equal(byId('toggle-busy').response.error.message, 'Cannot toggle MCP while a turn is active.', 'toggle busy message');
 assert.equal(byId('reconnect-busy').response.error.message, 'Cannot reconnect MCP while a turn is active.', 'reconnect busy message');
+assert.equal(byId('toggle-missing-session-key').response.error.code, 'INVALID_MCP_SERVER', 'toggle missing key code');
+assert.equal(byId('toggle-missing-session-key').response.error.message,
+  'sessionKey and serverName are required.', 'toggle missing key message');
+assert.equal(byId('toggle-blank-session-key').response.error.code, 'INVALID_MCP_SERVER', 'toggle blank key code');
+assert.equal(byId('toggle-blank-session-key').response.error.message,
+  'sessionKey and serverName are required.', 'toggle blank key message');
+assert.equal(byId('reconnect-missing-session-key').response.error.code, 'INVALID_MCP_SERVER', 'reconnect missing key code');
+assert.equal(byId('reconnect-missing-session-key').response.error.message,
+  'sessionKey and serverName are required.', 'reconnect missing key message');
+assert.deepEqual(byId('toggle-missing-session-key').events, [], 'missing key never closes');
 assert.equal(byId('override-auto').response.result.warning,
   'PilotDeck does not expose Claude\'s MCP safety classifier; auto uses conservative ask semantics for this server.',
   'override auto warning');
@@ -395,12 +425,17 @@ assert.equal(byId('override-busy-valid').response.error.message,
 assert.deepEqual(byId('override-busy-valid').post.ask.vb, [], 'override busy leaves ask empty');
 assert.equal(byId('override-busy-invalid-mode').response.error.code, 'INVALID_MCP_PERMISSION_MODE',
   'mode validation precedes the busy gate');
+assert.equal(byId('override-missing-session-key').response.error.code, 'INVALID_MCP_SERVER', 'override missing key code');
+assert.equal(byId('override-missing-session-key').response.error.message,
+  'sessionKey and serverName are required.', 'override missing key message');
+assert.equal(byId('override-nonstring-session-key').response.error.message,
+  'input.sessionKey?.trim is not a function', 'override non-string key message');
 assert.equal(byId('override-close-fault').response.error.message, 'Failed to dispose agent handle.',
   'override close fault message');
 assert.deepEqual(byId('override-close-fault').post.ask.f, [
   { source: 'session', behavior: 'ask', toolName: 'mcp__alpha__*', force: true },
 ], 'override commits before the failing close');
-assert.equal(rows.length, 37, 'matrix row count');
+assert.equal(rows.length, 44, 'matrix row count');
 for (const row of capabilityCases) {
   assert.equal(row.response.error.code, 'CAPABILITY_UNAVAILABLE', `${row.method} capability code`);
   assert.equal(row.response.error.message, `${row.method} is unavailable.`, `${row.method} capability message`);

@@ -232,6 +232,7 @@ regeneration!(jsonrepair_regenerates_identically, "jsonrepair");
 regeneration!(live_history_regenerates_identically, "live-history");
 regeneration!(live_recording_regenerates_identically, "live-recording");
 regeneration!(mcp_client_regenerates_identically, "mcp-client");
+regeneration!(mcp_gateway_regenerates_identically, "mcp-gateway");
 regeneration!(mcp_hooks_spawn_regenerates_identically, "mcp-hooks-spawn");
 regeneration!(
     mcp_http_encoding_regenerates_identically,

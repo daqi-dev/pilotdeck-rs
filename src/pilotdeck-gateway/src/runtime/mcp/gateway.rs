@@ -1,7 +1,7 @@
 //! U6 MCP control gateway adapter (#1215). Mirrors the TS gateway layers the
 //! four SDK MCP control methods cross: `GatewayWsConnection.ts` dispatch
 //! (`set_mcp_servers` / `mcp_server_reconnect` / `mcp_server_toggle` /
-//! `set_mcp_permission_mode_override`), then `InProcessGateway.ts:2284-2317`
+//! `set_mcp_permission_mode_override`), then `InProcessGateway.ts:2284-2319`
 //! (field validation, the per-key `hasActiveTurn` SESSION_BUSY gate, the
 //! registry callback, and `router.close(sessionKey)` after success, with the
 //! close error propagating), then the registry `*ForSdk` methods already
@@ -10,7 +10,11 @@
 //! This is a component, not a wiring change: `dispatch.rs` and the default
 //! routing table are untouched. The session side only uses the #1011
 //! `SessionOwner` admission/close ports; `runtime/session` itself is not
-//! modified.
+//! modified. A caller assembling this component answers for the capability
+//! gate: the TS gateway assembled without the four options answers
+//! `CAPABILITY_UNAVAILABLE` per method (recorded in the golden's
+//! `assemblyCases`), so any future wiring must check the capability before
+//! routing to this adapter instead of mounting it unconditionally.
 use super::sdk::{SdkMcpConfig, SdkMcpError, range_error, require_input, required_trimmed};
 use crate::js_value;
 use crate::runtime::session::SessionOwner;
@@ -56,7 +60,7 @@ impl McpGateway {
         Ok(result)
     }
 
-    /// `InProcessGateway.reconnectMcpServer` (client/InProcessGateway.ts:2297).
+    /// `InProcessGateway.reconnectMcpServer` (client/InProcessGateway.ts:2293).
     pub async fn reconnect_mcp_server(&self, input: &JsValue) -> Result<(), SdkMcpError> {
         let input = require_input(input, "sessionKey")?;
         let session_key = self.control_input(input)?;
@@ -65,7 +69,7 @@ impl McpGateway {
         self.close(&session_key).await
     }
 
-    /// `InProcessGateway.toggleMcpServer` (client/InProcessGateway.ts:2306).
+    /// `InProcessGateway.toggleMcpServer` (client/InProcessGateway.ts:2301).
     pub async fn toggle_mcp_server(&self, input: &JsValue) -> Result<(), SdkMcpError> {
         let input = require_input(input, "sessionKey")?;
         let session_key = self.control_input(input)?;
@@ -75,7 +79,7 @@ impl McpGateway {
     }
 
     /// `InProcessGateway.setMcpPermissionModeOverride`
-    /// (client/InProcessGateway.ts:2315). The mode check precedes the busy
+    /// (client/InProcessGateway.ts:2309). The mode check precedes the busy
     /// gate, exactly like the baseline's `if` ordering.
     pub async fn set_mcp_permission_mode_override(
         &self,
@@ -171,6 +175,9 @@ impl McpGateway {
 
     /// `await this.router.close(input.sessionKey)` after a successful callback.
     /// A close failure propagates to the caller instead of being swallowed.
+    /// The WS error frame carries only code+message, so the TS `AggregateError`
+    /// name of a dispose failure is intentionally flattened to `"Error"` here;
+    /// the name is not part of the golden contract.
     async fn close(&self, session_key: &JsString) -> Result<(), SdkMcpError> {
         self.options
             .owner

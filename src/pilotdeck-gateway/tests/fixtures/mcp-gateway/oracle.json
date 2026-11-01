@@ -1264,6 +1264,71 @@
       }
     },
     {
+      "id": "set-params-omitted",
+      "method": "set_mcp_servers",
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot read properties of undefined (reading 'sessionKey')"
+        }
+      },
+      "post": {
+        "turns": [],
+        "sessions": {
+          "s": false,
+          " w ": false,
+          "b": false,
+          "d": false,
+          "o": false,
+          "f": false,
+          "t": false,
+          "tb": false,
+          "rb": false,
+          "v": false,
+          "vb": false
+        },
+        "servers": {
+          "s": [
+            [
+              "alpha",
+              true
+            ],
+            [
+              "gamma",
+              true
+            ]
+          ],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        },
+        "ask": {
+          "s": [],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        }
+      }
+    },
+    {
       "id": "set-nonstring-session-key",
       "method": "set_mcp_servers",
       "params": {
@@ -1278,6 +1343,74 @@
         "error": {
           "code": "gateway_request_failed",
           "message": "input.sessionKey?.trim is not a function"
+        }
+      },
+      "post": {
+        "turns": [],
+        "sessions": {
+          "s": false,
+          " w ": false,
+          "b": false,
+          "d": false,
+          "o": false,
+          "f": false,
+          "t": false,
+          "tb": false,
+          "rb": false,
+          "v": false,
+          "vb": false
+        },
+        "servers": {
+          "s": [
+            [
+              "alpha",
+              true
+            ],
+            [
+              "gamma",
+              true
+            ]
+          ],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        },
+        "ask": {
+          "s": [],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        }
+      }
+    },
+    {
+      "id": "set-missing-session-key",
+      "method": "set_mcp_servers",
+      "params": {
+        "servers": {}
+      },
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_SESSION_KEY",
+          "message": "sessionKey is required."
         }
       },
       "post": {
@@ -2933,6 +3066,276 @@
       }
     },
     {
+      "id": "toggle-missing-session-key",
+      "method": "mcp_server_toggle",
+      "params": {
+        "serverName": "alpha",
+        "enabled": false
+      },
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_MCP_SERVER",
+          "message": "sessionKey and serverName are required."
+        }
+      },
+      "post": {
+        "turns": [
+          "b",
+          "o",
+          "tb",
+          "rb"
+        ],
+        "sessions": {
+          "s": false,
+          " w ": false,
+          "b": true,
+          "d": false,
+          "o": true,
+          "f": false,
+          "t": false,
+          "tb": false,
+          "rb": false,
+          "v": false,
+          "vb": false
+        },
+        "servers": {
+          "s": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          " w ": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "b": [],
+          "d": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "o": [],
+          "f": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "t": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        },
+        "ask": {
+          "s": [],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        }
+      }
+    },
+    {
+      "id": "toggle-blank-session-key",
+      "method": "mcp_server_toggle",
+      "params": {
+        "sessionKey": "  ",
+        "serverName": "alpha",
+        "enabled": false
+      },
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_MCP_SERVER",
+          "message": "sessionKey and serverName are required."
+        }
+      },
+      "post": {
+        "turns": [
+          "b",
+          "o",
+          "tb",
+          "rb"
+        ],
+        "sessions": {
+          "s": false,
+          " w ": false,
+          "b": true,
+          "d": false,
+          "o": true,
+          "f": false,
+          "t": false,
+          "tb": false,
+          "rb": false,
+          "v": false,
+          "vb": false
+        },
+        "servers": {
+          "s": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          " w ": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "b": [],
+          "d": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "o": [],
+          "f": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "t": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        },
+        "ask": {
+          "s": [],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        }
+      }
+    },
+    {
+      "id": "reconnect-missing-session-key",
+      "method": "mcp_server_reconnect",
+      "params": {
+        "serverName": "alpha"
+      },
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_MCP_SERVER",
+          "message": "sessionKey and serverName are required."
+        }
+      },
+      "post": {
+        "turns": [
+          "b",
+          "o",
+          "tb",
+          "rb"
+        ],
+        "sessions": {
+          "s": false,
+          " w ": false,
+          "b": true,
+          "d": false,
+          "o": true,
+          "f": false,
+          "t": false,
+          "tb": false,
+          "rb": false,
+          "v": false,
+          "vb": false
+        },
+        "servers": {
+          "s": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          " w ": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "b": [],
+          "d": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "o": [],
+          "f": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "t": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        },
+        "ask": {
+          "s": [],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        }
+      }
+    },
+    {
       "id": "override-auto",
       "method": "set_mcp_permission_mode_override",
       "params": {
@@ -3847,6 +4250,199 @@
         "error": {
           "code": "INVALID_MCP_SERVER",
           "message": "sessionKey and serverName are required."
+        }
+      },
+      "post": {
+        "turns": [
+          "b",
+          "o",
+          "tb",
+          "rb",
+          "vb"
+        ],
+        "sessions": {
+          "s": false,
+          " w ": false,
+          "b": true,
+          "d": false,
+          "o": true,
+          "f": false,
+          "t": false,
+          "tb": false,
+          "rb": false,
+          "v": false,
+          "vb": false
+        },
+        "servers": {
+          "s": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          " w ": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "b": [],
+          "d": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "o": [],
+          "f": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "t": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "tb": [],
+          "rb": [],
+          "v": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "vb": []
+        },
+        "ask": {
+          "s": [],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        }
+      }
+    },
+    {
+      "id": "override-missing-session-key",
+      "method": "set_mcp_permission_mode_override",
+      "params": {
+        "serverName": "alpha",
+        "mode": "auto"
+      },
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_MCP_SERVER",
+          "message": "sessionKey and serverName are required."
+        }
+      },
+      "post": {
+        "turns": [
+          "b",
+          "o",
+          "tb",
+          "rb",
+          "vb"
+        ],
+        "sessions": {
+          "s": false,
+          " w ": false,
+          "b": true,
+          "d": false,
+          "o": true,
+          "f": false,
+          "t": false,
+          "tb": false,
+          "rb": false,
+          "v": false,
+          "vb": false
+        },
+        "servers": {
+          "s": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          " w ": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "b": [],
+          "d": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "o": [],
+          "f": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "t": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "tb": [],
+          "rb": [],
+          "v": [
+            [
+              "alpha",
+              true
+            ]
+          ],
+          "vb": []
+        },
+        "ask": {
+          "s": [],
+          " w ": [],
+          "b": [],
+          "d": [],
+          "o": [],
+          "f": [],
+          "t": [],
+          "tb": [],
+          "rb": [],
+          "v": [],
+          "vb": []
+        }
+      }
+    },
+    {
+      "id": "override-nonstring-session-key",
+      "method": "set_mcp_permission_mode_override",
+      "params": {
+        "sessionKey": 5,
+        "serverName": "alpha",
+        "mode": "auto"
+      },
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "input.sessionKey?.trim is not a function"
         }
       },
       "post": {

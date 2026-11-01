@@ -32,6 +32,8 @@ from negative_suite import Case, run_cases
 root = Path(__file__).resolve().parents[5]
 assert os.environ.get("CARGO_TARGET_DIR"), "caller must set CARGO_TARGET_DIR"
 gateway = root / "src/pilotdeck-gateway/src/runtime/mcp/gateway.rs"
+sdk = root / "src/pilotdeck-gateway/src/runtime/mcp/sdk.rs"
+session_handle = root / "src/pilotdeck-gateway/src/runtime/session/handle.rs"
 
 REPLAY = "runtime::mcp::gateway_tests::mcp_gateway_replays_the_real_ts_oracle"
 DISPATCH = "runtime::mcp::gateway_tests::mcp_gateway_dispatch_returns_none_for_non_control_methods"
@@ -114,6 +116,10 @@ MUTATIONS = {
             _response("toggle-blank-server-name"),
             _response("override-missing-fields"),
             _response("reconnect-missing-fields"),
+            _response("toggle-missing-session-key"),
+            _response("toggle-blank-session-key"),
+            _response("reconnect-missing-session-key"),
+            _response("override-missing-session-key"),
         ],
     ),
     # The WS-layer `{ ok: true }` shape of the two void controls.
@@ -176,6 +182,55 @@ MUTATIONS = {
         DISPATCH,
         [
             "#1215 dispatch must not own non-control method mcp_server_status",
+        ],
+    ),
+    # The close-fault rows of the golden answer `Failed to dispose agent
+    # handle.`, produced by the real #1011 LiveSessionHandle aggregation
+    # over the fake's distinct `fixture dispose failure` rejection (fix-r1
+    # P2-3: the TS fixture does the same through the real AgentHandle). A
+    # passthrough aggregate — the single-failure semantics of
+    # `RuntimeError::aggregate` — would leak the fake's distinct text into
+    # both close-fault envelopes.
+    "dispose-aggregation-bypassed": (
+        session_handle,
+        """    } else {
+        Err(RuntimeError {
+            message: message.into(),
+            causes: failures,
+            js_error: None,
+        })
+    }
+}""",
+        """    } else {
+        Err(failures.into_iter().next().unwrap())
+    }
+}""",
+        REPLAY,
+        [
+            _response("set-close-fault"),
+            _response("override-close-fault"),
+        ],
+    ),
+    # `require_input` must keep `undefined` distinct from `null`: a frame
+    # without `params` answers "...of undefined...", a `params: null` frame
+    # "...of null..." (fix-r1 P2-2 probe). Dropping the Undefined arm makes
+    # the omitted-params row replay with the registry's INVALID_SESSION_KEY
+    # envelope instead of the TypeError the TS bytes carry.
+    "undefined-params-conflated": (
+        sdk,
+        """        JsValue::Undefined | JsValue::Null => Err(SdkMcpError::type_error(format!(
+            "Cannot read properties of {} (reading '{}')",
+            input_kind(input),
+            field
+        ))),""",
+        """        JsValue::Null => Err(SdkMcpError::type_error(format!(
+            "Cannot read properties of {} (reading '{}')",
+            input_kind(input),
+            field
+        ))),""",
+        REPLAY,
+        [
+            _response("set-params-omitted"),
         ],
     ),
 }
