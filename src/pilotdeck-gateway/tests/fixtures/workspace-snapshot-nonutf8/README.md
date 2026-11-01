@@ -50,13 +50,19 @@ CARGO_TARGET_DIR=<dir> ./run-linux.sh /home/clawbox-08/ws/pdrs-runner/resources/
 环境契约：钉死 Node v22.22.0（ICU 78.2 / libuv 1.52.1，默认
 `~/opt/node-v22.22.0-icu78-linux-arm64`，可用 `PDRS_NODE` 覆盖）、`LANG=C.UTF-8` 且无
 `LC_*` 覆盖（并断言 resolved locale 为 `en-US`，第三 locale 是 BLOCKED 不是 parity 失败，
-同 `../project-files-linux-dirent/run-linux.sh`）、`TMPDIR` 归一化到 `/tmp`（专用门 Scratch
-硬编码 `/tmp`，探测与回放必须同一文件系统）、临时目录文件系统接受非 UTF-8 文件名（字节透明，
-否则整条 lane BLOCKED）。流程：
+同 `../project-files-linux-dirent/run-linux.sh`）、临时目录归一到 `/tmp`（`TMPDIR` **导出**
+为 `/tmp` 且 `TMP`/`TEMP` 一并清掉：Node 的 `os.tmpdir()` 在 `TMPDIR` 缺失时仍读
+`TMP`/`TEMP`，v22.22.0 实测 `TMP` 优先于 `TEMP`，r2 评审 P1-2；专用门 Scratch 硬编码
+`/tmp`，探测与回放必须同一文件系统）、临时目录文件系统接受非 UTF-8 文件名（字节透明，
+否则整条 lane BLOCKED；探针把 raw `0xff` 名字节直接拼进 Buffer 路径——`path.join` 不收
+Buffer 参数，先抛 `ERR_INVALID_ARG_TYPE` 就读不出文件系统判决，失败时报真实 code+message，
+r2 评审增量外提醒）。流程：
 no-run → 专属门 → 28 场景主回放 → regen 守卫（`generator_provenance.rs`
 的 `workspace_snapshot_regenerates_identically`，#283 起 Linux 专属）→ 负控（提交前
 NOT_RUN）。退出码照 `../project-files-linux-dirent/run-linux.sh`：0 = 正控过且负控全
 KILLED；1 = FAILED；2 = BLOCKED（调用方环境/文件系统）；3 = BLOCKED（钉死 Node/locale 门）；
 77 = 正控过但负控 NOT_RUN（**仅提交前**：以「正在运行的 run-linux.sh 自身字节 == HEAD 里
 的 blob」为判据——不等才是未提交补丁在跑；已提交的 runner 再被 `mutating_sources`
-拒绝说明工作树有残留/手改，判 FAILED 而非 77，提交后重跑）。
+拒绝说明工作树有残留/手改，判 FAILED 而非 77，提交后重跑。判据有已知盲区：补丁未提交
++残留同时存在时仍 77，77 时会打印 `git status --porcelain` 脏集合供协调者核对是否恰为本
+补丁文件，见 runner 注释，r2 opus P2）。
