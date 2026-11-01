@@ -18,16 +18,27 @@ RFC 850、asctime、ISO（date-only 走 UTC、无时区走本地）、命名时�
 或按宿主 C 库 zone 搜索；Node v22.22.0 实测：`TZ=unsupported-profile`、
 `TZ=:/nonexistent` 下 `Date.parse` 与 `TZ=UTC` 同值；`TZ=localtime` 在有
 `/usr/share/zoneinfo/localtime` 的机器走本地、没有的机器回退 UTC，故不可对拍）
-——这是 provider 侧的保留差异子集，登记于
+——这是 `retry_after_header` 全部消费侧的保留差异子集（provider 流重试，以及
+共享 `retry_after_header_ms` 的 MCP HTTP 重试、web 网络重试与 web fetcher 的
+`retryAfterMs` 错误字段，TS 对应 `streamModel.ts` 与 `network/fetch.ts` 自带的
+同语义 `parseRetryAfterHeader` 副本、`urlFetcher.ts`），登记于
 `specs/gateway-parity/diffs/A6.4-PROVIDER-RETRY-AFTER-TZ-001.md`（未批准；沿用
 与 A6.4-STATS-RETENTION-001 相同的 TZif 子集，但那条的人批范围只有 stats
 retention，不覆盖本消费侧）。子进程测试
 `retry_after_dialects_production_wiring_matches_node_zone_children` 经生产入口在
 `TZ=UTC` / `TZ=Asia/Shanghai` 子进程里回放全部 62 条——仅当宿主 TZif 与
-`local-profiles.json` 的 SHA 配对时；未配对的宿主打印降级说明并按 fail-closed
-断言本地用例为 `None`，不冒充 Node 对拍通过（fix-r2 P2-2）。`TZ=localtime`
-（allowlist 拒绝的宿主相关别名）与 `TZ=:/nonexistent`（必为不可读路径，不假设
-宿主缺少某 zone 名）子进程断言本地用例 `None`、时区无关用例等于 UTC 列。
+`local-profiles.json` 的 SHA 配对时；未配对的宿主由子进程打印可机检的
+`#360-2 PARTIAL` 降级标记行、父测试整段回放子进程 stdout（`-- --nocapture`
+下可见，fix-r3 P2-2），并按 fail-closed 断言本地用例为 `None`，不冒充 Node
+对拍通过；负控 `negative_controls.py` 检测到该标记即把
+`production-local-wiring` / `zone-child-admission-false` 显式拒跑为 INVALID
+（fix-r3 P2-3）。`TZ=localtime`（allowlist 拒绝的宿主相关别名）、
+`TZ=:/nonexistent`（必为不可读路径，不假设宿主缺少某 zone 名）与
+`TZ=Europe/London`（非 allowlist 但宿主可读的 zone）子进程断言本地用例
+`None`、时区无关用例等于 UTC 列；对可读别名还会先断言无门槛共享解析器能解析
+宿主 profile（同 stats `dateparse_zone_child` 的做法），确保 `None` 来自
+allowlist 拒绝而非文件缺席——`Europe/London` 因此不依赖 `/etc/localtime` 就能
+钉死 allowlist（fix-r3 P2-3）。
 
 超大 delta-seconds（`"1e308"` / `"1e309"`）不入 oracle：`JSON.stringify(Infinity)`
 是 `null`，与不可解析的 null 无法区分。由
@@ -43,7 +54,8 @@ PATH=<node v22.22.0>/bin:$PATH node --disable-warning=ExperimentalWarning \
   src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/generate.mts <新输出目录>
 
 scripts/cargo-slots.sh
-cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib retry_after_dialect
+# zone children 的降级 PARTIAL 标记行只在 --nocapture 下可见（同 stats-dateparse）
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib retry_after_dialect -- --nocapture
 
 scripts/cargo-slots.sh
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test model_stream \
