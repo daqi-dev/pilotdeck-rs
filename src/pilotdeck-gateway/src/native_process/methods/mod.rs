@@ -3,6 +3,11 @@ use super::requests::Requests;
 use crate::runtime::connection::{Call, RequestError};
 use pilotdeck_protocol::{JsString, JsValue};
 
+mod active_turn;
+mod management;
+mod metadata;
+mod runs;
+
 type Response = Result<JsValue, RequestError>;
 type RequestHandler = for<'a> fn(&'a Requests, String, JsValue) -> Call<'a, Response>;
 type EarlyHandler = for<'a> fn(&'a Requests, &'a str, &'a JsValue) -> Call<'a, Option<Response>>;
@@ -17,11 +22,11 @@ struct Family {
     handler: Handler,
 }
 
-// A new family needs its own module and one line below. The same table drives
-// lookup and enumeration; management keeps its original admission boundary.
+// Keep module declarations explicit for the #1166 build-input scanner.
+// A new family needs one declaration above and one registration below.
+// The same table drives lookup and enumeration; management keeps its boundary.
 macro_rules! register_families {
     ($($family:ident: $methods:expr),+ $(,)?) => {
-        $(mod $family;)+
         const FAMILIES: &[Family] = &[
             $(Family { methods: $methods, handler: $family::HANDLER },)+
         ];
