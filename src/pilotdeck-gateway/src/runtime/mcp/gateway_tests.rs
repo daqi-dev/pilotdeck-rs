@@ -528,8 +528,8 @@ async fn mcp_gateway_replays_the_real_ts_oracle() {
     };
     assert_eq!(
         cases.len(),
-        44,
-        "#1215 the oracle must carry the full 44-row matrix"
+        53,
+        "#1215 the oracle must carry the full 53-row matrix"
     );
     let harness = harness(&keys);
     let mut failures: Vec<String> = Vec::new();
@@ -665,6 +665,46 @@ async fn mcp_gateway_dispatch_returns_none_for_non_control_methods() {
         error.code(),
         Some("MCP_SERVER_NOT_FOUND"),
         "#1215 reconnect of an unknown server must report MCP_SERVER_NOT_FOUND"
+    );
+}
+
+/// A control method's post-success `close` racing an owner shutdown (fix-r2
+/// review P1). The override path never closes through the registry, so the
+/// component's own close is the first owner port the method touches after
+/// its callback — and `SessionOwner::close` during a shutdown answers with
+/// the whole-shutdown aggregate (`owner.rs:676`), not the per-key dispose
+/// text the port's own aggregation produces. TS diverges here: the real
+/// `SessionRouter.close` during shutdown fulfills (probe
+/// `_tmp/20261026-issue-1215/fix-r2/probe/close-during-shutdown.out`,
+/// Node v22.22.0); the divergence is registered as
+/// `specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001.md`.
+#[tokio::test]
+async fn mcp_gateway_close_during_owner_shutdown_surfaces_the_shutdown_result() {
+    let harness = harness(&["f".to_string()]);
+    harness.run_setup("ensure-session:f").await;
+    let shutdown = harness.probe.owner().shutdown();
+    let input = parse_json(r#"{"sessionKey":"f","serverName":"alpha","mode":"auto"}"#)
+        .expect("#1215 shutdown-race override input must parse");
+    let error = harness
+        .gateway
+        .set_mcp_permission_mode_override(&input)
+        .await
+        .expect_err("#1215 the post-success close must surface the in-flight shutdown");
+    let message = error
+        .message()
+        .to_utf8()
+        .unwrap_or_else(|_| String::from("<invalid UTF-8>"));
+    assert!(
+        message == "Failed to shut down all agent sessions.",
+        "#1215 close during owner shutdown surfaces the shutdown aggregate, not the hardcoded dispose text: got {message}"
+    );
+    let shutdown_error = shutdown
+        .await
+        .expect_err("#1215 the failing dispose must fail the shutdown");
+    assert!(
+        shutdown_error.message == "Failed to shut down all agent sessions.",
+        "#1215 the shutdown the close surfaced must be the failing one: got {}",
+        shutdown_error.message
     );
 }
 

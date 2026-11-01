@@ -37,6 +37,10 @@ session_handle = root / "src/pilotdeck-gateway/src/runtime/session/handle.rs"
 
 REPLAY = "runtime::mcp::gateway_tests::mcp_gateway_replays_the_real_ts_oracle"
 DISPATCH = "runtime::mcp::gateway_tests::mcp_gateway_dispatch_returns_none_for_non_control_methods"
+SHUTDOWN_RACE = (
+    "runtime::mcp::gateway_tests::"
+    "mcp_gateway_close_during_owner_shutdown_surfaces_the_shutdown_result"
+)
 
 
 def _response(case_id):
@@ -89,7 +93,10 @@ MUTATIONS = {
     # validation of the three per-server controls. The registry layer
     # re-validates `set_mcp_servers` itself, so the control binds to the
     # toggle/reconnect/override rows whose missing-field envelopes differ
-    # from the registry's own errors.
+    # from the registry's own errors. The Rust `SdkMcpConfig` mirror also
+    # re-checks the override path's non-string `sessionKey`/`serverName` with
+    # the same TypeError text, so `override-nonstring-session-key` and
+    # `override-nonstring-server-name` stay unbound positive controls.
     "control-validation-relaxed": (
         gateway,
         """        let session_key = required_trimmed(
@@ -120,6 +127,14 @@ MUTATIONS = {
             _response("toggle-blank-session-key"),
             _response("reconnect-missing-session-key"),
             _response("override-missing-session-key"),
+            _response("toggle-nonstring-session-key"),
+            _response("reconnect-blank-session-key"),
+            _response("reconnect-nonstring-session-key"),
+            _response("reconnect-blank-server-name"),
+            _response("toggle-nonstring-server-name"),
+            _response("reconnect-nonstring-server-name"),
+            _response("override-blank-session-key"),
+            _response("override-blank-server-name"),
         ],
     ),
     # The WS-layer `{ ok: true }` shape of the two void controls.
@@ -231,6 +246,23 @@ MUTATIONS = {
         REPLAY,
         [
             _response("set-params-omitted"),
+        ],
+    ),
+    # The close-error mapping must pass the owner error's message through,
+    # not answer a fixed dispose literal (fix-r2 P1). Every golden close-fault
+    # row's message coincides with the literal, so the dedicated kill is the
+    # shutdown race: `SessionOwner::close` during a shutdown surfaces the
+    # whole-shutdown aggregate `Failed to shut down all agent sessions.`
+    # (owner.rs), which the literal never equals.
+    "close-message-hardcoded": (
+        gateway,
+        '            .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))',
+        '            .map_err(|_error| SdkMcpError::plain("Error", '
+        'JsString::from("Failed to dispose agent handle.")))',
+        SHUTDOWN_RACE,
+        [
+            "#1215 close during owner shutdown surfaces the shutdown aggregate, "
+            "not the hardcoded dispose text",
         ],
     ),
 }
