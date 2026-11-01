@@ -2077,6 +2077,85 @@
       ]
     },
     {
+      "name": "non-utf8",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [
+          {
+            "path": "ok.txt",
+            "b64": "b2sK"
+          }
+        ],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": [
+          {
+            "dir": "workspace",
+            "nameB64": "YmFkLf8udHh0",
+            "b64": "cmF3IG5hbWUK"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "op": "tick"
+        },
+        {
+          "op": "capture",
+          "phase": "pre_user",
+          "input": {
+            "workspaceId": "w",
+            "sessionId": "s",
+            "turnId": "t",
+            "runId": "r",
+            "workspaceDir": "<dir>/workspace"
+          },
+          "outcome": {
+            "snapshotId": "884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225",
+            "phase": "pre_user",
+            "state": "failed",
+            "failureMarkerPath": "<dir>/snapshots/workspaces/w/sessions/s/snapshots/884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225/_FAILED.json",
+            "error": "ENOENT: no such file or directory, lstat '<dir>/workspace/bad-�.txt'"
+          }
+        }
+      ],
+      "dynamicIds": [
+        "884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225"
+      ],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s/snapshots/884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s/snapshots/884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225/_FAILED.json",
+          "kind": "file",
+          "size": 313,
+          "sha256": "3302ba6f78bee2148ae4a7d214db5f800d0e712e4bd0d01a6d4161991a4d9da8"
+        }
+      ]
+    },
+    {
       "name": "provider-quirks",
       "snapshotRoot": "<dir>/snapshots",
       "workspace": {

@@ -479,10 +479,53 @@ regeneration!(
     web_conversion_lifecycle_regenerates_identically,
     "web-conversion-lifecycle"
 );
-regeneration!(
-    workspace_snapshot_regenerates_identically,
-    "workspace-snapshot"
-);
+// #283: not the shared macro — the committed oracle carries the non-utf8
+// scenario (a raw `bad-\xff.txt` beside `ok.txt`), which only a
+// byte-transparent filesystem can generate: the generator probes and drops
+// the scenario on macOS APFS/HFS+ (EINVAL), so regenerating there yields 27
+// scenarios and the byte comparison would false-fail. The guard is
+// Linux-only and pins the ICU build up front like the #132a card above,
+// because the recorded provider-order case is ICU-sensitive too (#283
+// fix-r1: libuv is pinned as well — its readdir order drives the same case).
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires fixed PilotDeck baseline and Node v22.22.0 with ICU 78.2 on a byte-transparent filesystem"]
+fn workspace_snapshot_regenerates_identically() {
+    let version = baseline::node_command()
+        .arg("--version")
+        .output()
+        .expect("#283 Node version");
+    assert!(version.status.success(), "#283 Node version command failed");
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        "v22.22.0",
+        "#283 pinned Node runtime"
+    );
+    let icu = baseline::node_command()
+        .args(["-p", "process.versions.icu"])
+        .output()
+        .expect("#283 Node ICU probe");
+    assert!(icu.status.success(), "#283 Node ICU probe failed");
+    assert_eq!(
+        String::from_utf8_lossy(&icu.stdout).trim(),
+        "78.2",
+        "#283 BLOCKED: workspace-snapshot requires ICU 78.2 (see the #132a card above)"
+    );
+    // #283 fix-r1: libuv too, like the runner's own gate — the provider-order
+    // case is recorded readdir order, which is a libuv property, so a
+    // v22.22.0 built against another libuv could false-fail the comparison.
+    let uv = baseline::node_command()
+        .args(["-p", "process.versions.uv"])
+        .output()
+        .expect("#283 Node libuv probe");
+    assert!(uv.status.success(), "#283 Node libuv probe failed");
+    assert_eq!(
+        String::from_utf8_lossy(&uv.stdout).trim(),
+        "1.52.1",
+        "#283 pinned libuv build (the runner pins the same version)"
+    );
+    baseline::regenerates_identically("workspace-snapshot");
+}
 regeneration!(write_tools_regenerates_identically, "write-tools");
 
 regeneration!(
