@@ -186,7 +186,15 @@ def check_budget(timeout, with_rust):
 
 
 def lease_expired(signum, frame):
+    if isinstance(sys.exception(), KeyboardInterrupt):
+        return
     raise KeyboardInterrupt('batch lease deadline')
+
+
+def interrupted(signum, frame):
+    if isinstance(sys.exception(), KeyboardInterrupt):
+        return
+    raise KeyboardInterrupt(f'signal {signum}')
 
 
 def process_table():
@@ -732,8 +740,6 @@ def main():
 
 
 if __name__ == '__main__':
-    def interrupted(signum, frame):
-        raise KeyboardInterrupt(f'signal {signum}')
     signal.signal(signal.SIGTERM, interrupted)
     try:
         code = main()
