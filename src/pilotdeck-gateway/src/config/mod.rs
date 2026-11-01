@@ -8,7 +8,7 @@ mod model;
 mod modules;
 pub mod permission;
 mod router;
-mod sections;
+pub(crate) mod sections;
 pub mod session_overrides;
 pub mod session_value;
 pub mod settings;

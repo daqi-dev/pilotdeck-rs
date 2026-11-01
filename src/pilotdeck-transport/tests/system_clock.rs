@@ -885,3 +885,95 @@ fn recurring_nonnorthern_and_nonhour_rules_keep_former_offsets() {
         );
     }
 }
+
+// -- #1324: ZonedPartsResolver (parse once, resolve per minute) --------------
+
+#[test]
+fn resolver_parts_match_zoned_datetime_parts_across_zones_and_transitions() {
+    let instants = [
+        0i64,
+        -1_000_000_000_000,     // 1938 (pre-1970 rules)
+        1_767_225_600_000,      // 2026-01-01T00:00:00Z
+        1_772_993_040_000,      // 2026-03-08 08:00Z, NY spring-forward day
+        1_772_992_999_999,      // one ms before the NY jump
+        1_793_548_000_000,      // 2026-11-01 06:00Z, NY fall-back day
+        1_793_511_600_000,      // 2026-11-01 05:00Z (the fold itself)
+        1_774_762_000_000,      // 2026-03-29 01:00Z, Berlin jump
+        1_762_063_600_000,      // 2025-11-02 06:00Z, Lord Howe fall-back day
+        8_640_000_000_000_000,  // TimeClip max
+        -8_640_000_000_000_000, // TimeClip min
+    ];
+    for zone in [
+        "UTC",
+        "Asia/Shanghai",
+        "America/New_York",
+        "Europe/Berlin",
+        "Australia/Lord_Howe",
+        "Pacific/Chatham",
+        "+05:30",
+        "-0800",
+        "etc/gmt+5",
+    ] {
+        let resolver = system_clock::ZonedPartsResolver::new(zone)
+            .unwrap_or_else(|error| panic!("{zone}: {error:?}"));
+        for &epoch in &instants {
+            let per_call = system_clock::zoned_datetime_parts(epoch, zone)
+                .unwrap_or_else(|error| panic!("{zone} @ {epoch}: {error:?}"));
+            let resolved = resolver
+                .parts_at(epoch)
+                .unwrap_or_else(|error| panic!("{zone} @ {epoch}: {error:?}"));
+            assert_eq!(per_call, resolved, "{zone} @ {epoch}");
+        }
+    }
+}
+
+#[test]
+fn resolver_weekday_agrees_with_gregorian_calendar() {
+    // 1970-01-01 was a Thursday; weekday 0 is Sunday (matches the
+    // Intl weekday index the cron matcher consumes).
+    let utc = system_clock::ZonedPartsResolver::new("UTC").unwrap();
+    for (epoch, weekday) in [
+        (0i64, 4u32),           // 1970-01-01, Thursday
+        (86_400_000, 5),        // 1970-01-02, Friday
+        (259_200_000, 0),       // 1970-01-04, Sunday
+        (345_600_000, 1),       // 1970-01-05, Monday
+        (1_767_225_600_000, 4), // 2026-01-01, Thursday
+        (1_767_484_800_000, 0), // 2026-01-04, Sunday
+        (1_767_308_400_000, 4), // 2026-01-01 22:00Z, Thursday
+        (-1, 3),                // 1969-12-31T23:59:59.999Z, Wednesday
+    ] {
+        assert_eq!(utc.parts_at(epoch).unwrap().weekday, weekday, "{epoch}");
+    }
+    // A zone ahead of UTC can roll the same instant onto the next day.
+    let kiritimati = system_clock::ZonedPartsResolver::new("Pacific/Kiritimati").unwrap();
+    assert_eq!(utc.parts_at(36_000_000).unwrap().weekday, 4); // 1970-01-01 10:00Z
+    // 2026-01-01 10:00Z: +14 rolls it to 2026-01-02 (a Friday). The same
+    // instant in 1970 was still -10:30 there; the zone's own history decides.
+    assert_eq!(utc.parts_at(1_767_262_200_000).unwrap().weekday, 4);
+    assert_eq!(kiritimati.parts_at(1_767_262_200_000).unwrap().weekday, 5);
+}
+
+#[test]
+fn resolver_rejects_zones_the_host_tree_lacks() {
+    assert!(system_clock::ZonedPartsResolver::new("Not/AZone").is_err());
+    assert!(system_clock::ZonedPartsResolver::new("").is_err());
+    assert!(system_clock::ZonedPartsResolver::new("Z").is_err());
+}
+
+#[test]
+fn resolver_fixed_offset_zone_never_shifts() {
+    let ist = system_clock::ZonedPartsResolver::new("+05:30").unwrap();
+    for epoch in [
+        0i64,
+        1_767_225_600_000,
+        1_799_999_999_999,
+        -1_767_225_600_000,
+    ] {
+        let parts = ist.parts_at(epoch).unwrap();
+        assert_eq!(parts.offset_seconds, 19_800, "{epoch}");
+        assert_eq!(
+            (epoch.div_euclid(1000) + 19_800) / 86_400,
+            (epoch + 19_800_000) / 86_400_000
+        );
+    }
+}
