@@ -14,4 +14,6 @@
 
 原 Cargo.toml、其余源码及上游测试/benches 原样保留。主 workspace 与 smoke probe 使用同一 path patch；数据 crate 不改。
 
+2026-11-01（#132 fix-r1）尝试手工运行 `cargo test --offline --manifest-path src/vendor/icu_collator/Cargo.toml --test tests`，在依赖解析阶段因本机缓存缺少 `databake` 失败，未执行上游测试，不能记作通过；原始输出见 `_tmp/20261026-issue-132/fix-r1/vendor-tests.log`。此外，crates.io 的规范化 Cargo.toml 未列出测试使用的 `atoi`、`arraystring`、`icu_normalizer_data` 等开发依赖，原样保留测试文件不代表可直接独立编译。本轮不修改上游 manifest/测试；补齐独立上游测试环境后仍需验证比较内核，产品回归结果另列 RESULT.md。
+
 核差量：从相同版本 crates.io 源包读取文件，对照 `UPSTREAM.sha256`，再比较上述两文件。内部比较主循环除左右迭代器改为闭包调用外没有更改判序规则。Node 原件和变异验证是产品测试，不能用本文件说明替代。

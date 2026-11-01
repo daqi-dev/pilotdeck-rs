@@ -345,6 +345,62 @@ class WorkspacePristine(unittest.TestCase):
                                        msg='#1166 new external literal inputs must be guarded'):
                     api._assert_product_pristine(self.root, 'HEAD')
 
+    def test_module_path_metadata_is_not_a_file_edge(self):
+        for key in ('path', 'r#path'):
+            with self.subTest(key=key):
+                failure = None
+                try:
+                    self.commit_source(
+                        f'#[cfg_attr(feature="datagen", databake({key} = foo::bar))] struct Example;\n'
+                        f'#[cfg_attr(all(), databake({key} = foo::bar))] mod child;',
+                        {'src/pilotdeck-cli/src/child.rs':
+                         'const X: &str = include_str!("../../../assets/metadata.txt");',
+                         'assets/metadata.txt': 'metadata'})
+                    inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+                except Exception as error:
+                    failure, inputs = error, ()
+                self.assertTrue(failure is None and ':(top,literal)assets/metadata.txt' in inputs,
+                                '#132 module path metadata must preserve source discovery')
+
+    def test_string_path_attributes_remain_file_edges(self):
+        for key in ('path', 'r#path'):
+            for literal in ('"../../../assets/child.inc"', 'r###"../../../assets/child.inc"###'):
+                with self.subTest(key=key, literal=literal):
+                    failure = None
+                    try:
+                        self.commit_source(f'#[{key} = {literal}] mod child;',
+                                           {'assets/child.inc': '// explicit edge',
+                                            'src/pilotdeck-cli/src/child.rs': '// default decoy'})
+                        inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+                    except Exception as error:
+                        failure, inputs = error, ()
+                    self.assertTrue(failure is None and ':(top,literal)assets/child.inc' in inputs,
+                                    '#132 string path attributes must retain the exact file edge')
+
+    def test_conditional_nonliteral_paths_remain_rejected(self):
+        for key in ('path', 'r#path'):
+            failure = None
+            try:
+                self.commit_source(f'#[cfg_attr(all(), {key} = concat!("x", ".rs"))] mod child;',
+                                   {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
+                api._workspace_literal_inputs(self.root, 'HEAD')
+            except api.SourceBaselineError as error:
+                failure = str(error)
+            self.assertTrue(failure is not None and 'conditional path attribute' in failure,
+                            '#132 conditional nonliteral paths must fail closed')
+
+    def test_metadata_string_paths_remain_rejected(self):
+        for key in ('path', 'r#path'):
+            failure = None
+            try:
+                self.commit_source(f'#[cfg_attr(all(), custom({key} = r#"child.rs"#))] mod child;',
+                                   {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
+                api._workspace_literal_inputs(self.root, 'HEAD')
+            except api.SourceBaselineError as error:
+                failure = str(error)
+            self.assertTrue(failure is not None and 'conditional path attribute' in failure,
+                            '#132 metadata string paths must retain conditional rejection')
+
     def test_attribute_data_inputs_are_guarded(self):
         self.commit_source('#[doc = include_str!("../../../assets/doc.md")] fn documented() {}',
                            {'assets/doc.md': 'documentation'})

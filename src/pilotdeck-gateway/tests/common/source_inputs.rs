@@ -655,7 +655,7 @@ fn is_doc_attribute(tokens: &[SourceToken]) -> bool {
 }
 
 // Walk the attribute body, nested `cfg_attr(...)` groups included, and call
-// `visit` for every `path` / `r#path` key followed by `=`. Shared by the edge
+// `visit` for every file `path` / `r#path` key followed by `=`. Shared by the edge
 // scanner and the candidate-marker test so a new attribute shape is handled by
 // both at once; a one-sided change would collect a file without scanning it,
 // or scan a file that was never collected as a candidate.
@@ -663,14 +663,30 @@ fn attribute_path_keys<'a>(
     tokens: &'a [SourceToken],
     visit: &mut impl FnMut(&'a [SourceToken], usize),
 ) {
+    attribute_path_keys_in(tokens, true, visit);
+}
+
+fn attribute_path_keys_in<'a>(
+    tokens: &'a [SourceToken],
+    file_attribute: bool,
+    visit: &mut impl FnMut(&'a [SourceToken], usize),
+) {
     for (index, token) in tokens.iter().enumerate() {
         if matches!(token, SourceToken::Ident(word) if word == "path")
             && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
+            // Real #[path] (also under cfg_attr) must still reject unsupported
+            // values. Other attributes may use `path = foo::bar` as metadata,
+            // e.g. databake; only a string there can name a source file.
+            && (file_attribute
+                || matches!(tokens.get(index + 2), Some(SourceToken::Literal(value))
+                    if plain_string_value(value).is_some()))
         {
             visit(tokens, index);
         }
         if let SourceToken::Group { tokens: inner, .. } = token {
-            attribute_path_keys(inner, visit);
+            let conditional = index > 0
+                && matches!(&tokens[index - 1], SourceToken::Ident(name) if name == "cfg_attr");
+            attribute_path_keys_in(inner, conditional, visit);
         }
     }
 }
@@ -707,4 +723,117 @@ fn attribute_names_path(tokens: &[SourceToken]) -> bool {
     let mut found = false;
     attribute_path_keys(tokens, &mut |_, _| found = true);
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Reuse an existing source file: no fixture IO can fail before the bound
+    // assertion, and both scanner modes resolve exactly the same real edge.
+    fn scan(source: &str, workspace: bool) -> Vec<SourceEdge> {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common");
+        let file = directory.join("source_inputs.rs");
+        let tokens = lex_source(source).expect("#132 attribute fixture must lex");
+        let mut scanner = EdgeScanner {
+            package: "fixture",
+            directory: &directory,
+            file: &file,
+            targets: Vec::new(),
+            macro_depth: 0,
+            workspace,
+        };
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scanner.walk(&tokens, true, vec![directory.clone()]);
+        }))
+        .expect("#132 attribute scanner accepts module metadata and literal file edges");
+        scanner.targets
+    }
+
+    #[test]
+    fn module_path_metadata_is_not_a_file_edge() {
+        for key in ["path", "r#path"] {
+            for attribute in [
+                format!("#[databake({key} = foo::bar)]"),
+                format!("#[cfg_attr(feature = \"datagen\", databake({key} = foo::bar))]"),
+                format!("#[cfg_attr(all(), cfg_attr(any(), databake({key} = foo::bar)))]"),
+            ] {
+                let tokens = lex_source(&attribute).expect("#132 metadata fixture must lex");
+                assert!(
+                    !lexemes_name_edge(&tokens),
+                    "#132 module metadata is not a file candidate: {attribute}"
+                );
+                for workspace in [false, true] {
+                    assert!(
+                        scan(&format!("{attribute} struct Example;"), workspace).is_empty(),
+                        "#132 module metadata produces no file edges: {attribute}"
+                    );
+                }
+                // A falsely set explicit_module flag would suppress this default edge.
+                assert_eq!(
+                    scan(&format!("{attribute} mod source_inputs;"), true).len(),
+                    1,
+                    "#132 module metadata preserves default module discovery"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn string_path_attributes_remain_file_edges() {
+        let expected = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/common/source_inputs.rs")
+            .canonicalize()
+            .expect("#132 literal fixture source exists");
+        for key in ["path", "r#path"] {
+            for value in ["\"source_inputs.rs\"", "r###\"source_inputs.rs\"###"] {
+                let source = format!("#[{key} = {value}] mod renamed;");
+                let tokens = lex_source(&source).expect("#132 literal fixture must lex");
+                assert!(
+                    lexemes_name_edge(&tokens),
+                    "#132 string path remains a file candidate"
+                );
+                for workspace in [false, true] {
+                    let targets: Vec<_> = scan(&source, workspace)
+                        .into_iter()
+                        .map(|edge| edge.path)
+                        .collect();
+                    assert_eq!(
+                        targets,
+                        vec![expected.clone()],
+                        "#132 string path resolves its exact file"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_paths_keep_strict_validation() {
+        for key in ["path", "r#path"] {
+            let source = format!("#[cfg_attr(all(), {key} = concat!(\"x\", \".rs\"))]");
+            let tokens = lex_source(&source).expect("#132 conditional fixture must lex");
+            assert!(
+                lexemes_name_edge(&tokens),
+                "#132 nonliteral conditional paths must reach strict validation"
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_string_paths_are_conservative_file_edges() {
+        for key in ["path", "r#path"] {
+            let source = format!("#[cfg_attr(all(), custom({key} = r#\"source_inputs.rs\"#))]");
+            let tokens = lex_source(&source).expect("#132 metadata string fixture must lex");
+            assert!(
+                lexemes_name_edge(&tokens),
+                "#132 metadata string paths remain file candidates"
+            );
+            assert_eq!(
+                scan(&format!("{source} mod renamed;"), false).len(),
+                1,
+                "#132 metadata string paths retain a conservative file edge"
+            );
+        }
+    }
 }
