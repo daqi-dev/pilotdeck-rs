@@ -512,7 +512,7 @@ class SessionRunnerTests(unittest.TestCase):
                         '#1210 multi-file row must still classify')
         self.assertTrue(captured and captured[0].changes is not None and
                         len(captured[0].changes) == 2,
-                        '#1210 Case must carry every change of the row')
+                        '#1210 the runner case record must carry every change of the row')
         self.assertEqual(code, 0, '#1210 multi-file row must run clean')
         self.assertTrue(all(restored_files.values()), '#1210 temp sources must be restored')
 
@@ -670,12 +670,13 @@ def negative_controls():
              "                          f'source guard: {error}')",
              "    invalidate_completed(results, f'source guard: {error}')")})),
         ('session-case-first-change-only', (SessionRunnerTests,),
-         {(SessionRunnerTests, 'test_classifier_receives_every_change'): '#1210 Case must carry every change of the row'},
+         {(SessionRunnerTests, 'test_classifier_receives_every_change'): '#1210 the runner case record must carry every change of the row'},
          lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
              FIXTURES / 'session-factory/negative_controls.py',
              "        status,reason=classify(run(name+'-negative',test),\n"
-             "                               Case(name,first_path,first_old,first_new,test,assertion,scope,changes))",
-             "        status,reason=classify(run(name+'-negative',test),Case(name,first_path,first_old,first_new,test,assertion,scope))")})),
+             "                               RunnerCase(name, changes, test, assertion))",
+             "        status,reason=classify(run(name+'-negative',test),\n"
+             "                               RunnerCase(name, changes[:1], test, assertion))")})),
     ])
     for label, test, old, new in [
         ('write', 'test_restore_write_failure',
