@@ -23,12 +23,18 @@ node --disable-warning=ExperimentalWarning --import "$PDRS_BASELINE/node_modules
 消费：`runtime/turn/host_timeline_tests.rs`（经 `#[path]` 挂进 live_stream_tests.rs）逐
 case 对拍全部事件与终态坐标；`live_stream_tests.rs` 的
 `submit_assembles_one_timeline_across_wire_host_and_terminal` 经 `LiveSessionAdapter::submit`
-走生产装配断言连续坐标。`host_timeline_regenerates_identically`（ignored）为重生成
-守卫。坐标分配语义的 Rust 实现在 `runtime/turn/timeline.rs`。负控 `schemata.py` 覆盖
-`timeline-order-frozen` / `timeline-boundary-omitted` / `timeline-derived-unprojected` /
-`timeline-compaction-unpositioned` / `wire-drains-host` / `timeline-forwarding-unwired` /
-`timeline-terminal-unwired` 七枚编译期变异，前五枚绑回放测试、后两枚绑 submit 测试
-（`_shared/mutant_switch.py`：不改源，可提交前本地跑；`--check` 为只读预检）。
+走生产装配断言连续坐标；同文件的
+`session_abort_still_drains_and_positions_post_cancel_events`（fix-r3：真会话，peer 与测试
+以信号文件构成 hb1→hb2→b2 因果链，不依赖墙钟窗口）断言取消后两个宿主事件分拍排空并定
+位、取消后 wire 块与终态块接续坐标。`host_timeline_regenerates_identically`（ignored）为重
+生成守卫。坐标分配语义的 Rust 实现在 `runtime/turn/timeline.rs`。负控 `schemata.py` 覆盖
+十枚编译期变异：`timeline-order-frozen` / `timeline-boundary-omitted` /
+`timeline-derived-unprojected` / `timeline-compaction-unpositioned` / `wire-drains-host` /
+`live-abort-finish-messages` 六枚绑回放测试，`timeline-forwarding-unwired` /
+`timeline-terminal-unwired` 两枚绑 submit 测试，`timeline-cancel-stops-pump` /
+`timeline-cancel-parks-pump` 两枚绑 cancel-window 会话测试（后者为 fix-r3 的循环顶部等价
+变异，锚点为两段超时锚的备选集；`_shared/mutant_switch.py`：不改源，可提交前本地跑；
+`--check` 为只读预检）。
 
 已登记微差与对拍适配（A7.2-INTERACTION-CONSUME-001-R6，不在本切片对齐范围）：① TS
 `recordKnownTerminal` 在协议 final 帧内、排空 pending 宿主事件之前定位终态块（金样在

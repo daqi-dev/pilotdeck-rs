@@ -1181,9 +1181,12 @@ impl LiveTurnStream {
     /// snapshot the client handed the sidecar at execute time, still pristine
     /// because the loop works on a copy (AgentLoop.ts:367). In-turn durable
     /// assistant/tool messages land in the runner afterwards and must not leak
-    /// into this list; before the execute snapshot exists (pre-execute cancels)
-    /// the runner has recorded nothing in-turn yet, so the runner's messages
-    /// and the raw loop input agree there.
+    /// into this list. Before the execute snapshot exists (pre-execute
+    /// cancels) the runner already carries what submit_prompt recorded —
+    /// including the UserPromptSubmit hook's injected messages (#741 extends
+    /// `self.messages` before execute) — so the fallback must report the
+    /// runner's list, never the bare loop input: the two only agree when no
+    /// hook contributed anything (#741 context-abort pins the hooked shape).
     fn abort_messages(&self) -> Vec<JsValue> {
         if crate::mutants::on("prompt-abort-context") {
             return self.input.loop_messages();
@@ -1517,6 +1520,20 @@ impl StreamHandler {
             result = &mut execution => result,
             error = async {
                 loop {
+                    // #1220 cancel window (top-of-loop twin): the equivalent
+                    // of the in-tick checkpoint below, placed at the loop top
+                    // beside the `stopped` check — the shape a cancel assembly
+                    // would most naturally take. It still lets the iteration
+                    // that already passed this check drain one more host batch,
+                    // so only the *second* post-abort host event catches it.
+                    if crate::mutants::on("timeline-cancel-parks-pump")
+                        && self
+                            .callback_cancel
+                            .as_ref()
+                            .is_some_and(|cancel| cancel.is_cancelled())
+                    {
+                        std::future::pending::<()>().await;
+                    }
                     if self.forwarding.lock().unwrap().stopped { std::future::pending::<()>().await; }
                     let deadline = self.forwarding.lock().unwrap().deadline();
                     sleep_until(deadline).await;
