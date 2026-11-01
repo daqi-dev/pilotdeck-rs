@@ -67,13 +67,15 @@ sweep 会停止，以及发布时旧 handle 的 admission cutoff 无需执行资
 drain 守卫）的专用负控，走共享
 M6 执行器（`mutating_sources` 原位变异 + `negative_suite.run_cases` 逐项
 KILLED/SURVIVED/INVALID），要求提交后源码等于 `HEAD`，与 `negative.py` 的独立
-`/tmp` 副本方式并存。八项变异：close 的 shutdown 窗口变异回旧的整个 shutdown
+`/tmp` 副本方式并存。九项变异：close 的 shutdown 窗口变异回旧的整个 shutdown
 聚合分支、else 分支不 await 就放行、close 任务的 closing 登记、idle sweep 的
 closing 登记、shutdown drain 的 closing 登记、shutdown 的 drain 清单抢走已有未
 结算 closing 的 key 的 record（最后一项去掉后 close-first-same-tick 格漂移为
 Ok + `shutdown` 原因）、skip 提前 `break` 不再排空其余 key（fix-r2）、per-key
 drain 退回裸 `tokio::spawn` 失去完成守卫（fix-r2，panic 后条目悬空、后续 close
-答 lifecycle-stopped）。一行变异可绑定多个测试（每测试一个 `Case`），marker
+答 lifecycle-stopped）、closing 守卫先释放 serial ticket 再结算条目
+（fix-r3 `settle-after-release`，窗口②回归，由两个顺序探针测试的事件序列断言
+判杀）。一行变异可绑定多个测试（每测试一个 `Case`），marker
 list 走 `negative_suite.classify` 的 alternatives 语义——绑定测试在任一列名
 断言失败即 KILLED，不把多个 marker 拆成多个 Case。TS 依据为真实路由探针
 `_tmp/20261026-issue-1245/probe/close-during-shutdown.out`、
@@ -81,7 +83,7 @@ list 走 `negative_suite.classify` 的 alternatives 语义——绑定测试在�
 `_tmp/20261026-issue-1245/fix-r2/probe/skip-only-closing-key.out`
 （作者树 `_tmp/20261026-issue-1245/` 下；交付轮副本在同目录的
 `remote-run/artifacts/round/probe/`；Node v22.22.0），差异与修正在
-`specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001{-R1,-R2}.md`。
+`specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001{-R1,-R2,-R3,-R4}.md`。
 `--check-anchors` 预检锚点；`--compile-only` 只证明每个变异体能编译；
 `--sample` 只跑 `close-else-awaits-nothing` 一项抽样。
 

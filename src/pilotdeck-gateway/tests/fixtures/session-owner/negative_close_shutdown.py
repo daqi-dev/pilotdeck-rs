@@ -76,6 +76,14 @@ DRAIN_PANIC = (
     "runtime::session::owner::tests::"
     "shutdown_drain_panic_settles_the_keys_closing_entry"
 )
+CLOSE_SETTLES = (
+    "runtime::session::owner::tests::"
+    "close_settles_its_closing_entry_before_releasing_the_ticket"
+)
+IDLE_SETTLES = (
+    "runtime::session::owner::tests::"
+    "idle_sweep_settles_its_closing_entry_before_releasing_the_ticket"
+)
 
 
 # Every marker names the exact assertion message that must turn red.
@@ -254,6 +262,30 @@ MUTATIONS = {
             "completion guard",
             "#1245 a record-less close after shutdown must fulfill like TS "
             "await undefined",
+        ],
+    ),
+    # #1245 fix-r3: the settle-before-release invariant loses its machine
+    # witness — the closing guard releases the serial ticket first and settles
+    # only afterwards, which is exactly the window where a queued same-key
+    # creation's published record escapes a later shutdown's
+    # unsettled-closing skip (the interleave itself has no await point, so the
+    # deterministic kill is the order probe's event-sequence assertion). The
+    # window reopens for the close task and the idle sweep task alike.
+    "settle-after-release": (
+        owner,
+        """impl Drop for ClosingGuard {
+    fn drop(&mut self) {
+        if let Some(outcome) = self.outcome.take() {""",
+        """impl Drop for ClosingGuard {
+    fn drop(&mut self) {
+        self.exclusive = None;
+        if let Some(outcome) = self.outcome.take() {""",
+        [CLOSE_SETTLES, IDLE_SETTLES],
+        [
+            "#1245 the close task must settle its closing entry before "
+            "releasing the serial ticket",
+            "#1245 the idle sweep task must settle its closing entry before "
+            "releasing the serial ticket",
         ],
     ),
 }

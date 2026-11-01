@@ -706,7 +706,17 @@ impl SessionOwner {
             done,
             RuntimeError::new("Session close task was dropped or panicked before completion."),
             async move {
-                let _exclusive = ticket.enter().await;
+                // #1245 settle-before-release: the serial ticket moves into
+                // the closing guard, whose `Drop` writes the key's closing
+                // entry strictly before the ticket is released — after the
+                // release a queued same-key get_or_create may publish a new
+                // record, and shutdown's skip must never see this entry
+                // unsettled then, or that record would escape every drain
+                // list. TS has no such gap: getOrCreateActive awaits
+                // closingSessions first. On a panic or abort no outcome is
+                // staged, so the outer `Completion` guard settles this entry
+                // with its dropped error after the ticket's release instead.
+                let mut closing = ClosingGuard::new(settle, Some(ticket.enter().await));
                 let (record, identity) = {
                     let mut state = owner.0.state.lock().unwrap();
                     state.order.retain(|item| item != &key);
@@ -733,14 +743,7 @@ impl SessionOwner {
                 } else {
                     Ok(())
                 };
-                // Settle the key's closing entry while the serial ticket is
-                // still held: after the ticket's release a queued same-key
-                // get_or_create may publish a new record, and shutdown's skip
-                // must never see this entry unsettled then, or that record
-                // would escape every drain list. TS has no such gap:
-                // getOrCreateActive awaits closingSessions first.
-                settle.send_replace(Some(outcome.clone()));
-                outcome
+                closing.settle(outcome)
             },
         );
         Box::pin(wait_result(completion))
@@ -858,13 +861,15 @@ impl SessionOwner {
                     "Session idle eviction task was dropped or panicked before completion.",
                 ),
                 async move {
-                    let _exclusive = ticket.enter().await;
-                    let outcome = owner.evict(&key, record, EvictionReason::Idle).await;
                     // Same settle-before-release invariant as the close task:
                     // a record published behind this key's ticket must never
-                    // land while this closing entry is still unsettled.
-                    settle.send_replace(Some(outcome.clone()));
-                    outcome
+                    // land while this closing entry is still unsettled. The
+                    // guard writes the entry, then releases the ticket; a
+                    // panic or abort leaves the entry to the outer
+                    // `Completion` guard instead.
+                    let mut closing = ClosingGuard::new(settle, Some(ticket.enter().await));
+                    let outcome = owner.evict(&key, record, EvictionReason::Idle).await;
+                    closing.settle(outcome)
                 },
             );
         }
@@ -1022,10 +1027,6 @@ impl SessionOwner {
     }
 }
 
-#[cfg(test)]
-#[path = "owner_tests.rs"]
-mod tests;
-
 // A ticket is reserved at method call time, not on first poll. This preserves
 // same-key close/create order even if executor threads poll tasks in reverse.
 struct Serial {
@@ -1044,9 +1045,54 @@ impl Ticket {
 }
 impl Drop for Ticket {
     fn drop(&mut self) {
+        #[cfg(test)]
+        settle_order::record("ticket-released");
         self.done.send_replace(true);
     }
 }
+
+/// #1245 settle-before-release: the key's closing entry must settle strictly
+/// before the serial ticket is released. Holding the ticket inside this guard
+/// makes the settle write and the release one drop sequence — `Drop` writes
+/// the staged outcome while `exclusive` is still a live field, and the field
+/// is dropped only after the `Drop` body returns — so no ordering slip at the
+/// call site can reopen the window where a queued same-key creation publishes
+/// a record that a later shutdown's unsettled-closing skip would never drain.
+/// A task that panics or is aborted stages no outcome: the guard then releases
+/// the ticket without settling, and the outer `Completion` guard settles the
+/// entry with its dropped error after the release.
+struct ClosingGuard {
+    settle: watch::Sender<Option<RuntimeResult>>,
+    outcome: Option<RuntimeResult>,
+    exclusive: Option<Ticket>,
+}
+impl ClosingGuard {
+    fn new(settle: watch::Sender<Option<RuntimeResult>>, exclusive: Option<Ticket>) -> Self {
+        Self {
+            settle,
+            outcome: None,
+            exclusive,
+        }
+    }
+    /// Stage the outcome for the settle-on-drop; the closing entry itself is
+    /// written in `Drop`, before the ticket is released.
+    fn settle(&mut self, outcome: RuntimeResult) -> RuntimeResult {
+        self.outcome = Some(outcome.clone());
+        outcome
+    }
+}
+impl Drop for ClosingGuard {
+    fn drop(&mut self) {
+        if let Some(outcome) = self.outcome.take() {
+            #[cfg(test)]
+            settle_order::record("closing-settled");
+            self.settle.send_replace(Some(outcome));
+        }
+        // Released only after the settle write.
+        self.exclusive = None;
+    }
+}
+
 fn ticket(state: &mut State, key: &JsString) -> Ticket {
     let serial = state
         .gates
@@ -1194,3 +1240,29 @@ impl RefreshRouter for SessionOwner {
         handle.and_then(|handle| handle.snapshot().get("messages").cloned())
     }
 }
+
+/// Test-only ordering probe for #1245 settle-before-release: records the
+/// settle write and every serial-ticket release, in execution order, on the
+/// running thread. The guarded window sits between two non-awaiting code
+/// spans, so no external task can gate on it; the recorded order is the one
+/// deterministic witness that the settle happens while the ticket is held.
+#[cfg(test)]
+mod settle_order {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static EVENTS: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record(event: &'static str) {
+        EVENTS.with(|events| events.borrow_mut().push(event));
+    }
+
+    pub(super) fn take() -> Vec<&'static str> {
+        EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()))
+    }
+}
+
+#[cfg(test)]
+#[path = "owner_tests.rs"]
+mod tests;
