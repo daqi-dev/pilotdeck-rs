@@ -1217,10 +1217,10 @@ async fn wait_flag(flag: &mut watch::Receiver<bool>, what: &str) {
 }
 
 /// Read the socket to EOF and return how long the close took after the
-/// capture window: the native port closes at Node's 5 s keep-alive idle
-/// deadline (TS at ~6 s with its fixed 1 s `keepAliveTimeoutBuffer` — the
-/// unconverged gap is registered in ledger A8.4-NATIVE-HTTP-001), and
-/// neither a stop nor a completed response may close it earlier.
+/// capture window: the native port closes at Node's effective keep-alive
+/// idle deadline — `keepAliveTimeout` 5 s plus the fixed 1 s
+/// `keepAliveTimeoutBuffer` (#1250) — and neither a stop nor a completed
+/// response may close it earlier.
 async fn eof_after_close(stream: &mut TcpStream, what: &str) -> Duration {
     let started = Instant::now();
     let mut buffer = [0u8; 1];
@@ -1520,13 +1520,14 @@ async fn stop_serves_in_flight_request_and_waits_like_ts_close() {
 
 /// #1209: Node's keep-alive idle close is in force with or without a stop:
 /// `server.keepAliveTimeout` defaults to 5 s (the TS `GatewayServer` does not
-/// override it and advertises `Keep-Alive: timeout=5`), and a connection that
-/// made one request and went quiet closes 5 s after its response (probe
-/// `probe-fixr3-a.out` A: EOF at +6007 ms — Node adds the fixed 1 s
-/// `keepAliveTimeoutBuffer`, so TS lands at ~6 s and the port at exactly
-/// 5 s; the unconverged gap fits the 3–7 s window below, which therefore
-/// cannot distinguish it; registered in ledger A8.4-NATIVE-HTTP-001). No
-/// stop is involved until after the EOF.
+/// override it and advertises `Keep-Alive: timeout=5` — the bare value), and a
+/// connection that made one request and went quiet closes 6 s after its
+/// response: Node adds the fixed 1 s `keepAliveTimeoutBuffer` (probes
+/// `probe-fixr3-a.out` A: EOF at +6007 ms; the #1250 probes read back
+/// `keepAliveTimeout=5000`/`keepAliveTimeoutBuffer=1000` live). #1250 pins
+/// the port to the same 6 s; `keep_alive_idle_close_lands_at_six_seconds`
+/// pins the deadline deterministically on the paused clock, so this wall-clock
+/// test only cross-checks the range. No stop is involved until after the EOF.
 #[tokio::test]
 async fn keep_alive_idle_close_matches_ts() {
     let host = gateway::tests::native_ws_fixture(Arc::new(Unused));
@@ -1569,8 +1570,8 @@ async fn keep_alive_idle_close_matches_ts() {
     );
     let elapsed = eof_after_close(&mut idle, "the served connection").await;
     assert!(
-        elapsed >= Duration::from_secs(3),
-        "#1209 the keep-alive connection is not closed early: the idle close lands at Node's 5 s keepAliveTimeout, closed after {elapsed:?}"
+        elapsed >= Duration::from_secs(5),
+        "#1209 the keep-alive connection is not closed early: the idle close lands at Node's keepAliveTimeout + the fixed 1 s keepAliveTimeoutBuffer (#1250), closed after {elapsed:?}"
     );
     stop.send(()).expect("#1209 stop native listener");
     let drained = timeout(Duration::from_secs(10), task)
@@ -1581,6 +1582,604 @@ async fn keep_alive_idle_close_matches_ts() {
         drained.is_ok(),
         "#1209 the listener drains Ok after the idle close: {drained:?}"
     );
+}
+
+// ── #1250: the keep-alive idle close's state × event × timing matrix, pinned
+// on the paused tokio clock (duplex + `start_paused`): virtual time moves only
+// through the explicit advances below, so every deadline is probed, never
+// raced. The TS expectations come from the real-`GatewayServer` probes
+// (Node v22.22.0, registered in ledger A8.4-NATIVE-HTTP-001-R1): the idle
+// deadline is `keepAliveTimeout` 5 s plus the fixed 1 s
+// `keepAliveTimeoutBuffer` (6 s), it arms at response `finish` — not at
+// handler return — and every socket read segment refreshes it.
+
+/// #1250: the virtual-clock harness from `native_ws::tests`: the wrapped
+/// future is polled against yields of the current-thread runtime, so the
+/// serve task makes progress between advances. The wall guard only diagnoses
+/// a stalled future; it is never a timing result.
+async fn manual_clock<F: std::future::Future>(future: F) -> F::Output {
+    tokio::pin!(future);
+    let wall = Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return result,
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(
+            wall.elapsed() < Duration::from_secs(60),
+            "#1250 manual-clock harness stalled: the serve future never resolved"
+        );
+    }
+}
+
+/// #1250: append to `buffer` until it contains `marker` — a response chunk or
+/// the chunked terminator — failing with the cell's own message instead of a
+/// bare IO error.
+async fn read_until(
+    buffer: &mut Vec<u8>,
+    client: &mut tokio::io::DuplexStream,
+    marker: &str,
+    what: &str,
+) {
+    while !latin1_string(buffer).contains(marker) {
+        let mut chunk = [0u8; 256];
+        let read = client
+            .read(&mut chunk)
+            .await
+            .unwrap_or_else(|error| panic!("#1250 {what}: {error}"));
+        if read == 0 {
+            panic!(
+                "#1250 {what}: EOF before {marker:?} arrived (buffer so far: {:?})",
+                latin1_string(buffer)
+            );
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+}
+
+/// #1250: read one full keep-alive response (head + chunked terminator). The
+/// terminator is on the wire strictly after the body's end-of-frames — the
+/// instant the idle deadline arms — so its arrival proves the deadline is
+/// armed; no barrier beyond the read itself is needed.
+async fn read_response(client: &mut tokio::io::DuplexStream, what: &str) -> String {
+    let mut buffer = Vec::new();
+    read_until(&mut buffer, client, "0\r\n\r\n", what).await;
+    let text = latin1_string(&buffer);
+    assert!(
+        text.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1250 {what}: the 200 head arrived, got {text:?}"
+    );
+    text
+}
+
+/// #1250: probe for data/EOF at the current virtual time. The 50 ms timeout
+/// window is armed before its own 60 ms advance, so a still-open read resolves
+/// `Elapsed`, while an EOF latched by a close during the advance wins — tokio
+/// polls the inner future before the delay.
+async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    let mut probe = [0u8; 1];
+    let pending = timeout(Duration::from_millis(50), client.read(&mut probe));
+    tokio::time::advance(Duration::from_millis(60)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    match pending.await {
+        Err(_quiet) => {}
+        Ok(Ok(0)) => panic!("#1250 {what}"),
+        Ok(Ok(count)) => panic!("#1250 {what}: {count} unexpected byte(s) arrived"),
+        Ok(Err(error)) => panic!("#1250 {what}: {error}"),
+    }
+}
+
+/// #1250: advance virtual time past the idle deadline and read the latched
+/// EOF (a half-closed duplex keeps reading 0, so no window is needed).
+async fn eof_after_idle_close(client: &mut tokio::io::DuplexStream, elapsed: Duration, what: &str) {
+    tokio::time::advance(elapsed).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    let mut probe = [0u8; 1];
+    match client.read(&mut probe).await {
+        Ok(0) => {}
+        Ok(count) => panic!("#1250 {what}: {count} unexpected byte(s) before the EOF"),
+        Err(error) => panic!("#1250 {what}: {error}"),
+    }
+}
+
+/// #1250: a response body the test holds mid-stream across the old idle
+/// deadline: the first chunk goes out immediately, the last only after the test
+/// flips `release` — Node arms the idle timer at response `finish`, so the gap
+/// must not close the connection. The release wait is one boxed future polled
+/// across the body's polls, so no wakeup can be lost.
+struct HeldBody {
+    first: Option<Bytes>,
+    last: Option<Bytes>,
+    wait: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send + Sync>>>,
+}
+impl hyper::body::Body for HeldBody {
+    type Data = Bytes;
+    type Error = ProxyError;
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, ProxyError>>> {
+        let this = self.get_mut();
+        if let Some(first) = this.first.take() {
+            return Poll::Ready(Some(Ok(hyper::body::Frame::data(first))));
+        }
+        if let Some(wait) = this.wait.as_mut() {
+            if wait.as_mut().poll(context).is_pending() {
+                return Poll::Pending;
+            }
+            this.wait = None;
+        }
+        Poll::Ready(
+            this.last
+                .take()
+                .map(|bytes| Ok(hyper::body::Frame::data(bytes))),
+        )
+    }
+}
+
+fn held_body(first: &str, last: &str, release: watch::Receiver<bool>) -> Body {
+    let mut waiter = release.clone();
+    HeldBody {
+        first: Some(Bytes::copy_from_slice(first.as_bytes())),
+        last: Some(Bytes::copy_from_slice(last.as_bytes())),
+        wait: Some(Box::pin(async move {
+            wait_flag(&mut waiter, "#1250 held-body release channel").await
+        })),
+    }
+    .boxed()
+}
+
+/// #1250 (matrix S5×E2/E4, divergence 1): a connection that made one request
+/// and went quiet closes at last activity + 6 s — `keepAliveTimeout` 5 s plus
+/// the fixed 1 s `keepAliveTimeoutBuffer` — while the response still
+/// advertises the bare `Keep-Alive: timeout=5`. Binds the negative control
+/// `native-http-idle-close-buffer-off` (the pre-#1250 5 s close).
+#[tokio::test(start_paused = true)]
+async fn keep_alive_idle_close_lands_at_six_seconds() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+        ));
+        client
+            .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1250 write the health request");
+        let response = read_response(&mut client, "health").await;
+        assert!(
+            response.to_ascii_lowercase().contains("keep-alive: timeout=5"),
+            "#1250 the advertisement stays the bare keepAliveTimeout: {response:?}"
+        );
+        tokio::time::advance(Duration::from_millis(5_400)).await;
+        probe_still_open(
+            &mut client,
+            "the idle connection stays open at +5.46 s: Node closes at keepAliveTimeout + the fixed 1 s keepAliveTimeoutBuffer (6 s), never at the bare 5 s",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(700),
+            "the idle close lands at 6 s after the response",
+        )
+        .await;
+        let served = task.await.expect("#1250 idle-close task join");
+        assert!(
+            served.is_ok(),
+            "#1250 the connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1250 (matrix S4×E3/E4, divergence 2): the idle deadline arms at the
+/// response's end-of-frames, not at handler return — a body held mid-stream
+/// for 8 s is not closed, and the close lands at body completion + 6 s. Binds
+/// the negative control `native-http-inflight-body-off` (the pre-#1250
+/// release-and-arm at handler return).
+#[tokio::test(start_paused = true)]
+async fn idle_close_waits_for_streaming_body() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                async {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", "part2", release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+        ));
+        client
+            .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1250 write the held-body request");
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "held body first chunk").await;
+        tokio::time::advance(Duration::from_secs(8)).await;
+        probe_still_open(
+            &mut client,
+            "the connection stays open while the response body is held mid-stream: Node arms the idle timer at response finish",
+        )
+        .await;
+        release_tx.send_replace(true);
+        let mut tail = Vec::new();
+        read_until(&mut tail, &mut client, "0\r\n\r\n", "held body end").await;
+        assert!(
+            latin1_string(&tail).contains("part2"),
+            "#1250 held body end: the final chunk arrived, got {:?}",
+            latin1_string(&tail)
+        );
+        tokio::time::advance(Duration::from_millis(5_400)).await;
+        probe_still_open(
+            &mut client,
+            "the streaming connection stays open at +5.46 s after its body ended: Node arms the idle deadline at response finish, not at handler return",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(700),
+            "the idle close lands 6 s after the streaming body ended",
+        )
+        .await;
+        let served = task.await.expect("#1250 held-body task join");
+        assert!(
+            served.is_ok(),
+            "#1250 the held-body connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1250 (matrix S2/S5×E1/E4, divergence 3): every read segment refreshes the
+/// idle deadline — a follow-up head that arrives as a segment at +3 s survives
+/// the previous response's +6 s deadline mid-arrival, and the connection then
+/// closes at the last activity + 6 s. Binds the negative control
+/// `native-http-read-refresh-off` (the pre-#1250 no-refresh close).
+#[tokio::test(start_paused = true)]
+async fn idle_close_refreshes_on_read_segments() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+        ));
+        client
+            .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1250 write the first health request");
+        read_response(&mut client, "first health").await;
+        tokio::time::advance(Duration::from_secs(3)).await;
+        client
+            .write_all(&latin1_bytes("GE"))
+            .await
+            .expect("#1250 write the first head segment");
+        probe_still_open(
+            &mut client,
+            "the half-arrived follow-up head keeps the connection open after its segment",
+        )
+        .await;
+        tokio::time::advance(Duration::from_millis(3_000)).await;
+        probe_still_open(
+            &mut client,
+            "the half-arrived follow-up head keeps the connection open past the pre-segment deadline: a read segment refreshes Node's idle deadline",
+        )
+        .await;
+        client
+            .write_all(&latin1_bytes(
+                "T /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1250 write the completing head segments");
+        read_response(&mut client, "second health").await;
+        tokio::time::advance(Duration::from_millis(5_400)).await;
+        probe_still_open(
+            &mut client,
+            "the second response's connection stays open past the refreshed deadline",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(700),
+            "the idle close lands 6 s after the last activity",
+        )
+        .await;
+        let served = task.await.expect("#1250 segments task join");
+        assert!(
+            served.is_ok(),
+            "#1250 the segmented connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1250 (matrix S3×E2/E4): while the handler is executing, no idle close is
+/// in force — the in-flight slot is held until the response body finishes, so
+/// a handler held 10 s keeps the connection open and the close lands at
+/// response completion + 6 s (aligned cell; no dedicated mutant).
+#[tokio::test(start_paused = true)]
+async fn handler_execution_blocks_idle_close() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let mut release = release_rx.clone();
+                let config = config.clone();
+                async move {
+                    wait_flag(&mut release, "#1250 handler-held release channel").await;
+                    serve(&request, &config).await
+                }
+            },
+            stop_rx,
+        ));
+        client
+            .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1250 write the handler-held request");
+        tokio::time::advance(Duration::from_secs(10)).await;
+        probe_still_open(
+            &mut client,
+            "the connection stays open while the handler is executing: Node arms no idle timer before response finish",
+        )
+        .await;
+        release_tx.send_replace(true);
+        read_response(&mut client, "handler-held health").await;
+        tokio::time::advance(Duration::from_millis(5_400)).await;
+        probe_still_open(
+            &mut client,
+            "the served connection after a held handler stays open at +5.46 s",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(700),
+            "the idle close lands 6 s after the held handler's response",
+        )
+        .await;
+        let served = task.await.expect("#1250 handler-held task join");
+        assert!(
+            served.is_ok(),
+            "#1250 the handler-held connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1250 (matrix S1/S2-first×E4): the idle deadline is armed only by request
+/// activity — a connection that sent nothing (nor only an incomplete first
+/// head, which TS bounds by its 60 s `headersTimeout` instead) is never closed
+/// by the keep-alive timer. The `headersTimeout` divergence is registered in
+/// the ledger and out of this issue's scope.
+#[tokio::test(start_paused = true)]
+async fn idle_state_no_request_stays_open() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+        ));
+        tokio::time::advance(Duration::from_secs(30)).await;
+        probe_still_open(
+            &mut client,
+            "the no-request connection stays open: the idle deadline is not armed before any response",
+        )
+        .await;
+        client
+            .write_all(&latin1_bytes("GET /hea"))
+            .await
+            .expect("#1250 write the partial first head");
+        tokio::time::advance(Duration::from_secs(20)).await;
+        probe_still_open(
+            &mut client,
+            "the partial first head keeps the connection open inside Node's 60 s headers window",
+        )
+        .await;
+        client
+            .write_all(&latin1_bytes(
+                "lth HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1250 complete the first head");
+        read_response(&mut client, "segmented first head").await;
+        tokio::time::advance(Duration::from_millis(5_400)).await;
+        probe_still_open(
+            &mut client,
+            "the segmented-head connection stays open at +5.46 s after its response",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(700),
+            "the idle close lands 6 s after the segmented-head response",
+        )
+        .await;
+        let served = task.await.expect("#1250 no-request task join");
+        assert!(
+            served.is_ok(),
+            "#1250 the no-request connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1250 (matrix S4×E1): a pipelined next request whose head arrives while
+/// the previous response's body is still held does not trigger the idle close
+/// — the read refreshes the deadline and the follow-up is served after the
+/// body ends (aligned cell; no dedicated mutant).
+#[tokio::test(start_paused = true)]
+async fn pipelined_request_during_body() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                async {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", "part2", release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+        ));
+        client
+            .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1250 write the held-body request");
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "pipelined first chunk").await;
+        client
+            .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1250 pipeline the next request during the body");
+        tokio::time::advance(Duration::from_secs(3)).await;
+        probe_still_open(
+            &mut client,
+            "the pipelined next request during a held body does not trigger the idle close",
+        )
+        .await;
+        release_tx.send_replace(true);
+        // Both responses from one buffer: the follow-up can share the read
+        // chunk that delivers the first terminator, so splitting the reads
+        // would swallow its bytes.
+        let mut tail = Vec::new();
+        while latin1_string(&tail).matches("0\r\n\r\n").count() < 2 {
+            let mut chunk = [0u8; 256];
+            let read = client
+                .read(&mut chunk)
+                .await
+                .unwrap_or_else(|error| panic!("#1250 pipelined responses: {error}"));
+            if read == 0 {
+                panic!(
+                    "#1250 pipelined responses: EOF before the second terminator (buffer so far: {:?})",
+                    latin1_string(&tail)
+                );
+            }
+            tail.extend_from_slice(&chunk[..read]);
+        }
+        let tail = latin1_string(&tail);
+        assert!(
+            tail.contains("HTTP/1.1 200 OK") && tail.matches("part2").count() == 2,
+            "#1250 the pipelined follow-up was served after the body ended: {tail:?}"
+        );
+        tokio::time::advance(Duration::from_millis(5_400)).await;
+        probe_still_open(
+            &mut client,
+            "the pipelined connection stays open at +5.46 s after the second response",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(700),
+            "the idle close lands 6 s after the second pipelined response",
+        )
+        .await;
+        let served = task.await.expect("#1250 pipelined task join");
+        assert!(
+            served.is_ok(),
+            "#1250 the pipelined connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1250 (matrix S5×E5): a client that goes away during the idle window ends
+/// the connection through the connection future itself — no timer is armed or
+/// consulted — so the serve future joins without a single virtual advance.
+#[tokio::test(start_paused = true)]
+async fn client_close_ends_connection_without_timer() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1250 write the health request");
+        read_response(&mut client, "client-close health").await;
+        client
+            .shutdown()
+            .await
+            .expect("#1250 half-close the idle connection");
+        // No advance(): the peer end alone must resolve the serve future.
+        let served = task.await.expect("#1250 client-close task join");
+        assert!(
+            served.is_ok(),
+            "#1250 the client-closed connection future resolves Ok without any timer: {served:?}"
+        );
+    })
+    .await;
 }
 
 /// #996-style regeneration guard for the fixture; see the fixture README for
