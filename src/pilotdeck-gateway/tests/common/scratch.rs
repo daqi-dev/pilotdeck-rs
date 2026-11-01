@@ -141,8 +141,12 @@ pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result
 /// publishing its group id afterwards (#1141 fix-r2 review P1-1). `reaped`
 /// receives the kill + wait outcome whenever the guard had to end the helper
 /// (#1125 fix-r3 review P2): it is the only liveness evidence the
-/// publication tests use, so no pid is ever read back from a file and
-/// signalled. `returning` receives the pipe's inode and runs once
+/// publication tests use, so the helper is never signalled through a pid
+/// read back from a file — the guard's kill below owns it. (The Linux-only
+/// pid-mode stranger in `tests/scratch_publication.rs` is the deliberate
+/// exception: its helper runs no group, so the test's guard ends that
+/// stranger through the pid it published, #1155 fix-r1 review P2-1.)
+/// `returning` receives the pipe's inode and runs once
 /// `published` is decided but before the guard disarms — the return
 /// boundary — so a test can prove no write end of that pipe survives the
 /// return (#1155 r3 review P2-1); its error takes precedence over a
