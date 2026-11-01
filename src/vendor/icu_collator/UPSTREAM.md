@@ -27,7 +27,7 @@
 
 从本机已有 Cargo 源码缓存取得 `icu_collator-2.1.1.crate`，先核对发布包 SHA-256（见文首），再解压到独占临时目录。进入解压后的 `icu_collator-2.1.1/`，用本仓保留的 `UPSTREAM.sha256` 对全部原件运行 `shasum -a 256 -c <本仓绝对路径>/src/vendor/icu_collator/UPSTREAM.sha256`。本轮已对缓存源包内的 25 项逐一核验，均与该清单一致。
 
-要恢复裁剪内容，从已验证的临时目录取回原 `Cargo.toml`、`tests/`、`benches/`，先审阅差异；不得将整个源包覆盖本目录，否则会丢失已有算法补丁。恢复非 lib target 必须先重新决定 vendor 范围；当前方案下，上游测试在临时目录独立运行，不重新暴露为产品 vendor targets。
+要恢复裁剪内容，从已验证的临时目录取回原 `Cargo.toml`、`tests/`、`benches/`，先审阅差异；不得将整个源包覆盖本目录，否则会丢失已有算法补丁。恢复非 lib target 必须先重新决定 vendor 范围；当前方案下，上游测试源码可以在临时目录里独立保存，但要运行还须另补发布包 manifest 未声明的 dev-deps（见下段）；不重新暴露为产品 vendor targets。
 
 2026-11-01 fix-r1 曾尝试直接运行上游 tests，但因缓存缺少 `databake` 在依赖解析阶段失败，未执行测试，不能记作通过；历史原始输出见 `_tmp/20261026-issue-132/fix-r1/vendor-tests.log`。发布包规范化 manifest 也未完整声明上游 tests 所需 `atoi`、`arraystring`、`icu_normalizer_data` 等开发依赖，因此还原文件不等于具备可运行的上游验证环境。产品回归与 Node 原件/变异验证另见 gateway `tests/fixtures/native-collation/`，它们不冒充上游完整测试。
 
