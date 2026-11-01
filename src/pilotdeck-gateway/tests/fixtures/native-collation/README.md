@@ -25,3 +25,5 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-collation/negative_contro
 未提交/新增文件不在 HEAD 时 `mutating_sources` 必须拒绝；不建影子仓库、不改 guard。worker 只交脚本，协调者提交后运行。`--compile-only` 可独立确认所有变异可编译，但 COMPILED 不计 KILLED。
 
 本单移除 catalog/session 的排序 host 边界和共享比较器的 PUA 映射。archive、storage transcript、workspace snapshot 的独立边界保持其原任务归属；A2 十 method、A8 总体验收及双家非作者终审不由本夹具代填。
+
+#132 fix-r2：同一负控入口还覆盖 ICU vendor 登记、恢复 test/bench target、放宽 lib-only 守卫四种变异，绑定 `icu_collator_vendor_scope_matches_approved_lib_only_boundary`。执行器按完整测试名选择 lib 或 `unsafe_boundary` 集成目标；编译、负控与恢复正控使用同一目标。所有变异均须先提交，再通过 HEAD 源码守卫运行。

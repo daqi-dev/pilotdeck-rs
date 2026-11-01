@@ -3,7 +3,8 @@
 //! （含 dev/build/target 与未启用的可选依赖）、仓内 Cargo 配置与 toolchain 文件、
 //! workspace manifest 树内的测试 cwd 到根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
 //! config*，以及测试进程可见的编译相关环境变量。
-//! vendored 包（`vendor/tiktoken-rs`、`data/icu_collator_data`）不在 workspace
+//! vendored 包（`vendor/tiktoken-rs`、`vendor/icu_collator`、
+//! `data/icu_collator_data`）不在 workspace
 //! lint 继承内，因此其声明/源码包含边与成员同受检查：path 依赖（含 dev/build/
 //! target 与未启用的可选依赖）、build script、proc-macro 及其它非 lib target、
 //! `[lib] path`，以及从 `[lib] src_path` 出发沿 `#[path = ...]` / `include!("...")`
@@ -113,7 +114,11 @@ fn workspace_paths(manifest: &str, key: &str) -> Vec<String> {
     members
 }
 
-const VENDORED_PACKAGES: [&str; 2] = ["vendor/tiktoken-rs", "data/icu_collator_data"];
+const VENDORED_PACKAGES: [&str; 3] = [
+    "vendor/tiktoken-rs",
+    "vendor/icu_collator",
+    "data/icu_collator_data",
+];
 
 fn is_local_source(source: &Value, description: &str) -> bool {
     match source {
@@ -331,9 +336,9 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
         .collect();
     let mut declared_allowed = checked_members.clone();
     declared_allowed.extend(vendored.iter().cloned());
-    // `cargo metadata` only lists packages reachable from the workspace. Both
+    // `cargo metadata` only lists packages reachable from the workspace. All
     // vendored packages are in the graph today (tiktoken via the tokenizer,
-    // icu data via `[patch.crates-io]`), but fail closed if either disappears:
+    // ICU code/data via `[patch.crates-io]`), but fail closed if any disappears:
     // an unaudited vendored manifest must not silently drop out of the guard.
     for directory in &vendored {
         let metadata = packages
@@ -1777,6 +1782,80 @@ mod vendored_edge_negative_controls {
         assert!(
             message.contains("#[path] target escapes its package directory"),
             "{message}"
+        );
+    }
+}
+
+// #132: audit the approved ICU import against real Cargo metadata. Keep this
+// narrow test independently bindable by the vendor-scope mutation runner.
+#[test]
+fn icu_collator_vendor_scope_matches_approved_lib_only_boundary() {
+    assert!(
+        VENDORED_PACKAGES.contains(&"vendor/icu_collator"),
+        "#132 ICU vendor must be registered"
+    );
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("#132 gateway belongs to the workspace");
+    let directory = workspace
+        .join("vendor/icu_collator")
+        .canonicalize()
+        .expect("#132 ICU vendor directory exists");
+    let output = Command::new(std::env::var_os("CARGO").expect("#132 Cargo executable"))
+        .args(["metadata", "--offline", "--format-version", "1"])
+        .current_dir(workspace)
+        .output()
+        .expect("#132 execute real Cargo metadata");
+    assert!(
+        output.status.success(),
+        "#132 Cargo metadata succeeds: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: Value = serde_json::from_slice(&output.stdout).expect("#132 Cargo metadata JSON");
+    let manifest = directory.join("Cargo.toml");
+    let package = metadata["packages"]
+        .as_array()
+        .expect("#132 Cargo metadata package list")
+        .iter()
+        .find(|package| {
+            package["manifest_path"]
+                .as_str()
+                .is_some_and(|path| Path::new(path) == manifest)
+        })
+        .expect("#132 ICU vendor remains in real dependency graph");
+    let targets = package["targets"]
+        .as_array()
+        .expect("#132 ICU target array");
+    assert_eq!(targets.len(), 1, "#132 ICU exposes only one lib target");
+    assert_eq!(
+        targets[0]["kind"],
+        serde_json::json!(["lib"]),
+        "#132 ICU exposes only one lib target"
+    );
+    // Real metadata supplies all declaration fields. Inject only a target kind
+    // to prove the existing universal boundary still rejects test/bench/etc.
+    for kind in [
+        "test",
+        "bench",
+        "bin",
+        "example",
+        "custom-build",
+        "proc-macro",
+    ] {
+        let mut forbidden = package.clone();
+        forbidden["targets"][0]["kind"] = serde_json::json!([kind]);
+        let payload = std::panic::catch_unwind(|| {
+            vendored_package_boundary("icu_collator", &forbidden, &directory, &BTreeSet::new());
+        })
+        .expect_err("#132 ICU non-lib target must be rejected");
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .expect("#132 target rejection has a text reason");
+        assert!(
+            message.contains("must expose only a lib target"),
+            "#132 target rejected at the lib-only boundary: {kind}: {message}"
         );
     }
 }

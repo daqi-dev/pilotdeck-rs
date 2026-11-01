@@ -20,8 +20,6 @@ include = [
     "data/**/*",
     "src/**/*",
     "examples/**/*",
-    "benches/**/*",
-    "tests/**/*",
     "Cargo.toml",
     "LICENSE",
     "README.md",
@@ -74,15 +72,6 @@ unstable = []
 [lib]
 name = "icu_collator"
 path = "src/lib.rs"
-
-[[test]]
-name = "tests"
-path = "tests/tests.rs"
-
-[[bench]]
-name = "bench"
-path = "benches/bench.rs"
-harness = false
 
 [dependencies.databake]
 version = "0.2.0"
