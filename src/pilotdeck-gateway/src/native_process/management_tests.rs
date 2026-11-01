@@ -199,6 +199,7 @@ fn setup() -> (Scratch, requests::Requests) {
         requests::Requests {
             options,
             env,
+            snapshot_enabled: true,
             project,
             owner,
             coordinator: Arc::default(),
@@ -589,7 +590,15 @@ async fn production_host_management_and_restart() {
                 .iter()
                 .find(|f| f["id"] == method)
                 .expect("#1231 route response");
-            negative_assert_eq!(response["ok"], true, "#1231 production route success");
+            if method == "snapshot_list" {
+                negative_assert_eq!(
+                    response["ok"],
+                    true,
+                    "#1231 snapshot route with explicit storage"
+                );
+            } else {
+                negative_assert_eq!(response["ok"], true, "#1231 production route success");
+            }
         }
         connection
             .receive(
@@ -630,6 +639,7 @@ async fn production_host_management_and_restart() {
         ];
         expected.sort_unstable();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
+        assert_ts_capability_subset(&expected);
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
@@ -1022,6 +1032,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             expected,
             "#1231 disabled storage exact capability set"
         );
+        assert_ts_capability_subset(&expected);
     }
     host.shutdown(options.drain_budget)
         .await
@@ -1036,6 +1047,137 @@ async fn missing_storage_environment_disables_snapshots() {
 #[tokio::test]
 async fn empty_storage_environment_disables_snapshots() {
     assert_storage_disabled(Some(""), "emptyStorage").await;
+}
+
+fn assert_ts_capability_subset(expected: &[&str]) {
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 TS capability oracle");
+    let ts_capabilities = oracle["contract"]["capabilities"]
+        .as_array()
+        .expect("#1231 TS capability array");
+    negative_assert!(
+        expected
+            .iter()
+            .all(|capability| ts_capabilities.contains(&json!(capability))),
+        "#1231 wired capabilities are TS subset"
+    );
+}
+
+#[tokio::test]
+async fn production_entry_snapshot_capabilities_are_disabled() {
+    let (_scratch, requests) = setup();
+    // Follow run()'s CLI/environment path, rather than injecting storage into
+    // assembly::start as the snapshot success fixtures intentionally do.
+    let options = Options::parse([
+        "--home".into(),
+        requests.options.home.clone().into_os_string(),
+        "--project".into(),
+        requests.options.project.clone().into_os_string(),
+        "--listen".into(),
+        "127.0.0.1:0".into(),
+        "--token-file".into(),
+        requests.options.token_file.clone().into_os_string(),
+        "--sidecar".into(),
+        requests.options.sidecar.clone().into_os_string(),
+    ])
+    .expect("#1231 production entry parses supported CLI options");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1231 production entry unused owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1231 production entry unused registry disposal");
+    for key in ["PILOTDECK_STORAGE_ROOT", "PILOTDECK_SNAPSHOT_ROOT"] {
+        for value in ["/explicit/storage", "   "] {
+            let env = Env::from([(key.into(), value.into())]);
+            let error = validate_environment(&env)
+                .expect_err("#1231 production entry rejects inherited snapshot authority");
+            negative_assert_eq!(
+                error.to_string(),
+                format!("native isolated mode does not accept inherited {key}"),
+                "#1231 production entry rejects named inherited snapshot authority"
+            );
+        }
+    }
+    for storage in [None, Some("")] {
+        for snapshot in [None, Some("")] {
+            let mut inherited = Env::new();
+            for (key, value) in [
+                ("PILOTDECK_STORAGE_ROOT", storage),
+                ("PILOTDECK_SNAPSHOT_ROOT", snapshot),
+            ] {
+                if let Some(value) = value {
+                    inherited.insert(key.into(), value.into());
+                }
+            }
+            validate_environment(&inherited)
+                .expect("#1231 production entry accepts absent or empty snapshot authority");
+            let host = assembly::start(options.clone(), options.environment(inherited))
+                .await
+                .expect("#1231 production entry starts without snapshots");
+            let text = Arc::new(Text::default());
+            let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+            connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.expect("#1231 production entry hello");
+            connection
+                .receive(
+                    json!({"type":"request","id":"describe","method":"describe_server"})
+                        .to_string(),
+                )
+                .await
+                .expect("#1231 production entry describe request");
+            {
+                let frames = text
+                    .0
+                    .lock()
+                    .expect("#1231 production entry describe frames");
+                let response = frames
+                    .iter()
+                    .find(|frame| frame["id"] == "describe")
+                    .expect("#1231 production entry describe response");
+                negative_assert_eq!(
+                    response["ok"],
+                    true,
+                    "#1231 production entry describe success"
+                );
+                let mut capabilities: Vec<&str> = response["result"]["capabilities"]
+                    .as_array()
+                    .expect("#1231 production entry capabilities")
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .expect("#1231 production entry capability string")
+                    })
+                    .collect();
+                capabilities.sort_unstable();
+                let mut expected = [
+                    "run_get",
+                    "run_events",
+                    "run_reattach",
+                    "project_files_list",
+                    "project_file_read",
+                    "model_catalog_list",
+                    "session_model_get",
+                    "supported_agents",
+                    "manager_sessions",
+                    "commands_list",
+                ];
+                expected.sort_unstable();
+                negative_assert_eq!(
+                    capabilities,
+                    expected,
+                    "#1231 production entry exact 10 capabilities"
+                );
+                assert_ts_capability_subset(&expected);
+            }
+            host.shutdown(options.drain_budget)
+                .await
+                .expect("#1231 production entry host shutdown");
+        }
+    }
 }
 
 #[tokio::test]
