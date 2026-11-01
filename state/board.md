@@ -1,30 +1,36 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-01 05:35 · by Claude Code 协调者
-- #1214 | impl | doing | A8.2-pr4 U2 memory 网关适配 → GLM cb8 远端
-- #1209 | impl | doing | PR #1212 A8.4-pr1 原生 HTTP；r1 DeepSeek P1 + opus 两条升 P1 → fix-r1 GLM cb8
-- #1166 | impl | doing | PR #1172（M6）r10 cb8 宿主：workspace-pristine 50 INVALID（_build 符号链接）+ 2 SURVIVED → 尺子 P1 r10-host-fix GLM cb8
-- #1145 | review | doing | PR #1148 收敛（final opus 0/0）；mbp2 r8 宿主在跑 → 入队
-- #1136 | review | doing | PR #1171 最终 opus 0/0；macmini r3n 单项复核两处超时 → 入队
-- #1154 | review | doing | PR #1186 r4 收敛；macmini r4n 单项复核 native-process → 最终块 → 入队
-- #1140 | review | doing | PR #1196 r4 两家 0/0；mbp2 复算排车道；cb8 真实采集等 #1154
-- #1139 | impl | blocked | PR #1170；等 #1166 合入后改用 proc-macro2 共享入口（同时关 #1174）
-- #589 | coord | doing | 前置已清（#1011 合入）→ 收尾自查 `_tmp/20261101-589-closeout/CHECK.md`
-- #1215 | impl | ready | A8.1-pr4 U6 MCP 四控制适配 → GLM（在审 ≤ 8 时放）
-- #1216 | impl | ready | A8.3-pr1a cron 存储与迁移 → GLM（在审 ≤ 8 时放）
-- #996 | impl | ready | session 族负控迁编译期开关（#1011 已合入，前置清）→ GLM（在审 ≤ 8 时放）
-- #132 | impl | blocked | 第二、三步等 #1154 合入
-- codex | coord | blocked | Codex 额度用尽，11-04 14:36 恢复；期间实现方用 GLM
-- #590 | impl | blocked | 前置 A5.4 冻结期望（#1140）
-- #727 | impl | blocked | 前置 #589
-- #19 | impl | blocked | 修复归 #727
-- #1146 | impl | blocked | D1-P09 前置 A8 + P08（#1145）
-- #123 | impl | doing | D1：P08 #1145 在审；P09 #1146 等 A8
-- #1099 | impl | doing | M6 总单：在途子单 #1166 / #1139；pr4 存量迁移等两者合入
-- #1061 | impl | blocked | 归 M6 #1099
-- #1087 | impl | blocked | 归 M6 #1099 → M6-pr4
-- #953 | impl | blocked | item 3 余项等 #996 迁移
+updated: 2026-11-01 15:33 · by Claude Code 协调者
+- #1209 | review | doing | PR #1212 A8.4-pr1 原生 HTTP；r6 两家 0/0（覆盖 e9ea6a94f）→ mbp2 r6m / cb8 r6c 宿主 → 合 main 检查 → 入队
+- #1044 | review | doing | PR #1238 合 main 检查过，已入队
+- #1215 | review | doing | PR #1225 收敛；cb8 r4c 宿主 → 入队
+- #1218 | review | doing | PR #1228 收敛；mbp2 r3m 宿主 → 合 main 检查 → 入队
+- #132 | review | doing | 协调者修两处负控丢 patch（connection-context、yaml）→ r5 GLM + DeepSeek；mbp2 / cb8 宿主
+- #201 | review | doing | PR #1248 r2 收敛；mbp2 / cb8 宿主
+- #1216 | review | doing | PR #1229 第 3 轮后 r4 0 P0/P1（P2 → #1258）；cb8 r4c 宿主 → 入队
+- #1231 | review | doing | 第 3 轮后 r4 0 P0/P1（P2 → #1261）；决策卡措辞本地已改，宿主跑完再推
+- #1140 | impl | doing | PR #1196 fix-r5 GLM cb8（尺子 P1：门控跳过可假通过）
+- #1190 | impl | doing | PR #1243 fix-r3 GLM cb8（P0：预存文件被删）
+- #1220 | impl | doing | PR #1237 fix-r2 GLM macmini
+- #360 | impl | doing | fix-r3（末轮）GLM macmini
+- #1207 | review | doing | PR #1240 r3 opus + DeepSeek；cb8 宿主
+- #1232 | review | doing | PR #1256 r1 opus + DeepSeek；两台宿主
+- #1233 | review | doing | PR #1257 r1 opus + DeepSeek；两台宿主
+- #1252 | review | doing | PR #1259 r1 opus + DeepSeek；mbp2 宿主（严格比较后 36 格关闭顺序 FAIL → #1260）
+- #1139 | impl | doing | 改用 proc-macro2 共享入口，GLM cb8
+- #1260 | impl | blocked | SDK 信号 36 格关闭顺序与 TS 不一致（P1）；等 #1259 合入（同改 signal_replay.rs）
+- #1242 | impl | blocked | native 格刺激对齐；等 #1140 合入（同改 native-witness），挡 #590
+- #1250 | impl | blocked | 原生 HTTP keep-alive 三处偏离；等 #1209 合入，前置于 A8.5
+- #1253 | impl | blocked | #1011 承接；等 #1218 合入（同模块 session-factory）
+- #996 #1245 | impl | blocked | 等 #1218 合入
+- #1219 | impl | blocked | 等 #1220 合入
+- #1221 #1194 | impl | blocked | 等 #1140 合入
+- #1254 | impl | blocked | 归 M6 #1099 车道
+- #144 | coord | doing | 协调者补决策卡后请人定（#1157）
+- #590 | impl | blocked | 前置 #1140 → #1242
+- #1146 | impl | blocked | D1-P09 前置 A8 + #1260
+- #1099 | impl | doing | M6 总单：pr4 存量迁移等 #1139
 <!-- READY:END -->
 
 > ## 2026-10-25 03:57 · #589/#590 fix-r4 ACK 收据与安全红探针配方（GLM glm-5.3-mb，wt=issue-589-live-integrity）
@@ -2710,3 +2716,10 @@ updated: 2026-11-01 05:35 · by Claude Code 协调者
 - 14:58 宿主分诊：#132 mbp2 connection-context 两个类型负控 INVALID——临时 crate 没带工作区 `[patch.crates-io]`，编到 registry 版 icu_collator 缺 vendored 方法 → 协调者补传 patch，本机复跑中。#1044 cb8 `large-stdin-oracle-drift` INVALID 是 Linux 上 TS 重生成失败（cb8 三单都 INVALID、mbp2 KILLED），本机单项复跑中。selfcheck-tree.sh 并发共用 /tmp 目录致假「通过」，改 mktemp。
 - 15:00 收尾自查补贴 #1011 #1136 #1145 #1154 #1166 #1214：3 单完整；#1145 缺项开 P1 承接 #1252（closes_match 不比关闭顺序、96 格回放未重跑），#1011 承接 #1253，#1166 跟进 #1254。
 - 15:02 **两小时交接** → `_tmp/20261101-handoff-1502.md`。
+
+## 11-01 15:02–15:33
+- 15:10 人问：待批事项与怎么批复 → #1157 顶部写明批复方式（评论「单号 / 卡名 + 选项」），补 #1231 卡；关键路径：#1242 在（等 #1140，挡 #590），#1250 不在（前置于 A8.5）；四机余量充足，瓶颈是可派单。本机磁盘 196 → 141 GiB（回收 #1226 树、删 #1209 / #1215 可重建编译产物）。#1252（P1）派 mbp2 Codex。
+- 15:15 #132 connection-context 负控补 patch 提交 f9144eea1 → r4 GLM + DeepSeek：DeepSeek 0/0；GLM P1「yaml check_mutations.py 同样丢 patch」——最小实测证实 cargo 对悬空 patch 路径直接报错 → 同法修，本机复跑中。
+- 15:20 #1044 合 main 检查过（锚点 0 错、--no-run 过）→ ready + 入队。#1231 fix-r3 收货 b2608503f + 决策卡 a0a446b07 → r4 GLM + DeepSeek + 两台宿主。#1216 fix-r3 → r4。#360 r3：P2 叠加可致对拍假通过 → fix-r3（末轮）GLM macmini。
+- 15:25 #1232、#1233 接续轮交付（又落在上一级目录，rsync 回 deliver-resume1 并核补丁一致）→ PR #1256 / #1257 → r1 opus + DeepSeek + 两台宿主。#1190 r3 Codex P0（meta_controls 预存文件被 finally 删除，opus 同处撞上）+ glob 扫描集缩小仍绿升 P1 → fix-r3 GLM cb8。
+- 15:30 #1252 交付（PR #1259）：严格比较后 96 格 36 格关闭顺序与 TS 不同（#1145 合入时是假通过）→ 开 P1 #1260；#123 / #1146 八格缺口评论已发。#1207 fix-r2 收货 → r3。#1231 r4 0 P0/P1 → P2 开 #1261；#1216 → #1258。我推的 #1209 文档修正触发 branch-watch 停掉两条在跑宿主，已在新 head 重起，规则记入记忆。READY 区块重写（上次 05:35）。
