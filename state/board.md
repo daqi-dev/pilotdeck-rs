@@ -2622,3 +2622,15 @@ updated: 2026-11-01 05:35 · by Claude Code 协调者
 - 06:29 本机宿主与同树评审并行（#790 / #747 之后同类第三次）→ local-host-queue2 加守卫：同树 run-review-roles / dsh 评审在跑时等待（实测命中）；记忆 negctl-before-review 补 stop-tree 会杀树内评审子进程。
 - 06:29 #1214 GLM 交付 6ad572022（8 案例 50 步金样、8 负控手工 KILLED）→ PR #1223 草稿 → r1 opus + DeepSeek，本机宿主排在评审后。
 - 06:31 **两小时交接** → `_tmp/20261101-handoff-0631.md`。
+- 06:48 #1209 r2：opus 0/0；DeepSeek P1（账本 002 把头数上限写成已对齐，Node 实测 2049–8000 小头都 200）；停机窗口（停机时静默 / 在途的连接之后不再关闭）opus 两角色 + DeepSeek 三处同撞 → 升 P1 → fix-r2 GLM cb8（第 2 轮）。本机宿主（旧 head）已停，树干净。
+- 06:54 #1214 r1 两家 0/0（P2：Forward 分支无测试两家同撞、from_projection 无测试、Unicode 去空白边界无金样）→ 只修 P2 的 fix-r1 GLM cb8，之后一家复核。
+- 06:54 **事故**：停 #1214 孤儿负控时误执行 `pkill -P 1`，用户 PilotDeck、CorpLink VPN、Logitech 代理与一批 launchd 用户代理被杀后重启（碰红线）；3 个 remote-wait 已重挂。记录 `_tmp/20261101-incident-pkill-ppid1.md`，记忆 never-pkill-ppid-1；待人确认 PilotDeck / VPN / 应用状态。
+- 07:38 #1154 本机 native-process 全量 rc=0、71 KILLED / 0 INVALID（macmini 那 5 个 INVALID 坐实为 macmini 进程启动卡顿）→ 最终 opus 全量块在跑 → 入队。
+- 07:38 #1145 mbp2 r8 宿主：7 套全 KILLED + CLI 定向 100 passed；sdk-signals 10 INVALID（全是 90 s TimeoutExpired，其中 3 个是还原步骤）；上轮 71820db2 同套 37 全 KILLED；mbp2 启动探针 60 次最慢 1.48 s（未复现 macmini 式卡顿）→ 本机原样跑这 10 个 case 判定。
+- 07:38 #1215 GLM 交付 0a42d811c（守望自动开草稿 PR #1225；worker 自修两条负控真问题）→ r1 opus + DeepSeek，本机宿主排在评审后；sdk.rs 只改可见性。
+- 08:27 人在 #1222 拍板 **A**（001 接受；002 opt-in 期间接受，A8.5 前复核）→ #1212 本轮评审后更新两条批准记录。人问资源利用：实测 cb8 / mbp2 / macmini 都近乎空闲、GLM worker 为 0 → 放单：#1218 接续（WIP 补丁）→ mbp2，#1216（cron）→ cb8，#1220（timeline）→ macmini；在审上限改为只数产品 PR、放到约 10；macOS 宿主改回 mbp2 远端（与评审并行）。
+- 08:27 #1145：#1136 合入后 CONFLICTING → rebase 到 3421b004d，sdk-format 负控冲突按变异名逐条合并（late-connection 取本 PR，stdin-synchronous 取 main 的 #1136 消息），range-diff 只差这 4 行 → 60f870e0b → r9 GLM + DeepSeek（协调者改动）+ 本机 sdk-format 全量与 CLI 定向。本机复跑 mbp2 那 10 个 sdk-signals INVALID → 10/10 KILLED。
+- 08:27 #1209 fix-r2 1d4167f3c（报文级 16384 预算复刻、停机窗口按实测对齐、loopback 由绑定地址推导，负控 13 全 KILLED）→ r3 两家。#1154 最终 opus 0/0；macmini r4 漏看的 plugin-loader（cargo 超时）+ 链没跑到的定向与 lib → 本机 r4l 补跑。
+- 08:30 #1214 r2（全量，覆盖 head a7d68ca95）：opus 四角色 0/0；DeepSeek 0/0，P2 一条（去空白边界只钉 6/25 码点，现网实测正确）→ 跟进 #1226（前置于 A8 接线）；本机宿主在跑 → 入队。
+- 08:30 #1145 r9（rebase 冲突合并复核）：DeepSeek 0/0/0/0，GLM 四角色 0/0（覆盖 head 60f870e0b）；本机 sdk-format 全量与 CLI 定向在跑 → 入队。
+- 08:32 **两小时交接** → `_tmp/20261101-handoff-0831.md`。
