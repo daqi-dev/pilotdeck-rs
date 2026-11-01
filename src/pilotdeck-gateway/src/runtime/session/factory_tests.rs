@@ -6176,6 +6176,125 @@ async fn recreation_cancelled_timeout_busy_is_not_delivered_by_close_or_shutdown
     h.finish("1218-busy-shutdown").await;
 }
 
+// #1055 ② cell 12, faulted half: a retained, retriable BUSY whose own
+// disposal later ended in an unreported cleanup error — with no next caller
+// taking it over — must still not reach the closing or shutting-down caller.
+// Both return only the eviction result, the replayed disposal error, with no
+// BUSY cause beside it.
+async fn busy_retained_beside_failed_disposal(h: &Harness) -> SessionOwner {
+    let (old, _original, gate) = retry_fault(h, "error").await;
+    let mut options = SessionOwnerOptions::new(Arc::new(RetryInitialFactory {
+        initial: Mutex::new(Some(old.clone())),
+        factory: h.factory.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    followup_bounded("1218 initial owner", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 initial owner succeeds");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "1218"),
+        "#1218 mark dirty"
+    );
+    let mut sent = owner.creations_sent_for_test();
+    let expected_sent = *sent.borrow() + 1;
+    let mut waiting = owner.get_or_create(h.context());
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(
+        poll.is_pending(),
+        "#1218 recreate caller waits for the held drain"
+    );
+    drop(waiting);
+    followup_bounded(
+        "1218 cancelled timeout sent",
+        sent.wait_for(|count| *count >= expected_sent),
+    )
+    .await
+    .expect("#1218 fence timeout delivered BUSY before the drain completes");
+    assert_eq!(
+        old.state(),
+        HandleState::Draining,
+        "#1218 predecessor still draining at the timeout"
+    );
+    gate.open();
+    let drain_error = followup_bounded("1218 drain outcome", old.dispose("probe".into()))
+        .await
+        .expect_err("#1218 unreported drain ends with the cleanup error");
+    assert_eq!(
+        drain_error.message, "Failed to dispose agent handle.",
+        "#1218 drain error shape"
+    );
+    owner
+}
+
+#[tokio::test]
+async fn recreation_cancelled_timeout_busy_is_not_aggregated_with_failed_disposal_by_close() {
+    let h = Harness::with_fence_timeout("1218-busy-fault-close", Duration::from_millis(50));
+    let owner = busy_retained_beside_failed_disposal(&h).await;
+    let error = followup_bounded("1218 close", owner.close(&h.context().session_key))
+        .await
+        .expect_err("#1218 close returns only the evict error beside a retained BUSY");
+    assert_eq!(
+        error.message, "Failed to dispose agent handle.",
+        "#1218 close keeps only the failed disposal error beside a retriable BUSY"
+    );
+    assert_eq!(
+        error.causes.len(),
+        1,
+        "#1218 close does not aggregate the retriable BUSY beside the failed disposal"
+    );
+    assert_eq!(
+        error
+            .causes
+            .first()
+            .and_then(|cause| cause.causes.first())
+            .map(|cause| cause.message.as_str()),
+        Some("DISPOSE_1022"),
+        "#1218 close keeps the failed disposal's nested drain cause"
+    );
+    assert_eq!(
+        owner.cached_session_count(),
+        0,
+        "#1218 close removed the busy record"
+    );
+    followup_bounded("1218 owner shutdown", owner.shutdown())
+        .await
+        .expect("#1218 owner shutdown succeeds");
+    h.finish("1218-busy-fault-close").await;
+}
+
+#[tokio::test]
+async fn recreation_cancelled_timeout_busy_is_not_aggregated_with_failed_disposal_by_shutdown() {
+    let h = Harness::with_fence_timeout("1218-busy-fault-shutdown", Duration::from_millis(50));
+    let owner = busy_retained_beside_failed_disposal(&h).await;
+    let error = followup_bounded("1218 owner shutdown", owner.shutdown())
+        .await
+        .expect_err("#1218 shutdown returns only the evict error beside a retained BUSY");
+    assert_eq!(
+        error.message, "Failed to shut down all agent sessions.",
+        "#1218 shutdown aggregate shape (TS finishShutdown AggregateError)"
+    );
+    assert_eq!(
+        error.causes.len(),
+        1,
+        "#1218 shutdown carries only the record's failed disposal"
+    );
+    let record_error = error
+        .causes
+        .first()
+        .expect("#1218 shutdown carries the record's failed disposal error");
+    assert_eq!(
+        record_error.message, "Failed to dispose agent handle.",
+        "#1218 shutdown keeps only the failed disposal error beside a retriable BUSY"
+    );
+    assert_eq!(
+        record_error.causes.len(),
+        1,
+        "#1218 shutdown does not aggregate the retriable BUSY beside the failed disposal"
+    );
+    h.finish("1218-busy-fault-shutdown").await;
+}
+
 // #1055 ② (P3-1): a BUSY record whose predecessor drain ended in an already
 // reported cleanup error is reclaimable — a reported drain counts as settled
 // even though the disposal itself failed, so the sweep's busy arm applies.
@@ -6405,7 +6524,7 @@ async fn recreation_unconsumed_cleanup_error_is_returned_by_close() {
         .expect_err("#1218 close aggregates the disposer error with the retained cleanup error");
     assert_eq!(
         error.message,
-        "Failed to dispose the agent session and report its unconsumed creation error.",
+        "Failed to dispose the agent session and report its unconsumed creation or cleanup error.",
         "#1218 close keeps both errors in one aggregate"
     );
     assert_eq!(
@@ -6417,6 +6536,16 @@ async fn recreation_unconsumed_cleanup_error_is_returned_by_close() {
         error.causes.first().map(|cause| cause.message.as_str()),
         Some("Failed to dispose agent handle."),
         "#1218 close preserves the disposer error"
+    );
+    assert_eq!(
+        error
+            .causes
+            .first()
+            .and_then(|cause| cause.causes.first())
+            .and_then(|cause| cause.causes.first())
+            .map(|cause| cause.message.as_str()),
+        Some("DISPOSE_1022"),
+        "#1218 close preserves the disposer error's nested cleanup cause"
     );
     assert_eq!(
         error
@@ -6571,7 +6700,7 @@ async fn recreation_unconsumed_creation_error_is_aggregated_with_failed_disposal
         .expect_err("#1218 close aggregates the failed disposal and the pending creation error");
     assert_eq!(
         error.message,
-        "Failed to dispose the agent session and report its unconsumed creation error.",
+        "Failed to dispose the agent session and report its unconsumed creation or cleanup error.",
         "#1218 close keeps both errors in one aggregate"
     );
     assert_eq!(
@@ -6612,7 +6741,7 @@ async fn recreation_unconsumed_creation_error_is_aggregated_with_failed_disposal
         .expect("#1218 shutdown carries the record's aggregated error");
     assert_eq!(
         record_error.message,
-        "Failed to dispose the agent session and report its unconsumed creation error.",
+        "Failed to dispose the agent session and report its unconsumed creation or cleanup error.",
         "#1218 shutdown keeps both record errors in one aggregate"
     );
     assert_eq!(
