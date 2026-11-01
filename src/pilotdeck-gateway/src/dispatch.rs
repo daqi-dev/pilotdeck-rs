@@ -5,7 +5,7 @@ use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 // The three native_archive names in this list and in `needs_files` mirror
 // native_archive::ARCHIVE_METHODS by hand: they sit alongside other methods
 // here, so the shared const cannot be embedded directly.
-const LOCAL_METHODS: &[&str] = &[
+pub(crate) const LOCAL_METHODS: &[&str] = &[
     "supported_agents",
     "list_projects",
     "describe_project",
