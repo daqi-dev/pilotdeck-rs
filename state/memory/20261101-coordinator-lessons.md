@@ -14,3 +14,7 @@ type: feedback
 - **rebase 后**：除冲突文件外，必跑全仓 `anchor_selfcheck.py --root . --anchors-only` 与 `cargo test --workspace --no-run`（别的 PR 新增的锚点可能指向本 PR 改过的源码，#1145）。
 - **宿主分诊**：先列全表（每套 K / I / S、`FAIL` / `rc=[1-9]` 行、seq.log 停在哪步），不只 grep INVALID；macmini 进程启动偶发卡 12–35 s，超时类 INVALID 改在别的 macOS 机器单项复跑；Linux 上 calibrate 按设计 BLOCKED，复算放 macOS。
 - **关单前收尾自查**：PR 写 `Closes #N` 自动关单也要先在 issue 上贴收尾自查（DoD 逐条证据、占位 grep、前置跟进单）。
+- **（11-01 晚补）停进程要核实到 ps**：zsh `set -- $x` 不拆词，曾把「pid 单号」整串当一个 pid 传给 stop-tree，存活探测出错被当成已停、误报核实（4 个进程实际仍在）。stop-tree 已拒非纯数字 pid、用 `ps -p` 判存活并有回归测试；多参数循环一律写成 bash 脚本文件再跑。
+- **（11-01 晚补）交付守望**：同一轮次目录重做时 exit 文件内容不变，按内容哈希的守望会判「未变」——#1139 交付闲置 8.5 h。守望 v10 键含 mtime，round-start 另扫「exit=0 晚于树 HEAD 且树脏」。READY 段每轮重写（round-start 已核 updated 时限）。
+- **（11-01 晚补）给所有清单加行前想消费方**：负控清单生成器给每份清单加了全仓 test_safety 行，macmini 车道按清单文本判「占 28999 / 对拍锁」→ 全部链串行 15–78 min。改共享产物格式时 grep 所有读它的脚本。
+- **（11-01 晚补）评审家族名以块内 model 为准**：`--runner anthropic` 10-25 至 11-01 默认是 claude-sonnet-5-5，正文写的「opus」不准；#1294 起默认 claude-opus-5-5。
