@@ -2968,17 +2968,98 @@ async fn keep_alive_duplicate_content_length_large_body_is_served() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// #1277 (#1232 r2 P2-1, probe `te-multitoken-then-oversized-pipelined-under-cap`
+/// / `-over-cap`): after request A steps the guard aside at its multi-token
+/// `Transfer-Encoding: gzip, chunked`, a pipelined oversized head B that rides
+/// the SAME single write. Node's parser scans the bytes the moment they land
+/// and destroys the socket with only the 67-byte 431 — the probe recorded A's
+/// list handler running (`serverInvocations.list` = 1), so only the bytes were
+/// suppressed, and Node answers its own 67-byte 431 for every oversized head,
+/// past hyper's buffer cap included (the over-cap cell re-probed the same 67
+/// bytes behind a 200 KB head). Rust (measured, registered in the
+/// `…-SHAPE-001-R5` diff entry): hyper writes A's served response before it
+/// dispatches B, so the wire is A's 200 followed by Node's exact 67-byte 431 —
+/// the step-aside family's single-burst priority difference, pinned here byte
+/// for byte.
+#[tokio::test]
+async fn pipelined_oversized_after_step_aside_te_single_burst_writes_served_response_then_node_431()
+{
+    let (store, directory) = file_store("step-aside-single-burst");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1277 connect to the store under test");
+    let body = list_body();
+    stream
+        .write_all(&[pipelined_list_head(body.len()).into_bytes(), body.clone()].concat())
+        .await
+        .expect("#1277 write the first request on the keep-alive connection");
+    let first = read_response(&mut stream).await;
+    assert_eq!(
+        status(&first),
+        200,
+        "#1277 the first request must be served before the multi-token one: {first:?}"
+    );
+    // A's multi-token value steps the guard aside mid-head; A's own body is a
+    // valid chunked list request, so a served A answers 200. B rides the same
+    // write, exactly the single burst the probe used.
+    let second = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Transfer-Encoding: gzip, chunked\r\n\r\n"
+    );
+    let oversized = pipelined_follow_up_head(DEFAULT_MAX_HEADER_BYTES, 0);
+    stream
+        .write_all(
+            &[
+                second.into_bytes(),
+                chunk_frame(&body, ""),
+                b"0\r\n\r\n".to_vec(),
+                oversized.into_bytes(),
+            ]
+            .concat(),
+        )
+        .await
+        .expect("#1277 write the multi-token request and the oversized head in one burst");
+    let served = read_response(&mut stream).await;
+    assert_eq!(
+        status(&served),
+        200,
+        "#1277 the stepped-aside multi-token request is served before the oversized head's 431: {served:?}"
+    );
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1277 the single-burst oversized head behind a stepped-aside request ends the connection with the Node 431",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// #1232 fix-r1 (P2-2, registered): after a step-aside the guard stays aside
 /// for the connection's remainder, so a head hyper cannot finish parsing
 /// inside its buffer cap is answered by hyper's own 431 shape, not the 67
 /// Node bytes (`serve`'s `header_bytes` backstop never sees the request).
-/// hyper's cap is `max_buf_size` (`hyper_buffer_bytes(16384) = 90112`) plus
-/// one adaptive read chunk (the doubling strategy 8/16/32/64 KiB lets a
-/// ~91 KiB head complete inside the 64 KiB read and still reach the backstop
-/// with Node's bytes — measured); past ~123 KiB the partial parse at the cap
-/// errors first and the wire is hyper's shape. Node writes its 67-byte 431
-/// for every oversized head — the registered unapproved difference this test
-/// pins.
+/// hyper's cap is `max_buf_size` (`hyper_buffer_bytes(16384) = 90,112`), but
+/// the cap check runs only *between* reads while the adaptive read strategy
+/// doubles its chunk 8/16/32/64 KiB (#1277: the derivation in the R5 entry
+/// replaces this file's earlier "cap + one read chunk" wording — the buffer
+/// can reach the cumulative 8+16+32+64 KiB = 122,880 bytes before the check
+/// fires, not 90,112 + 64 KiB): a head up to 90,112 raw bytes always parses
+/// and reaches the backstop with Node's bytes, one in (90,112, 122,880]
+/// only when arrival granularity fills whole read chunks, and one past
+/// 122,880 always errors at the cap with hyper's own shape. Node writes its
+/// 67-byte 431 for every oversized head — the registered unapproved
+/// difference this test pins.
+///
+/// #1277 (#1232 r2 P2): the 200 KB head is written while the response is
+/// read concurrently (`into_split`) — the server answers and closes well
+/// before the client finishes writing, and a client that only starts reading
+/// afterwards can meet an RST that discards the 431 bytes still queued in
+/// its receive buffer (an intermittent empty-response failure on kernels
+/// that flush on reset; this host kept the bytes 20/20, the hardening removes
+/// the ordering hazard rather than the observed flake).
 #[tokio::test]
 async fn oversized_head_over_hyper_buffer_after_step_aside_writes_hyper_431() {
     let (store, directory) = file_store("step-aside-hyper-431");
@@ -3007,29 +3088,38 @@ async fn oversized_head_over_hyper_buffer_after_step_aside_writes_hyper_431() {
         200,
         "#1232 hyper serves the duplicate-equal-Content-Length request: {first:?}"
     );
-    // Raw size ≈ 200 KB: beyond the cap plus the largest adaptive read
-    // chunk, so hyper's partial parse at the cap errors before the head can
-    // complete, whatever the arrival granularity.
+    // Raw size ≈ 200 KB: past the 122,880-byte cumulative bound of the
+    // doubling reads, so hyper's partial parse at the cap errors before the
+    // head can complete, whatever the arrival granularity.
     let oversized = format!(
         "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
          Authorization: Bearer {TOKEN}\r\nX-Pad: {}\r\nContent-Length: 0\r\n\r\n",
         "a".repeat(200_000)
     );
-    stream
-        .write_all(oversized.as_bytes())
-        .await
-        .expect("#1232 write the oversized head beyond hyper's buffer cap");
+    // The write and the read run concurrently: the server stops reading at
+    // its buffer cap, answers, and closes with unread bytes still in its
+    // receive queue, so the client may see the connection torn down while
+    // this write is still in flight (its error is expected and ignored).
+    let (mut reader, mut writer) = stream.into_split();
+    let write = tokio::spawn(async move {
+        let _ = writer.write_all(oversized.as_bytes()).await;
+    });
     let mut response = Vec::new();
     loop {
         let mut buffer = [0u8; 4_096];
-        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer))
+        let read = tokio::time::timeout(Duration::from_secs(5), reader.read(&mut buffer))
             .await
             .expect("#1232 the stepped-aside connection ends within 5 s");
         match read {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(read) => response.extend_from_slice(&buffer[..read]),
+            Err(error) if response.is_empty() => panic!(
+                "#1232 the hyper 431 bytes were lost before the first read ({error}); the concurrent reader must see them"
+            ),
+            Err(_) => break,
         }
     }
+    let _ = write.await;
     assert!(
         response != NODE_431,
         "#1232 after a step-aside an oversized head beyond hyper's buffer cap is hyper's own registered 431 shape, not Node's bytes: {:?}",
@@ -3234,6 +3324,92 @@ async fn zero_room_poll_does_not_latch_a_fake_eof() {
     assert!(
         !stream.ahead_eof,
         "#1232 a zero-capacity read is not the peer's EOF: the waiting read-ahead bytes must stay delivered, not fake a 400"
+    );
+}
+
+/// #1277 (#1232 r2 P2, the wake half of the P2-4 park): a parked zero-room
+/// read has no room to deliver into, so it never polls the inner socket —
+/// the wake sources that exist are the timer's in-band events (any write or
+/// lifecycle transition calls `KeepAliveTimer::wake`). hyper itself never
+/// polls with a zero-capacity buffer (`poll_read_from_io` always reserves an
+/// adaptive chunk), so this is the residual contract for any caller that
+/// does: a real waker records the park without a self-wake (which would spin
+/// the executor), the next write activity must wake it, and the poll after
+/// the wake — once the caller has room again — delivers the waiting bytes.
+#[tokio::test]
+async fn zero_room_park_is_woken_by_connection_activity() {
+    struct RecordingWake {
+        woke: Arc<AtomicBool>,
+    }
+    impl std::task::Wake for RecordingWake {
+        fn wake(self: Arc<Self>) {
+            self.woke.store(true, Ordering::SeqCst);
+        }
+    }
+    let timer = Arc::new(KeepAliveTimer::new(
+        Duration::from_secs(3_600),
+        Duration::from_secs(3_600),
+        Arc::new(AtomicBool::new(false)),
+    ));
+    let (mut client, server_io) = tokio::io::duplex(READ_AHEAD_BYTES * 2);
+    let mut stream = TimeoutStream::new(server_io, Arc::clone(&timer), DEFAULT_MAX_HEADER_BYTES);
+    // The same fill as the P2-4 test: a framed body larger than the
+    // read-ahead cap, walked as body bytes, so `ahead` sits at its cap.
+    client
+        .write_all(b"POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 9999999\r\n\r\n")
+        .await
+        .expect("#1277 write the framed head");
+    client
+        .write_all(&vec![b'x'; READ_AHEAD_BYTES + 512])
+        .await
+        .expect("#1277 write more than the read-ahead cap of body bytes");
+    let mut first = [0u8; 1];
+    stream
+        .read_exact(&mut first)
+        .await
+        .expect("#1277 the first byte must be delivered");
+    assert_eq!(
+        first[0], b'P',
+        "#1277 the delivered byte is the head's first"
+    );
+    let woke = Arc::new(AtomicBool::new(false));
+    let waker = std::task::Waker::from(Arc::new(RecordingWake {
+        woke: Arc::clone(&woke),
+    }));
+    let mut context = std::task::Context::from_waker(&waker);
+    let mut nothing: [u8; 0] = [];
+    let mut read_buf = ReadBuf::new(&mut nothing);
+    let poll = std::pin::Pin::new(&mut stream).poll_read(&mut context, &mut read_buf);
+    assert!(
+        matches!(poll, std::task::Poll::Pending),
+        "#1277 a zero-room poll with a full read-ahead buffer parks, it does not answer"
+    );
+    assert!(
+        !stream.ahead_eof,
+        "#1277 the parked zero-capacity read does not latch a fake EOF"
+    );
+    assert!(
+        !woke.load(Ordering::SeqCst),
+        "#1277 parking the zero-room read must not self-wake (that would spin the executor)"
+    );
+    // The next in-band event on the connection — here hyper flushing part of
+    // the in-flight response — must wake the parked read.
+    timer.write_activity();
+    assert!(
+        woke.load(Ordering::SeqCst),
+        "#1277 the connection's next write activity must wake the parked zero-room read"
+    );
+    let mut room = [0u8; 4];
+    let mut read_buf = ReadBuf::new(&mut room);
+    let poll = std::pin::Pin::new(&mut stream).poll_read(&mut context, &mut read_buf);
+    assert!(
+        matches!(poll, std::task::Poll::Ready(Ok(()))),
+        "#1277 a woken zero-room poll, once the caller has room again, must deliver instead of staying parked"
+    );
+    assert_eq!(
+        read_buf.filled(),
+        b"OST ",
+        "#1277 the delivered bytes are the head's next ones"
     );
 }
 
