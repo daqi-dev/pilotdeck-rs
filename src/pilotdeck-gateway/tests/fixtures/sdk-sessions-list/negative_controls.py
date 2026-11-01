@@ -224,6 +224,7 @@ def main():
 
     guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
                root / 'src/pilotdeck-cli/tests/common/negative_receipt.rs',
+               root / 'src/pilotdeck-cli/tests/common/sdk_exit.rs',
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                root / 'src/pilotdeck-cli/tests/sdk_sessions_list_exit.rs',
                oracle, root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/generate.mjs',
