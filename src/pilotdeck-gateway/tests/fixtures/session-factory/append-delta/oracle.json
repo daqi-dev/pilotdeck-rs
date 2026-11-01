@@ -3283,5 +3283,522 @@
         }
       }
     }
+  },
+  "delivery": {
+    "entries": [
+      {
+        "type": "accepted_input",
+        "turnId": "a",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "restored user"
+              }
+            ]
+          }
+        ],
+        "sessionId": "session-1253",
+        "sequence": 1,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "restore-1",
+        "parentEntryId": null
+      },
+      {
+        "type": "turn_result",
+        "turnId": "a",
+        "result": {
+          "type": "success",
+          "sessionId": "session-1253",
+          "turnId": "a",
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 3
+          },
+          "permissionDenials": [
+            {
+              "toolName": "shell",
+              "toolCallId": "a",
+              "reason": "probe"
+            }
+          ],
+          "turns": 1,
+          "startedAt": "2026-11-01T00:00:00.000Z",
+          "completedAt": "2026-11-01T00:00:00.000Z"
+        },
+        "sessionId": "session-1253",
+        "sequence": 2,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "restore-2",
+        "parentEntryId": "restore-1"
+      },
+      {
+        "type": "assistant_message",
+        "turnId": "a",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "restored assistant_message"
+            }
+          ]
+        },
+        "sessionId": "session-1253",
+        "sequence": 3,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "restore-3",
+        "parentEntryId": "restore-2"
+      }
+    ],
+    "completed": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "restored user"
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 3
+      },
+      "permissionDenials": [
+        {
+          "toolName": "shell",
+          "toolCallId": "a",
+          "reason": "probe"
+        }
+      ],
+      "metadata": {}
+    },
+    "late": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "restored user"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "restored assistant_message"
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 3
+      },
+      "permissionDenials": [
+        {
+          "toolName": "shell",
+          "toolCallId": "a",
+          "reason": "probe"
+        }
+      ],
+      "metadata": {}
+    },
+    "admission": [
+      {
+        "watermark": 2,
+        "failure": {
+          "name": "SessionEventValidationError",
+          "code": "sequence_not_increasing",
+          "message": "Recorded session event sequence 2 must be greater than current sequence 2."
+        },
+        "state": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "restored user"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 3
+          },
+          "permissionDenials": [
+            {
+              "toolName": "shell",
+              "toolCallId": "a",
+              "reason": "probe"
+            }
+          ],
+          "metadata": {}
+        }
+      },
+      {
+        "watermark": 3,
+        "failure": {
+          "name": "SessionEventValidationError",
+          "code": "sequence_not_increasing",
+          "message": "Recorded session event sequence 2 must be greater than current sequence 3."
+        },
+        "state": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "restored user"
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "restored assistant_message"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 3
+          },
+          "permissionDenials": [
+            {
+              "toolName": "shell",
+              "toolCallId": "a",
+              "reason": "probe"
+            }
+          ],
+          "metadata": {}
+        }
+      }
+    ]
+  },
+  "checkpointMetadata": {
+    "entries": [
+      {
+        "type": "accepted_input",
+        "turnId": "metadata",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "metadata user"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "modelSelection": {
+            "mode": "auto"
+          }
+        },
+        "sessionId": "session-1253",
+        "sequence": 1,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "metadata-1",
+        "parentEntryId": null
+      },
+      {
+        "type": "session_metadata",
+        "turnId": "metadata",
+        "metadata": {
+          "title": "before",
+          "linkedPullRequest": {
+            "number": 1,
+            "url": "https://example.invalid/1",
+            "repository": "fixture"
+          }
+        },
+        "sessionId": "session-1253",
+        "sequence": 2,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "metadata-2",
+        "parentEntryId": "metadata-1"
+      },
+      {
+        "type": "turn_result",
+        "turnId": "metadata",
+        "result": {
+          "type": "success",
+          "sessionId": "session-1253",
+          "turnId": "metadata",
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 3
+          },
+          "permissionDenials": [
+            {
+              "toolName": "shell",
+              "toolCallId": "metadata",
+              "reason": "probe"
+            }
+          ],
+          "turns": 1,
+          "startedAt": "2026-11-01T00:00:00.000Z",
+          "completedAt": "2026-11-01T00:00:00.000Z"
+        },
+        "sessionId": "session-1253",
+        "sequence": 3,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "metadata-3",
+        "parentEntryId": "metadata-2"
+      },
+      {
+        "type": "session_metadata",
+        "turnId": "metadata",
+        "metadata": {
+          "title": "after",
+          "linkedPullRequest": {
+            "number": 2,
+            "url": "https://example.invalid/2",
+            "repository": "fixture"
+          },
+          "tag": "suffix"
+        },
+        "sessionId": "session-1253",
+        "sequence": 4,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "metadata-4",
+        "parentEntryId": "metadata-3"
+      },
+      {
+        "type": "session_metadata",
+        "turnId": "metadata",
+        "metadata": {
+          "title": null,
+          "linkedPullRequest": null
+        },
+        "sessionId": "session-1253",
+        "sequence": 5,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "metadata-5",
+        "parentEntryId": "metadata-4"
+      },
+      {
+        "type": "accepted_input",
+        "turnId": "next",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "next user"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "modelSelection": {
+            "mode": "model",
+            "provider": "probe",
+            "model": "fixture"
+          }
+        },
+        "sessionId": "session-1253",
+        "sequence": 6,
+        "createdAt": "2026-11-01T00:00:00.000Z",
+        "entryId": "metadata-6",
+        "parentEntryId": "metadata-5"
+      }
+    ],
+    "envelope": {
+      "format": "pilotdeck.session-projections",
+      "version": 1,
+      "sessionId": "session-1253",
+      "asOfSequence": 3,
+      "anchor": {
+        "sequence": 3,
+        "entryId": "metadata-3",
+        "parentEntryId": "metadata-2",
+        "turnId": "metadata",
+        "type": "turn_result",
+        "createdAt": "2026-11-01T00:00:00.000Z"
+      },
+      "projections": {
+        "agent-transcript.conversation": {
+          "version": 3,
+          "asOfSequence": 3,
+          "state": {
+            "entries": [
+              {
+                "entry": {
+                  "type": "accepted_input",
+                  "turnId": "metadata",
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "metadata user"
+                        }
+                      ]
+                    }
+                  ],
+                  "metadata": {
+                    "modelSelection": {
+                      "mode": "auto"
+                    }
+                  },
+                  "sessionId": "session-1253",
+                  "sequence": 1,
+                  "createdAt": "2026-11-01T00:00:00.000Z",
+                  "entryId": "metadata-1",
+                  "parentEntryId": null
+                },
+                "index": 0
+              },
+              {
+                "entry": {
+                  "type": "turn_result",
+                  "turnId": "metadata",
+                  "result": {
+                    "type": "success",
+                    "sessionId": "session-1253",
+                    "turnId": "metadata",
+                    "usage": {
+                      "inputTokens": 2,
+                      "outputTokens": 3
+                    },
+                    "permissionDenials": [
+                      {
+                        "toolName": "shell",
+                        "toolCallId": "metadata",
+                        "reason": "probe"
+                      }
+                    ],
+                    "turns": 1,
+                    "startedAt": "2026-11-01T00:00:00.000Z",
+                    "completedAt": "2026-11-01T00:00:00.000Z"
+                  },
+                  "sessionId": "session-1253",
+                  "sequence": 3,
+                  "createdAt": "2026-11-01T00:00:00.000Z",
+                  "entryId": "metadata-3",
+                  "parentEntryId": "metadata-2"
+                },
+                "index": 2
+              }
+            ],
+            "completedTurnIds": [
+              "metadata"
+            ],
+            "lastCompactBoundaryIndex": -1
+          }
+        },
+        "agent-transcript.turn-summary": {
+          "version": 1,
+          "asOfSequence": 3,
+          "state": {
+            "usage": {
+              "inputTokens": 2,
+              "outputTokens": 3
+            },
+            "permissionDenials": [
+              {
+                "toolName": "shell",
+                "toolCallId": "metadata",
+                "reason": "probe"
+              }
+            ]
+          }
+        },
+        "agent-transcript.metadata": {
+          "version": 2,
+          "asOfSequence": 3,
+          "state": {
+            "modelSelection": {
+              "mode": "auto"
+            },
+            "title": "before",
+            "linkedPullRequest": {
+              "number": 1,
+              "url": "https://example.invalid/1",
+              "repository": "fixture"
+            }
+          }
+        },
+        "agent-transcript.compact-boundary": {
+          "version": 1,
+          "asOfSequence": 3,
+          "state": {}
+        },
+        "agent-transcript.subagent-references": {
+          "version": 1,
+          "asOfSequence": 3,
+          "state": {
+            "started": [],
+            "completed": []
+          }
+        }
+      }
+    },
+    "expected": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "metadata user"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "next user"
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 3
+      },
+      "permissionDenials": [
+        {
+          "toolName": "shell",
+          "toolCallId": "metadata",
+          "reason": "probe"
+        }
+      ],
+      "metadata": {
+        "modelSelection": {
+          "mode": "model",
+          "provider": "probe",
+          "model": "fixture"
+        },
+        "title": "after",
+        "linkedPullRequest": {
+          "number": 2,
+          "url": "https://example.invalid/2",
+          "repository": "fixture"
+        },
+        "tag": "suffix"
+      }
+    }
   }
 }

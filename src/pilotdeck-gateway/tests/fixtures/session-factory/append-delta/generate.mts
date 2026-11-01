@@ -103,5 +103,48 @@ release.resolve();await bounded(Promise.all([one,two]));const settled=observe();
 assert.equal(settled.writer.sequence,2,'#1253 both queued appends settle');
 const concurrency={before,held,cancelled,settled};
 console.log('OBSERVED concurrency',JSON.stringify(concurrency));
-fs.writeFileSync(path.join(out,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,icu:process.versions.icu,cases,concurrency},null,2)+'\n',{flag:'wx'});
+// #1253 fix-r1: observe real TS replay/hydration and duplicate admission.
+// A repeated Rust durable notification is not a second TS appendRecorded call.
+const deliveryEntries = cases.find(row=>row.name==='restore').steps.slice(0,3).map((step:any)=>step.entry);
+const canonical = new SessionProjectionDriver({registry:registry(),entries:deliveryEntries.slice(0,2)});
+const completed = snapshot(canonical);
+canonical.hydrate(deliveryEntries.slice(0,2));
+(canonical as any).drive(deliveryEntries[2]);
+const late = snapshot(canonical);
+const replayLate = new SessionProjectionDriver({registry:registry(),entries:deliveryEntries});
+assert.deepEqual(late,snapshot(replayLate),'#1253 hydrated completed turn accepts late message');
+canonical.dispose(); replayLate.dispose();
+const admission:any[]=[];
+for(const entries of [deliveryEntries.slice(0,2),deliveryEntries]) {
+  const rt = new SessionRuntime(); rt.restore(entries);
+  const d = new SessionProjectionDriver({runtime:rt,registry:registry(),entries});
+  const before=snapshot(d);let failure:any;
+  try {await rt.appendRecorded(deliveryEntries[1]);} catch(error:any) {failure={name:error.name,code:error.code,message:error.message};}
+  assert(failure,'#1253 duplicate/stale TS recorded append rejects');
+  assert.deepEqual(snapshot(d),before,'#1253 rejected TS entry does not double count');
+  admission.push({watermark:entries.at(-1).sequence,failure,state:snapshot(d)});d.dispose();
+}
+const delivery={entries:deliveryEntries,completed,late,admission};
+console.log('OBSERVED delivery',JSON.stringify(delivery));
+const metadataDrafts:any[]=[input('metadata','metadata user',{modelSelection:{mode:'auto'}}),
+  {type:'session_metadata',turnId:'metadata',metadata:{title:'before',linkedPullRequest:{number:1,url:'https://example.invalid/1',repository:'fixture'}}},
+  result('metadata'),
+  {type:'session_metadata',turnId:'metadata',metadata:{title:'after',linkedPullRequest:{number:2,url:'https://example.invalid/2',repository:'fixture'},tag:'suffix'}},
+  {type:'session_metadata',turnId:'metadata',metadata:{title:null,linkedPullRequest:null}},
+  input('next','next user',{modelSelection:{mode:'model',provider:'probe',model:'fixture'}})];
+const metadataEntries=metadataDrafts.map((draft,at)=>({...draft,sessionId:'session-1253',sequence:at+1,
+  createdAt:'2026-11-01T00:00:00.000Z',entryId:`metadata-${at+1}`,parentEntryId:at?`metadata-${at}`:null}));
+const metadataDriver=new SessionProjectionDriver({registry:registry(),entries:metadataEntries.slice(0,3)});
+const checkpoint=metadataDriver.checkpoint();
+metadataDriver.hydrate(metadataEntries,checkpoint);
+const metadataExpected=snapshot(metadataDriver);
+const metadataReplay=new SessionProjectionDriver({registry:registry(),entries:metadataEntries});
+assert.deepEqual(metadataExpected,snapshot(metadataReplay),'#1253 metadata checkpoint suffix equals replay');
+const anchor=Object.fromEntries(['sequence','entryId','parentEntryId','turnId','type','createdAt'].map(key=>[key,metadataEntries[2][key]]));
+const envelope={format:'pilotdeck.session-projections',version:1,sessionId:'session-1253',asOfSequence:3,anchor,projections:checkpoint};
+const checkpointMetadata={entries:metadataEntries,envelope,expected:metadataExpected};
+metadataDriver.dispose();metadataReplay.dispose();
+console.log('OBSERVED checkpointMetadata',JSON.stringify(checkpointMetadata));
+
+fs.writeFileSync(path.join(out,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,icu:process.versions.icu,cases,concurrency,delivery,checkpointMetadata},null,2)+'\n',{flag:'wx'});
 console.log('PASS: #1253 real TS append delta matrix');

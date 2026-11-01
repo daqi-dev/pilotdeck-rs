@@ -16,9 +16,18 @@ const sourceCommit=assertBaseline(base);
 const sourceSha256=await baselineSourceHashes(base,JSON.parse(fs.readFileSync(path.join(here,'sources.json'),'utf8')));
 fs.mkdirSync(output,{recursive:true});
 fs.writeFileSync(path.join(output,'.generation-owner'),'session-factory\n',{flag:'wx'});
+// Keep probe files through check.py's physical inventory/byte audit. Each
+// root is allocated here before launching its child, so even child timeouts
+// leave an owned root that this parent's finally can remove precisely.
+const ownedProbeRoots:string[]=[];
+function probeEnv(extra:Record<string,string>={}) {
+ const work=fs.mkdtempSync(path.join(output,'run-'));ownedProbeRoots.push(work);
+ return {...process.env,PDRS_BASELINE:base,MATRIX_ROOT:output,TSX_DISABLE_CACHE:'1',...extra,MATRIX_WORK_ROOT:work};
+}
+try {
 process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'file-snapshot-test.mts'),output],{env:{...process.env,PDRS_BASELINE:base,TSX_DISABLE_CACHE:'1'},encoding:'utf8',timeout:15000}));
 const root=output;
- process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts')],{env:{...process.env,PDRS_BASELINE:base,MATRIX_ROOT:output,TSX_DISABLE_CACHE:'1'},encoding:'utf8',timeout:120000}));
+ process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts')],{env:probeEnv(),encoding:'utf8',timeout:120000}));
 process.stdout.write(execFileSync('python3',[path.join(here,'check.py'),root],{encoding:'utf8',timeout:30000}));
 const cases=JSON.parse(fs.readFileSync(path.join(root,'raw/index.json'),'utf8')).results.map((row:any)=>normalize(JSON.parse(fs.readFileSync(path.join(root,'raw',row.name+'.json'),'utf8')),root)).sort((a:any,b:any)=>a.name.localeCompare(b.name,'en'));
 assert.equal(cases.length,20);
@@ -26,7 +35,7 @@ const extra=await observations(base);
 const fileTiming=await fileStateTiming(base,output);
 const followupCases=await followups(base,output);
 const supplemental=(name:string,env:Record<string,string>,cell:string)=>{
- process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts'),cell],{env:{...process.env,PDRS_BASELINE:base,MATRIX_ROOT:output,MATRIX_OUTPUT:name,TSX_DISABLE_CACHE:'1',...env},encoding:'utf8',timeout:120000}));
+ process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts'),cell],{env:probeEnv({MATRIX_OUTPUT:name,...env}),encoding:'utf8',timeout:120000}));
  const report=JSON.parse(fs.readFileSync(path.join(output,name,cell+'.json'),'utf8'));
  assert.equal(report.status,'OBSERVED');return report;
 };
@@ -51,7 +60,7 @@ const writerInterleavings=['after-publish','before-read'].map(name=>{
   entriesAtCheckpoint:report.snapshots.find((s:any)=>s.label==='replacement-ready').storages[1].entriesAtCheckpoint};
 });
 const fenceNames=['idle','quick','never','disposing'].flatMap(state=>['recreate','twice','close','shutdown'].flatMap(event=>['beforeload','afterload','publish'].map(timing=>`fence-${state}-${event}-${timing}`)));
-process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts'),...fenceNames],{env:{...process.env,PDRS_BASELINE:base,MATRIX_ROOT:output,MATRIX_OUTPUT:'fence-matrix',TSX_DISABLE_CACHE:'1'},encoding:'utf8',timeout:120000}));
+process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts'),...fenceNames],{env:probeEnv({MATRIX_OUTPUT:'fence-matrix'}),encoding:'utf8',timeout:120000}));
 const fenceMatrix=fenceNames.map(name=>{
  const r=JSON.parse(fs.readFileSync(path.join(output,'fence-matrix',name+'.json'),'utf8'));
  assert.equal(r.status,'OBSERVED');assert.deepEqual(r.forbidden,[]);
@@ -91,3 +100,7 @@ const memoryOnly={injected:memory.timeline.find((e:any)=>e.type==='injected.relo
 assert.notDeepEqual(memoryOnly.actual.messages,memoryOnly.injected.messages);
 fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases,...extra,fileTiming,writerInterleavings,fenceMatrix,twiceReturnOrders,closeReturnOrders,memoryOnly,prepareDisposal,followups:followupCases,cancelledDisposal},null,2)+'\n',{flag:'wx'});
 console.log('PASS: factory fixture', cases.length, 'cells and',extra.projections.length,'projection probes');
+
+} finally {
+ for(const work of ownedProbeRoots)fs.rmSync(work,{recursive:true,force:true});
+}

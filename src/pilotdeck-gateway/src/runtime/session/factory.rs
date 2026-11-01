@@ -1607,6 +1607,9 @@ fn requires_replay(entry: &JsValue) -> bool {
 /// Apply events that cannot change the interpretation of earlier entries.
 /// Validate/clone the delta before mutating last_valid so failed projections
 /// retain the entire previous valid state for the live adapter's fallback.
+/// Visibility/metadata branches must stay equivalent to `project`; the
+/// permutation regression checks each prefix against full replay. Events that
+/// reinterpret history must also stay in `requires_replay`.
 fn apply_delta(
     state: &mut DurableSessionState,
     completed: &HashSet<JsString>,

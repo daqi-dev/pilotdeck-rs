@@ -9,6 +9,7 @@ import {snapshotFiles} from './file-snapshot.mts';
 export async function verifyFileSnapshot(base:string, output:string) {
  const {JsonFileSessionProjectionCheckpointStore}=await import(`${base}/src/session/projection/checkpoint/JsonFileSessionProjectionCheckpointStore.ts`);
  const root=fs.mkdtempSync(path.join(output,'snapshot-contract-'));
+ try {
  const checkpoint=path.join(root,'session.jsonl.projections.json');
  const transcript=path.join(root,'session.jsonl');
  const envelope={format:'pilotdeck.session-projections',version:1,sessionId:'session-745',asOfSequence:-1,anchor:null,projections:{}};
@@ -76,6 +77,7 @@ export async function verifyFileSnapshot(base:string, output:string) {
   }
  }
  console.log('PASS: #745 checkpoint scope, final evidence, persistent ENOENT/EACCES');
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
 }
 
 // generate.mts runs this entry point in a process with a 15-second hard limit,

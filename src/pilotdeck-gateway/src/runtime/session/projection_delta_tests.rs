@@ -7,10 +7,20 @@ fn js(text: &str) -> JsValue {
 }
 
 #[derive(Default)]
-struct Log(Mutex<Vec<JsValue>>);
+struct Log {
+    entries: Mutex<Vec<JsValue>>,
+    // Test-only, synchronous pin after persistence and before publication.
+    after_commit: Mutex<Option<AfterCommit>>,
+}
+type AfterCommit = Box<dyn FnOnce(Vec<JsValue>) + Send>;
 impl TranscriptStore for Log {
     fn append(&self, _: &TranscriptKey, entry: &JsValue) -> crate::storage::StoreResult<()> {
-        lock(&self.0).push(entry.clone());
+        lock(&self.entries).push(entry.clone());
+        let hook = lock(&self.after_commit).take();
+        if let Some(hook) = hook {
+            let durable = lock(&self.entries).clone();
+            hook(durable);
+        }
         Ok(())
     }
     fn read(
@@ -19,7 +29,7 @@ impl TranscriptStore for Log {
         _: Option<u64>,
     ) -> crate::storage::StoreResult<TranscriptRead> {
         Ok(TranscriptRead {
-            entries: lock(&self.0).clone(),
+            entries: lock(&self.entries).clone(),
             diagnostics: vec![],
         })
     }
@@ -34,13 +44,15 @@ impl ProjectionCheckpointStore for Cache {
     }
 }
 fn store() -> ProjectedStore {
+    store_with_log(Arc::new(Log::default()))
+}
+fn store_with_log(inner: Arc<Log>) -> ProjectedStore {
     let key = TranscriptKey {
         project_root: PathBuf::from("/unused-1253"),
         pilot_home: PathBuf::from("/unused-1253"),
         session_id: "session-1253".into(),
         transcript_path: PathBuf::from("/unused-1253/log.jsonl"),
     };
-    let inner = Arc::new(Log::default());
     let projection = Arc::new(SessionProjection::default());
     let cache = Arc::new(ProjectionCache::new(
         Arc::new(Cache),
@@ -547,6 +559,13 @@ fn tail_generator_cleans_only_owned_work() {
             root.join("raw/index.json").is_file(),
             "#1253 raw evidence retained"
         );
+        if !collision {
+            assert_eq!(
+                fs::read(root.join("oracle.json")).expect("#1253 tail generated oracle bytes"),
+                include_bytes!("../../../tests/fixtures/turn-runner-tail/oracle.json"),
+                "#1253 random collector root preserves oracle bytes"
+            );
+        }
         if collision {
             assert!(
                 String::from_utf8_lossy(&stderr).contains("EEXIST"),
@@ -559,5 +578,298 @@ fn tail_generator_cleans_only_owned_work() {
             );
         }
         fs::remove_dir_all(root).expect("#1253 remove owned test scratch");
+    }
+}
+
+fn delivery() -> JsValue {
+    field(&oracle(), "delivery").clone()
+}
+fn assert_canonical(store: &ProjectedStore, want: &DurableSessionState, message: &str) {
+    let actual = store
+        .projection
+        .snapshot()
+        .expect("#1253 delivery snapshot remains valid");
+    assert_eq!(&actual, want, "{message}");
+    assert_eq!(
+        actual,
+        project(&lock(&store.projection.entries))
+            .expect("#1253 delivery full replay remains valid"),
+        "#1253 delivery snapshot equals project(entries)"
+    );
+    assert_eq!(
+        actual.usage, want.usage,
+        "#1253 delivery usage counted once"
+    );
+    assert_eq!(
+        actual.permission_denials, want.permission_denials,
+        "#1253 delivery denials counted once"
+    );
+}
+
+#[test]
+fn duplicate_sequence_append_is_idempotent() {
+    let row = delivery();
+    let entries = array(field(&row, "entries")).expect("#1253 duplicate delivery entries");
+    let store = store();
+    for entry in &entries[..2] {
+        append(&store, entry);
+    }
+    append(&store, &entries[1]);
+    assert_canonical(
+        &store,
+        &expected(field(&row, "completed")),
+        "#1253 duplicate sequence does not double count",
+    );
+    assert_eq!(
+        lock(&store.projection.entries).len(),
+        2,
+        "#1253 duplicate sequence is not reinserted"
+    );
+}
+
+#[test]
+fn out_of_order_append_is_idempotent() {
+    let row = delivery();
+    let entries = array(field(&row, "entries")).expect("#1253 stale delivery entries");
+    let store = store();
+    for entry in entries {
+        append(&store, entry);
+    }
+    append(&store, &entries[1]);
+    assert_canonical(
+        &store,
+        &expected(field(&row, "late")),
+        "#1253 lower sequence does not double count",
+    );
+    assert_eq!(
+        lock(&store.projection.entries).len(),
+        3,
+        "#1253 lower sequence is not reinserted"
+    );
+}
+
+#[test]
+fn restore_racing_completion_keeps_late_message() {
+    let row = delivery();
+    let entries = array(field(&row, "entries")).expect("#1253 racing delivery entries");
+    let log = Arc::new(Log::default());
+    let store = store_with_log(log.clone());
+    append(&store, &entries[0]);
+    let cache = store.cache.clone();
+    *lock(&log.after_commit) = Some(Box::new(move |durable| {
+        // The turn_result is on disk, but ProjectedStore has not obtained its
+        // projection lock. Restore installs it first; append must then take
+        // already_projected without erasing the restored completion index.
+        cache
+            .restore(durable)
+            .expect("#1253 racing restore installs durable result");
+    }));
+    append(&store, &entries[1]);
+    assert!(
+        lock(&log.after_commit).is_none(),
+        "#1253 racing restore hook ran"
+    );
+    assert_canonical(
+        &store,
+        &expected(field(&row, "completed")),
+        "#1253 racing restore counts completion once",
+    );
+    append(&store, &entries[2]);
+    assert_canonical(
+        &store,
+        &expected(field(&row, "late")),
+        "#1253 racing restore preserves completed turn late message",
+    );
+    assert_eq!(
+        lock(&store.projection.entries).len(),
+        3,
+        "#1253 racing restore publishes each sequence once"
+    );
+}
+
+struct SuppliedCheckpoint(JsValue);
+impl ProjectionCheckpointStore for SuppliedCheckpoint {
+    fn load(&self) -> Option<JsValue> {
+        Some(self.0.clone())
+    }
+    fn save(&self, _: &JsValue) -> RuntimeResult {
+        Ok(())
+    }
+}
+
+#[test]
+fn checkpoint_metadata_suffix_equals_replay() {
+    let fixture = oracle();
+    let row = field(&fixture, "checkpointMetadata");
+    let entries = array(field(row, "entries")).expect("#1253 checkpoint metadata entries");
+    let store = store();
+    let envelope = field(row, "envelope").clone();
+    let cache = ProjectionCache::new(
+        Arc::new(SuppliedCheckpoint(envelope)),
+        store.inner.clone(),
+        store.key.clone(),
+        store.projection.clone(),
+    );
+    cache
+        .restore(entries.to_vec())
+        .expect("#1253 checkpoint metadata restore");
+    assert_eq!(
+        *lock(&cache.hydrated_rows),
+        2,
+        "#1253 checkpoint metadata actually hydrated"
+    );
+    assert_canonical(
+        &store,
+        &expected(field(row, "expected")),
+        "#1253 checkpoint metadata suffix equals TS replay",
+    );
+}
+
+#[test]
+fn delta_event_permutations_equal_replay() {
+    // All ordered triples, including repeated results and completion before
+    // messages. Every prefix is checked, not just a single final snapshot.
+    let drafts = [
+        r#""type":"accepted_input","messages":[{"role":"user","content":[{"type":"text","text":"real"}]}],"metadata":{"modelSelection":{"mode":"auto"}}"#,
+        r#""type":"durable_message","message":{"role":"assistant","content":[]}"#,
+        r#""type":"assistant_message","message":{"role":"assistant","content":[],"metadata":{"compactReplacement":true}}"#,
+        r#""type":"tool_result_message","message":{"role":"user","content":[{"type":"tool_result","toolCallId":"t","content":[{"type":"text","text":"ok"}]}]}"#,
+        r#""type":"context_snapshot","runtimeContextMessages":[{"role":"user","content":[],"metadata":{"synthetic":true}}]"#,
+        r#""type":"turn_result","result":{"usage":{"inputTokens":2},"permissionDenials":[{"toolName":"shell","toolCallId":"t"}]}"#,
+        r#""type":"session_metadata","metadata":{"title":"after","linkedPullRequest":null}"#,
+        r#""type":"control_boundary","boundary":{"kind":"compact","subtype":"compact_boundary","snapshot":{"version":1,"messages":[{"role":"assistant","content":[]}]}}"#,
+        r#""type":"control_boundary","boundary":{"kind":"compact","subtype":"compact_boundary","replacementMessages":[{"role":"assistant","content":[]}]}"#,
+    ];
+    for a in 0..drafts.len() {
+        for b in 0..drafts.len() {
+            for c in 0..drafts.len() {
+                let store = store();
+                for (offset, index) in [a, b, c].into_iter().enumerate() {
+                    append(
+                        &store,
+                        &js(&format!(
+                            r#"{{"sequence":{},"turnId":"permutation",{}}}"#,
+                            offset + 1,
+                            drafts[index],
+                        )),
+                    );
+                    assert_eq!(
+                        store
+                            .projection
+                            .snapshot()
+                            .expect("#1253 permutation snapshot"),
+                        project(&lock(&store.projection.entries))
+                            .expect("#1253 permutation replay"),
+                        "#1253 all event permutations equal full replay: {a}/{b}/{c} prefix {offset}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires fixed Node v22.22.0 / ICU 78.2 and real TS baseline"]
+fn factory_generators_clean_only_owned_work() {
+    use std::fs;
+    let base = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("#1253 cleanup TS baseline"));
+    for (script, collision) in [
+        ("probe.mts", false),
+        ("probe.mts", true),
+        ("file-snapshot-test.mts", false),
+        ("generate.mts", false),
+        ("generate.mts", true),
+    ] {
+        let root = std::env::temp_dir().join(format!("pdrs-1253-factory-{}", uuid::Uuid::new_v4()));
+        for name in ["run-existing", "snapshot-contract-existing"] {
+            fs::create_dir_all(root.join(name)).expect("#1253 cleanup foreign directory");
+            fs::write(root.join(name).join("keep"), "foreign")
+                .expect("#1253 cleanup foreign marker");
+        }
+        let collision_path = if script == "probe.mts" {
+            "raw/resume-missing.json"
+        } else {
+            "oracle.json"
+        };
+        if collision {
+            let file = root.join(collision_path);
+            fs::create_dir_all(file.parent().expect("#1253 cleanup collision parent"))
+                .expect("#1253 cleanup collision directory");
+            fs::write(file, "foreign report").expect("#1253 cleanup collision marker");
+        }
+        let mut command = crate::test_baseline::node_command();
+        command
+            .arg("--disable-warning=ExperimentalWarning")
+            .arg("--import")
+            .arg(base.join("node_modules/tsx/dist/loader.mjs"))
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/session-factory")
+                    .join(script),
+            )
+            .env_remove("MATRIX_WORK_ROOT")
+            .env_remove("MATRIX_NEGATIVE")
+            .env("MATRIX_OUTPUT", "raw");
+        if script == "probe.mts" {
+            command.arg("resume-missing").env("MATRIX_ROOT", &root);
+        } else {
+            command.arg(&root);
+        }
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+            &mut command,
+            "session-factory",
+            Duration::from_secs(300),
+        )
+        .expect("#1253 cleanup generator bounded execution");
+        assert!(
+            status.success() != collision,
+            "#1253 factory generator completes before cleanup: {script}: {}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        let mut scratch: Vec<_> = fs::read_dir(&root)
+            .expect("#1253 cleanup output list")
+            .map(|entry| {
+                entry
+                    .expect("#1253 cleanup output entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.starts_with("run-") || name.starts_with("snapshot-contract-"))
+            .collect();
+        scratch.sort();
+        assert_eq!(
+            scratch,
+            ["run-existing", "snapshot-contract-existing"],
+            "#1253 factory generator removes only owned scratch: {script} collision={collision}"
+        );
+        for name in ["run-existing", "snapshot-contract-existing"] {
+            assert_eq!(
+                fs::read_to_string(root.join(name).join("keep"))
+                    .expect("#1253 cleanup foreign marker retained"),
+                "foreign",
+                "#1253 cleanup foreign marker unchanged"
+            );
+        }
+        if collision {
+            assert_eq!(
+                fs::read_to_string(root.join(collision_path))
+                    .expect("#1253 cleanup collision retained"),
+                "foreign report",
+                "#1253 cleanup preserves colliding output"
+            );
+        } else if script == "generate.mts" {
+            assert!(
+                root.join("raw/index.json").is_file(),
+                "#1253 cleanup preserves raw audit"
+            );
+            assert_eq!(
+                fs::read(root.join("oracle.json")).expect("#1253 factory oracle bytes"),
+                include_bytes!("../../../tests/fixtures/session-factory/oracle.json"),
+                "#1253 factory cleanup does not change oracle bytes"
+            );
+        }
+        fs::remove_dir_all(root).expect("#1253 cleanup test removes owned output");
     }
 }
