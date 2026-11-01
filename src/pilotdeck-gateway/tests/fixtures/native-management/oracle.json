@@ -2810,12 +2810,205 @@
     ],
     "emptyStorage": {
       "config": null,
+      "capabilities": [
+        "upload_create",
+        "upload_get",
+        "upload_part",
+        "upload_complete",
+        "upload_cancel",
+        "run_get",
+        "run_events",
+        "run_reattach",
+        "project_files_list",
+        "commands_list",
+        "model_catalog_list",
+        "session_model_get",
+        "session_model_set",
+        "session_model_clear",
+        "delete_session",
+        "session_transcript_archive",
+        "native_transcript_archive",
+        "native_transcript_archive_artifact",
+        "memory_list",
+        "memory_wipe",
+        "manager_sessions",
+        "snapshot_list",
+        "snapshot_get",
+        "snapshot_restore",
+        "mcp_server_status",
+        "set_mcp_servers",
+        "mcp_server_reconnect",
+        "mcp_server_toggle",
+        "set_mcp_permission_mode_override",
+        "project_file_read",
+        "set_permission_mode",
+        "apply_flag_settings",
+        "update_settings",
+        "resolve_settings",
+        "set_session_thinking",
+        "output_styles_list",
+        "set_output_style",
+        "reload_output_styles",
+        "usage_snapshot",
+        "model_usage_snapshot",
+        "async_hook_result",
+        "user_dialog_list",
+        "permission_list",
+        "permission_decide",
+        "rewind_files",
+        "background_task_stop",
+        "background_tasks",
+        "seed_read_state",
+        "sdk_session_config",
+        "supported_agents"
+      ],
       "result": {
         "error": {
           "code": "CAPABILITY_UNAVAILABLE",
           "message": "Gateway snapshot provider is unavailable."
         }
-      }
+      },
+      "requests": [
+        {
+          "method": "snapshot_list",
+          "params": {
+            "projectKey": "<root>/project"
+          },
+          "result": {
+            "error": {
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        },
+        {
+          "method": "snapshot_get",
+          "params": {
+            "projectKey": "<root>/project",
+            "snapshotId": "missing"
+          },
+          "result": {
+            "error": {
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        },
+        {
+          "method": "snapshot_restore",
+          "params": {
+            "projectKey": "<root>/project",
+            "snapshotId": "missing"
+          },
+          "result": {
+            "error": {
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        }
+      ]
+    },
+    "missingStorage": {
+      "config": null,
+      "capabilities": [
+        "upload_create",
+        "upload_get",
+        "upload_part",
+        "upload_complete",
+        "upload_cancel",
+        "run_get",
+        "run_events",
+        "run_reattach",
+        "project_files_list",
+        "commands_list",
+        "model_catalog_list",
+        "session_model_get",
+        "session_model_set",
+        "session_model_clear",
+        "delete_session",
+        "session_transcript_archive",
+        "native_transcript_archive",
+        "native_transcript_archive_artifact",
+        "memory_list",
+        "memory_wipe",
+        "manager_sessions",
+        "snapshot_list",
+        "snapshot_get",
+        "snapshot_restore",
+        "mcp_server_status",
+        "set_mcp_servers",
+        "mcp_server_reconnect",
+        "mcp_server_toggle",
+        "set_mcp_permission_mode_override",
+        "project_file_read",
+        "set_permission_mode",
+        "apply_flag_settings",
+        "update_settings",
+        "resolve_settings",
+        "set_session_thinking",
+        "output_styles_list",
+        "set_output_style",
+        "reload_output_styles",
+        "usage_snapshot",
+        "model_usage_snapshot",
+        "async_hook_result",
+        "user_dialog_list",
+        "permission_list",
+        "permission_decide",
+        "rewind_files",
+        "background_task_stop",
+        "background_tasks",
+        "seed_read_state",
+        "sdk_session_config",
+        "supported_agents"
+      ],
+      "result": {
+        "error": {
+          "code": "CAPABILITY_UNAVAILABLE",
+          "message": "Gateway snapshot provider is unavailable."
+        }
+      },
+      "requests": [
+        {
+          "method": "snapshot_list",
+          "params": {
+            "projectKey": "<root>/project"
+          },
+          "result": {
+            "error": {
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        },
+        {
+          "method": "snapshot_get",
+          "params": {
+            "projectKey": "<root>/project",
+            "snapshotId": "missing"
+          },
+          "result": {
+            "error": {
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        },
+        {
+          "method": "snapshot_restore",
+          "params": {
+            "projectKey": "<root>/project",
+            "snapshotId": "missing"
+          },
+          "result": {
+            "error": {
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        }
+      ]
     }
   },
   "snapshotSuccess": {

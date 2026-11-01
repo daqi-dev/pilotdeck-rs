@@ -38,21 +38,21 @@ mutations = [
     ('missing-project-defaulted', SOURCE, 'validate_command_project(params)?;', 'if false { validate_command_project(params)?; }', TEST, '#1231 method wire result'),
     ('host-boundary-leaked', SOURCE, 'if e.requires_host {\n        return unavailable();\n    }', 'if false && e.requires_host {\n        return unavailable();\n    }', ADMISSION, '#1231 host-dependent skill rejected'),
     ('surrogate-target-accepted', SOURCE, '!s.to_utf8().is_ok_and(|p| self.options.serves_project(&p))', 's.to_utf8().is_ok_and(|p| !self.options.serves_project(&p))', ADMISSION, '#1231 surrogate restore target admission'),
-    ('capability-omitted', REQUESTS, '"commands_list",', '"commands_list", "skill_scan",', HOST, '#1231 capability belongs to TS contract'),
-    ('capability-snapshot_list', REQUESTS, '"snapshot_list",', '"unwired_snapshot_list",', HOST, '#1231 wired method declared'),
-    ('capability-snapshot_get', REQUESTS, '"snapshot_get",', '"unwired_snapshot_get",', HOST, '#1231 wired method declared'),
-    ('capability-snapshot_restore', REQUESTS, '"snapshot_restore",', '"unwired_snapshot_restore",', HOST, '#1231 wired method declared'),
-    ('capability-manager_sessions', REQUESTS, '"manager_sessions",', '"unwired_manager_sessions",', HOST, '#1231 wired method declared'),
-    ('capability-commands_list', REQUESTS, '"commands_list",', '"unwired_commands_list",', HOST, '#1231 wired method declared'),
-    ('capability-skill_list', REQUESTS, '"commands_list",', '"commands_list", "skill_list",', HOST, '#1231 capability belongs to TS contract'),
-    ('capability-skill_read', REQUESTS, '"commands_list",', '"commands_list", "skill_read",', HOST, '#1231 capability belongs to TS contract'),
-    ('capability-skill_write', REQUESTS, '"commands_list",', '"commands_list", "skill_write",', HOST, '#1231 capability belongs to TS contract'),
-    ('capability-skill_create', REQUESTS, '"commands_list",', '"commands_list", "skill_create",', HOST, '#1231 capability belongs to TS contract'),
-    ('capability-skill_delete', REQUESTS, '"commands_list",', '"commands_list", "skill_delete",', HOST, '#1231 capability belongs to TS contract'),
-    ('capability-skill_import', REQUESTS, '"commands_list",', '"commands_list", "skill_import",', HOST, '#1231 capability belongs to TS contract'),
-    ('capability-skill_validate', REQUESTS, '"commands_list",', '"commands_list", "skill_validate",', HOST, '#1231 capability belongs to TS contract'),
+    ('capability-added-skill_scan', REQUESTS, '"commands_list",', '"commands_list", "skill_scan",', HOST, '#1231 exact wired capability set'),
+    ('capability-snapshot_list', REQUESTS, '"snapshot_list",', '"unwired_snapshot_list",', HOST, '#1231 exact wired capability set'),
+    ('capability-snapshot_get', REQUESTS, '"snapshot_get",', '"unwired_snapshot_get",', HOST, '#1231 exact wired capability set'),
+    ('capability-snapshot_restore', REQUESTS, '"snapshot_restore",', '"unwired_snapshot_restore",', HOST, '#1231 exact wired capability set'),
+    ('capability-manager_sessions', REQUESTS, '"manager_sessions",', '"unwired_manager_sessions",', HOST, '#1231 exact wired capability set'),
+    ('capability-commands_list', REQUESTS, '"commands_list",', '"unwired_commands_list",', HOST, '#1231 exact wired capability set'),
+    ('capability-skill_list', REQUESTS, '"commands_list",', '"commands_list", "skill_list",', HOST, '#1231 exact wired capability set'),
+    ('capability-skill_read', REQUESTS, '"commands_list",', '"commands_list", "skill_read",', HOST, '#1231 exact wired capability set'),
+    ('capability-skill_write', REQUESTS, '"commands_list",', '"commands_list", "skill_write",', HOST, '#1231 exact wired capability set'),
+    ('capability-skill_create', REQUESTS, '"commands_list",', '"commands_list", "skill_create",', HOST, '#1231 exact wired capability set'),
+    ('capability-skill_delete', REQUESTS, '"commands_list",', '"commands_list", "skill_delete",', HOST, '#1231 exact wired capability set'),
+    ('capability-skill_import', REQUESTS, '"commands_list",', '"commands_list", "skill_import",', HOST, '#1231 exact wired capability set'),
+    ('capability-skill_validate', REQUESTS, '"commands_list",', '"commands_list", "skill_validate",', HOST, '#1231 exact wired capability set'),
     ('skills-restart-refused', ASSEMBLY, 'if management && name == "skills" {', 'if management && name == "unwired_skills" {', HOST, '#1231 native management boot/restart'),
-    ('snapshot-storage-omitted', ASSEMBLY, '.entry("PILOTDECK_STORAGE_ROOT".into())', '.entry("UNWIRED_STORAGE_ROOT".into())', HOST, '#1231 production route success'),
+    ('snapshot-storage-omitted', ASSEMBLY, 'let project = project_registry(&options, &env);', 'let mut env = env; env.remove("PILOTDECK_STORAGE_ROOT"); let project = project_registry(&options, &env);', HOST, '#1231 production route success'),
     ('oracle-corruption', ORACLE, '"node": "v22.22.0"', '"node": "v0.0.0"', 'native_process::management_tests::regenerates_identically', '#280 native-management/oracle.json differs'),
 ]
 mutations.append(('cursor-array-refused', SOURCE, 'JsValue::Array(items) => encode(items),', 'JsValue::Array(_items) => Err(invalid()),', TEST, '#1231 method wire result'))
@@ -80,20 +80,19 @@ mutations.append(('notification-before-dirty', REFRESH, '''        // `if (input
 
 # fix-r1: real unwired methods, contract, storage and successful disk effects.
 mutations.append(('wire-memory_list', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "memory_list"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-memory_list', REQUESTS, '"commands_list",', '"commands_list", "memory_list",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('capability-memory_list', REQUESTS, '"commands_list",', '"commands_list", "memory_list",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-memory_wipe', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "memory_wipe"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-memory_wipe', REQUESTS, '"commands_list",', '"commands_list", "memory_wipe",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('capability-memory_wipe', REQUESTS, '"commands_list",', '"commands_list", "memory_wipe",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-mcp_server_status', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "mcp_server_status"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-mcp_server_status', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_status",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('capability-mcp_server_status', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_status",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-set_mcp_servers', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "set_mcp_servers"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-set_mcp_servers', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_servers",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('capability-set_mcp_servers', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_servers",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-mcp_server_reconnect', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "mcp_server_reconnect"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-mcp_server_reconnect', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_reconnect",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('capability-mcp_server_reconnect', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_reconnect",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-mcp_server_toggle', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "mcp_server_toggle"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-mcp_server_toggle', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_toggle",', HOST, '#1231 unavailable provider not advertised'))
+mutations.append(('capability-mcp_server_toggle', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_toggle",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-set_mcp_permission_mode_override', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "set_mcp_permission_mode_override"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-set_mcp_permission_mode_override', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_permission_mode_override",', HOST, '#1231 unavailable provider not advertised'))
-mutations.append(('empty-storage-default-skipped', ASSEMBLY, 'if storage.is_empty() {', 'if false && storage.is_empty() {', 'native_process::management_tests::empty_storage_environment_uses_isolated_default', '#1231 empty storage snapshot available'))
+mutations.append(('capability-set_mcp_permission_mode_override', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_permission_mode_override",', HOST, '#1231 exact wired capability set'))
 mutations.append(('snapshot-get-list-instead', SOURCE, '"snapshot_get" => gateway.get(params),', '"snapshot_get" => gateway.list(params),', SNAPSHOT_TEST, '#1231 snapshot get success and workspace filter'))
 mutations.append(('snapshot-get-workspace-ignored', SNAPSHOT, 'field(manifest, "workspaceId")\n                .as_string()\n                .is_some_and(|id| id.equals_str(&workspace_id))', 'field(manifest, "workspaceId")\n                .as_string()\n                .is_some_and(|id| id.equals_str(&workspace_id) || !workspace_id.is_empty())', SNAPSHOT_TEST, '#1231 snapshot get success and workspace filter'))
 mutations.append(('snapshot-restore-list-instead', SOURCE, '"snapshot_restore" => gateway.restore(params),', '"snapshot_restore" => gateway.list(params),', SNAPSHOT_TEST, '#1231 snapshot restore success'))
@@ -103,7 +102,14 @@ mutations.append(('skill-import-conflict-overwritten', IMPORT, 'if exists && !tr
 mutations.append(('skill-import-force-refused', IMPORT, 'if exists && !truthy(field(input, "force")?) {', 'if exists && (truthy(field(input, "force")?) || exists) {', IMPORT_TEST, '#1231 skill import read list scan and conflict results'))
 
 mutations.append(('snapshot-restore-file-empty', STORAGE, 'write_file(Path::new(&output), &contents)?;', 'write_file(Path::new(&output), &contents[..0])?;', SNAPSHOT_TEST, '#1231 snapshot restored file bytes'))
-mutations.append(('empty-storage-wrong-root', ASSEMBLY, '*storage = options.home.join("storage").to_string_lossy().into_owned();', '*storage = options.home.join("wrong-storage").to_string_lossy().into_owned();', 'native_process::management_tests::empty_storage_environment_uses_isolated_default', '#1231 empty storage snapshot available'))
+
+# fix-r2: exact wired set and independently disabled missing/empty roots.
+mutations.append(('capability-add-upload_create', REQUESTS, '"commands_list",', '"commands_list", "upload_create",', HOST, '#1231 exact wired capability set'))
+mutations.append(('capability-duplicate-run_get', REQUESTS, '                            "run_get",', '                            "run_get", "run_get",', HOST, '#1231 exact wired capability set'))
+mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
+mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
+mutations.append(('missing-storage-advertised', REQUESTS, 'snapshot_enabled || !capability.starts_with("snapshot_")', 'snapshot_enabled || true || !capability.starts_with("snapshot_")', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
+mutations.append(('empty-storage-advertised', REQUESTS, 'snapshot_enabled || !capability.starts_with("snapshot_")', 'snapshot_enabled || true || !capability.starts_with("snapshot_")', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
 
 
 def mutate(case, text):
