@@ -1494,6 +1494,22 @@ mod comparison_tests {
         fallback.then_some(ids)
     }
 
+    // #1278: read the registered difference at runtime. The previous
+    // `include_str!` made every `sdk_signal_exit` build read `specs/` at
+    // compile time, so a `src/`-only checkout (what the copy-based negative
+    // controls compile) could not build this target at all. Only this domain
+    // test needs the ledger; an unreadable file fails it with this message
+    // instead of passing silently.
+    fn rejection_difference_ledger() -> String {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
+        );
+        std::fs::read_to_string(path).unwrap_or_else(|error| {
+            panic!("#1278 rejection difference ledger unreadable at {path}: {error}")
+        })
+    }
+
     #[test]
     fn approved_stderr_match_domain_is_exact() {
         let expected: BTreeSet<_> = APPROVED_SIGNAL_IDS.map(str::to_owned).into_iter().collect();
@@ -1512,9 +1528,7 @@ mod comparison_tests {
             cases, expected,
             "#1145 rejection byte cases equal approved ID scope"
         );
-        let spec = include_str!(
-            "../../../../specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
-        );
+        let spec = rejection_difference_ledger();
         let documented: BTreeSet<_> = spec
             .lines()
             .filter_map(|line| {
