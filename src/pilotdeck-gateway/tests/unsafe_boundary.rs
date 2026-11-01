@@ -4,11 +4,15 @@
 //! workspace manifest 树内的测试 cwd 到根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
 //! config*、测试进程可见的编译相关环境变量（#448 补 RUSTDOC / RUSTC_BOOTSTRAP；
 //! RUSTUP_TOOLCHAIN 仅在 RUSTUP_TOOLCHAIN_SOURCE=toolchain-file 且值等于本仓
-//! rust-toolchain.toml 钉住 channel（或 channel-host）时放行），以及 #448 在
-//! Linux 上经 /proc 读到的真实调用上下文：父进程（cargo / cargo-nextest 本尊）
-//! 的 cwd 到根的 Cargo 配置链、其 argv 里的 `--config` 覆盖、其进程像与
-//! CARGO 环境的一致性（防树外 config 用 `[env] force = true` 把守卫的
-//! cargo metadata 审计指向假 cargo）。
+//! rust-toolchain.toml 钉住 channel、或 channel 加上运行中 cargo 报告的真实
+//! host triple 时放行），以及 #448 在 Linux 上经 /proc 读到的真实调用上下文：
+//! 父进程（cargo / cargo-nextest 本尊）的 cwd 到根的 Cargo 配置链、其 argv
+//! 与祖先链上每个名为 cargo 的进程的 argv 里的 `--config` 覆盖（cb8 实测
+//! cargo 会 exec 成外部子命令：真跑 `cargo nextest run` 时 cargo 本尊已不
+//! 存在、其 argv 随之消失，归头注登记的人工评审边界；祖先扫描覆盖 cargo
+//! 存活的一切布局，如 `cargo test` 派生的 harness-free runner 再拉起本守
+//! 卫的两层布局）、其进程像与 CARGO 环境的一致性（防树外 config 用
+//! `[env] force = true` 把守卫的 cargo metadata 审计指向假 cargo）。
 //! vendored 包（`vendor/tiktoken-rs`、`data/icu_collator_data`）不在 workspace
 //! lint 继承内，因此其声明/源码包含边与成员同受检查：path 依赖（含 dev/build/
 //! target 与未启用的可选依赖）、build script、proc-macro 及其它非 lib target、
@@ -40,12 +44,19 @@
 //! #448 登记的剩余边界（做不到的部分，明确写出）：测试进程 cwd 恒为包根，
 //! 没有 /proc 的平台（macOS / Windows）读不到父进程的 cwd / argv / 进程像，
 //! 那些平台上的树外调用目录 `.cargo/config*`、`cargo --config` 与
-//! `[env]` CARGO 覆盖不可核实，与下方 CI 脚本替换编译器同归人工评审；
-//! `cargo nextest` 下父进程是 cargo-nextest，cargo 自身的 `--config` 与
-//! 调用目录经 nextest 转达后对测试进程同样不可见（nextest 自身的
-//! `--config-file` 是另一个 token，不受 `--config` 检查影响）；直接运行
-//! 已编译守卫二进制（父进程不是 cargo）时进程像一致性也无法核实，仅当
-//! 祖先里出现名为 cargo 的进程时才比对 CARGO。
+//! `[env]` CARGO 覆盖不可核实——静默放行等于假 PASS，因此非 Linux 默认测试
+//! 失败并说明原因，仅显式设置 `PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1`
+//! 时以可辨认的 stderr skip 行放行（CI 全是 ubuntu 作业，无需设置）；
+//! 祖先链走到 init 为止，`/proc/<pid>/exe`（或 stat）读失败时区分「进程
+//! 已退出」（停止）与「无权限等其它错误」（stderr 打 note 后停止，到达
+//! root 属主的合法祖先如 sshd 即此情形，再往上的 cargo 不可核实，与 CI
+//! 脚本替换编译器同归人工评审）；`RUSTUP_HOME`（rustup 会为子进程导出，
+//! cb8 实测）可把 toolchain 解析重定向到假 home，但假 toolchain 名仍须
+//! 精确等于 channel 或 channel-<真实 host triple>，等价于替换 rustup
+//! 状态本身，同归人工评审；直接运行已编译守卫二进制（祖先里没有名为
+//! cargo 的进程）时进程像一致性无法核实，仅当祖先里出现名为 cargo 的
+//! 进程时才比对 CARGO（nextest 自身的 `--config-file` 是另一个 token，
+//! 不受 `--config` 检查影响）。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
 //! CARGO 包装器）由人工评审负责，不靠扫描脚本文本覆盖；依据：
 //! state/decisions-20261021.md「卡 · #386 守卫的构建配置检查改为「一律不许存在」，并划清守卫边界（AI 代批，待人复核）」。
@@ -896,10 +907,14 @@ fn compiler_environment_boundary() {
 // a nonempty value. RUSTUP_TOOLCHAIN is the one toolchain variable the normal
 // flow itself sets: rustup's shim resolves this repository's hash-pinned
 // rust-toolchain.toml and exports RUSTUP_TOOLCHAIN with
-// RUSTUP_TOOLCHAIN_SOURCE=toolchain-file, so exactly that combination (with
-// the resolved name equal to the pinned channel or channel plus host triple)
-// passes; +toolchain CLI, a user-exported RUSTUP_TOOLCHAIN, and a different
-// toolchain file on an out-of-tree invocation directory are all rejected.
+// RUSTUP_TOOLCHAIN_SOURCE=toolchain-file (probed on rustup 1.29.2 / cb8: the
+// toolchain file exports the toolchain-file source, `RUSTUP_TOOLCHAIN=x
+// cargo …` exports env, and `cargo +x …` exports cli), so exactly that
+// combination passes, with the resolved name equal to the pinned channel or
+// that channel plus the real host triple the running cargo reports — an
+// arbitrary channel-anystring suffix would accept a linked fake toolchain
+// name. +toolchain CLI, a user-exported RUSTUP_TOOLCHAIN, and a linked
+// non-host toolchain are all rejected.
 fn toolchain_environment_boundary(root: &Path) {
     for key in ["RUSTDOC", "RUSTC_BOOTSTRAP"] {
         assert!(
@@ -919,25 +934,84 @@ fn toolchain_environment_boundary(root: &Path) {
             .find_map(|line| line.strip_prefix("channel = "))
             .and_then(|value| value.strip_prefix('"').and_then(|v| v.strip_suffix('"')))
             .expect("#448 pinned toolchain channel is declared");
+        // A rustup shim re-resolves RUSTUP_TOOLCHAIN itself, so the probe
+        // removes it: the shim then resolves this repository's toolchain file
+        // from the guard's cwd (the package root) while the real cargo binary
+        // ignores the variable anyway. A missing CARGO or a failing probe
+        // leaves no verified host triple and fails the assertion below.
+        let host = std::env::var_os("CARGO").and_then(|cargo| {
+            Command::new(cargo)
+                .arg("-vV")
+                .env_remove("RUSTUP_TOOLCHAIN")
+                .env_remove("RUSTUP_TOOLCHAIN_SOURCE")
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| {
+                    String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .find_map(|line| line.strip_prefix("host: "))
+                        .map(str::to_owned)
+                })
+        });
         assert!(
             source == "toolchain-file"
-                && (toolchain.as_ref() == channel || toolchain.starts_with(&format!("{channel}-"))),
-            "#448 RUSTUP_TOOLCHAIN={toolchain} (RUSTUP_TOOLCHAIN_SOURCE={source}) does not come from this repository's pinned rust-toolchain.toml (channel {channel}); the unsafe_code=forbid guarantee is defined for the pinned rustc only. For this guard test only, run cargo without +toolchain, an exported RUSTUP_TOOLCHAIN, or an invocation directory outside this checkout"
+                && (toolchain.as_ref() == channel
+                    || host.as_deref()
+                        .is_some_and(|host| toolchain == format!("{channel}-{host}"))),
+            "#448 RUSTUP_TOOLCHAIN={toolchain} (RUSTUP_TOOLCHAIN_SOURCE={source}) does not come from this repository's pinned rust-toolchain.toml (channel {channel}{host_note}); the unsafe_code=forbid guarantee is defined for the pinned rustc only. For this guard test only, run cargo from inside this checkout without +toolchain, an exported RUSTUP_TOOLCHAIN, or a rustup override (see `rustup override unset`)",
+            host_note = host.as_deref().map_or_else(
+                || String::from(
+                    "; the running cargo did not report its host triple, so channel-host names cannot be verified"
+                ),
+                |host| format!(", which resolves on this host as {channel}-{host}"),
+            )
         );
     }
 }
 
 #[cfg(target_os = "linux")]
-fn parent_process_id(pid: u32) -> Option<u32> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+fn parent_process_id(pid: u32) -> std::io::Result<u32> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
     // The comm field may contain ')' and spaces; the fixed fields resume
     // after the final closing parenthesis: state, then ppid.
     stat.rsplit(')')
-        .next()?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
+        .next()
+        .and_then(|fields| fields.split_whitespace().nth(1))
+        .and_then(|field| field.parse().ok())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unparsable ppid field in /proc/{pid}/stat"),
+            )
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn read_cmdline(pid: u32) -> std::io::Result<Vec<String>> {
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline"))?;
+    Ok(cmdline
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .map(|argument| String::from_utf8_lossy(argument).into_owned())
+        .collect())
+}
+
+// Cargo's own options end at the first `--`; later tokens belong to the test
+// harness, which has a `--config` flag of its own that must not be mistaken
+// for a cargo override.
+#[cfg(target_os = "linux")]
+fn assert_no_config_cli_overrides(argv: &[String]) {
+    let cargo_options = argv
+        .split(|argument| argument == "--")
+        .next()
+        .unwrap_or(&[]);
+    for argument in cargo_options {
+        assert!(
+            argument != "--config" && !argument.starts_with("--config="),
+            "#448 cargo --config overrides (build.rustc, build.rustflags, target tables, [env]) are not observable through files or the test environment and are forbidden: {argv:?}. For this guard test only, run cargo without --config"
+        );
+    }
 }
 
 // #448: the test process cwd is always the package root, so walking the cwd
@@ -949,25 +1023,21 @@ fn parent_process_id(pid: u32) -> Option<u32> {
 // invocation: its cwd carries the out-of-tree configuration discovery chain,
 // its argv shows the otherwise unobservable `--config` overrides, and its
 // process image is the real cargo that a `[env] force=true` CARGO override
-// would have to impersonate.
+// would have to impersonate. Under `cargo nextest run` the direct parent is
+// cargo-nextest; cargo exec-replaces into external subcommands (probed on
+// cb8 / cargo 1.99.1), so by test time the cargo process itself is gone and
+// its argv with it — that absence is the declared manual-review boundary in
+// the module header. The ancestor walk (to init, with a truncation note when
+// a step is unreadable) covers every layout where a cargo-named process IS
+// alive (plain `cargo test`, and runners that a test target spawns), reading
+// each one's argv.
 #[cfg(target_os = "linux")]
 fn cargo_invocation_boundary() {
     let ppid = parent_process_id(std::process::id())
         .expect("#448 the parent runner process must be identifiable through /proc");
-    let parent = PathBuf::from(format!("/proc/{ppid}"));
-    let argv: Vec<String> = fs::read(parent.join("cmdline"))
-        .expect("#448 parent runner cmdline must be readable")
-        .split(|byte| *byte == 0)
-        .filter(|argument| !argument.is_empty())
-        .map(|argument| String::from_utf8_lossy(argument).into_owned())
-        .collect();
-    for argument in &argv {
-        assert!(
-            argument != "--config" && !argument.starts_with("--config="),
-            "#448 cargo --config overrides (build.rustc, build.rustflags, target tables, [env]) are not observable through files or the test environment and are forbidden: {argv:?}. For this guard test only, run cargo without --config"
-        );
-    }
-    let cwd = fs::read_link(parent.join("cwd"))
+    let argv = read_cmdline(ppid).expect("#448 parent runner cmdline must be readable");
+    assert_no_config_cli_overrides(&argv);
+    let cwd = fs::read_link(format!("/proc/{ppid}/cwd"))
         .expect("#448 parent runner working directory must be readable");
     assert_no_ancestor_cargo_configuration(
         &cwd,
@@ -977,11 +1047,13 @@ fn cargo_invocation_boundary() {
     // The runner image identifies the real cargo behind the CARGO variable;
     // an out-of-tree `[env] force=true` CARGO override would otherwise point
     // this guard's own `cargo metadata` audit at a fake cargo. Plain
-    // `cargo test` exposes the cargo as the parent; `cargo nextest run`
-    // exposes it one level above cargo-nextest. With no cargo ancestry
-    // (direct execution of the compiled guard binary) the identity cannot
-    // be verified and stays within the declared manual-review boundary; with
-    // any cargo ancestry visible, CARGO must name one of those ancestors.
+    // `cargo test` exposes the cargo as the parent; under `cargo nextest run`
+    // no cargo is alive at all (cargo exec-replaces into the subcommand).
+    // With no cargo ancestry (direct execution of the compiled guard binary,
+    // or any exec'd-subcommand runner such as cargo-nextest) the identity
+    // cannot be verified and stays within the declared manual-review
+    // boundary; with any cargo ancestry visible, CARGO must name one of
+    // those ancestors.
     let cargo = PathBuf::from(
         std::env::var_os("CARGO")
             .expect("#448 the guard environment must name its cargo through CARGO"),
@@ -989,20 +1061,46 @@ fn cargo_invocation_boundary() {
     let mut saw_cargo = false;
     let mut verified = false;
     let mut pid = ppid;
-    for _ in 0..8 {
+    loop {
+        if pid <= 1 {
+            break;
+        }
         let exe = match fs::read_link(format!("/proc/{pid}/exe")) {
             Ok(exe) => exe,
-            Err(_) => break,
+            // The process exited before the guard could read it.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                eprintln!(
+                    "#448 note: the ancestry walk stopped at pid {pid}: /proc/{pid}/exe cannot be read ({error}); any cargo above it stays unverified (declared manual-review boundary)"
+                );
+                break;
+            }
         };
         if exe.file_name().and_then(|name| name.to_str()) == Some("cargo") {
             saw_cargo = true;
             verified |= Path::new(&cargo)
                 .canonicalize()
                 .is_ok_and(|cargo| cargo == exe);
+            let runner_argv = match read_cmdline(pid) {
+                Ok(argv) => argv,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => panic!(
+                    "#448 the cargo ancestor's cmdline must be readable to audit its --config overrides (pid {pid}): {error}"
+                ),
+            };
+            assert_no_config_cli_overrides(&runner_argv);
         }
         match parent_process_id(pid) {
-            Some(next) if next > 1 => pid = next,
-            _ => break,
+            Ok(next) if next > 1 && next != pid => pid = next,
+            Ok(_) => break,
+            // The process exited before the guard could read it.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                eprintln!(
+                    "#448 note: the ancestry walk stopped at pid {pid}: /proc/{pid}/stat cannot be read ({error}); any cargo above it stays unverified (declared manual-review boundary)"
+                );
+                break;
+            }
         }
     }
     assert!(
@@ -1014,9 +1112,21 @@ fn cargo_invocation_boundary() {
 
 // #448 declared boundary (module header): without /proc the invocation
 // directory chain, the runner argv and the runner image are unavailable to
-// the test process, so those platforms keep the manual-review boundary.
+// the test process. A silent no-op would report the same green as a verified
+// run, so the default is fail-closed; the explicit opt-out prints a
+// recognizable skip line and keeps the manual-review boundary.
 #[cfg(not(target_os = "linux"))]
-fn cargo_invocation_boundary() {}
+fn cargo_invocation_boundary() {
+    if std::env::var_os("PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX").is_some_and(|value| value == "1") {
+        eprintln!(
+            "#448 skip: the /proc invocation boundary is Linux-only; PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1 acknowledges the manual-review boundary (invocation directory chain, runner argv and CARGO identity are unverified on this platform)"
+        );
+        return;
+    }
+    panic!(
+        "#448 the /proc invocation boundary is unavailable on this platform, so the invocation directory chain, the runner argv and the CARGO identity cannot be verified; refusing to report an unverified green. For this guard test only, set PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX=1 to acknowledge the manual-review boundary and skip with a printed line"
+    );
+}
 
 #[test]
 fn compiler_enforces_gateway_boundary() {
