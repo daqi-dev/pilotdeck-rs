@@ -104,6 +104,37 @@ fn message_block_timeline(event: &JsValue) -> Option<&JsValue> {
     }
 }
 
+/// The recording submit() would own for a compaction case, plus the execute
+/// snapshot the stream saves when it hands the runner's messages to the
+/// sidecar: a real runner that accepted the turn input, then recorded every
+/// durable wire message the script sent — the same settle pending_durable
+/// drives in production. The snapshot must exclude those messages (TS
+/// abortedResult reads input.messages), while the runner retains them.
+async fn replay_recording(
+    input: TurnInput,
+    durable: &[JsValue],
+) -> (Option<Recording>, Option<Vec<JsValue>>) {
+    let runner = TurnRunner::new(test_recorder(), test_lease(), "s".into(), "t".into());
+    let (runner, _) = runner
+        .start()
+        .await
+        .expect("#1220 timeline: replay runner must start");
+    let (runner, _) = runner
+        .accept(input)
+        .await
+        .expect("#1220 timeline: replay runner must accept the case input");
+    let snapshot = runner.messages().to_vec();
+    let mut runner = runner;
+    for message in durable {
+        let (next, _) = runner
+            .durable_message(message.clone())
+            .await
+            .expect("#1220 timeline: replay runner must record the durable wire message");
+        runner = next;
+    }
+    (Some(Recording::new(runner, Arc::new(()))), Some(snapshot))
+}
+
 async fn replay_case(case: &JsValue, name: &str) {
     let timeline = Arc::new(Mutex::new(
         crate::runtime::turn::timeline::TurnTimeline::new("t".into()),
@@ -134,6 +165,10 @@ async fn replay_case(case: &JsValue, name: &str) {
     assert_pending(&mut task).await;
     let mut final_payload = None;
     let mut compaction_final = false;
+    // The durable wire messages the script sends before its final: the settle
+    // the stream's pending_durable drives on the consumer's next poll in
+    // production, which this pump-only replay cannot drive itself.
+    let mut durable_wire = Vec::new();
     let JsValue::Array(steps) = case.get("steps").expect("#1220 timeline: case steps") else {
         panic!("#1220 timeline: {name} must list steps")
     };
@@ -144,6 +179,16 @@ async fn replay_case(case: &JsValue, name: &str) {
             .expect("#1220 timeline: step kind");
         if kind.equals_str("wire") {
             let payload = step.get("payload").expect("#1220 timeline: wire payload");
+            if let Some(kind) = payload.get("type")
+                && (kind == &"assistant_message".into() || kind == &"tool_results_projected".into())
+            {
+                durable_wire.push(
+                    payload
+                        .get("message")
+                        .cloned()
+                        .expect("#1220 timeline: durable wire message"),
+                );
+            }
             deliver(&handler, payload, false)
                 .await
                 .expect("#1220 timeline: wire step must apply");
@@ -191,23 +236,36 @@ async fn replay_case(case: &JsValue, name: &str) {
         collected.push(event);
     }
     let final_payload = final_payload.expect("#1220 timeline: case must end in a final step");
+    let input = case_input(case);
+    // The compaction terminal is synthesized from the turn's own message
+    // source, so only that case needs the recording submit() would have owned:
+    // a runner that accepted the case input — the execute-time snapshot the
+    // sidecar receives — and then recorded every durable wire message. Every
+    // other case completes through the peer's own terminal payload, which
+    // never consults the runner.
+    let (recording, execute_messages) = if compaction_final {
+        replay_recording(input.clone(), &durable_wire).await
+    } else {
+        (None, None)
+    };
     let turn = LiveTurnStream {
         execution: None,
         result: None,
         events: mpsc::channel(1).1,
         identity: replay_identity(),
-        input: case_input(case),
+        input,
         integrity,
         delivered: StreamIntegrity::new(),
         active: None,
         recording_ready: oneshot::channel().1,
-        recording: None,
+        recording,
         pending_event: None,
         pending_durable: None,
         callback_cancel: None,
         accepted: false,
         preflight: 0,
         execute_ready: None,
+        execute_messages,
         recorded: std::collections::VecDeque::new(),
         timeline: Some(timeline),
     };

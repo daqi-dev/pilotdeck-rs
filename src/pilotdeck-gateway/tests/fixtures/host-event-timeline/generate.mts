@@ -462,11 +462,16 @@ const scripts: Script[] = [
     // TS client:1338-1350: the incomplete compaction final is replaced by
     // abortedResult(input) through recordKnownTerminal -> projectTerminal,
     // so the original input messages get coordinates (unlike the pre-execute
-    // cancels, which never position anything).
+    // cancels, which never position anything). The wire assistant_message is
+    // durable loop output, but input.messages is pristine (AgentLoop.ts:367
+    // copies it), so it must appear neither in returned.messages nor in the
+    // synthesized terminal.
     name: 'compaction-incomplete-final',
     steps: [
       wire({type: 'model_request_started', sessionId: 's', turnId: 't', model: 'm', provider: 'p'}),
       wire({type: 'model_event', sessionId: 's', turnId: 't', blockId: 'b1', event: {type: 'text_delta', text: 'x'}}),
+      wire({type: 'assistant_message', sessionId: 's', turnId: 't', message: {role: 'assistant',
+        content: [{type: 'text', text: 'partial', blockId: 'am1'}], metadata: {}}}),
       cancel('compaction_persistence_failed'),
       tick(500),
     ],
@@ -481,9 +486,17 @@ const scripts: Script[] = [
       assert.equal(terminal.result.type, 'aborted', '#1220 abortedResult(input) is synthesized');
       assert.equal(terminal.result.turns, 0, '#1220 the synthesized result reports zero turns');
       assert.equal(terminal.result.stopReason, 'aborted_streaming', '#1220 the synthesized stop reason');
+      const [assistant] = events.filter(e => e.type === 'assistant_message');
+      assert.deepEqual(assistant.message.content[0].timeline,
+        {version: 1, turnId: 't', id: 'am1', previousId: 'b1', order: 1, revision: 4},
+        '#1220 the durable wire assistant message is positioned before the cancel');
+      assert.equal(returned.messages.length, 2,
+        '#1220 abortedResult(input) keeps only the execute-time input messages');
+      assert.ok(!JSON.stringify(returned.messages).includes('partial'),
+        '#1220 the in-turn durable assistant message is not part of the terminal');
       assert.deepEqual(returned.messages[0].content[0].timeline,
-        {version: 1, turnId: 't', id: 'h1', previousId: 'b1', order: 1, revision: 3},
-        '#1220 the retained input assistant message is positioned');
+        {version: 1, turnId: 't', id: 'h1', previousId: 'am1', order: 2, revision: 5},
+        '#1220 the retained input assistant message is positioned after the wire assistant');
       assert.equal(returned.messages[0].metadata.moduleId, 'fixture', '#1220 the positioned input message is marked');
       assert.deepEqual(returned.messages[1], {role: 'user', content: [{type: 'text', text: 'q'}]},
         '#1220 the plain user input message passes through untouched');
