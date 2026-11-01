@@ -7,11 +7,15 @@ The full suite belongs on the coordinator host; a guarded sample is enough here.
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
+# tree_lock stays imported although the switch group now uses the official
+# pristine guard: the session-switch-pristine-removed reverse negative in
+# negative-restore/test_restore.py reverts to it and must execute, not crash.
 from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_suite import Case, classify, invalidate_completed, passed
 from _negative_common import mutate
@@ -234,6 +238,34 @@ cases = [
     # before the successful attempt's setup must fail the retry ordering.
     ('1020-publication-before-setup', owner, '        if let Err(cause) = self\n            .0\n            .options\n            .factory\n            .setup(context.clone(), handle.clone(), previous)\n            .await\n        {\n            let rollback = handle.dispose("agent_publication_rollback".into()).await;\n            return Err(match rollback {\n                Ok(()) => cause,\n                Err(error) => RuntimeError {\n                    message: format!(\n                        "Failed to roll back unpublished resources while attempting to {} agent {}.",\n                        if cached.is_some() {\n                            "replace"\n                        } else {\n                            "create"\n                        },\n                        String::from_utf16_lossy(context.session_key.units())\n                    ),\n                    causes: vec![cause, error],\n                    js_error: None,\n                },\n            });\n        }\n        let publication_error = {\n            let mut state = self.0.state.lock().unwrap();\n            if state.stopped {\n                Some(if cached.is_some() {\n                    "Session router shut down during session recreation."\n                } else {\n                    "Session router shut down during session creation."\n                })\n            } else if project_paused(&state, context.project_key.as_ref()) {\n                Some("Project is being deleted; the created session was discarded.")\n            } else {\n                if let Some(previous) = &cached {\n                    previous.handle.stop_new();\n                    state.completion_owners.remove(&context.session_key);\n                }\n                if !state.records.contains_key(&context.session_key) {\n                    state.order.push(context.session_key.clone());\n                }\n                state.records.insert(\n                    context.session_key.clone(),\n                    Record {\n                        handle: handle.clone(),\n                        context: context.clone(),\n                        last_used: (self.0.options.now_ms)(),\n                        // TS SessionRouter.ts:144-166 clears dirty after replace, including marks during recreation.\n                        dirty: false,\n                        unreported_creation_error: None,\n                    },\n                );\n                None\n            }\n        };\n        if let Some(message) = publication_error {\n            handle.dispose("session_router_shutdown".into()).await?;\n            return Err(RuntimeError::new(message));\n        }\n        if let Some(previous) = cached {\n            let already_drained = previous.handle.recreation_drained();\n            let mut reason = JsString::from("agent_replaced:").units().to_vec();\n            reason.extend_from_slice(context.session_key.units());\n            let disposal = previous.handle.dispose(JsString::from_utf16(reason));\n            self.emit(&context.session_key, EvictionReason::DirtyRecreate);', '        if cached.is_some() {\n            self.emit(&context.session_key, EvictionReason::DirtyRecreate);\n        }\n        if let Err(cause) = self\n            .0\n            .options\n            .factory\n            .setup(context.clone(), handle.clone(), previous)\n            .await\n        {\n            let rollback = handle.dispose("agent_publication_rollback".into()).await;\n            return Err(match rollback {\n                Ok(()) => cause,\n                Err(error) => RuntimeError {\n                    message: format!(\n                        "Failed to roll back unpublished resources while attempting to {} agent {}.",\n                        if cached.is_some() {\n                            "replace"\n                        } else {\n                            "create"\n                        },\n                        String::from_utf16_lossy(context.session_key.units())\n                    ),\n                    causes: vec![cause, error],\n                    js_error: None,\n                },\n            });\n        }\n        let publication_error = {\n            let mut state = self.0.state.lock().unwrap();\n            if state.stopped {\n                Some(if cached.is_some() {\n                    "Session router shut down during session recreation."\n                } else {\n                    "Session router shut down during session creation."\n                })\n            } else if project_paused(&state, context.project_key.as_ref()) {\n                Some("Project is being deleted; the created session was discarded.")\n            } else {\n                if let Some(previous) = &cached {\n                    previous.handle.stop_new();\n                    state.completion_owners.remove(&context.session_key);\n                }\n                if !state.records.contains_key(&context.session_key) {\n                    state.order.push(context.session_key.clone());\n                }\n                state.records.insert(\n                    context.session_key.clone(),\n                    Record {\n                        handle: handle.clone(),\n                        context: context.clone(),\n                        last_used: (self.0.options.now_ms)(),\n                        // TS SessionRouter.ts:144-166 clears dirty after replace, including marks during recreation.\n                        dirty: false,\n                        unreported_creation_error: None,\n                    },\n                );\n                None\n            }\n        };\n        if let Some(message) = publication_error {\n            handle.dispose("session_router_shutdown".into()).await?;\n            return Err(RuntimeError::new(message));\n        }\n        if let Some(previous) = cached {\n            let already_drained = previous.handle.recreation_drained();\n            let mut reason = JsString::from("agent_replaced:").units().to_vec();\n            reason.extend_from_slice(context.session_key.units());\n            let disposal = previous.handle.dispose(JsString::from_utf16(reason));\n', None, prefix+'recreate_retries_stale_disposed_handoff', "#1020 publication follows the successful retry's setup"),
     ('1020-publication-before-setup-completed', owner, '        if let Err(cause) = self\n            .0\n            .options\n            .factory\n            .setup(context.clone(), handle.clone(), previous)\n            .await\n        {\n            let rollback = handle.dispose("agent_publication_rollback".into()).await;\n            return Err(match rollback {\n                Ok(()) => cause,\n                Err(error) => RuntimeError {\n                    message: format!(\n                        "Failed to roll back unpublished resources while attempting to {} agent {}.",\n                        if cached.is_some() {\n                            "replace"\n                        } else {\n                            "create"\n                        },\n                        String::from_utf16_lossy(context.session_key.units())\n                    ),\n                    causes: vec![cause, error],\n                    js_error: None,\n                },\n            });\n        }\n        let publication_error = {\n            let mut state = self.0.state.lock().unwrap();\n            if state.stopped {\n                Some(if cached.is_some() {\n                    "Session router shut down during session recreation."\n                } else {\n                    "Session router shut down during session creation."\n                })\n            } else if project_paused(&state, context.project_key.as_ref()) {\n                Some("Project is being deleted; the created session was discarded.")\n            } else {\n                if let Some(previous) = &cached {\n                    previous.handle.stop_new();\n                    state.completion_owners.remove(&context.session_key);\n                }\n                if !state.records.contains_key(&context.session_key) {\n                    state.order.push(context.session_key.clone());\n                }\n                state.records.insert(\n                    context.session_key.clone(),\n                    Record {\n                        handle: handle.clone(),\n                        context: context.clone(),\n                        last_used: (self.0.options.now_ms)(),\n                        // TS SessionRouter.ts:144-166 clears dirty after replace, including marks during recreation.\n                        dirty: false,\n                        unreported_creation_error: None,\n                    },\n                );\n                None\n            }\n        };\n        if let Some(message) = publication_error {\n            handle.dispose("session_router_shutdown".into()).await?;\n            return Err(RuntimeError::new(message));\n        }\n        if let Some(previous) = cached {\n            let already_drained = previous.handle.recreation_drained();\n            let mut reason = JsString::from("agent_replaced:").units().to_vec();\n            reason.extend_from_slice(context.session_key.units());\n            let disposal = previous.handle.dispose(JsString::from_utf16(reason));\n            self.emit(&context.session_key, EvictionReason::DirtyRecreate);', '        if cached.is_some() {\n            self.emit(&context.session_key, EvictionReason::DirtyRecreate);\n        }\n        if let Err(cause) = self\n            .0\n            .options\n            .factory\n            .setup(context.clone(), handle.clone(), previous)\n            .await\n        {\n            let rollback = handle.dispose("agent_publication_rollback".into()).await;\n            return Err(match rollback {\n                Ok(()) => cause,\n                Err(error) => RuntimeError {\n                    message: format!(\n                        "Failed to roll back unpublished resources while attempting to {} agent {}.",\n                        if cached.is_some() {\n                            "replace"\n                        } else {\n                            "create"\n                        },\n                        String::from_utf16_lossy(context.session_key.units())\n                    ),\n                    causes: vec![cause, error],\n                    js_error: None,\n                },\n            });\n        }\n        let publication_error = {\n            let mut state = self.0.state.lock().unwrap();\n            if state.stopped {\n                Some(if cached.is_some() {\n                    "Session router shut down during session recreation."\n                } else {\n                    "Session router shut down during session creation."\n                })\n            } else if project_paused(&state, context.project_key.as_ref()) {\n                Some("Project is being deleted; the created session was discarded.")\n            } else {\n                if let Some(previous) = &cached {\n                    previous.handle.stop_new();\n                    state.completion_owners.remove(&context.session_key);\n                }\n                if !state.records.contains_key(&context.session_key) {\n                    state.order.push(context.session_key.clone());\n                }\n                state.records.insert(\n                    context.session_key.clone(),\n                    Record {\n                        handle: handle.clone(),\n                        context: context.clone(),\n                        last_used: (self.0.options.now_ms)(),\n                        // TS SessionRouter.ts:144-166 clears dirty after replace, including marks during recreation.\n                        dirty: false,\n                        unreported_creation_error: None,\n                    },\n                );\n                None\n            }\n        };\n        if let Some(message) = publication_error {\n            handle.dispose("session_router_shutdown".into()).await?;\n            return Err(RuntimeError::new(message));\n        }\n        if let Some(previous) = cached {\n            let already_drained = previous.handle.recreation_drained();\n            let mut reason = JsString::from("agent_replaced:").units().to_vec();\n            reason.extend_from_slice(context.session_key.units());\n            let disposal = previous.handle.dispose(JsString::from_utf16(reason));\n', None, prefix+'recreate_after_completed_disposal_resumes_without_previous', '#1020 completed disposal publishes after the replacement setup'),
+    # #1055 ①: disabling the takeover branch hands the immediately following
+    # caller one more replayed BUSY round instead of the late cleanup error.
+    ('1055-takeover-removed', owner,
+     '&& let Some(error) = record.handle.take_recreation_disposal_error()',
+     '&& let Some(error) = None::<RuntimeError>',
+     None, prefix+'recreation_cancelled_timeout_late_cleanup_error_is_returned_to_next_caller',
+     '#1218 takeover must not replay one more BUSY round'),
+    # #1055 ②: the busy arm of the sweep filter is what reclaims a drained,
+    # retriable BUSY record; without it the record grows without bound again.
+    ('1055-sweep-busy-arm-removed', owner,
+     'pending_is_busy(pending) && record.handle.recreation_drained()',
+     'pending_is_busy(pending) && false',
+     None, prefix+'recreation_cancelled_timeout_busy_is_reclaimed_by_idle_sweep',
+     '#1218 idle sweep reclaims the drained-BUSY record'),
+    # #1055 ②: the pending-free arm keeps ordinary (consumed-error) records
+    # reclaimable; disabling it would retain every ordinary record forever.
+    ('1055-sweep-none-arm-removed', owner,
+     'None => true,',
+     'None => false,',
+     None, prefix+'recreation_cancelled_consumed_owner_error_is_reclaimed_by_idle_sweep',
+     '#1218 idle sweep reclaims the record after the error was consumed'),
+    # #1055 ②: dropping the non-retriable delivery guard makes close/shutdown
+    # silently swallow an unconsumed creation error.
+    ('1055-close-pending-error-dropped', owner,
+     '(Ok(()), Some(pending)) if !pending_is_busy(&pending) => Err((*pending).clone()),',
+     '(Ok(()), Some(pending)) if false => Err((*pending).clone()),',
+     None, prefix+'recreation_unconsumed_creation_error_is_returned_by_close_and_shutdown',
+     '#1218 close returns the unconsumed creation error'),
 ]
 
 # These cfg(test) branches are selected at compile time by option_env!.
@@ -265,15 +297,27 @@ def row_name(row):
 
 
 def audit():
+    # #1210: the README's declared mutation count must match the table, so a
+    # future drift fails --audit instead of waiting for a reviewer.
+    readme = (Path(__file__).with_name('README.md')).read_text()
+    declared = re.search(r'(\d+) 项变异绑定完整', readme)
+    if declared is None or int(declared.group(1)) != len(cases):
+        raise SystemExit(f'#1210 README mutation count drift: README says '
+                         f'{declared and declared.group(1)}, table has {len(cases)}')
     rows = []
     for case in cases:
         name, changes, scope, test, assertion = row_parts(case)
         try:
+            # #1210: changes on one file accumulate. Recomputing each change
+            # from the pristine original would let a later write overwrite the
+            # earlier mutation of the same file.
+            accumulated = {}
             for path, old, new in changes:
-                original = path.read_text()
-                changed = mutate(original, scope, [(old, new)])
-                if changed == original:
+                current = accumulated.get(path, path.read_text())
+                changed = mutate(current, scope, [(old, new)])
+                if changed == current:
                     raise ValueError('mutation leaves source unchanged')
+                accumulated[path] = changed
             source = factory.with_name('factory_tests.rs').read_text()
             test_name = test.removeprefix(prefix)
             compact = ''.join(source.split())
@@ -297,7 +341,7 @@ def audit():
             if not test_name.endswith('regenerates_identically') and not any(
                 marker_matches(literal) for literal in literals
                 if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal
-                or '#1020 ' in literal or '#1122 ' in literal):
+                or '#1020 ' in literal or '#1122 ' in literal or '#1218 ' in literal):
                 raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:
@@ -339,14 +383,17 @@ switch_cases = [c for c in chosen if row_name(c) in compile_switches]
 
 def compile_and_classify(row, case):
     name,changes,scope,test,assertion = row_parts(case)
-    path,old,new = changes[0]
+    first_path,first_old,first_new = changes[0]
     if run(name+'-compile',test,compile=True).returncode:
         raise RuntimeError('mutant compile failed')
     row['compiled']=True
     if compile_only:
         row.update(status='COMPILED',reason='mutant no-run passed')
     else:
-        status,reason=classify(run(name+'-negative',test),Case(name,path,old,new,test,assertion,scope))
+        # #1210: the classifier sees every change of a multi-file row, not
+        # only the first one.
+        status,reason=classify(run(name+'-negative',test),
+                               Case(name,first_path,first_old,first_new,test,assertion,scope,changes))
         row.update(status=status,reason=reason)
 
 def restored(row, name, test):
@@ -360,10 +407,15 @@ def restored(row, name, test):
     print(f'{name}: {row["status"]}: {row["reason"]}',flush=True)
 
 def guard_failed(group, error):
-    # A failed guard means the tree may not be restored: every row recorded so
-    # far is untrusted, not only this group's (#979 P0 / #1037, shared
-    # invalidate_completed also revokes ``compiled``). Unrun rows stay INVALID.
-    invalidate_completed(results, f'source guard: {error}')
+    # A failed guard means the tree may not be restored for THIS group's rows:
+    # the source group's rows were already restored and byte-verified inside
+    # their own guarded window, so a later switch-group failure must not revoke
+    # their verdicts (#1210 count drift). The failing group's own rows are
+    # untrusted either way (#979 P0 / #1037; shared invalidate_completed also
+    # revokes ``compiled``). Unrun rows stay INVALID.
+    scope = {row_name(case) for case in group}
+    invalidate_completed([row for row in results if row['mutation'] in scope],
+                          f'source guard: {error}')
     recorded = {row['mutation'] for row in results}
     for case in group:
         name, _changes, _scope, test, assertion = row_parts(case)
@@ -380,15 +432,18 @@ if source_cases:
                 name,changes,scope,test,assertion = row_parts(case)
                 row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
                 try:
-                    texts=[]
+                    # #1210: accumulate per file so two changes on one file
+                    # compose instead of the later write erasing the earlier.
+                    texts={}
                     for path,old,new in changes:
-                        changed=mutate(originals[path].decode(),scope,[(old,new)])
-                        if changed == originals[path].decode():
+                        current=texts.get(path, originals[path].decode())
+                        changed=mutate(current,scope,[(old,new)])
+                        if changed == current:
                             raise ValueError('mutation leaves source unchanged')
-                        texts.append((path,changed))
+                        texts[path]=changed
                     if not compile_only and not passed(run(name+'-positive',test),test):
                         raise RuntimeError('bound positive test failed')
-                    for path,changed in texts:
+                    for path,changed in texts.items():
                         path.write_text(changed)
                     compile_and_classify(row, case)
                 except Exception as error:
@@ -410,16 +465,22 @@ if switch_cases and source_guard_error is not None:
     guard_failed(switch_cases, f'source guard failed earlier: {source_guard_error}')
 elif switch_cases:
     try:
-        with tree_lock(root):
-            for name,path,old,new,scope,test,assertion in switch_cases:
+        # #1055 r5 P2-2: a switch-only run must prove the product tree equals
+        # HEAD too. The official guard with an empty mutation set performs the
+        # same pristine check and holds the same tree lock without owning any
+        # source bytes (option_env! switches never write product sources).
+        with mutating_sources(root, []):
+            for case in switch_cases:
+                name,changes,scope,test,assertion = row_parts(case)
                 row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
                 switch = compile_switches[name]
                 try:
-                    mutate(path.read_text(),scope,[(old,new)])
+                    for path,old,new in changes:
+                        mutate(path.read_text(),scope,[(old,new)])
                     if not compile_only and not passed(run(name+'-positive',test),test):
                         raise RuntimeError('bound positive test failed')
                     env[switch] = '1'
-                    compile_and_classify(row, (name,path,old,new,scope,test,assertion))
+                    compile_and_classify(row, case)
                 except Exception as error:
                     row.update(status='INVALID',reason=f'{type(error).__name__}: {error}')
                 finally:

@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-164 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+170 项变异绑定完整 Rust 测试名和专属失败消息（`--audit` 机检该数与用例表一致，漂移即失败）。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -89,3 +89,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.p
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py "$OUT_DEADLINE" r3-candidate-observation-deadline-accepted
 ```
+
+#1210：`recreate-disposed` 是**两道 disposed 守卫的联合变异**（`SessionProjection::snapshot` 的 TS assertActive 移植 + `SessionState::reload_source` 的 adapter 守卫），只能证明「两道全关会失败」。「第二道守卫单独有效」由 `recreate-disposed-adapter-guard`（只关 adapter 守卫）与 `disposed-guard-removed`（`projection-cache/negative_controls.py`，只关 projection 守卫）两条单变异分别覆盖。同一文件的多条 change 逐条累积应用（后写不再覆盖前写）；开关组按名运行时同样过 `mutating_sources` 的 pristine 校验；开关组自身守卫失败只作废本组行，不回滚已验证还原的源码组判杀计数。这些执行器行为由 `negative-restore/test_restore.py` 的绑定测试与反向负控守护。
+
+#1055：`1055-takeover-removed` 绑定「超时 + 迟到清理 Err」交给紧随 caller（①）；`1055-sweep-busy-arm-removed`、`1055-sweep-none-arm-removed` 绑定 BUSY/无 pending 两臂的 idle 回收（②）；`1055-close-pending-error-dropped` 绑定 close/shutdown 对未消费不可重试错误的交付（②）。策略更正见 `A7.2-SESSION-DRAIN-FILE-STATE-001-R6.md`。

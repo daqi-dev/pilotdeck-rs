@@ -5817,6 +5817,432 @@ async fn recreation_cancelled_timeout_keeps_active_predecessor() {
     cancelled_timeout_retry(false).await;
 }
 
+// #1055 ①: a cancelled caller left a drain-timeout BUSY behind, and the drain
+// it stopped waiting on later ends with a cleanup error. The immediately
+// following caller must receive that original disposal error instead of one
+// more replayed BUSY round (TS: every awaiter of the cached disposePromise
+// gets the same rejection; there is no busy tier to mask it).
+#[tokio::test]
+async fn recreation_cancelled_timeout_late_cleanup_error_is_returned_to_next_caller() {
+    let h = Harness::with_fence_timeout("1218-late-cleanup", Duration::from_millis(50));
+    let (old, _original, gate) = retry_fault(&h, "error").await;
+    let mut options = SessionOwnerOptions::new(Arc::new(RetryInitialFactory {
+        initial: Mutex::new(Some(old.clone())),
+        factory: h.factory.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    followup_bounded("1218 initial owner", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 initial owner succeeds");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "1218"),
+        "#1218 mark dirty"
+    );
+    let mut sent = owner.creations_sent_for_test();
+    let expected_sent = *sent.borrow() + 1;
+    let mut waiting = owner.get_or_create(h.context());
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(
+        poll.is_pending(),
+        "#1218 recreate caller waits for the held drain"
+    );
+    drop(waiting);
+    followup_bounded(
+        "1218 cancelled timeout sent",
+        sent.wait_for(|count| *count >= expected_sent),
+    )
+    .await
+    .expect("#1218 abandoned BUSY sent before the drain completes");
+    assert_eq!(
+        old.state(),
+        HandleState::Draining,
+        "#1218 drain still running behind the abandoned BUSY"
+    );
+    gate.open();
+    // Await the idempotent disposal outcome so the completion is published
+    // before the next caller observes it.
+    let drain_error = followup_bounded("1218 drain outcome", old.dispose("probe".into()))
+        .await
+        .expect_err("#1218 late drain ends with the cleanup error");
+    assert_eq!(
+        drain_error.message, "Failed to dispose agent handle.",
+        "#1218 late drain error shape"
+    );
+    let error = followup_bounded("1218 next caller", owner.get_or_create(h.context()))
+        .await
+        .err()
+        .expect("#1218 next caller receives the late cleanup error");
+    assert_ne!(
+        error.js_error().and_then(|error| error.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#1218 takeover must not replay one more BUSY round"
+    );
+    assert_eq!(
+        error.message, "Failed to dispose agent handle.",
+        "#1218 takeover returns the original disposal error"
+    );
+    assert_eq!(
+        error
+            .causes
+            .first()
+            .and_then(|cause| cause.causes.first())
+            .map(|cause| cause.message.as_str()),
+        Some("DISPOSE_1022"),
+        "#1218 takeover preserves the nested cleanup error"
+    );
+    assert_eq!(
+        lock(&h.observed.bindings).len(),
+        1,
+        "#1218 takeover cannot publish a replacement"
+    );
+    let new = followup_bounded(
+        "1218 retry after takeover",
+        owner.get_or_create(h.context()),
+    )
+    .await
+    .expect("#1218 retry after the takeover delivered the error");
+    assert!(!new.same_identity(&old), "#1218 replacement identity");
+    assert_eq!(
+        lock(&h.observed.bindings).len(),
+        2,
+        "#1218 retry constructs exactly one replacement"
+    );
+    followup_bounded("1218 owner shutdown", owner.shutdown())
+        .await
+        .expect("#1218 owner shutdown succeeds");
+    h.finish("1218-late-cleanup").await;
+}
+
+// #1055 ②: a record holding a retriable, cleanly-drained BUSY is ordinary
+// idle-expiry reclaimable; the next caller is a fresh create (TS: failed and
+// abandoned creates never park a pending record in the map at all).
+#[tokio::test]
+async fn recreation_cancelled_timeout_busy_is_reclaimed_by_idle_sweep() {
+    let now = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let h = Harness::with_fence_timeout("1218-busy-sweep", Duration::from_millis(50));
+    let old = followup_bounded("1218 initial factory", h.factory.create(h.context(), None))
+        .await
+        .expect("#1218 initial factory succeeds");
+    let mut options = SessionOwnerOptions::new(Arc::new(RetryInitialFactory {
+        initial: Mutex::new(Some(old.clone())),
+        factory: h.factory.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let clock = now.clone();
+    options.now_ms = Arc::new(move || clock.load(Ordering::SeqCst));
+    options.idle_timeout_ms = 10;
+    let owner = SessionOwner::new(options);
+    followup_bounded("1218 initial owner", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 initial owner succeeds");
+    let activity = old
+        .begin_activity()
+        .expect("#1218 predecessor holds activity");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "1218"),
+        "#1218 mark dirty"
+    );
+    let mut sent = owner.creations_sent_for_test();
+    let expected_sent = *sent.borrow() + 1;
+    let mut waiting = owner.get_or_create(h.context());
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(
+        poll.is_pending(),
+        "#1218 caller waits for the active predecessor"
+    );
+    drop(waiting);
+    followup_bounded(
+        "1218 cancelled timeout sent",
+        sent.wait_for(|count| *count >= expected_sent),
+    )
+    .await
+    .expect("#1218 fence timeout delivered BUSY before the drain completes");
+    assert_eq!(
+        old.state(),
+        HandleState::Draining,
+        "#1218 predecessor still draining at the timeout"
+    );
+    drop(activity);
+    followup_bounded("1218 clean drain", old.dispose("finish".into()))
+        .await
+        .expect("#1218 predecessor drain completes clean");
+    now.store(11, Ordering::SeqCst);
+    owner.sweep_idle();
+    assert_eq!(
+        owner.cached_session_count(),
+        0,
+        "#1218 idle sweep reclaims the drained-BUSY record"
+    );
+    let fresh = followup_bounded(
+        "1218 fresh create after sweep",
+        owner.get_or_create(h.context()),
+    )
+    .await
+    .expect("#1218 fresh create after idle reclamation");
+    assert!(
+        !fresh.same_identity(&old),
+        "#1218 reclaimed record creates fresh"
+    );
+    followup_bounded("1218 owner shutdown", owner.shutdown())
+        .await
+        .expect("#1218 owner shutdown succeeds");
+    h.finish("1218-busy-sweep").await;
+}
+
+// #1055 ② test (a): once the pending cleanup error is consumed and the retry
+// published the replacement, idle expiry reclaims that record like any other
+// (cell 11: consumed -> None -> sweepable).
+async fn retry_consumed_error_sweep(after_send: bool) {
+    let now = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let h = Harness::new("1218-consumed-sweep");
+    let (old, _original, gate) = retry_fault(&h, "error").await;
+    let mut options = SessionOwnerOptions::new(Arc::new(RetryInitialFactory {
+        initial: Mutex::new(Some(old.clone())),
+        factory: h.factory.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let clock = now.clone();
+    options.now_ms = Arc::new(move || clock.load(Ordering::SeqCst));
+    options.idle_timeout_ms = 10;
+    let owner = SessionOwner::new(options);
+    followup_bounded("1218 initial owner", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 initial owner succeeds");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "1218"),
+        "#1218 mark dirty"
+    );
+    let mut sent = owner.creations_sent_for_test();
+    let expected_sent = *sent.borrow() + 1;
+    let mut waiting = owner.get_or_create(h.context());
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(
+        poll.is_pending(),
+        "#1218 recreate caller waits for the held drain"
+    );
+    if after_send {
+        gate.open();
+        followup_bounded(
+            "1218 abandoned error sent",
+            sent.wait_for(|count| *count >= expected_sent),
+        )
+        .await
+        .expect("#1218 unconsumed error sent before receiver cancellation");
+        drop(waiting);
+    } else {
+        drop(waiting);
+        gate.open();
+        followup_bounded(
+            "1218 abandoned error sent",
+            sent.wait_for(|count| *count >= expected_sent),
+        )
+        .await
+        .expect("#1218 cancelled caller completes before retry");
+    }
+    // Before consumption the non-retriable cleanup error keeps the record.
+    now.store(11, Ordering::SeqCst);
+    owner.sweep_idle();
+    assert_eq!(
+        owner.cached_session_count(),
+        1,
+        "#1218 unconsumed cleanup error is retained by idle sweep"
+    );
+    let error = followup_bounded("1218 replay", owner.get_or_create(h.context()))
+        .await
+        .err()
+        .expect("#1218 consumed cleanup error is replayed");
+    assert_eq!(
+        error.message, "Failed to dispose agent handle.",
+        "#1218 replay error shape"
+    );
+    let new = followup_bounded("1218 retry", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 consumed cleanup error allows retry");
+    assert!(!new.same_identity(&old), "#1218 replacement identity");
+    // The replacement record is ordinary: idle expiry now removes it.
+    now.store(22, Ordering::SeqCst);
+    owner.sweep_idle();
+    assert_eq!(
+        owner.cached_session_count(),
+        0,
+        "#1218 idle sweep reclaims the record after the error was consumed"
+    );
+    let fresh = followup_bounded("1218 fresh create", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 fresh create after idle reclamation");
+    assert!(
+        !fresh.same_identity(&old),
+        "#1218 fresh session after reclamation"
+    );
+    followup_bounded("1218 owner shutdown", owner.shutdown())
+        .await
+        .expect("#1218 owner shutdown succeeds");
+    h.finish("1218-consumed-sweep").await;
+}
+#[tokio::test]
+async fn recreation_cancelled_consumed_owner_error_is_reclaimed_by_idle_sweep() {
+    retry_consumed_error_sweep(false).await;
+}
+#[tokio::test]
+async fn recreation_unconsumed_consumed_owner_error_is_reclaimed_by_idle_sweep() {
+    retry_consumed_error_sweep(true).await;
+}
+
+// #1055 ② cell 8 (existing semantics): the record keeps an unconsumed
+// cleanup error and its handle drain already failed; close returns that
+// original disposer error to the closing caller.
+#[tokio::test]
+async fn recreation_unconsumed_cleanup_error_is_returned_by_close() {
+    let h = Harness::new("1218-close-cleanup");
+    let (old, _original, gate) = retry_fault(&h, "error").await;
+    let mut options = SessionOwnerOptions::new(Arc::new(RetryInitialFactory {
+        initial: Mutex::new(Some(old.clone())),
+        factory: h.factory.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    followup_bounded("1218 initial owner", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 initial owner succeeds");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "1218"),
+        "#1218 mark dirty"
+    );
+    let mut sent = owner.creations_sent_for_test();
+    let expected_sent = *sent.borrow() + 1;
+    let mut waiting = owner.get_or_create(h.context());
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(
+        poll.is_pending(),
+        "#1218 recreate caller waits for the held drain"
+    );
+    drop(waiting);
+    gate.open();
+    followup_bounded(
+        "1218 abandoned error sent",
+        sent.wait_for(|count| *count >= expected_sent),
+    )
+    .await
+    .expect("#1218 cancelled caller completes before close");
+    let error = followup_bounded("1218 close", owner.close(&h.context().session_key))
+        .await
+        .expect_err("#1218 close returns the original disposer error");
+    assert_eq!(
+        error.message, "Failed to dispose agent handle.",
+        "#1218 close disposer error identity"
+    );
+    assert_eq!(
+        error
+            .causes
+            .first()
+            .and_then(|cause| cause.causes.first())
+            .map(|cause| cause.message.as_str()),
+        Some("DISPOSE_1022"),
+        "#1218 close preserves the nested cleanup error"
+    );
+    assert_eq!(
+        owner.cached_session_count(),
+        0,
+        "#1218 close removed the record"
+    );
+    followup_bounded("1218 owner shutdown", owner.shutdown())
+        .await
+        .expect("#1218 owner shutdown succeeds");
+    h.finish("1218-close-cleanup").await;
+}
+
+// #1055 ② tests (b): an evicted record's unconsumed, non-retriable creation
+// error has no other delivery path once its caller is gone — close returns it
+// and shutdown aggregates it (TS has no counterpart: failed creates never
+// enter the router map).
+async fn unconsumed_creation_pending(h: &Harness) -> (SessionOwner, pilotdeck_protocol::JsString) {
+    let initial = followup_bounded("1218 creation initial", h.factory.create(h.context(), None))
+        .await
+        .expect("#1218 creation initial factory session");
+    struct FailsOnce {
+        initial: Mutex<Option<LiveSessionHandle>>,
+    }
+    impl SessionFactory for FailsOnce {
+        fn can_recreate(&self) -> bool {
+            true
+        }
+        fn create(
+            &self,
+            _: SessionContext,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            if let Some(initial) = lock(&self.initial).take() {
+                return Box::pin(async move { Ok(initial) });
+            }
+            Box::pin(async move { Err(RuntimeError::new("FAILURE_1218")) })
+        }
+    }
+    let mut options = SessionOwnerOptions::new(Arc::new(FailsOnce {
+        initial: Mutex::new(Some(initial)),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    followup_bounded("1218 creation cache", owner.get_or_create(h.context()))
+        .await
+        .expect("#1218 creation initial owner");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "1218"),
+        "#1218 creation dirty"
+    );
+    let mut sent = owner.creations_sent_for_test();
+    let expected_sent = *sent.borrow() + 1;
+    let mut waiting = owner.get_or_create(h.context());
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(
+        poll.is_pending(),
+        "#1218 creation caller waits for the factory"
+    );
+    drop(waiting);
+    followup_bounded(
+        "1218 creation failure sent",
+        sent.wait_for(|count| *count >= expected_sent),
+    )
+    .await
+    .expect("#1218 unconsumed creation failure stored");
+    (owner, h.context().session_key)
+}
+
+#[tokio::test]
+async fn recreation_unconsumed_creation_error_is_returned_by_close_and_shutdown() {
+    let h = Harness::new("1218-close-creation");
+    let (owner, key) = unconsumed_creation_pending(&h).await;
+    let error = followup_bounded("1218 close", owner.close(&key))
+        .await
+        .expect_err("#1218 close returns the unconsumed creation error");
+    assert_eq!(
+        error.message, "FAILURE_1218",
+        "#1218 close creation error identity"
+    );
+    assert_eq!(
+        owner.cached_session_count(),
+        0,
+        "#1218 close removed the record"
+    );
+    followup_bounded("1218 post-close shutdown", owner.shutdown())
+        .await
+        .expect("#1218 shutdown after close is clean");
+    let (owner, _key) = unconsumed_creation_pending(&h).await;
+    let error = followup_bounded("1218 shutdown", owner.shutdown())
+        .await
+        .expect_err("#1218 shutdown aggregates the unconsumed creation error");
+    assert_eq!(
+        error.message, "Failed to shut down all agent sessions.",
+        "#1218 shutdown aggregate shape (TS finishShutdown AggregateError)"
+    );
+    assert_eq!(
+        error.causes.first().map(|cause| cause.message.as_str()),
+        Some("FAILURE_1218"),
+        "#1218 shutdown creation error identity"
+    );
+    h.finish("1218-close-creation").await;
+}
+
 #[tokio::test]
 async fn writer_busy_budget_excludes_drained_snapshot() {
     let h = Harness::with_fence_timeout("r2-slow-snapshot", Duration::from_secs(5));

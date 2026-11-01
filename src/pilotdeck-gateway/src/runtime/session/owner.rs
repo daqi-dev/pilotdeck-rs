@@ -236,26 +236,26 @@ impl SessionOwner {
                 .records
                 .get_mut(&context.session_key)
                 .and_then(|record| {
-                    // A cancelled caller may leave a transient BUSY behind.
-                    // Completed drain makes that retryable; cleanup errors must
-                    // still reach the public caller, even if the factory worker
-                    // has already acknowledged the underlying disposal error.
-                    let stale_busy =
-                        record
-                            .unreported_creation_error
-                            .as_ref()
-                            .is_some_and(|error| {
-                                error
-                                    .js_error
-                                    .as_ref()
-                                    .and_then(|error| error.code.as_deref())
-                                    == Some("SESSION_WRITER_BUSY")
-                            })
-                            && record.handle.recreation_drained();
+                    // #1055 ①: a cancelled caller may leave a transient BUSY
+                    // behind. Judge the disposal outcome FIRST: a drain that
+                    // already ended in an unreported cleanup error hands that
+                    // original error to THIS caller instead of replaying one
+                    // more BUSY round; only a clean (or already reported) drain
+                    // makes the stale BUSY retryable. Cleanup errors must
+                    // still reach the public caller, even if the factory
+                    // worker has already acknowledged them.
+                    let pending_busy = record
+                        .unreported_creation_error
+                        .as_ref()
+                        .is_some_and(|error| pending_is_busy(error));
                     #[cfg(test)]
-                    let stale_busy =
-                        stale_busy && option_env!("PDRS_1022_R3_REPLAY_DRAINED_BUSY").is_none();
-                    if stale_busy {
+                    let pending_busy =
+                        pending_busy && option_env!("PDRS_1022_R3_REPLAY_DRAINED_BUSY").is_none();
+                    if pending_busy
+                        && let Some(error) = record.handle.take_recreation_disposal_error()
+                    {
+                        record.unreported_creation_error = Some(Arc::new(error));
+                    } else if pending_busy && record.handle.recreation_drained() {
                         record.unreported_creation_error.take();
                     }
                     record.unreported_creation_error.clone()
@@ -701,6 +701,10 @@ impl SessionOwner {
                     )
                 };
                 if let Some(record) = record {
+                    // #1055 ②: an evicted record's unconsumed creation error
+                    // would otherwise die with it; the closing caller receives
+                    // it once the disposal itself succeeded.
+                    let pending = record.unreported_creation_error.clone();
                     let result = owner.evict(&key, record, EvictionReason::Closed).await;
                     let _state = owner.0.state.lock().unwrap();
                     owner
@@ -708,7 +712,7 @@ impl SessionOwner {
                         .turns
                         .admission
                         .end_identity(&key, identity.as_ref());
-                    result
+                    combine_pending_error(result, pending)
                 } else {
                     Ok(())
                 }
@@ -786,7 +790,14 @@ impl SessionOwner {
             .filter(|key| {
                 let record = &state.records[*key];
                 // Idle eviction has no caller to receive an abandoned error.
-                let no_pending_error = record.unreported_creation_error.is_none();
+                // #1055 ②: a retriable BUSY is reclaimable once the drain it
+                // waited on ended clean — after that point no cleanup error can
+                // surface from this record. Non-retriable errors stay until a
+                // caller consumes them or close/shutdown delivers them.
+                let no_pending_error = match record.unreported_creation_error.as_ref() {
+                    None => true,
+                    Some(pending) => pending_is_busy(pending) && record.handle.recreation_drained(),
+                };
                 #[cfg(test)]
                 let no_pending_error =
                     no_pending_error || option_env!("PDRS_1022_R3_SWEEP_PENDING_ERROR").is_some();
@@ -861,7 +872,14 @@ impl SessionOwner {
                 for (key, record) in records {
                     let owner = owner.clone();
                     drains.push(tokio::spawn(async move {
-                        owner.evict(&key, record, EvictionReason::Shutdown).await
+                        // #1055 ②: fold each record's unconsumed creation
+                        // error into the shutdown aggregate once its own
+                        // disposal succeeded, so it is not silently dropped.
+                        let pending = record.unreported_creation_error.clone();
+                        combine_pending_error(
+                            owner.evict(&key, record, EvictionReason::Shutdown).await,
+                            pending,
+                        )
                     }));
                 }
                 for drain in drains {
@@ -973,6 +991,31 @@ fn ticket(state: &mut State, key: &JsString) -> Ticket {
 
 fn project_paused(state: &State, project: Option<&JsString>) -> bool {
     project.is_some_and(|project| !project.is_empty() && state.paused_projects.contains(project))
+}
+
+/// #1055 ②: only the factory's transient drain-timeout error is retriable.
+/// Cleanup, prepare and setup errors stay with the record until a caller or a
+/// close/shutdown consumes them.
+fn pending_is_busy(error: &RuntimeError) -> bool {
+    error
+        .js_error
+        .as_ref()
+        .and_then(|error| error.code.as_deref())
+        == Some("SESSION_WRITER_BUSY")
+}
+
+/// #1055 ②: after an eviction removed the record, an unconsumed non-retriable
+/// creation error has no other delivery path left. Return it to the evicting
+/// caller when the disposal itself succeeded; a failed disposal keeps its own
+/// error, and a retriable BUSY is never delivered by close/shutdown.
+fn combine_pending_error(
+    result: RuntimeResult,
+    pending: Option<Arc<RuntimeError>>,
+) -> RuntimeResult {
+    match (result, pending) {
+        (Ok(()), Some(pending)) if !pending_is_busy(&pending) => Err((*pending).clone()),
+        (result, _) => result,
+    }
 }
 
 fn track(

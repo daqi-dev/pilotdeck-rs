@@ -158,6 +158,20 @@ def main():
     for _, filename, old, new, _, _ in mutations:
         mutate((root / filename).read_text(), None, [(old, new)])
     if sys.argv[1:] == ['--audit']:
+        # #1210: bound test names may come from the matrix_tests! macro table,
+        # so a plain `fn <name>` scan would not find them. Accept either the
+        # direct function or the `name=>"case"` table entry; anything else
+        # fails the audit instead of silently binding a nonexistent test.
+        # Guards bound at the factory::tests level (regenerates_identically)
+        # live in factory_tests.rs, so both files are scanned.
+        test_source = '\n'.join(
+            (root / 'src/pilotdeck-gateway/src/runtime/session' / name).read_text()
+            for name in ('projection_cache_tests.rs', 'factory_tests.rs'))
+        compact = ''.join(test_source.split())
+        for _name, _filename, _old, _new, test, _assertion in mutations:
+            short = test.rsplit('::', 1)[-1]
+            if 'fn' + short + '(' not in compact and short + '=>"' not in test_source:
+                raise SystemExit(f'#1210 bound test not found for {short}: {test}')
         print('PASS: #1011 projection cache mutation anchors (static only)')
         return 0
     if len(sys.argv) != 2:

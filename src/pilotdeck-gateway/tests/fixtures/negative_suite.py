@@ -21,6 +21,9 @@ class Case:
     test: str
     assertion: object
     scope: object = None
+    # #1210: the full (path, old, new) list of a multi-file/multi-change row.
+    # path/old/new above stay the first change for backward compatibility.
+    changes: object = None
 
 
 def passed(result, test):
