@@ -767,5 +767,7 @@ def verified_parity_lock(timeout=600, takeovers=None, lock=LOCK):
 
 def install_shutdown():
     def interrupt(signum, frame):
+        if isinstance(sys.exception(), KeyboardInterrupt):
+            return
         raise KeyboardInterrupt(f'signal {signum}: cleaning owned groups and releasing lock')
     signal.signal(signal.SIGTERM, interrupt)
