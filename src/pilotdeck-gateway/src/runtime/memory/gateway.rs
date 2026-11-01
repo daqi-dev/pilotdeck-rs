@@ -195,10 +195,67 @@ fn scope_is_session(params: &JsValue) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::js_is_space_unit;
     use super::*;
 
     fn js(json: &str) -> JsValue {
         pilotdeck_protocol::parse_json(json).expect("#1214 test JSON must parse")
+    }
+
+    /// The complete `String.prototype.trim` whitespace set of the fixed TS
+    /// baseline, measured by scanning every UTF-16 code unit on Node v22.22.0
+    /// (`String.fromCharCode(unit).trim() === ''`; #1226 delivery evidence
+    /// `whitespace-probe.log`). The #1214 replay corpus only pinned 6 of
+    /// these 25 units, so a dropped or widened boundary survived it.
+    const TS_TRIM_SPACE_UNITS: [u16; 25] = [
+        0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680, 0x2000, 0x2001, 0x2002,
+        0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F,
+        0x205F, 0x3000, 0xFEFF,
+    ];
+
+    /// #1226: exhaustive pin of [`js_is_space_unit`] over the whole UTF-16
+    /// code-unit range. Any unit removed from or added to the match arms
+    /// drifts against the measured TS trim set.
+    #[test]
+    fn js_is_space_unit_pins_the_ts_trim_whitespace_set() {
+        let drifted: Vec<String> = (0u16..=u16::MAX)
+            .filter(|&unit| js_is_space_unit(unit) != TS_TRIM_SPACE_UNITS.contains(&unit))
+            .map(|unit| format!("U+{unit:04X}"))
+            .collect();
+        assert!(
+            drifted.is_empty(),
+            "#1226 js_is_space_unit drifted from the TS trim whitespace set: {drifted:?}"
+        );
+    }
+
+    /// #1226: `requireManagementProjectKey` (InProcessGateway.ts:3144-3148)
+    /// only trims to check emptiness; the validated key keeps its raw units.
+    #[test]
+    fn require_management_project_key_only_trims_for_emptiness() {
+        for &unit in &TS_TRIM_SPACE_UNITS {
+            let mut padded = vec![unit];
+            padded.extend("/pdrs-fixture/project".encode_utf16());
+            padded.push(unit);
+            let key = require_management_project_key(&JsValue::String(JsString::from_utf16(
+                padded.clone(),
+            )))
+            .unwrap_or_else(|_| {
+                panic!("#1226 U+{unit:04X}-padded projectKey must pass validation")
+            });
+            assert_eq!(
+                key.units(),
+                padded.as_slice(),
+                "#1226 U+{unit:04X}-padded projectKey must keep its raw units"
+            );
+            let blank =
+                require_management_project_key(&JsValue::String(JsString::from_utf16(vec![unit])))
+                    .expect_err("#1226 whitespace-only projectKey must be rejected");
+            assert_eq!(
+                blank.code(),
+                Some("PROJECT_NOT_FOUND"),
+                "#1226 whitespace-only projectKey rejection code"
+            );
+        }
     }
 
     #[test]

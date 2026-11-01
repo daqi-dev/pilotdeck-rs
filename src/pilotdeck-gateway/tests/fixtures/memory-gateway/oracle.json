@@ -2197,6 +2197,177 @@
               "sessionKey": "​"
             }
           ]
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " "
+          },
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required."
+          },
+          "calls": []
+        }
+      ]
+    },
+    {
+      "name": "project-key-padded-passthrough",
+      "capability": "available",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        },
+        {
+          "id": "g",
+          "sourceSessionKey": "a\ud800b"
+        }
+      ],
+      "steps": [
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": "  /pdrs-fixture/project  "
+          },
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"b\",\"title\":\"no-session\"},{\"id\":\"c\",\"sourceSessionKey\":\"s2\"},{\"id\":\"d\",\"sourceSessionKey\":1},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"},{\"id\":\"f\",\"sourceSessionKey\":\"\"},{\"id\":\"g\",\"sourceSessionKey\":\"a\\ud800b\"}]}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "  /pdrs-fixture/project  "
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:  /pdrs-fixture/project  "
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "memoryList",
+          "params": "object",
+          "input": {
+            "projectKey": " /pdrs-fixture/project "
+          },
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"b\",\"title\":\"no-session\"},{\"id\":\"c\",\"sourceSessionKey\":\"s2\"},{\"id\":\"d\",\"sourceSessionKey\":1},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"},{\"id\":\"f\",\"sourceSessionKey\":\"\"},{\"id\":\"g\",\"sourceSessionKey\":\"a\\ud800b\"}]}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": " /pdrs-fixture/project "
+            },
+            {
+              "op": "resolve",
+              "key": "resolved: /pdrs-fixture/project "
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "memoryWipe",
+          "params": "object",
+          "input": {
+            "projectKey": " /pdrs-fixture/project ",
+            "scope": "session",
+            "sessionKey": "s1"
+          },
+          "resultJson": "{\"wiped\":true,\"scope\":\"session\"}",
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": " /pdrs-fixture/project "
+            },
+            {
+              "op": "resolve",
+              "key": "resolved: /pdrs-fixture/project "
+            },
+            {
+              "op": "clearSession",
+              "sessionKey": "s1"
+            }
+          ]
         }
       ]
     }
