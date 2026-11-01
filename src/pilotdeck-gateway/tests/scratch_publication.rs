@@ -434,6 +434,66 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     );
 }
 
+/// #1155 fix-r2b review (Codex P1-1): a `started` that appears after the
+/// helper's cap must not be recorded as seen, even when the helper's poll
+/// was paused across the deadline so the loop resumes to find the file
+/// already there — the saw write re-validates the same deadline the loop
+/// watched, so the file-exists short-circuit cannot skip it. The pause is
+/// controlled, not a load gamble: the helper polls once per ten seconds,
+/// the stranger publishes `started` at its 2-second delay, and the cap is
+/// 1 second, so the loop can only resume long after the deadline with the
+/// file long present — deterministically the interleaving the review's
+/// leak needed, and the one a scheduling-paused `started-cap-hardcoded-short`
+/// mutant could have been judged by.
+#[test]
+fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
+    // Every signal here is test machinery, so the whole test lives in a
+    // scratch of its own.
+    let signals = Scratch::new("helper-late-started-signals");
+    let marker = signals.path().join(STRANGER_EOF);
+    let go = signals.path().join(STRANGER_GO);
+    let started = signals.path().join(STRANGER_STARTED);
+    let saw = signals.path().join(STRANGER_SAW);
+    // Declared before the spawn so every later exit of this test — including
+    // a panic from inside the assertions — unwinds through the guard's Drop.
+    let mut stranger = StrangerGuard::new();
+    let mut helper = started_wait_helper(
+        &marker,
+        &go,
+        &started,
+        &saw,
+        Duration::from_secs(2),
+        1,
+        "10",
+    )
+    .spawn()
+    .expect("#1155 the late-started helper must spawn");
+    stranger.adopt(helper_group(helper.id()));
+    // The helper's single poll round sleeps past both the 1-second cap and
+    // the 2-second delayed `started`, so its loop can only leave through
+    // the file-exists short-circuit — with the deadline long gone.
+    let exited = helper
+        .wait()
+        .expect("#1155 the late-started helper must exit on its own");
+    assert!(
+        exited.success(),
+        "#1155 the late-started helper must exit cleanly: {exited}"
+    );
+    assert!(
+        !saw.exists(),
+        "#1155 a started past the helper's cap must not be recorded as seen after a paused poll"
+    );
+    // The stranger did publish `started` — the refusal above was the
+    // deadline's, not a stranger that never started — and the guard ends it
+    // through the same contract as the group tests.
+    let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
+        .expect("#1155 the late-started stranger must still publish its started signal");
+    stranger.watch(stranger_pid(&started_pid));
+    stranger
+        .end()
+        .expect("#1155 the late-started stranger must be killed and reaped by the test's guard");
+}
+
 /// #1141 fix-r2 review P1-1 (Codex): the stranger must be owned from the
 /// moment the helper is spawned — not from a group id the helper child
 /// publishes later, which left a window where a panic could not find the
@@ -545,6 +605,11 @@ fn stalled_without_reading() -> process::Command {
 /// counted on the wall clock, because a round count is only an upper bound
 /// on time under load (#1155 fix-r1 review: the negative control re-hardcodes
 /// 5 s, and a stretched round count could out-wait the delayed `started`).
+/// #1155 fix-r2b review (Codex P1-1): the cap's wall clock is re-checked at
+/// the saw write itself, so a `started` that only appears after the cap —
+/// even when a paused poll resumes to find the file already there, the
+/// loop's file-exists short-circuit having skipped the time check — is not
+/// recorded as seen.
 /// The helper runs as its own process-group leader (`process_group(0)`), so
 /// the stranger — and everything it runs — stays in a group the test alone
 /// can end, and whose id is the spawn-returned one the `spawned` hook hands
@@ -563,17 +628,45 @@ fn dead_helper_with_a_stranger_reader(
     saw: &Path,
     delay: Duration,
 ) -> process::Command {
+    started_wait_helper(
+        marker,
+        go,
+        started,
+        saw,
+        delay,
+        stranger_started_wait_secs(),
+        "0.05",
+    )
+}
+
+/// The helper shape of [`dead_helper_with_a_stranger_reader`] with the
+/// started-wait parameters factored out (#1155 fix-r2b review Codex P1-1):
+/// `wait_secs` is the wall-clock cap — derived from the one test-side
+/// constant — and `poll_secs` the sleep between poll rounds, the
+/// controllable pause of the late-started test below. The `end` the cap
+/// resolves to is computed before the stranger is launched, so both sides
+/// count from before its start, and the saw write re-validates that same
+/// deadline: a `started` that appeared after it is not recorded as seen
+/// just because the file already exists when a paused poll resumes.
+fn started_wait_helper(
+    marker: &Path,
+    go: &Path,
+    started: &Path,
+    saw: &Path,
+    delay: Duration,
+    wait_secs: u64,
+    poll_secs: &str,
+) -> process::Command {
     let delay_ms = delay.as_millis();
-    let wait_secs = stranger_started_wait_secs();
     let mut helper = process::Command::new("/bin/sh");
     helper
         .arg("-c")
         .arg(format!(
             "exec 3<&0
-               python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" {delay_ms} <&3 &
                end=$(( $(date +%s) + {wait_secs} ))
-               while [ ! -e \"$3\" ] && [ \"$(date +%s)\" -lt \"$end\" ]; do /bin/sleep 0.05; done
-               if [ -e \"$3\" ]; then printf saw >\"$4.staging\"; mv \"$4.staging\" \"$4\"; fi
+               python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" {delay_ms} <&3 &
+               while [ ! -e \"$3\" ] && [ \"$(date +%s)\" -lt \"$end\" ]; do /bin/sleep {poll_secs}; done
+               if [ -e \"$3\" ] && [ \"$(date +%s)\" -lt \"$end\" ]; then printf saw >\"$4.staging\"; mv \"$4.staging\" \"$4\"; fi
                exit 0"
         ))
         .arg("dead-helper")
@@ -591,9 +684,13 @@ fn dead_helper_with_a_stranger_reader(
 /// (#1155 r4 review P2): one cap, not two to drift apart — the r4 review
 /// found the helper hardcoded at 5 s against the test's 10 s, so the
 /// helper could give up on a stranger the test was still willing to wait
-/// for.
+/// for. #1155 fix-r2b review (concurrency P2 / boundary P3): the `date +%s`
+/// the helper counts on truncates to whole seconds, so a nominal cap can
+/// lose up to one second of real budget; the `+ 1` compensates and keeps
+/// the helper's true budget at or above the test-side cap. A helper that
+/// out-waits the test is harmless — the test's own hook wait fails first.
 fn stranger_started_wait_secs() -> u64 {
-    STRANGER_STARTED_TIMEOUT.as_secs()
+    STRANGER_STARTED_TIMEOUT.as_secs() + 1
 }
 
 /// The helper's spawn-returned id, which `process_group(0)` above also made
@@ -856,9 +953,14 @@ mod pid_mode {
         assert_only_the_owner_token_remains(&scratch);
     }
 
-    /// `/bin/sh` leaves a background `sleep 5` holding the pipe's read end, then
-    /// `exec`s its own sleep: killing the helper cannot close the read end, so
-    /// only the writer's deadline ends the write. The stranger's `<&3` off the
+    /// `/bin/sh` leaves a background `sleep 30` holding the pipe's read end,
+    /// then `exec`s its own sleep: killing the helper cannot close the read
+    /// end, so only the writer's deadline ends the write. #1155 fix-r2b
+    /// review (boundary P3): the stranger parks for the full 30 s — like the
+    /// group-mode stranger's bounded sleep, only the guard's kill may end it
+    /// — instead of self-exiting at 5 s, because a stranger that dies inside
+    /// the guard's confirm window made the kill contract untestable: a guard
+    /// that never killed still found it exited. The stranger's `<&3` off the
     /// helper's fd 3 save is what keeps it on the read end (#1141 fix-r3,
     /// Linux cb8): the POSIX async rule points a background command's stdin at
     /// `/dev/null` — dash applies it even behind an explicit `<&0`; bash honors
@@ -874,7 +976,7 @@ mod pid_mode {
         helper
             .arg("-c")
             .arg(format!(
-                "exec 3<&0; sleep 5 <&3 & \
+                "exec 3<&0; sleep 30 <&3 & \
                  echo $! >\"{staging}\"; mv \"{staging}\" \"{pid}\"; exec /bin/sleep 30",
                 staging = staging.display(),
                 pid = pid_file.display(),
@@ -960,10 +1062,17 @@ mod pid_mode {
 
 /// Off Linux no pid-mode guard exists (see the module above): every guard
 /// that runs here owns a group, so [`StrangerGuard::terminate`] never falls
-/// through to this — an explicit no-op, not a silent pass.
+/// through to this — an explicit no-op, not a silent pass. #1155 fix-r2b
+/// review (simplify P3): a stranger without a group would be an invariant
+/// violation here — the only `watch`/`follow` callers off Linux own groups —
+/// so the stub says so instead of passing silently.
 #[cfg(not(target_os = "linux"))]
 mod pid_mode {
-    pub(super) fn end_stranger(_guard: &mut super::StrangerGuard) -> std::io::Result<()> {
+    pub(super) fn end_stranger(guard: &mut super::StrangerGuard) -> std::io::Result<()> {
+        debug_assert!(
+            guard.stranger.is_none(),
+            "#1155 an off-Linux guard owns a group; a pid-mode stranger cannot exist here"
+        );
         Ok(())
     }
 }
@@ -1044,9 +1153,36 @@ fn release_subreaper() {
 /// Whether the group still has at least one member, zombies included —
 /// the lib's `process_group::group_exists`, mirrored here because the
 /// lib's test-support module is not visible across the integration-crate
-/// boundary.
+/// boundary (#1155 fix-r2b review, sibling P3): the mirror is deliberate —
+/// a `#[path]` include cannot work, the lib module reads crate-private
+/// siblings — so change this copy only together with the lib's.
 fn group_exists(group: Pid) -> bool {
     rustix::process::test_kill_process_group(group).is_ok()
+}
+
+/// #1155 fix-r2b review (boundary P2 / concurrency P3): classify an fdinfo
+/// read that failed behind an fd the scan had already resolved to the pipe.
+/// The read can fail for a reason other than the fd's own disappearance — a
+/// task in teardown, or one that exec'd a setuid binary, fails the procfs
+/// access check with ESRCH/EACCES (cb8 probe, 6.17: an unreaped zombie's
+/// fdinfo reads ENOENT while its fd link already reads EACCES, and a
+/// setuid-exec'd child's fdinfo reads EACCES) — so the release is proven by
+/// the fd itself being gone, re-read here: an fd that still resolves to the
+/// pipe keeps the scan fail-closed, and only this binary's children can
+/// hold the pipe — none of them execs anything setuid — so an fd that can
+/// no longer be shown to exist, unreadable included, is a release, never a
+/// leak.
+#[cfg(target_os = "linux")]
+fn fdinfo_unreadable(error: io::Error, fd: &Path, wanted: &str) -> Option<io::Error> {
+    fs::read_link(fd)
+        .ok()
+        .is_some_and(|target| target.to_string_lossy() == wanted)
+        .then(|| {
+            io::Error::other(format!(
+                "#1155 reading the fdinfo of {}: {error}",
+                fd.display()
+            ))
+        })
 }
 
 /// #1155 r3 review P2-1: the return-boundary proof. The scan runs inside
@@ -1071,10 +1207,12 @@ fn group_exists(group: Pid) -> bool {
 /// nothing — or to another user, which can never hold this pipe, so
 /// unreadable entries are skipped. An fd of the pipe whose fdinfo cannot
 /// be read, or whose flags line cannot be parsed, is an unknown rather
-/// than a read end: only the fd's own disappearance (ENOENT between the
-/// readlink and the read) proves the copy was released, so every other
-/// read failure fails the scan instead of guessing the fd harmless
-/// (#1155 fix-r1 review, opus P2). The pipe is identified by its inode —
+/// than a read end: the release is proven only by the fd itself being gone
+/// — re-read after a failed fdinfo read, whatever errno the dying task
+/// reported (ENOENT, ESRCH, EACCES alike; #1155 fix-r2b review boundary
+/// P2 / concurrency P3) — so an fd that still resolves to the pipe fails
+/// the scan instead of guessing the fd harmless (#1155 fix-r1 review,
+/// opus P2). The pipe is identified by its inode —
 /// both ends share it and no live pipe reuses it — and a write end by its
 /// fdinfo access mode (`O_WRONLY`/`O_RDWR`, the low two flag bits); a read
 /// end (mode `0`) is the stranger, and passes. `/proc` is Linux: elsewhere
@@ -1111,21 +1249,18 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
                 if target.to_string_lossy() != wanted {
                     continue;
                 }
-                let number = descriptor.file_name();
-                let fdinfo = match fs::read_to_string(format!(
-                    "/proc/{pid}/fdinfo/{}",
-                    number.to_string_lossy()
-                )) {
+                let number = descriptor.file_name().to_string_lossy().into_owned();
+                let fdinfo = match fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", number)) {
                     Ok(fdinfo) => fdinfo,
-                    // The fd disappeared between the readlink and this
-                    // read: the copy was released, which is what the scan
-                    // is about to require of it anyway.
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    // #1155 fix-r2b review (boundary P2 / concurrency P3):
+                    // the release is proven by the fd itself being gone,
+                    // re-read here — see [`fdinfo_unreadable`].
                     Err(error) => {
-                        return Err(io::Error::other(format!(
-                            "#1155 reading the fdinfo of /proc/{pid}/fd/{}: {error}",
-                            number.to_string_lossy()
-                        )));
+                        if let Some(failure) = fdinfo_unreadable(error, &descriptor.path(), &wanted)
+                        {
+                            return Err(failure);
+                        }
+                        continue;
                     }
                 };
                 let access = match fdinfo
@@ -1136,8 +1271,7 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
                     Some(access) => access,
                     None => {
                         return Err(io::Error::other(format!(
-                            "#1155 the fdinfo of /proc/{pid}/fd/{} has no parsable flags line",
-                            number.to_string_lossy()
+                            "#1155 the fdinfo of /proc/{pid}/fd/{number} has no parsable flags line"
                         )));
                     }
                 };
@@ -1145,7 +1279,7 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
                     // A read end — the stranger holds exactly that.
                     continue;
                 }
-                candidates.push(format!("/proc/{pid}/fd/{}", number.to_string_lossy()));
+                candidates.push(format!("/proc/{pid}/fd/{number}"));
             }
         }
         // A candidate counts as a surviving write end only if it persists
@@ -1169,6 +1303,37 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
     #[cfg(not(target_os = "linux"))]
     let _ = pipe;
     Ok(())
+}
+
+/// #1155 fix-r2b review (boundary P2 / concurrency P3): the two outcomes of
+/// an fdinfo read that failed behind an already-matched fd — a live fd
+/// fails the scan closed, a gone fd proves the release — pinned without the
+/// kernel race that produces the errno in the wild (ESRCH stands in for it
+/// here).
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd() {
+    use std::os::fd::AsRawFd;
+    let esrch = || io::Error::from_raw_os_error(3);
+    let held = fs::File::open("/dev/null").expect("#1155 open the fdinfo probe descriptor");
+    let fd = format!("/proc/self/fd/{}", held.as_raw_fd());
+    let wanted = fs::read_link(&fd)
+        .expect("#1155 read the fdinfo probe descriptor's target")
+        .to_string_lossy()
+        .into_owned();
+    let unknown = fdinfo_unreadable(esrch(), Path::new(&fd), &wanted)
+        .expect("#1155 an unreadable fdinfo behind a live fd must fail the scan closed");
+    assert!(
+        unknown.to_string().contains("#1155 reading the fdinfo"),
+        "#1155 the fail-closed error must name the fdinfo read: {unknown}"
+    );
+    // A descriptor number nothing holds — released, in the scan's terms —
+    // cannot be shown to exist, so its unreadable fdinfo is a release.
+    let gone = Path::new("/proc/self/fd/1048576");
+    assert!(
+        fdinfo_unreadable(esrch(), gone, &wanted).is_none(),
+        "#1155 an fd that is gone must prove the release of its unreadable fdinfo"
+    );
 }
 
 /// Wait until the stranger has published `signal`, bounded by `wait`; the

@@ -29,10 +29,13 @@ never shows the write window, so the two race mutants are a Linux contract
 mutants, which need `/proc` and `PR_SET_CHILD_SUBREAPER`: the scan's
 access-mode filter (`boundary-write-end-filter-removed`), the fdinfo
 fail-closed branches (`boundary-fdinfo-read-error` /
-`boundary-fdinfo-parse-error`, #1155 fix-r1 review opus row 1), the
-subreaper lease (`stranger-subreaper-removed`), and the group reaping
-(`stranger-reap-removed`). The other thirteen must kill on every unix
-host — `stranger-retention-reverted` included: bash (the macOS `/bin/sh`)
+`boundary-fdinfo-parse-error`, #1155 fix-r1 review opus row 1, plus
+`boundary-fdinfo-unknown-passed` for the release re-check, #1155 fix-r2b
+review boundary P2), the subreaper lease (`stranger-subreaper-removed`),
+the group reaping (`stranger-reap-removed`), and the pid-mode guard's
+kill (`stranger-pid-kill-removed`, #1155 fix-r2b review boundary P3 —
+the pid-mode test itself is Linux-only). The other fourteen must kill on
+every unix host — `stranger-retention-reverted` included: bash (the macOS `/bin/sh`)
 keeps the pipe behind an explicit `<&0`, so `started` still appears, but
 the reverted helper writes no `saw` marker and the #1155 r4 saw assertion
 kills it (under dash, the Linux `/bin/sh`, a background command's stdin
@@ -75,7 +78,13 @@ first — one anchor list for the two outcomes); the helper's and the
 test's started-wait caps are one derived constant
 (`started-cap-hardcoded-short`, r4 review P2 — a re-hardcoded 5-second
 wall clock gives up 3 s of real time before the 8-second delayed `started`
-on any host, so the helper dies without its saw marker); the
+on any host, so the helper dies without its saw marker), and a `started`
+that appears after the cap is not recorded as seen at all
+(`saw-write-skips-the-cap`, #1155 fix-r2b review Codex P1-1 — the saw
+write re-validates the same deadline the loop watched, so even a poll
+paused across the cap that resumes to find the file already there
+refuses it; the late-started test controls the pause instead of gambling
+on load); the
 return-boundary scan flags write ends only
 (`boundary-write-end-filter-removed`, r3 review P2-1 — without the
 access-mode filter the stranger's read end fails the healthy path; bound
@@ -107,6 +116,9 @@ stalled = 'a_stalled_helper_is_killed_and_cleaned_up'
 unread = 'a_helper_that_never_reads_hits_the_write_deadline'
 dead_stranger = 'a_dead_helper_with_a_stranger_reader_still_closes_the_write_end'
 panic_stranger = 'a_panic_while_the_stranger_runs_still_ends_it'
+late_started = 'a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll'
+pid_stranger = 'a_stranger_on_the_read_end_still_hits_the_write_deadline'
+fdinfo_unit = 'an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd'
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
 # process owns the subreaper lease instead of the shared lib test process.
@@ -429,10 +441,10 @@ cases = [
     # hosts (#1155 fix-r1 review, opus row 3).
     ('stranger-retention-reverted', publication,
      '''            "exec 3<&0
-               python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" {delay_ms} <&3 &
                end=$(( $(date +%s) + {wait_secs} ))
-               while [ ! -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; do /bin/sleep 0.05; done
-               if [ -e \\"$3\\" ]; then printf saw >\\"$4.staging\\"; mv \\"$4.staging\\" \\"$4\\"; fi
+               python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" {delay_ms} <&3 &
+               while [ ! -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; do /bin/sleep {poll_secs}; done
+               if [ -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; then printf saw >\\"$4.staging\\"; mv \\"$4.staging\\" \\"$4\\"; fi
                exit 0"''',
      '''            "python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" 0 <&0 &
                exit 0"''',
@@ -466,12 +478,29 @@ cases = [
     # `started` the helper gives up first, dies without leaving its `saw`
     # marker, and the dead-helper test's saw assertion kills; the
     # publication itself still behaves, which is exactly the r4 finding
-    # (the drift was invisible to every other assertion).
+    # (the drift was invisible to every other assertion). #1155 fix-r2b
+    # review: the derivation now adds the `+ 1` truncation compensation —
+    # the anchor covers it — and the saw write re-validates the deadline,
+    # so the 5 s mutant is refused there too even if a paused poll resumes
+    # to find the file already present.
     ('started-cap-hardcoded-short', publication,
-     '''    STRANGER_STARTED_TIMEOUT.as_secs()''',
+     '''    STRANGER_STARTED_TIMEOUT.as_secs() + 1''',
      '''    5''',
      publication_target, dead_stranger,
      "#1155 the helper must observe the stranger's started signal before it dies"),
+    # #1155 fix-r2b review (Codex P1-1): a started that appears after the
+    # helper's cap must not be recorded as seen — even when the helper's poll
+    # was paused across the deadline so the loop resumes to find the file
+    # already there (the file-exists short-circuit skipped the time check).
+    # The mutant drops the deadline re-check at the saw write, so the
+    # late-started test — one ten-second poll round, cap 1 s, started at the
+    # 2 s delay, all controlled, no load gamble — records the late started as
+    # seen and its saw assertion kills, deterministically on any unix host.
+    ('saw-write-skips-the-cap', publication,
+     '''               if [ -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; then printf saw''',
+     '''               if [ -e \\"$3\\" ]; then printf saw''',
+     publication_target, late_started,
+     "#1155 a started past the helper's cap must not be recorded as seen after a paused poll"),
     # #1155 r3 review P2-1: the scan must only flag write ends. The mutant
     # drops the access-mode filter, so the stranger's read end — a
     # `pipe:[inode]` fd like any other — fails the scan on the healthy path.
@@ -502,6 +531,19 @@ cases = [
      '''.strip_prefix("flags:")''',
      '''.strip_prefix("flagsX:")''',
      publication_target, dead_stranger, 'has no parsable flags line'),
+    # #1155 fix-r2b review (boundary P2 / concurrency P3): an fdinfo read
+    # that fails behind an fd that still resolves to the pipe must fail the
+    # scan closed — the read can fail for reasons other than the fd's own
+    # disappearance (ESRCH in teardown, EACCES behind a setuid exec; cb8
+    # probe), so the release is proven by the fd being gone, re-read inside
+    # `fdinfo_unreadable`. The mutant makes the re-read never confirm a live
+    # fd, so the unit test's live-fd half fails at its expect while its
+    # gone-fd half pins the release side (Linux contract: /proc).
+    ('boundary-fdinfo-unknown-passed', publication,
+     '''        .is_some_and(|target| target.to_string_lossy() == wanted)''',
+     '''        .is_some_and(|target| false)''',
+     publication_target, fdinfo_unit,
+     '#1155 an unreadable fdinfo behind a live fd must fail the scan closed'),
     # #1155 r3 review P2-2: without the subreaper lease the orphaned
     # stranger lands on PID 1, so the guard's `waitid` finds no child of
     # this process — an ECHILD — and the strict Linux path turns that into
@@ -524,6 +566,25 @@ cases = [
         let _ = group;''',
      publication_target, dead_stranger,
      "#1141 the stranger's process group survived the guard's kill"),
+    # #1155 fix-r2b review (boundary P3): the pid-mode guard's kill itself
+    # had no negative control — its stranger now parks (sleep 30) instead of
+    # self-exiting at 5 s, so a guard that never kills leaves it alive and
+    # the reparented-confirmation times out with "did not die by the guard's
+    # kill"; the end() expect of the pid-mode test is the assertion that
+    # kills (Linux contract: the pid-mode test is Linux-only). The kill-error
+    # propagation half of the fix-r1 tightening stays defense-in-depth
+    # without a mutant of its own: under the subreaper lease the stranger's
+    # zombie pins its pid, so a real kill cannot fail ESRCH on any path this
+    # binary can reach.
+    ('stranger-pid-kill-removed', publication,
+     '''        rustix::process::kill_process(stranger, Signal::KILL).map_err(|error| {
+            io::Error::other(format!(
+                "#1155 the guard's stranger kill could not be sent: {error}"
+            ))
+        })?;''',
+     '''        let _ = stranger;''',
+     publication_target, pid_stranger,
+     "#1155 the stranger must be killed and reaped by the test's guard, not PID 1's"),
 ]
 
 
