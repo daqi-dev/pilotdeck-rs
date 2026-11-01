@@ -35,7 +35,6 @@ const { readSessionInfo } = await import(`${BASE}/src/session/storage/SessionLis
 const outputName = process.env.MATRIX_OUTPUT ?? 'raw';
 assert.match(outputName, /^[a-z0-9-]+$/);
 const rawDir = path.join(ROOT, outputName);
-const runDir = fs.mkdtempSync(path.join(ROOT, 'run-'));
 fs.mkdirSync(rawDir, {recursive:true});
 const rel = (p: string) => path.relative(ROOT, p);
 const clone = (v: any) => JSON.parse(JSON.stringify(v));
@@ -63,6 +62,8 @@ const selected = requested.length ? cases.filter(c=>requested.includes(c.name)) 
 assert(selected.length > 0);
 const results: any[] = [];
 const rows: any[] = [];
+const runDir = fs.mkdtempSync(path.join(ROOT, 'run-'));
+try {
 for (const config of selected) {
  const report: any = {name:config.name, baseline, node:process.version, config, scope:'real AgentSession/TurnRunner/session persistence; deterministic fake loop and auxiliary ModelRuntime.complete', timeline:[], events:[], commits:[], snapshots:[], console:[], modelRequests:[], checks:[]};
  let ordinal=0, uuid=0;
@@ -205,7 +206,7 @@ for(const c of [
  {name:'secret-key',path:'credential.json'}, {name:'pem',path:'private.pem'},
  {name:'same-hash',path:'output.txt',before:'artifact',explicit:true},
 ]) {
- const workspace=path.join(ROOT,'collector',c.name);fs.mkdirSync(path.dirname(path.join(workspace,c.path)),{recursive:true});
+ const workspace=path.join(runDir,'collector',c.name);fs.mkdirSync(path.dirname(path.join(workspace,c.path)),{recursive:true});
  if(c.fifo)execFileSync('mkfifo',[path.join(workspace,c.path)]);
  if(c.before!==undefined)fs.writeFileSync(path.join(workspace,c.path),c.before,{flag:'wx'});
  const cwd=c.rootLink?workspace+'-link':workspace;if(c.rootLink)fs.symlinkSync(workspace,cwd,'dir');
@@ -221,3 +222,8 @@ for(const c of [
 const sources=['agent/turn/TurnRunner.ts','agent/turn/TurnInputProcessor.ts','agent/session/AgentSession.ts','agent/session/AgentSessionEventRecorder.ts','session/metadata/SessionMetadataStore.ts','session/artifacts/FileArtifactCollector.ts','session/title/SessionTitleGenerator.ts','session/prompt/PromptSuggestionGenerator.ts','session/transcript/JsonlTranscriptWriter.ts','session/events/SessionRuntime.ts','session/events/JsonlSessionEventStore.ts','session/persistence/JsonlSessionPersistence.ts'];
 const oracle={sourceCommit:baseline,sourceSha256:await baselineSourceHashes(BASE,sources.map(p=>'src/'+p)),rows,collectorRows};
 fs.writeFileSync(path.join(ROOT,'oracle.json'),JSON.stringify(oracle,null,2)+'\n',{flag:'wx'});
+} finally {
+ // #1253: raw reports already contain transcript bytes and hashes. Remove
+ // only this invocation's mkdtemp root, including collector FIFO/symlinks.
+ fs.rmSync(runDir,{recursive:true,force:true});
+}
