@@ -2291,12 +2291,12 @@ async fn shutdown_with_partial_body_finishes_at_request_timeout() {
         .await
         .expect("requestTimeout did not fire during shutdown")
         .unwrap();
-    assert_eq!(status(&response), 408, "{response:?}");
-    assert!(
-        String::from_utf8_lossy(&response)
-            .to_ascii_lowercase()
-            .contains("connection: close"),
-        "the body-timeout response must close the connection"
+    // #1232: the bytes are Node's 51-byte 408 (probe `body-timeout-default`);
+    // the termination boundary itself (Rust writes it, Node's cleared checker
+    // hangs) stays the registered shutdown difference from #699.
+    assert_eq!(
+        response, NODE_408,
+        "#1232 the shutdown body-timeout must be Node's 51-byte 408"
     );
     tokio::time::timeout(Duration::from_secs(2), closing)
         .await
@@ -2320,18 +2320,601 @@ async fn slow_request_bodies_are_closed_after_request_timeout() {
     );
     let response = tokio::time::timeout(Duration::from_secs(3), exchange(port, request.as_bytes()))
         .await
-        .expect("requestTimeout did not fire")
-        .unwrap();
-    assert_eq!(status(&response), 408, "slow body must time out");
-    let text = String::from_utf8_lossy(&response);
-    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
-    assert!(body.is_empty(), "Node sends no body with 408");
-    assert!(
-        head.to_ascii_lowercase().contains("connection: close"),
-        "Node closes the connection after 408"
+        .expect("#1232 requestTimeout did not fire")
+        .expect("#1232 the body-timeout exchange must return response bytes");
+    // #1232 M1 (probe `body-timeout-default`): Node's `requestTimeout`
+    // writes the exact 51-byte `requestTimeoutResponse`, not hyper's
+    // encoding with `content-length` / `date`.
+    assert_eq!(
+        response, NODE_408,
+        "#1232 the body requestTimeout must be Node's 51-byte 408"
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+// ---------------------------------------------------------------------------
+// #1232: the pipelined-head matrix. Every cell below replays a shape probed
+// against the real TS server (Node v22.22.0,
+// `_tmp/20261026-issue-1232/node/probe-408-431-shape.mjs`,
+// `probe-408-431-shape.json`); the expected wire bytes in the comments are
+// the probe's recorded output, never hand-written.
+// ---------------------------------------------------------------------------
+
+/// A `POST list` head whose body arrives separately (the pipelined-matrix
+/// first request).
+fn pipelined_list_head(body_len: usize) -> String {
+    format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {body_len}\r\n\r\n"
+    )
+}
+
+/// A `POST list` head with a chunked body.
+fn pipelined_chunked_head() -> String {
+    format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Transfer-Encoding: chunked\r\n\r\n"
+    )
+}
+
+/// The follow-up head of every pipelined cell: `X-Pad` carries the padding,
+/// the body is empty, so an under-limit head is a well-formed request that
+/// answers 400 (`invalid_json`, empty body), exactly like the probe's.
+fn pipelined_follow_up_head(padding: usize, content_length: usize) -> String {
+    format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nX-Pad: {}\r\nContent-Length: {content_length}\r\n\r\n",
+        "a".repeat(padding)
+    )
+}
+
+/// One chunk of a chunked body, with optional chunk extensions.
+fn chunk_frame(body: &[u8], extension: &str) -> Vec<u8> {
+    let mut frame = format!("{:x}{extension}\r\n", body.len()).into_bytes();
+    frame.extend_from_slice(body);
+    frame.extend_from_slice(b"\r\n");
+    frame
+}
+
+/// #1232 M2 (probe `pipelined-oversized-body-late`, 67 bytes, EOF): the next
+/// request head is pipelined while the first request is still in its body
+/// phase. Node's parser scans the bytes the moment they land and destroys the
+/// socket with only the 67-byte 431 on it — the response the in-flight
+/// request would have produced never reaches the wire (the probe recorded the
+/// list handler running, so only the bytes were suppressed, not the handler).
+#[tokio::test]
+async fn pipelined_oversized_head_during_body_writes_node_431_only() {
+    let (store, directory) = file_store("pipelined-431-body-late");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1232 connect to the store under test");
+    let body = list_body();
+    stream
+        .write_all(pipelined_list_head(body.len()).as_bytes())
+        .await
+        .expect("#1232 write the first request head");
+    // Let the server enter the body phase of request 1 — the phase the old
+    // guard refused to scan.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let oversized = pipelined_follow_up_head(DEFAULT_MAX_HEADER_BYTES, 0);
+    stream
+        .write_all(&[body.as_slice(), oversized.as_bytes()].concat())
+        .await
+        .expect("#1232 write the body and the oversized follow-up head");
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1232 a pipelined oversized head during a body answers with only the Node 431",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 M2 (probe `pipelined-oversized-single-burst`, 67 bytes, EOF): the
+/// whole exchange — head, body, and the oversized follow-up head — arrives in
+/// one write, like a client that has already queued the next request.
+#[tokio::test]
+async fn pipelined_oversized_head_single_burst_writes_node_431_only() {
+    let (store, directory) = file_store("pipelined-431-single-burst");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1232 connect to the store under test");
+    let body = list_body();
+    let oversized = pipelined_follow_up_head(DEFAULT_MAX_HEADER_BYTES, 0);
+    stream
+        .write_all(
+            &[
+                pipelined_list_head(body.len()).into_bytes(),
+                body.clone(),
+                oversized.into_bytes(),
+            ]
+            .concat(),
+        )
+        .await
+        .expect("#1232 write the single-burst pipelined exchange");
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1232 a single-burst pipelined oversized head answers with only the Node 431",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 M2 (probe `pipelined-oversized-with-body`, 67 bytes, EOF): the
+/// oversized follow-up head itself declares a body that keeps dribbling after
+/// the head, so the server has unread bytes in flight when it answers.
+#[tokio::test]
+async fn pipelined_oversized_head_with_declared_body_writes_node_431_only() {
+    let (store, directory) = file_store("pipelined-431-with-body");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let body = list_body();
+    stream
+        .write_all(pipelined_list_head(body.len()).as_bytes())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut declaring = pipelined_follow_up_head(DEFAULT_MAX_HEADER_BYTES, 1000).into_bytes();
+    declaring.push(b'x');
+    stream
+        .write_all(&[body.as_slice(), &declaring].concat())
+        .await
+        .unwrap();
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1232 a pipelined oversized head that declares a body answers with only the Node 431",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 M2 (probe `chunked-pipelined-oversized-body-late`, 67 bytes, EOF):
+/// the same pipelined shape over a `Transfer-Encoding: chunked` body; the
+/// guard must track the chunk framing to find the follow-up head.
+#[tokio::test]
+async fn chunked_pipelined_oversized_head_writes_node_431_only() {
+    let (store, directory) = file_store("chunked-pipelined-431");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1232 connect to the store under test");
+    let body = list_body();
+    stream
+        .write_all(pipelined_chunked_head().as_bytes())
+        .await
+        .expect("#1232 write the chunked request head");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let oversized = pipelined_follow_up_head(DEFAULT_MAX_HEADER_BYTES, 0);
+    stream
+        .write_all(
+            &[
+                chunk_frame(&body, ""),
+                b"0\r\n\r\n".to_vec(),
+                oversized.into_bytes(),
+            ]
+            .concat(),
+        )
+        .await
+        .expect("#1232 write the chunked body and the oversized follow-up head");
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1232 a pipelined oversized head behind a chunked body answers with only the Node 431",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 (probe `chunked-oversized-trailer`, 67 bytes, EOF, the list handler
+/// never ran): Node counts chunked trailer fields toward the same
+/// `maxHeaderSize` budget as the head, so an oversized trailer is the 67-byte
+/// 431 and the still-incomplete request never gets its response.
+#[tokio::test]
+async fn chunked_oversized_trailer_writes_node_431_only() {
+    let (store, directory) = file_store("chunked-oversized-trailer");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let body = list_body();
+    stream
+        .write_all(
+            &[
+                pipelined_chunked_head().into_bytes(),
+                chunk_frame(&body, ""),
+            ]
+            .concat(),
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let trailer = format!(
+        "0\r\nX-Pad: {}\r\n\r\n",
+        "a".repeat(DEFAULT_MAX_HEADER_BYTES)
+    );
+    stream.write_all(trailer.as_bytes()).await.unwrap();
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1232 an oversized chunked trailer is the Node 431 on the message's own budget",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 (probe `chunkext-pipelined-oversized-body-late`, 67 bytes, EOF):
+/// chunk extensions do not blind the framing walk — llhttp skips them, and so
+/// must the guard, or the follow-up head would ride into hyper unaccounted.
+#[tokio::test]
+async fn chunk_extensions_do_not_blind_the_pipelined_guard() {
+    let (store, directory) = file_store("chunkext-pipelined-431");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let body = list_body();
+    stream
+        .write_all(pipelined_chunked_head().as_bytes())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let oversized = pipelined_follow_up_head(DEFAULT_MAX_HEADER_BYTES, 0);
+    stream
+        .write_all(
+            &[
+                chunk_frame(&body, ";ext=1"),
+                b"0\r\n\r\n".to_vec(),
+                oversized.into_bytes(),
+            ]
+            .concat(),
+        )
+        .await
+        .unwrap();
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1232 chunk extensions must not hide a pipelined oversized head",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 M3 negative control (probe `pipelined-under-limit-body-late`, 449
+/// bytes, connection still open): an under-limit follow-up head is served on
+/// the same connection — response 1 (200), response 2 (400 `invalid_json`,
+/// the head declared an empty body) — and a third request proves the
+/// connection stayed usable.
+#[tokio::test]
+async fn pipelined_under_limit_head_is_served_and_connection_reusable() {
+    let (store, directory) = file_store("pipelined-under-limit");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let body = list_body();
+    stream
+        .write_all(pipelined_list_head(body.len()).as_bytes())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let under_limit = pipelined_follow_up_head(15_000, 0);
+    stream
+        .write_all(&[body.as_slice(), under_limit.as_bytes()].concat())
+        .await
+        .unwrap();
+    let first = read_response(&mut stream).await;
+    assert_eq!(
+        status(&first),
+        200,
+        "#1232 an under-limit pipelined head must not disturb the in-flight response: {first:?}"
+    );
+    let second = read_response(&mut stream).await;
+    assert_eq!(
+        status(&second),
+        400,
+        "#1232 the under-limit follow-up head must be served (400 invalid_json): {second:?}"
+    );
+    stream
+        .write_all(&[pipelined_list_head(body.len()).into_bytes(), body].concat())
+        .await
+        .unwrap();
+    let third = read_response(&mut stream).await;
+    assert_eq!(
+        status(&third),
+        200,
+        "#1232 the connection must stay usable after the pipelined exchange: {third:?}"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 M3 chunked negative control (probe
+/// `chunked-pipelined-under-limit-body-late`, 449 bytes, open): the chunked
+/// twin of [`pipelined_under_limit_head_is_served_and_connection_reusable`].
+#[tokio::test]
+async fn chunked_pipelined_under_limit_head_is_served() {
+    let (store, directory) = file_store("chunked-pipelined-under-limit");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let body = list_body();
+    stream
+        .write_all(pipelined_chunked_head().as_bytes())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let under_limit = pipelined_follow_up_head(15_000, 0);
+    stream
+        .write_all(
+            &[
+                chunk_frame(&body, ""),
+                b"0\r\n\r\n".to_vec(),
+                under_limit.into_bytes(),
+            ]
+            .concat(),
+        )
+        .await
+        .unwrap();
+    let first = read_response(&mut stream).await;
+    assert_eq!(
+        status(&first),
+        200,
+        "#1232 the chunked in-flight response must complete: {first:?}"
+    );
+    let second = read_response(&mut stream).await;
+    assert_eq!(
+        status(&second),
+        400,
+        "#1232 the chunked under-limit follow-up must be served: {second:?}"
+    );
+    let plain = list_body();
+    stream
+        .write_all(&[pipelined_list_head(plain.len()).into_bytes(), plain].concat())
+        .await
+        .unwrap();
+    let third = read_response(&mut stream).await;
+    assert_eq!(
+        status(&third),
+        200,
+        "#1232 the chunked connection must stay usable: {third:?}"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 (probe `dup-cl-pipelined-oversized-body-late`): hyper accepts
+/// duplicate equal `Content-Length` values (`role.rs` only rejects differing
+/// values) while Node's parser answers the duplicate with its own 47-byte
+/// 400 — a registered framing difference, so the guard steps aside on it and
+/// the follow-up head reaches hyper's parser unaccounted. What this test pins
+/// is the `serve` backstop's bytes: the oversized head still gets Node's
+/// 67-byte 431 — after response 1, which was already flushed (Node instead
+/// answers 47 bytes of 400 and no response 1) — and not hyper's 123-byte
+/// encoding.
+#[tokio::test]
+async fn duplicate_content_length_pipelined_head_hits_node_431_backstop() {
+    let (store, directory) = file_store("dup-cl-pipelined-431");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1232 connect to the store under test");
+    let body = list_body();
+    let duplicate_length = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {n}\r\nContent-Length: {n}\r\n\r\n",
+        n = body.len()
+    );
+    stream
+        .write_all(duplicate_length.as_bytes())
+        .await
+        .expect("#1232 write the duplicate-length request head");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let oversized = pipelined_follow_up_head(DEFAULT_MAX_HEADER_BYTES, 0);
+    stream
+        .write_all(&[body.as_slice(), oversized.as_bytes()].concat())
+        .await
+        .expect("#1232 write the body and the oversized follow-up head");
+    let first = read_response(&mut stream).await;
+    assert_eq!(
+        status(&first),
+        200,
+        "#1232 hyper serves the duplicate-equal-Content-Length request (registered): {first:?}"
+    );
+    expect_terminal_bytes(
+        &mut stream,
+        NODE_431,
+        "#1232 the backstop must still answer an oversized head with Node's 431 bytes",
+    )
+    .await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232: Node's `maxHeaderSize` accounting is per message, so the budget the
+/// first head consumed must be given back after its body, and the framed body
+/// itself must never be charged to it. The body here is 20 K of head-shaped
+/// `aa: bb` field lines (invalid JSON, so both answers are 400): a guard that
+/// forgot the `Content-Length` framing, or that kept one connection-wide
+/// budget, trips on it and answers the 67-byte 431 instead.
+#[tokio::test]
+async fn pipelined_head_budget_resets_per_message() {
+    let (store, directory) = file_store("budget-reset");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1232 connect to the store under test");
+    let body = "aa: bb\r\n".repeat(2_500);
+    let first = pipelined_follow_up_head(10_000, body.len());
+    let second = pipelined_follow_up_head(10_000, 0);
+    stream
+        .write_all(&[first.into_bytes(), body.into_bytes(), second.into_bytes()].concat())
+        .await
+        .expect("#1232 write the two pipelined messages and the body between them");
+    let served_first = read_response(&mut stream).await;
+    assert_eq!(
+        status(&served_first),
+        400,
+        "#1232 the first ~10 K head plus its 20 K body must be served, not 431: {served_first:?}"
+    );
+    let served_second = read_response(&mut stream).await;
+    assert_eq!(
+        status(&served_second),
+        400,
+        "#1232 the second head must start from a fresh per-message budget, not 431: {served_second:?}"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 (probe `large-body-served-and-connection-reusable`, responses 400
+/// then 200, connection open): body bytes are not header bytes — a 40 KB body
+/// is served (400 `invalid_json` for the non-JSON payload), never the 431,
+/// and the connection stays reusable.
+#[tokio::test]
+async fn large_bodies_do_not_trip_the_header_guard() {
+    let (store, directory) = file_store("large-body");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1232 connect to the store under test");
+    let big = vec![b'x'; 40_000];
+    let head = format!(
+        "POST {STORE_PATH_PREFIX}put HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n",
+        big.len()
+    );
+    stream
+        .write_all(&[head.into_bytes(), big].concat())
+        .await
+        .expect("#1232 write the 40 KB body request");
+    let first = read_response(&mut stream).await;
+    assert_eq!(
+        status(&first),
+        400,
+        "#1232 a 40 KB body must be served, not counted against the header budget: {first:?}"
+    );
+    let body = list_body();
+    stream
+        .write_all(&[pipelined_list_head(body.len()).into_bytes(), body].concat())
+        .await
+        .expect("#1232 write the follow-up request after the large body");
+    let second = read_response(&mut stream).await;
+    assert_eq!(
+        status(&second),
+        200,
+        "#1232 the connection must stay usable after a large body: {second:?}"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1232 unit cell for the `Content-Length` body walk: the guard skips exactly
+/// the framed body bytes, and the head after them is charged to a fresh
+/// per-message budget.
+#[test]
+fn header_guard_walks_content_length_bodies_to_the_next_head() {
+    let mut guard = HeaderGuard::new(64);
+    // Counted: target `/x` (2) + `Host` + `h` (5) + `Content-Length` + `4`
+    // (15) = 22, under the budget.
+    assert!(
+        !guard.push(b"POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\n\r\n"),
+        "#1232 the first head stays under the budget"
+    );
+    assert!(
+        !guard.push(b"abcd"),
+        "#1232 the four framed body bytes are walked, not counted"
+    );
+    assert!(
+        !guard.push(b"POST /x HTTP/1.1\r\nHost: h\r\nX-Pad: "),
+        "#1232 the head after the body is counted on a fresh budget"
+    );
+    assert!(
+        !guard.push(&[b'a'; 30]),
+        "#1232 30 more value bytes stay under the fresh budget (42 of 64)"
+    );
+    assert!(
+        guard.push(&[b'a'; 30]),
+        "#1232 the follow-up head trips its own budget (72 of 64), not the previous message's"
+    );
+}
+
+/// #1232 unit cell for the chunked walk: chunk sizes, extensions, and the
+/// terminal chunk are framing; trailer fields count toward the same budget as
+/// the head (probe `chunked-oversized-trailer`).
+#[test]
+fn header_guard_walks_chunked_bodies_extensions_and_trailers() {
+    let mut guard = HeaderGuard::new(64);
+    // Counted: 2 (target) + 5 (`Host: h`) + 17 + 7 (`Transfer-Encoding:
+    // chunked`) = 31, under the budget.
+    assert!(
+        !guard.push(b"POST /x HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n"),
+        "#1232 the chunked head stays under the budget"
+    );
+    assert!(
+        !guard.push(b"4;ext=1\r\nabcd\r\n0\r\n"),
+        "#1232 chunk sizes and extensions are framing, not counted bytes"
+    );
+    assert!(
+        !guard.push(b"X-Pad: "),
+        "#1232 a trailer field name starts on the message's own budget"
+    );
+    assert!(
+        guard.push(&[b'a'; 40]),
+        "#1232 trailer value bytes are counted (31 + 5 + 40 over 64)"
+    );
+}
+
+/// #1232 unit cell for the step-aside set: duplicate `Content-Length` and
+/// multi-token `Transfer-Encoding` are framings where hyper and Node
+/// disagree, so the guard must stop accounting (the `serve` backstop owns the
+/// follow-up head) and re-arm at the next message boundary.
+#[test]
+fn header_guard_steps_aside_on_untrackable_framing() {
+    let mut guard = HeaderGuard::new(64);
+    assert!(
+        !guard
+            .push(b"POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\n"),
+        "#1232 a duplicate Content-Length does not itself trip the budget"
+    );
+    assert!(
+        !guard.active,
+        "#1232 a duplicate Content-Length must step the guard aside"
+    );
+    assert!(
+        !guard.push(&[b'a'; 200]),
+        "#1232 a stepped-aside guard answers nothing, even far past the budget"
+    );
+    guard.begin(TimeoutPhase::NextHeaders);
+    assert!(
+        guard.active,
+        "#1232 the guard re-arms at the next message boundary"
+    );
+    assert!(
+        !guard.push(b"POST /"),
+        "#1232 the re-armed guard counts the next head from zero"
+    );
+    assert!(
+        guard.push(&[b'a'; 100]),
+        "#1232 the re-armed guard trips on its own budget again"
+    );
+
+    let mut guard = HeaderGuard::new(64);
+    assert!(
+        !guard.push(b"POST /x HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"),
+        "#1232 a multi-token Transfer-Encoding does not itself trip the budget"
+    );
+    assert!(
+        !guard.active,
+        "#1232 a multi-token Transfer-Encoding must step the guard aside"
+    );
 }
 
 #[tokio::test]
