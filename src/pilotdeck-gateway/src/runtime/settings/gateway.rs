@@ -2,7 +2,7 @@
 //! map; every comment below cites the TS line it mirrors.
 use crate::config::{
     Error as ConfigError,
-    store::{ConfigStore, ReloadEvent},
+    store::{ConfigStore, ReloadEvent, Subscription},
 };
 use crate::js_value;
 use crate::runtime::refresh::{ExtensionsReload, RefreshBundle, ReloadOutcome};
@@ -268,11 +268,23 @@ impl SettingsGateway {
             *lock(&sink) = event.changed_paths.clone()
         }));
         // `try { await configStore.reload("sdk-update-settings") } finally
-        // { unsubscribe() }`: the listener is detached even when the reload
-        // fails, before the error reaches the caller.
+        // { unsubscribe() }`: the listener is detached when the reload
+        // settles, when it fails, and when the future is dropped at the
+        // await point (the WS layer drops in-flight requests on disconnect;
+        // `Subscription` has no `Drop` of its own). Same guard shape as
+        // `RefreshBundle::reload_config`'s capture.
+        struct Capture(Option<Subscription>);
+        impl Drop for Capture {
+            fn drop(&mut self) {
+                if let Some(subscription) = self.0.take() {
+                    subscription.unsubscribe();
+                }
+            }
+        }
+        let capture = Capture(Some(subscription));
         let reload = chain.store.reload("sdk-update-settings");
         let result = reload.await;
-        subscription.unsubscribe();
+        drop(capture);
         result.map_err(|error| SettingsError::config(&error))?;
         let changed_paths = std::mem::take(&mut *lock(&captured));
         Ok(update_result(
@@ -412,11 +424,12 @@ fn field<'a>(input: &'a JsValue, name: &str) -> &'a JsValue {
 }
 
 /// `!input.sessionKey?.trim()`: a nullish input throws the property-read
-/// TypeError, a missing/nullish/blank key is rejected as blank, and a
-/// non-string key has no `trim` method, so the call itself throws
-/// `input.sessionKey?.trim is not a function` (the optional chain only
-/// guards nullish values). Returns the raw key, trimmed only for the
-/// emptiness check.
+/// TypeError, a missing/nullish/blank key is rejected as blank (the optional
+/// chain short-circuits on a nullish key value, including the `undefined`
+/// a primitive params' property read yields), and a non-string non-nullish
+/// key has no `trim` method, so the call itself throws
+/// `input.sessionKey?.trim is not a function`. Returns the raw key, trimmed
+/// only for the emptiness check.
 fn required_session_key(input: &JsValue) -> Result<JsString, SettingsError> {
     require_input(input, "sessionKey")?;
     match field(input, "sessionKey") {
@@ -431,6 +444,10 @@ fn required_session_key(input: &JsValue) -> Result<JsString, SettingsError> {
                 Ok(key.clone())
             }
         }
+        JsValue::Undefined | JsValue::Null => Err(SettingsError::gateway(
+            "INVALID_SESSION_KEY",
+            "sessionKey is required.",
+        )),
         _ => Err(SettingsError::type_error(
             "input.sessionKey?.trim is not a function",
         )),
@@ -559,7 +576,8 @@ fn to_string_throw(error: js_value::ToStringError) -> SettingsError {
 /// `frame.params` → `ExtensionsReload` for the bundle delegate. Only an
 /// object params has own properties in TS (`input?.projectKey`); a non-string
 /// truthy `projectKey` or a non-string `changedPaths` entry is coerced with
-/// `String(value)` (see the module docs for the documented edge).
+/// `String(value)` (the registered divergence
+/// `U7-EXTENSIONS-RELOAD-STRING-COERCION-001`, to converge with #1320).
 fn extensions_reload(params: &JsValue) -> Result<ExtensionsReload, SettingsError> {
     let object = match params {
         JsValue::Object(object) => object,

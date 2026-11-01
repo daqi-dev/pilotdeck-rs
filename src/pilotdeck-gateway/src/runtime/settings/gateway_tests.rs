@@ -4,7 +4,9 @@
 //! layers (the #1011 session owner, the real [`ConfigStore`] over a real
 //! scratch YAML tree, the real [`RefreshBundle`] with recording
 //! collaborators), then the reconstructed WS response frame, the event stream
-//! and the post state must match the TS bytes.
+//! and the post state must match the TS oracle rows (JSON structural
+//! equality via `as_serde`: object key order is normalized by serde, so the
+//! key-order bytes are not pinned).
 //!
 //! The TS golden's `assemblyCases` (a gateway assembled without the five
 //! options answers CAPABILITY_UNAVAILABLE / the unsupported projection; an
@@ -116,6 +118,12 @@ fn own_entries(object: &JsObject) -> Vec<(JsString, JsValue)> {
         .collect()
 }
 
+/// JS `String(number)` for the golden's numeric tokens. The `i64` cast is
+/// exact strictly below 1e15; at and above it, Rust's `f64` `Display` prints
+/// the shortest round-trip decimal without an exponent, which matches
+/// `String()` through MAX_SAFE_INTEGER (verified at 1e15 and 2^53 with
+/// Node v22.22.0; JS only switches to exponential notation at 1e21, far
+/// beyond the golden's 100000 range).
 fn number_text(value: f64) -> String {
     if value.fract() == 0.0 && value.abs() < 1e15 {
         format!("{}", value as i64)
@@ -1247,8 +1255,8 @@ async fn settings_gateway_replays_the_real_ts_oracle() {
     };
     assert_eq!(
         cases.len(),
-        49,
-        "#1318 the oracle must carry the full 49-row matrix"
+        54,
+        "#1318 the oracle must carry the full 54-row matrix"
     );
     let harness = harness(&keys);
     let mut failures: Vec<String> = Vec::new();
@@ -1386,6 +1394,84 @@ async fn settings_gateway_dispatch_returns_none_for_non_settings_methods() {
             "#1318 dispatch must own the settings method {method}"
         );
     }
+}
+
+/// The update closure's capture listener is detached `finally`-style,
+/// including when the future is dropped at the reload await point (the WS
+/// layer drops in-flight requests on disconnect) — the plain return-path
+/// unsubscribe missed that window.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn update_settings_detaches_the_capture_listener_when_dropped_mid_reload() {
+    let harness = harness(&[]);
+    harness.make_tree("t-drop", None).await;
+    let store = lock(&harness.trees)
+        .iter()
+        .find(|(name, _)| name == "t-drop")
+        .map(|(_, tree)| tree.store.clone())
+        .expect("#1318-r1 update-drop: the scratch tree must be registered");
+    let before = store.listener_count();
+    // The first listener blocks publication (the flight stays Running), so
+    // the update's own reload chains after it and parks at its await point.
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Mutex::new(Some(release_rx));
+    let blocker = store.subscribe(Arc::new(move |_: &ReloadEvent| {
+        if let Some(rx) = lock(&release_rx).take() {
+            let _ = entered_tx.send(());
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
+        }
+    }));
+    assert_eq!(
+        store.listener_count(),
+        before + 1,
+        "#1318-r1 update-drop: the blocker must be the only new listener"
+    );
+    let first = tokio::spawn(store.reload("manual"));
+    tokio::task::spawn_blocking(move || {
+        entered_rx
+            .recv()
+            .expect("#1318-r1 update-drop: the blocker listener must run")
+    })
+    .await
+    .expect("#1318-r1 update-drop: the gate join must succeed");
+    let gateway = harness.gateway();
+    let input = parse_json(
+        r#"{"source":"localSettings","settings":{"agent":{"maxContextTokens":100000}}}"#,
+    )
+    .expect("#1318-r1 update-drop: the update input must parse");
+    let mut future = Box::pin(gateway.update_settings(&input));
+    let parked = tokio::select! {
+        biased;
+        result = &mut future => panic!(
+            "#1318-r1 update-drop: update_settings must park at the chained reload, got {result:?}"
+        ),
+        _ = tokio::task::yield_now() => true,
+    };
+    assert!(parked, "#1318-r1 update-drop: the parking branch must win");
+    assert_eq!(
+        store.listener_count(),
+        before + 2,
+        "#1318-r1 update-drop: the capture listener must be subscribed while the reload is in flight"
+    );
+    drop(future);
+    assert_eq!(
+        store.listener_count(),
+        before + 1,
+        "#1318-r1 update-drop: dropping the future must detach the capture listener"
+    );
+    release_tx
+        .send(())
+        .expect("#1318-r1 update-drop: the blocker must be released");
+    blocker.unsubscribe();
+    first
+        .await
+        .expect("#1318-r1 update-drop: the first reload must join")
+        .expect("#1318-r1 update-drop: the first reload must succeed");
+    assert_eq!(
+        store.listener_count(),
+        before,
+        "#1318-r1 update-drop: cleanup must leave only the probe listener"
+    );
 }
 
 /// Regeneration guard for the TS golden; run once with `PDRS_BASELINE` set.

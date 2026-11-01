@@ -260,6 +260,13 @@ impl ConfigStore {
         }
     }
 
+    /// Test support: the number of live listener entries (an `Arc` shared by
+    /// two subscriptions counts once).
+    #[cfg(test)]
+    pub(crate) fn listener_count(&self) -> usize {
+        lock(&self.inner.listeners).entries.len()
+    }
+
     /// `startWatching`. Must be called inside a Tokio runtime. The returned
     /// handle stops watching when dropped or via [`WatchHandle::stop`].
     pub fn start_watching(&self, options: WatchOptions) -> Result<WatchHandle, Error> {
