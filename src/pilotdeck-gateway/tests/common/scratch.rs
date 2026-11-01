@@ -124,6 +124,9 @@ pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result
         // The production helper is killed exactly when it overruns; only
         // the publication tests consume a kill report.
         |_| {},
+        // The production helper needs no return-boundary proof; only the
+        // publication tests observe the pipe.
+        |_| Ok(()),
     )
 }
 
@@ -138,8 +141,23 @@ pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result
 /// publishing its group id afterwards (#1141 fix-r2 review P1-1). `reaped`
 /// receives the kill + wait outcome whenever the guard had to end the helper
 /// (#1125 fix-r3 review P2): it is the only liveness evidence the
-/// publication tests use, so no pid is ever read back from a file and
-/// signalled.
+/// publication tests use, so the helper is never signalled through a pid
+/// read back from a file — the guard's kill below owns it. (The Linux-only
+/// pid-mode stranger in `tests/scratch_publication.rs` is the deliberate
+/// exception: its helper runs no group, so the test's guard ends that
+/// stranger through the pid it published, #1155 fix-r1 review P2-1.)
+/// `returning` receives the pipe's inode and runs once
+/// `published` is decided but before the guard disarms — the return
+/// boundary — so a test can prove no write end of that pipe survives the
+/// return (#1155 r3 review P2-1); its error takes precedence over a
+/// `TimedOut` publication, because a leaked descriptor must not hide
+/// behind a deadline error the test already expects.
+///
+/// The write deadline starts only after `spawned` returns (#1155 r4 review
+/// P2): the handover may legitimately wait — for a stranger that confirms it
+/// holds the pipe's read end before the writer starts — and that wait must
+/// not consume the write budget the deadline is supposed to bound.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_executable_bounded(
     path: &Path,
     body: &str,
@@ -148,13 +166,13 @@ pub(crate) fn write_executable_bounded(
     build_helper: impl FnOnce(&Path) -> process::Command,
     spawned: impl FnOnce(u32),
     reaped: impl FnOnce(io::Result<process::ExitStatus>),
+    returning: impl FnOnce(u64) -> io::Result<()>,
 ) -> io::Result<()> {
     let name = path
         .file_name()
         .expect("#1125 executable file name")
         .to_string_lossy();
     let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));
-    let expiry = Instant::now() + deadline;
     let helper = build_helper(&temporary).spawn()?;
     // #1125 fix-r3 review P2-1: the guard owns the helper from the spawn on,
     // so every later exit — an error return, a deadline overrun, or a panic
@@ -177,6 +195,10 @@ pub(crate) fn write_executable_bounded(
         .expect("#1125 reap guard holds the helper")
         .id();
     spawned(helper_id);
+    // #1155 r4 review P2: the expiry starts here, after the handover, so a
+    // `spawned` hook that waits for the helper's descendants to settle (the
+    // stranger confirming the read end) does not eat into the write budget.
+    let expiry = Instant::now() + deadline;
     let mut stdin = guard
         .helper
         .as_mut()
@@ -184,6 +206,10 @@ pub(crate) fn write_executable_bounded(
         .stdin
         .take()
         .expect("#1125 helper stdin is piped");
+    // #1155 r3 review P2-1: the pipe's inode identifies every fd of the
+    // pipe in the return-boundary scan — both ends share it — and it must
+    // be taken before the writer owns the write end.
+    let pipe = pipe_inode(&stdin)?;
     set_nonblocking(&mut stdin)?;
     let (sent, done) = mpsc::channel();
     let payload = body.as_bytes().to_vec();
@@ -263,12 +289,18 @@ pub(crate) fn write_executable_bounded(
         let _ = mode;
         fs::rename(&temporary, path)
     });
-    if published.is_ok() {
+    // #1155 r3 review P2-1: the return boundary. `returning` proves — while
+    // this function still owns the guard, so an error can still clean up —
+    // that no write end of the pipe survives the return; its error takes
+    // precedence over `published` so a leak surfaces even on a deadline
+    // failure the test already expects.
+    let boundary = returning(pipe);
+    if boundary.is_ok() && published.is_ok() {
         // The wait loop reaped the helper and the rename consumed the
         // temporary name; the guard has nothing left to do.
         guard.disarm();
     }
-    published
+    boundary.and(published)
 }
 
 /// Owns the helper between its spawn and the end of
@@ -356,6 +388,22 @@ fn set_nonblocking(stdin: &mut process::ChildStdin) -> io::Result<()> {
 #[cfg(not(unix))]
 fn set_nonblocking(_stdin: &mut process::ChildStdin) -> io::Result<()> {
     Ok(())
+}
+
+/// The helper pipe's inode, shared by both of its ends and unique to it for
+/// as long as any fd of the pipe exists (#1155 r3 review P2-1): the
+/// return-boundary scan identifies a write end of this pipe — as opposed to
+/// any other pipe in the process tree — by that inode. Other targets keep
+/// the `returning` hook but have no scan to feed.
+#[cfg(unix)]
+fn pipe_inode(stdin: &process::ChildStdin) -> io::Result<u64> {
+    use std::os::fd::AsFd;
+    Ok(rustix::fs::fstat(stdin.as_fd())?.st_ino)
+}
+
+#[cfg(not(unix))]
+fn pipe_inode(_stdin: &process::ChildStdin) -> io::Result<u64> {
+    Ok(0)
 }
 
 fn helper_deadline_error(deadline: Duration) -> io::Error {
