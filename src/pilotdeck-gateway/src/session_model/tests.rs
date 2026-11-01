@@ -107,10 +107,10 @@ pub(crate) fn illformed_fixture() -> serde_json::Value {
     .unwrap()
 }
 #[test]
-fn illformed_collation_has_precise_host_boundaries_and_node_responses() {
+fn illformed_collation_is_native_and_preserves_node_responses() {
     let fixture = illformed_fixture();
     assert_eq!(fixture["cases"].as_array().unwrap().len(), 12);
-    verify_responses(&fixture);
+    verify_responses_with_collation(&fixture, true);
 }
 #[test]
 fn complete_default_provider_matches_node_wire_fixtures() {
@@ -142,6 +142,9 @@ fn filesystem_stages_match_real_node_failures_and_races() {
     }
 }
 fn verify_responses(fixture: &serde_json::Value) {
+    verify_responses_with_collation(fixture, false);
+}
+fn verify_responses_with_collation(fixture: &serde_json::Value, native_collation: bool) {
     assert_eq!(fixture["routerCalls"], 0);
     let mut failures = vec![];
     for row in fixture["cases"].as_array().unwrap() {
@@ -168,7 +171,7 @@ fn verify_responses(fixture: &serde_json::Value) {
             "{} kill calls",
             row["id"]
         );
-        if row["forward"].as_bool() == Some(true) {
+        if !native_collation && row["forward"].as_bool() == Some(true) {
             assert!(actual.is_none(), "{} must forward to TS", row["id"]);
             continue;
         }
