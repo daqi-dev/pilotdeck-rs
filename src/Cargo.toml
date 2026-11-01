@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-exclude = ["vendor/tiktoken-rs", "data/icu_collator_data"]
+exclude = ["vendor/tiktoken-rs", "vendor/icu_collator", "data/icu_collator_data"]
 members = [
     "pilotdeck-cli",
     "pilotdeck-agent",
@@ -35,6 +35,7 @@ all = "warn"
 # #438: a side effect inside debug_assert! vanishes in release builds.
 debug_assert_with_mut_call = "warn"
 
-# D6: replace the existing data crate only; algorithms and package versions stay locked.
+# D6 data stays pinned; #132 adds a source patch to preserve isolated UTF-16 weights.
 [patch.crates-io]
 icu_collator_data = { path = "data/icu_collator_data" }
+icu_collator = { path = "vendor/icu_collator" }

@@ -51,11 +51,10 @@ fn assert_fixture_complete(tests: &[JsValue], expected_count: usize) {
         assert!(ids.insert(id.clone()), "duplicate fixture id: {id}");
     }
 }
-fn verify(raw: &str, expected_count: usize, expected_host_count: usize) -> Vec<String> {
+fn verify(raw: &str, expected_count: usize) -> Vec<String> {
     let tests = cases(raw);
     assert_fixture_complete(&tests, expected_count);
     let mut failures = vec![];
-    let mut host_count = 0;
     for test in tests {
         let id = text(field(&test, "id")).unwrap();
         let yaml = text(field(&test, "yaml")).unwrap();
@@ -124,32 +123,6 @@ fn verify(raw: &str, expected_count: usize, expected_host_count: usize) -> Vec<S
         assert!(crate::dispatch::is_local(&frame));
         assert!(crate::dispatch::needs_files(&frame));
         let route = crate::dispatch::route_catalog(&frame, Some(&metadata), &env);
-        // Fixed Node cases whose filtered sorting keys contain ill-formed UTF-16.
-        // Keep the original response bytes; the host owns these comparisons.
-        const HOST_COLLATION_CASES: &[&str] = &[
-            "diag-2458-catalog-filters",
-            "diag-2459-catalog-filters",
-            "diag-2462-catalog-filters",
-            "diag-2466-catalog-filters",
-            "diag-2470-catalog-filters",
-            "diag-2471-locale",
-            "diag-2473-locale",
-            "diag-2477-locale",
-            "diag-2478-locale",
-            "diag-2479-locale",
-            "diag-2480-locale",
-            "diag-2483-locale",
-            "diag-2485-locale",
-            "diag-2489-locale",
-            "diag-2491-locale",
-            "diag-2495-locale",
-            "diag-2497-locale",
-        ];
-        if HOST_COLLATION_CASES.contains(&id.as_str()) {
-            assert!(matches!(route, crate::dispatch::Route::Forward), "{id}");
-            host_count += 1;
-            continue;
-        }
         let actual = match route {
             crate::dispatch::Route::LocalResponse(bytes) => bytes,
             _ => panic!("catalog must terminate locally"),
@@ -161,19 +134,11 @@ fn verify(raw: &str, expected_count: usize, expected_host_count: usize) -> Vec<S
             ));
         }
     }
-    assert_eq!(
-        host_count, expected_host_count,
-        "host collation count changed"
-    );
     failures
 }
 #[test]
 fn catalog_32_wire_and_load() {
-    let failures = verify(
-        include_str!("../../tests/fixtures/config/catalog.json"),
-        32,
-        0,
-    );
+    let failures = verify(include_str!("../../tests/fixtures/config/catalog.json"), 32);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 #[test]
@@ -181,7 +146,6 @@ fn configuration_diagnostics_and_catalog_wire() {
     let failures = verify(
         include_str!("../../tests/fixtures/config/diagnostics.json"),
         2696,
-        17,
     );
     let total = failures.len();
     assert!(

@@ -18,3 +18,4 @@ tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "time"] 
 # probe resolves to the same pinned tree instead of reaching the network.
 [patch.crates-io]
 icu_collator_data = { path = "../../../src/data/icu_collator_data" }
+icu_collator = { path = "../../../src/vendor/icu_collator" }

@@ -10,7 +10,6 @@ use icu_locale_core::{LanguageIdentifier, Locale};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
 use std::{
-    borrow::Cow,
     cmp::Ordering,
     collections::HashSet,
     fs::File,
@@ -658,57 +657,19 @@ fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> Strin
         .into_owned()
 }
 
-// ICU4X replaces ill-formed UTF-16 with U+FFFD; Node localeCompare retains
-// distinct weights. Callers that only reject such inputs use this predicate;
-// callers that sort use `node_collation_units`, which preserves Node's order.
+// Retained for independently scoped archive/storage host boundaries.
 pub(crate) fn has_unpaired_surrogate(value: &pilotdeck_protocol::JsString) -> bool {
     char::decode_utf16(value.units().iter().copied()).any(|unit| unit.is_err())
 }
 
-/// `localeCompare` input for raw UTF-16, including unpaired surrogates.
-///
-/// ICU4C (Node) collates an unpaired surrogate with the UCA implicit weight of
-/// the code point it names: `\uD800 < \uD801 < ... < \uDFFF`, all just above
-/// U+D7FF and below U+E000. ICU4X (`Collator::compare_utf16`) instead folds
-/// every unpaired surrogate to U+FFFD, losing both the order and the
-/// distinction. Re-encode each unpaired surrogate `unit` as the
-/// collation-unassigned private-use scalar `U+E000 + (unit - 0xD800)`: those
-/// code points receive implicit weights in the same band, and the mapping is
-/// strictly increasing, so order and adjacency survive. Valid UTF-16,
-/// including surrogate pairs, passes through unchanged and borrows the input.
-///
-/// Residual divergence: a real U+E000..U+E7FF character compared against a
-/// mapped surrogate at the deciding position lands on the same weight instead
-/// of just above it. Node v22.22.0 measurements and that trade-off are recorded
-/// in the A6.6-pr10a RESULT「修复轮 2」and「修复轮 3」. Ledger:
-/// specs/gateway-parity/accepted-diffs.md A6-COLLATION-PUA-001 (unapproved).
-pub(crate) fn node_collation_units(value: &pilotdeck_protocol::JsString) -> Cow<'_, [u16]> {
-    if !has_unpaired_surrogate(value) {
-        return Cow::Borrowed(value.units());
-    }
-    let mut units = Vec::with_capacity(value.units().len());
-    for decoded in char::decode_utf16(value.units().iter().copied()) {
-        match decoded {
-            Ok(character) => {
-                let mut buffer = [0; 2];
-                units.extend_from_slice(character.encode_utf16(&mut buffer));
-            }
-            Err(error) => units.push(0xE000 + (error.unpaired_surrogate() - 0xD800)),
-        }
-    }
-    Cow::Owned(units)
-}
-
-/// The shared `localeCompare` comparator for a [`node_collator`]: applies
-/// [`node_collation_units`] so unpaired surrogates keep Node's order. New
-/// locale-aware sort sites should use this instead of calling
-/// `compare_utf16` on raw units.
+/// Node/ICU4C collation: isolated UTF-16 units retain their own implicit CE,
+/// while valid runs use ICU4X normalization and the pinned locale data.
 pub(crate) fn node_compare_utf16(
     collator: &CollatorBorrowed<'static>,
     left: &pilotdeck_protocol::JsString,
     right: &pilotdeck_protocol::JsString,
 ) -> Ordering {
-    collator.compare_utf16(&node_collation_units(left), &node_collation_units(right))
+    collator.compare_utf16_preserving_surrogates(left.units(), right.units())
 }
 
 fn node_dirent_name(name: &std::ffi::CStr) -> String {
@@ -720,10 +681,29 @@ fn node_dirent_name(name: &std::ffi::CStr) -> String {
 // retain Node's fallback to the language default, then root.
 pub(crate) fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
     let mut preferences: CollatorPreferences = locale.clone().into();
-    Collator::try_new(preferences, Default::default())
+    let create = |preferences: CollatorPreferences| {
+        Collator::try_new(preferences, Default::default()).map(|collator| {
+            // The pinned baked metadata omits fr-CA's backward-secondary bit.
+            // Restore the Node/ICU78 default; explicit collations (e.g. emoji)
+            // retain their own metadata. See native-collation/oracle.json.
+            if locale.id.language.as_str() == "fr"
+                && locale.id.script.is_none()
+                && locale
+                    .id
+                    .region
+                    .is_some_and(|region| region.as_str() == "CA")
+                && preferences.collation_type.is_none()
+            {
+                collator.with_backward_second_level(true)
+            } else {
+                collator
+            }
+        })
+    };
+    create(preferences)
         .or_else(|_| {
             preferences.collation_type = None;
-            Collator::try_new(preferences, Default::default())
+            create(preferences)
         })
         .or_else(|_| Collator::try_new(Default::default(), Default::default()))
         .map_err(|_| {
