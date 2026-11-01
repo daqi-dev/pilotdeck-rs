@@ -42,10 +42,10 @@ EADDRINUSE 仅在预检/启动失败复查的 `probe.bind` 和 provider 的实�
 
 `--session-domain` 模式按 `scripts/gateway-parity/fixtures/session-calibration.json` 的 72 个冻结 case 顺序驱动：每个 case 独立 sessionKey/runId 与一次 submit_turn，实际模型请求数量如实保留，超时类 case 带 `timeoutMs=400`，时序类 case 带 `timeoutMs=30000` 且 provider 延迟 1.5 秒；最终帧后固定 settle 0.5 秒再读取三面（frames / durableStatus / registry）。结果发布到输出目录的 `session-domain/`：
 
-- `observer.json`：独立 observer 在一条连接上记录的 hello 与全部帧（`{connections, rows}`）；每行形如 `{direction, wireHex, wire, frame, connection}`，`send` 行的 `frame` 为 payload 文本、`receive` 行为解码对象。
+- `observer.json`：采集器内 observer 在一条连接上记录的 hello 与全部帧（`{connections, rows}`）；observer 记录独立于被测网关与预注册 contract，不独立于 driver。每行形如 `{direction, wireHex, wire, frame, connection}`，`send` 行的 `frame` 为 payload 文本、`receive` 行为解码对象。
 - `cases.json`：72 行 `{case, identity, observation}`，identity 含 requestId/projectKey/sessionKey/runId/实际 transcriptPath，observation 含三面。registry 面的 `applicable` 是观测值：由该 run 在 `runs.json` 中是否出现 events/record 推导（`bool(events or record)`），不是常量——宿主真的没有该 run 的 registry 记录时如实记 `applicable: false`，与 `no-registry-*` 案例的登记期望可以匹配；runs.json 缺失、events 与 record 均缺时同样记不适用。record 缺 `state` 属于该案的 `registry.state` 期望不符（单案 FAIL），不是结构错误，更不会让整批判分崩溃。
 - `provider.json`：driver 侧模型请求台账 `{endpoint, requests}`，与 strace 出网见证交叉核对；每条受控 streaming model 请求必须独占一个 manifest case 的 marker，marker 必须来自 user content；标题请求不能补足模型调用覆盖。#1284 人批 A：`native_evidence.required_provider_cases` 仅从冻结 #1177 `rust.frames` 机械派生必需请求集合（含模型产出 / 请求后的 `turn_completed` 帧），不读 Rust 结果或超时标签。缺请求仅使该 case 以 `provider.requests` 判 FAIL，仍形成 72 case 同源链并逐格评分；无模型产出期望的 case 不强求请求。空请求台账同样进入逐格评分，不因结果错误作废可信原始证据。
-- `driver.json`（#1140 fix-r3）：driver 在 hello 收到时单独记下的绑定值与逐 case 映射 `{binding, identities}`，是 observer 行台账之外的第二份独立记录；冻结 loader 要求二者一致，observer 侧 hello binding 被改成另一合法值（wire 字节与 receipt 哈希重算）时以 `BINDING` 拒收。
+- `driver.json`（#1140 fix-r3）：driver 在 hello 收到时单独记下的绑定值与逐 case 映射 `{binding, identities}`，是 observer 行台账之外、由同一采集器生成的第二份一致性记录；冻结 loader 要求二者一致，observer 侧 hello binding 被改成另一合法值（wire 字节与 receipt 哈希重算）时以 `BINDING` 拒收。
 
 `capture/` 保留：
 
@@ -78,11 +78,13 @@ argv 元素内的逗号、空格、引号在 `-xx` 下均编码为 `\\xNN`，例
 
 冻结函数本身只信 `networkWitness.complete`，`calls=[]` 且 complete=true 会被它接受；本包明确测试这个既有边界。漏记出网通过独立回放使 complete=false，然后由原函数以 `NETWORK_WITNESS` 拒绝。短命子进程漏记与 source=ps 同样由原函数拒绝。
 
-完整 audit 还要求 observer rows、binding、capabilities、cases 和 output/disk/http 表面。**binding 的证据合同已按 #1140 改为：独立 observer 在 hello 时记录，再与 contract 绑定**——`witness.bind_contract()` 拒绝任何预注册了 `binding`/`observerRows`/`bindingSource` 的合同，只接受从 `evidence['observer']` 的 hello 帧推导的绑定，与冻结 loader 的规则互为镜像；离线 `--capture` 检查沿用同一入口，不再有 `SYNTHETIC_CONTROL_ONLY` 外壳，输出 `REAL_WITNESS_AUDIT`。全部真实报告继续标 `scoring: NOT_RUN`。
+完整 audit 还要求 observer rows、binding、capabilities、cases 和 output/disk/http 表面。**binding 的证据合同已按 #1140 改为：采集器内 observer 在 hello 时记录，再与 contract 绑定；hello 观测独立于被测网关与预注册 contract，不独立于 driver。**——`witness.bind_contract()` 拒绝任何预注册了 `binding`/`observerRows`/`bindingSource` 的合同，只接受从 `evidence['observer']` 的 hello 帧推导的绑定，与冻结 loader 的规则互为镜像；离线 `--capture` 检查沿用同一入口，不再有 `SYNTHETIC_CONTROL_ONLY` 外壳，输出 `REAL_WITNESS_AUDIT`。全部真实报告继续标 `scoring: NOT_RUN`。
 
 deadline 判分入口只接受 `receipt.status == WITNESS_CAPTURED`、全部 receipt 附件哈希核对通过、launch/prelaunch 一致且无预注册 binding 的采集目录；随后逐 case 与 #1177 登记的期望比对（`executedCases` 只收非 NOT_RUN 的 verdict，单案观测缺失保持 `NOT_RUN` 且不计入已执行）。真实 Rust 的场景刺激与 TS 六格语义尚待 #1242 对齐；目前真实失配不能全部归责为产品错误，也不允许缩小分母。离线端到端套件 `tests/fixtures/native-session-e2e/`（真实 socket mock 网关回放登记期望 + 只 mock OS 层的完整采集，再按显式路径加载冻结评分）断言 72/72 逐案例 PASS，配套数据负控与源码变异负控，列表以各脚本 `cases` 为准。
 
-`load_native_capture` 用 observer/hello 重构 `audited` evidence 的 capabilities/binding/observerRows 字段（loader 是运行期绑定的绑定方），这三处与 contract 的比对在新路径上是同源自比、恒真——真正闭合该面的是 `_observer_binding`（hello 帧推导）、driver 记录与 observer 绑定的一致性（fix-r3 独立锚，改值不再自洽）、loader 的预注册 key 拒收、wire 解码交叉核对与完整 receipt 哈希；`audit_native` 的 `bindingSource` require 是对非 loader 调用方的纵深防御（loader 在真实路径上自己覆写该字段）；已知边界见 #1140 fix-r1 RESULT（评审 P2-1，无假 PASS）。
+`load_native_capture` 用 observer/hello 重构 `audited` evidence 的 capabilities/binding/observerRows 字段（loader 是运行期绑定的绑定方），这三处与 contract 的比对在新路径上是同源自比、恒真——真正闭合该面的是 `_observer_binding`（hello 帧推导）、driver 记录与 observer 绑定的一致性（只改单侧时可发现不一致）、loader 的预注册 key 拒收、wire 解码交叉核对与完整 receipt 哈希；`audit_native` 的 `bindingSource` require 是对非 loader 调用方的纵深防御（loader 在真实路径上自己覆写该字段）；已知边界见 #1140 fix-r1 RESULT（评审 P2-1，无假 PASS）。
+
+#1206 已知边界：只防协作写者的误改或只改单侧。driver.json、observer.json 由同一采集器生成，且附件哈希位于可共同重钉的 receipt；能够同时重写三者的对抗写者不在此威胁模型内。driver 记录不是采集侧之外的独立签名锚。`tests/fixtures/native-witness/test_boundary.py` 固定“健康通过 / 只改 observer 拒收 / 共同改写接受”的已知边界；该接受用例不代表可防篡改，不改变 #1177 判分。历史 #1140-r4 冻结事件的“独立锚”措辞由新增 #1206 事件更正，旧事件原字节保留。
 
 ## 开发检查
 

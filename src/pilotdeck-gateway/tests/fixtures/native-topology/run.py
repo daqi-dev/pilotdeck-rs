@@ -121,9 +121,8 @@ def cancel_signals():
     #1168: without a handler, SIGTERM terminates the process between the
     probe's spawn and the finally clauses, orphaning the probe's process
     groups and leaving the shared lease cleanupPending until MAX_AGE. Same
-    shape as scripts/native-witness/collect.py lease_signals (#1140),
-    except the in-unwind second-raise suppression below: collect.py still
-    re-raises unconditionally (frozen; coordinator follow-up).
+    shape as scripts/native-witness/collect.py lease_signals (#1140/#1194),
+    including suppression of a second raise while cancellation unwinds.
     """
     def cancel(signum, _frame):
         # fix-r1 P1-1: while one cancellation is already unwinding, a second

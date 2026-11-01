@@ -3,7 +3,7 @@
 绑定对象：`scripts/gateway-parity/session_domain.py` 的 #1140 新增行——
 `load_native_capture` 的预注册 binding 拒收、driver 台账/出网见证交叉核对、
 manifest 相等（fail-fast 层）、driver hello 记录与 observer 绑定的一致性
-require（fix-r3 独立锚）、会话转录首开窗口的逐 session 归责 require（fix-r4
+require（fix-r3 同源一致性检查，#1206：不防共同重钉）、会话转录首开窗口的逐 session 归责 require（fix-r4
 P1-1），`audit_native` 的 `bindingSource` 溯源 require，
 以及 `deadline_report` 的两处共享聚合调用——与
 `scripts/gateway-parity/controls/session_domain.py` 的 `NATIVE_DEADLINE_CASES`

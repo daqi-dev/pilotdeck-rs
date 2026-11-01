@@ -68,7 +68,7 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 `--suite deadline` 无参时输出四格 `NOT_RUN`，结构自检通过仍 exit 3（未运行专用码）。加
 `--native-capture <采集目录>`（#1140 A5.4，只允许 deadline）时，rust/rust 格按
 `scripts/native-witness/collect.py --session-domain` 的真实采集逐 case 判分：先过
-`load_native_capture` 的完整附件哈希（清单见 `native_evidence.py:NATIVE_RECEIPT_KEYS`）/合同/绑定审计（含 #1140 fix-r3 的 driver 记录独立锚），再与 #1177 登记的期望比三面，并按 #1284 A 从期望帧机械派生必需模型请求；缺少请求记对应 case 的 `provider.requests` FAIL，不阻断可信证据认证、不缩分母。输出逐
+`load_native_capture` 的完整附件哈希（清单见 `native_evidence.py:NATIVE_RECEIPT_KEYS`）/合同/绑定审计（含 #1140 fix-r3 的 driver 同源一致性副本；#1206：只防协作写者，具体边界见 `scripts/native-witness/README.md`），再与 #1177 登记的期望比三面，并按 #1284 A 从期望帧机械派生必需模型请求；缺少请求记对应 case 的 `provider.requests` FAIL，不阻断可信证据认证、不缩分母。输出逐
 case PASS/FAIL；其余三格仍 `NOT_RUN`，批不能 PASS（native 全 PASS → 批 `NOT_RUN`
 exit 3；任一 FAIL → 批 `FAIL` exit 1）。采集目录的记录契约与离线端到端验证见
 `scripts/native-witness/README.md` 与 `tests/fixtures/native-session-e2e/`。
