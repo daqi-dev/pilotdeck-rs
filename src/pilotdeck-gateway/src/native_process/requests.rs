@@ -50,6 +50,10 @@ fn read_error(error: read::TurnReadError) -> RequestError {
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
+            let snapshot_enabled =
+                crate::storage::resolve_workspace_snapshot_config(|key| self.env.get(key).cloned())
+                    .map_err(|error| RequestError::new(error.to_string()))?
+                    .is_some();
             Ok(object([
                 ("mode", "in_process".into()),
                 (
@@ -75,6 +79,9 @@ impl GatewayRequests for Requests {
                             "commands_list",
                         ]
                         .into_iter()
+                        .filter(|capability| {
+                            snapshot_enabled || !capability.starts_with("snapshot_")
+                        })
                         .map(JsValue::from)
                         .collect(),
                     ),

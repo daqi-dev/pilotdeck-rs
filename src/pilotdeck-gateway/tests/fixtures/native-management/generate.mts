@@ -143,11 +143,25 @@ try {
  // Contract evidence uses the real describe implementation and real empty-env provider.
  const description=await local.gateway.describeServer();
  const {resolveWorkspaceSnapshotConfig,ContentAddressedWorkspaceSnapshotRecorder}=await import(pathToFileURL(join(baseline,'src/storage/workspaceSnapshot.ts')).href);
- const emptyEnv={...process.env,PILOTDECK_STORAGE_ROOT:''};
- const empty=createLocalGateway({projectRoot:project,pilotHome:home,builtinSkillsRoot:join(home,'builtin'),env:emptyEnv});
- let emptyResult:any;
- try {try{emptyResult={ok:await empty.gateway.snapshotList(expand(p))};}catch(e:any){emptyResult={error:{code:e.code,message:e.message}};}} finally {await empty.dispose();}
- const contract={capabilities:description.capabilities,emptyStorage:{config:resolveWorkspaceSnapshotConfig(emptyEnv)??null,result:emptyResult}};
+ const disabledStorage=async(value:string|undefined)=>{
+  const env={...process.env};delete env.PILOTDECK_STORAGE_ROOT;
+  if(value!==undefined)env.PILOTDECK_STORAGE_ROOT=value;
+  const disabled=createLocalGateway({projectRoot:project,pilotHome:home,builtinSkillsRoot:join(home,'builtin'),env});
+  try {
+   const capabilities=(await disabled.gateway.describeServer()).capabilities;
+   const requests:any[]=[];
+   for(const method of ['snapshot_list','snapshot_get','snapshot_restore']){
+    const params={...p,...(method==='snapshot_list'?{}:{snapshotId:'missing'})};
+    let result:any;
+    try {result={ok:clean(await disabled.gateway[methods[method]](expand(params)))};}
+    catch(e:any){result={error:{code:e.code,message:e.message}};}
+    assert.equal(result.error?.code,'CAPABILITY_UNAVAILABLE','#1231 TS disabled snapshot provider');
+    requests.push({method,params,result});
+   }
+   return {config:resolveWorkspaceSnapshotConfig(env)??null,capabilities,result:requests[0].result,requests};
+  } finally {await disabled.dispose();}
+ };
+ const contract={capabilities:description.capabilities,emptyStorage:await disabledStorage(''),missingStorage:await disabledStorage(undefined)};
  assert.equal(contract.capabilities.some((c:string)=>c.startsWith('skill_')),false,'#1231 TS has no skill capabilities');
  const tree=async(directory:string):Promise<any[]>=>{
   const rows:any[]=[];

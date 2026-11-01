@@ -554,14 +554,10 @@ async fn production_host_management_and_restart() {
         .await
         .expect("#1231 shutdown unused test owner");
     for restart in [false, true] {
-        // Empty captured environment: the production root supplies its own
-        // isolated storage path, never an inherited storage authority.
-        let host = assembly::start(
-            options.clone(),
-            options.environment(crate::config::Env::new()),
-        )
-        .await
-        .expect("#1231 native management boot/restart");
+        // Snapshot success requires an explicit isolated storage authority.
+        let host = assembly::start(options.clone(), requests.env.clone())
+            .await
+            .expect("#1231 native management boot/restart");
         let text = Arc::new(Text::default());
         let connection = host.connect(text.clone(), "token".into(), "fixture".into());
         connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.expect("#1231 hello");
@@ -595,38 +591,45 @@ async fn production_host_management_and_restart() {
                 .expect("#1231 route response");
             negative_assert_eq!(response["ok"], true, "#1231 production route success");
         }
-        let description = json_value(&requests.describe_server().await.expect("#1231 describe"));
-        let capabilities = description["capabilities"]
+        connection
+            .receive(
+                json!({"type":"request","id":"describe","method":"describe_server"}).to_string(),
+            )
+            .await
+            .expect("#1231 capability describe request");
+        let description = {
+            let frames = text.0.lock().expect("#1231 capability frames");
+            let response = frames
+                .iter()
+                .find(|frame| frame["id"] == "describe")
+                .expect("#1231 capability describe response");
+            negative_assert_eq!(response["ok"], true, "#1231 capability describe success");
+            response["result"].clone()
+        };
+        let mut capabilities: Vec<&str> = description["capabilities"]
             .as_array()
-            .expect("#1231 capabilities");
-        for method in [
+            .expect("#1231 capabilities")
+            .iter()
+            .map(|value| value.as_str().expect("#1231 capability string"))
+            .collect();
+        capabilities.sort_unstable();
+        let mut expected = [
+            "run_get",
+            "run_events",
+            "run_reattach",
+            "project_files_list",
+            "project_file_read",
+            "model_catalog_list",
+            "session_model_get",
+            "supported_agents",
             "snapshot_list",
             "snapshot_get",
             "snapshot_restore",
             "manager_sessions",
             "commands_list",
-        ] {
-            negative_assert!(
-                capabilities.contains(&json!(method)),
-                "#1231 wired method declared"
-            );
-        }
-        let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 capability oracle");
-        let ts_capabilities = oracle["contract"]["capabilities"]
-            .as_array()
-            .expect("#1231 TS capabilities");
-        for capability in capabilities {
-            negative_assert!(
-                ts_capabilities.contains(capability),
-                "#1231 capability belongs to TS contract"
-            );
-        }
-        for method in std::iter::once("manager_browsers").chain(UNWIRED_METHODS) {
-            negative_assert!(
-                !capabilities.contains(&json!(method)),
-                "#1231 unavailable provider not advertised"
-            );
-        }
+        ];
+        expected.sort_unstable();
+        negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
@@ -737,12 +740,9 @@ async fn pending_file_read_does_not_block_serial_host() {
             .success(),
         "#1231 FIFO fixture"
     );
-    let host = assembly::start(
-        options.clone(),
-        options.environment(crate::config::Env::new()),
-    )
-    .await
-    .expect("#1231 pending IO host");
+    let host = assembly::start(options.clone(), requests.env.clone())
+        .await
+        .expect("#1231 pending IO host");
     let text = Arc::new(Text::default());
     let connection = host.connect(text.clone(), "token".into(), "fixture".into());
     connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.expect("#1231 pending IO hello");
@@ -919,57 +919,123 @@ fn file_tree(directory: &Path) -> Value {
     json!(rows)
 }
 
-#[tokio::test]
-async fn empty_storage_environment_uses_isolated_default() {
-    let (_scratch, requests) = setup();
+async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
+    let (scratch, requests) = setup();
     let options = requests.options.clone();
-    let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 empty storage oracle");
-    let expected = &oracle["snapshotSuccess"]["requests"][0];
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 disabled storage oracle");
+    // Existing data must not implicitly enable the provider without configuration.
     seed_files(
         &options.home.join("storage"),
         &oracle["snapshotSuccess"]["storageFiles"],
-        &_scratch.0,
+        &scratch.0,
     );
     requests
         .owner
         .shutdown()
         .await
-        .expect("#1231 empty storage unused owner shutdown");
+        .expect("#1231 disabled storage unused owner shutdown");
     requests
         .project
         .dispose()
         .await
-        .expect("#1231 empty storage unused registry disposal");
+        .expect("#1231 disabled storage unused registry disposal");
     let mut env = crate::config::Env::new();
-    env.insert("PILOTDECK_STORAGE_ROOT".into(), String::new());
-    validate_environment(&env).expect("#1231 empty storage inherited admission");
+    if let Some(storage) = storage {
+        env.insert("PILOTDECK_STORAGE_ROOT".into(), storage.into());
+    }
+    validate_environment(&env).expect("#1231 disabled storage inherited admission");
     let host = assembly::start(options.clone(), options.environment(env))
         .await
-        .expect("#1231 empty storage host startup");
+        .expect("#1231 disabled storage host startup");
     let text = Arc::new(Text::default());
     let connection = host.connect(text.clone(), "token".into(), "fixture".into());
-    connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.expect("#1231 empty storage hello");
-    connection.receive(json!({"type":"request","id":"snapshot","method":"snapshot_get","params":{"projectKey":options.project,"snapshotId":expected["params"]["snapshotId"]}}).to_string()).await.expect("#1231 empty storage request");
-    {
-        let frames = text.0.lock().expect("#1231 empty storage frames");
+    connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.expect("#1231 disabled storage hello");
+    for method in ["snapshot_list", "snapshot_get", "snapshot_restore"] {
+        let row = oracle["contract"][fixture]["requests"]
+            .as_array()
+            .expect("#1231 disabled storage TS requests")
+            .iter()
+            .find(|row| row["method"] == method)
+            .expect("#1231 disabled storage TS method");
+        let params = json_value(&expand(&row["params"], &scratch.0));
+        connection
+            .receive(
+                json!({"type":"request","id":method,"method":method,"params":params}).to_string(),
+            )
+            .await
+            .expect("#1231 disabled storage request");
+        let frames = text.0.lock().expect("#1231 disabled storage frames");
         let response = frames
             .iter()
-            .find(|frame| frame["id"] == "snapshot")
-            .expect("#1231 empty storage response");
+            .find(|frame| frame["id"] == method)
+            .expect("#1231 disabled storage response");
+        negative_assert_eq!(
+            json!({"ok":response["ok"],"error":response["error"]}),
+            json!({"ok":false,"error":row["result"]["error"]}),
+            "#1231 disabled storage snapshot result"
+        );
+    }
+    connection
+        .receive(json!({"type":"request","id":"describe","method":"describe_server"}).to_string())
+        .await
+        .expect("#1231 disabled storage describe request");
+    {
+        let frames = text
+            .0
+            .lock()
+            .expect("#1231 disabled storage describe frames");
+        let response = frames
+            .iter()
+            .find(|frame| frame["id"] == "describe")
+            .expect("#1231 disabled storage describe response");
         negative_assert_eq!(
             response["ok"],
             true,
-            "#1231 empty storage snapshot available"
+            "#1231 disabled storage describe success"
         );
+        let mut capabilities: Vec<&str> = response["result"]["capabilities"]
+            .as_array()
+            .expect("#1231 disabled storage capabilities")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .expect("#1231 disabled storage capability string")
+            })
+            .collect();
+        capabilities.sort_unstable();
+        let mut expected = [
+            "run_get",
+            "run_events",
+            "run_reattach",
+            "project_files_list",
+            "project_file_read",
+            "model_catalog_list",
+            "session_model_get",
+            "supported_agents",
+            "manager_sessions",
+            "commands_list",
+        ];
+        expected.sort_unstable();
         negative_assert_eq!(
-            normalize(response["result"].clone(), &_scratch.0),
-            expected["result"]["ok"],
-            "#1231 empty storage isolated snapshot data"
+            capabilities,
+            expected,
+            "#1231 disabled storage exact capability set"
         );
     }
     host.shutdown(options.drain_budget)
         .await
-        .expect("#1231 empty storage host shutdown");
+        .expect("#1231 disabled storage host shutdown");
+}
+
+#[tokio::test]
+async fn missing_storage_environment_disables_snapshots() {
+    assert_storage_disabled(None, "missingStorage").await;
+}
+
+#[tokio::test]
+async fn empty_storage_environment_disables_snapshots() {
+    assert_storage_disabled(Some(""), "emptyStorage").await;
 }
 
 #[tokio::test]
