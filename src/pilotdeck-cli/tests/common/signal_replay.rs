@@ -1907,8 +1907,14 @@ mod comparison_tests {
     }
 
     fn registered_unordered_close_ids() -> Vec<String> {
-        let ledger =
-            include_str!("../../../../specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md");
+        // Like #1278, keep ledger access at runtime so src-only builds work.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md"
+        );
+        let ledger = std::fs::read_to_string(path).unwrap_or_else(|error| {
+            panic!("#1252 close-order ledger unreadable at {path}: {error}")
+        });
         let (_, tail) = ledger
             .split_once("<!-- close-order-ids:start -->\n```json\n")
             .expect("#1252 close-order ledger start");
