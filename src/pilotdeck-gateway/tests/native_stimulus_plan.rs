@@ -23,6 +23,17 @@ fn native_stimulus_plan_controls() {
     controls(&[
         "PlanTests.test_boundary_coverage",
         "PlanTests.test_manifest_rejects_gap",
+        "PlanTests.test_manifest_rejects_duplicate",
+        "PlanTests.test_unknown_plan_reason",
+        "PlanTests.test_duplicate_plan_reason",
+        "PlanTests.test_empty_boundary_not_witnessed",
+        "PlanTests.test_measurement_unchecked_not_pass",
+        "PlanTests.test_phase_requires_prefix_before_wait",
+        "PlanTests.test_fault_requires_entry_before_failure",
+        "PlanTests.test_measurement_registered_denominator",
+        "PlanTests.test_measurement_rejects_empty_repeats",
+        "PlanTests.test_runner_target_environment",
+        "PlanTests.test_registry_free_settle_synthetic_control",
         "PlanTests.test_unknown_and_detached_plan",
         "PlanTests.test_unwitnessed_is_not_run",
     ]);

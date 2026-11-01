@@ -28,7 +28,8 @@ def matches(row, selector):
 def witnessed(target, timeline):
     def positions(selector):
         return [index for index, row in enumerate(timeline) if matches(row, selector)]
-    return (all(positions(selector) for selector in target['events'])
+    return (bool(target['events'])
+            and all(positions(selector) for selector in target['events'])
             and all(positions(left) and positions(right)
                     and min(positions(left)) < min(positions(right)) for left, right in target['before']))
 
@@ -37,7 +38,10 @@ def verify(folder):
     registration = json.loads((folder / 'preregistration.json').read_text())
     if registration['cells'] != s.CELLS or registration['phases'] != ['model', 'tool']:
         raise ValueError('#1368 measured preregistration differs from native declaration')
+    if type(registration['repeats']) is not int or registration['repeats'] <= 0:
+        raise ValueError('#1368 measured repeats must be a positive integer')
     seen, event_controls, order_controls = [], 0, 0
+    unchecked = []
     for cell in registration['cells']:
         document = json.loads((folder / (cell['name'] + '.json')).read_text())
         for observation in document['observations']:
@@ -48,6 +52,10 @@ def verify(folder):
                 raise ValueError('#1368 measured registry/phase/variant mismatch: ' + case)
             timeline = observation['timeline']
             for target in plan['boundaries']:
+                if not target['events']:
+                    unchecked.append({'measurement': observation['id'], 'boundary': target['name'],
+                                      'reason': '未执行：缺少可机检的边界事件声明'})
+                    continue
                 if not witnessed(target, timeline):
                     raise ValueError('#1368 missing measured target: ' + case + '/' + target['name'])
                 for selector in target['events']:
@@ -68,9 +76,11 @@ def verify(folder):
             seen.append(observation['id'])
     expected = [plan['case'] + '/' + str(repeat) for plan in s.plans()
                 for repeat in range(1, registration['repeats'] + 1)]
-    if seen != expected or len(seen) != 360:
+    if seen != expected:
         raise ValueError('#1368 measured denominator/order mismatch')
-    return {'status': 'PASS', 'measurements': len(seen), 'cases': len(s.plans()),
+    return {'status': 'NOT_RUN' if unchecked else 'PASS',
+            'uncheckedBoundaries': unchecked,
+            'measurements': len(seen), 'cases': len(s.plans()),
             'missingEventControls': event_controls, 'reversedOrderControls': order_controls,
             'scope': 'TS input and boundary validation only; native remains NOT_RUN'}
 

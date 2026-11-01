@@ -43,7 +43,7 @@ EADDRINUSE 仅在预检/启动失败复查的 `probe.bind` 和 provider 的实�
 `--session-domain` 模式按 `scripts/gateway-parity/fixtures/session-calibration.json` 的 72 个冻结 case 顺序驱动：每个 case 独立 sessionKey/runId 与一次 submit_turn，实际模型请求数量如实保留，超时类 case 带 `timeoutMs=400`，时序类 case 带 `timeoutMs=30000` 且 provider 延迟 1.5 秒；最终帧后固定 settle 0.5 秒再读取三面（frames / durableStatus / registry）。结果发布到输出目录的 `session-domain/`：
 
 - `observer.json`：独立 observer 在一条连接上记录的 hello 与全部帧（`{connections, rows}`）；每行形如 `{direction, wireHex, wire, frame, connection}`，`send` 行的 `frame` 为 payload 文本、`receive` 行为解码对象。
-- `cases.json`：72 行 `{case, identity, observation}`，identity 含 requestId/projectKey/sessionKey/runId/实际 transcriptPath，observation 含三面。registry 面的 `applicable` 是观测值：由该 run 在 `runs.json` 中是否出现 events/record 推导（`bool(events or record)`），不是常量——宿主真的没有该 run 的 registry 记录时如实记 `applicable: false`，与 `no-registry-*` 案例的登记期望可以匹配；runs.json 缺失、events 与 record 均缺时同样记不适用。record 缺 `state` 属于该案的 `registry.state` 期望不符（单案 FAIL），不是结构错误，更不会让整批判分崩溃。
+- `cases.json`：72 行 `{case, identity, observation, stimulus}`（未执行时另附 `reason`），identity 含 requestId/projectKey/sessionKey/runId/实际 transcriptPath，observation 含三面。registry 面的 `applicable` 是观测值：由该 run 在 `runs.json` 中是否出现 events/record 推导（`bool(events or record)`），不是常量——宿主真的没有该 run 的 registry 记录时如实记 `applicable: false`，与 `no-registry-*` 案例的登记期望可以匹配；runs.json 缺失、events 与 record 均缺时同样记不适用。record 缺 `state` 属于该案的 `registry.state` 期望不符（单案 FAIL），不是结构错误，更不会让整批判分崩溃。
 - `provider.json`：driver 侧模型请求台账 `{endpoint, requests}`，与 strace 出网见证交叉核对；每条受控 streaming model 请求必须独占一个 manifest case 的 marker，marker 必须来自 user content；标题请求不能补足模型调用覆盖。#1284 人批 A：`native_evidence.required_provider_cases` 仅从冻结 #1177 `rust.frames` 机械派生必需请求集合（含模型产出 / 请求后的 `turn_completed` 帧），不读 Rust 结果或超时标签。缺请求仅使该 case 以 `provider.requests` 判 FAIL，仍形成 72 case 同源链并逐格评分；无模型产出期望的 case 不强求请求。空请求台账同样进入逐格评分，不因结果错误作废可信原始证据。
 - `driver.json`（#1140 fix-r3）：driver 在 hello 收到时单独记下的绑定值与逐 case 映射 `{binding, identities}`，是 observer 行台账之外的第二份独立记录；冻结 loader 要求二者一致，observer 侧 hello binding 被改成另一合法值（wire 字节与 receipt 哈希重算）时以 `BINDING` 拒收。
 
@@ -92,7 +92,14 @@ deadline 判分入口只接受 `receipt.status == WITNESS_CAPTURED`、全部 rec
 observation 置空、附 `stimulus.plan/missing` 与「未执行」原因；72 请求、identity、observer
 与原始 sources 仍保留，冻结评分器沿用既有 `NOT_RUN` 行为，不缩分母、不改期望。
 `stimuli.execution` 是后续接入点；只有 case/run 绑定的原始边界收据才可在未来实现中放行，
-同名请求、provider 成功或终态与登记相同都不能代替收据。已有合成评分用例明确 mock 此接入点，
+同名请求、provider 成功或终态与登记相同都不能代替收据。
+`verify_measurement.py` 对空事件声明不计见证：当前 registry 构造收据未声明，汇总返回
+`NOT_RUN`，逐 observation 列入 `uncheckedBoundaries`；其余边界继续执行删除事件与倒序负控。
+phase 顺序检查生产端发出前缀后进入 `loop.wait`：有 registry 使用
+`registry.append.attempt`，无 registry 使用 `queue.enqueue`；客户端 `client.frame` 只核存在，
+因为异步消费在真实 TS 时间线中晚于 wait。每个有事件声明的边界都包含顺序边。
+测量数量/次序按 preregistration 的完整 case × repeats ID 清单核对，不额外硬编码 360。
+已有合成评分用例明确 mock 此接入点，
 新增真实采集逻辑测试不 mock 它并要求 72 格均 NOT_RUN。
 
 新增计划检查（固定 Node v22.22.0 / ICU 78.2，无下载）：
