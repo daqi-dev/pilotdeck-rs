@@ -9,13 +9,13 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-ga
 
 生成器先断言基线 HEAD，再把无参时钟钉在 `Date.UTC(2026, 0, 1)`（`installFixedClock`，同 `../_shared/generator_guard.mjs`；marker 的 `completedAt`、锁新鲜度判定都由该纪元决定，锁种子的 mtime 也按 `Date.now() - age` 相对该纪元回拨）。输入文件逐场景独占写入（`flag: 'wx'`，目录递归创建），`oracle.json` 独占发布，输出目录必须尚不存在。迁移场景记录一次执行的树，`twice` 场景在无错时用同一 logger 再跑一次并记录第二次的树；警告元数据与错误文案中的场景 home 替换为 `{HOME}`，使 oracle 与输出目录无关（fix-r1 重生成时验证过连续两次输出字节一致）。
 
-矩阵形状固定为 **9 + 10 + 33 + 23**（paths / eventsPaths / store / migration）。`generate.mts` 在发布 `oracle.json` 前、Rust `oracle_matrix_counts_match_generator` 在重放前都精确断言这四个数，增删场景必须同时更新两侧断言及本段。Rust 侧每个 cell 恰好一个具名测试（`src/pilotdeck-gateway/src/runtime/cron/tests.rs`，84 个测试函数：80 直跑（含 fix-r2 的 deleted-cwd 父测试）+ 2 个 locale 门控父测试 + 2 个 `#[ignore]` worker（locale / deleted-cwd）），逐 cell 比较记录结果与落盘树（文件 base64 解码后逐字节，目录集合逐一相等）。
+矩阵形状固定为 **9 + 10 + 33 + 23**（paths / eventsPaths / store / migration）。`generate.mts` 在发布 `oracle.json` 前、Rust `oracle_matrix_counts_match_generator` 在重放前都精确断言这四个数，增删场景必须同时更新两侧断言及本段。Rust 侧每个 cell 恰好一个具名测试（`src/pilotdeck-gateway/src/runtime/cron/tests.rs`，85 个测试函数：81 直跑（含 fix-r2 的 deleted-cwd 父测试）+ 2 个 locale 门控父测试 + 2 个 `#[ignore]` worker（locale / deleted-cwd）；其中 non-UTF-8 home 守卫 #1289 起 `#[cfg(target_os = "linux")]`，macOS 上少编这一个，见下「非 cell 的守卫测试」），逐 cell 比较记录结果与落盘树（文件 base64 解码后逐字节，目录集合逐一相等）。
 
 两个 cell 的字节依赖非 ASCII 文本的 `localeCompare` 排序（`store:put-sort-missing-and-collation`——`ä` 对 `z`/`Z`，`migration:duplicate-runs-dedupe`）：Rust 通过 `crate::test_process::run_cases` 在 `LANG=en_US.UTF-8` 的子进程里重放（env_clear，`--exact --ignored --test-threads=1`，`PDRS_CRON_CASE=section:cell` 分发），与生成器自身的 en-US 断言同一契约；worker `cron_locale_worker` 只被子进程拉起。
 
 ```sh
 cd src
-cargo test -p pilotdeck-gateway --lib runtime::cron          # 82 passed; 2 ignored
+cargo test -p pilotdeck-gateway --lib runtime::cron          # Linux：83 passed；macOS：82 passed；均 2 ignored
 PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test cron_store -- --ignored
 ```
 
@@ -40,10 +40,11 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test
 | migration 锁（2） | stale-lock-removed（11 分钟陈旧）、fresh-lock-times-out（60 秒新鲜锁） |
 
 † locale 门控。
+‡ 绑定测试 Linux-only（#1289，APFS/HFS+ 拒绝非 UTF-8 文件名）：非 Linux 宿主该行记 SKIP——不计 KILLED 也不计 INVALID，不使整轮失败。
 
 ## 负控
 
-`negative_controls.py` 复用 `../negative_process.py` 和 `../negative_suite.py`，17 项变异各绑定一个具名 cell 重放测试，判杀证据是该测试自身 panic 载荷携带的 `#1216` 消息；编译失败、正控失败、锚点失配、恢复失败均为 INVALID，任一非 KILLED 即非零退出。守卫覆盖 `store.rs`、`migration.rs`、`tests.rs`、脚本自身与两个共享裁决依赖，任一脏即拒跑；调用方必须提供 `CARGO_TARGET_DIR`（本树构建目录）。
+`negative_controls.py` 复用 `../negative_process.py` 和 `../negative_suite.py`，17 项变异各绑定一个具名 cell 重放测试，判杀证据是该测试自身 panic 载荷携带的 `#1216` 消息；编译失败、正控失败、锚点失配、恢复失败均为 INVALID，任一非 KILLED 即非零退出（#1289 起非 Linux 宿主对 Linux-only 行记 SKIP——不计 KILLED 也不计 INVALID，不使整轮失败；但全 SKIP、零 KILLED 仍非零退出：什么都没证明）。守卫覆盖 `store.rs`、`migration.rs`、`tests.rs`、脚本自身与两个共享裁决依赖，任一脏即拒跑；调用方必须提供 `CARGO_TARGET_DIR`（本树构建目录）。
 
 | 变异 | 绑定测试 | 对应问题范围 |
 |---|---|---|
@@ -59,7 +60,7 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test
 | concurrency-serialization-removed（put_task 不再持有每文件互斥，读改写交错丢任务） | store_concurrent_puts_across_threads_keep_every_task | fix-r1 P0 |
 | stale-lock-enoent-errors（锁删除不容忍 ENOENT） | lock_removal_tolerates_a_vanished_lock_file | fix-r1 P2 |
 | surrogate-lossy-reverted（严格 UTF-16 拒绝孤立代理 projectKey） | migration_lone_surrogate_projectkey_matches_ts | fix-r1 P3 |
-| entry-lossy-home（home 重新经 to_string_lossy 字符串下传，非 UTF-8 home 同目录双键空桶覆盖） | migration_non_utf8_home_keeps_one_physical_key | fix-r2 P1 |
+| entry-lossy-home‡（home 重新经 to_string_lossy 字符串下传，非 UTF-8 home 同目录双键空桶覆盖） | migration_non_utf8_home_keeps_one_physical_key | fix-r2 P1 |
 | entry-cwd-unconditional（入口无条件读 cwd，绝对 home 被已删 cwd 误报） | migration_absolute_home_survives_deleted_cwd | fix-r2 P2 |
 | lock-guard-removed（Drop guard 不再释放锁，panic 后锁滞留 10 分钟） | panicking_migration_body_still_releases_the_lock | fix-r2 P2 |
 | tail-entry-never-removed（完成的 tail 永不从注册表删除，进程级 map 无界增长） | store_tail_entry_removed_after_uncontended_mutation | fix-r2 P3 |
@@ -73,7 +74,7 @@ CARGO_TARGET_DIR=/absolute/build/dir python3 -I src/pilotdeck-gateway/tests/fixt
 
 **执行推迟**：本 worker 的 cron 源码未提交，`mutating_sources` 的 HEAD 守卫拒跑，实际变异由协调者提交后运行。本 worker 已用等价脚本（fix-r2 证据目录 `sample_negative.py`，与 fix-r1 的 `manual-mutations.py` 同一序列）手动验证：快照字节 → 应用变异 → `cargo test --no-run` 编译 → 被绑测试 `--exact` 实跑 → 恢复并逐字节校验；fix-r2 抽样 5 项（entry-lossy-home / entry-cwd-unconditional / lock-guard-removed / tail-entry-never-removed / concurrency-serialization-removed）全 KILLED，其余 12 项与 fix-r1 的 13 项一致或仅换锚点，由协调者提交后全量重跑。
 
-非 cell 的守卫测试：`migration_non_utf8_home_keeps_one_physical_key`（Unix，非 UTF-8 home + 同目录 projectKey，P1 双 key 回归）、`migration_absolute_home_survives_deleted_cwd`（父测试经 `run_cases` 拉起 `#[ignore]` worker `cron_deleted_cwd_worker`，worker 删除自身 cwd 后以绝对 home 跑迁移）、`panicking_migration_body_still_releases_the_lock`（warn 里 panic 的 logger + `catch_unwind`，断言锁文件已删）、`store_tail_entry_removed_after_uncontended_mutation`（完成 mutation 后 `TASK_FILE_TAILS` 条目删除，对齐 CronTaskStore.ts:168-172；等待者持有克隆时不删，串行性由并发测试守卫）。`blocked-dir-tasks-eacces` 的重放在 `geteuid()==0` 时跳过（root 可读 000 文件，该 cell 会因 warning/tree 不符而误报；读错误分支由 EISDIR cell 与 `read-tasks-error-aborts` 变异覆盖），chmod 恢复按保存的原 mode 而非固定 644。
+非 cell 的守卫测试：`migration_non_utf8_home_keeps_one_physical_key`（Linux-only，#1289：APFS/HFS+ 拒绝非 UTF-8 文件名（EILSEQ），macOS 既建不出夹具、真实用户也不存在非 UTF-8 home，故 `#[cfg(target_os = "linux")]`，Linux 宿主与 CI 照跑；非 UTF-8 home + 同目录 projectKey，P1 双 key 回归）、`migration_absolute_home_survives_deleted_cwd`（父测试经 `run_cases` 拉起 `#[ignore]` worker `cron_deleted_cwd_worker`，worker 删除自身 cwd 后以绝对 home 跑迁移）、`panicking_migration_body_still_releases_the_lock`（warn 里 panic 的 logger + `catch_unwind`，断言锁文件已删）、`store_tail_entry_removed_after_uncontended_mutation`（完成 mutation 后 `TASK_FILE_TAILS` 条目删除，对齐 CronTaskStore.ts:168-172；等待者持有克隆时不删，串行性由并发测试守卫）。`blocked-dir-tasks-eacces` 的重放在 `geteuid()==0` 时跳过（root 可读 000 文件，该 cell 会因 warning/tree 不符而误报；读错误分支由 EISDIR cell 与 `read-tasks-error-aborts` 变异覆盖），chmod 恢复按保存的原 mode 而非固定 644。
 
 ## 范围
 
