@@ -9,6 +9,9 @@ use std::{
 };
 mod assembly;
 mod families;
+mod management;
+#[cfg(test)]
+mod management_tests;
 mod requests;
 mod services;
 mod tools;

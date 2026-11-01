@@ -706,6 +706,10 @@ async fn project_path_boundaries_worker() {
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
     let requests = requests::Requests {
+        project: Arc::new(ProjectRuntimeRegistry::new(
+            options.project.clone(),
+            Arc::new(NoPathResources),
+        )),
         options: options.clone(),
         env: options.environment(Env::new()),
         coordinator: Arc::default(),

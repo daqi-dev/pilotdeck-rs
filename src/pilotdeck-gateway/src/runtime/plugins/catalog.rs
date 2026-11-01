@@ -27,8 +27,22 @@ impl CommandCatalogListCommands for NativeCommandCatalogProvider {
         pilot_home: String,
         commands: Vec<PluginCommandContribution>,
     ) -> BoxCommandsListFuture {
+        let query = input.query.clone().unwrap_or_default().into();
+        self.list_with_query(input, pilot_home, commands, query)
+    }
+}
+impl NativeCommandCatalogProvider {
+    /// Preserve UTF-16 query units at the wire boundary without narrowing the
+    /// existing string-based command bundle API used by typed callers.
+    pub(crate) fn list_with_query(
+        &self,
+        input: CommandsListInput,
+        pilot_home: String,
+        commands: Vec<PluginCommandContribution>,
+        query: JsString,
+    ) -> BoxCommandsListFuture {
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || project(input, &pilot_home, commands))
+            tokio::task::spawn_blocking(move || project(input, &pilot_home, commands, query))
                 .await
                 .map_err(|e| PluginRuntimeError::new(e.to_string()))?
         })
@@ -62,20 +76,30 @@ fn project(
     input: CommandsListInput,
     home: &str,
     commands: Vec<PluginCommandContribution>,
+    raw: JsString,
 ) -> Result<CommandsListResult, PluginRuntimeError> {
     let error = |s: &str| PluginRuntimeError::new(s);
     if input.project_key.is_empty() {
-        return Err(error("projectKey is required."));
+        return Err(PluginRuntimeError::gateway(
+            "PROJECT_NOT_FOUND",
+            "projectKey is required.",
+        ));
     }
     let locale = node_locale(|key| std::env::var(key).ok());
-    let raw = input.query.as_deref().unwrap_or("");
-    let query = lower(&js_trim(raw).into(), &locale.id, js_trim(raw) != raw);
+    let trimmed = crate::model_catalog::trim(&raw);
+    let query = lower(&trimmed, &locale.id, trimmed != raw);
     if query.len_utf16() > 256 {
-        return Err(error("query must not exceed 256 characters."));
+        return Err(PluginRuntimeError::gateway(
+            "INVALID_QUERY",
+            "query must not exceed 256 characters.",
+        ));
     }
     let limit = input.limit.unwrap_or(50) as usize;
     if !(1..=100).contains(&limit) {
-        return Err(error("limit must be an integer between 1 and 100."));
+        return Err(PluginRuntimeError::gateway(
+            "INVALID_LIMIT",
+            "limit must be an integer between 1 and 100.",
+        ));
     }
     let collator = node_collator(&locale).map_err(|(_, s)| error(&s))?;
     let mut all = builtins();
@@ -257,7 +281,12 @@ fn cursor(cursor: Option<&str>, signature: &str) -> Result<usize, PluginRuntimeE
     let Some(cursor) = cursor.filter(|s| !s.is_empty()) else {
         return Ok(0);
     };
-    let invalid = || PluginRuntimeError::new("cursor is invalid or does not match the query.");
+    let invalid = || {
+        PluginRuntimeError::gateway(
+            "INVALID_CURSOR",
+            "cursor is invalid or does not match the query.",
+        )
+    };
     let decoded = crate::skills::base64_lenient(&cursor.encode_utf16().collect::<Vec<_>>());
     let value = parse_json(&String::from_utf8_lossy(&decoded)).map_err(|_| invalid())?;
     let n = field(&value, "offset").as_number().ok_or_else(invalid)?;
