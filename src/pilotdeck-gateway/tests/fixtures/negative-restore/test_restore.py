@@ -494,6 +494,27 @@ class SessionRunnerTests(unittest.TestCase):
         self.assertEqual(code, 1, '#1210 switch guard failure must exit nonzero')
         self.assertTrue(all(restored_files.values()), '#1210 temp sources must be restored')
 
+    def test_two_rows_without_guard_fault_are_both_killed(self):
+        # fix-r1 (#1218 P2-4): every row consumes its own positive, negative
+        # and restored stages in table order, so in a multi-row no-fault run
+        # each bound positive test actually executes. A leftover stage would
+        # make the second row fail as "bound positive test failed" instead.
+        code, rows, _guard_calls, restored_files = self.run_session_runner(
+            SESSION_SOURCE,
+            ['same-key-concurrent', 'recreate-disposed'],
+            {SESSION_OWNER: 'dirty: false,\n',
+             SESSION_LIVE: 'if self.disposed {\n',
+             SESSION_FACTORY_FILE: 'if self.disposed.load(Ordering::SeqCst) {\n'},
+            [(SESSION_PREFIX + 'same_key_concurrent', '#745 same-key-concurrent conclusion'),
+             (SESSION_PREFIX + 'recreate_disposed', '#745 recreate expected failure')])
+        by_name = {row['mutation']: row for row in rows}
+        self.assertTrue(by_name['same-key-concurrent']['status'] == 'KILLED',
+                        '#1210 the first row must actually run its bound positive test')
+        self.assertTrue(by_name['recreate-disposed']['status'] == 'KILLED',
+                        '#1210 the second row must actually run its bound positive test')
+        self.assertEqual(code, 0, '#1210 a two-row no-fault run must exit clean')
+        self.assertTrue(all(restored_files.values()), '#1210 temp sources must be restored')
+
     def test_classifier_receives_every_change(self):
         captured = []
         real_classify = negative_suite.classify
@@ -677,6 +698,16 @@ def negative_controls():
              "                               RunnerCase(name, changes, test, assertion))",
              "        status,reason=classify(run(name+'-negative',test),\n"
              "                               RunnerCase(name, changes[:1], test, assertion))")})),
+        # fix-r1 (#1218 P2-4): skipping the restored run leaves its stage
+        # unconsumed, so the next row's positive run pops it and fails as a
+        # bound positive instead of actually running — the misalignment the
+        # review feared. The no-fault two-row test must catch exactly that.
+        ('session-restored-stage-skipped', (SessionRunnerTests,),
+         {(SessionRunnerTests, 'test_two_rows_without_guard_fault_are_both_killed'): '#1210 the second row must actually run its bound positive test'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             "def restored(row, name, test):\n    if not compile_only:",
+             "def restored(row, name, test):\n    if False:")})),
     ])
     for label, test, old, new in [
         ('write', 'test_restore_write_failure',

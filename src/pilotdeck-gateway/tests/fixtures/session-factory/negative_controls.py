@@ -267,6 +267,33 @@ cases = [
      '(Ok(()), Some(pending)) if false => Err((*pending).clone()),',
      None, prefix+'recreation_unconsumed_creation_error_is_returned_by_close_and_shutdown',
      '#1218 close returns the unconsumed creation error'),
+    # fix-r1 (DeepSeek P1): when the disposal itself fails, dropping the pending
+    # error from the aggregate silently swallows an unconsumed creation error.
+    ('1055-close-evict-failure-drops-pending', owner,
+     'vec![error, (*pending).clone()],',
+     'vec![error],',
+     None, prefix+'recreation_unconsumed_creation_error_is_aggregated_with_failed_disposal_by_close',
+     '#1218 close keeps the pending creation error beside the failed disposal'),
+    ('1055-shutdown-evict-failure-drops-disposal', owner,
+     'vec![error, (*pending).clone()],',
+     'vec![(*pending).clone()],',
+     None, prefix+'recreation_unconsumed_creation_error_is_aggregated_with_failed_disposal_by_shutdown',
+     '#1218 shutdown keeps the failed disposal error'),
+    # fix-r1 (P2-1): removing the recreation_drained gate lets the idle sweep
+    # reclaim a BUSY record while its drain is still running, orphaning a late
+    # cleanup error.
+    ('1055-sweep-drain-gate-removed', owner,
+     'pending_is_busy(pending) && record.handle.recreation_drained()',
+     'pending_is_busy(pending) && true',
+     None, prefix+'recreation_cancelled_timeout_busy_is_retained_by_sweep_while_drain_pending',
+     '#1218 sweep retains the busy record until the drain settles'),
+    # fix-r1 (P2-2): delivering the retriable BUSY through close hands the
+    # closing caller a transient error the model reserves for recreation.
+    ('1055-busy-delivered-by-close', owner,
+     '(Ok(()), Some(pending)) if !pending_is_busy(&pending) => Err((*pending).clone()),',
+     '(Ok(()), Some(pending)) if true => Err((*pending).clone()),',
+     None, prefix+'recreation_cancelled_timeout_busy_is_not_delivered_by_close_or_shutdown',
+     '#1218 close returns only the evict result for a retriable BUSY'),
 ]
 
 # These cfg(test) branches are selected at compile time by option_env!.
