@@ -5,8 +5,11 @@ Run after committing the candidate (the mutating_sources guard refuses a dirty
 tree). Each mutant reverts one #1232 behaviour to its pre-fix shape — hyper's
 123-byte error encoding, a guard that refuses to scan request bodies, a
 connection-wide header budget — and the bound libtest must fail at its own
-`#1232` assertion. Mutants are applied to the original one at a time, never
-cumulatively, and every mutation is restored and byte-verified afterwards.
+`#1232` assertion. The fix-r1 additions revert the step-aside semantics: a
+guard that scans on past its step-aside, a zero-capacity read latched as the
+peer's EOF, and an empty `Content-Length` value read as zero. Mutants are
+applied to the original one at a time, never cumulatively, and every mutation
+is restored and byte-verified afterwards.
 
     CARGO_TARGET_DIR=... python3 negative_controls_1232.py NEW_OUTPUT_DIR [name ...]
 """
@@ -26,7 +29,10 @@ TEST_PREFIX = 'user_dialog::http_store::http_store_tests::'
 
 # (name, source, before, after, bound test, bound assertion). Every bound
 # assertion is a `#1232` message owned by the named test, so only that test's
-# own panic payload can produce a KILLED verdict.
+# own panic payload can produce a KILLED verdict. An assertion may be a list:
+# the bound test then dies at any one of its own assertions (the budget-reset
+# mutant can hit either response depending on where the false 431 lands, #1232
+# fix-r1 P1-2).
 cases = [
     ('body-408-hyper-shape', source,
      '            timer.force_node_response(NODE_408_RESPONSE);\n'
@@ -59,16 +65,22 @@ cases = [
      '',
      'slow_request_bodies_are_closed_after_request_timeout',
      "#1232 the body requestTimeout must be Node's 51-byte 408"),
+    # fix-r1: begin() is gone, so the phase-blind mutant now skips the guard
+    # scan itself while the timer reports the request-body phase.
     ('guard-request-phase-blind', source,
-     '            TimeoutPhase::Request | TimeoutPhase::InitialHeaders => {}',
-     '            TimeoutPhase::Request => {\n'
-     '                self.active = false;\n'
-     '            }\n'
-     '            TimeoutPhase::InitialHeaders => {}',
+     '                    this.timer.read_activity();\n'
+     '                    if this.header_guard.push(filled) {',
+     '                    this.timer.read_activity();\n'
+     '                    if !matches!(this.timer.phase(), TimeoutPhase::Request)\n'
+     '                        && this.header_guard.push(filled)\n'
+     '                    {',
      'pipelined_oversized_head_during_body_writes_node_431_only',
      '#1232 a pipelined oversized head during a body answers with only the Node 431'),
     ('body-bytes-counted', source,
      '        for &byte in bytes {\n'
+     '            if !self.active {\n'
+     '                return false;\n'
+     '            }\n'
      '            if matches!(self.body, BodyFraming::None) {\n'
      '                if self.push_head(byte) {\n'
      '                    return true;\n'
@@ -78,6 +90,9 @@ cases = [
      '            }\n'
      '        }',
      '        for &byte in bytes {\n'
+     '            if !self.active {\n'
+     '                return false;\n'
+     '            }\n'
      '            if true {\n'
      '                if self.push_head(byte) {\n'
      '                    return true;\n'
@@ -96,6 +111,8 @@ cases = [
      '            self.body = BodyFraming::ChunkSize {',
      'chunked_pipelined_oversized_head_writes_node_431_only',
      '#1232 a pipelined oversized head behind a chunked body answers with only the Node 431'),
+    # fix-r1 P1-2: the false 431 can land before either response, so the
+    # mutant binds both of the test's own assertions.
     ('per-message-budget-not-reset', source,
      '    fn begin_next_head(&mut self) {\n'
      '        self.body = BodyFraming::None;\n'
@@ -107,7 +124,8 @@ cases = [
      '        self.line = GuardLine::RequestLine;\n'
      '        self.raw_bytes = 0;',
      'pipelined_head_budget_resets_per_message',
-     '#1232 the first ~10 K head plus its 20 K body must be served, not 431'),
+     ['#1232 the first ~10 K head plus its 20 K body must be served, not 431',
+      '#1232 the second head must start from a fresh per-message budget, not 431']),
     ('content-length-capture-broken', source,
      '            NameMatch::Full(FramingField::ContentLength) => FramingValue::ContentLength {',
      '            NameMatch::Full(FramingField::ContentLength) if false => FramingValue::ContentLength {',
@@ -128,6 +146,31 @@ cases = [
      '            }',
      'pipelined_oversized_head_single_burst_writes_node_431_only',
      '#1232 a single-burst pipelined oversized head answers with only the Node 431'),
+    # fix-r1: a guard that keeps scanning once it stepped aside reverts the
+    # never-re-arm half of P1-1 — the bytes behind an untrackable head (here a
+    # 48 KB chunk behind a multi-token Transfer-Encoding) get counted again.
+    ('step-aside-stops-scanning', source,
+     '        for &byte in bytes {\n'
+     '            if !self.active {\n'
+     '                return false;\n'
+     '            }\n',
+     '        for &byte in bytes {\n',
+     'keep_alive_multi_token_te_large_chunked_body_is_served',
+     '#1232 a keep-alive multi-token Transfer-Encoding request with a large chunk must be served, not 431'),
+    # fix-r1 (P2-4): without the zero-room park, the 0-capacity read's empty
+    # `filled` is latched as the peer's EOF while bytes are still in flight.
+    ('zero-read-latches-eof', source,
+     '            if limit == 0 {',
+     '            if limit == 0 && false {',
+     'zero_room_poll_does_not_latch_a_fake_eof',
+     '#1232 a zero-capacity read is not the peer\'s EOF: the waiting read-ahead bytes must stay delivered, not fake a 400'),
+    # fix-r1 (opus-4): an empty `Content-Length:` value read as zero lets the
+    # trailing bytes be counted as the next head instead of stepping aside.
+    ('empty-content-length-is-zero', source,
+     '                if invalid || !digits || self.content_length.is_some() {',
+     '                if invalid || self.content_length.is_some() {',
+     'header_guard_steps_aside_on_empty_content_length',
+     '#1232 the bytes behind an empty Content-Length value are not counted as head bytes'),
 ]
 
 

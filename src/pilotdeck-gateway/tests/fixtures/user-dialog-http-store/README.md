@@ -56,9 +56,10 @@ constructors 29 · handlerConstruction 7。
 
 `negative_controls_1232.py`（431/408 字节形状族）：复用 `negative_process` 的
 `mutating_sources` / `run_owned` / `wait_for_slot` 与 `negative_suite` 的 `classify` /
-`passed`，要求源码与 HEAD 一致，必须由调用方设置 `CARGO_TARGET_DIR`。九个变异各把一处
-#1232 行为还原成修复前形态（hyper 的 123 字节错误编码、`Request` 相位致盲的 guard、
-连接级头预算、断掉的 forced-response 接线、提前停的读前瞻），逐个先正控后变异，恢复后
+`passed`，要求源码与 HEAD 一致，必须由调用方设置 `CARGO_TARGET_DIR`。十二个变异各把
+一处 #1232 行为还原成修复前形态（hyper 的 123 字节错误编码、`Request` 相位致盲的
+guard、连接级头预算、断掉的 forced-response 接线、提前停的读前瞻、让位后继续扫描、
+0 容量读锁存假 EOF、空 `Content-Length` 值读作 0），逐个先正控后变异，恢复后
 字节校验，全量跑完汇总 KILLED / SURVIVED / INVALID，任一非 KILLED 即非零退出：
 `python3 negative_controls_1232.py <新输出目录> [变异名 ...]`；`--check-anchors` 校验
 锚点未过期。长套件交协调者提交后宿主执行。
