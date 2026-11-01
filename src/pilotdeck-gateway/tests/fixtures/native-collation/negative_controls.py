@@ -20,10 +20,28 @@ PROJECT = root / 'src/pilotdeck-gateway/src/project_files.rs'
 CATALOG = root / 'src/pilotdeck-gateway/src/model_catalog.rs'
 SESSION = root / 'src/pilotdeck-gateway/src/session_model.rs'
 COMPARISON = root / 'src/vendor/icu_collator/src/comparison.rs'
+BOUNDARY = root / 'src/pilotdeck-gateway/tests/unsafe_boundary.rs'
+MANIFEST = root / 'src/vendor/icu_collator/Cargo.toml'
+VENDOR_SCOPE = 'icu_collator_vendor_scope_matches_approved_lib_only_boundary'
 PREFIX = 'pairing::native_collation_tests::'
 MATRIX = PREFIX + 'native_matrix_matches_node'
 PAIRS = PREFIX + 'native_comparator_matches_node_all_pairs'
 mutations = [
+    ('icu-vendor-registration-lost', BOUNDARY,
+     '    "vendor/icu_collator",', '    "vendor/unregistered-icu",',
+     VENDOR_SCOPE, '#132 ICU vendor must be registered'),
+    ('icu-test-target-restored', MANIFEST,
+     '[dependencies.databake]',
+     '[[test]]\nname = "restored_test"\npath = "src/lib.rs"\n\n[dependencies.databake]',
+     VENDOR_SCOPE, '#132 ICU exposes only one lib target'),
+    ('icu-bench-target-restored', MANIFEST,
+     '[dependencies.databake]',
+     '[[bench]]\nname = "restored_bench"\npath = "src/lib.rs"\nharness = false\n\n[dependencies.databake]',
+     VENDOR_SCOPE, '#132 ICU exposes only one lib target'),
+    ('icu-lib-only-guard-relaxed', BOUNDARY,
+     '            kinds,\n            ["lib"],',
+     '            kinds,\n            kinds,',
+     VENDOR_SCOPE, '#132 ICU non-lib target must be rejected'),
     ('code-unit-order', PROJECT,
      'collator.compare_utf16_preserving_surrogates(left.units(), right.units())',
      'left.units().cmp(right.units())', PAIRS, '#132 comparator raw weights'),
@@ -91,19 +109,20 @@ def main():
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-               '-p', 'pilotdeck-gateway', '--lib']
+               '-p', 'pilotdeck-gateway']
     results = []
 
-    def run(label, arguments):
+    def run(label, arguments, test):
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
         with (out / (label + '.slots.log')).open('x') as stream:
             stream.write(slot.stdout + slot.stderr)
-        result = run_owned(command + arguments, cwd=root, env=env, timeout=900)
+        target = ['--lib'] if test.startswith(PREFIX) else ['--test', 'unsafe_boundary']
+        result = run_owned(command + target + arguments, cwd=root, env=env, timeout=900)
         with (out / (label + '.log')).open('x') as stream:
             stream.write(result.stdout + result.stderr)
         return result
 
-    guarded = [PROJECT, CATALOG, SESSION, COMPARISON, FIXTURE / 'regression.rs',
+    guarded = [PROJECT, CATALOG, SESSION, COMPARISON, BOUNDARY, MANIFEST, FIXTURE / 'regression.rs',
                FIXTURE / 'oracle.json', FIXTURE / 'generate.mts', Path(__file__).resolve(),
                root / 'src/vendor/icu_collator/src/elements.rs',
                *(FIXTURE.parent / name for name in (
@@ -118,16 +137,16 @@ def main():
                     original = originals[path].decode()
                     if original.count(old) != 1 or old == new:
                         raise ValueError('expired or invalid anchor')
-                    if not compile_only and not passed(run(name + '-positive', arguments), test):
+                    if not compile_only and not passed(run(name + '-positive', arguments, test), test):
                         raise RuntimeError('positive control did not pass')
                     path.write_text(original.replace(old, new, 1))
-                    if run(name + '-compile', ['--no-run']).returncode != 0:
+                    if run(name + '-compile', ['--no-run'], test).returncode != 0:
                         raise RuntimeError('mutant did not compile; never a kill')
                     row['compiled'] = True
                     if compile_only:
                         row.update(status='COMPILED', reason='mutant compiles; runtime check still required')
                     else:
-                        status, reason = classify(run(name + '-negative', arguments),
+                        status, reason = classify(run(name + '-negative', arguments, test),
                                                   Case(name, path, old, new, test, marker))
                         row.update(status=status, reason=reason)
                 except Exception as error:
@@ -135,7 +154,7 @@ def main():
                 finally:
                     path.write_bytes(originals[path])
                 try:
-                    restored = run(name + '-restored', ['--no-run'] if compile_only else arguments)
+                    restored = run(name + '-restored', ['--no-run'] if compile_only else arguments, test)
                     if restored.returncode or (not compile_only and not passed(restored, test)):
                         raise RuntimeError('restored positive did not pass')
                 except Exception as error:
