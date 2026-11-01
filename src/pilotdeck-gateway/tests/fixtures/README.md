@@ -33,6 +33,7 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 ## 自测与负控
 
 ```sh
+export CARGO_TARGET_DIR="$PWD/../../_build/cargo-target"
 python3 -B tests/fixtures/pending-reanchor/test_controls.py
 python3 -B tests/fixtures/anchor_selfcheck.py --anchors-only
 # 先提交；复用调用方的 CARGO_TARGET_DIR，不另建 git 或构建目录。

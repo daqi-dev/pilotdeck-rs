@@ -41,9 +41,15 @@ REPO = FIXTURES.parents[4]
 TEST_NAME = 'real_ts_scenarios_match_outcomes_and_bytes'
 TEST = ['cargo', 'test', '-p', 'pilotdeck-gateway', '--test', 'recorder',
         TEST_NAME, '--', '--exact', '--nocapture', '--test-threads=4']
-# The Rust criterion entry whose count assertion binds every kill below; the
-# scanner prefixes each literal input with this marker.
-CRITERION_ENTRY = 'src/pilotdeck-gateway/tests/recorder.rs'
+# The Rust criterion chain whose count assertion binds every kill below:
+# tests/recorder.rs plus everything its mod/#[path]/include_*! declarations
+# compile in. The scanner prefixes each literal input with this marker.
+CRITERION_CHAIN = (
+    'src/pilotdeck-gateway/tests/recorder.rs',
+    'src/pilotdeck-gateway/tests/common/baseline.rs',
+    'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+    'src/pilotdeck-gateway/tests/fixtures/_shared/regeneration-masks.tsv',
+)
 LITERAL_PREFIX = ':(top,literal)'
 
 
@@ -254,17 +260,21 @@ def rust_criterion_inputs():
     proves every workspace literal input equals HEAD through it, which covers
     the criterion chain (tests/recorder.rs and everything its mod/#[path]/
     include_*! declarations compile in, e.g. common/baseline.rs ->
-    regeneration_masks.rs -> _shared/regeneration-masks.tsv). The entry anchor
-    below fails closed when the criterion is no longer a scanner input, so a
-    moved or renamed criterion is an error before any control runs, never an
-    under-guarded KILLED.
+    regeneration_masks.rs -> _shared/regeneration-masks.tsv). The scanner
+    seeds every tracked .rs under src, so an entry-only anchor would be
+    tautological; asserting the whole chain below is what proves the
+    include_*!/#[path] edge discovery still reaches the chain's include_str!
+    input. A chain file that moved or was renamed — or an edge-discovery
+    regression — is an error before any control runs, never an under-guarded
+    KILLED.
     """
     inputs = {name.removeprefix(LITERAL_PREFIX)
               for name in _workspace_literal_inputs(REPO, 'HEAD')}
-    if CRITERION_ENTRY not in inputs:
+    missing = [name for name in CRITERION_CHAIN if name not in inputs]
+    if missing:
         raise RuntimeError(
-            f'#1139 Rust criterion entry is not a #1166 scanner input: '
-            f'{CRITERION_ENTRY}')
+            f'#1139 Rust criterion chain is not covered by #1166 scanner '
+            f'inputs: {missing}')
     return inputs
 
 
@@ -275,7 +285,7 @@ def guarded_inputs():
     # The Rust criterion compiles from tests/recorder.rs's own declarations;
     # mutating_sources proves every workspace literal input equals HEAD through
     # the shared #1166 proc-macro2 scanner, so a dirty criterion is refused
-    # before any positive control. The entry anchor above keeps that coverage
+    # before any positive control. The chain anchor above keeps that coverage
     # pointed at this criterion; run-registry's bound test sits inside the
     # product tree the same shared check already covers.
     guarded = [generator, FIXTURES / 'oracle.json', Path(__file__).resolve(),

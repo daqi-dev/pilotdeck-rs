@@ -157,15 +157,52 @@ GUARD_PROBES = [
      """    'pathToFileURL(join(baseline, source)).href',""",
      """    'pathToFileURL(join(baseline, sources)).href',""",
      "#1139: the runners' closure helpers must stay synchronized"),
+    ('recorder-closure-skip-in-root-absolute', RECORDER,
+     'ClosureTests.test_in_repository_absolute_dynamic_import_joins_the_closure',
+     """    resolved = Path(specifier).resolve()
+    if resolved.is_relative_to(source_root):
+        return [resolved]""",
+     """    resolved = Path(specifier).resolve()
+    if resolved.is_relative_to(source_root):
+        return []  # mutated: in-root absolute import skipped""",
+     '#1139: in-repository absolute dynamic import must join the closure'),
+    ('run-registry-closure-skip-in-root-absolute', RUN_REGISTRY,
+     'ClosureTests.test_in_repository_absolute_dynamic_import_joins_the_closure',
+     """    resolved = Path(specifier).resolve()
+    if resolved.is_relative_to(source_root):
+        return [resolved]""",
+     """    resolved = Path(specifier).resolve()
+    if resolved.is_relative_to(source_root):
+        return []  # mutated: in-root absolute import skipped""",
+     '#1139: in-repository absolute dynamic import must join the closure'),
+    ('recorder-closure-drop-from-keyword', RECORDER,
+     'ClosureTests.test_static_import_edge_forms_join_the_closure',
+     "    for keyword in ('import', 'from'):",
+     "    for keyword in ('import',):  # mutated: re-export from edges dropped",
+     '#1139: static import edge forms must join the closure'),
+    ('run-registry-closure-drop-from-keyword', RUN_REGISTRY,
+     'ClosureTests.test_static_import_edge_forms_join_the_closure',
+     "    for keyword in ('import', 'from'):",
+     "    for keyword in ('import',):  # mutated: re-export from edges dropped",
+     '#1139: static import edge forms must join the closure'),
+    ('recorder-criterion-chain-file-dropped', RECORDER,
+     'CriterionCoverageTests.test_documented_criterion_chain_is_scanner_covered',
+     """    inputs = {name.removeprefix(LITERAL_PREFIX)
+              for name in _workspace_literal_inputs(REPO, 'HEAD')}""",
+     """    inputs = {name.removeprefix(LITERAL_PREFIX)
+              for name in _workspace_literal_inputs(REPO, 'HEAD')
+              if not name.endswith('regeneration-masks.tsv')}""",
+     '#1139: criterion chain fell out of the scanner input set'),
     ('recorder-criterion-anchor-dropped', RECORDER,
-     'CriterionCoverageTests.test_criterion_entry_outside_scanner_inputs_fails_closed',
-     """    if CRITERION_ENTRY not in inputs:
+     'CriterionCoverageTests.test_criterion_chain_outside_scanner_inputs_fails_closed',
+     """    missing = [name for name in CRITERION_CHAIN if name not in inputs]
+    if missing:
         raise RuntimeError(
-            f'#1139 Rust criterion entry is not a #1166 scanner input: '
-            f'{CRITERION_ENTRY}')
+            f'#1139 Rust criterion chain is not covered by #1166 scanner '
+            f'inputs: {missing}')
     return inputs""",
-     '    return inputs  # mutated: criterion entry anchor dropped',
-     'RuntimeError not raised'),
+     '    return inputs  # mutated: criterion chain anchor dropped',
+     '#1139: a criterion file outside the scanner input set must fail closed'),
 ]
 
 
