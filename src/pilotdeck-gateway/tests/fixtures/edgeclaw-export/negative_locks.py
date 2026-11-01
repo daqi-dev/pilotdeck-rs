@@ -116,7 +116,7 @@ with mutating_sources(repo, list(files.values())) as snapshot:
             let leaked: &'static std::sync::Arc<std::sync::Mutex<()>> = Box::leak(Box::new(lock));
             &**leaked
         })).collect::<Result<Vec<_>>>()?;
-        let mut guards = locks.iter().map(|l| super::super::file_memory::OperationGuard::enter(*l)).collect::<Result<Vec<_>>>()?;
+        let mut guards = locks.iter().map(|l| super::super::file_memory::OperationGuard::enter(*l, None)).collect::<Result<Vec<_>>>()?;
         let global = vec![guards.pop().expect("snapshot root order mutation")];
         let workspace = guards;""")
             reserve('snapshot-order-build')
