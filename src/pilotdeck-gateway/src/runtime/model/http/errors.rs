@@ -122,17 +122,28 @@ pub(crate) fn retry_after_from_message(message: &str) -> Option<f64> {
 /// dialect set — IMF-fixdate, RFC 850, asctime, ISO and the V8-lenient forms
 /// — shared with the execution clock (`pilotdeck_transport::system_clock`,
 /// #360-2). A wall time without a timezone resolves against the process
-/// timezone through the admitted system TZif subset; Node also parses such
-/// values in environments that subset does not admit (POSIX TZ rules, custom
-/// TZ paths, unreadable tzdata), where this parser counts the value as
-/// unparseable and the header is ignored — the retained TZ-subset difference
-/// recorded under A6.4-STATS-RETENTION-001 in
-/// `specs/gateway-parity/accepted-diffs.md`.
+/// timezone through the admitted system TZif subset — the same
+/// three-identifier + SHA gate as conservative stats retention
+/// (`stats::admitted_local_to_utc`, #360-2 fix-r2), not an arbitrary readable
+/// TZif. Node also parses such values in environments that gate does not
+/// admit (POSIX TZ rules, custom TZ paths, unreadable or unpaired tzdata,
+/// host-dependent aliases like `TZ=localtime`), where this parser counts the
+/// value as unparseable and the header is ignored. That retained TZ-subset
+/// difference is registered for this provider HTTP consumer by
+/// `specs/gateway-parity/diffs/A6.4-PROVIDER-RETRY-AFTER-TZ-001.md` (it
+/// follows the same TZif subset as A6.4-STATS-RETENTION-001 but is a
+/// separate, unapproved entry — the stats entry's scope is retention only).
 pub(crate) fn retry_after_header(value: Option<&str>, now_ms: f64) -> Option<f64> {
-    retry_after_header_parsed(
-        value,
-        now_ms,
-        &pilotdeck_transport::system_clock::parse_node22_date,
+    retry_after_header_parsed(value, now_ms, &admitted_node22_parse)
+}
+
+/// The production parse closure: the Node22 dialect parser with the shared
+/// admitted-local resolver. Fail-closed gate errors (unverified TZif, alias
+/// like `TZ=localtime`) make the whole value unparseable, never a UTC guess.
+fn admitted_node22_parse(text: &JsString) -> Result<Option<f64>, JsString> {
+    pilotdeck_transport::system_clock::parse_node22_date_with_local(
+        text,
+        &crate::runtime::model::stats::admitted_local_to_utc,
     )
 }
 

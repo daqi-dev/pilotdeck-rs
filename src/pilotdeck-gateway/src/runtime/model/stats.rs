@@ -1341,12 +1341,22 @@ fn migrate_json_to_jsonl_with(
 /// the accounting row. See stats-dateparse/README.md for the admitted TZ data.
 /// Ledger: gateway accepted-diffs A6.4-STATS-RETENTION-001 (human-approved subset).
 pub(crate) fn parse_date_ms(value: &JsString) -> Option<f64> {
-    pilotdeck_transport::system_clock::parse_node22_date_with_local(value, &stats_local_to_utc)
+    pilotdeck_transport::system_clock::parse_node22_date_with_local(value, &admitted_local_to_utc)
         .ok()
         .flatten()
 }
 
-fn stats_local_to_utc(wall: i64) -> Result<i64, JsString> {
+/// The admitted local resolver shared by stats retention (`parse_date_ms`) and
+/// the provider HTTP Retry-After header (`http::errors::retry_after_header`,
+/// #360-2 fix-r2): the same three-identifier allowlist, `/etc/localtime`
+/// canonical-link check for an unset TZ, 1 MiB read bound and
+/// `local-profiles.json` SHA pairing. Outside that subset the answer is Err —
+/// the consumer counts the local wall time as unparseable instead of guessing
+/// UTC or the host's offset. `TZ=localtime` is deliberately outside: Node
+/// v22.22.0 resolves it through the C library's zone search (hosts with
+/// `/usr/share/zoneinfo/localtime` parse the local zone, hosts without fall
+/// back to UTC), so it is not a reproducible ICU profile.
+pub(crate) fn admitted_local_to_utc(wall: i64) -> Result<i64, JsString> {
     use std::io::Read;
     let unsupported = || JsString::from("STATS_LOCAL_DATE_UNVERIFIED_TZIF");
     let tz = std::env::var_os("TZ");
@@ -1385,7 +1395,9 @@ fn stats_local_to_utc(wall: i64) -> Result<i64, JsString> {
     stats_tzif_local(wall, &bytes, &zone)
 }
 
-fn stats_tzif_local(wall: i64, bytes: &[u8], zone: &str) -> Result<i64, JsString> {
+/// SHA-paired TZif admission, also used by the Retry-After zone-child tests to
+/// decide whether a host profile replays as Node-parity or fail-closed.
+pub(crate) fn stats_tzif_local(wall: i64, bytes: &[u8], zone: &str) -> Result<i64, JsString> {
     use sha2::{Digest, Sha256};
     static VERIFIED: OnceLock<Vec<(String, String)>> = OnceLock::new();
     let hashes = VERIFIED.get_or_init(|| {
