@@ -125,3 +125,64 @@ async fn explicit_entry_selects_parser() {
         }
     }
 }
+
+// #1261: anchor run()'s validate_environment call site, not the function body
+// (production_entry_snapshot_capabilities_are_disabled already mirrors the
+// combination by calling the function directly). Only the real --native child
+// catches a removed or reordered call; the child is bounded so an accepted
+// authority that starts listening still fails the deadline assertion instead
+// of hanging the suite.
+#[tokio::test]
+async fn native_entry_process_rejects_inherited_authority() {
+    let scratch = test_scratch::Scratch::new("1261-native-entry");
+    let home = scratch.path().join("home");
+    let project = scratch.path().join("project");
+    std::fs::create_dir(&home).expect("#1261 native entry home directory");
+    std::fs::create_dir(&project).expect("#1261 native entry project directory");
+    let token_file = scratch.path().join("token");
+    std::fs::write(&token_file, "1261-native-entry-token\n")
+        .expect("#1261 native entry token file");
+    let sidecar = scratch.path().join("sidecar");
+    std::fs::write(&sidecar, "#1261 never executed before the rejection\n")
+        .expect("#1261 native entry sidecar file");
+    for key in [
+        "PILOTDECK_STORAGE_ROOT",
+        "PILOTDECK_SNAPSHOT_ROOT",
+        "PILOTDECK_MANAGED_CONFIG",
+    ] {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
+                .arg("--native")
+                .arg("--home")
+                .arg(&home)
+                .arg("--project")
+                .arg(&project)
+                .arg("--listen")
+                .arg("127.0.0.1:0")
+                .arg("--token-file")
+                .arg(&token_file)
+                .arg("--sidecar")
+                .arg(&sidecar)
+                .env_clear()
+                .env(key, "/1261-inherited/storage-root")
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("#1261 native entry child rejection deadline")
+        .expect("#1261 native entry child launch");
+        let stderr =
+            String::from_utf8(output.stderr).expect("#1261 native entry child stderr UTF8");
+        negative_assert!(
+            stderr.contains(&format!(
+                "native isolated mode does not accept inherited {key}"
+            )),
+            "#1261 native entry rejects inherited {key}"
+        );
+        negative_assert!(
+            !output.status.success(),
+            "#1261 native entry rejects inherited {key}"
+        );
+    }
+}
