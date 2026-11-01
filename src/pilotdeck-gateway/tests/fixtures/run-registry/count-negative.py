@@ -28,9 +28,12 @@ from negative_suite import Case, classify, passed
 FIXTURES = Path(__file__).resolve().parent
 REPO = FIXTURES.parents[4]
 TEST_NAME = 'storage::run_registry_tests::real_ts_scenarios_match_outcomes_and_snapshot_bytes'
+# No `--nocapture`: it splices the test's stdout into the
+# `test <name> ... ok/FAILED` status line (#938 r14) that the shared
+# negative_suite.passed()/classify() judge matches exactly (#1053).
 TEST = ['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib',
         TEST_NAME,
-        '--', '--exact', '--nocapture', '--test-threads=4']
+        '--', '--exact', '--test-threads=4']
 
 
 def _skip_spacing(text, index):

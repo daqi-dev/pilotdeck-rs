@@ -162,8 +162,11 @@ with mutating_sources(root, [source]) as originals:
     check_anchors({source: originals[source].decode()})
 
     # Positive baseline: the unmutated bound test must pass.
+    # No `--nocapture` in either run: it splices the test's stdout into the
+    # `test <name> ... ok/FAILED` status line (#938 r14) that the baseline
+    # check and the classify() kill check match exactly (#1053).
     baseline_ok = True
-    result, log = run('baseline', [TEST, '--', '--exact', '--nocapture'])
+    result, log = run('baseline', [TEST, '--', '--exact'])
     if (result is None or result.returncode != 0 or f'test {TEST} ... ok' not in log
             or 'running 0 tests' in log):
         baseline_ok = False
@@ -188,7 +191,7 @@ with mutating_sources(root, [source]) as originals:
             if compiled is None or compiled.returncode != 0:
                 reason = 'mutant did not compile; never a kill'
             else:
-                result, log = run(name + '-negative', [TEST, '--', '--exact', '--nocapture'])
+                result, log = run(name + '-negative', [TEST, '--', '--exact'])
                 status = classify(log, None if result is None else result.returncode)
                 if status == 'KILLED' and (
                         f'test {TEST} ... FAILED' not in log

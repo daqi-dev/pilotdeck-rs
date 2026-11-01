@@ -396,8 +396,11 @@ with mutating_sources(root, paths) as originals:
             if compiled is None or compiled.returncode != 0:
                 reason = 'mutant did not compile; never a kill'
             else:
+                # No `--nocapture`: it splices the test's stdout into the
+                # `test <name> ... FAILED` status line that classify() and
+                # the #947 assertion check below match exactly (#1053).
                 result, log = run(name + '-negative',
-                                  [*extra, test, '--', '--exact', '--nocapture'])
+                                  [*extra, test, '--', '--exact'])
                 status = classify(log, None if result is None else result.returncode)
                 if status == 'KILLED' and (
                         f'test {test} ... FAILED' not in log

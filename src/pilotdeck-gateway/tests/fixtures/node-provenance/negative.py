@@ -77,12 +77,15 @@ ROWS = [
 ]
 
 
+# No `--nocapture` in either command: it splices the test's stdout into the
+# `test <name> ... ok/FAILED` status line (#938 r14) that cargo_passed()/
+# classify() match exactly (#1053).
 def cargo_command(test):
     return [
         'cargo', 'test', '--offline', '--locked',
         '--manifest-path', str(ROOT / 'src/Cargo.toml'),
         '-p', 'pilotdeck-gateway', '--test', 'regeneration_masks',
-        test, '--', '--exact', '--nocapture',
+        test, '--', '--exact',
     ]
 
 
@@ -91,7 +94,7 @@ def cargo_lib_command(test):
         'cargo', 'test', '--offline', '--locked',
         '--manifest-path', str(ROOT / 'src/Cargo.toml'),
         '-p', 'pilotdeck-gateway', '--lib',
-        test, '--', '--ignored', '--exact', '--nocapture',
+        test, '--', '--ignored', '--exact',
     ]
 
 

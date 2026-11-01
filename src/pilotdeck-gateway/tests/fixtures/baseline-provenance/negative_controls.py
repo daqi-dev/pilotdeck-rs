@@ -39,7 +39,10 @@ base = [
     "cargo", "test", "--offline", "--manifest-path", "src/Cargo.toml",
     "-p", "pilotdeck-gateway", "--test", "baseline_provenance",
 ]
-test_command = base + [test, "--", "--exact", "--nocapture"]
+# No `--nocapture`: it splices the test's stdout into the
+# `test <name> ... ok/FAILED` status line (#938 r14) that passed()/
+# classify() match exactly (#1053).
+test_command = base + [test, "--", "--exact"]
 
 # Each row is (name, anchor, replacement). The anchor must occur exactly once.
 ROWS = [
