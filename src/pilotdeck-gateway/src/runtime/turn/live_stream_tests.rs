@@ -170,6 +170,7 @@ fn stream(
         preflight: 0,
         execute_ready: None,
         recorded: std::collections::VecDeque::new(),
+        timeline: None,
     }
 }
 
@@ -3641,6 +3642,9 @@ mod gates_tests;
 
 #[path = "host_pump_tests.rs"]
 mod host_pump_tests;
+
+#[path = "host_timeline_tests.rs"]
+mod host_timeline_tests;
 
 // A prepared handler must stop even when dispose never completes. Virtual time
 // distinguishes both shorter and longer configured budgets from the old 5 s.
