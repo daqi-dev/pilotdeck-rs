@@ -21,6 +21,17 @@ shutil.copytree(root / "src/pilotdeck-yaml", crate)
 workspace = (root / "src/Cargo.toml").read_text()
 workspace = re.sub(r"members = \[.*?\]", 'members = ["pilotdeck-yaml"]', workspace, flags=re.S)
 workspace = workspace.replace('path = "pilotdeck-protocol"', f'path = "{root}/src/pilotdeck-protocol"')
+# #132: [patch.crates-io] paths (vendored icu_collator) are relative to src/; the
+# scratch workspace does not copy vendor/ or data/, so a relative patch path would
+# dangle and cargo refuses to start (every mutant would fail for the wrong reason).
+patch = re.search(r"^\[patch\.crates-io\]\n(.*?)(?=^\[|\Z)", workspace, flags=re.M | re.S)
+assert patch or not re.search(r"^\s*\[patch\b", workspace, flags=re.M), "#132 unrecognised [patch] table header"
+if patch:
+    body = patch.group(1)
+    rows = [row for row in body.splitlines() if row.split("#", 1)[0].strip()]
+    assert all(re.fullmatch(r'\s*[A-Za-z0-9_-]+\s*=\s*\{\s*path\s*=\s*"[^"/][^"]*"\s*\}\s*', row) for row in rows), rows
+    absolute = re.sub(r'path\s*=\s*"([^"]+)"', lambda m: f'path = "{root}/src/{m.group(1)}"', body)
+    workspace = workspace[:patch.start(1)] + absolute + workspace[patch.end(1):]
 (scratch / "Cargo.toml").write_text(workspace)
 shutil.copy(root / "src/Cargo.lock", scratch / "Cargo.lock")
 scalar = "src/compose/resolve_flow_scalar.rs"

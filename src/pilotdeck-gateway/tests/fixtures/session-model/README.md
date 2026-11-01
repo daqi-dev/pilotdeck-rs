@@ -205,7 +205,7 @@ EIO 的原始帧转发与 TS 回包透传。白名单与生产原件观测集合
 
 `illformed-collation.json` 是独立新增的12个真实Node WS原件；基线/Node/ICU及完整请求、响应、文件快照随文件记录。用原录制器第五参数 `--illformed-collation` 在全新隔离scratch输出到新文件，不改历史cases.json。
 
-catalog过滤后多于一项且排序id含孤立高/低surrogate、session同sequence组createdAt含孤立surrogate时，ICU4X会替换为U+FFFD而Node保留不同排序权重，故经JS_HOST_REQUIRED整帧转发。4个host案例由pairing独立观察完整原请求并回放真实Node响应；8个本地正控逐字节比响应且上游静默，并发sentinel形成观察因果。U+FFFD与paired补充面本地，单项/过滤后单项catalog、不同sequence和未入同序组的孤立surrogate均本地。全输入原生化仍有边界，待后续原生UTF16实现；未登记排序差异豁免。
+#132 将这 12 个案例全部改为原生处理；`forward` 字段保留为历史采集元数据，不再决定当前路由期望。catalog 多项 id 与 session 同 sequence createdAt 中的孤立代理项直接使用原码位隐式权重；pairing 对 12 格逐字节核对真实 Node 响应，并用独立上游 observer + sentinel 证明业务请求零转发。另见 `../native-collation/README.md` 的 100 格矩阵与上下文排序负控。未登记排序差异豁免。
 
 原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)。#133 的 Linux 门控测试已入库（`../project-files-linux-dirent/`，需 cb8 主机运行，证据由协调者产出后收口）；在其实跑证据落盘前，单元解码核验仍不能视为真实文件系统验收。
 

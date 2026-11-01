@@ -94,9 +94,8 @@ pub enum StorageError {
     NotIterable(String),
     /// ICU collation data could not be loaded, so `localeCompare`-based trace
     /// ordering cannot be reproduced. (Unpaired surrogates are no longer a
-    /// host boundary: the shared `project_files::node_compare_utf16` maps them
-    /// onto the unassigned U+E000..U+E7FF band the way Node/ICU4C weights
-    /// them.)
+    /// host boundary: the shared `project_files::node_compare_utf16` preserves
+    /// their implicit weights directly, without a private-use mapping.)
     HostRequired(String),
 }
 impl fmt::Display for StorageError {

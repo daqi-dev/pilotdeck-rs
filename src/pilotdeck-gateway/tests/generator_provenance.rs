@@ -1517,3 +1517,9 @@ fn surrogate_collation_matrix_covers_locale_and_key_classes() {
         "#132 de_DE mixed order must match en_US (ICU 78.2)"
     );
 }
+
+#[test]
+#[ignore = "#132 requires pinned Node v22.22.0 / ICU 78.2 and TS baseline"]
+fn native_collation_regenerates_identically() {
+    baseline::regenerates_identically("native-collation");
+}
