@@ -451,6 +451,7 @@ impl LiveSession for LiveSessionAdapter {
             accepted: false,
             preflight: 0,
             execute_ready: Some(execute_ready),
+            execute_messages: None,
             recorded: std::collections::VecDeque::new(),
             timeline: if crate::mutants::on("timeline-terminal-unwired") {
                 None
@@ -577,6 +578,10 @@ pub(super) struct LiveTurnStream {
     accepted: bool,
     preflight: u8,
     execute_ready: Option<oneshot::Sender<Vec<JsValue>>>,
+    // #1220: the messages snapshot actually sent through execute_ready — the
+    // aborted terminal's message source (TS input.messages), kept separate
+    // from the runner the stream keeps recording into afterwards.
+    execute_messages: Option<Vec<JsValue>>,
     recorded: std::collections::VecDeque<JsValue>,
     // #1220: the turn's coordinate allocator, shared with the handler's
     // Forwarding so terminal blocks reuse the positions the stream assigned.
@@ -680,6 +685,12 @@ impl LiveTurn for LiveTurnStream {
                     } else {
                         runner.messages().to_vec()
                     };
+                    // #1220: retain exactly what the sidecar receives.
+                    // abortedResult reads input.messages (TS client:1434-1450),
+                    // pristine because the loop copies it (AgentLoop.ts:367), so
+                    // an aborted terminal must report this execute-time snapshot
+                    // — never the runner's later in-turn durable loop messages.
+                    self.execute_messages = Some(messages.clone());
                     let _ = self.execute_ready.take().unwrap().send(messages);
                 }
                 let mut delivered = None;
@@ -1161,23 +1172,38 @@ impl LiveTurnStream {
         }
         let mut terminal = JsObject::new();
         terminal.insert("result".into(), JsValue::Object(result));
-        terminal.insert(
-            "messages".into(),
-            JsValue::Array(
-                self.recording
-                    .as_ref()
-                    .and_then(Recording::runner)
-                    .map(|runner| {
-                        if crate::mutants::on("prompt-abort-context") {
-                            self.input.loop_messages()
-                        } else {
-                            runner.messages().to_vec()
-                        }
-                    })
-                    .unwrap_or_else(|| self.input.loop_messages()),
-            ),
-        );
+        terminal.insert("messages".into(), JsValue::Array(self.abort_messages()));
         JsValue::Object(terminal)
+    }
+
+    /// The message list an aborted terminal reports. TS `abortedResult(input)`
+    /// (agentLoopSidecarClient.ts:1434-1450) returns `input.messages` — the
+    /// snapshot the client handed the sidecar at execute time, still pristine
+    /// because the loop works on a copy (AgentLoop.ts:367). In-turn durable
+    /// assistant/tool messages land in the runner afterwards and must not leak
+    /// into this list; before the execute snapshot exists (pre-execute cancels)
+    /// the runner has recorded nothing in-turn yet, so the runner's messages
+    /// and the raw loop input agree there.
+    fn abort_messages(&self) -> Vec<JsValue> {
+        if crate::mutants::on("prompt-abort-context") {
+            return self.input.loop_messages();
+        }
+        if crate::mutants::on("live-abort-finish-messages") {
+            return self
+                .recording
+                .as_ref()
+                .and_then(Recording::runner)
+                .map(|runner| runner.messages().to_vec())
+                .unwrap_or_else(|| self.input.loop_messages());
+        }
+        if let Some(messages) = &self.execute_messages {
+            return messages.clone();
+        }
+        self.recording
+            .as_ref()
+            .and_then(Recording::runner)
+            .map(|runner| runner.messages().to_vec())
+            .unwrap_or_else(|| self.input.loop_messages())
     }
 }
 
@@ -1496,6 +1522,25 @@ impl StreamHandler {
                     sleep_until(deadline).await;
                     let mut delivery = self.forwarding.lock().unwrap().reserve();
                     delivery.wait().await;
+                    // #1220 cancel window: a cancelled turn must keep pumping —
+                    // only the module final or dispose stops the loop. The
+                    // mutated branch simulates a cancel assembly that parks the
+                    // pump once the host's cancellation signal has fired by the
+                    // tick, so post-abort host events stop being drained there.
+                    if crate::mutants::on("timeline-cancel-stops-pump")
+                        && self
+                            .callback_cancel
+                            .as_ref()
+                            .is_some_and(|cancel| cancel.is_cancelled())
+                    {
+                        // Release the reserved slot to any successor first, so
+                        // wire callbacks are not blocked behind the parked pump;
+                        // the pending await below never resolves (the `continue`
+                        // only exists to end the moved value's control flow).
+                        drop(delivery);
+                        std::future::pending::<()>().await;
+                        continue;
+                    }
                     if self.forwarding.lock().unwrap().stopped || Instant::now() < self.forwarding.lock().unwrap().deadline() { continue; }
                     self.forwarding.lock().unwrap().activity = Some(Instant::now());
                     if let Err(error) = self.forward(Box::pin(async { Ok(()) }), None, Some(delivery), false, true).await { break error; }
@@ -2074,6 +2119,7 @@ mod tests {
             accepted: false,
             preflight: 0,
             execute_ready: None,
+            execute_messages: None,
             recorded: std::collections::VecDeque::new(),
             timeline: None,
         };

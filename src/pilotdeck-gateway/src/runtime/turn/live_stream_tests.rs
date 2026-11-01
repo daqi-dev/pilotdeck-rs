@@ -169,6 +169,7 @@ fn stream(
         accepted: false,
         preflight: 0,
         execute_ready: None,
+        execute_messages: None,
         recorded: std::collections::VecDeque::new(),
         timeline: None,
     }
@@ -1566,13 +1567,67 @@ async fn incomplete_compaction_final_yields_original_messages_then_none() {
         let event = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
     }
+    // The durable wire assistant message yields with its coordinates before
+    // the incomplete compaction final (the peer sends it before the cancel).
+    let assistant = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        assistant.get("type"),
+        Some(&"assistant_message".into()),
+        "#1220 compaction: the durable wire assistant message yields before the final"
+    );
+    assert_eq!(
+        assistant
+            .get("message")
+            .and_then(|message| message.get("content"))
+            .and_then(|content| match content {
+                JsValue::Array(blocks) => blocks.first(),
+                _ => None,
+            })
+            .and_then(|block| block.get("timeline")),
+        Some(
+            &parse_json(r#"{"version":1,"turnId":"turn","id":"am1","order":0,"revision":2}"#)
+                .expect("#1220 compaction: literal must parse")
+        ),
+        "#1220 compaction: the durable wire assistant block takes the first position"
+    );
     session
         .abort(&"compaction_persistence_failed".into())
         .unwrap();
-    assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
-    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    // The incomplete compaction final is aborted before the handler sees it.
-    assert_eq!(handler.events.lock().unwrap().len(), 1);
+    let terminal = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        terminal.get("type"),
+        Some(&"turn_completed".into()),
+        "#1220 compaction: the incomplete final yields the synthesized terminal"
+    );
+    // TS abortedResult(input) (agentLoopSidecarClient.ts:1434-1450) reports
+    // input.messages — the execute-time snapshot the sidecar received — so the
+    // in-turn durable assistant message above must not appear here.
+    assert_eq!(
+        terminal.get("messages"),
+        Some(&input_messages()),
+        "#1220 compaction: the aborted terminal keeps only the execute-time messages"
+    );
+    let result = terminal
+        .get("result")
+        .expect("#1220 compaction: the synthesized aborted result");
+    assert_eq!(
+        result.get("type"),
+        Some(&"aborted".into()),
+        "#1220 compaction: the synthesized result is aborted"
+    );
+    assert_eq!(
+        result.get("turns"),
+        Some(&JsValue::Number(0.0)),
+        "#1220 compaction: the synthesized result reports zero turns"
+    );
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap(),
+        None,
+        "#1220 compaction: one synthesized terminal only"
+    );
+    // The incomplete compaction final is aborted before the handler sees it;
+    // the loop model_event and the durable assistant message applied normally.
+    assert_eq!(handler.events.lock().unwrap().len(), 2);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
@@ -1624,6 +1679,150 @@ async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
     // The sidecar process itself was released, not just the stream.
     let child = *children.lock().unwrap().first().unwrap();
     assert_reaped(child).await;
+}
+
+/// #1220: the cancel window on a real session. The peer holds a wire block,
+/// the session aborts, a host event arrives only after that abort, and the
+/// peer then delivers one more wire delta plus its cancelled final. The pump
+/// must keep draining across the cancellation signal — the post-abort host
+/// event still yields and positions before the post-cancel wire delta, and
+/// the terminal keeps its own position chain across all of them.
+#[tokio::test]
+async fn session_abort_still_drains_and_positions_post_cancel_events() {
+    let handler = Arc::new(Handler::default());
+    let session = session("live-cancel-window-timeline", handler.clone()).await;
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
+    for event_type in ["turn_started", "input_accepted", "user_prompt_submitted"] {
+        let event = next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(
+            event.get("type"),
+            Some(&event_type.into()),
+            "#1220 cancel window: preflight {event_type}"
+        );
+    }
+    let started = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        started.get("type"),
+        Some(&"model_request_started".into()),
+        "#1220 cancel window: the peer starts the model request"
+    );
+    let first = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        first.get("type"),
+        Some(&"model_event".into()),
+        "#1220 cancel window: the pre-cancel wire delta arrives"
+    );
+    assert_eq!(
+        first.get("timeline"),
+        Some(
+            &parse_json(
+                r#"{"version":1,"turnId":"turn","id":"b1","order":0,"revision":2,"offset":0}"#
+            )
+            .expect("#1220 cancel window: literal must parse")
+        ),
+        "#1220 cancel window: the pre-cancel wire block takes the first position"
+    );
+    session.abort(&"user-stop".into()).unwrap();
+    // The peer holds its remaining frames for 2.5 s after this abort, so the
+    // post-abort host event below is drained by the 500 ms pump tick long
+    // before the post-cancel wire delta can arrive.
+    queue_host_events(
+        &handler,
+        &[parse_json(
+            r#"{"type":"assistant_message","sessionId":"session","turnId":"turn","message":{"role":"assistant","content":[{"type":"text","text":"during cancel","blockId":"hb1"}],"metadata":{"model":"m"}}}"#,
+        )
+        .expect("#1220 cancel window: host event must parse")],
+    );
+    let host = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        host.get("type"),
+        Some(&"assistant_message".into()),
+        "#1220 cancel window: the host event queued after the abort is still drained and positioned"
+    );
+    let host_block = host
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(|content| match content {
+            JsValue::Array(blocks) => blocks.first(),
+            _ => None,
+        })
+        .and_then(|block| block.get("timeline"));
+    assert_eq!(
+        host_block,
+        Some(
+            &parse_json(
+                r#"{"version":1,"turnId":"turn","id":"hb1","previousId":"b1","order":1,"revision":4}"#
+            )
+            .expect("#1220 cancel window: literal must parse")
+        ),
+        "#1220 cancel window: the post-abort host block chains after the wire block"
+    );
+    let after = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        after.get("type"),
+        Some(&"model_event".into()),
+        "#1220 cancel window: the post-cancel wire delta still arrives"
+    );
+    assert_eq!(
+        after.get("timeline"),
+        Some(
+            &parse_json(
+                r#"{"version":1,"turnId":"turn","id":"b2","previousId":"hb1","order":2,"revision":6,"offset":0}"#
+            )
+            .expect("#1220 cancel window: literal must parse")
+        ),
+        "#1220 cancel window: the post-cancel wire block chains after the host block"
+    );
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        completed.get("type"),
+        Some(&"turn_completed".into()),
+        "#1220 cancel window: the peer's cancelled terminal completes the turn"
+    );
+    let result = completed.get("result").unwrap();
+    assert_eq!(
+        result.get("type"),
+        Some(&"aborted".into()),
+        "#1220 cancel window: the terminal reports the peer's aborted result"
+    );
+    assert_eq!(
+        result.get("turns"),
+        Some(&JsValue::Number(1.0)),
+        "#1220 cancel window: the terminal keeps the peer's turns count"
+    );
+    let final_block = completed
+        .get("messages")
+        .and_then(|messages| match messages {
+            JsValue::Array(messages) => messages.first(),
+            _ => None,
+        })
+        .and_then(|message| message.get("content"))
+        .and_then(|content| match content {
+            JsValue::Array(blocks) => blocks.first(),
+            _ => None,
+        })
+        .and_then(|block| block.get("timeline"));
+    assert_eq!(
+        final_block,
+        Some(
+            &parse_json(
+                r#"{"version":1,"turnId":"turn","id":"fb1","previousId":"b2","order":3,"revision":7}"#
+            )
+            .expect("#1220 cancel window: literal must parse")
+        ),
+        "#1220 cancel window: the terminal block chains after the post-cancel wire block"
+    );
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap(),
+        None,
+        "#1220 cancel window: one terminal only"
+    );
+    assert_eq!(
+        handler.events.lock().unwrap().len(),
+        4,
+        "#1220 cancel window: the request, both wire deltas and the final were applied"
+    );
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -1883,6 +2082,9 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
         "input_accepted",
         "user_prompt_submitted",
         "model_event",
+        // The peer's durable loop output before the incomplete compaction
+        // final (#1220): the abort must not inherit it as turn state.
+        "assistant_message",
     ] {
         assert_eq!(
             next(first.as_mut()).await.unwrap().unwrap().get("type"),
@@ -1904,6 +2106,7 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
         "input_accepted",
         "user_prompt_submitted",
         "model_event",
+        "assistant_message",
     ] {
         assert_eq!(
             next(second.as_mut()).await.unwrap().unwrap().get("type"),

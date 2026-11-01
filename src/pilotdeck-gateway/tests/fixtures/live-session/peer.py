@@ -10,6 +10,7 @@ lifecycle under test.
 """
 import json
 import sys
+import time
 
 
 def read():
@@ -34,7 +35,8 @@ send(response(hello, **binding))
 capabilities = read()
 assert capabilities["method"] == "capabilities"
 methods = [dict(name="execute", profiles=["streaming"])]
-if mode in ("live-cancel-compaction", "live-cancel-full-aborted", "live-session-cancel"):
+if mode in ("live-cancel-compaction", "live-cancel-full-aborted", "live-session-cancel",
+            "live-cancel-window-timeline"):
     methods.append(dict(name="cancel"))
 send(response(capabilities, **binding, payload=dict(
     capabilitiesVersion="v1", methods=methods)))
@@ -246,13 +248,46 @@ elif mode == "live-failed-then-max-turns":
 elif mode == "live-cancel-compaction":
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="hello")))
+    # Durable loop output before the incomplete compaction final: the terminal
+    # must report only the execute-time input messages, never this message.
+    send_event(1, dict(type="assistant_message", sessionId=session, turnId=turn,
+                      message=dict(role="assistant",
+                          content=[dict(type="text", text="partial", blockId="am1")],
+                          metadata=dict())))
     while True:
         frame = read()
         if frame.get("method") == "cancel":
             assert frame["reason"] == "compaction_persistence_failed", frame
             break
-    send(agent_event(1, dict(compaction="incomplete"), final=True,
+    send(agent_event(2, dict(compaction="incomplete"), final=True,
                      outcome="cancelled"))
+elif mode == "live-cancel-window-timeline":
+    # The issue's "arrives after cancel" window on a real session: a wire
+    # block before the abort, a host event the session queues after it (the
+    # pump tick must still drain and position it), then one more wire event.
+    # The 2.5 s hold after the cancel keeps the post-cancel wire frame on the
+    # far side of the 500 ms pump tick that drains the host event.
+    send_event(0, dict(type="model_request_started", sessionId=session, turnId=turn,
+                      model="m", provider="p"))
+    send_event(1, dict(type="model_event", sessionId=session, turnId=turn,
+                      blockId="b1", event=dict(type="text_delta", text="x")))
+    while True:
+        frame = read()
+        if frame.get("method") == "cancel":
+            assert frame["reason"] == "user-stop", frame
+            break
+    time.sleep(2.5)
+    send_event(2, dict(type="model_event", sessionId=session, turnId=turn,
+                      blockId="b2", event=dict(type="text_delta", text="after")))
+    send(agent_event(3, dict(result=dict(
+        type="aborted", sessionId=session, turnId=turn,
+        stopReason="aborted_streaming", turns=1,
+        usage=dict(inputTokens=12, outputTokens=34, totalTokens=46),
+        permissionDenials=[], startedAt="2026-10-25T00:00:00Z",
+        completedAt="2026-10-25T00:00:01Z"),
+        messages=[dict(role="assistant",
+            content=[dict(type="text", text="final", blockId="fb1")])]),
+        final=True, outcome="cancelled"))
 elif mode in ("live-cancel-full-aborted", "live-session-cancel"):
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="hello")))

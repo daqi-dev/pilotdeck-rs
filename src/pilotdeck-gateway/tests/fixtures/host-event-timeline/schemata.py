@@ -28,6 +28,8 @@ REPLAY = ('runtime::turn::live::stream_tests::host_timeline_tests::'
           'host_timeline_replay_matches_ts_golden')
 SUBMIT = ('runtime::turn::live::stream_tests::'
           'submit_assembles_one_timeline_across_wire_host_and_terminal')
+CANCEL_WINDOW = ('runtime::turn::live::stream_tests::'
+                 'session_abort_still_drains_and_positions_post_cancel_events')
 switches = [
     ('timeline-order-frozen', TIMELINE, REPLAY, '#1220 timeline: wire-deltas event 5'),
     ('timeline-boundary-omitted', TIMELINE, REPLAY, '#1220 timeline: wire-boundaries event 2'),
@@ -40,6 +42,15 @@ switches = [
      '#1220 submit timeline: the wire block takes the first position'),
     ('timeline-terminal-unwired', LIVE, SUBMIT,
      '#1220 submit timeline: the terminal reuses the wire position without a revision bump'),
+    # fix-r2 P1-1: the aborted terminal must report the execute-time snapshot
+    # (TS abortedResult(input).messages), never the runner's later in-turn
+    # durable loop messages.
+    ('live-abort-finish-messages', LIVE, REPLAY,
+     '#1220 timeline: compaction-incomplete-final terminal messages'),
+    # fix-r2 P2-1: a cancelled turn must keep pumping — post-abort host events
+    # are still drained and positioned at the next tick.
+    ('timeline-cancel-stops-pump', LIVE, CANCEL_WINDOW,
+     '#1220 cancel window: the host event queued after the abort is still drained and positioned'),
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
@@ -61,6 +72,7 @@ GUARDED = [
     FIXTURES / 'negative_process.py',
     FIXTURES / 'host-event-timeline/oracle.json',
     FIXTURES / 'host-event-timeline/generate.mts',
+    FIXTURES / 'live-session/peer.py',
     Path(__file__).resolve(),
 ]
 
