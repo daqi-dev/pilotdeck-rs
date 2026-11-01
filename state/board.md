@@ -2742,3 +2742,32 @@ updated: 2026-11-01 15:33 · by Claude Code 协调者
 - 16:5x #1190 fix-r4 收货 b1b4d4b8c（元负控全部改在临时副本上构造，真实 frozen/ 逐字节不变）→ r5 opus + Codex、mbp2 宿主。#283 r1 P1（旧重生成守卫无 Linux 门，macOS 必挂）→ fix-r1 GLM mbp2。#1265 r1 P1（文档写死 mbp2 基线路径）→ fix-r1 Codex mbp2。
 - 17:0x #1140 fix-r6（Codex）收货：F1–F10 + r7 P2 全处理，新负控 56 项 KILLED；冻结程序 --write（27 → 28 项，新增 native_evidence.py）ddee0cf33 → r8 opus + DeepSeek 逐行核覆盖表、mbp2 宿主；真实 strace 复算另派 cb8（GLM，只跑不改）。#1190 r5 Codex 又报 P0 + P1×2（同一处第 3 次）→ fix-r5 改成副本只含普通文件、非普通项 fail-closed、快照递归、正式模式拒 --frozen-dir；r6 若此处仍有 P0/P1 即挂起转人。#448 r1 P1×2（nextest 布局漏查、非 Linux 静默放行）→ fix-r1 GLM cb8。
 - 17:00 **两小时交接** → `_tmp/20261101-handoff-1700.md`。
+
+## 11-01 17:00–19:05
+- 17:0x #1228（#1218）合 main 检查过 → 入队。mbp2 三车道被 #201 / #132 / #1231 占，#1209 / #1252 / #360 / #1140 排队 → #1140（最高优先级）宿主改本机 r8l（自动等同树评审结束），撤 mbp2 排队。
+- 17:1x 人问 #1190 能否提速 → 分析 `_tmp/20261101-1140-speedup/ANALYSIS-1190.md`：原三项第 1 轮已完成，r3 起的 P0 全出在后加的 619 行 meta_controls 文件系统操作上 → 改设计（闸门纯函数、元负控全内存、不碰文件）并改派本机 Codex；cb8 上 GLM fix-r5 停掉。#283 fix-r1 收货 → r2。#1270（state）合入。
+- 17:2x #1140 r8：DeepSeek 逐行核覆盖表 F1–F10 全部已覆盖（收敛判据达成）；表外 P2：README「八份」应为 9 份、hashes() 清单与 A2 清单并行维护；opus：transcript 用 splitlines 遇 U+2028 断行致真实数据假 FAIL → 按 P2b 升 P1。等 cb8 真实复算与本机 r8l 宿主结果后合并为 fix-r7 一次修（OVERLAP 下别急着修）。
+- 17:1x #1265 fix-r1 收货 5296210d0 → r2 opus + DeepSeek、cb8 宿主。#201 两台宿主仍在逐套跑（改 storage 牵动负控多，非卡死）。
+- 17:3x #1229（#1216 cron 存储组件）合入 b427482f2，邮箱 noreply；收尾自查已贴、树回收、远端构建删。
+- 17:3x #1228（#1218）合入 3b9ae921c，邮箱 noreply；收尾自查已贴、#1055 #1210 随之关单、树回收、mbp2 runner 构建删 129G。解锁派单：#1245（close 在 shutdown 中对齐 TS）GLM cb8、#1253（#1011 承接：重试与增量投影）Codex mbp2；#996 与 #1245 同改 owner.rs，排在其后。
+- 17:3x #1190 fix-r5（Codex，纯内存设计，净删 172 行）收货 d6648900c → r6 opus + DeepSeek、mbp2 宿主（闸门若仍有 P0/P1 即挂起）。#1265 r2 无 P0/P1，P2 开跟进（前置于接生产），等 cb8 宿主。
+- 18:0x 人同意闭环退回：新增 clippy-bounce（auto-receive 遇 safe-push clippy 失败即把交付存补丁、复位、带 macOS clippy 原文派回原实现方在 macOS 主机自修，同树最多 2 次），DRY 冒烟用 #1155 真实交付通过；remote-worker 派单前兜底补「常驻约束」（手写任务书也带上）；常驻约束补「平台专属代码进 cfg 模块」。#1220 fix-r3 收货 → r4；#1233 r2、#283 r3 起评审。
+- 18:1x #1190 r6：文件系统类问题已消失，Codex P1×3 都出在 prose 计数解析器本身 → 改走原文第一种做法（计数以代码为准、--list，删解析器），fix-r6 Codex 本机；卡 decisions-20261101-1190-drop-count-parser（AI 代批待复核，进 #1157）。
+- 17:5x #1209 cb8 r6c 全过；mbp2 三车道被 #201 / #132 / #1231 长链占 2–3 h → #1209 的 macOS 宿主改本机 r6l。#1140 e2e 负控本机复跑（上次 15 格 INVALID 疑为本机端口 28999 段被并行负控占用；首次复跑命令路径写错已重跑）。
+- 18:0x #1155 fix-r0（macOS 自修 clippy）收货 → PR #1272 → r1 opus + DeepSeek、cb8 宿主。#448 fix-r1 收货 7deb4c312（macOS clippy 一次过）→ r2。
+- 18:0x #283 r3 无 P0/P1，P2 开跟进；等 cb8 r3c 宿主收口。
+- 18:1x #1220 r4（末轮后）无 P0/P1，P2 开跟进；等 cb8 r4c 宿主收口。
+- 18:1x **#1140 cb8 真实复算：采集两跑两败（确定性）**——fix-r6 新加的 `provider_cases`「每个 case 都要有 provider 请求」在真实运行上拒收（有的 case 本来就不发 provider 请求），72 case 零逐案结果。合成数据发现不了，正是复算的意义。另：本机 r8l 宿主 e2e 负控 14 格 INVALID 复跑确认不是环境——首格正控后 mock gateway/provider 子进程未收干净、占住 28999 段端口；session-domain-native 两格因 fix-r6 新检查前移而期望过时 / 被遮蔽。连同 r8 表外 P2（splitlines U+2028 升 P1、README 9 份、哈希清单双维护）等复算 worker 收尾后合成 fix-r7（Codex）。
+- 18:1x #1233 r2 无 P0/P1 → P2 开 #1276，等宿主。#1253（Codex mbp2）交付 → PR #1275 → r1 opus + DeepSeek、cb8 宿主。#1190 fix-r6 交付待收。
+- 18:1x #1155 r1 P1×2（negctl 绑定 macOS 不成立、subreaper 进程级副作用可致 grep 用例假 FAIL）→ fix-r1 GLM cb8（subreaper 移入专用子进程）。#448 r2 P1（nextest 注释 / 命名与实测相反，只改文档）→ fix-r2。#1190 fix-r6 收货（删计数解析器，净删 316 行）→ r7 + 本机宿主。#201 / #1231 / #132 长宿主链逐套推进中（负控套件多，非卡死）。
+- 18:2x #1190 r7 两家无 P0/P1（新设计收敛）；两条 P2-a 当轮修 → fix-r7 Codex 本机（一家复核）。#1232 fix-r1 接续收货 376740e51 → r2 opus + DeepSeek、cb8 宿主。
+- 18:3x #1253 r1 无 P0/P1；重试保留理由已登记到 #1011 并更正 #1175 正文；P2-1（并发 / 迟到 / 重复 append 用例）+ opus P2 → fix-r1 Codex mbp2。
+- 18:3x 本机磁盘 206 GiB 超限 → 删 #1231 / #1207 可重建编译产物 → 139 GiB。#1232 r2 无 P0/P1，P2 开跟进，等 cb8 宿主。#1190 fix-r7 收货 → r8（一家复核 + opus 终审）+ 本机宿主。
+- 18:4x **main 回归**：#1154 合入的 `metadata_cwd_tests.rs:353` 编译期 `include_str!` specs 账本，M6 共享拷贝装置 `_shared/negative_control.py` 不拷 specs → 经它的负控（约 18 个 fixture）在副本里编译失败、全 INVALID（cb8 #1233 background-output 17 INVALID 实测）。开 P1 #1278（改运行时读取，不碰 M6 件）GLM macmini；#1233 该负控待 #1278 合入后补跑。#1220 cb8 live-e2e 10 INVALID 与 #201 同为 cb8 环境（mbp2 通过）。#1190 r8 无 P0/P1 → P2 开跟进，等本机宿主 → 入队。#448 fix-r2 收货 → r3。
+- 18:5x 另一 Agent 提醒 → 清 macmini：#1232 / #201 / #283 / #1218 构建目录（约 60G，均无进程、交付已收）、#1218 #1226（已合入）worker 树与构建，空 runner 目录；macmini 磁盘 92% → 约 74%。
+- 18:5x #1253 fix-r1 收货 aa32be76a → r2（一家复核 + opus 终审）、cb8 宿主。另一 Agent 问 #1140 e2e 复跑：17:46 首次因命令路径写错立即失败、17:5x 重跑于 17:52 完成（rc=1，35 份产物，14 格端口对失败），分诊已做：e2e 装置子进程泄漏占端口，并进 fix-r7。
+- 19:0x #448 r3 无 P0/P1，P2 开跟进；等 cb8 宿主收口。
+- 19:0x **人问 #1140 情况**：我的失误——cb8 复算 worker 17:23 已写完 RESULT，GLM 会话不退出，本机等待器只认 glm.exit，且我把 fix-r7 设成「等复算交付」，关键路径白等约 1.5 h。已按明确 pid 停远端会话、拉回原始采集、fix-r7 派本机 Codex（真实数据假拒收 provider_cases 按 #1177 期望派生 + cleanupPending 核实 + e2e 子进程泄漏 + 两格负控过时 + r8 表外 P2）。机检：remote-wait2「交付齐且 15 min 未变即收」，冒烟用 #1140 真实目录识别正确，remote-worker 已改指；扫全部在跑远端会话无同类。记忆补「远端交付后不退出」。
+- 19:1x 人问 #1140 的问题与最佳实践 → `_tmp/20261101-1140-speedup/LESSONS.md`（11 类问题：怎么发现 / 处理 / 机器化 / 最佳实践）；会话不退出的根因推断为采集失败后 provider 子进程未清理、Bash 工具命令等不到 EOF（并入 fix-r7 实测）。
+- 19:1x #1190 本机 r8l 宿主：session-domain-expectations 元负控只传了 --output（需同 HEAD 官方 calibrate 六格作 --source，#1177 r2 同因第二次）→ 补跑 r8l2（先 calibrate 再带 --source），neg-for-diff v13 加该特例（Linux 记 SKIP、以 macOS 为准）。#1253 r2 无 P0/P1 → P2 开 #1281，等 cb8 宿主。
+- 19:05 **两小时交接** → `_tmp/20261101-handoff-1905.md`。
