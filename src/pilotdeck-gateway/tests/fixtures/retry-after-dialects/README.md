@@ -66,6 +66,12 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 scripts/cargo-slots.sh
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test model_stream \
   retry_after_dialects_regenerate_identically -- --ignored --exact
+scripts/cargo-slots.sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test generator_provenance \
+  retry_after_dialects_regenerates_identically -- --ignored --exact
+scripts/cargo-slots.sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test model_stream \
+  retry_after_dialects_guard_fails_rather_than_skips_on_tzdata_mismatch -- --ignored --exact
 ```
 
 生成目录 `recursive:true`、金样 `flag:'wx'`，不覆盖已有输出。回放模块经
@@ -74,18 +80,30 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test 
 `node` / `v8` / `icu` / `tzdata`（provenance 不只依赖 `#[ignore]` 的字节再生
 守卫，fix-r2 P3-1）。负控见 `negative_controls.py`（提交后宿主串行跑）。
 
-再生守卫对运行时 provenance 分两维（regen-r2，评审 P2b→P1 修法 C）：
-`model_stream.rs` 的 `retry_after_dialects_regenerate_identically` 与
-`generator_provenance.rs` 的 `retry_after_dialects_regenerates_identically`（同一
-守卫的两个测试二进制孪生）先探测本机 Node 的 `icu`/`tz`，再决定怎么比——
-**ICU 78.2 是硬钉**（`generate.mts` 断言 `process.versions.icu`，守卫也先断言，
-不符即失败：不同 ICU 构建可能改变 `Date.parse` 本身，决策卡 2026-10-31）；
-**tzdata 只记录不断言**，本机 tzdata 与金样记录的 2025c 不同时（如 homebrew
-78.2/2026a），守卫打印可机检的 `#360-2 BLOCKED: tzdata <本机> != <金样> …`
-并跳过字节比较而不误报 FAIL——语料的本地解析用例都落在上海平坦 +08:00 年段，
-2026a 上 62×2 值逐字相同（r5 评审内存回放实测），差异只在元数据一行；相同时
-照旧逐字节比较。快速回放对 oracle 元数据（含 `icu`/`tzdata`）的断言保持严格：
-它钉的是 committed 金样的记录值、与宿主无关，篡改 committed `tzdata` 行只有该
-断言能杀（再生守卫会因记录值≠本机而 BLOCKED）。负控检测到 `#360-2 BLOCKED`
-即把 `generator-epoch` / `oracle-asctime-2015` 显式拒跑为 INVALID（regen-r2，
-同 fix-r3 P2-3 的 PARTIAL 机制）。
+再生守卫对运行时 provenance 分两维（regen-r2，评审 P2b→P1 修法 C；regen-r3 评审
+P1 把 BLOCKED 从「打印跳过」改为「失败」）：`model_stream.rs` 的
+`retry_after_dialects_regenerate_identically` 与 `generator_provenance.rs` 的
+`retry_after_dialects_regenerates_identically`（同一守卫的两个测试二进制孪生）都只
+调用共享门 `common/retry_after_dialects_guard.rs`（
+`assert_calibrated_runtime_and_regenerate`）——**ICU 78.2 是硬钉**（`generate.mts`
+断言 `process.versions.icu`，门也先断言，不符即失败：不同 ICU 构建可能改变
+`Date.parse` 本身，决策卡 2026-10-31）；**tzdata 不符即失败**：本机 tzdata 与金样
+记录的 2025c 不同时（如 homebrew 78.2/2026a），门以可机检的
+`#360-2 BLOCKED: tzdata <本机> != <金样> …` panic 让守卫直接 FAILED（与 #132a
+surrogate 孪生 ICU 硬钉的 fail-not-skip 形状一致）——regen-r3 之前这里是
+println + return 的静默跳过，cargo 记 ok、与「真比较过且一致」无法区分（评审 P1
+假 PASS）。**本机复核金样需要 tz 2025c 的校准 Node**
+（`~/opt/node-v22.22.0-icu78-*`）：tzdata 不符的宿主上此守卫按设计常红、不是
+回归；语料的本地解析用例都落在上海平坦 +08:00 年段，2026a 上 62×2 值逐字相同
+（r5 评审内存回放实测），差异只在元数据一行——值中立是「不复核」的理由，不是
+「假 PASS」的理由。守卫语义本身由 `model_stream.rs` 的
+`retry_after_dialects_guard_fails_rather_than_skips_on_tzdata_mismatch` 钉住：注入
+良构但不符的 tzdata（`2039z`）、断言门必须 panic（`#[ignore]`，只需校准 Node、
+无需 PDRS_BASELINE）；负控 `blocked-branch-return` 把门的 panic 分支改回
+println + return、必须被它判杀（任何宿主可杀，不依赖真实 2026a 机器）。tz 匹配
+时照旧逐字节比较。快速回放对 oracle 元数据（含 `icu`/`tzdata`）的断言保持严格：
+它钉的是 committed 金样的记录值、与宿主无关，篡改 committed `tzdata` 行由该断言
+杀（再生门也会因记录值≠本机而以 BLOCKED panic 失败）。负控检测到
+`#360-2 BLOCKED`（就在失败输出里，无需 `--show-output`）即把 `generator-epoch` /
+`oracle-asctime-2015` 显式拒跑为 INVALID（regen-r2，同 fix-r3 P2-3 的 PARTIAL
+机制）。
