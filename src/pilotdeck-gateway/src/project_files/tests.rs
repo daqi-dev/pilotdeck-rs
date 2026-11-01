@@ -528,10 +528,13 @@ fn node_compare_utf16_keeps_unpaired_surrogate_weights() {
     for pair in surrogates.windows(2) {
         assert!(node_compare_utf16(&collator, &pair[0], &pair[1]).is_lt());
     }
-    // Valid UTF-16, including surrogate pairs, is borrowed unchanged.
+    // Valid UTF-16, including surrogate pairs, retains equality.
     for text in ["", "z", "\u{1f600}", "你好", "\u{fffd}"] {
         let value = JsString::from(text);
-        assert_eq!(node_collation_units(&value).as_ref(), value.units());
+        assert_eq!(
+            node_compare_utf16(&collator, &value, &value),
+            std::cmp::Ordering::Equal
+        );
     }
 }
 

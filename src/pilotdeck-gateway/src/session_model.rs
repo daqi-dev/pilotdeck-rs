@@ -7,7 +7,7 @@ pub(crate) mod tests;
 use crate::{
     config::{self, Env, Error},
     metadata::{Files, Metadata, object, resolve},
-    project_files::{has_unpaired_surrogate, node_collator, node_locale},
+    project_files::{node_collator, node_compare_utf16, node_locale},
 };
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
 use std::cmp::Ordering;
@@ -199,13 +199,6 @@ pub(crate) fn execute<F: Files>(
             .entry(if n == 0.0 { 0 } else { n.to_bits() })
             .or_insert(0usize) += 1;
     }
-    if entries.iter().any(|entry| {
-        let n = field(entry, "sequence").as_number().unwrap();
-        counts[&if n == 0.0 { 0 } else { n.to_bits() }] > 1
-            && has_unpaired_surrogate(field(entry, "createdAt").as_string().unwrap())
-    }) {
-        return Err(config::collation_host_error());
-    }
     if entries.len() > 1 {
         let collator = if counts.values().any(|count| *count > 1) {
             let locale = node_locale(|key| env.get(key).cloned());
@@ -219,13 +212,11 @@ pub(crate) fn execute<F: Files>(
             if a_seq != b_seq {
                 (a_seq - b_seq).partial_cmp(&0.0).unwrap_or(Ordering::Equal)
             } else {
-                collator
-                    .as_ref()
-                    .expect("equal sequence group")
-                    .compare_utf16(
-                        field(a, "createdAt").as_string().unwrap().units(),
-                        field(b, "createdAt").as_string().unwrap().units(),
-                    )
+                node_compare_utf16(
+                    collator.as_ref().expect("equal sequence group"),
+                    field(a, "createdAt").as_string().unwrap(),
+                    field(b, "createdAt").as_string().unwrap(),
+                )
             }
         });
     }

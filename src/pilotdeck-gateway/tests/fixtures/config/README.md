@@ -14,9 +14,9 @@
   它们不计入本地 wire 对拍通过数量。每个原型案例使用独立 Node，避免基线
   deepFreeze 对共享 Object.prototype 的影响污染其他案例。
 
-D6 A 候选对2,728个catalog/diagnostics原件核load诊断：2,711个wire本地逐字节对拍，
-17个过滤后多项id含孤立surrogate的明确case经JS_HOST_REQUIRED转发（固定ID见config/tests.rs）。
-这是Node与ICU4X非良构UTF16权重不同的精确宿主边界；合法Unicode/CJK继续本地。
+#132 对 2,728 个 catalog/diagnostics 原件核 load 诊断及完整 wire 响应；
+包括此前转发的 17 个孤立 surrogate 排序案例，现全部原生逐字节对拍。
+合法 Unicode/CJK 继续使用同一 ICU 数据。
 18个宿主intrinsic边界另行断言转发。历史JSON原件未改；新真实原件见session-model/illformed-collation.json。
 
 Rust 测试对本地请求逐字节比较完整 response 字符串；诊断对象仅统一属性顺序后比较，

@@ -73,7 +73,7 @@ URL 检查使用固定版本 `url` crate；现有 Cargo.lock 包版本没有升�
 catalog 排序使用 D6 A 的 ICU4X Unihan baked 数据，大小写沿用 ICU4X compiled data；
 wire 使用 protocol codec。数据来源、固定版本和再生成方法见 `src/PROVENANCE.md`
 （仓根），排序证据见 `tests/fixtures/collation/README.md`（gateway crate 根）。
-`model_catalog_list`、`project_files_list` 与 `session_model_get` 的合法Unicode排序继续本地应答；仅实际参与多项排序的孤立UTF16 surrogate由JS_HOST_REQUIRED转发，单项及过滤后单项不触发。没有批准排序差异豁免。`project_file_read` 继续本地安全读取。
+`model_catalog_list` 与 `session_model_get` 在 #132 中用原码位隐式权重原生处理孤立 UTF-16，移除对应排序 host 边界；合法 Unicode 和 `project_files_list` 继续原生。100 格真实 Node 原件及 pairing 零业务上游证明见 `tests/fixtures/native-collation/README.md`。没有批准排序差异豁免。`project_file_read` 继续本地安全读取。
 涉及宿主共享 intrinsic 的配置转发 upstream，内部 `JS_HOST_REQUIRED` 不出现在 wire。
 HOME 不可解析时同样转发，避免猜测系统账户 home。
 
