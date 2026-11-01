@@ -17,11 +17,13 @@ are refused as INVALID (an explicit unpaired-host explanation, never a
 silent SURVIVED or a silent pass).
 
 Mutants in TZDATA_PAIRED_HOST_ONLY are killed only through the regeneration
-byte comparison, which the guard (regen-r2, fix C) runs only when this host
-Node's tzdata equals the gold-recorded one. Their positive run goes through
-cargo with --show-output so the guard's captured "#360-2 BLOCKED" skip marker
-reaches this harness: on a tzdata-mismatched host those mutants are refused
-as INVALID too, never a silent SURVIVED.
+byte comparison, which the gate (regen-r3) runs only when this host Node's
+tzdata equals the gold-recorded one; every other tzdata fails the gate with
+the "#360-2 BLOCKED" panic (regen-r3 review P1: the old println-and-return
+skip left the positive run green on a host whose byte comparison never ran).
+The marker now arrives on a *failed* positive run, so it is checked before
+the generic did-not-pass: on a tzdata-mismatched host those mutants are
+refused as INVALID, never a silent SURVIVED.
 """
 import argparse
 import json
@@ -40,10 +42,12 @@ http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
 replay_rs = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/retry_after.rs'
 generator = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/generate.mts'
 oracle = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/oracle.json'
+guard_rs = root / 'src/pilotdeck-gateway/tests/common/retry_after_dialects_guard.rs'
 replay = 'runtime::model::http::retry_after_dialect_tests::retry_after_dialects_match_node_in_two_timezones'
 zone_children = 'runtime::model::http::retry_after_dialect_tests::retry_after_dialects_production_wiring_matches_node_zone_children'
 huge = 'runtime::model::http::retry_after_dialect_tests::retry_after_dialects_huge_delta_seconds_parse_to_infinity_and_clamp'
 regen = 'retry_after_dialects_regenerate_identically'
+guard_semantics = 'retry_after_dialects_guard_fails_rather_than_skips_on_tzdata_mismatch'
 cases = [
     ('dialect-ignored', errors, 'retry_after_header_parsed(value, now_ms, &admitted_node22_parse)',
      'retry_after_header_parsed(value, now_ms, &|_| Ok(None))', replay, '#360-2'),
@@ -89,10 +93,11 @@ cases = [
     # (node/v8/icu/tzdata), not only the TS source bytes.
     ('oracle-runtime-node', oracle, '"node": "v22.22.0"', '"node": "v22.21.0"', replay, '#360-2'),
     # regen-r2 P2a (review P2, both reviewers): the icu/tzdata halves of that
-    # pin had no mutants of their own. The tzdata one also carries the BLOCKED
-    # world's other half: with the regeneration guard skipping the byte
-    # comparison whenever the committed tzdata differs from the host Node's,
-    # a tampered committed tzdata line is only killed by this replay pin.
+    # pin had no mutants of their own. The tzdata one still carries the other
+    # half of the pinned world: the committed tzdata line is host-independent
+    # metadata, so this quick replay pin is what kills a tampered value even
+    # on a host whose own tzdata happens to differ from the recorded one
+    # (where the regeneration gate would refuse with the BLOCKED panic).
     ('oracle-runtime-icu', oracle, '"icu": "78.2"', '"icu": "77.1"', replay, '#360-2'),
     ('oracle-runtime-tzdata', oracle, '"tzdata": "2025c"', '"tzdata": "2025b"', replay, '#360-2'),
     # regen-r2 P2b→P1 (fix C): prove the byte comparison still kills a changed
@@ -103,6 +108,25 @@ cases = [
      '"value": "Wed Oct 21 07:28:00 2015",\n     "retryAfterMs": 1445383680000',
      '"value": "Wed Oct 21 07:28:00 2015",\n     "retryAfterMs": 1445383680001',
      regen, '#280 retry-after-dialects'),
+    # regen-r3 P1 (opus boundary review): a tzdata mismatch must FAIL the
+    # regeneration gate, never println + return — that skip left cargo green
+    # on a host whose byte comparison never ran. Reverting the branch to the
+    # old skip resurrects that false PASS, so this mutant is bound to the
+    # guard-semantics test, which injects a well-formed but mismatched
+    # tzdata: killable on any host, never only on a real mismatched machine.
+    ('blocked-branch-return', guard_rs,
+     r'''        panic!(
+            "#360-2 BLOCKED: tzdata {local} (this Node) != {recorded} (gold-recorded); \
+             the case bytes cannot be re-verified byte-wise on this host, so this \
+             guard fails instead of silently skipping the byte comparison"
+        );''',
+     r'''        println!(
+            "#360-2 BLOCKED: tzdata {local} (this Node) != {recorded} (gold-recorded); \
+             the case bytes cannot be re-verified byte-wise on this host, so this \
+             guard fails instead of silently skipping the byte comparison"
+        );
+        return;''',
+     guard_semantics, '#360-2 regen-r3'),
 ]
 
 # fix-r3 P2-3: these mutants only die through the admitted TZ=UTC / Asia/Shanghai
@@ -117,11 +141,13 @@ PAIRED_HOST_ONLY = {'production-local-wiring', 'zone-child-admission-false'}
 PARTIAL_MARKER = '#360-2 PARTIAL'
 
 # regen-r2 P2b→P1 (fix C): these mutants die only through the regeneration
-# byte comparison, which the guard now runs only when this host Node's
-# tzdata equals the gold-recorded one; on any other tzdata the guard prints
-# the "#360-2 BLOCKED" skip marker and compares nothing, so the run is
-# refused (INVALID with the BLOCKED evidence) instead of reporting a
-# misleading SURVIVED — the same refusal shape as PAIRED_HOST_ONLY above.
+# byte comparison, which the guard runs only when this host Node's tzdata
+# equals the gold-recorded one; on any other tzdata the gate fails the run
+# outright with the "#360-2 BLOCKED" panic (regen-r3: the old println +
+# return skip would have left the positive run green while comparing
+# nothing), so the run is refused (INVALID with the BLOCKED evidence on the
+# failed positive) instead of reporting a misleading SURVIVED — the same
+# refusal shape as PAIRED_HOST_ONLY above.
 TZDATA_PAIRED_HOST_ONLY = {'generator-epoch', 'oracle-asctime-2015'}
 BLOCKED_MARKER = '#360-2 BLOCKED'
 
@@ -159,11 +185,12 @@ def main():
             (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
             suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored']
             if show_output:
-                # Only ever the positive run of the regeneration guard:
-                # --show-output replays its captured stdout (where the
-                # "#360-2 BLOCKED" skip marker lives) after the result lines,
-                # without interleaving the `... ok` status line (#938 r14) the
-                # way --nocapture would.
+                # Only ever the positive run of the regeneration guard: the
+                # "#360-2 BLOCKED" panic (regen-r3) already reaches this
+                # harness through the failing run's own output; --show-output
+                # additionally replays the guard's captured stdout after the
+                # result lines without interleaving the status line
+                # (#938 r14) the way --nocapture would.
                 suffix.append('--show-output')
             if nocapture:
                 # Only ever the positive run: the parent re-prints each
@@ -202,23 +229,26 @@ def main():
                         nocapture=test == zone_children,
                         show_output=test == regen,
                     )
-                    if not passed(positive, test):
-                        reason = 'bound positive test did not pass'
-                    elif name in TZDATA_PAIRED_HOST_ONLY and BLOCKED_MARKER in (
+                    if name in TZDATA_PAIRED_HOST_ONLY and BLOCKED_MARKER in (
                         positive.stdout + positive.stderr
                     ):
-                        # regen-r2 P2b→P1: explicit tzdata-mismatched host
-                        # refusal — the regeneration guard skipped the byte
-                        # comparison, so a surviving mutant here would be a
-                        # lie about the guard, never a real SURVIVED.
+                        # regen-r2 P2b→P1, regen-r3: explicit tzdata-mismatched
+                        # host refusal. Since regen-r3 the gate fails the
+                        # positive run outright with the BLOCKED panic (review
+                        # P1), so the marker arrives on a *failed* run; a
+                        # surviving mutant here would be a lie about the
+                        # gate, never a real SURVIVED.
                         status = 'INVALID'
                         reason = (
                             'tzdata-mismatched host: the bound regeneration positive run '
-                            f'printed "{BLOCKED_MARKER}" (this Node\'s tzdata differs '
-                            'from the gold-recorded one), so the byte comparison was '
-                            'skipped and this mutant cannot be killed on this host; run '
-                            'it on the calibrated icu78 / tzdata 2025c chain'
+                            f'failed with the "{BLOCKED_MARKER}" panic (this Node\'s '
+                            'tzdata differs from the gold-recorded one), so the byte '
+                            'comparison was refused and this mutant cannot be killed '
+                            'on this host; run it on the calibrated icu78 / tzdata '
+                            '2025c chain'
                         )
+                    elif not passed(positive, test):
+                        reason = 'bound positive test did not pass'
                     elif name in PAIRED_HOST_ONLY and PARTIAL_MARKER in (
                         positive.stdout + positive.stderr
                     ):
