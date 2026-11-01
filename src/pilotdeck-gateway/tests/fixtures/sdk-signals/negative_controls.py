@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#1145 HEAD-only product controls: [--check] | NEW_OUTPUT_DIR [mutation ...].
 
-The catalog has exactly thirty-eight controls. Each selected control runs its named
+The catalog has exactly forty-one controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -43,7 +43,7 @@ skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 38
+EXPECTED_TOTAL = 41
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
@@ -125,6 +125,11 @@ mutations = [
     ('node-frames-required', replay, 'r"(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n",', 'r"(?:(?:    at [^ \\t\\r\\n{}][^\\r\\n{}]*\\n)*    at [^ \\t\\r\\n{}][^\\r\\n{}]* \\{\\n)?",', 'signal_replay::comparison_tests::stderr_missing_stack_frames_is_not_normalized', '#1145 missing stack frames cannot pass'),
     ('node-business-message-consistent', replay, "if business.strip_suffix('\\n') == Some(message) {", 'if !message.is_empty() {', 'signal_replay::comparison_tests::stderr_changed_business_line_is_not_hidden', '#1145 mismatched business and exception remain literal'),
     ('rust-stderr-never-normalized', replay, 'ts_stderr(ts).as_bytes() == rust', 'ts_stderr(ts) == ts_stderr(std::str::from_utf8(rust).expect("#1145 mutant Rust UTF8"))', 'signal_replay::comparison_tests::stderr_rust_node_stack_is_not_normalized', '#1145 Rust Node stack cannot pass'),
+    # #1252: preserve observer, exact-match and approved-reason order independently.
+    ('close-observer-order', replay, '                self.closes.push(\n                    json!({"connection":connection,"code":code,"reason":reason,"cleanup":cleanup}),\n                );', '                self.closes.push(\n                    json!({"connection":connection,"code":code,"reason":reason,"cleanup":cleanup}),\n                );\n                self.closes.sort_by_key(|row| row["connection"].as_u64());', 'signal_replay::comparison_tests::close_events_keep_arrival_order', '#1252 close events retain arrival order and fields'),
+    ('close-exact-order', replay, '    if *actual == json!(closes) {', '    closes.sort_by_key(|row| row["connection"].as_u64());\n    if *actual == json!(closes) {', 'signal_replay::comparison_tests::close_order_is_strict_including_reason_exception', '#1252 swapped actual closes must fail despite unchanged trace'),
+    ('close-approved-order', replay, '            }\n        }\n    }\n    *actual == json!(closes)', '            }\n        }\n        closes.sort_by_key(|row| row["connection"].as_u64());\n    }\n    *actual == json!(closes)', 'signal_replay::comparison_tests::close_order_is_strict_including_reason_exception', '#1252 swapped actual closes must fail despite unchanged trace'),
+
     ('close-exception-scoped', replay, 'let approved = matches!(', 'let approved = true || matches!(', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 unregistered close case cannot pass'),
     ('close-code-scoped', replay, '&& row["code"] == 4003', '&& !row["code"].is_null()', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 close exception requires TS code'),
     ('close-connection-scoped', replay, 'if row["connection"] == 2', 'if !row["connection"].is_null()', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 close exception requires TS connection'),
@@ -147,7 +152,7 @@ mutations = [
     ('rejection-domain-missing-cell', replay, '        | "run--abort-error-sigterm"\n', '', 'signal_replay::comparison_tests::approved_stderr_match_domain_is_exact', '#1145 approved stderr match arms equal exactly eight IDs'),
     ('rejection-registered-difference-drift', d1_ledger, '- `run--abort-error-sigint`', '- `mutant-not-a-registered-cell`', 'signal_replay::comparison_tests::approved_stderr_match_domain_is_exact', '#1145 approved stderr IDs equal registered difference'),
     ('rejection-original-error-required', replay, "expected == rust && ts.split_inclusive('\\n').any(|line| line == exception)", 'expected == rust && !exception.is_empty()', 'signal_replay::comparison_tests::unhandled_rejection_requires_original_error', '#1145 rejection requires exact original TS error'),
-    ('rejection-hooks-from-original', replay, '            let removed = expected["hooks"]', '            let removed = !expected["hooks"]', 'signal_replay::comparison_tests::unhandled_rejection_preserves_other_surfaces', '#1145 rejection all surfaces positive'),
+    ('rejection-hooks-from-original', replay, '            let removed = expected["hooks"]\n                .as_array()\n                .expect("#1145 rejection surface TS hooks")', '            let removed = !expected["hooks"]\n                .as_array()\n                .expect("#1145 rejection surface TS hooks")', 'signal_replay::comparison_tests::unhandled_rejection_preserves_other_surfaces', '#1145 rejection all surfaces positive'),
 
     ('nested-marker-child-name', skills_tests, '"::marker_child_over_file_size_limit"', '"::marker_child_over_file_size_limit_renamed"', 'product::skills::tests::marker_write_reports_the_write_stage_like_node', '#1145 marker child emitted no WRITE_ERROR line'),
     ('nested-umask-child-name', migrate_tests, '"::copy_tree_preserves_modes_like_node_async_cp"', '"::copy_tree_preserves_modes_like_node_async_cp_renamed"', 'product::skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp', '#273 umask rerun matched no test'),
@@ -168,7 +173,7 @@ def check_catalog():
         count = path.read_text(encoding="utf-8").count(old)
         if count != 1:
             stale.append(f"{name}: expected one anchor, found {count}")
-        if not test.startswith(("signal_cases::", "product::sdk::turn::tests::", "product::sdk::transport::tests::", "product::skills::tests::", "product::skills_migrate::tests::", "signal_replay::comparison_tests::")) or not assertion.startswith(("#1145 ", "#273 ")):
+        if not test.startswith(("signal_cases::", "product::sdk::turn::tests::", "product::sdk::transport::tests::", "product::skills::tests::", "product::skills_migrate::tests::", "signal_replay::comparison_tests::")) or not assertion.startswith(("#1145 ", "#1252 ", "#273 ")):
             stale.append(f"{name}: invalid named-test/assertion binding")
     if stale:
         raise RuntimeError("#1145 stale product controls: " + "; ".join(stale))
