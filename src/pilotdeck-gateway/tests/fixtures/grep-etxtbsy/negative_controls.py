@@ -21,22 +21,24 @@ KILLED. The cleanup, deadline, and writer mutants are bound to the
 lib-only publication unit tests instead: they are deterministic and
 unix-only like the module itself. macOS uses posix_spawn and never shows
 the window, so the two race mutants are a Linux contract (expected
-SURVIVED elsewhere), and so is `stranger-retention-reverted` (#1141
-fix-r3, Linux cb8: dash, the Linux `/bin/sh`, points a background
-command's stdin at /dev/null even behind an explicit `<&0`, so the r2
-helper lost the pipe's read end and the writer died on EPIPE; bash keeps
-the pipe, so the mutant survives on macOS); the other ten must kill on
-every unix host. The
-#1141 mutants target the dead-helper stranger test's write-end
-observation — the stranger is a python probe that classifies the pipe at
-the go signal (a 0-byte read is EOF pending, a not-ready read end is a
-write end held past the return boundary), so any mutant that leaks a
-write end past the observation — the writer's give-up
+SURVIVED elsewhere), and so are the #1155 scan and reaping mutants, which
+need `/proc` and `PR_SET_CHILD_SUBREAPER`; the other thirteen must kill on
+every unix host — `stranger-retention-reverted` included: bash (the macOS
+`/bin/sh`) keeps the pipe behind an explicit `<&0`, so `started` still
+appears, but the reverted helper writes no `saw` marker and the #1155 r4
+saw assertion kills it (under dash, the Linux `/bin/sh`, a background
+command's stdin is /dev/null even behind an explicit `<&0`, so `started`
+never appears and the hook's expect fails first). The
+#1141 mutants target the dead-helper stranger test's write-end evidence:
+the publication itself now scans `/proc` at the return boundary (#1155
+r3 review P2-1) — before it returns — for any fd of its pipe open for
+writing, with the scan's error taking precedence over the `TimedOut` the
+test expects, so any mutant that leaks a write end — the writer's give-up
 (`deadline-write-end-kept-open`) or the parent's own copy
 (`parent-write-end-held-past-return`, fix-r2 review P2-1) — fails the
-marker's verdict; the r1 `deadline-write-end-released-late` (a fixed 4 s
-release) is subsumed by those, which hold the write end through the whole
-observation instead of racing a timer — and the guards: the dead-helper
+deadline-kind assertion with the scan's message in its payload (the
+stranger's later marker verdict, a 0-byte read versus a not-ready read
+end, remains the second witness) — and the guards: the dead-helper
 test's group kill (`stranger-guard-kill-removed`, fix-r1 review P1-1),
 plus the spawn-window panic test, which proves the guard owns the group
 from the spawn on (`spawn-hook-removed`) and still ends the stranger
@@ -48,7 +50,21 @@ hold the read end before anything else runs: the probe publishes
 test's `spawned` hook wait for that signal, so a mutant that inverts the
 confirmation (`stranger-confirmation-inverted`) or drops the fd-3
 retention save (`stranger-retention-reverted`) leaves the publication
-blocked at the hook's expect.
+blocked at the hook's expect. The #1155 mutants cover the four new
+contracts: the deadline starts only after the `spawned` hook's handshake
+(`expiry-hoisted-before-spawn`, r4 review P2 — the 6-second handshake
+must not eat the write budget, and a deadline that starts too early lands
+under the measured floor); the helper's and the test's started-wait caps
+are one derived constant (`started-cap-hardcoded-short`, r4 review P2 —
+a re-hardcoded 5 s gives up before the 6-second delayed started, so the
+helper dies without its saw marker); the return-boundary scan flags write
+ends only (`boundary-write-end-filter-removed`, r3 review P2-1 — without
+the access-mode filter the stranger's read end fails the healthy path);
+and the test — never PID 1 — reaps the stranger (`stranger-subreaper-removed`
+and `stranger-reap-removed`, r3 review P2-2 — without the subreaper lease
+the strict NOWAIT `waitid` confirmation reports ECHILD; without the
+`waitpgid` group collection the zombies keep the group non-empty forever,
+because under the lease there is no init fallback).
 """
 import argparse
 import json
@@ -97,7 +113,6 @@ cases = [
         .expect("#1125 executable file name")
         .to_string_lossy();
     let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));
-    let expiry = Instant::now() + deadline;
     let helper = build_helper(&temporary).spawn()?;
     // #1125 fix-r3 review P2-1: the guard owns the helper from the spawn on,
     // so every later exit — an error return, a deadline overrun, or a panic
@@ -120,6 +135,10 @@ cases = [
         .expect("#1125 reap guard holds the helper")
         .id();
     spawned(helper_id);
+    // #1155 r4 review P2: the expiry starts here, after the handover, so a
+    // `spawned` hook that waits for the helper's descendants to settle (the
+    // stranger confirming the read end) does not eat into the write budget.
+    let expiry = Instant::now() + deadline;
     let mut stdin = guard
         .helper
         .as_mut()
@@ -127,6 +146,10 @@ cases = [
         .stdin
         .take()
         .expect("#1125 helper stdin is piped");
+    // #1155 r3 review P2-1: the pipe's inode identifies every fd of the
+    // pipe in the return-boundary scan — both ends share it — and it must
+    // be taken before the writer owns the write end.
+    let pipe = pipe_inode(&stdin)?;
     set_nonblocking(&mut stdin)?;
     let (sent, done) = mpsc::channel();
     let payload = body.as_bytes().to_vec();
@@ -206,12 +229,18 @@ cases = [
         let _ = mode;
         fs::rename(&temporary, path)
     });
-    if published.is_ok() {
+    // #1155 r3 review P2-1: the return boundary. `returning` proves — while
+    // this function still owns the guard, so an error can still clean up —
+    // that no write end of the pipe survives the return; its error takes
+    // precedence over `published` so a leak surfaces even on a deadline
+    // failure the test already expects.
+    let boundary = returning(pipe);
+    if boundary.is_ok() && published.is_ok() {
         // The wait loop reaped the helper and the rename consumed the
         // temporary name; the guard has nothing left to do.
         guard.disarm();
     }
-    published
+    boundary.and(published)
 }
 ''',
      '''    let mut file = fs::File::create(path)?;
@@ -279,12 +308,13 @@ cases = [
                 }''',
      stranger, '#1125 helper writer did not exit by its deadline'),
     # The give-up must also close this process's copy of the write end: the
-    # mutant leaks a clone past the deadline, so the stranger that the
-    # dead-helper test leaves holding the read end observes a not-ready
-    # read end at the go signal and records `write-end-still-held` instead
-    # of `eof`. Only that test observes the write end — the other bound
-    # tests assert the error, the kill report, or the residue, none of
-    # which the leaked descriptor touches (#1141, #1125 r4 review P2-1).
+    # mutant leaks a clone past the deadline. #1155 r3 review P2-1: the leak
+    # is now caught before the return — the publication's own /proc scan
+    # finds the surviving write end and fails the publication with it, and
+    # the scan's error takes precedence over the TimedOut the test expects —
+    # so the deadline-kind assertion in the dead-helper test is the kill,
+    # with the scan's message inside its panic payload; the stranger's later
+    # marker verdict (`write-end-still-held`) is the second witness.
     ('deadline-write-end-kept-open', helper,
      '''                if Instant::now() >= expiry {
                     return Err(helper_deadline_error(deadline));
@@ -294,14 +324,14 @@ cases = [
                     std::mem::forget(stdin.as_fd().try_clone_to_owned());
                     return Err(helper_deadline_error(deadline));
                 }''',
-     dead_stranger, '#1141 the write end must be closed by the time the publication returns'),
+     dead_stranger, '#1141 deadline error must be TimedOut'),
     # #1141 fix-r2 review P2-1 (Codex): a write end held past the publication
     # must fail the return-boundary observation, whatever holds it. The
     # writer-side leak above covers the give-up clone; this one leaks the
     # parent's own dup before the writer even starts — the review's shape of
     # a copy surviving the return boundary — and holds it through the whole
-    # observation (no fixed-delay release to race), so the probe's verdict
-    # is the only assertion that can kill.
+    # return boundary scan, which is what kills it now (#1155 r3 review
+    # P2-1, same rebind as above).
     ('parent-write-end-held-past-return', helper,
      '''    set_nonblocking(&mut stdin)?;
     let (sent, done) = mpsc::channel();''',
@@ -309,7 +339,7 @@ cases = [
     use std::os::fd::AsFd;
     std::mem::forget(stdin.as_fd().try_clone_to_owned());
     let (sent, done) = mpsc::channel();''',
-     dead_stranger, '#1141 the write end must be closed by the time the publication returns'),
+     dead_stranger, '#1141 deadline error must be TimedOut'),
     # #1141 fix-r1 review P1-1: the stranger must be ended by the test's own
     # guard, never left parked behind the pipe. The mutant drops the guard's
     # group kill, so the parked stranger outlives the whole test and the
@@ -353,20 +383,83 @@ cases = [
     # command's stdin even behind an explicit `<&0`, which lost the read
     # end on Linux and killed the writer with EPIPE instead of its
     # deadline. The mutant reverts the helper to the r2 shape (no save, no
-    # started handshake), so on Linux `started` never appears and the
-    # spawned hook's expect kills; bash keeps the pipe behind `<&0`, so
-    # the mutant SURVIVES on macOS like the two race mutants above (a
-    # Linux contract, run by the coordinator on cb8/CI).
+    # started handshake, no saw marker), so on Linux `started` never appears
+    # and the spawned hook's expect kills; bash keeps the pipe behind `<&0`,
+    # so `started` does appear on macOS — but the reverted helper never
+    # writes the `saw` marker (#1155 r4 review P2), so the dead-helper
+    # test's saw assertion kills there too.
     ('stranger-retention-reverted', publication,
      '''            "exec 3<&0
-               python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" <&3 &
+               python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" {delay_ms} <&3 &
                i=0
-               while [ ! -e \\"$3\\" ] && [ \\"$i\\" -lt 100 ]; do i=$((i+1)); /bin/sleep 0.05; done
+               while [ ! -e \\"$3\\" ] && [ \\"$i\\" -lt {polls} ]; do i=$((i+1)); /bin/sleep 0.05; done
+               if [ -e \\"$3\\" ]; then printf saw >\\"$4.staging\\"; mv \\"$4.staging\\" \\"$4\\"; fi
                exit 0"''',
-     '''            "python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" <&0 &
+     '''            "python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" 0 <&0 &
                exit 0"''',
      dead_stranger,
      '#1141 the stranger must confirm it holds the pipe read end before the publication writes'),
+    # #1155 r4 review P2: the write deadline must start after the `spawned`
+    # hook's handshake, not before the spawn. The mutant hoists the expiry
+    # back to the r4 shape, so the dead-helper test's 6-second started
+    # handshake consumes the whole write budget: the writer gives up on its
+    # first blocked write — elapsed since the hook's return is ~0, far under
+    # the deadline floor — or the writer-exit race assert fires first when
+    # the already-past expiry collapses the grace; either assertion kills.
+    ('expiry-hoisted-before-spawn', helper,
+     '''    spawned(helper_id);
+    // #1155 r4 review P2: the expiry starts here, after the handover, so a
+    // `spawned` hook that waits for the helper's descendants to settle (the
+    // stranger confirming the read end) does not eat into the write budget.
+    let expiry = Instant::now() + deadline;''',
+     '''    let expiry = Instant::now() + deadline;
+    spawned(helper_id);''',
+     dead_stranger,
+     ['#1155 the write phase must last its full deadline',
+      '#1125 helper writer did not exit by its deadline']),
+    # #1155 r4 review P2: the helper's started-wait cap is derived from the
+    # test-side `STRANGER_STARTED_TIMEOUT` — one cap, not two. The mutant
+    # re-hardcodes the old 5 s (100 polls), so against the 6-second delayed
+    # `started` the helper gives up first, dies without leaving its `saw`
+    # marker, and the dead-helper test's saw assertion kills; the
+    # publication itself still behaves, which is exactly the r4 finding
+    # (the drift was invisible to every other assertion).
+    ('started-cap-hardcoded-short', publication,
+     '''    STRANGER_STARTED_TIMEOUT.as_millis() / 50''',
+     '''    100''',
+     dead_stranger,
+     "#1155 the helper must observe the stranger's started signal before it dies"),
+    # #1155 r3 review P2-1: the scan must only flag write ends. The mutant
+    # drops the access-mode filter, so the stranger's read end — a
+    # `pipe:[inode]` fd like any other — fails the scan on the healthy path,
+    # and the dead-helper test's deadline-kind assertion kills with the
+    # scan's message in its payload.
+    ('boundary-write-end-filter-removed', publication,
+     '''                if access & 0o3 == 0 {''',
+     '''                if false {''',
+     dead_stranger, '#1141 deadline error must be TimedOut'),
+    # #1155 r3 review P2-2: without the subreaper lease the orphaned
+    # stranger lands on PID 1, so the guard's `waitpid` finds no child of
+    # this process — an ECHILD — and the strict Linux path turns that into
+    # an error instead of leaving the collection to init.
+    ('stranger-subreaper-removed', publication,
+     '''            rustix::process::set_child_subreaper(Some(mine))?;''',
+     '''            let _ = mine;''',
+     dead_stranger,
+     "#1155 the stranger was not reparented to the test's guard"),
+    # #1155 r3 review P2-2: the reaping itself. With the subreaper lease up
+    # there is no init fallback — nobody else collects the zombie — so the
+    # mutant that never waits leaves it in the process group forever and the
+    # group-empty confirmation times out.
+    ('stranger-reap-removed', publication,
+     '''        #[cfg(target_os = "linux")]
+        while let Ok(Some(_)) =
+            rustix::process::waitpgid(group, rustix::process::WaitOptions::NOHANG)
+        {}''',
+     '''        #[cfg(target_os = "linux")]
+        let _ = group;''',
+     dead_stranger,
+     "#1141 the stranger's process group survived the guard's kill"),
 ]
 
 
