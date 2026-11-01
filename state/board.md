@@ -2634,3 +2634,18 @@ updated: 2026-11-01 05:35 · by Claude Code 协调者
 - 08:30 #1214 r2（全量，覆盖 head a7d68ca95）：opus 四角色 0/0；DeepSeek 0/0，P2 一条（去空白边界只钉 6/25 码点，现网实测正确）→ 跟进 #1226（前置于 A8 接线）；本机宿主在跑 → 入队。
 - 08:30 #1145 r9（rebase 冲突合并复核）：DeepSeek 0/0/0/0，GLM 四角色 0/0（覆盖 head 60f870e0b）；本机 sdk-format 全量与 CLI 定向在跑 → 入队。
 - 08:32 **两小时交接** → `_tmp/20261101-handoff-0831.md`。
+- 08:41 #1215 r1：opus 0/0；DeepSeek 0/0，P2×3，其中「省略 params 被金样记成 null」可能假 PASS → 按 P1；另两条补 sessionKey 用例与关闭错误冒泡测试 → fix-r1 GLM cb8，排在本机宿主跑完之后自动派（不杀进程）。
+- 08:42 #1209 r3：opus 0/0；DeepSeek P1×2（停机测试把 drain 超时写成期望值，Node 实测是约 6 s keep-alive 空闲后正常关闭；头预算未计尾部 OWS）→ fix-r3（最后一轮），连同 #1222 A 的批准记录、账本同步，排在本机宿主之后自动派 cb8。
+- 09:23 #1218 接续交付（6 条新生命周期测试、负控 16 KILLED、lib 3093 passed）手工收货；但改了 M6 独占的 negative_suite.py（人批 10-30）→ 收货后小修 fix-m6：撤回共享件改动、多改动列表留在 session-factory 自己的 runner 里 → 推送后自动派 mbp2。
+- 09:39 #1214 本机宿主 done（edgeclaw 42 + memory-gateway 11/11 KILLED）→ PR #1223 ready；合 main 后 --no-run 通过即自动入队（后台）。
+- 09:39 #1166 cb8 r11h：workspace-pristine 等 26 套全过（r11 sibling P2 担心的兄弟脚本批量 INVALID 未出现）；exact-rerun-receipt 1 INVALID（Linux，#1204）；skills 负控 rc=1「evidence must stay in this tree's _tmp」——r10 就有、分诊漏看（脚本级 AssertionError 无 INVALID 字样）→ 清单参数问题：mbp2 r11m 补跑两套；neg-for-diff v12 对这类脚本改传树内 _tmp。
+- 09:42 #1218 fix-m6 a81abfce2（共享件 diff 已清零，多 change 本地化）→ 守望自动开草稿 PR #1228 → r1 opus + DeepSeek（NOHOST）+ mbp2 宿主 10 套（远端树，与评审并行）。本机负载 30（4 个本机宿主 + 合并编译检查），之后宿主一律派 mbp2 / cb8。
+- 09:58 #1145 本机 r9：sdk-format 107 KILLED + CLI 定向 sdk_format 37 / sdk_signal 100 passed → PR #1148 正文更新（结果块只保留覆盖当前 head 的 GLM r9 块）→ 入队等待中。#1214（PR #1223）合 main 后 --no-run 通过 → 已入队。#1154 r4l：plugin-loader 96/96 killed、定向 17 passed，lib 在跑。
+- 09:58 #1166 宿主齐（cb8 r11h 26 套 + mbp2 r11m：skills PASS、exact-rerun-receipt 30 KILLED、定向 / lib rc=0）。核作者谱系发现协调者 r8 改的 2 行（a75abe7fb）从未被 GLM 审过（r9 基点在它之后）→ 补审：GLM 只审该文件 + DeepSeek 只读审该提交；同时跑 opus 全量终审块。
+- 10:18 #1223（#1214）合入 3bf3d346f（邮箱 noreply；#1214 关；树回收；cb8 23G worker 构建删）。
+- 10:18 #1145 入队前 CI rust 失败：rebase 后的语义冲突——#1136 新增的 sdk-cli-lifecycle 六条 wire-end 锚点仍按 4 格缩进锚 turn.rs，本 PR fix-r6 已改 12 格 → 协调者机械同步 dd7f70908（全仓 anchor_selfcheck errors=0、test_anchor_selfcheck 122 OK、--check 84/84）→ r10 GLM + DeepSeek（只审该提交）+ mbp2 实跑 sdk-cli-lifecycle 84 条。记忆补「rebase 后必跑全仓 anchor_selfcheck」。
+- 10:18 #1166 最终 opus 全量 0/0（P2×5）；协调者 r8 那行的补审（GLM 只看该文件 + DeepSeek 只读）在跑。
+- 10:22 #1166 协调者 2 行补审：GLM 0/0/0、DeepSeek 0/0（P2：该正控单看变松，已被 r10 符号链接用例兜住）→ 证据齐；PR #1172 正文就绪（check-pr-gate PASS）；合 main 后全仓锚点 + --no-run 检查在跑，过了即 ready 入队。
+- 10:42 #1218 r1：opus 0/0；DeepSeek P1（evict 失败时丢掉未消费的 pending 错误，与 R6 shutdown 句相反）+ P2×4（矩阵 cell 6 / 12 无负控、R6 探针路径、test_restore 阶段队列残留）→ fix-r1 GLM cb8。
+- 10:42 #1220 GLM 7200 s 时限（只完成 TS 金样，Rust 未开始）→ WIP 打包、树复位 → resume1 GLM cb8。#1216 GLM 交付 bef440b9d，auto-receive 推送中（两个实例并跑，未杀，待核无重复提交）。
+- 10:56 **两小时交接** → `_tmp/20261101-handoff-1055.md`。
