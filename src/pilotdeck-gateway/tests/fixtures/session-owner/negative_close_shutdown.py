@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Negative controls for the #1245 close-during-shutdown alignment.
 
-The TS contract (`SessionRouter.ts:327-338`, pinned by the real-router probe
-``_tmp/20261026-issue-1245/probe/close-during-shutdown.out``, Node v22.22.0):
-a ``SessionOwner::close`` that finds no cached record awaits the key's
-registered in-flight eviction — a close task, the idle sweep or a shutdown
-drain — and transmits that eviction's own result; no entry means fulfilled.
+The TS contract (`SessionRouter.ts:327-338, 421-454`, pinned by the real-router
+probes ``_tmp/20261026-issue-1245/probe/close-during-shutdown.out`` and
+``_tmp/20261026-issue-1245/fix-r1/probe/close-first-same-tick.out``, Node
+v22.22.0): a ``SessionOwner::close`` that finds no cached record awaits the
+key's registered in-flight eviction — a close task, the idle sweep or a
+shutdown drain — and transmits that eviction's own result; no entry means
+fulfilled. A close that finds a record owns its eviction: TS ``close``
+deletes the record synchronously at call time, so a same-tick ``shutdown()``
+must not steal it — the close keeps its per-key result and ``closed``
+reason, and the shutdown aggregates the failure through the pending drain.
 The whole-shutdown aggregate stays ``shutdown()``'s own answer.
 
 Every mutation below reverts one slice of that mechanism and must be killed
@@ -21,10 +26,11 @@ sandbox the patch is uncommitted, so the coordinator runs this after committing:
     _tmp/<date>-issue-1245/negative-close-shutdown
 
 Rows follow anchor_selfcheck's ``MUTATIONS`` dict layout
-``name: (path, before, after, test, [markers])`` so the static preflight can
-resolve every anchor. A mutation may list several markers; ``cases_for`` turns
-each marker into its own ``Case``, so every marker must fail under the mutation
-or the row is INVALID.
+``name: (path, before, after, [tests], [markers])`` so the static preflight can
+resolve every anchor. A row may bind several tests (one ``Case`` each) and list
+several markers; ``negative_suite.classify`` treats the marker list as
+alternatives — the bound test may fail at any one of them — so a row is one
+mutation, not one marker per case.
 """
 import argparse
 import json
@@ -52,6 +58,14 @@ IDLE_EVICT = (
     "runtime::session::owner::tests::"
     "close_during_idle_eviction_awaits_the_idle_eviction_matches_ts"
 )
+CLOSE_THEN_SHUTDOWN = (
+    "runtime::session::owner::tests::"
+    "close_then_shutdown_same_tick_matches_ts"
+)
+SHUTDOWN_THEN_CLOSE = (
+    "runtime::session::owner::tests::"
+    "shutdown_then_close_same_tick_fulfills_matches_ts"
+)
 
 
 # Every marker names the exact assertion message that must turn red.
@@ -59,8 +73,10 @@ MUTATIONS = {
     # The #1245 core: revert the close window to the pre-alignment branch —
     # any close while `state.shutdown` is set answers the whole-shutdown
     # aggregate instead of the key's own eviction. Every mid-flight window
-    # of the A2 test diverges: the succeeding eviction rejects, the unknown
-    # key rejects, and the failing one answers the aggregate text.
+    # of the A2 test diverges (the succeeding eviction rejects, the unknown
+    # key rejects, the failing one answers the aggregate text), and a
+    # same-tick close after shutdown() awaits the aggregate instead of
+    # fulfilling before the drain registers.
     "close-during-shutdown-aggregate": (
         owner,
         """        if let Some(closing) = unsettled_closing(&mut state, key) {
@@ -72,11 +88,13 @@ MUTATIONS = {
         """        if let Some(shutdown) = state.shutdown.clone() {
             return Box::pin(wait_result(shutdown));
         }""",
-        DURING_SHUTDOWN,
+        [DURING_SHUTDOWN, SHUTDOWN_THEN_CLOSE],
         [
             "#1245 a succeeding mid-flight shutdown eviction must fulfill close",
             "#1245 an unregistered key must fulfill close during shutdown",
             "#1245 close during shutdown transmits the key's own dispose aggregate",
+            "#1245 a same-tick close after shutdown must fulfill before the drain registers",
+            "#1245 a same-tick close after shutdown must fulfill on a succeeding drain too",
         ],
     ),
     # The else branch stops awaiting: a mid-flight eviction no longer holds
@@ -90,7 +108,7 @@ MUTATIONS = {
         """        if unsettled_closing(&mut state, key).is_some() {
             return Box::pin(async { Ok(()) });
         }""",
-        DURING_SHUTDOWN,
+        [DURING_SHUTDOWN],
         [
             "#1245 close of a mid-flight shutdown eviction must await it, "
             "not answer early",
@@ -98,16 +116,20 @@ MUTATIONS = {
     ),
     # The close task no longer registers its completion under the key, so a
     # same-key close#2 arriving mid-flight takes the ticket path and drains to
-    # Ok instead of transmitting close#1's eviction result.
+    # Ok instead of transmitting close#1's eviction result — and a same-tick
+    # shutdown() no longer sees the registered eviction, steals the record
+    # and the close drains to Ok with the drain's `shutdown` reason.
     "close-call-registration-removed": (
         owner,
         """        track(&mut state, project, completion.clone());
         state.closings.insert(key.clone(), completion.clone());""",
         """        track(&mut state, project, completion.clone());""",
-        SECOND_CLOSE,
+        [SECOND_CLOSE, CLOSE_THEN_SHUTDOWN],
         [
             "#1245 each in-flight close of the key must reject with the eviction's "
             "own result",
+            "#1245 a close that starts before a same-tick shutdown must reject "
+            "with its own dispose failure",
         ],
     ),
     # The idle sweep no longer registers its eviction under the key, so a
@@ -117,7 +139,7 @@ MUTATIONS = {
         """            state.closings.insert(key.clone(), completion);
             let owner = self.clone();""",
         """            let owner = self.clone();""",
-        IDLE_EVICT,
+        [IDLE_EVICT],
         [
             "#1245 a failing mid-flight idle eviction must reject close",
         ],
@@ -136,10 +158,27 @@ MUTATIONS = {
                         .closings
                         .insert(key.clone(), drain_completion);""",
         """                    let (drain_done, drain_completion) = watch::channel(None);""",
-        DURING_SHUTDOWN,
+        [DURING_SHUTDOWN],
         [
             "#1245 close of a mid-flight shutdown eviction must await it, "
             "not answer early",
+        ],
+    ),
+    # #1245 fix-r1 core: the shutdown drain list steals the record of a key
+    # whose close registered its eviction but has not yet taken the record —
+    # the close task then drains to Ok and the eviction flips to the drain's
+    # `shutdown` reason.
+    "shutdown-steals-close-owned-record": (
+        owner,
+        """            if unsettled_closing(&mut state, &key).is_some() {
+                continue;
+            }
+""",
+        "",
+        [CLOSE_THEN_SHUTDOWN],
+        [
+            "#1245 a close that starts before a same-tick shutdown must reject "
+            "with its own dispose failure",
         ],
     ),
 }
@@ -157,9 +196,9 @@ def mutate(original, _scope, replacements):
 def cases_for(names):
     bound = []
     for name in names:
-        source, old, new, test, markers = MUTATIONS[name]
-        for marker in markers:
-            bound.append(Case(name, source, old, new, test, marker))
+        source, old, new, tests, markers = MUTATIONS[name]
+        for test in tests:
+            bound.append(Case(name, source, old, new, test, markers))
     return bound
 
 

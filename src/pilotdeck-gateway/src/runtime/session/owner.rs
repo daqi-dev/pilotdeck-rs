@@ -870,10 +870,24 @@ impl SessionOwner {
             .filter(|pending| pending.completion.borrow().is_none())
             .collect();
         let order = std::mem::take(&mut state.order);
-        let records: Vec<_> = order
-            .into_iter()
-            .filter_map(|key| state.records.remove(&key).map(|record| (key, record)))
-            .collect();
+        let mut records = Vec::new();
+        for key in order {
+            // TS close deletes the key's record synchronously at call time
+            // (SessionRouter.ts:329), so a close that registered its eviction
+            // but has not yet taken the record — its task is parked behind
+            // the serial gate or not yet polled — still owns that eviction.
+            // The drain list must not steal the record: the close keeps its
+            // own result and `closed` reason, and shutdown aggregates its
+            // failure through the pending drain (#1245 fix-r1). The
+            // recreation-serialization divergence (A7.2-SESSION-RECREATE-
+            // DRAIN-001) keeps the record available for such a close.
+            if unsettled_closing(&mut state, &key).is_some() {
+                continue;
+            }
+            if let Some(record) = state.records.remove(&key) {
+                records.push((key, record));
+            }
+        }
         let (done, completion) = watch::channel(None);
         state.shutdown = Some(completion.clone());
         let owner = self.clone();
@@ -1078,9 +1092,13 @@ fn track(
 }
 
 /// The in-flight eviction a record-less close awaits (TS closingSessions). A
-/// settled entry is finishEviction's removal: a task that panicked before its
-/// own cleanup cannot leak a stale result either, because the completion
-/// guard guarantees settlement.
+/// settled entry is finishEviction's removal: a close, idle-sweep or
+/// shutdown task that panicked before its own cleanup cannot leak a stale
+/// result either, because those tasks' completion guard guarantees
+/// settlement. The per-key shutdown drains are plain spawns: a panic there
+/// leaves the entry unsettled and a later close answers wait_result's
+/// lifecycle-stopped error (registered limitation,
+/// A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001-R2).
 fn unsettled_closing(
     state: &mut State,
     key: &JsString,

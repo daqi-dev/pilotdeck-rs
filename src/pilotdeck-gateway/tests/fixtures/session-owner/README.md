@@ -63,16 +63,20 @@ sweep 会停止，以及发布时旧 handle 的 admission cutoff 无需执行资
 其余变异限时 240 秒。每次编译前运行任务指定的 cargo-slots 命令。
 
 `negative_close_shutdown.py <evidence-directory>` 是 #1245（close 在 shutdown 进行中
-的错误语义对齐 TS）的专用负控，走共享 M6 执行器（`mutating_sources` 原位变异 +
-`negative_suite.run_cases` 逐项 KILLED/SURVIVED/INVALID），要求提交后源码等于
-`HEAD`，与 `negative.py` 的独立 `/tmp` 副本方式并存。五项变异各绑定一个确切的单测
-断言：close 的 shutdown 窗口变异回旧的整个 shutdown 聚合分支、else 分支不 await
-就放行、close 任务的 closing 登记、idle sweep 的 closing 登记、shutdown drain 的
-closing 登记（后三项去掉登记后，对应窗口的 close 漂移为 Ok，A2/B2/B4 的 per-key
-断言必须红）。TS 依据为真实路由探针
-`_tmp/20261026-issue-1245/probe/close-during-shutdown.out`（Node v22.22.0），
-差异与修正在
-`specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001{-R1}.md`。
+的错误语义对齐 TS，含 fix-r1 的 close-先于-shutdown 同 tick 格）的专用负控，走共享
+M6 执行器（`mutating_sources` 原位变异 + `negative_suite.run_cases` 逐项
+KILLED/SURVIVED/INVALID），要求提交后源码等于 `HEAD`，与 `negative.py` 的独立
+`/tmp` 副本方式并存。六项变异：close 的 shutdown 窗口变异回旧的整个 shutdown
+聚合分支、else 分支不 await 就放行、close 任务的 closing 登记、idle sweep 的
+closing 登记、shutdown drain 的 closing 登记、shutdown 的 drain 清单抢走已有未
+结算 closing 的 key 的 record（最后一项去掉后 close-first-same-tick 格漂移为
+Ok + `shutdown` 原因）。一行变异可绑定多个测试（每测试一个 `Case`），marker
+list 走 `negative_suite.classify` 的 alternatives 语义——绑定测试在任一列名
+断言失败即 KILLED，不把多个 marker 拆成多个 Case。TS 依据为真实路由探针
+`_tmp/20261026-issue-1245/probe/close-during-shutdown.out` 与
+`_tmp/20261026-issue-1245/fix-r1/probe/close-first-same-tick.out`
+（Node v22.22.0），差异与修正在
+`specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001{-R1,-R2}.md`。
 `--check-anchors` 预检锚点；`--compile-only` 只证明每个变异体能编译；
 `--sample` 只跑 `close-else-awaits-nothing` 一项抽样。
 
