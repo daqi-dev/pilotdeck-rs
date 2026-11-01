@@ -60,6 +60,19 @@ switches = [
     # `probe-fixr3-c.out` C4 serves 16363 empty-value headers); the mutant
     # lowers the cap to 3000, so the 8000-header cell 431s.
     ('native-http-header-cap-low', SOURCE_PROXY, 'header_counts_within_ts_bounds_stay_served', '#1209 8000 small headers stay served like TS'),
+    # #1250: Node closes an idle keep-alive connection at keepAliveTimeout 5 s
+    # plus the fixed 1 s keepAliveTimeoutBuffer (6 s, while the response still
+    # advertises the bare timeout=5); the mutant drops the buffer, so the close
+    # lands at the bare 5 s.
+    ('native-http-idle-close-buffer-off', SOURCE_PROXY, 'keep_alive_idle_close_lands_at_six_seconds', "#1250 the idle connection stays open at +5.46 s: Node closes at keepAliveTimeout + the fixed 1 s keepAliveTimeoutBuffer (6 s), never at the bare 5 s"),
+    # #1250: the idle deadline arms at the response's end-of-frames, not at
+    # handler return; the mutant releases the in-flight slot and re-arms at
+    # handler return, so the connection closes right after the body ends.
+    ('native-http-inflight-body-off', SOURCE_PROXY, 'idle_close_waits_for_streaming_body', "#1250 the streaming connection stays open at +5.46 s after its body ended: Node arms the idle deadline at response finish, not at handler return"),
+    # #1250: every read segment refreshes the idle deadline; the mutant stops
+    # refreshing on reads, so the previous response's deadline closes the
+    # connection while the follow-up head is still arriving.
+    ('native-http-read-refresh-off', SOURCE_PROXY, 'idle_close_refreshes_on_read_segments', "#1250 the half-arrived follow-up head keeps the connection open past the pre-segment deadline: a read segment refreshes Node's idle deadline"),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

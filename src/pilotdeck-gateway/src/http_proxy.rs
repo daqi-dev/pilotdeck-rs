@@ -182,6 +182,11 @@ impl Drop for ReadLease {
 struct UpgradeReadGate<S> {
     stream: S,
     state: SharedReadState,
+    /// #1250: every successfully read byte is Node socket activity, so a
+    /// segment of the next request head pushes the idle deadline out
+    /// (`node-dribble-valid-segments.out`); without this the connection can
+    /// be closed by the previous response's deadline mid-arrival.
+    activity: watch::Sender<Option<tokio::time::Instant>>,
 }
 impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
     fn poll_read(
@@ -196,7 +201,19 @@ impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
                 return Poll::Pending;
             }
         }
-        Pin::new(&mut self.stream).poll_read(cx, buf)
+        let filled = buf.filled().len();
+        match Pin::new(&mut self.stream).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) => {
+                if buf.filled().len() > filled
+                    && !crate::mutants::on("native-http-read-refresh-off")
+                {
+                    self.activity
+                        .send_replace(Some(tokio::time::Instant::now()));
+                }
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
     }
 }
 impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
@@ -240,13 +257,17 @@ where
 
 /// Node v22.22.0's default `server.keepAliveTimeout` (the TS
 /// `GatewayServer` does not override it and advertises
-/// `Keep-Alive: timeout=5`): an idle keep-alive connection closes 5 s after
-/// its last request/response activity (probe `probe-fixr3-a.out` A). Node
-/// adds the fixed `keepAliveTimeoutBuffer` (1 s), so the TS close lands at
-/// ~6 s; this port replicates the 5 s timeout itself and closes at exactly
-/// 5 s, never later — the unconverged ~1 s buffer is registered in ledger
-/// A8.4-NATIVE-HTTP-001 (alignment tracked in #1250).
-const NODE_KEEP_ALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(5);
+/// `Keep-Alive: timeout=5` — the bare value, not this deadline).
+const NODE_KEEP_ALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Node v22.22.0's fixed `server.keepAliveTimeoutBuffer` default. Node arms
+/// the idle socket timeout with `keepAliveTimeout + keepAliveTimeoutBuffer`,
+/// so an idle keep-alive connection actually closes 6 s after its last
+/// activity (live TS server read back `keepAliveTimeout=5000`
+/// `keepAliveTimeoutBuffer=1000`; #1250 probes `node-keepalive-matrix.out`
+/// and `node-dribble-valid-segments.out`: the close lands at last activity +
+/// 6000 ms — a response's quiet +5749 ms, a follow-up head's last segment
+/// +6006 ms).
+const NODE_KEEP_ALIVE_TIMEOUT_BUFFER: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The native listener's connection serving. TS emits literal header cases
 /// (`Date`, `Connection` capitalized), so responses render Title-Case, and
@@ -258,13 +279,14 @@ const NODE_KEEP_ALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs
 /// `stop` mirrors Node's `server.close()` semantics (probes
 /// `probe-fixr1.out` B, `probe-fixr2.out` D, `probe-fixr3-b.out` B1): a
 /// connection that is idle keep-alive at that instant is closed right away,
-/// while a connection with a request in flight — or one that never sent
-/// bytes, including requests it sends only after the stop — is answered with
-/// the normal keep-alive response and never force-closed; such sockets close
-/// at their own 5 s keep-alive idle timeout (below). `graceful_shutdown` is
-/// hyper's equivalent for the idle-at-close case and is a no-op for an
-/// already-upgraded connection. A dropped sender means no stop signal, and
-/// the connection simply runs to its natural end.
+/// while a connection with a request in flight — a parsed head still inside
+/// the handler or a response body still streaming, #1250 — or one that never
+/// sent bytes, including requests it sends only after the stop — is answered
+/// with the normal keep-alive response and never force-closed; such sockets
+/// close at their own 6 s keep-alive idle timeout (below).
+/// `graceful_shutdown` is hyper's equivalent for the idle-at-close case and
+/// is a no-op for an already-upgraded connection. A dropped sender means no
+/// stop signal, and the connection simply runs to its natural end.
 pub(crate) async fn serve_connection_native_with_shutdown<S, F, Fut>(
     stream: S,
     handler: F,
@@ -289,6 +311,52 @@ impl Drop for InFlightRequest {
     }
 }
 
+/// #1250: a response body that keeps the request's in-flight slot held until
+/// the body has actually finished streaming, and arms the keep-alive idle
+/// deadline at that completion — Node's idle timer arms at the response
+/// `finish`, not at handler return, so a mid-body hold is never closed by a
+/// deadline armed at the head (probe `node-keepalive-matrix.out` cell S4a:
+/// head + one chunk on the wire, no writes for 8 s, the `socket TIMEOUT`
+/// event only fires after the body ends).
+struct IdleBody {
+    body: Body,
+    held: Option<(InFlightRequest, watch::Sender<Option<tokio::time::Instant>>)>,
+}
+impl IdleBody {
+    /// Releases the slot and re-arms the idle deadline at body completion.
+    /// Idempotent: the frame end and the drop can both reach it.
+    fn release(&mut self) {
+        if let Some((guard, activity)) = self.held.take() {
+            drop(guard);
+            activity.send_replace(Some(tokio::time::Instant::now()));
+        }
+    }
+}
+impl hyper::body::Body for IdleBody {
+    type Data = Bytes;
+    type Error = ProxyError;
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, ProxyError>>> {
+        let poll = Pin::new(&mut self.body).poll_frame(context);
+        if matches!(poll, Poll::Ready(None)) {
+            self.release();
+        }
+        poll
+    }
+    fn size_hint(&self) -> http_body::SizeHint {
+        // Wrapping must not hide the inner body's exact size (the
+        // parser-level 400/431 bodies are exact-0 and must stay unchunked).
+        self.body.size_hint()
+    }
+}
+impl Drop for IdleBody {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 async fn serve_connection_configured<S, F, Fut>(
     stream: S,
     handler: F,
@@ -301,13 +369,14 @@ where
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
     let state = SharedReadState::default();
-    let stream = UpgradeReadGate {
-        stream,
-        state: state.clone(),
-    };
     let served = Arc::new(AtomicBool::new(false));
     let in_flight = Arc::new(AtomicUsize::new(0));
     let (activity, mut activity_rx) = watch::channel(None::<tokio::time::Instant>);
+    let stream = UpgradeReadGate {
+        stream,
+        state: state.clone(),
+        activity: activity.clone(),
+    };
     let served_in_connection = served.clone();
     let in_flight_in_connection = in_flight.clone();
     let activity_in_connection = activity.clone();
@@ -331,9 +400,30 @@ where
         let handler = handler(request, lease);
         async move {
             let result = handler.await;
-            drop(in_flight);
-            activity.send_replace(Some(tokio::time::Instant::now()));
-            result
+            match result {
+                Ok(response) => {
+                    // #1250: Node's keep-alive idle timer arms at the
+                    // response `finish`, not at handler return, so the
+                    // in-flight slot stays held until the body has actually
+                    // finished streaming (`node-keepalive-matrix.out` cell
+                    // S4a: an 8 s mid-body hold with no writes is not closed
+                    // by the idle deadline armed at the response head).
+                    let held = if crate::mutants::on("native-http-inflight-body-off") {
+                        // The pre-#1250 behavior the negative control
+                        // kills: release and re-arm at handler return.
+                        drop(in_flight);
+                        activity.send_replace(Some(tokio::time::Instant::now()));
+                        None
+                    } else {
+                        Some((in_flight, activity))
+                    };
+                    Ok(response.map(|body| IdleBody { body, held }.boxed()))
+                }
+                Err(error) => {
+                    drop(in_flight);
+                    Err(error)
+                }
+            }
         }
     });
     let mut builder = http1::Builder::new();
@@ -362,18 +452,26 @@ where
     };
     tokio::pin!(connection);
     // Node's keep-alive idle close, in force with or without a stop: the
-    // deadline is the last request-parse or response-completion activity plus
-    // 5 s, re-armed on every new activity. While a request is in flight the
-    // timer never fires (Node's requestTimeout, not keepAliveTimeout, governs
-    // a busy socket), and the next activity update re-arms it.
+    // deadline is the last activity — a request parse, a read segment of the
+    // next request head, or the completion of a response body — plus the
+    // effective `keepAliveTimeout + keepAliveTimeoutBuffer` (6 s), re-armed
+    // on every new activity. While a request is in flight, which includes a
+    // response body still streaming, the timer never fires (Node's
+    // requestTimeout, not keepAliveTimeout, governs a busy socket), and the
+    // next activity update re-arms it.
     let idle = async {
         if crate::mutants::on("native-http-keep-alive-timeout-off") {
             std::future::pending::<()>().await;
         }
+        let buffer = if crate::mutants::on("native-http-idle-close-buffer-off") {
+            std::time::Duration::ZERO
+        } else {
+            NODE_KEEP_ALIVE_TIMEOUT_BUFFER
+        };
         loop {
             let deadline = activity_rx
                 .borrow_and_update()
-                .map(|at| at + NODE_KEEP_ALIVE_IDLE);
+                .map(|at| at + NODE_KEEP_ALIVE_TIMEOUT + buffer);
             let Some(deadline) = deadline else {
                 if activity_rx.changed().await.is_err() {
                     std::future::pending::<()>().await;
@@ -425,7 +523,8 @@ where
                     connection.as_mut().graceful_shutdown();
                 }
                 // close() only destroys the connections that were idle at
-                // that instant; requests in flight and later requests are
+                // that instant; requests in flight — which includes a
+                // response body still streaming — and later requests are
                 // answered normally, and their sockets still end at the
                 // keep-alive idle close below, so the stop is consumed but
                 // the connection keeps being served.

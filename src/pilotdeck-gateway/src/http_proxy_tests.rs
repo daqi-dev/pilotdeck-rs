@@ -494,6 +494,7 @@ fn cancelling_service_lease_wakes_paused_reader() {
     let mut gated = UpgradeReadGate {
         stream: io,
         state: state.clone(),
+        activity: tokio::sync::watch::channel(None).0,
     };
     let lease = ReadLease(state.clone());
     let mut bytes = [0; 1];
