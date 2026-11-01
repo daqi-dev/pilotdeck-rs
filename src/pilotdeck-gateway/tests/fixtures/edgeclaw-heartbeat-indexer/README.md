@@ -120,10 +120,19 @@ comparison outright — the re-captured turn is silently dropped behind the
 stale entry. The #1207 fix-r1 review adds a fourth: dropping the re-arm from
 the clear's abort path (`clear-abort-rearm-dropped`), so an indexed row whose
 file the failed clear already removed is never re-listed and the file is
-lost. Both blocking-witness tests (`concurrent_capture_cannot_land_between_
-l0_id_selection_and_delete` and `commit_segment_blocks_concurrent_clear_
-until_writes_complete`) judge on completion-signal events, not wall clocks,
-so host load cannot false-green their bound mutants.
+lost. The fix-r2 review adds a fifth (`clear-abort-delete-rearm-dropped`):
+the same re-arm dropped from the entry-deletion error arm, the failure face
+inside `delete_memory_entries` itself (a later unlink or the manifest repair,
+after the files are already removed). Both blocking-witness tests
+(`concurrent_capture_cannot_land_between_l0_id_selection_and_delete` and
+`commit_segment_blocks_concurrent_clear_until_writes_complete`) judge through
+doc-hidden lock-wait observers (`EdgeClawStorage::set_process_wait_observer`,
+`FileMemoryStore::set_operation_wait_observer`), which fire only when a
+caller really parks on the contended guard: the first probe event is either
+the blocking witness or the other side's completion, so host load cannot
+false-green their bound mutants and no wall-clock window participates in the
+discrimination (the probe waits themselves only bound pathological
+scheduling, like every other channel wait in the suite).
 After commit:
 
 ```sh

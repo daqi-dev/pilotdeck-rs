@@ -452,7 +452,21 @@ impl EdgeClawFileStores {
                     .map(JsValue::String)
                     .collect(),
             );
-            let deleted = self.delete_memory_entries(&ids)?;
+            // #1207 fix-r2 (review P0): the deletion itself can fail after the
+            // session's files are (partially) removed — a later unlink, the
+            // manifest `repair()` rewriting MEMORY.md, or `repair_manifests`
+            // — which is the same indexed-row-without-its-file shape the tail
+            // below recovers from. No connection guard is held here
+            // (`mutate_entries` takes only the reentrant snapshot scopes), so
+            // the same re-arm applies; a failure before any unlink resets rows
+            // whose files still exist, which is idempotent.
+            let deleted = match self.delete_memory_entries(&ids) {
+                Ok(deleted) => deleted,
+                Err(error) => {
+                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    return Err(error);
+                }
+            };
             // #1207 fix-r1 (review P1): everything below can still fail while
             // the session's memory files are already gone. It runs in a
             // helper whose connection guard is released when the helper

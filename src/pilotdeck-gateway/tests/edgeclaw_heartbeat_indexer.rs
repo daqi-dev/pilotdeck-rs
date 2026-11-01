@@ -2113,34 +2113,62 @@ async fn commit_segment_blocks_concurrent_clear_until_writes_complete() {
     parked_rx
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("#917 the heartbeat must park inside the commit segment");
+    // Deterministic blocked/completed discrimination (the #1207 fix-r2 review
+    // P2-1 shape): the workspace store's operation-lock wait observer reports
+    // the clear actually parked on the commit segment's snapshot locks — not a
+    // wall-clock window host load could stretch past the dropped-scope
+    // mutant's clear. While the segment stays parked the clear can only
+    // block, so the first probe event must be the blocking one; the
+    // dropped-scope mutant lets the clear run to completion inside the
+    // parked window and is killed by receiving that completion here.
+    #[derive(Debug)]
+    enum ClearProbe {
+        BlockedOnSnapshotLocks,
+        Done,
+    }
+    let (clear_probe_tx, clear_probe_rx) = std::sync::mpsc::channel::<ClearProbe>();
+    lab.stores.workspace_memory.set_operation_wait_observer({
+        let clear_probe_tx = clear_probe_tx.clone();
+        Arc::new(move || {
+            // Re-acquisition contention after the release is expected
+            // noise; the discrimination only needs the first event.
+            let _ = clear_probe_tx.send(ClearProbe::BlockedOnSnapshotLocks);
+        })
+    });
     let clear_stores = lab.stores.clone();
-    let (clear_done_tx, clear_done_rx) = std::sync::mpsc::channel::<()>();
     let clear = thread::spawn(move || {
         clear_stores
             .clear_session_memory_data("s1")
             .expect("#917 the concurrent clear must succeed after the commit segment");
-        clear_done_tx
-            .send(())
+        clear_probe_tx
+            .send(ClearProbe::Done)
             .expect("#917 the concurrent clear must signal its completion");
     });
-    // Event criterion, not wall clocks (the #1207 fix-r1 review P1 shape): the
-    // parked commit segment holds the snapshot operation locks `clearSession`
-    // also takes, so while the segment stays parked the clear can only be
-    // blocked — its completion signal must not arrive within the window. The
-    // dropped-scope mutant lets the clear finish while the segment is parked.
+    let first = clear_probe_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#917 the clear probe must report blocking or completion within 10s");
     assert!(
-        matches!(
-            clear_done_rx.recv_timeout(std::time::Duration::from_secs(5)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-        ),
-        "#917 a concurrent clearSession must stay blocked on the commit segment's snapshot locks until its writes complete"
+        matches!(first, ClearProbe::BlockedOnSnapshotLocks),
+        "#917 a concurrent clearSession must stay blocked on the commit segment's snapshot locks until its writes complete, got {first:?}"
     );
     release_tx
         .send(())
         .expect("#917 the release signal must reach the commit hook");
-    clear_done_rx
-        .recv_timeout(std::time::Duration::from_secs(10))
-        .expect("#917 the blocked clear must complete once the commit segment released the snapshot locks");
+    // Post-release contention on the re-acquired locks can queue more
+    // BlockedOnSnapshotLocks probes ahead of the completion; only the
+    // completion itself is required here.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match clear_probe_rx
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        {
+            Ok(ClearProbe::Done) => break,
+            Ok(ClearProbe::BlockedOnSnapshotLocks) => continue,
+            Err(timeout) => panic!(
+                "#917 the blocked clear must complete once the commit segment released the snapshot locks, got {timeout:?}"
+            ),
+        }
+    }
     let stats = heartbeat
         .join()
         .expect("#917 the heartbeat thread must not panic")
@@ -2928,6 +2956,155 @@ async fn clear_failing_after_l0_ids_selected_rearms_indexed_rows() {
     lab.server.close().await;
 }
 
+// #1207 fix-r2 (review P0): a clear that fails *inside* delete_memory_entries
+// — here the manifest repair rewriting the read-only MEMORY.md, after the
+// per-file unlinks already removed the session's memory file — has the same
+// shape as the tail failure above. The pre-fix state was the permanent loss
+// the fix-r1 recovery was built for: the L0 row survives indexed=1, nothing
+// ever re-lists it, and the file cannot be re-derived. The abort must re-arm
+// the session's still-present rows exactly like the tail's error arm.
+#[cfg(unix)]
+#[tokio::test]
+async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-fails-inside-delete-entries", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "indexed before a clear that fails inside the entry deletion",
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1207 the first heartbeat must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1207 the first heartbeat must index the turn and write its file"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the first heartbeat");
+    assert!(
+        rows[0].indexed,
+        "#1207 the row must be indexed before the failing clear starts"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1207 the turn's file must exist before the failing clear starts, got {paths:?}"
+    );
+    // The real mid-deletion IO failure face: the workspace store's manifest
+    // rewrite (deleteEntries unlinks each file, then repairs MEMORY.md) hits
+    // a read-only manifest with the files already removed.
+    let manifest = lab
+        .stores
+        .get_file_memory_store()
+        .get_root_dir()
+        .join("MEMORY.md");
+    assert!(
+        manifest.is_file(),
+        "#1207 the workspace manifest must exist before it is made read-only, got {manifest:?}"
+    );
+    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o444))
+        .expect("#1207 make the workspace manifest read-only");
+    let error = lab
+        .stores
+        .clear_session_memory_data("s1")
+        .expect_err("#1207 the clear must fail inside the entry deletion");
+    assert!(
+        matches!(
+            &error,
+            FileMemoryError::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied
+        ),
+        "#1207 the clear must fail with the read-only manifest's permission error, got {error}"
+    );
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#1207 the failed clear must not advance the generation"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        !paths.iter().any(|path| path.starts_with("Project/")),
+        "#1207 the failed clear already removed the session's files; only the re-arm can bring them back, got {paths:?}"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the failed clear");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1207 the failed clear must leave the session's L0 row in place"
+    );
+    assert!(
+        !rows[0].indexed,
+        "#1207 the clear that failed inside its entry deletion must re-arm its still-present indexed row"
+    );
+    let pending = lab
+        .stores
+        .storage
+        .list_unindexed_l0_by_session("s1")
+        .expect("#1207 list unindexed rows after the failed clear");
+    assert_eq!(
+        pending.len(),
+        1,
+        "#1207 the re-armed row must be re-listable so the next heartbeat regenerates its file"
+    );
+    // The next heartbeat's own manifest repair needs the manifest writable
+    // again; the failure face under test is only the clear's mid-deletion one.
+    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644))
+        .expect("#1207 make the workspace manifest writable again");
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1207 the heartbeat after the re-armed clear failure must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1207 the heartbeat after the re-armed clear failure must re-index the row and regenerate its file"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1207 list l0 rows after the second heartbeat");
+    assert!(
+        rows[0].indexed,
+        "#1207 the re-armed row must be indexed again alongside the regenerated file"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1207 the heartbeat after the re-armed clear failure must regenerate the session's file, got {paths:?}"
+    );
+    lab.server.close().await;
+}
+
 // #1207 fix-1: the L0 id selection and the DELETE inside `clearSession` must
 // share one connection guard. A capture that starts while the clear is parked
 // at the `L0IdsSelected` seam must not land inside the guarded segment: with
@@ -2997,47 +3174,61 @@ fn concurrent_capture_cannot_land_between_l0_id_selection_and_delete() {
     parked_rx
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("#1207 the clear must park between the id selection and the DELETE");
-    let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
-    let (inserted_tx, inserted_rx) = std::sync::mpsc::channel::<()>();
+    // Deterministic blocked/completed discrimination (fix-r2 review P2-1): the
+    // storage's process-lock wait observer reports the capture actually
+    // parked on the connection guard — not a wall-clock window that host load
+    // could stretch past the mutant's insert. While the clear stays parked
+    // inside the guarded segment the capture can only block, so the first
+    // probe event must be the blocking one; the two-guard mutant lets the
+    // insert run to completion inside the parked window and is killed by
+    // receiving that completion here.
+    #[derive(Debug)]
+    enum CaptureProbe {
+        BlockedOnStorage,
+        Inserted,
+    }
+    let (probe_tx, probe_rx) = std::sync::mpsc::channel::<CaptureProbe>();
+    stores.storage.set_process_wait_observer({
+        let probe_tx = probe_tx.clone();
+        Arc::new(move || {
+            // Re-acquisition contention after the release is expected noise;
+            // the discrimination only needs the first event.
+            let _ = probe_tx.send(CaptureProbe::BlockedOnStorage);
+        })
+    });
     let insert_stores = stores.clone();
     let insert = thread::spawn(move || {
-        started_tx
-            .send(())
-            .expect("#1207 the guarded-segment insert must signal its start");
         insert_stores
             .storage
             .insert_l0_session(&row("s1_b_raw", "2026-10-22T00:00:02.000Z"))
             .expect("#1207 the guarded-segment insert must not fail");
-        inserted_tx
-            .send(())
+        probe_tx
+            .send(CaptureProbe::Inserted)
             .expect("#1207 the guarded-segment insert must signal its completion");
     });
-    started_rx
+    let first = probe_rx
         .recv_timeout(std::time::Duration::from_secs(10))
-        .expect("#1207 the guarded-segment insert thread must start");
-    // Event criterion, not wall clocks (fix-r1 review P1): while the clear
-    // stays parked inside the guarded segment the capture can only be blocked
-    // on the connection guard, so its completion signal must not arrive
-    // within the window — the two-guard shape lets the insert finish while
-    // the clear is parked, and receiving it here is the deterministic kill.
-    // A host slow enough to keep even the mutant's insert unfinished for the
-    // whole window cannot make the fixed shape fail: it never completes
-    // before the release.
+        .expect("#1207 the capture probe must report blocking or completion within 10s");
     assert!(
-        matches!(
-            inserted_rx.recv_timeout(std::time::Duration::from_secs(5)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-        ),
-        "#1207 the capture started while the clear is parked inside the guarded segment must stay blocked on the connection guard until the clear releases it"
+        matches!(first, CaptureProbe::BlockedOnStorage),
+        "#1207 the capture started while the clear is parked inside the guarded segment must stay blocked on the connection guard until the clear releases it, got {first:?}"
     );
     release_tx
         .send(())
         .expect("#1207 the release signal must reach the parked clear");
-    inserted_rx
-        .recv_timeout(std::time::Duration::from_secs(10))
-        .expect(
-            "#1207 the blocked capture must complete once the clear released the storage guard",
-        );
+    // Post-release contention on the re-acquired guard can queue more
+    // BlockedOnStorage probes ahead of the completion; only the completion
+    // itself is required here.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match probe_rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok(CaptureProbe::Inserted) => break,
+            Ok(CaptureProbe::BlockedOnStorage) => continue,
+            Err(timeout) => panic!(
+                "#1207 the blocked capture must complete once the clear released the storage guard, got {timeout:?}"
+            ),
+        }
+    }
     insert
         .join()
         .expect("#1207 the guarded-segment insert thread must not panic");

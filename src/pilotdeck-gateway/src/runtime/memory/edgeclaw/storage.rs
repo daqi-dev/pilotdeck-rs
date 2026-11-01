@@ -228,6 +228,12 @@ fn shared_process_lock(key: &Path) -> Arc<Mutex<()>> {
     lock
 }
 
+/// #1207 fix-r2 (review P2-1): fires when a caller is about to park on the
+/// contended process lock, before it blocks. Tests use it to prove a thread is
+/// really waiting on the storage guard — a deterministic blocked/completed
+/// discrimination no wall-clock window can give. Production never installs one.
+pub type ProcessWaitObserver = Arc<dyn Fn() + Send + Sync>;
+
 /// Canonical identity of the SQLite file. The path is opened before this is
 /// called, so `canonicalize` normally succeeds; the absolute fallback covers a
 /// host that opened through a now-removed directory entry.
@@ -311,6 +317,9 @@ pub struct EdgeClawStorage {
     /// `created_at` fallback (`sqlite.ts:941`); injected so replays observe
     /// the same clock reads as TS.
     clock: FileMemoryClock,
+    /// #1207 fix-r2 (review P2-1): test-only, fires on a contended process
+    /// lock. `None` in production and in every test that does not install it.
+    wait_observer: Mutex<Option<ProcessWaitObserver>>,
 }
 
 // Dropping the last service/storage owner closes SQLite too. Serialize that
@@ -409,6 +418,7 @@ impl EdgeClawStorage {
             conn: Mutex::new(Some(conn)),
             process,
             clock,
+            wait_observer: Mutex::new(None),
         })
     }
 
@@ -481,16 +491,29 @@ impl EdgeClawStorage {
         {
             return ProcessGuard { outer: None, key };
         }
-        #[cfg(test)]
-        if let Some(sender) = same_root_tests::lock_observer() {
-            // Observe the real acquisition result, not thread startup. A
-            // WouldBlock event proves overlap before the writer is released.
-            match self.process.try_lock() {
-                Ok(guard) => return ProcessGuard::owned(guard, key),
-                Err(std::sync::TryLockError::Poisoned(error)) => {
-                    return ProcessGuard::owned(error.into_inner(), key);
+        // #1207 fix-r2 (review P2-1): try first, observe only real
+        // contention. The uncontended path keeps the plain acquisition
+        // semantics; a caller that really parks on the process lock fires
+        // the doc-hidden wait observer (test-only; see
+        // [`Self::set_process_wait_observer`]) and the `#[cfg(test)]`
+        // lock observer, instead of tests having to infer blocking from a
+        // wall-clock window.
+        match self.process.try_lock() {
+            Ok(guard) => return ProcessGuard::owned(guard, key),
+            Err(std::sync::TryLockError::Poisoned(error)) => {
+                return ProcessGuard::owned(error.into_inner(), key);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if let Some(hook) = self
+                    .wait_observer
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+                {
+                    hook();
                 }
-                Err(std::sync::TryLockError::WouldBlock) => {
+                #[cfg(test)]
+                if let Some(sender) = same_root_tests::lock_observer() {
                     let event = match _operation {
                         ProcessOperation::Call => same_root_tests::LockEvent::Contended,
                         ProcessOperation::Close => same_root_tests::LockEvent::CloseContended,
@@ -504,6 +527,18 @@ impl EdgeClawStorage {
             self.process.lock().unwrap_or_else(PoisonError::into_inner),
             key,
         )
+    }
+
+    /// #1207 fix-r2 (review P2-1): install the process-lock wait observer
+    /// (tests only; production never installs one). It fires on the storage
+    /// instance's own contended acquisitions, so other instances' contention
+    /// stays invisible to the installing test.
+    #[doc(hidden)]
+    pub fn set_process_wait_observer(&self, hook: ProcessWaitObserver) {
+        *self
+            .wait_observer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(hook);
     }
 
     fn conn(&self) -> Result<ConnectionGuard<'_>, StorageError> {
@@ -924,8 +959,9 @@ impl EdgeClawStorage {
     /// nothing ever re-lists an indexed row. No TS twin (`sqlite.ts:1985-2002`
     /// runs the statements back-to-back on one synchronous connection, so TS
     /// has no mid-tail failure face to recover from); this covers the
-    /// Rust-only abort faces (the clearSession seams and a mid-tail storage
-    /// error).
+    /// Rust-only abort faces (the clearSession seams, a mid-tail storage
+    /// error, and — fix-r2, review P0 — a failure inside the entry deletion
+    /// itself, after its per-file unlinks).
     pub fn rearm_l0_indexed_for_session(&self, session_key: &str) -> Result<(), StorageError> {
         self.conn()?.execute(
             "UPDATE l0_sessions SET indexed = 0 WHERE session_key = ?1",
