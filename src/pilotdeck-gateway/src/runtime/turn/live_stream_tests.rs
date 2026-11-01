@@ -778,6 +778,104 @@ async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_o
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
+/// #1220: submit() assembles one coordinate allocator for the whole turn and
+/// wires it into all three consumers — the wire event projection and the
+/// pump's host projection (Forwarding), and the terminal block positioning
+/// (LiveTurnStream) — so a full turn through the real session yields
+/// consecutive coordinates across all three sources.
+#[tokio::test]
+async fn submit_assembles_one_timeline_across_wire_host_and_terminal() {
+    let handler = Arc::new(Handler::default());
+    queue_host_events(
+        &handler,
+        &[parse_json(
+            r#"{"type":"assistant_message","sessionId":"session","turnId":"turn","message":{"role":"assistant","content":[{"type":"text","text":"from host","blockId":"hb1"}],"metadata":{"model":"m"}}}"#,
+        )
+        .expect("#1220 submit timeline: host event must parse")],
+    );
+    let session = session("timeline-submit", handler.clone()).await;
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
+    for event_type in ["turn_started", "input_accepted", "user_prompt_submitted"] {
+        let event = next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
+    }
+    let started = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        started.get("type"),
+        Some(&"model_request_started".into()),
+        "#1220 submit timeline: the peer's model_request_started arrives"
+    );
+    let wire = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        wire.get("type"),
+        Some(&"model_event".into()),
+        "#1220 submit timeline: the wire delta arrives"
+    );
+    assert_eq!(
+        wire.get("timeline"),
+        Some(
+            &parse_json(
+                r#"{"version":1,"turnId":"turn","id":"b1","order":0,"revision":2,"offset":0}"#
+            )
+            .expect("#1220 submit timeline: literal must parse")
+        ),
+        "#1220 submit timeline: the wire block takes the first position"
+    );
+    let host = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        host.get("type"),
+        Some(&"assistant_message".into()),
+        "#1220 submit timeline: the drained host message arrives"
+    );
+    let host_block = host
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(|content| match content {
+            JsValue::Array(blocks) => blocks.first(),
+            _ => None,
+        })
+        .and_then(|block| block.get("timeline"));
+    assert_eq!(
+        host_block,
+        Some(
+            &parse_json(
+                r#"{"version":1,"turnId":"turn","id":"hb1","previousId":"b1","order":1,"revision":4}"#
+            )
+            .expect("#1220 submit timeline: literal must parse")
+        ),
+        "#1220 submit timeline: the drained host block chains after the wire block"
+    );
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(
+        completed.get("type"),
+        Some(&"turn_completed".into()),
+        "#1220 submit timeline: the turn completes"
+    );
+    let final_block = completed
+        .get("result")
+        .and_then(|result| result.get("finalMessage"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| match content {
+            JsValue::Array(blocks) => blocks.first(),
+            _ => None,
+        })
+        .and_then(|block| block.get("timeline"));
+    assert_eq!(
+        final_block,
+        Some(
+            &parse_json(r#"{"version":1,"turnId":"turn","id":"b1","order":0,"revision":2}"#)
+                .expect("#1220 submit timeline: literal must parse")
+        ),
+        "#1220 submit timeline: the terminal reuses the wire position without a revision bump"
+    );
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap(),
+        None,
+        "#1220 submit timeline: one terminal only"
+    );
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
 #[tokio::test]
 async fn host_early_failure_completes_after_host_input_accepted() {
     let handler = Arc::new(Handler::default());

@@ -18,7 +18,7 @@ mutations = {
     'interleave': ('self.subagents.retain(|s| s.id != id);', '// keep completed subagent', 'idle_reset_and_heartbeat_oracle'),
     'module-phase': ('if !module {', 'if true {', 'pending_callback_does_not_hold_batches'),
     'stale-stop': ('if heartbeat && state.stopped {', 'if false {', 'stops_before_dispose_closes_port'),
-    'wire-buffer': ('if payload.is_some() {', 'if false {', 'wire_predecessor_cancel_and_drop_are_bounded'),
+    'wire-buffer': ('if payload.is_some() && !crate::mutants::on("wire-drains-host") {', 'if false {', 'wire_predecessor_cancel_and_drop_are_bounded'),
     'callback': ('if module {', 'if module && false {', 'pending_callback_does_not_hold_batches'),
     'wire': ('delivery.wait().await;', '// skip reserved predecessor', 'wire_predecessor_cancel_and_drop_are_bounded'),
     'finish': ('if final_event {\n            self.forwarding.lock().unwrap().stopped = true;', 'if final_event && false {\n            self.forwarding.lock().unwrap().stopped = true;', 'finish_cancel_drop_stop_draining'),

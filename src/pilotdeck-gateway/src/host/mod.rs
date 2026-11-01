@@ -395,14 +395,21 @@ pub struct ExecuteRequest {
 #[derive(Debug)]
 pub enum ExecuteResult {
     Terminal(JsValue),
-    /// TS abortedResult (client:330,593,1338-1350,1434-1448). The session layer
-    /// projects type=aborted, stopReason=aborted_streaming, turns=0 and retains
-    /// its original input messages. None covers both an input cancelled before
-    /// execute and the incomplete compaction final; raw incomplete payloads are
-    /// never exposed as a terminal or delivered to the event handler.
+    /// TS abortedResult (client:330,593,1434-1448). The session layer projects
+    /// type=aborted, stopReason=aborted_streaming, turns=0 and retains its
+    /// original input messages. This variant is only the pre-execute cancels
+    /// (an input cancelled before execute was sent); TS synthesizes that
+    /// result outside the projector, so nothing gets block coordinates.
     Aborted {
         terminal: Option<JsValue>,
     },
+    /// TS client:1338-1350: the incomplete compaction final (outcome
+    /// cancelled, reason compaction_persistence_failed) is replaced by
+    /// abortedResult(input) inside readFinalTerminal, which routes through
+    /// recordKnownTerminal -> projectTerminal, so the session layer must
+    /// position the original input messages. The raw incomplete payload is
+    /// never exposed as a terminal or delivered to the event handler.
+    AbortedCompaction,
     /// TS client:780-789 accepts a final failed execute response even after a
     /// stream was accepted. This is an authoritative failure, not retry permission.
     Rejected(JsValue),
@@ -584,9 +591,11 @@ impl HostClient {
             recovery::observe(&handler, ReconnectObservation::Failed { attempt: 1 });
         }
         let result = match result {
-            Ok(terminal @ (ExecuteResult::Terminal(_) | ExecuteResult::Aborted { .. })) => {
-                self.connection.finish_terminal().await.map(|()| terminal)
-            }
+            Ok(
+                terminal @ (ExecuteResult::Terminal(_)
+                | ExecuteResult::Aborted { .. }
+                | ExecuteResult::AbortedCompaction),
+            ) => self.connection.finish_terminal().await.map(|()| terminal),
             Ok(rejected) => self.connection.flush().await.map(|()| rejected),
             Err(error) => Err(error),
         };
