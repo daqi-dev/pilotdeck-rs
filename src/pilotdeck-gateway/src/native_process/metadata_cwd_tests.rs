@@ -531,20 +531,20 @@ async fn observe_archive(name: &str) {
     let expected = if key == "empty" && cwd != "project" {
         // Existing isolated admission policy, recorded separately from TS parity.
         // specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md
-        let admission_ledger = admission_ledger();
+        let ledger = admission_ledger();
         negative_assert!(
-            admission_ledger
+            ledger
                 .lines()
                 .any(|line| line == "original: A7.2-NATIVE-ARCHIVE-CWD-001"),
             "#1154 archive admission expectation stays bound to its ledger"
         );
         negative_assert_eq!(
-            admission_ledger_line(&admission_ledger, "admission-code: "),
+            admission_ledger_line(&ledger, "admission-code: "),
             Some(ADMISSION_CODE),
             "#1154 archive admission expectation stays bound to its ledger"
         );
         negative_assert_eq!(
-            admission_ledger_line(&admission_ledger, "admission-message: "),
+            admission_ledger_line(&ledger, "admission-message: "),
             Some(ADMISSION_MESSAGE),
             "#1154 archive admission expectation stays bound to its ledger"
         );

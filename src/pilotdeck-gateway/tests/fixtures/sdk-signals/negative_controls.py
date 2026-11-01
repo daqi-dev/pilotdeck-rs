@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#1145 HEAD-only product controls: [--check] | NEW_OUTPUT_DIR [mutation ...].
 
-The catalog has exactly thirty-seven controls. Each selected control runs its named
+The catalog has exactly thirty-eight controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -38,11 +38,12 @@ transport = root / "src/pilotdeck-cli/src/sdk/transport.rs"
 signals = root / "src/pilotdeck-cli/src/sdk/signals.rs"
 output = root / "src/pilotdeck-cli/src/sdk/output.rs"
 replay = root / "src/pilotdeck-cli/tests/common/signal_replay.rs"
+d1_ledger = root / "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
 skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 37
+EXPECTED_TOTAL = 38
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
@@ -144,6 +145,7 @@ mutations = [
     ('rejection-domain-ninth-distinct', replay, '        _ => None,\n    }\n}\n\nfn stderr_matches_for_case', '        "run--terminal-during-abort-open-sigint" => Some(b"distinct ninth error\\n"),\n        _ => None,\n    }\n}\n\nfn stderr_matches_for_case', 'signal_replay::comparison_tests::approved_stderr_match_domain_is_exact', '#1145 approved stderr match arms equal exactly eight IDs'),
     ('rejection-domain-outside-matrix', replay, '        _ => None,\n    }\n}\n\nfn stderr_matches_for_case', '        "not-a-registered-signal-cell" => Some(b"outside matrix error\\n"),\n        _ => None,\n    }\n}\n\nfn stderr_matches_for_case', 'signal_replay::comparison_tests::approved_stderr_match_domain_is_exact', '#1145 approved stderr match arms equal exactly eight IDs'),
     ('rejection-domain-missing-cell', replay, '        | "run--abort-error-sigterm"\n', '', 'signal_replay::comparison_tests::approved_stderr_match_domain_is_exact', '#1145 approved stderr match arms equal exactly eight IDs'),
+    ('rejection-registered-difference-drift', d1_ledger, '- `run--abort-error-sigint`', '- `mutant-not-a-registered-cell`', 'signal_replay::comparison_tests::approved_stderr_match_domain_is_exact', '#1145 approved stderr IDs equal registered difference'),
     ('rejection-original-error-required', replay, "expected == rust && ts.split_inclusive('\\n').any(|line| line == exception)", 'expected == rust && !exception.is_empty()', 'signal_replay::comparison_tests::unhandled_rejection_requires_original_error', '#1145 rejection requires exact original TS error'),
     ('rejection-hooks-from-original', replay, '            let removed = expected["hooks"]', '            let removed = !expected["hooks"]', 'signal_replay::comparison_tests::unhandled_rejection_preserves_other_surfaces', '#1145 rejection all surfaces positive'),
 
@@ -295,6 +297,7 @@ def main():
         root / "src/pilotdeck-cli/tests/sdk_signal_exit.rs",
         root / "src/pilotdeck-cli/tests/common/signal_replay.rs",
         root / "src/pilotdeck-cli/tests/common/negative_receipt.rs",
+        root / "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md",
         *sorted(path for path in fixture.iterdir() if path.is_file()),
         *sorted((fixture.parent / "sdk-signal-abort-state").glob("*")),
         Path(__file__).resolve(),
