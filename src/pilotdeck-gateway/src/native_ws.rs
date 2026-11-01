@@ -50,8 +50,12 @@ impl NativeWsServer {
         // The token route's loopback gate is derived from the bind address
         // (TS: host === "127.0.0.1" || host === "localhost"), not asserted:
         // a future non-loopback bind policy must not leak /auth/local-token.
-        // The test-only loopback:false routing goes through the native_http
-        // router tests' own Config construction.
+        // The derivation is wider than the TS literal (`is_loopback()`
+        // accepts all of 127.0.0.0/8 and ::1); the bind policy above — only
+        // Ipv4Addr::LOCALHOST ever reaches here, pinned by the
+        // `native_configuration` refusal cases — is what keeps that
+        // unreachable. The test-only loopback:false routing goes through the
+        // native_http router tests' own Config construction.
         let http = native_http::Config {
             token: token.clone(),
             loopback: address.ip().is_loopback(),
@@ -88,6 +92,15 @@ impl NativeWsServer {
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.listener.local_addr()
+    }
+
+    /// Test-only: the accept loop's live-connection high-water mark, so a
+    /// test can deterministically wait for its connection to be accepted
+    /// (spawned out of the listener backlog) before signaling stop, instead
+    /// of racing a fixed sleep against the accept loop.
+    #[cfg(test)]
+    pub(crate) fn accepted_connections(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        self.resources.task_high_watermark.clone()
     }
 
     /// Stop accepting on `stop`, then drain existing sockets and their owned
