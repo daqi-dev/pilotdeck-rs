@@ -1,0 +1,220 @@
+[
+  {
+    "id": "dot-non-u",
+    "pattern": "^.$",
+    "flags": "",
+    "units": [
+      55357,
+      56832
+    ]
+  },
+  {
+    "id": "dot-u",
+    "pattern": "^.$",
+    "flags": "u",
+    "units": [
+      55357,
+      56832
+    ]
+  },
+  {
+    "id": "dot-half",
+    "pattern": ".",
+    "flags": "",
+    "units": [
+      55357,
+      56832
+    ]
+  },
+  {
+    "id": "dot-whole",
+    "pattern": ".",
+    "flags": "u",
+    "units": [
+      55357,
+      56832
+    ]
+  },
+  {
+    "id": "lone-high",
+    "pattern": "^.$",
+    "flags": "u",
+    "units": [
+      55296
+    ]
+  },
+  {
+    "id": "lone-low",
+    "pattern": "^.$",
+    "flags": "u",
+    "units": [
+      56320
+    ]
+  },
+  {
+    "id": "surrogate-escape",
+    "pattern": "\\uD800",
+    "flags": "u",
+    "units": [
+      55296
+    ]
+  },
+  {
+    "id": "fixed-lookbehind",
+    "pattern": "(?<=a)b",
+    "flags": "u",
+    "units": [
+      97,
+      98
+    ]
+  },
+  {
+    "id": "variable-lookbehind",
+    "pattern": "(?<=a+)b",
+    "flags": "u",
+    "units": [
+      97,
+      97,
+      97,
+      98
+    ]
+  },
+  {
+    "id": "backward-captures",
+    "pattern": "(?<=([ab]+)([bc]+))$",
+    "flags": "u",
+    "units": [
+      97,
+      98,
+      99
+    ]
+  },
+  {
+    "id": "named-backref",
+    "pattern": "(?<x>a)\\k<x>",
+    "flags": "u",
+    "units": [
+      97,
+      97
+    ]
+  },
+  {
+    "id": "unset-backref",
+    "pattern": "^(a|(b))\\2c$",
+    "flags": "u",
+    "units": [
+      97,
+      99
+    ]
+  },
+  {
+    "id": "ascii-word",
+    "pattern": "^\\w$",
+    "flags": "u",
+    "units": [
+      233
+    ]
+  },
+  {
+    "id": "ascii-digit",
+    "pattern": "^\\d$",
+    "flags": "u",
+    "units": [
+      1633
+    ]
+  },
+  {
+    "id": "bom-space",
+    "pattern": "^\\s$",
+    "flags": "u",
+    "units": [
+      65279
+    ]
+  },
+  {
+    "id": "line-separator",
+    "pattern": "^.$",
+    "flags": "",
+    "units": [
+      8232
+    ]
+  },
+  {
+    "id": "carriage-return",
+    "pattern": "^.$",
+    "flags": "",
+    "units": [
+      13
+    ]
+  },
+  {
+    "id": "end-before-newline",
+    "pattern": "a$",
+    "flags": "",
+    "units": [
+      97,
+      10
+    ]
+  },
+  {
+    "id": "identity-escape",
+    "pattern": "^\\q$",
+    "flags": "",
+    "units": [
+      113
+    ]
+  },
+  {
+    "id": "invalid-u-escape",
+    "pattern": "^\\q$",
+    "flags": "u",
+    "units": [
+      113
+    ]
+  },
+  {
+    "id": "unicode-set",
+    "pattern": "^[\\p{ASCII}&&\\p{Letter}]+$",
+    "flags": "v",
+    "units": [
+      65,
+      122
+    ]
+  },
+  {
+    "id": "unicode-property",
+    "pattern": "^\\p{Emoji}$",
+    "flags": "u",
+    "units": [
+      55357,
+      56832
+    ]
+  },
+  {
+    "id": "empty-match",
+    "pattern": "(?:)",
+    "flags": "u",
+    "units": [
+      97
+    ]
+  },
+  {
+    "id": "named-capture",
+    "pattern": "(?<x>a+)",
+    "flags": "u",
+    "units": [
+      122,
+      97,
+      97
+    ]
+  },
+  {
+    "id": "negative-lookbehind",
+    "pattern": "(?<!a)b",
+    "flags": "u",
+    "units": [
+      99,
+      98
+    ]
+  }
+]
