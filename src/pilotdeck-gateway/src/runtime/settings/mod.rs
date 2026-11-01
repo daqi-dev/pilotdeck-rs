@@ -29,17 +29,20 @@
 //!
 //! ## JS semantics
 //!
-//! `input.sessionKey?.trim()` short-circuits only on a nullish key: a
-//! non-string key throws the raw `input.sessionKey?.trim is not a function`
-//! TypeError (wrapped as `gateway_request_failed` by the WS layer), reading
-//! any property of a nullish params object throws the property-read
-//! TypeError, `Object.entries` walks own keys in JS order (array indices
-//! first, ascending), and `String(value)` conversions go through
-//! [`crate::js_value`]. Wire-reachable divergences are documented on the
-//! mapping helpers: a non-string `reload_extensions` `projectKey` uses the
-//! coerced `String(value)` form (TS passes the raw value through to its
-//! per-project branch), and non-string `changedPaths` entries likewise;
-//! both cells are outside the golden's string-only contract.
+//! `input.sessionKey?.trim()` short-circuits on a nullish key value (and on
+//! the `undefined` a primitive params' property read yields): both take the
+//! INVALID_SESSION_KEY gate, while a non-string non-nullish key throws the
+//! raw `input.sessionKey?.trim is not a function` TypeError (wrapped as
+//! `gateway_request_failed` by the WS layer), reading any property of a
+//! nullish params object throws the property-read TypeError, `Object.entries`
+//! walks own keys in JS order (array indices first, ascending), and
+//! `String(value)` conversions go through [`crate::js_value`]. One
+//! wire-reachable divergence is registered in the gateway-parity diff ledger
+//! (`U7-EXTENSIONS-RELOAD-STRING-COERCION-001`, to converge with #1320's
+//! wiring): a non-string `reload_extensions` `projectKey` or `changedPaths`
+//! entry is coerced to `String(value)` here, while TS passes the raw value
+//! through (its per-project branch and broadcast/response keep `1`/`true`/
+//! `null` as-is); both cells are outside the golden's string-only contract.
 
 mod gateway;
 #[cfg(test)]

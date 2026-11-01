@@ -2510,6 +2510,159 @@
       }
     },
     {
+      "id": "apply-null-session-key",
+      "method": "apply_flag_settings",
+      "params": {
+        "sessionKey": null,
+        "settings": {}
+      },
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_SESSION_KEY",
+          "message": "sessionKey is required."
+        }
+      },
+      "post": {
+        "turns": [
+          "b"
+        ],
+        "sessions": {
+          "a": false,
+          "a2": false,
+          "n": false,
+          "b": true,
+          "f": false,
+          "ghost": false,
+          "sx": false,
+          "sy": false,
+          "sz": false,
+          "sw": false
+        },
+        "overrides": {
+          "a": {
+            "effort": null,
+            "mode": null
+          },
+          "a2": {
+            "effort": null,
+            "mode": "plan"
+          },
+          "n": {
+            "effort": null,
+            "mode": null
+          },
+          "b": {
+            "effort": null,
+            "mode": null
+          },
+          "f": {
+            "effort": "low",
+            "mode": null
+          },
+          "ghost": {
+            "effort": "high",
+            "mode": null
+          },
+          "sx": {
+            "effort": null,
+            "mode": null
+          },
+          "sy": {
+            "effort": null,
+            "mode": null
+          },
+          "sz": {
+            "effort": null,
+            "mode": null
+          },
+          "sw": {
+            "effort": null,
+            "mode": null
+          }
+        },
+        "trees": {}
+      }
+    },
+    {
+      "id": "apply-scalar-params",
+      "method": "apply_flag_settings",
+      "params": 5,
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_SESSION_KEY",
+          "message": "sessionKey is required."
+        }
+      },
+      "post": {
+        "turns": [
+          "b"
+        ],
+        "sessions": {
+          "a": false,
+          "a2": false,
+          "n": false,
+          "b": true,
+          "f": false,
+          "ghost": false,
+          "sx": false,
+          "sy": false,
+          "sz": false,
+          "sw": false
+        },
+        "overrides": {
+          "a": {
+            "effort": null,
+            "mode": null
+          },
+          "a2": {
+            "effort": null,
+            "mode": "plan"
+          },
+          "n": {
+            "effort": null,
+            "mode": null
+          },
+          "b": {
+            "effort": null,
+            "mode": null
+          },
+          "f": {
+            "effort": "low",
+            "mode": null
+          },
+          "ghost": {
+            "effort": "high",
+            "mode": null
+          },
+          "sx": {
+            "effort": null,
+            "mode": null
+          },
+          "sy": {
+            "effort": null,
+            "mode": null
+          },
+          "sz": {
+            "effort": null,
+            "mode": null
+          },
+          "sw": {
+            "effort": null,
+            "mode": null
+          }
+        },
+        "trees": {}
+      }
+    },
+    {
       "id": "styles-closes-matching",
       "method": "reload_output_styles",
       "params": {
@@ -4283,6 +4436,323 @@
           "changedPaths": [
             "extension.includeHookEvents"
           ]
+        }
+      },
+      "post": {
+        "turns": [
+          "b"
+        ],
+        "sessions": {
+          "a": false,
+          "a2": false,
+          "n": false,
+          "b": true,
+          "f": false,
+          "ghost": false,
+          "sx": false,
+          "sy": false,
+          "sz": true,
+          "sw": false
+        },
+        "overrides": {
+          "a": {
+            "effort": null,
+            "mode": null
+          },
+          "a2": {
+            "effort": null,
+            "mode": "plan"
+          },
+          "n": {
+            "effort": null,
+            "mode": null
+          },
+          "b": {
+            "effort": null,
+            "mode": null
+          },
+          "f": {
+            "effort": "low",
+            "mode": null
+          },
+          "ghost": {
+            "effort": "high",
+            "mode": null
+          },
+          "sx": {
+            "effort": null,
+            "mode": null
+          },
+          "sy": {
+            "effort": null,
+            "mode": null
+          },
+          "sz": {
+            "effort": null,
+            "mode": null
+          },
+          "sw": {
+            "effort": null,
+            "mode": null
+          }
+        },
+        "trees": {
+          "t1": {
+            "version": 4,
+            "storeYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t2": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t3": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t4": {
+            "version": 1,
+            "storeYaml": "agent: {model: parity/deterministic\nmodel: [unclosed",
+            "writerYaml": "agent: {model: parity/deterministic\nmodel: [unclosed"
+          },
+          "t5": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 2\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic, maxContextTokens: 100000 }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t6": {
+            "version": 2,
+            "storeYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\nextension:\n  includeHookEvents: true\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\nextension:\n  includeHookEvents: true\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "update-null-params",
+      "method": "update_settings",
+      "params": null,
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot read properties of null (reading 'source')"
+        }
+      },
+      "post": {
+        "turns": [
+          "b"
+        ],
+        "sessions": {
+          "a": false,
+          "a2": false,
+          "n": false,
+          "b": true,
+          "f": false,
+          "ghost": false,
+          "sx": false,
+          "sy": false,
+          "sz": true,
+          "sw": false
+        },
+        "overrides": {
+          "a": {
+            "effort": null,
+            "mode": null
+          },
+          "a2": {
+            "effort": null,
+            "mode": "plan"
+          },
+          "n": {
+            "effort": null,
+            "mode": null
+          },
+          "b": {
+            "effort": null,
+            "mode": null
+          },
+          "f": {
+            "effort": "low",
+            "mode": null
+          },
+          "ghost": {
+            "effort": "high",
+            "mode": null
+          },
+          "sx": {
+            "effort": null,
+            "mode": null
+          },
+          "sy": {
+            "effort": null,
+            "mode": null
+          },
+          "sz": {
+            "effort": null,
+            "mode": null
+          },
+          "sw": {
+            "effort": null,
+            "mode": null
+          }
+        },
+        "trees": {
+          "t1": {
+            "version": 4,
+            "storeYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t2": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t3": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t4": {
+            "version": 1,
+            "storeYaml": "agent: {model: parity/deterministic\nmodel: [unclosed",
+            "writerYaml": "agent: {model: parity/deterministic\nmodel: [unclosed"
+          },
+          "t5": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 2\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic, maxContextTokens: 100000 }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t6": {
+            "version": 2,
+            "storeYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\nextension:\n  includeHookEvents: true\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\nextension:\n  includeHookEvents: true\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "update-params-omitted",
+      "method": "update_settings",
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot read properties of undefined (reading 'source')"
+        }
+      },
+      "post": {
+        "turns": [
+          "b"
+        ],
+        "sessions": {
+          "a": false,
+          "a2": false,
+          "n": false,
+          "b": true,
+          "f": false,
+          "ghost": false,
+          "sx": false,
+          "sy": false,
+          "sz": true,
+          "sw": false
+        },
+        "overrides": {
+          "a": {
+            "effort": null,
+            "mode": null
+          },
+          "a2": {
+            "effort": null,
+            "mode": "plan"
+          },
+          "n": {
+            "effort": null,
+            "mode": null
+          },
+          "b": {
+            "effort": null,
+            "mode": null
+          },
+          "f": {
+            "effort": "low",
+            "mode": null
+          },
+          "ghost": {
+            "effort": "high",
+            "mode": null
+          },
+          "sx": {
+            "effort": null,
+            "mode": null
+          },
+          "sy": {
+            "effort": null,
+            "mode": null
+          },
+          "sz": {
+            "effort": null,
+            "mode": null
+          },
+          "sw": {
+            "effort": null,
+            "mode": null
+          }
+        },
+        "trees": {
+          "t1": {
+            "version": 4,
+            "storeYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t2": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t3": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t4": {
+            "version": 1,
+            "storeYaml": "agent: {model: parity/deterministic\nmodel: [unclosed",
+            "writerYaml": "agent: {model: parity/deterministic\nmodel: [unclosed"
+          },
+          "t5": {
+            "version": 1,
+            "storeYaml": "schemaVersion: 2\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic, maxContextTokens: 100000 }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\n"
+          },
+          "t6": {
+            "version": 2,
+            "storeYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\nextension:\n  includeHookEvents: true\n",
+            "writerYaml": "schemaVersion: 1\nagent: { model: parity/deterministic }\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        other: {}\nextension:\n  includeHookEvents: true\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "update-scalar-params",
+      "method": "update_settings",
+      "params": 5,
+      "setup": [],
+      "events": [],
+      "response": {
+        "type": "response",
+        "ok": false,
+        "error": {
+          "code": "INVALID_SETTINGS_SOURCE",
+          "message": "Only localSettings is supported."
         }
       },
       "post": {

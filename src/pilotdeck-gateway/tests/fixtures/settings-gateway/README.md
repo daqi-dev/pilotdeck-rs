@@ -15,12 +15,13 @@ close-session 原因串，#1215 模式）、真实 `GatewayWsConnection`（假�
 `reloadOutputStylesForSdk`（真 Map 状态；resolve / pluginRuntime 为桩）、真实
 `GatewayRuntimeRefreshBundle`（录音协作者；configStore delegate 始终指向当前场景
 树的真实 `createPilotConfigStoreSync` store）、真实 `updatePilotLocalSettings`
-写盘（每行独立 mkdtemp home + project 的离线 scratch 树）。`updateSettings`
+写盘（每场景树一套 scratch home/project，行间按需复用，如 `t1` 被
+update-merges / rewrite-same-value / clear-value / noop 四行共用）。`updateSettings`
 闭包体为 `createLocalGateway.ts:1384-1404` 逐字副本（createLocalGateway 本身
 要起整个 CLI，离线不可运行）；`createLocalGateway.ts` 计入 sourceSha256，
 闭包任何编辑都会改变 oracle 的 provenance。
 
-`oracle.json` 全由生成器输出，不手写期望：49 个 case 行（每行 `{id, method,
+`oracle.json` 全由生成器输出，不手写期望：54 个 case 行（每行 `{id, method,
 params, setup, events, response, post}`）+ `assemblyCases.capability`（裸组装
 五方法的能力门答案）+ `setupKeys`。update 系行写真实 YAML（`agent` flow map
 按 yaml 包规范空格形重排），事件含 `store-event:` / `log:` / `sdk-config-change:`
@@ -45,11 +46,12 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib runtime::se
 ```
 
 Rust 重放（`runtime/settings/gateway_tests.rs`）逐行执行同一 setup 词表，经
-`SettingsGateway::dispatch` 重建 WS 帧，比对 response / events / post 三格；
+`SettingsGateway::dispatch` 重建 WS 帧，比对 response / events / post 三格
+（JSON 结构等价：对象键序经 serde 归一，不钉键序字节）；
 `#[ignore]` 的 `settings_gateway_fixture_regenerates_identically_from_ts` 为
 重生成守卫（`PDRS_BASELINE` 下实跑）。
 
-负控（独占本 worktree，不与任何编译或写入并发；五个变异的目标文件在本分支
+负控（独占本 worktree，不与任何编译或写入并发；六个变异的目标文件在本分支
 新增，须提交后由 `mutating_sources` 在 HEAD 字节上执行）：
 
 ```sh
@@ -58,10 +60,14 @@ CARGO_TARGET_DIR=… python3 \
   _tmp/20261026-issue-1318/negative-controls <可选变异名子集>
 ```
 
-每次仅临时改一处产品实现，要求 `settings_gateway_replays_the_real_ts_oracle`
-以自己的 `#1318` panic 消息失败（每变异绑定专属判杀标记：`case apply-busy`、
+每次仅临时改一处产品实现，要求被点名测试以自己的 `#1318` panic 消息失败
+（每变异绑定专属判杀标记：`case apply-busy`、
 `case update-merges-store-paths`、`the bare assembly must answer reload_config`、
-`dispatch must own the five settings methods`、`case apply-success-closes`）；
+`dispatch must own the five settings methods`、`case apply-effort-low`、
+`#1318-r1 update-drop: dropping the future must detach the capture listener`；
+前五个由 `settings_gateway_replays_the_real_ts_oracle` 判杀，最后一个由
+`update_settings_detaches_the_capture_listener_when_dropped_mid_reload` 判杀；
+`case <id>` 标记与金样行的绑定由脚本启动断言机检）；
 编译错误、信号退出、锚点过期（出现次数 ≠ 1）都不算杀死，直接报错退出。
 每轮 finally 恢复原始源码并核 SHA-256；输出每条补丁、原始日志、失败摘要，
 结束后应重跑正常测试和 fmt/clippy。
@@ -69,4 +75,9 @@ CARGO_TARGET_DIR=… python3 \
 本组件未接线 `dispatch.rs` / `native_process`（归 #1320）；registry 的
 `applyFlagSettingsForSdk` / `reloadOutputStylesForSdk` 与
 `updatePilotLocalSettings` 生产写盘件为镜像端口（`MirrorWriter` 保持同一
-allowlist / YAML 编辑语义），随接线单评估替换。
+allowlist / YAML 编辑语义），随接线单评估替换。已知未收敛差异：
+`reload_extensions` 的非字符串 `projectKey` / `changedPaths` 元素被
+`String(value)` 强转而 TS 原值透传（金样 54 行均为字符串，不触发；两格
+`changedPaths:[1]` / `projectKey:5` 随 #1320 接线补入），登记于
+`specs/gateway-parity/diffs/U7-EXTENSIONS-RELOAD-STRING-COERCION-001.md`，
+前置于 #1320。

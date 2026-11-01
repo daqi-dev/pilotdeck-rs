@@ -440,6 +440,11 @@ await run('apply-blank-session-key', 'apply_flag_settings', { sessionKey: '   ',
 await run('apply-nonstring-session-key', 'apply_flag_settings', { sessionKey: 5, settings: {} });
 await run('apply-null-params', 'apply_flag_settings', null);
 await run('apply-params-omitted', 'apply_flag_settings', undefined);
+// The `input.sessionKey?.trim()` guard short-circuits on a nullish key value
+// and on a primitive params (its property read yields undefined): both take
+// INVALID_SESSION_KEY, distinct from the non-string key TypeError above.
+await run('apply-null-session-key', 'apply_flag_settings', { sessionKey: null, settings: {} });
+await run('apply-scalar-params', 'apply_flag_settings', 5);
 
 // --- reload_output_styles ----------------------------------------------------
 await run('styles-closes-matching', 'reload_output_styles', { projectKey: '/proj-A' },
@@ -476,6 +481,11 @@ await run('update-reload-error', 'update_settings',
   { source: 'localSettings', settings: { agent: { maxContextTokens: 100000 } } }, ['tree-split:t5', 'break-store-yaml:t5']);
 await run('update-runs-through-bundle', 'update_settings',
   { source: 'localSettings', settings: { extension: { includeHookEvents: true } } }, ['tree:t6', 'attach-bundle']);
+// `input.source` throws only on nullish params; a primitive params reads
+// `undefined` and takes the INVALID_SETTINGS_SOURCE gate.
+await run('update-null-params', 'update_settings', null);
+await run('update-params-omitted', 'update_settings', undefined);
+await run('update-scalar-params', 'update_settings', 5);
 
 // --- reload_config ----------------------------------------------------------
 await run('reload-config-unchanged', 'reload_config', undefined, ['tree:t7']);
@@ -544,6 +554,9 @@ assert.equal(byId('apply-null-params').response.error.message,
   "Cannot read properties of null (reading 'sessionKey')", 'null params message');
 assert.equal(byId('apply-params-omitted').response.error.message,
   "Cannot read properties of undefined (reading 'sessionKey')", 'omitted params message');
+assert.equal(byId('apply-null-session-key').response.error.code, 'INVALID_SESSION_KEY', 'null session key code');
+assert.equal(byId('apply-null-session-key').response.error.message, 'sessionKey is required.', 'null session key message');
+assert.equal(byId('apply-scalar-params').response.error.code, 'INVALID_SESSION_KEY', 'scalar params takes the key gate');
 assert.equal(byId('apply-close-fault').response.error.code, 'gateway_request_failed', 'close fault envelope');
 assert.equal(byId('apply-close-fault').response.error.message, 'Failed to dispose agent handle.', 'close fault message');
 assert.equal(byId('apply-close-fault').post.overrides.f.effort, 'low', 'close fault keeps the commit');
@@ -566,6 +579,11 @@ assert.equal(byId('update-rewrite-same-value').events.includes('store-event:'), 
 assert.equal(byId('update-org-denied').response.error.code, 'GATEWAY_ORGANIZATION_SETTINGS_UPDATE_DENIED', 'org denied code');
 assert.equal(byId('update-bad-source').response.error.code, 'INVALID_SETTINGS_SOURCE', 'bad source code');
 assert.equal(byId('update-settings-missing').response.error.code, 'INVALID_LOCAL_SETTINGS', 'missing settings code');
+assert.equal(byId('update-null-params').response.error.message,
+  "Cannot read properties of null (reading 'source')", 'update null params message');
+assert.equal(byId('update-params-omitted').response.error.message,
+  "Cannot read properties of undefined (reading 'source')", 'update omitted params message');
+assert.equal(byId('update-scalar-params').response.error.code, 'INVALID_SETTINGS_SOURCE', 'update scalar params code');
 assert.equal(byId('update-writer-unsupported').response.error.code, 'UNSUPPORTED_LOCAL_SETTING', 'writer unsupported code');
 assert.equal(byId('update-writer-invalid').response.error.code, 'INVALID_LOCAL_SETTINGS', 'writer invalid code');
 assert.equal(byId('update-writer-yaml-invalid').response.error.code, 'LOCAL_SETTINGS_YAML_INVALID', 'writer yaml code');
@@ -589,7 +607,7 @@ assert.ok(byId('extensions-project').events.includes('mark-project-dirty:/p:exte
 assert.equal(byId('extensions-bad-changed-paths').response.error.code, 'gateway_request_failed', 'bad changedPaths envelope');
 assert.equal(byId('extensions-bad-changed-paths').response.error.message,
   'changedPaths.join is not a function', 'bad changedPaths message');
-assert.equal(rows.length, 49, 'matrix row count');
+assert.equal(rows.length, 54, 'matrix row count');
 for (const row of capabilityCases) {
   if (row.method === 'reload_config' || row.method === 'reload_extensions') {
     assert.deepEqual(row.response.result, { reloaded: false, reason: 'unsupported' }, `${row.method} unsupported projection`);
