@@ -11,6 +11,13 @@ import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 
 assert.equal(process.version, 'v22.22.0', '#360-2 calibrated Node');
 assert.equal(process.versions.v8, '12.4.254.21-node.33', '#360-2 calibrated V8');
+// regen-r2 (fix C): ICU is a hard generation pin — a different ICU build can
+// change Date.parse itself, so recording on one must fail here (decision card
+// 2026-10-31). tzdata stays recorded-only: the corpus is value-neutral across
+// tzdata builds (every local-resolving case sits in Shanghai's flat +08:00
+// era), and the Rust regeneration guards BLOCK the byte comparison with an
+// explicit reason when the host's tzdata differs from the gold-recorded one.
+assert.equal(process.versions.icu, '78.2', '#360-2 calibrated ICU');
 assert.ok(process.env.PDRS_BASELINE, '#360-2 set PDRS_BASELINE');
 assert.ok(process.argv[2], '#360-2 provide a new/empty output directory');
 const base = resolve(process.env.PDRS_BASELINE);
