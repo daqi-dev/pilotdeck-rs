@@ -5,6 +5,9 @@
 The historical filename remains for callers; the document-scanning meta
 control runner and its tests have been removed. Function variants below run
 only in memory, compile before testing, and bind exact unittest diagnostics.
+#1279 adds the standalone ``--check-anchors`` invocation (no ``--list``):
+its ``or not args.list`` half-branch is the only thing that returns 0 from
+the preflight without ``--output`` / ``--source``.
 """
 import contextlib
 import copy
@@ -205,6 +208,54 @@ class DriftTests(unittest.TestCase):
         self.assertTrue('BINDING DRIFT:' in errors.getvalue() and not output.getvalue(),
                         '#1190 list: binding diagnostic must precede listing')
 
+    def test_standalone_check_anchors(self):
+        active = False
+
+        def audit(event, args):
+            if not active:
+                return
+            if event == 'open':
+                _path, mode, flags = args
+                writable = (isinstance(mode, str) and any(char in mode for char in 'wax+')) or (
+                    isinstance(flags, int) and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT |
+                                                       os.O_TRUNC | os.O_APPEND))
+                if not writable:
+                    return
+            elif event not in {'os.mkdir', 'os.rename', 'os.remove', 'os.rmdir',
+                               'os.symlink', 'os.link', 'os.truncate', 'os.chmod',
+                               'os.chown', 'os.utime', 'subprocess.Popen', 'os.system'}:
+                return
+            raise AssertionError(f'#1279 standalone-anchors: filesystem writes forbidden: {event}')
+
+        sys.addaudithook(audit)
+        with patch.object(sys, 'argv', ['negative_controls.py', '--check-anchors']), \
+                patch.object(gate, 'check_anchors', wraps=gate.check_anchors) as anchors, \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            try:
+                active = True
+                self.assertTrue(gate.main() == 0,
+                                '#1279 standalone-anchors: rc must be 0 without --output/--source')
+            finally:
+                active = False
+        self.assertTrue(anchors.call_count == 1
+                        and [row[0] for row in anchors.call_args.args[0]]
+                        == [row[0] for row in gate.MUTATIONS],
+                        '#1279 standalone-anchors: the full mutation table must be preflighted')
+        lines = output.getvalue().splitlines()
+        self.assertTrue(lines and lines[-1] == f'{len(gate.MUTATIONS)} anchors: ok',
+                        '#1279 standalone-anchors: the anchor report must be the final output line')
+        self.assertTrue(not any(line.lstrip().startswith('{') for line in lines),
+                        '#1279 standalone-anchors: standalone must not print the JSON listing')
+        self.assertTrue(errors.getvalue() == '',
+                        '#1279 standalone-anchors: the ok path must not print usage or drift diagnostics')
+        with patch.object(sys, 'argv', ['negative_controls.py', '--check-anchors']), \
+                patch.object(gate, 'check_anchors', return_value=2), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(gate.main() == 2,
+                            '#1279 standalone-anchors: failed anchors must fail standalone too')
+
     def test_early_errors_have_fresh_evidence_and_continue(self):
         source = Mock()
         rows = [('first', source, 'absent', ''), ('second', source, 'pass', 'invalid !')]
@@ -272,6 +323,9 @@ def negative_checks():
         ('ignore-anchor-failure', 'main', 'if anchor_status != 0 or not args.list:',
          'if not args.list:', 'test_list_rejects_failed_anchors',
          '#1190 list-anchors: failed anchors must reject listing'),
+        ('drop-standalone-return', 'main', 'if anchor_status != 0 or not args.list:',
+         'if anchor_status != 0:', 'test_standalone_check_anchors',
+         '#1279 standalone-anchors: rc must be 0 without --output/--source'),
         ('write-during-list', 'main', '    if args.list:',
          "    if args.list:\n        sys.audit('os.mkdir', '/unused', 511, -1)",
          'test_list_is_read_only', '#1190 list: filesystem writes forbidden'),
