@@ -103,6 +103,7 @@ def workspace_patches():
     text = (rust / "Cargo.toml").read_text()
     block = re.search(r'^\[patch\.crates-io\]\n(.*?)(?=^\[|\Z)', text, re.M | re.S)
     if not block:
+        assert not re.search(r'^\s*\[patch\b', text, re.M), "#132 unrecognised [patch] table header"
         return ""
     lines = ["[patch.crates-io]"]
     for row in block.group(1).splitlines():
