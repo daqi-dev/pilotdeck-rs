@@ -34,16 +34,25 @@
   `specs/gateway-parity/frozen/` 下全部 #1190 冻结事件，按目录通配推导，
   新增事件不漏扫）中的中文 / 阿拉伯数字计数短语（条 / 档 / 项 / 个 / 处）
   同样与推导计数机检，不一致或无法归类即 `COUNT DRIFT`（exit 2）
-  （#1190 fix-r1，fix-r2 扩单位与扫描集）。`mutating_sources`（带
+  （#1190 fix-r1，fix-r2 扩单位与扫描集）。扫描集本身不再只信通配
+  （#1190 fix-r3）：`check_scan_set` 把已提交的 #1190 事件按文件名钉为
+  下限，且 `frozen/` 下凡文件名含 `1190` 的文件必须落在扫描集内——已知
+  事件被删 / 被改名脱出通配时，门禁以专属 `COUNT DRIFT` 拒绝而不是静默
+  缩小扫描集后仍绿。`mutating_sources`（带
   common.py 与 parity 租约）守源码并逐字节还原，summary 原子发布、guard
   失败全 INVALID（#979/#1037）。
-- `meta_controls.py` — 元负控的元负控（#1190 fix-r1，fix-r2 扩容）：
-  原地变异 `negative_controls.py` 自身的绑定表与被扫描的 README，要求
-  上述两道漂移闸门各自拒绝——删除 `drop-registry-state-require` 变异行、
-  清空其 `BOUND` 条目、变形其条目 / 容器 / 变异行、整行重复、README 钉回
-  与推导计数不符的数字（含个单位形式）、以及在 `frozen/` 里新建携带过期
-  计数的冻结事件夹具（用后删除），都必须以 exit 2 加各自专属漂移消息
-  失败；恢复后 `--check-anchors` 闸门复绿。逐行记
+- `meta_controls.py` — 元负控的元负控（#1190 fix-r1，fix-r2 扩容，fix-r3
+  修所有权）：原地变异 `negative_controls.py` 自身的绑定表与被扫描的
+  README，要求上述漂移闸门各自拒绝——删除 `drop-registry-state-require`
+  变异行、清空其 `BOUND` 条目、变形其条目 / 容器 / 变异行、整行重复、
+  README 钉回与推导计数不符的数字（含个单位形式）、在 `frozen/` 里新建
+  携带过期计数的冻结事件夹具，以及删除 / 改名已提交的 #1190 冻结事件
+  （fix-r3 新增的文件系统行，事件文件进 `mutating_sources` 守卫集，行内
+  从守卫快照还原字节）——都必须以 exit 2 加各自专属漂移消息失败；恢复后
+  `--check-anchors` 闸门复绿。夹具行经独占创建（`open(..., 'x')`）取得
+  所有权：预存文件只报 INVALID、原字节不动，`finally` 只删本轮真正创建
+  的文件，守卫窗口外另有按字节核对的兜底清理，任何情况下不删非本轮创建
+  的文件（fix-r3，r3 评审 P0/P2）。逐行记
   KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出。
 
 ## 运行
@@ -55,6 +64,8 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/nega
   --output <新证据目录> --source <A5.2a 六格原始输出>
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/meta_controls.py \
   --output <新证据目录>
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/meta_controls.py \
+  --output <新证据目录> --self-test
 ```
 
 `--source` 需要真实 A5.2a 校准输出（`raw/` 下六格 JSON + preregistration /

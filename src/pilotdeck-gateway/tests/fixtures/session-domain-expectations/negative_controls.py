@@ -59,6 +59,12 @@ scanned event set is derived from the ``frozen/`` directory glob so a new
 event file can never be silently left out, and the count units include
 个/处.
 
+fix-r3 (#1190 r3 review P1, coordinator-escalated "ruler false PASS"): the
+glob-derived scan set is no longer trusted alone.  ``check_scan_set`` pins
+the committed #1190 events by name and refuses any ``frozen/`` file whose
+name carries 1190 but matches no scan glob, so a deleted or renamed-away
+event is ``COUNT DRIFT`` (exit 2) instead of a silently green gate.
+
 Per-row results live in memory only.  ``summary.json`` is published exactly
 once, after ``mutating_sources`` restored every guarded file and verified it
 byte-for-byte against the baseline (#979/#1037 + #166 r8 semantics, shared
@@ -98,6 +104,13 @@ DOC_COUNTS = (
         event for pattern in ('*-1190.md', '*-1190-*.md')
         for event in (ROOT / 'specs/gateway-parity/frozen').glob(pattern)})),
 )
+
+# fix-r3 (r3 review P1): the floor of the glob-derived scan set.  A shrunk or
+# empty scan set used to read as "no drift" (an all-glob DOC_COUNTS cannot
+# raise on a file it never saw), so the committed #1190 events are pinned by
+# name and every file in frozen/ whose name carries 1190 must be inside the
+# scan set -- renaming an event out of the glob cannot drop it either.
+KNOWN_EVENTS = ('20261101-1190.md', '20261101-1190-r2.md')
 
 # <number>(条|档|项|个|处): the count units of the drifted phrases the
 # reviews found.  The number must stand alone (no adjacent alphanumerics); a
@@ -342,6 +355,31 @@ def check_docs(counts):
     return errors
 
 
+def check_scan_set():
+    """The doc-scan set must cover the known #1190 events (fix-r3, r3 review P1).
+
+    ``DOC_COUNTS`` is glob-derived, so a deleted, renamed-away or otherwise
+    shrunken scan set used to read as "no drift" and the gate stayed green.
+    The committed events in ``KNOWN_EVENTS`` are the floor; and every file
+    under ``frozen/`` whose name carries 1190 must be inside the scan set,
+    so a name the two globs do not match (``20261101-1190r2.md``) is refused
+    instead of silently left unscanned.
+    """
+    errors = []
+    scanned = {path.name for path, _label in DOC_COUNTS}
+    for name in KNOWN_EVENTS:
+        if name not in scanned:
+            errors.append(f'event file {name} is missing from the doc scan set')
+    directory = ROOT / 'specs/gateway-parity/frozen'
+    if not directory.is_dir():
+        errors.append(f'frozen event directory is missing: {directory}')
+        return errors
+    for path in sorted(directory.iterdir()):
+        if '1190' in path.name and path.is_file() and path.name not in scanned:
+            errors.append(f'frozen event {path.name} matches no doc scan glob')
+    return errors
+
+
 def run_control(out, label, name, source):
     """One control run in a fresh interpreter; returns its parsed verdict."""
     case_dir = out / (label + '.dir')
@@ -428,6 +466,7 @@ def main():
     drift = [('BINDING DRIFT', message)
              for message in check_bindings(expectation_cases)]
     drift += [('COUNT DRIFT', message) for message in check_docs(counts)]
+    drift += [('COUNT DRIFT', message) for message in check_scan_set()]
     if drift:
         for prefix, message in drift:
             print(prefix + ': ' + message, file=sys.stderr)
