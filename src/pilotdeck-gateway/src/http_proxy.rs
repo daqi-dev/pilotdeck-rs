@@ -187,6 +187,16 @@ struct UpgradeReadGate<S> {
     /// (`node-dribble-valid-segments.out`); without this the connection can
     /// be closed by the previous response's deadline mid-arrival.
     activity: watch::Sender<Option<tokio::time::Instant>>,
+    /// #1250 fix-r1: Node arms the keep-alive idle timer only once a
+    /// response has finished, so reads before the first request is served —
+    /// a first head arriving in segments — must not arm the 6 s deadline at
+    /// all (probe `node-first-head-segmented.out`: a first-head segment
+    /// followed by an 8 s gap stays open, the completed head is answered
+    /// `Connection: keep-alive`, and the socket stays reusable). The first
+    /// head is bounded by Node's `headersTimeout` instead (registered in the
+    /// ledger as A8.4-NATIVE-HTTP-002 family, out of scope here). This is
+    /// the same `served` flag the stop-close logic uses.
+    served: Arc<AtomicBool>,
 }
 impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
     fn poll_read(
@@ -206,6 +216,11 @@ impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
             Poll::Ready(Ok(())) => {
                 if buf.filled().len() > filled
                     && !crate::mutants::on("native-http-read-refresh-off")
+                    // The pre-fix-r1 behavior the negative control kills:
+                    // refreshing on any read, so a first head's segments arm
+                    // the idle deadline and poison the socket.
+                    && (crate::mutants::on("native-http-unserved-read-arms-idle")
+                        || self.served.load(Ordering::Relaxed))
                 {
                     self.activity
                         .send_replace(Some(tokio::time::Instant::now()));
@@ -376,6 +391,7 @@ where
         stream,
         state: state.clone(),
         activity: activity.clone(),
+        served: served.clone(),
     };
     let served_in_connection = served.clone();
     let in_flight_in_connection = in_flight.clone();
@@ -455,16 +471,23 @@ where
     // deadline is the last activity — a request parse, a read segment of the
     // next request head, or the completion of a response body — plus the
     // effective `keepAliveTimeout + keepAliveTimeoutBuffer` (6 s), re-armed
-    // on every new activity. While a request is in flight, which includes a
-    // response body still streaming, the timer never fires (Node's
-    // requestTimeout, not keepAliveTimeout, governs a busy socket), and the
-    // next activity update re-arms it.
+    // on every new activity. Before the first request is served no deadline
+    // exists at all (Node arms the timer only after a response finished;
+    // fix-r1 probes `node-first-head-segmented.out`), and while a request is
+    // in flight, which includes a response body still streaming, the timer
+    // never fires (Node's requestTimeout, not keepAliveTimeout, governs a
+    // busy socket), and the next activity update re-arms it.
     let idle = async {
         if crate::mutants::on("native-http-keep-alive-timeout-off") {
             std::future::pending::<()>().await;
         }
         let buffer = if crate::mutants::on("native-http-idle-close-buffer-off") {
             std::time::Duration::ZERO
+        } else if crate::mutants::on("native-http-idle-close-buffer-half") {
+            // The half-buffer mutant pins the fixed 1 s buffer: a 500 ms
+            // buffer closes at 5.5 s, inside the tightened (5.99, 6.09] test
+            // window's still-open probe.
+            std::time::Duration::from_millis(500)
         } else {
             NODE_KEEP_ALIVE_TIMEOUT_BUFFER
         };

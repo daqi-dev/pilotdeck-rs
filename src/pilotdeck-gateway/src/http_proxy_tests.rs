@@ -495,6 +495,7 @@ fn cancelling_service_lease_wakes_paused_reader() {
         stream: io,
         state: state.clone(),
         activity: tokio::sync::watch::channel(None).0,
+        served: Arc::new(AtomicBool::new(true)),
     };
     let lease = ReadLease(state.clone());
     let mut bytes = [0; 1];
