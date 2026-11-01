@@ -133,14 +133,29 @@ const ZONE_CHILD: &str =
 /// seam, so the real runtime wiring cannot rot while the seam replay stays
 /// green. `TZ=localtime` pins the fail-closed alias edge (Node v22.22.0
 /// resolves it through the C library's zone search, so it is host-dependent
-/// and not an admitted profile), and `TZ=:/nonexistent` pins the unreadable
-/// path edge without assuming a host zone name is absent (r2 P3-2). Each
-/// child inherits its `TZ` before any parsing (no in-process `set_var`); the
-/// libtest receipt proves the child really ran (#273), and
+/// and not an admitted profile), `TZ=:/nonexistent` pins the unreadable
+/// path edge without assuming a host zone name is absent (r2 P3-2), and
+/// `TZ=Europe/London` is a readable zone outside the allowlist, so the
+/// fail-closed None for its local dialects can only come from the gate
+/// itself — a kill that does not depend on `/etc/localtime` (r3 P2-3).
+/// Each child inherits its `TZ` before any parsing (no in-process
+/// `set_var`); the libtest receipt proves the child really ran (#273), and
 /// `--test-threads=2` pins the multithreaded receipt layout (#942).
+///
+/// r3 P2-2: the parent re-prints every child's stdout (the same pattern as
+/// `stats_dateparse_tests.rs`), so a degraded SHA-unpaired host cannot look
+/// like a Node-parity pass — the child's `#360-2 PARTIAL` marker line stays
+/// visible in `cargo test -- --nocapture` output and machine-checkable by the
+/// negative controls, which refuse zone-children mutants on such a host.
 #[test]
 fn retry_after_dialects_production_wiring_matches_node_zone_children() {
-    for zone in ["UTC", "Asia/Shanghai", "localtime", ":/nonexistent"] {
+    for zone in [
+        "UTC",
+        "Asia/Shanghai",
+        "localtime",
+        ":/nonexistent",
+        "Europe/London",
+    ] {
         let output = Command::new(std::env::current_exe().expect("#360-2 zone child executable"))
             .args(["--exact", ZONE_CHILD, "--nocapture", "--test-threads=2"])
             .env(ZONE_ENV, zone)
@@ -154,6 +169,7 @@ fn retry_after_dialects_production_wiring_matches_node_zone_children() {
             crate::test_exact_receipt::single_pass(&status, ZONE_CHILD, &stdout),
             "#360-2 production wiring replay in TZ={zone} failed: {status}\n{stdout}\n{stderr}",
         );
+        println!("{stdout}");
     }
 }
 
@@ -167,11 +183,15 @@ fn retry_after_dialects_production_wiring_matches_node_zone_children() {
 /// dates sit in Shanghai's flat +08:00 era, which is exactly why a byte
 /// mismatch would otherwise stay silently green. On an unpaired host the row
 /// is not claimed as a pass: the shared gate itself fail-closes, the
-/// local-resolving dialects are expected as `None`, and the run prints the
-/// downgrade. The `localtime` (host-dependent alias, fail-closed by the
-/// allowlist) and `:/nonexistent` (unreadable path) children pin the edges of
-/// the admitted-TZif subset: local-resolving dialects count as unparseable
-/// and the header is ignored, while zone-independent values keep the UTC
+/// local-resolving dialects are expected as `None`, and the run prints a
+/// machine-checkable `#360-2 PARTIAL` downgrade marker (r3 P2-2; the same
+/// convention as `stats_dateparse_tests.rs`). The `localtime`
+/// (host-dependent alias, fail-closed by the allowlist),
+/// `:/nonexistent` (unreadable path), and `Europe/London` (readable zone
+/// outside the allowlist) children pin the edges of the admitted-TZif
+/// subset: for the readable aliases the ungated shared parser is asserted to
+/// parse the host profile, so the local dialects' `None` comes from the gate
+/// and not from a missing file, while zone-independent values keep the UTC
 /// column that Node v22.22.0 itself keeps there (it falls back to UTC — the
 /// retained difference registered for this consumer by
 /// `specs/gateway-parity/diffs/A6.4-PROVIDER-RETRY-AFTER-TZ-001.md`).
@@ -225,16 +245,53 @@ fn retry_after_dialect_zone_child() {
                 .expect("#360-2 zone child host TZif read");
             let verified = crate::runtime::model::stats::stats_tzif_local(0, &bytes, &zone).is_ok();
             if !verified {
+                // r3 P2-2: a machine-checkable PARTIAL marker (the sibling
+                // convention of stats_dateparse_tests.rs) — the parent
+                // re-prints it, and the negative controls refuse
+                // zone-children mutants on a host in this state.
                 println!(
-                    "#360-2 host TZif for TZ={zone} is not the local-profiles.json profile: \
-                     the local-resolving dialects replay fail-closed (None), \
-                     not as a Node-parity pass"
+                    "#360-2 PARTIAL {zone}: host TZif is not the SHA-paired \
+                     local-profiles.json profile; the local-resolving dialects \
+                     replay fail-closed (None), not as a Node-parity pass"
                 );
             }
             verified
         }
         None => false,
     };
+    if row.is_none() {
+        // r3 P2-3 (mirrors stats dateparse_zone_child's non-admitted branch):
+        // for a pinned zone outside the allowlist, prove the gate — not a
+        // missing host file — is what fail-closes the local dialects. The
+        // ungated shared parser must read and parse the host profile
+        // (Europe/London directly pins the allowlist without depending on
+        // /etc/localtime; `:/nonexistent` must stay unreadable), and the
+        // production entry must still count the local dialect unparseable.
+        let wall = "Sun Nov  6 08:49:37 1994";
+        let ungated = pilotdeck_transport::system_clock::parse_node22_date(&JsString::from(wall));
+        if zone == ":/nonexistent" {
+            assert!(
+                ungated.is_err(),
+                "#360-2 TZ={zone} must stay an unreadable path, got {ungated:?}"
+            );
+        } else {
+            let parsed = ungated.unwrap_or_else(|error| {
+                panic!(
+                    "#360-2 TZ={zone} must have a readable host profile so the \
+                     allowlist, not a missing file, fail-closes it: {error:?}"
+                )
+            });
+            assert!(
+                parsed.is_some(),
+                "#360-2 TZ={zone} ungated parser must resolve the local dialect"
+            );
+        }
+        assert_eq!(
+            errors::retry_after_header(Some(wall), 0.0),
+            None,
+            "#360-2 TZ={zone} must fail-close the local dialect at the admitted gate"
+        );
+    }
     for (index, (utc_case, shanghai_case)) in utc.iter().zip(shanghai).enumerate() {
         let value = utc_case["value"]
             .as_str()

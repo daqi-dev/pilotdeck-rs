@@ -356,8 +356,13 @@ fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
 }
 
 /// Same 1 MiB bound as the conservative stats retention read: a zone file
-/// above the cap is not an admitted profile.
-fn bounded_zone_read(path: &std::path::Path) -> Option<Vec<u8>> {
+/// above the cap is not an admitted profile. The read takes one byte past the
+/// cap so an oversized file is detected and rejected here (returning `None`),
+/// never silently truncated and handed to the parser — the same semantics as
+/// `stats_tzif_local`'s explicit post-read rejection. A pub seam like
+/// [`system_tzif_path`] / [`resolve_tzif_local`]: the transport's
+/// `#[path]`-mounted test exercises it directly.
+pub fn bounded_zone_read(path: &std::path::Path) -> Option<Vec<u8>> {
     use std::io::Read;
     let mut bytes = Vec::new();
     std::fs::File::open(path)
@@ -365,7 +370,7 @@ fn bounded_zone_read(path: &std::path::Path) -> Option<Vec<u8>> {
         .take(1_048_577)
         .read_to_end(&mut bytes)
         .ok()?;
-    Some(bytes)
+    (bytes.len() <= 1_048_576).then_some(bytes)
 }
 
 fn days_from_civil(year: i32, month: i32, day: i32) -> i64 {

@@ -1362,8 +1362,10 @@ pub(crate) fn admitted_local_to_utc(wall: i64) -> Result<i64, JsString> {
     let tz = std::env::var_os("TZ");
     let zone = if let Some(tz) = tz.as_deref() {
         let name = tz.to_str().ok_or_else(unsupported)?;
-        // An OS file name is not necessarily an ICU TZ identifier: Node uses
-        // UTC for TZ=localtime even when /etc/localtime contains Shanghai.
+        // An OS file name is not necessarily an ICU TZ identifier, and the
+        // TZ=localtime alias is host-dependent (see the fn doc): Node resolves
+        // it through the C library's zone search, so aliases like it stay
+        // outside the admitted subset and fail closed here.
         if !matches!(name, "UTC" | "America/New_York" | "Asia/Shanghai") {
             return Err(unsupported());
         }

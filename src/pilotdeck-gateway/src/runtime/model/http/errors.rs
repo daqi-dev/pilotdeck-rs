@@ -129,10 +129,17 @@ pub(crate) fn retry_after_from_message(message: &str) -> Option<f64> {
 /// admit (POSIX TZ rules, custom TZ paths, unreadable or unpaired tzdata,
 /// host-dependent aliases like `TZ=localtime`), where this parser counts the
 /// value as unparseable and the header is ignored. That retained TZ-subset
-/// difference is registered for this provider HTTP consumer by
-/// `specs/gateway-parity/diffs/A6.4-PROVIDER-RETRY-AFTER-TZ-001.md` (it
-/// follows the same TZif subset as A6.4-STATS-RETENTION-001 but is a
-/// separate, unapproved entry — the stats entry's scope is retention only).
+/// difference is registered by
+/// `specs/gateway-parity/diffs/A6.4-PROVIDER-RETRY-AFTER-TZ-001.md` for every
+/// consumer of this entry, not only the provider stream retry that reads the
+/// header in `http.rs` (`streamModel.ts:231` on the TS side): the shared
+/// `retry_after_header_ms` callers — the MCP HTTP retry delay, the web
+/// network retry delay, and the web fetcher's `retryAfterMs` error field
+/// (rendered as `Retry-After: …ms.` by the web_fetch failure text) — where TS
+/// resolves through `network/fetch.ts`'s own identical
+/// `parseRetryAfterHeader` copy or the protocol one. The entry follows the
+/// same TZif subset as A6.4-STATS-RETENTION-001 but is a separate,
+/// unapproved entry — the stats entry's scope is retention only.
 pub(crate) fn retry_after_header(value: Option<&str>, now_ms: f64) -> Option<f64> {
     retry_after_header_parsed(value, now_ms, &admitted_node22_parse)
 }
