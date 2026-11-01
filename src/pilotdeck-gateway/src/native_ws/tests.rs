@@ -1134,10 +1134,15 @@ async fn cancelled_server_stops_retained_host() {
 async fn native_configuration() {
     let host = native_ws_fixture(Arc::new(Requests::default()));
     // The non-loopback addresses must be refused before any Config derives
-    // `loopback: address.ip().is_loopback()` from them (#1209 fix-r2).
+    // `loopback: address.ip().is_loopback()` from them (#1209 fix-r2), and
+    // 127.0.0.2 pins the dependency the other way: only the literal
+    // 127.0.0.1 can bind, so the derivation's 127.0.0.0/8 width (wider than
+    // the TS `127.0.0.1`/`localhost` literals) is unreachable in practice
+    // (#1209 fix-r3 review, opus concurrency-4 / DeepSeek P3-2).
     for (address, token) in [
         ("0.0.0.0:0", "token"),
         ("192.0.2.1:0", "token"),
+        ("127.0.0.2:0", "token"),
         ("127.0.0.1:80", "token"),
         ("127.0.0.1:0", ""),
     ] {

@@ -39,6 +39,24 @@ switches = [
     # connection open across stop like TS server.close(); the mutant
     # force-closes it, so the late request never gets its response.
     ('native-http-unserved-close', SOURCE_PROXY, 'stop_serves_late_request_and_waits_like_ts_close', '#1209 the late request is still served after stop'),
+    # fix-r3: Node's 5 s keep-alive idle close is in force with or without a
+    # stop (probe `probe-fixr3-a.out` A); the mutant disables it, so a served
+    # connection never reaches EOF.
+    ('native-http-keep-alive-timeout-off', SOURCE_PROXY, 'keep_alive_idle_close_matches_ts', '#1209 the served connection reaches EOF at the keep-alive idle close'),
+    # fix-r3: a request genuinely in flight at stop is answered normally and
+    # its socket ends at the idle close, never at the stop or the response
+    # (probe `probe-fixr3-b.out` B1); the mutant disables keep-alive
+    # mid-flight, and hyper then rewrites the in-flight response to
+    # `Connection: close`.
+    ('native-http-inflight-close', SOURCE_PROXY, 'stop_serves_in_flight_request_and_waits_like_ts_close', '#1209 the in-flight response keeps the connection alive'),
+    # fix-r3: the span-budget boundary is inclusive — exactly 16384 tracked
+    # bytes is the 431 (probe `probe-fixr3-c.out` C1); the mutant needs
+    # strictly more, so the boundary cell stays served.
+    ('native-http-header-budget-boundary', SOURCE, 'header_budget_431s_like_ts', '#1209 a 16363-byte single header (tracked 16384) is the TS 431'),
+    # fix-r3: the count cap must never bind before the byte budget (probe
+    # `probe-fixr3-c.out` C4 serves 16363 empty-value headers); the mutant
+    # lowers the cap to 3000, so the 8000-header cell 431s.
+    ('native-http-header-cap-low', SOURCE_PROXY, 'header_counts_within_ts_bounds_stay_served', '#1209 8000 small headers stay served like TS'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

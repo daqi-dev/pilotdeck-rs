@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
 };
@@ -238,6 +238,14 @@ where
     serve_connection_configured(stream, handler, false, None).await
 }
 
+/// Node v22.22.0's default `server.keepAliveTimeout` (the TS
+/// `GatewayServer` does not override it and advertises
+/// `Keep-Alive: timeout=5`): an idle keep-alive connection closes 5 s after
+/// its last request/response activity (probe `probe-fixr3-a.out` A). Node
+/// re-checks on a ~1 s cull interval, so the TS close lands at ~6 s; this
+/// port closes at exactly 5 s, never later.
+const NODE_KEEP_ALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The native listener's connection serving. TS emits literal header cases
 /// (`Date`, `Connection` capitalized), so responses render Title-Case, and
 /// every native_http handler response sets `Date` explicitly, so the
@@ -245,17 +253,16 @@ where
 /// undated ones. The byte-level transport diffs this leaves are registered
 /// in the gateway-parity diff ledger.
 ///
-/// `stop` mirrors Node's `server.close()` semantics (probe `probe-fixr1.out`
-/// B): connections that have served at least one request are closed (idle ones
-/// immediately, in-flight ones after the response) while connections that
-/// never sent bytes are left alone — and that includes serving requests they
-/// send only after the stop: Node answers those with the normal keep-alive
-/// response and never force-closes them; its `close()` promise waits for the
-/// socket's own idle timeout or the peer (probe `probe-fixr2.out` D, the
-/// runner's bounded drain error is the equivalent). `graceful_shutdown` is
-/// hyper's equivalent and is a no-op for an already-upgraded connection. A
-/// dropped sender means no stop signal, and the connection simply runs to its
-/// natural end.
+/// `stop` mirrors Node's `server.close()` semantics (probes
+/// `probe-fixr1.out` B, `probe-fixr2.out` D, `probe-fixr3-b.out` B1): a
+/// connection that is idle keep-alive at that instant is closed right away,
+/// while a connection with a request in flight — or one that never sent
+/// bytes, including requests it sends only after the stop — is answered with
+/// the normal keep-alive response and never force-closed; such sockets close
+/// at their own 5 s keep-alive idle timeout (below). `graceful_shutdown` is
+/// hyper's equivalent for the idle-at-close case and is a no-op for an
+/// already-upgraded connection. A dropped sender means no stop signal, and
+/// the connection simply runs to its natural end.
 pub(crate) async fn serve_connection_native_with_shutdown<S, F, Fut>(
     stream: S,
     handler: F,
@@ -267,6 +274,17 @@ where
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
     serve_connection_configured(stream, handler, true, Some(stop)).await
+}
+
+/// Decrements the in-flight request count when the response future is done
+/// or dropped (hyper can cancel a service future when the connection goes
+/// away mid-request), so a stop never mistakes a torn-down request for an
+/// idle connection.
+struct InFlightRequest(Arc<AtomicUsize>);
+impl Drop for InFlightRequest {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 async fn serve_connection_configured<S, F, Fut>(
@@ -286,7 +304,11 @@ where
         state: state.clone(),
     };
     let served = Arc::new(AtomicBool::new(false));
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let (activity, mut activity_rx) = watch::channel(None::<tokio::time::Instant>);
     let served_in_connection = served.clone();
+    let in_flight_in_connection = in_flight.clone();
+    let activity_in_connection = activity.clone();
     let service = service_fn(move |request| {
         served_in_connection.store(true, Ordering::Relaxed);
         // This must run before returning a future: Hyper can poll read again
@@ -300,7 +322,17 @@ where
         } else {
             None
         };
-        handler(request, lease)
+        activity_in_connection.send_replace(Some(tokio::time::Instant::now()));
+        in_flight_in_connection.fetch_add(1, Ordering::Relaxed);
+        let in_flight = InFlightRequest(in_flight_in_connection.clone());
+        let activity = activity_in_connection.clone();
+        let handler = handler(request, lease);
+        async move {
+            let result = handler.await;
+            drop(in_flight);
+            activity.send_replace(Some(tokio::time::Instant::now()));
+            result
+        }
     });
     let mut builder = http1::Builder::new();
     if native {
@@ -308,34 +340,102 @@ where
         if !crate::mutants::on("native-http-header-count-off") {
             // Node v22.22.0 has no header-count limit: its binding constraint
             // is the 16384-byte URL+header-names+values budget the router
-            // replicates, and a header's name is at least one of those bytes,
-            // so at most ~16377 headers can ever be served. A count cap of
-            // 16384 therefore never binds before that budget; it only bounds
+            // replicates (probe `probe-fixr3-c.out` C4: 16363 one-byte
+            // headers stay served, 16364 hits the byte budget), so a count
+            // cap of 16384 never binds before that budget; it only bounds
             // hyper's per-parse smallvec allocation. hyper's default of 100
             // would 431 requests TS serves.
-            builder.max_headers(16384);
+            if crate::mutants::on("native-http-header-cap-low") {
+                builder.max_headers(3000);
+            } else {
+                builder.max_headers(16384);
+            }
         }
     }
     let connection = builder
         .serve_connection(TokioIo::new(stream), service)
         .with_upgrades();
-    let Some(mut stop) = stop else {
+    let Some(stop) = stop else {
         return connection.await;
     };
     tokio::pin!(connection);
-    tokio::select! {
-        result = &mut connection => return result,
-        changed = stop.wait_for(|stopped| *stopped) => {
-            if changed.is_ok()
-                && (served.load(Ordering::Relaxed)
-                    || crate::mutants::on("native-http-unserved-close"))
-                && !crate::mutants::on("native-http-idle-close-off")
-            {
+    // Node's keep-alive idle close, in force with or without a stop: the
+    // deadline is the last request-parse or response-completion activity plus
+    // 5 s, re-armed on every new activity. While a request is in flight the
+    // timer never fires (Node's requestTimeout, not keepAliveTimeout, governs
+    // a busy socket), and the next activity update re-arms it.
+    let idle = async {
+        if crate::mutants::on("native-http-keep-alive-timeout-off") {
+            std::future::pending::<()>().await;
+        }
+        loop {
+            let deadline = activity_rx
+                .borrow_and_update()
+                .map(|at| at + NODE_KEEP_ALIVE_IDLE);
+            let Some(deadline) = deadline else {
+                if activity_rx.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+                continue;
+            };
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    if in_flight.load(Ordering::Relaxed) > 0 {
+                        if activity_rx.changed().await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                        continue;
+                    }
+                    return;
+                }
+                _ = activity_rx.changed() => {}
+            }
+        }
+    };
+    tokio::pin!(idle);
+    let mut stop = Some(stop);
+    loop {
+        tokio::select! {
+            result = &mut connection => return result,
+            changed = async {
+                match stop.as_mut() {
+                    Some(receiver) => receiver
+                        .wait_for(|stopped| *stopped)
+                        .await
+                        .map(|stopped| *stopped),
+                    None => std::future::pending::<
+                        Result<bool, tokio::sync::watch::error::RecvError>,
+                    >()
+                    .await,
+                }
+            } => {
+                if changed.is_err() {
+                    // The sender is dropped without a stop: no stop can ever
+                    // arrive, so only the idle close and the peer end this.
+                    stop = None;
+                    continue;
+                }
+                let idle_now = (served.load(Ordering::Relaxed)
+                    && (in_flight.load(Ordering::Relaxed) == 0
+                        || crate::mutants::on("native-http-inflight-close")))
+                    || crate::mutants::on("native-http-unserved-close");
+                if idle_now && !crate::mutants::on("native-http-idle-close-off") {
+                    connection.as_mut().graceful_shutdown();
+                }
+                // close() only destroys the connections that were idle at
+                // that instant; requests in flight and later requests are
+                // answered normally, and their sockets still end at the
+                // keep-alive idle close below, so the stop is consumed but
+                // the connection keeps being served.
+                stop = None;
+                continue;
+            }
+            _ = &mut idle => {
                 connection.as_mut().graceful_shutdown();
+                return connection.as_mut().await;
             }
         }
     }
-    connection.as_mut().await
 }
 
 async fn pair_upgraded<S, U>(

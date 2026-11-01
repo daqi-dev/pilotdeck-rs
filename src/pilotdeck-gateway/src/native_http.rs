@@ -135,8 +135,17 @@ async fn route<B>(
     // bad form (authority-form for non-CONNECT, non-alpha scheme) is a bare
     // 400 even when the target is huge, while a huge but grammatical target
     // (a CONNECT authority included) crosses the 16 KiB span budget first.
-    let budget_exceeded = !crate::mutants::on("native-http-header-budget-off")
-        && tracked_header_bytes(request) >= 16_384;
+    // The boundary itself is inclusive: Node's TrackHeader overflows at
+    // exactly 16384 accumulated span bytes (probe `probe-fixr3-c.out` C1:
+    // tracked 16383 stays served, 16384 is the 431), which is what the
+    // off-by-one mutant below removes.
+    let tracked = tracked_header_bytes(request);
+    let over_budget = if crate::mutants::on("native-http-header-budget-boundary") {
+        tracked > 16_384
+    } else {
+        tracked >= 16_384
+    };
+    let budget_exceeded = !crate::mutants::on("native-http-header-budget-off") && over_budget;
     if request.method() == hyper::Method::CONNECT {
         if budget_exceeded {
             return Ok(request_header_fields_too_large());
@@ -268,12 +277,14 @@ fn parser_bad_request() -> hyper::Response<Body> {
 }
 
 /// The byte budget Node v22.22.0 actually enforces (node_http_parser.cc
-/// `TrackHeader`, probe `probe-fixr2.out` A/B): the current message's URL
-/// span plus every header-name and header-value span accumulate (separators,
-/// OWS, and CRLF excluded; reset per message and per chunk), and reaching
+/// `TrackHeader`, probes `probe-fixr2.out` A/B and `probe-fixr3-c.out` C1):
+/// the current message's URL span plus every header-name and header-value
+/// span accumulate (separators and CRLF excluded; leading value OWS skipped,
+/// trailing value OWS counted; reset per message and per chunk), and reaching
 /// 16384 is the parser's header overflow — the canned 431 below. hyper
-/// strips the fragment from the parsed URI, so a fragmented target
-/// under-counts here (registered residual in the parity ledger).
+/// trims a value's trailing OWS before this runs, so a trailing-OWS-padded
+/// value under-counts here, and hyper also strips the fragment from the
+/// parsed URI (both registered residuals in the parity ledger).
 fn tracked_header_bytes<B>(request: &hyper::Request<B>) -> usize {
     request.uri().to_string().len()
         + request
