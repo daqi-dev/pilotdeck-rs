@@ -14,6 +14,17 @@ ROOT = Path(__file__).resolve().parents[5]
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_guarded_sources_include_common(self):
+        marker = '#a5b parity mutation guards include common.py'
+        path = Path(__file__).with_name('negative_boundary.py')
+        try:
+            spec = importlib.util.spec_from_file_location('boundary_negative', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            self.assertTrue(ROOT / 'scripts/gateway-parity/common.py' in module.guarded_sources, marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
     def test_documented_boundary(self):
         marker = '#1206 document the cooperative-writer boundary'
         documents = {
@@ -28,6 +39,12 @@ class BoundaryTests(unittest.TestCase):
                 except Exception as error:
                     self.fail(marker + ': ' + repr(error))
                 self.assertTrue(expected in content, marker)
+        witness = (ROOT / 'scripts/native-witness/README.md').read_text()
+        for expected in (
+            'observer 记录独立于被测网关与预注册 contract，不独立于 driver。',
+            'hello 观测独立于被测网关与预注册 contract，不独立于 driver。',
+        ):
+            self.assertTrue(expected in witness, marker)
 
     def test_binding_writer_boundary(self):
         marker = '#1206 observer-only edit rejected, joint rewrite is a known boundary'
