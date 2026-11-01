@@ -417,8 +417,18 @@ class R11Tests(unittest.TestCase):
         # B2 CLI bootstrap deliberately refuses uncommitted frozen candidates;
         # this pure-function probe does not relax its production admission.
         import types
-        parity = load('r11_g03', ROOT / 'scripts/parity/g03_compare.py')
-        b1 = load('r11_b1', ROOT / 'scripts/exp008/compare.py')
+        def jsonl_helper(filename):
+            # Execute the real helper without module bootstrap (g03 loads the
+            # TS baseline at import time, which the offline CI job lacks).
+            path = ROOT / 'scripts' / filename
+            tree = ast.parse(path.read_bytes().decode(), filename=str(path))
+            definitions = [node for node in tree.body
+                           if isinstance(node, ast.FunctionDef) and node.name == 'jsonl_lines']
+            self.assertTrue(len(definitions) == 1, marker + ': helper coverage ' + filename)
+            namespace = {}
+            exec(compile(ast.Module(body=definitions, type_ignores=[]), str(path), 'exec'), namespace)
+            return namespace['jsonl_lines']
+
         sample = json.dumps({'text': 'a\u2028b\u2029c\u0085d'}, ensure_ascii=False) + '\n'
         files = {'parity/g03_compare.py': 1, 'parity/score.py': 1,
                  'parity/controls/run_all.py': 1, 'parity/controls/multimodal.py': 3,
@@ -426,7 +436,9 @@ class R11Tests(unittest.TestCase):
                  'ui-server-parity/snapshot.py': 1, 'ui-server-parity/run.py': 1,
                  'ui-server-parity/check_coverage.py': 1}
         try:
-            self.assertTrue(parity.jsonl_lines(sample) == b1.jsonl_lines(sample) == n.jsonl_lines(sample), marker)
+            parity = jsonl_helper('parity/g03_compare.py')
+            b1 = jsonl_helper('exp008/compare.py')
+            self.assertTrue(parity(sample) == b1(sample) == n.jsonl_lines(sample), marker)
             for filename, count in files.items():
                 tree = ast.parse((ROOT / 'scripts' / filename).read_bytes().decode())
                 candidates = []
@@ -446,7 +458,7 @@ class R11Tests(unittest.TestCase):
                            and ((isinstance(node.func, ast.Attribute) and node.func.attr in ('jsonl_lines', 'splitlines'))
                                 or (isinstance(node.func, ast.Name) and node.func.id == 'jsonl_lines'))]
                 self.assertTrue(len(readers) == count, marker + ': reader coverage ' + filename)
-                helper = parity.jsonl_lines if filename.startswith('parity/') else b1.jsonl_lines
+                helper = parity if filename.startswith('parity/') else b1
                 for reader in readers:
                     if isinstance(reader.func, ast.Attribute) and reader.func.attr == 'splitlines':
                         reader.func.value = ast.Constant(sample)
