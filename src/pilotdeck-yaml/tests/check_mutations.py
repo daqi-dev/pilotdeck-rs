@@ -25,6 +25,7 @@ workspace = workspace.replace('path = "pilotdeck-protocol"', f'path = "{root}/sr
 # scratch workspace does not copy vendor/ or data/, so a relative patch path would
 # dangle and cargo refuses to start (every mutant would fail for the wrong reason).
 patch = re.search(r"^\[patch\.crates-io\]\n(.*?)(?=^\[|\Z)", workspace, flags=re.M | re.S)
+assert patch or not re.search(r"^\s*\[patch\b", workspace, flags=re.M), "#132 unrecognised [patch] table header"
 if patch:
     body = patch.group(1)
     rows = [row for row in body.splitlines() if row.split("#", 1)[0].strip()]
