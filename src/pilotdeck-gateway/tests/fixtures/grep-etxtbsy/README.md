@@ -48,13 +48,19 @@ ENOENT（fd 中途消失）允许 continue，其余错误、以及 flags 行缺�
 `end` 在启动 stranger 之前算出（计时起点统一）；**saw 写入前复检同一截止**
 （Codex P1-1——轮询跨截止点暂停后恢复、文件已存在也不能把迟到 started 记
 成 seen，新增受控用例 `a_started_past_the_helper_cap_is_not_seen_after_a_
-paused_poll`：单轮 10s 轮询 + 1s 上限 + 2s 延迟，全部受控不赌负载）；fdinfo
+paused_poll`）；fdinfo
 读失败不再按 errno 分类放过——**复检 fd 本身的 readlink**，fd 仍在且仍指向
 管道则 fail-closed，fd 已消失（任何 errno：ENOENT/ESRCH/EACCES，本机 6.17
 实测：僵尸 fdinfo→ENOENT 而 fd 链接→EACCES、setuid exec 后→EACCES）即释放
 （`fdinfo_unreadable`，配 Linux 单元测试）；pid 模式 stranger 由 `sleep 5`
 改为停驻 `sleep 30`（与组模式一致，只有守卫 kill 能终结），kill 契约因此可
-判杀。
+判杀。fix-r3（fix-r3 评审 P1-1）：受控用例的暂停改为**事件屏障**——helper
+在算出 `end`、拉起 stranger 后原子发布 `paused` 收据，随后挂起等 `resume`
+信号（0.05s 轮询、30s 安全上限，独立于 `end`）；用例等收据 → 等 `started`
+→ 以「`end` ≤ 收据观测时刻 + cap」证同一截止已越过 → 才发布 `resume`，
+saw 写入时 started 必在、截止必过，不再有任何睡眠时序赌注。共享 helper 改形
+后 dead-helper / panic 两用例同步屏障化（钩子在 started 后发布 resume；panic
+用例故意不发，由 ReapGuard 收割挂起的 helper）。
 
 变异体（23 个；绑定测试如无说明均在 `--test scratch_publication`）：
 
@@ -117,15 +123,19 @@ paused_poll`：单轮 10s 轮询 + 1s 上限 + 2s 延迟，全部受控不赌负
   ≈ 0）；若 expiry 已过导致 writer-exit 竞态先行，则以 `#1125 helper writer
   did not exit by its deadline` 判杀（双锚点，确定性）；
 - `started-cap-hardcoded-short`（#1155 r4 评审 P2，fix-r1 改形状，fix-r2b
-  锚点带 `+ 1` 截断补偿）：helper
-  侧 started 等待秒数退回字面量 `5`（墙钟，`date +%s` 基准）——8s 延迟的
-  `started` 出现前 helper 先放弃（真实余量 3s，与负载无关），死时无 `saw`
-  标记，`#1155 the helper must observe the stranger's started signal before it
-  dies` 判杀（确定性；fix-r2b 起 saw 复检让轮询暂停后恢复的场景同样拒写）；
-- `saw-write-skips-the-cap`（fix-r2b 新增，Codex P1-1）：saw 写入的截止
-  复检被删——受控用例的单轮 10s 轮询跨过 1s 上限与 2s 延迟后恢复、文件
-  已在，迟到 started 被记成 seen，`#1155 a started past the helper's cap
-  must not be recorded as seen after a paused poll` 判杀（任意 unix 确定性）；
+  锚点带 `+ 1` 截断补偿，fix-r3 改绑）：helper 侧 started 等待秒数退回字面量
+  `5`（墙钟，`date +%s` 基准）——fix-r3 起绑定走事件屏障受控路径的新用例
+  `a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll`：该用例
+  在 8s 延迟的 `started` 出现的一刻恢复 helper，推导的 11s cap 当刻仍有预算、
+  健康 helper 记录 `saw`；硬回 5s 的 cap 在同一受控时刻截止已过、拒写 saw，
+  `#1155 a started within the helper's cap must still be recorded as seen
+  after a paused poll` 判杀（确定性；不再依赖旧 dead-helper 用例的时序旁证）；
+- `saw-write-skips-the-cap`（fix-r2b 新增，Codex P1-1；fix-r3 改屏障）：saw
+  写入的截止复检被删——事件屏障用例等 `paused` 收据、2s 延迟的 `started`、
+  并证 1s 上限的截止已越过后才恢复 helper，saw 写入时文件必在、截止必过，
+  迟到 started 被记成 seen，`#1155 a started past the helper's cap
+  must not be recorded as seen after a paused poll` 判杀（任意 unix 确定性，
+  无调度时序赌注）；
 - `boundary-write-end-filter-removed`（#1155 r3 评审 P2-1；fix-r1 改绑，
   DeepSeek P2-2）：扫描去掉 O_WRONLY/O_RDWR 访问模式过滤——健康路径上陌生
   进程的读端（同为 `pipe:[inode]` fd）误报为存活写端，扫描错误进 dead-helper
@@ -150,11 +160,13 @@ paused_poll`：单轮 10s 轮询 + 1s 上限 + 2s 延迟，全部受控不赌负
   循环删除——租约下没有 init 兜底，僵尸留在进程组里，组永不为空，
   `#1141 the stranger's process group survived the guard's kill` 超时报错，
   守卫 end() 的 expect 判杀；
-- `stranger-pid-kill-removed`（fix-r2b 新增，boundary P3，Linux）：pid 模式
-  守卫的 kill 被删——stranger 停驻 `sleep 30` 不再自行退出，重挂确认 5s
-  超时报 `#1155 the stranger did not die by the guard's kill`，pid 模式用例
-  end() 的 expect `#1155 the stranger must be killed and reaped by the test's
-  guard, not PID 1's` 判杀。kill 错误传播（fix-r1 P2-1 收紧的另一半）为
+- `stranger-pid-kill-removed`（fix-r2b 新增，boundary P3，Linux；fix-r3 修
+  绑定名）：pid 模式守卫的 kill 被删——stranger 停驻 `sleep 30` 不再自行退
+  出，重挂确认 5s 超时报 `#1155 the stranger did not die by the guard's
+  kill`，pid 模式用例 end() 的 expect `#1155 the stranger must be killed and
+  reaped by the test's guard, not PID 1's` 判杀。**绑定名须带模块前缀**
+  `pid_mode::…`（fix-r3 评审 P1-2：`--exact` 下裸名匹配 0 个测试，正控被
+  `passed()` 拒绝、整行 INVALID）。kill 错误传播（fix-r1 P2-1 收紧的另一半）为
   无变异体的防御层：租约下僵尸钉住 pid，真实 kill 不会 ESRCH，本二进制
   可达路径上无失败可绑定（边界记录于 cases 内联注释与 fix-r2b RESULT）。
 
