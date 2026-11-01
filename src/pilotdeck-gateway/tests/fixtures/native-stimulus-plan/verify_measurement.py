@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+# anchor-selfcheck: unsupported measured timeline data controls, no source mutation table
+"""Recheck all declared witnesses against unmodified six_cells TS output.
+
+For each required event, remove it in memory and require rejection; restore
+and recheck. These are data controls, never native execution evidence.
+"""
+import sys
+if not sys.flags.isolated:
+    raise SystemExit('run with python3 -I')
+sys.dont_write_bytecode = True
+import importlib.util
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[5]
+spec = importlib.util.spec_from_file_location('stimulus', ROOT / 'scripts/native-witness/stimulus_plan.py')
+s = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(s)
+
+
+def matches(row, selector):
+    return isinstance(row, dict) and all(
+        matches(row.get(key), value) if isinstance(value, dict) else row.get(key) == value
+        for key, value in selector.items())
+
+
+def witnessed(target, timeline):
+    def positions(selector):
+        return [index for index, row in enumerate(timeline) if matches(row, selector)]
+    return (all(positions(selector) for selector in target['events'])
+            and all(positions(left) and positions(right)
+                    and min(positions(left)) < min(positions(right)) for left, right in target['before']))
+
+
+def verify(folder):
+    registration = json.loads((folder / 'preregistration.json').read_text())
+    if registration['cells'] != s.CELLS or registration['phases'] != ['model', 'tool']:
+        raise ValueError('#1368 measured preregistration differs from native declaration')
+    seen, event_controls, order_controls = [], 0, 0
+    for cell in registration['cells']:
+        document = json.loads((folder / (cell['name'] + '.json')).read_text())
+        for observation in document['observations']:
+            case, repetition = observation['id'].rsplit('/', 1)
+            plan = s.plan(case)
+            if (observation['variant'] != plan['variant'] or observation['phase'] != plan['phase']
+                    or observation['registry']['applicable'] is not plan['registry']):
+                raise ValueError('#1368 measured registry/phase/variant mismatch: ' + case)
+            timeline = observation['timeline']
+            for target in plan['boundaries']:
+                if not witnessed(target, timeline):
+                    raise ValueError('#1368 missing measured target: ' + case + '/' + target['name'])
+                for selector in target['events']:
+                    damaged = [row for row in timeline if not matches(row, selector)]
+                    if witnessed(target, damaged):
+                        raise ValueError('#1368 missing-event data control SURVIVED: ' + case + '/' + target['name'])
+                    event_controls += 1
+                for left, right in target['before']:
+                    # Move every left match behind the last right match, keeping
+                    # the events present so the order check is independently hit.
+                    damaged = [row for row in timeline if not matches(row, left)]
+                    damaged.extend(row for row in timeline if matches(row, left))
+                    if witnessed(target, damaged):
+                        raise ValueError('#1368 reversed-order data control SURVIVED: ' + case + '/' + target['name'])
+                    order_controls += 1
+                if not witnessed(target, timeline):
+                    raise ValueError('#1368 restored measured target failed: ' + case)
+            seen.append(observation['id'])
+    expected = [plan['case'] + '/' + str(repeat) for plan in s.plans()
+                for repeat in range(1, registration['repeats'] + 1)]
+    if seen != expected or len(seen) != 360:
+        raise ValueError('#1368 measured denominator/order mismatch')
+    return {'status': 'PASS', 'measurements': len(seen), 'cases': len(s.plans()),
+            'missingEventControls': event_controls, 'reversedOrderControls': order_controls,
+            'scope': 'TS input and boundary validation only; native remains NOT_RUN'}
+
+
+if __name__ == '__main__':
+    print(json.dumps(verify(Path(sys.argv[1])), ensure_ascii=False))

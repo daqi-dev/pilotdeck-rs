@@ -23,6 +23,9 @@ import time
 spec = importlib.util.spec_from_file_location('native_witness', Path(__file__).with_name('witness.py'))
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
+spec = importlib.util.spec_from_file_location('native_stimulus_plan', Path(__file__).with_name('stimulus_plan.py'))
+stimuli = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(stimuli)
 # Explicit source load preserves the frozen auditor's isolated sys.path and
 # records executed bytes for its existing provenance guard.
 common_path = Path(__file__).resolve().parents[1] / 'gateway-parity/common.py'
@@ -208,8 +211,7 @@ SESSION_SETTLE_INTERVAL_SECONDS = 0.05
 # RunRegistry.append permits failed -> completed; failed needs the final
 # error frame as well as a persisted error result (see wait_observation).
 SESSION_TERMINAL_STATES = frozenset(('completed', 'aborted', 'interrupted'))
-SESSION_ORDERING_VARIANTS = ('known-final-first', 'unknown-first', 'after-complete',
-                              'known-final-before-timeout-pending')
+SESSION_ORDERING_VARIANTS = stimuli.ORDERS  # legacy transport timing only
 
 
 def session_manifest():
@@ -218,6 +220,8 @@ def session_manifest():
     with open(path, encoding='utf-8') as stream:
         cases = json.load(stream)['cases']
     w.need(bool(cases) and len(set(cases)) == len(cases), 'session manifest is empty or has duplicates')
+    w.need([item['case'] for item in stimuli.plans()] == cases,
+           '#1368 stimulus plans must cover the frozen manifest exactly in order')
     return cases
 
 
@@ -230,18 +234,29 @@ session_key = w.native.session_key
 
 
 def case_plan(case):
-    """Timeout/provider plan mirroring the preregistered variant topology.
+    """Full input plan plus legacy transport timing, never proof of execution.
 
-    Ordering variants let the turn finish before the deadline; every other
-    variant is timeout-first, so the provider answers after the gateway's
-    timeout has fired. The native host cannot reproduce the TS harness's
-    controlled slow/failed durable writes; observed mismatches with the
-    registered rust expectations are honest FAILs, never wiring failures.
+    The text-only provider still lacks the registered outcome, phase and
+    storage hooks. In particular after-complete is timeout-first in TS; the
+    legacy fast response below does NOT implement that order. session_row
+    withholds the scoring observation until all target boundaries are attested.
     """
-    variant = case.split('/')[1]
-    if variant in SESSION_ORDERING_VARIANTS:
-        return {'timeoutMs': SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0}
-    return {'timeoutMs': SESSION_TIMEOUT_MS, 'delay': SESSION_PROVIDER_DELAY}
+    stimulus = stimuli.plan(case)
+    if stimulus['order'] in stimuli.ORDERS:
+        return {'timeoutMs': SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0, 'stimulus': stimulus}
+    return {'timeoutMs': SESSION_TIMEOUT_MS, 'delay': SESSION_PROVIDER_DELAY, 'stimulus': stimulus}
+
+
+def session_row(case, identity, observation, source):
+    execution = stimuli.execution(case_plan(case)['stimulus'])
+    row = {'case': case, 'identity': identity, 'stimulus': execution,
+           'observation': observation}
+    if execution['status'] != 'WITNESSED':
+        row['observation'] = None
+        row['reason'] = execution['reason'] + ': ' + ', '.join(execution['missing'])
+    if observation is None:
+        row['reason'] = source['collectionError'] + '; ' + row.get('reason', '')
+    return row
 
 
 def read_observation(home, project, session, run_id, received, request_id=None, *, retain=False):
@@ -504,8 +519,8 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
                     driver_hello['identities'] = []
                     # One connection, one hello, 72 sequential turns: every
                     # case gets its own session and run, so per-case surfaces
-                    # never alias. Timeout-first variants answer after the
-                    # gateway's timeout has fired; ordering variants complete.
+                    # never alias. Transport timing alone does not execute a
+                    # registered stimulus; session_row requires its witnesses.
                     for index, case in enumerate(cases, start=1):
                         run_id = f'run-{index:02d}'
                         request_id = f'case-{index:02d}'
@@ -523,9 +538,7 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
                         observation, identity, source = wait_observation(
                             home, str(project), key, run_id, received, request_id, deadline,
                             expectation=expectations[case])
-                        row = {'case': case, 'identity': identity, 'observation': observation}
-                        if observation is None:
-                            row['reason'] = source['collectionError']
+                        row = session_row(case, identity, observation, source)
                         rows.append(row)
                         driver_hello['identities'].append(identity)
                         sources.append(source)
