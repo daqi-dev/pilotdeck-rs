@@ -7,7 +7,20 @@
 //! target is bound by the `grep-etxtbsy` negative control. unix-only, like
 //! the `/bin/sh` helpers and `rustix` calls they drive (#1125 fix-r3
 //! review P2).
+//!
+//! #1155 tightens three of those contracts: the write end is proven closed
+//! at the return by a `/proc` scan that runs inside the publication — no
+//! observation gap is left after the return for a released copy to hide in
+//! (r3 review P2-1); the stranger is reaped by the test process itself —
+//! a child subreaper for the guard's lifetime — never left for PID 1 to
+//! collect (r3 review P2-2); the helper's and the test's started-wait caps
+//! are one derived constant (r4 review P2), and the write deadline starts
+//! only once the `spawned` hook's handshake is done, so that wait cannot
+//! consume the write budget it is meant to bound (r4 review P2).
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
 use std::{
+    cell::Cell,
     fs, io,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
@@ -41,12 +54,49 @@ const RETURN_GRACE: Duration = Duration::from_secs(2);
 /// started; the stranger publishes that signal only once it has confirmed it
 /// holds the pipe's read end, so this only bounds a stranger that never
 /// started or never got the read end (#1141 fix-r2 review P1-1, fix-r3).
+/// The helper's own bounded started-wait is derived from this same constant
+/// (#1155 r4 review P2), so there is one cap — not two to drift apart; the
+/// r4 review found the helper waiting 5 s against the test's 10 s.
 const STRANGER_STARTED_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long the guard below may take to confirm the stranger's process group
 /// is empty after its kill; it only bounds a stranger that refuses to die
 /// (#1141 fix-r1 review P1-1).
 const STRANGER_REAP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// #1155 r3 review P2-2: how long the guard below may take to reap the
+/// stranger itself after its kill; the stranger is this process's child
+/// under the subreaper lease, so this only bounds a reaping that never
+/// completes.
+#[cfg(target_os = "linux")]
+const STRANGER_PID_REAP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// #1155 r4 review P2: how long the stranger below waits between confirming
+/// its stdin is the pipe and publishing `started` — longer than the 5 s the
+/// helper's bounded wait used to hardcode independently of the test-side
+/// cap (r4 review P2), shorter than the unified 10 s, so a helper that
+/// reverts to the short cap gives up before the stranger it was waiting
+/// for ever confirms.
+const STRANGER_STARTED_DELAY: Duration = Duration::from_secs(6);
+
+/// #1155 r4 review P2: how far below the deadline the measured write phase
+/// may land; a healthy writer cannot give up before its own expiry — the
+/// deadline now starts where the `spawned` hook returns — so the floor only
+/// absorbs the instant between the hook's return and the expiry computation.
+const DEADLINE_FLOOR_SLACK: Duration = Duration::from_millis(100);
+
+/// #1155 r3 review P2-1: how long a write-end candidate found by the
+/// return-boundary scan gets to disappear before it is declared a survivor.
+/// A fork of this process that has not exec'd yet holds an inherited copy of
+/// the write end for its fork-to-exec window — O_CLOEXEC only closes it at
+/// that exec, the same pre-exec window #1125 was about — and such a copy is
+/// on its way out, not a leak; the sibling stress test forks continuously
+/// while these tests run, so the scan would otherwise flag a transient on
+/// the healthy path. No new copy can appear once the writer thread is
+/// finished, so a candidate that persists through the grace is one that
+/// really survives the return.
+#[cfg(target_os = "linux")]
+const TRANSIENT_WRITE_END_GRACE: Duration = Duration::from_millis(500);
 
 /// The name the stranger records its write-end observation under (#1141).
 const STRANGER_EOF: &str = "stranger-eof";
@@ -63,7 +113,21 @@ const STRANGER_GO: &str = "stranger-go";
 /// publication step has run yet (#1141 fix-r2 review P1-1), the dead-helper
 /// test so neither the helper's death nor the writer's first write can
 /// precede the stranger holding the read end (#1141 fix-r3, Linux cb8).
+/// Its content is the stranger's own pid (#1155 r3 review P2-2): the guard
+/// reaps the stranger through that pid, so it is never read back to signal
+/// it — the stranger is already dead by then — only to collect it.
 const STRANGER_STARTED: &str = "stranger-started";
+
+/// #1155 r4 review P2: the marker the helper writes once its bounded
+/// started-wait observed the stranger's `started` signal — the same cap the
+/// test-side wait derives from — so "the helper waited out the handshake
+/// before dying" is an assertion, not an assumption.
+const STRANGER_SAW: &str = "stranger-saw";
+
+/// #1155 r3 review P2-2: the pid file the sleep-5 helper publishes its
+/// stranger under; that helper runs no group of its own, so the guard can
+/// only end its stranger by pid.
+const STRANGER_PID: &str = "stranger-pid";
 
 /// The panic the `spawned` hook of the panic test below raises once the
 /// stranger has started; comparing the caught payload against it keeps a
@@ -84,24 +148,29 @@ const DELIBERATE_PANIC: &str = "#1141 deliberate panic while the stranger is run
 /// EPIPE instead of the deadline). A stdin that is not the pipe is
 /// recorded as the marker verdict `stdin-not-a-pipe` — the r2 probe read a
 /// `/dev/null` stdin as a 0-byte `eof`, silently misclassifying the very
-/// broken shape it was there to observe. After the go signal it drains the
-/// pipe with a zero-timeout `select` on its stdin and classifies what it
-/// sees — a 0-byte read means EOF was pending, i.e. every write end was
-/// closed before the observation, while a not-ready read end means one is
-/// still held (the writer is gone by then, so no data can ever arrive and
-/// make it ready; the state is monotone, which is what replaces a timing
-/// grace). It publishes every verdict — and the `started` signal —
-/// atomically through a staging file + rename (#166 r8), and then parks in
-/// a bounded sleep that only the test's [`StrangerGuard`] may end, never
-/// EOF or a self-chosen lifetime. `/bin/sh` itself cannot make a
-/// non-blocking read, so the stranger is this `python3` probe (`python3` is
-/// an established dependency of the gateway host runtime and of tests:
-/// `host/connection.rs`, `pilotdeck-yaml/tests/resource_scaling.rs`); the
-/// script contains no single quotes, so it embeds verbatim into the
-/// helper's single-quoted `-c` argument below.
+/// broken shape it was there to observe. The `started` signal carries the
+/// stranger's own pid (#1155 r3 review P2-2), published atomically (#166
+/// r8) after a caller-chosen delay — the dead-helper test delays it past
+/// the 5 s the helper's wait once hardcoded alone, so a cap that drifts
+/// apart again shows up as a helper that gives up first (#1155 r4 review
+/// P2). After the go signal it drains the pipe with a zero-timeout
+/// `select` on its stdin and classifies what it sees — a 0-byte read means
+/// EOF was pending, i.e. every write end was closed before the observation,
+/// while a not-ready read end means one is still held (the writer is gone
+/// by then, so no data can ever arrive and make it ready; the state is
+/// monotone, which is what replaces a timing grace). It publishes every
+/// verdict — and the `started` signal — atomically through a staging file +
+/// rename (#166 r8), and then parks in a bounded sleep that only the test's
+/// [`StrangerGuard`] may end, never EOF or a self-chosen lifetime.
+/// `/bin/sh` itself cannot make a non-blocking read, so the stranger is
+/// this `python3` probe (`python3` is an established dependency of the
+/// gateway host runtime and of tests: `host/connection.rs`,
+/// `pilotdeck-yaml/tests/resource_scaling.rs`); the script contains no
+/// single quotes, so it embeds verbatim into the helper's single-quoted
+/// `-c` argument below.
 const STRANGER_PROBE: &str = r#"
 import os, select, stat, sys, time
-marker, go, started = sys.argv[1], sys.argv[2], sys.argv[3]
+marker, go, started, delay_ms = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 def publish(path, text):
     staging = path + ".staging"
     with open(staging, "w") as handle:
@@ -110,7 +179,8 @@ def publish(path, text):
 if not stat.S_ISFIFO(os.fstat(0).st_mode):
     publish(marker, "stdin-not-a-pipe")
 else:
-    publish(started, "started")
+    time.sleep(int(delay_ms) / 1000.0)
+    publish(started, str(os.getpid()))
     deadline = time.monotonic() + 60.0
     while not os.path.exists(go) and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -167,6 +237,9 @@ fn a_stalled_helper_is_killed_and_cleaned_up() {
         |status| {
             let _ = kill_sent.send(status);
         },
+        // #1155 r3 review P2-1: the return-boundary proof holds on every
+        // path — success included.
+        assert_no_write_end_survives_the_return,
     )
     .expect_err("#1125 a stalled helper must fail its publication");
     assert!(
@@ -197,6 +270,7 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
         |status| {
             let _ = kill_sent.send(status);
         },
+        assert_no_write_end_survives_the_return,
     )
     .expect_err("#1125 a helper that never reads must fail its publication");
     assert!(
@@ -216,10 +290,19 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
 /// explicit redirection `/bin/sh` points a background command's stdin at
 /// `/dev/null`, and dash does so even with one (`<&0`), so the read end
 /// would close with the helper (#1141, #1125 r4 review P2-1, #1141 fix-r3
-/// Linux cb8 finding).
+/// Linux cb8 finding). #1155 r3 review P2-2: the helper publishes the
+/// stranger's pid atomically (staging + rename, #166 r8), the `spawned`
+/// hook waits for it and takes a subreaper lease before the helper — the
+/// stranger's original parent — can die, and the [`StrangerGuard`] then
+/// kills and reaps the stranger by pid: this helper runs no group of its
+/// own, so a group kill is not an option, and the collection is the
+/// test's own job, never PID 1's.
 #[test]
 fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
     let scratch = Scratch::new("helper-stall-stranger");
+    let signals = Scratch::new("helper-stall-stranger-signals");
+    let pid_file = signals.path().join(STRANGER_PID);
+    let mut stranger = StrangerGuard::new();
     let (kill_sent, kill_reported) = mpsc::channel();
     let body = "\n".repeat(256 * 1024);
     let error = write_executable_bounded(
@@ -227,13 +310,17 @@ fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
         &body,
         0o755,
         Duration::from_millis(1500),
-        |_| stalled_behind_a_stranger_reader(),
-        // This helper's stranger ends on its own within a bounded moment
-        // (#1141), so nobody consumes the spawn id either.
-        |_| {},
+        |_| stalled_behind_a_stranger_reader(&pid_file),
+        // The subreaper lease goes up before the publication writes, so the
+        // helper's death — whenever it comes — leaves the stranger on this
+        // process, and the guard can collect it.
+        |_| {
+            stranger.follow(wait_for_stranger_pid(&pid_file));
+        },
         |status| {
             let _ = kill_sent.send(status);
         },
+        assert_no_write_end_survives_the_return,
     )
     .expect_err("#1125 a stranger on the read end must fail its publication");
     assert!(
@@ -241,6 +328,9 @@ fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
         "#1125 deadline error must be TimedOut: {error}"
     );
     assert_killed_and_reaped(&kill_reported);
+    stranger
+        .end()
+        .expect("#1155 the stranger must be killed and reaped by the test's guard, not PID 1's");
     assert_only_the_owner_token_remains(&scratch);
 }
 
@@ -253,31 +343,32 @@ fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
 /// does. The observable chain: the reap report shows an ordinary exit (a
 /// guard-killed helper would report SIGKILL), the write fails with
 /// `TimedOut` (a read end closed at the deadline would have surfaced as a
-/// broken pipe instead), and the publication returns within its deadline.
-/// The stranger — released by a go signal the test publishes once the
-/// publication has returned — then observes the pipe with the non-blocking
-/// probe and records the verdict in the marker, proving the writer thread
-/// exited and with it dropped this process's only copy of the write end:
-/// EOF reaches a reader only after every write end is closed, and the go
-/// signal was published after the return, so a copy still held past that
-/// boundary is observed as `write-end-still-held` instead of `eof` (#1141
-/// fix-r2 review P2-1, which replaced the r1 marker-timestamp judgment and
-/// its fixed grace). The stranger parks in a bounded sleep after recording
-/// the verdict rather than ending on its own, so the [`StrangerGuard`] is
-/// the only thing that may collect it, on every exit of this test (#1141
-/// fix-r1 review P1-1): it kills the stranger's process group, confirms the
-/// group is empty, and the test asserts the stranger was collected before
-/// it returns.
+/// broken pipe instead), the helper left its `saw` marker behind — it
+/// waited out the handshake before dying, under the one cap both sides
+/// derive from (#1155 r4 review P2) — and the write phase measured from
+/// the hook's return lasted the full deadline and returned within its
+/// grace (#1155 r4 review P2: the deadline starts after the handshake, so
+/// the 6 s `started` delay below no longer eats the write budget — and a
+/// deadline that starts too early gives up on it and lands under the
+/// floor). #1155 r3 review P2-1 replaces the old evidence — the stranger
+/// observing the read end after the go signal — with the publication's own
+/// return-boundary scan: a write end of the pipe still held by anyone in
+/// the process tree at the return fails the publication there, with the
+/// scan's error taking precedence over the `TimedOut` the test expects
+/// (the stranger's verdict below remains as defense in depth, and the
+/// stranger itself — killed in its group and reaped by the test, never
+/// left for PID 1, #1155 r3 review P2-2 — records it after the fact).
 #[test]
 fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     let scratch = Scratch::new("helper-dead-stranger");
     let marker = scratch.path().join(STRANGER_EOF);
-    // The go and started signals are test machinery rather than observations
-    // of the publication, so they live in a scratch of their own and the
-    // residue assertion keeps watching the publication's names.
+    // The go, started, and saw signals are test machinery rather than
+    // observations of the publication, so they live in a scratch of their
+    // own and the residue assertion keeps watching the publication's names.
     let signals = Scratch::new("helper-dead-stranger-signals");
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
+    let saw = signals.path().join(STRANGER_SAW);
     // Declared before the publication so every later exit of this test —
     // including a panic from inside the shared helper — unwinds through the
     // guard's Drop (#1141 fix-r1 review P1-1).
@@ -285,13 +376,15 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     let (kill_sent, kill_reported) = mpsc::channel();
     let body = "\n".repeat(256 * 1024);
     let deadline = Duration::from_millis(1500);
-    let begin = Instant::now();
+    let write_began = Cell::new(None::<Instant>);
     let error = write_executable_bounded(
         &scratch.path().join("script"),
         &body,
         0o755,
         deadline,
-        |_| dead_helper_with_a_stranger_reader(&marker, &go, &started),
+        |_| {
+            dead_helper_with_a_stranger_reader(&marker, &go, &started, &saw, STRANGER_STARTED_DELAY)
+        },
         // #1141 fix-r2 review P1-1: the helper runs as its own group leader
         // (`process_group(0)` below), so its spawn-returned id is the group
         // the stranger lands in — adopted here, before the helper or the
@@ -300,26 +393,45 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         // pipe, so waiting here keeps the writer from starting — and the
         // helper below from dying — before the read end is held; with the
         // read end lost (dash points a background stdin at /dev/null), the
-        // writer died on EPIPE instead of the deadline.
+        // writer died on EPIPE instead of the deadline. #1155 r4 review P2:
+        // the wait below runs inside this hook, and the write deadline
+        // starts only after it, so the handshake cannot consume the write
+        // budget — which is why the hook's return is where the write phase
+        // begins (`write_began`).
         |pid| {
             stranger.adopt(helper_group(pid));
-            wait_for_signal(&started, STRANGER_STARTED_TIMEOUT).expect(
+            let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT).expect(
                 "#1141 the stranger must confirm it holds the pipe read end \
                  before the publication writes",
             );
+            stranger.watch(stranger_pid(&started_pid));
+            write_began.set(Some(Instant::now()));
         },
         |status| {
             let _ = kill_sent.send(status);
         },
+        assert_no_write_end_survives_the_return,
     )
     .expect_err("#1141 a dead helper with a stranger reader must fail its publication");
+    let write_began = write_began
+        .get()
+        .expect("#1155 the spawned hook must record where the write phase began");
+    let took = write_began.elapsed();
     assert!(
-        begin.elapsed() < deadline + RETURN_GRACE,
-        "#1141 publication must return within its deadline"
+        took + DEADLINE_FLOOR_SLACK >= deadline,
+        "#1155 the write phase must last its full deadline: {took:?} elapsed"
+    );
+    assert!(
+        took < deadline + RETURN_GRACE,
+        "#1155 the publication must return within its deadline: {took:?} elapsed"
     );
     assert!(
         error.kind() == io::ErrorKind::TimedOut,
         "#1141 deadline error must be TimedOut: {error}"
+    );
+    assert!(
+        saw.exists(),
+        "#1155 the helper must observe the stranger's started signal before it dies"
     );
     assert_reaped_after_a_natural_death(&kill_reported);
     assert!(
@@ -336,7 +448,10 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     // #1141 fix-r2 review P2-1: the probe distinguishes the two pipe states
     // directly — every write end already closed (a 0-byte read) versus one
     // still held past the return boundary (a not-ready read end) — so the
-    // verdict, not a timestamp difference, is the judgment.
+    // verdict, not a timestamp difference, is the judgment. #1155 r3 review
+    // P2-1 demoted it from the only evidence to the second witness: the
+    // publication's own return-boundary scan already failed any write end
+    // still held at the return.
     assert!(
         observation == "eof",
         "#1141 the write end must be closed by the time the publication returns, \
@@ -373,6 +488,7 @@ fn a_panic_while_the_stranger_runs_still_ends_it() {
     let marker = signals.path().join(STRANGER_EOF);
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
+    let saw = signals.path().join(STRANGER_SAW);
     let mut stranger = StrangerGuard::new();
     let (kill_sent, _kill_reported) = mpsc::channel();
     let body = "\n".repeat(256 * 1024);
@@ -382,16 +498,20 @@ fn a_panic_while_the_stranger_runs_still_ends_it() {
             &body,
             0o755,
             Duration::from_millis(1500),
-            |_| dead_helper_with_a_stranger_reader(&marker, &go, &started),
+            |_| dead_helper_with_a_stranger_reader(&marker, &go, &started, &saw, Duration::ZERO),
             |pid| {
                 stranger.adopt(helper_group(pid));
-                wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
+                let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
                     .expect("#1141 the stranger must signal that it started");
+                stranger.watch(stranger_pid(&started_pid));
                 panic!("{DELIBERATE_PANIC}");
             },
             |status| {
                 let _ = kill_sent.send(status);
             },
+            // The panic below unwinds before a writer ever exists, so there
+            // is no return boundary to prove here.
+            |_| Ok(()),
         )
     }))
     .expect_err("#1141 the publication must panic while the stranger is running");
@@ -440,22 +560,29 @@ fn stalled_without_reading() -> process::Command {
     helper
 }
 
-/// `/bin/sh` leaves a background `sleep` holding the pipe's read end, then
+/// `/bin/sh` leaves a background `sleep 5` holding the pipe's read end, then
 /// `exec`s its own sleep: killing the helper cannot close the read end, so
-/// only the writer's deadline ends the write. The stranger stays on the
-/// read end through the same fd 3 save as the dead-helper stranger below
-/// (#1141 fix-r3): a plain `sleep 5 &` reads `/dev/null` because the POSIX
-/// async rule assigns a background command that stdin, and — the Linux cb8
-/// finding — dash applies the rule even behind an explicit `<&0`, which
-/// lost the read end there; bash honors an explicit `<&0`, which is why the
-/// same shape kept working on macOS. The stranger is a `sleep 5`, so it
-/// lets go on its own shortly after the 1.5-second deadline and never
-/// outlives the test by more than a bounded moment.
-fn stalled_behind_a_stranger_reader() -> process::Command {
+/// only the writer's deadline ends the write. The stranger's `<&3` off the
+/// helper's fd 3 save is what keeps it on the read end (#1141 fix-r3,
+/// Linux cb8): the POSIX async rule points a background command's stdin at
+/// `/dev/null` — dash applies it even behind an explicit `<&0`; bash honors
+/// the redirect — so the fd 3 save is the shape that holds under both.
+/// #1155 r3 review P2-2: the helper also publishes the stranger's pid —
+/// `$!`, atomically through a staging file + rename (#166 r8) — because
+/// this helper runs no group of its own, so the test's [`StrangerGuard`]
+/// can only end the stranger by pid, and does its own reaping: the
+/// alternative was leaving a zombie (once the helper dies first) to PID 1.
+fn stalled_behind_a_stranger_reader(pid_file: &Path) -> process::Command {
+    let staging = pid_file.with_extension("staging");
     let mut helper = process::Command::new("/bin/sh");
     helper
         .arg("-c")
-        .arg("exec 3<&0; sleep 5 <&3 & exec /bin/sleep 30")
+        .arg(format!(
+            "exec 3<&0; sleep 5 <&3 & \
+             echo $! >\"{staging}\"; mv \"{staging}\" \"{pid}\"; exec /bin/sleep 30",
+            staging = staging.display(),
+            pid = pid_file.display(),
+        ))
         .arg("stalled-helper")
         .stdin(process::Stdio::piped());
     helper
@@ -475,39 +602,58 @@ fn stalled_behind_a_stranger_reader() -> process::Command {
 /// started-wait — never an unbounded `wait`, so a stranger that never starts
 /// cannot wedge the helper past its own deadline — is the other half of the
 /// handshake: the helper may not die before the stranger provably holds the
-/// read end. The helper runs as its own process-group leader
-/// (`process_group(0)`), so the stranger — and everything it runs — stays
-/// in a group the test alone can end, and whose id is the spawn-returned one
-/// the `spawned` hook hands over: the group exists from the spawn on, so it
-/// never depends on the helper (or the stranger) publishing anything (#1141
-/// fix-r2 review P1-1). The stranger itself is the [`STRANGER_PROBE`]
-/// python process: it waits for the go signal the test publishes once the
-/// publication has returned (capped, so even a test that never signals
-/// leaves it bounded), observes the pipe, records the verdict, and then
-/// parks in a bounded sleep that only the test's [`StrangerGuard`] may end,
-/// never EOF or a self-chosen lifetime (#1141 fix-r1 review P1-1).
+/// read end, and it writes the `saw` marker once it has waited the handshake
+/// out (#1155 r4 review P2), under the one cap both sides derive from —
+/// the r4 review found the helper's 5 s hardcoded against the test's 10 s.
+/// The helper runs as its own process-group leader (`process_group(0)`), so
+/// the stranger — and everything it runs — stays in a group the test alone
+/// can end, and whose id is the spawn-returned one the `spawned` hook hands
+/// over: the group exists from the spawn on, so it never depends on the
+/// helper (or the stranger) publishing anything (#1141 fix-r2 review P1-1).
+/// The stranger itself is the [`STRANGER_PROBE`] python process: it waits
+/// for the go signal the test publishes once the publication has returned
+/// (capped, so even a test that never signals leaves it bounded), observes
+/// the pipe, records the verdict, and then parks in a bounded sleep that
+/// only the test's [`StrangerGuard`] may end, never EOF or a self-chosen
+/// lifetime (#1141 fix-r1 review P1-1).
 fn dead_helper_with_a_stranger_reader(
     marker: &Path,
     go: &Path,
     started: &Path,
+    saw: &Path,
+    delay: Duration,
 ) -> process::Command {
+    let delay_ms = delay.as_millis();
+    let polls = stranger_started_polls();
     let mut helper = process::Command::new("/bin/sh");
     helper
         .arg("-c")
         .arg(format!(
             "exec 3<&0
-               python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" <&3 &
+               python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" {delay_ms} <&3 &
                i=0
-               while [ ! -e \"$3\" ] && [ \"$i\" -lt 100 ]; do i=$((i+1)); /bin/sleep 0.05; done
+               while [ ! -e \"$3\" ] && [ \"$i\" -lt {polls} ]; do i=$((i+1)); /bin/sleep 0.05; done
+               if [ -e \"$3\" ]; then printf saw >\"$4.staging\"; mv \"$4.staging\" \"$4\"; fi
                exit 0"
         ))
         .arg("dead-helper")
         .arg(marker)
         .arg(go)
         .arg(started)
+        .arg(saw)
         .stdin(process::Stdio::piped())
         .process_group(0);
     helper
+}
+
+/// The helper's bounded started-wait, in `/bin/sleep 0.05` rounds, derived
+/// from the same [`STRANGER_STARTED_TIMEOUT`] the test-side wait uses
+/// (#1155 r4 review P2): one cap, not two to drift apart — the r4 review
+/// found the helper hardcoded at 5 s against the test's 10 s, so the
+/// helper could give up on a stranger the test was still willing to wait
+/// for.
+fn stranger_started_polls() -> u128 {
+    STRANGER_STARTED_TIMEOUT.as_millis() / 50
 }
 
 /// The helper's spawn-returned id, which `process_group(0)` above also made
@@ -516,16 +662,48 @@ fn helper_group(id: u32) -> Pid {
     Pid::from_raw(id as i32).expect("#1141 the helper's id must be a valid group id")
 }
 
+/// The stranger's pid, published inside its `started` signal (#1155 r3
+/// review P2-2): the guard uses it only to collect the stranger — never to
+/// signal it, which the group kill already did.
+fn stranger_pid(started: &str) -> Pid {
+    let pid: i32 = started
+        .trim()
+        .parse()
+        .expect("#1155 the stranger's started signal must carry its pid");
+    Pid::from_raw(pid).expect("#1155 the stranger's pid must be valid")
+}
+
+/// The pid the sleep-5 helper publishes for its stranger (#1155 r3 review
+/// P2-2), waited for by the `spawned` hook so the guard owns the stranger
+/// before the publication continues; the helper renames the staging file
+/// into place (#166 r8), so a partial file is never mistaken for one.
+fn wait_for_stranger_pid(pid_file: &Path) -> Pid {
+    let deadline = Instant::now() + STRANGER_STARTED_TIMEOUT;
+    while !pid_file.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let published =
+        fs::read_to_string(pid_file).expect("#1155 the helper must publish its stranger's pid");
+    stranger_pid(&published)
+}
+
 /// Ends the stranger the dead-helper tests leave behind, on every exit of
 /// those tests (#1141 fix-r1 review P1-1, #1141 fix-r2 review P1-1). The
 /// group id is handed over by the `spawned` hook the moment the helper
 /// exists, so the guard is armed before the stranger can even be forked: a
 /// helper that dies before forking it, a group file that is never written,
 /// an in-flight publication that panics — the guard already holds the group,
-/// and a `None` group means the spawn never succeeded, so nothing was ever
-/// forked and there is nothing to end.
+/// and no group and no pid at all means the spawn never succeeded or the
+/// helper published nothing, so there is nothing to end. #1155 r3 review
+/// P2-2: the guard also reaps the stranger itself — this process is a
+/// child subreaper for the guard's lifetime, so the orphaned stranger is
+/// its child — instead of leaving the collection to PID 1; on Linux an
+/// `ECHILD` from that wait is an error, so "reaped here, never by init" is
+/// itself the tested invariant.
 struct StrangerGuard {
     group: Option<Pid>,
+    stranger: Option<Pid>,
+    adopted: bool,
     ended: bool,
 }
 
@@ -533,14 +711,40 @@ impl StrangerGuard {
     fn new() -> Self {
         Self {
             group: None,
+            stranger: None,
+            adopted: false,
             ended: false,
         }
     }
 
     /// Take over the stranger's group at the spawn, through the `spawned`
-    /// hook (#1141 fix-r2 review P1-1).
+    /// hook (#1141 fix-r2 review P1-1). The subreaper lease goes up first —
+    /// the helper may die at any moment after this, and the orphaned
+    /// stranger must land on this process, not on PID 1 (#1155 r3 review
+    /// P2-2).
     fn adopt(&mut self, group: Pid) {
+        self.acquire_reaper();
         self.group = Some(group);
+    }
+
+    /// The pid-only counterpart for a helper that runs no group of its own
+    /// (#1155 r3 review P2-2): the stranger's pid is published by the
+    /// helper, and the subreaper lease must be up before the helper — and
+    /// with it the stranger's original parent — can die.
+    fn follow(&mut self, stranger: Pid) {
+        self.acquire_reaper();
+        self.stranger = Some(stranger);
+    }
+
+    /// Record the stranger's pid, published inside its `started` signal, for
+    /// the guard's own reaping (#1155 r3 review P2-2).
+    fn watch(&mut self, stranger: Pid) {
+        self.stranger = Some(stranger);
+    }
+
+    fn acquire_reaper(&mut self) {
+        adopt_subreaper().expect("#1155 the test process must become its strangers' subreaper");
+        self.adopted = true;
     }
 
     /// The owned group, if the spawn handed one over; the tests assert this
@@ -549,28 +753,151 @@ impl StrangerGuard {
         self.group
     }
 
-    /// Kill the stranger's whole process group and confirm the group is
-    /// empty. The group holds only the dead helper's descendants, and it
-    /// cannot have been recycled while the stranger is still parked in it.
+    /// Kill the stranger's whole process group, confirm the orphaned
+    /// stranger was reparented here, collect the group's dead, and confirm
+    /// the group is empty. The group holds only the dead helper's
+    /// descendants, and it cannot have been recycled while the stranger is
+    /// still parked in it. The collection comes first: under the subreaper
+    /// lease the zombies are this process's children, so the group-empty
+    /// poll can only pass after the guard has collected them — there is no
+    /// PID 1 left to do it (#1155 r3 review P2-2).
     fn end(&mut self) -> io::Result<()> {
         if self.ended {
             return Ok(());
         }
-        let Some(group) = self.group else {
+        self.ended = true;
+        let ended = self.terminate();
+        if self.adopted {
+            release_subreaper();
+            self.adopted = false;
+        }
+        ended
+    }
+
+    fn terminate(&mut self) -> io::Result<()> {
+        if let Some(group) = self.group {
+            super::process_group::kill(Some(group), Signal::KILL);
+            self.confirm_reparented()?;
+            let deadline = Instant::now() + STRANGER_REAP_TIMEOUT;
+            while super::process_group::group_exists(group) && Instant::now() < deadline {
+                self.reap_group(group);
+                thread::sleep(Duration::from_millis(5));
+            }
+            if super::process_group::group_exists(group) {
+                return Err(io::Error::other(
+                    "#1141 the stranger's process group survived the guard's kill",
+                ));
+            }
+            Ok(())
+        } else if let Some(stranger) = self.stranger {
+            let _ = rustix::process::kill_process(stranger, Signal::KILL);
+            self.confirm_reparented()?;
+            self.reap_process(stranger)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Confirm the orphaned stranger really is this process's child
+    /// (#1155 r3 review P2-2): the subreaper lease is what reparents it here
+    /// — making the guard, not PID 1, its reaper — so on Linux a wait that
+    /// reports `ECHILD` (never reparented, still init's to collect) is an
+    /// error rather than a fallthrough, and "the test owns the stranger" is
+    /// itself the tested invariant. The observation is a `waitid` with
+    /// `NOWAIT`, so it confirms the exit without collecting the zombie:
+    /// the group reaping below owns collection, and that split keeps
+    /// "was it ours" and "did we collect it" separately breakable. Other
+    /// unix kernels have no `PR_SET_CHILD_SUBREAPER` (rustix gates its
+    /// prctl module to linux), so the lease never went up there and init
+    /// remains the collector.
+    fn confirm_reparented(&self) -> io::Result<()> {
+        let Some(stranger) = self.stranger else {
             return Ok(());
         };
-        super::process_group::kill(Some(group), Signal::KILL);
-        let deadline = Instant::now() + STRANGER_REAP_TIMEOUT;
-        while super::process_group::group_exists(group) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(5));
+        #[cfg(target_os = "linux")]
+        {
+            let deadline = Instant::now() + STRANGER_PID_REAP_TIMEOUT;
+            loop {
+                match rustix::process::waitid(
+                    rustix::process::WaitId::Pid(stranger),
+                    rustix::process::WaitIdOptions::EXITED
+                        | rustix::process::WaitIdOptions::NOHANG
+                        | rustix::process::WaitIdOptions::NOWAIT,
+                ) {
+                    Ok(Some(_)) => return Ok(()),
+                    Ok(None) if Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(5))
+                    }
+                    Ok(None) => {
+                        return Err(io::Error::other(
+                            "#1155 the stranger did not die by the guard's kill",
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(io::Error::other(format!(
+                            "#1155 the stranger was not reparented to the test's guard: {error}"
+                        )));
+                    }
+                }
+            }
         }
-        if super::process_group::group_exists(group) {
-            return Err(io::Error::other(
-                "#1141 the stranger's process group survived the guard's kill",
-            ));
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = stranger;
+            Ok(())
         }
-        self.ended = true;
-        Ok(())
+    }
+
+    /// Collect every exited member of the group (#1155 r3 review P2-2):
+    /// under the subreaper lease the test — not PID 1 — is the reaper of
+    /// everything the dead helper left in its group, which is not just the
+    /// stranger but also the short-lived `/bin/sleep 0.05` of the helper's
+    /// started-poll, orphaned whenever a guard kill lands mid-poll. Without
+    /// this there is no init fallback under the lease, so a zombie of
+    /// either kind would keep the group non-empty forever. Non-Linux
+    /// targets run no lease, so init remains the collector there.
+    fn reap_group(&self, group: Pid) {
+        #[cfg(target_os = "linux")]
+        while let Ok(Some(_)) =
+            rustix::process::waitpgid(group, rustix::process::WaitOptions::NOHANG)
+        {}
+        #[cfg(not(target_os = "linux"))]
+        let _ = group;
+    }
+
+    /// The pid-mode counterpart of [`Self::reap_group`] for a helper that
+    /// runs no group of its own (#1155 r3 review P2-2): the stranger is
+    /// this process's child under the lease, so `waitpid` on its pid alone
+    /// collects it without touching any other child of the test.
+    fn reap_process(&self, stranger: Pid) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let deadline = Instant::now() + STRANGER_PID_REAP_TIMEOUT;
+            loop {
+                match rustix::process::waitpid(Some(stranger), rustix::process::WaitOptions::NOHANG)
+                {
+                    Ok(Some(_)) => return Ok(()),
+                    Ok(None) if Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(5))
+                    }
+                    Ok(None) => {
+                        return Err(io::Error::other(
+                            "#1155 the stranger was not reaped by the test's guard",
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(io::Error::other(format!(
+                            "#1155 the stranger was not reparented to the test's guard: {error}"
+                        )));
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = stranger;
+            Ok(())
+        }
     }
 }
 
@@ -588,22 +915,176 @@ impl Drop for StrangerGuard {
     }
 }
 
+/// #1155 r3 review P2-2: this process's child-subreaper flag, refcounted
+/// because libtest runs these tests on a thread pool and two stranger
+/// guards may overlap: the first adoption saves the previous value and
+/// raises the flag, later adoptions join it, and the last release restores
+/// the saved value. The flag is process-wide, so the count — not the flag
+/// itself — decides who restores what.
+#[cfg(target_os = "linux")]
+static SUBREAPER_ADOPTIONS: Mutex<Option<(Option<Pid>, usize)>> = Mutex::new(None);
+
+/// Become a child subreaper (Linux): orphaned descendants — the stranger,
+/// whose parent helper dies before it does — are reparented to this process
+/// instead of PID 1, so the test is their reaper (#1155 r3 review P2-2).
+/// `PR_SET_CHILD_SUBREAPER` does not exist on other unix kernels (rustix
+/// gates its prctl module to linux), so elsewhere this is a no-op and the
+/// guards keep the old contract: init collects the orphan, and the
+/// group-empty confirmation proves it went.
+fn adopt_subreaper() -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut adoptions = SUBREAPER_ADOPTIONS
+            .lock()
+            .expect("#1155 the subreaper adoption state must not be poisoned");
+        let (saved, count) = adoptions.get_or_insert_with(|| (None, 0));
+        if *count == 0 {
+            *saved = rustix::process::child_subreaper()?;
+            let mine = Pid::from_raw(process::id() as i32)
+                .expect("#1155 this process's id must be a valid pid");
+            rustix::process::set_child_subreaper(Some(mine))?;
+        }
+        *count += 1;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = ();
+    Ok(())
+}
+
+/// Step the subreaper refcount back down, restoring the saved flag value on
+/// the last release (#1155 r3 review P2-2). Best effort on purpose: a
+/// restore that fails only leaves this process a subreaper, which harms
+/// nothing outside this test run.
+fn release_subreaper() {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(mut adoptions) = SUBREAPER_ADOPTIONS.lock() else {
+            return;
+        };
+        let Some((_saved, count)) = adoptions.as_mut() else {
+            return;
+        };
+        *count -= 1;
+        if *count == 0 {
+            let (saved, _) = adoptions
+                .take()
+                .expect("#1155 the subreaper adoption state must be present");
+            let _ = rustix::process::set_child_subreaper(saved);
+        }
+    }
+}
+
+/// #1155 r3 review P2-1: the return-boundary proof. The scan runs inside
+/// the publication — after `published` is decided, before it returns — so
+/// there is no gap between "the last write end closed" and "someone
+/// checked" for a copy released in between to hide in, which is exactly the
+/// gap the old read-end observation left. Soundness: a copy held at the
+/// return moment is held through the whole scan — holding is monotone, only
+/// a release makes an fd disappear — so the scan enumerates it; a copy
+/// released mid-scan does not violate "closed at return"; and no new copy of
+/// this pipe's write end can appear, because the writer thread — whose
+/// `ChildStdin` was this process's only source of the descriptor — has
+/// already been asserted finished, while no other process can acquire the
+/// descriptor: only this process's descendants can inherit it, and any copy
+/// they already hold is precisely what the scan must find — with one
+/// exception, a pre-exec transient: a fork of this process that has not
+/// exec'd yet holds an inherited CLOEXEC copy for its fork-to-exec window
+/// (the same window #1125 was about) and is on its way out, not a leak, so
+/// a candidate must persist through [`TRANSIENT_WRITE_END_GRACE`] before
+/// it is declared a survivor. Directories
+/// that cannot be read belong to a process that is dying — it holds
+/// nothing — or to another user, which can never hold this pipe, so
+/// unreadable entries are skipped. The pipe is identified by its inode —
+/// both ends share it and no live pipe reuses it — and a write end by its
+/// fdinfo access mode (`O_WRONLY`/`O_RDWR`, the low two flag bits); a read
+/// end (mode `0`) is the stranger, and passes. `/proc` is Linux: elsewhere
+/// the proof is skipped and the stranger's marker observation remains the
+/// evidence.
+fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let wanted = format!("pipe:[{pipe}]");
+        let mut candidates: Vec<String> = Vec::new();
+        let processes = fs::read_dir("/proc").map_err(|error| {
+            io::Error::other(format!(
+                "#1155 reading /proc for the return-boundary scan: {error}"
+            ))
+        })?;
+        for process in processes {
+            let process = process
+                .map_err(|error| io::Error::other(format!("#1155 reading /proc: {error}")))?;
+            let pid = process.file_name().to_string_lossy().into_owned();
+            if !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
+            let descriptors = match fs::read_dir(format!("/proc/{pid}/fd")) {
+                Ok(descriptors) => descriptors,
+                Err(_) => continue,
+            };
+            for descriptor in descriptors {
+                let Ok(descriptor) = descriptor else {
+                    continue;
+                };
+                let Ok(target) = fs::read_link(descriptor.path()) else {
+                    continue;
+                };
+                if target.to_string_lossy() != wanted {
+                    continue;
+                }
+                let number = descriptor.file_name();
+                let Ok(fdinfo) =
+                    fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", number.to_string_lossy()))
+                else {
+                    continue;
+                };
+                let access = fdinfo
+                    .lines()
+                    .find_map(|line| line.strip_prefix("flags:"))
+                    .and_then(|flags| u32::from_str_radix(flags.trim(), 8).ok())
+                    .unwrap_or(0);
+                if access & 0o3 == 0 {
+                    // A read end — the stranger holds exactly that.
+                    continue;
+                }
+                candidates.push(format!("/proc/{pid}/fd/{}", number.to_string_lossy()));
+            }
+        }
+        // A candidate counts as a surviving write end only if it persists
+        // through the transient grace: the writer thread is finished, so
+        // nothing new can acquire the descriptor, while a pre-exec fork of
+        // this process loses its inherited copy at the exec already
+        // underway.
+        let deadline = Instant::now() + TRANSIENT_WRITE_END_GRACE;
+        while !candidates.is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+            candidates.retain(|fd| {
+                fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted)
+            });
+        }
+        if let Some(fd) = candidates.first() {
+            return Err(io::Error::other(format!(
+                "#1155 a write end of the publication pipe ({fd}) survived the return"
+            )));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = pipe;
+    Ok(())
+}
+
 /// Wait until the stranger has published `signal`, bounded by `wait`; the
 /// stranger publishes the signal only once it has confirmed it holds the
 /// pipe's read end, so the bound only covers a stranger that never started
-/// or never got the read end (#1141 fix-r2 review P1-1, fix-r3).
-fn wait_for_signal(signal: &Path, wait: Duration) -> io::Result<()> {
+/// or never got the read end (#1141 fix-r2 review P1-1, fix-r3). Its
+/// content — the stranger's pid — is the caller's to keep (#1155 r3
+/// review P2-2).
+fn wait_for_signal(signal: &Path, wait: Duration) -> io::Result<String> {
     let deadline = Instant::now() + wait;
     while !signal.exists() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(5));
     }
-    if signal.exists() {
-        Ok(())
-    } else {
-        Err(io::Error::other(
-            "#1141 the stranger never signalled that it started",
-        ))
-    }
+    fs::read_to_string(signal)
+        .map_err(|_| io::Error::other("#1141 the stranger never signalled that it started"))
 }
 
 /// Publish the go signal atomically — write a staging file, then rename it
