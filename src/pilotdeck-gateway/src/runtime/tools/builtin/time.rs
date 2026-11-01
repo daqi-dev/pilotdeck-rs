@@ -113,8 +113,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         parts.month,
         parts.day
     );
-    let days = days_from_civil(parts.year, i64::from(parts.month), i64::from(parts.day));
-    let weekday = WEEKDAYS[((days + 4).rem_euclid(7)) as usize];
+    let weekday = WEEKDAYS[parts.weekday as usize];
     let output = object([
         ("timezone", string(timezone)),
         ("iso", string(iso)),

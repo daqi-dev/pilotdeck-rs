@@ -1,15 +1,26 @@
 //! Cron storage and its one-shot v1 store migration, ported from the TS
 //! baseline `src/cron/storage/` (CronPaths.ts / CronTaskStore.ts /
-//! CronStoreMigration.ts). Storage contract only: nothing here is wired into
-//! the default proxy route (#1216 A8.3-pr1a).
+//! CronStoreMigration.ts), plus the schedule computation from
+//! `src/cron/runtime/CronSchedule.ts` (and `src/cron/CronTimezone.ts`).
+//! Neither is wired into the gateway process yet: storage is #1216
+//! A8.3-pr1a, schedule computation is #1324 (dispatch splits to #1305,
+//! wiring to #1325).
 mod migration;
 mod paths;
+mod schedule;
 mod store;
 
 pub use migration::{MigrationInput, migrate_cron_stores};
 pub use paths::{CronPaths, resolve_cron_paths};
+pub use schedule::{
+    CRON_SCHEDULE_COMPUTATION_VERSION, ComputedRunAt, CronCreateSchedule, DelayUnit,
+    InvalidTimeValue, compute_next_cron_run_at, compute_next_run_at, cron_day_fields_use_or,
+    delay_to_milliseconds, is_valid_cron_timezone, resolve_cron_timezone,
+};
 pub use store::CronTaskStore;
 
+#[cfg(test)]
+mod schedule_tests;
 #[cfg(test)]
 mod tests;
 
