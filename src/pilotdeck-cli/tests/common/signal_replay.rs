@@ -307,7 +307,8 @@ struct Replay {
     observer: PathBuf,
     sockets: BTreeMap<usize, mpsc::UnboundedSender<Action>>,
     active: BTreeSet<usize>,
-    closes: BTreeMap<usize, Value>,
+    // Preserve the order in which close events reach the observer.
+    closes: Vec<Value>,
     hooks: Vec<Value>,
     wire: Vec<Value>,
     connections: usize,
@@ -590,8 +591,7 @@ impl Replay {
                     &self.id,
                     "one close per connection",
                 );
-                self.closes.insert(
-                    connection,
+                self.closes.push(
                     json!({"connection":connection,"code":code,"reason":reason,"cleanup":cleanup}),
                 );
             }
@@ -705,7 +705,6 @@ fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
             "reason":row["reason"],"cleanup":row["cleanup"]})
         })
         .collect::<Vec<_>>();
-    closes.sort_by_key(|row| row["connection"].as_u64());
     if *actual == json!(closes) {
         return true;
     }
@@ -729,7 +728,6 @@ fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
             }
         }
     }
-    closes.sort_by_key(|row| row["connection"].as_u64());
     *actual == json!(closes)
 }
 
@@ -857,7 +855,7 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
         observer,
         sockets: BTreeMap::new(),
         active: BTreeSet::new(),
-        closes: BTreeMap::new(),
+        closes: Vec::new(),
         hooks: Vec::new(),
         wire: Vec::new(),
         connections: 0,
@@ -978,7 +976,7 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
         "stdoutHex":stdout.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
         "stderrHex":stderr.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
         "initial":initial,"final":snapshot(&runtime,id),"hooks":replay.hooks,"wire":replay.wire,
-        "closes":replay.closes.into_values().collect::<Vec<_>>()});
+        "closes":replay.closes});
     publish(&replay.directory, "actual.json", &actual, id);
     actual
 }
@@ -1721,10 +1719,6 @@ mod comparison_tests {
                     )
                     .collect::<Vec<_>>()
             );
-            actual["closes"]
-                .as_array_mut()
-                .expect("#1145 rejection surface close array")
-                .sort_by_key(|row| row["connection"].as_u64());
             // Project the recorded TS hooks into the Rust comparison shape.
             // This is comparator input, not a claim to have replayed Rust here.
             let removed = expected["hooks"]
@@ -1800,6 +1794,164 @@ mod comparison_tests {
             assert!(
                 compare_surfaces(id, expected, &actual, stdout, message).is_empty(),
                 "#1145 rejection all surfaces restored: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn close_events_keep_arrival_order() {
+        // A short-lived owned child satisfies Replay's ownership invariant;
+        // the two close events themselves are supplied deterministically.
+        let child = Command::new("/usr/bin/true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("#1252 close-order owned child");
+        let mut replay = Replay {
+            id: "#1252 close-order".into(),
+            input: json!({}),
+            child: OwnedChild {
+                child,
+                id: "#1252 close-order".into(),
+            },
+            directory: PathBuf::new(),
+            observer: PathBuf::new(),
+            sockets: BTreeMap::new(),
+            active: BTreeSet::from([1, 2]),
+            closes: Vec::new(),
+            hooks: Vec::new(),
+            wire: Vec::new(),
+            connections: 2,
+            aborts: 0,
+            registered: false,
+            removed: false,
+            abort_entered: false,
+            terminal_consumed: false,
+            terminal_after_abort: false,
+            late_abort_handled: false,
+            resolved_held: false,
+            trigger: false,
+            first_signal: false,
+            second_signal: false,
+            held: None,
+            stream: None,
+            pending_abort: None,
+            deadline: Instant::now() + CLEANUP,
+            cleanup: Arc::new(AtomicBool::new(false)),
+        };
+        replay.on_event(Event::Closed(2, 4003, "auth_failed".into(), false));
+        replay.on_event(Event::Closed(1, 1005, String::new(), false));
+        assert_eq!(
+            json!(replay.closes),
+            json!([
+                {"connection":2,"code":4003,"reason":"auth_failed","cleanup":false},
+                {"connection":1,"code":1005,"reason":"","cleanup":false}
+            ]),
+            "#1252 close events retain arrival order and fields"
+        );
+        assert!(
+            replay.active.is_empty(),
+            "#1252 every observed connection removed"
+        );
+    }
+
+    #[test]
+    fn close_order_is_strict_including_reason_exception() {
+        let source: Value =
+            serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
+                .expect("#1252 close-order original JSON");
+        for id in [
+            "run--complete-cleanup",
+            "run--query-hello-reject-sigint",
+            "run--query-hello-reject-sigterm",
+            "resume--query-hello-reject-sigint",
+            "resume--query-hello-reject-sigterm",
+        ] {
+            let expected = source["captures"]
+                .as_array()
+                .expect("#1252 close-order captures")
+                .iter()
+                .find(|row| row["input"]["id"] == id)
+                .expect("#1252 close-order registered original");
+            let mut actual = expected.clone();
+            let closes = expected["closes"]
+                .as_array()
+                .expect("#1252 close-order observations");
+            assert_eq!(closes.len(), 2, "#1252 exactly two observed closes");
+            assert!(
+                closes[0]["seq"].as_u64().expect("#1252 first close seq")
+                    < closes[1]["seq"].as_u64().expect("#1252 second close seq"),
+                "#1252 original closes retain trace order"
+            );
+            actual["closes"] = json!(
+                closes
+                    .iter()
+                    .map(|row| {
+                        let reason = if row["code"] == 4003 {
+                            json!("auth_failed")
+                        } else {
+                            row["reason"].clone()
+                        };
+                        json!({"connection":row["connection"],"code":row["code"],
+                    "reason":reason,"cleanup":row["cleanup"]})
+                    })
+                    .collect::<Vec<_>>()
+            );
+            let removed = expected["hooks"]
+                .as_array()
+                .expect("#1252 close-order hooks")
+                .iter()
+                .any(|row| {
+                    row["hook"]["kind"] == "listener-removed"
+                        && row["hook"]["listeners"]["SIGINT"] == 0
+                        && row["hook"]["listeners"]["SIGTERM"] == 0
+                });
+            actual["hooks"] = if removed {
+                json!([{"kind":"listeners-removed"}])
+            } else {
+                json!([])
+            };
+            let stdout = expected["stdout"].as_str().expect("#1252 original stdout");
+            let stderr = ts_stderr(
+                expected["stderrRaw"]
+                    .as_str()
+                    .expect("#1252 original stderr"),
+            );
+            let compare = |ts: &Value, rust: &Value| {
+                compare_surfaces(id, ts, rust, stdout.as_bytes(), stderr.as_bytes())
+            };
+            let mut reversed = actual.clone();
+            reversed["closes"]
+                .as_array_mut()
+                .expect("#1252 actual close array")
+                .swap(0, 1);
+            assert_eq!(
+                compare(expected, &reversed),
+                ["connection closures"],
+                "#1252 swapped actual closes must fail despite unchanged trace: {id}"
+            );
+            assert!(
+                compare(expected, &actual).is_empty(),
+                "#1252 observed close order must pass: {id}"
+            );
+            let mut reversed_expected = expected.clone();
+            reversed_expected["closes"]
+                .as_array_mut()
+                .expect("#1252 expected close array")
+                .swap(0, 1);
+            assert_eq!(
+                compare(&reversed_expected, &actual),
+                ["connection closures"],
+                "#1252 swapped expected closes must fail: {id}"
+            );
+            assert!(
+                compare(&reversed_expected, &reversed).is_empty(),
+                "#1252 matching reverse observation order must pass: {id}"
+            );
+            assert!(
+                compare(expected, &actual).is_empty(),
+                "#1252 restored order passes: {id}"
             );
         }
     }
