@@ -349,15 +349,25 @@ fn archive_fixture() -> Value {
 // `marker: value` ledger lines, not a substring any other sentence could
 // satisfy — so an approved or revoked registration must fail the matrix
 // instead of silently drifting from the hardcoded expectation.
-const ADMISSION_LEDGER: &str =
-    include_str!("../../../../specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md");
 const ADMISSION_CODE: &str = "gateway_request_failed";
 const ADMISSION_MESSAGE: &str = "The isolated native process serves only its configured project.";
 
-fn admission_ledger_line(marker: &str) -> Option<&'static str> {
-    ADMISSION_LEDGER
-        .lines()
-        .find_map(|line| line.strip_prefix(marker))
+// #1278: read the ledger at runtime instead of `include_str!`, which made
+// every `--lib` test build depend on `specs/` and broke the `src/`-only
+// scratch copies that copy-based negative controls compile. Only this
+// archive matrix needs the file, and a missing ledger fails the test with
+// its own message instead of passing silently.
+fn admission_ledger() -> String {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md"
+    );
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("#1278 admission ledger unreadable at {path}: {error}"))
+}
+
+fn admission_ledger_line<'a>(ledger: &'a str, marker: &str) -> Option<&'a str> {
+    ledger.lines().find_map(|line| line.strip_prefix(marker))
 }
 
 #[test]
@@ -511,19 +521,20 @@ async fn observe_archive(name: &str) {
     let expected = if key == "empty" && cwd != "project" {
         // Existing isolated admission policy, recorded separately from TS parity.
         // specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md
+        let admission_ledger = admission_ledger();
         negative_assert!(
-            ADMISSION_LEDGER
+            admission_ledger
                 .lines()
                 .any(|line| line == "original: A7.2-NATIVE-ARCHIVE-CWD-001"),
             "#1154 archive admission expectation stays bound to its ledger"
         );
         negative_assert_eq!(
-            admission_ledger_line("admission-code: "),
+            admission_ledger_line(&admission_ledger, "admission-code: "),
             Some(ADMISSION_CODE),
             "#1154 archive admission expectation stays bound to its ledger"
         );
         negative_assert_eq!(
-            admission_ledger_line("admission-message: "),
+            admission_ledger_line(&admission_ledger, "admission-message: "),
             Some(ADMISSION_MESSAGE),
             "#1154 archive admission expectation stays bound to its ledger"
         );
