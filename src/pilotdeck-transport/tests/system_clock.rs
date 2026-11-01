@@ -885,3 +885,46 @@ fn recurring_nonnorthern_and_nonhour_rules_keep_former_offsets() {
         );
     }
 }
+
+/// #360 fix-r3 (r3 review P3-1): a zone file above the shared 1 MiB cap is
+/// rejected, not truncated — the read takes one byte past the cap precisely so
+/// `bounded_zone_read` can tell "at most 1 MiB" from "larger" and return
+/// `None`, matching `stats_tzif_local`'s explicit post-read rejection. A
+/// truncating read would silently feed cut-off bytes to the parser.
+#[test]
+fn zone_read_above_the_1mib_cap_is_not_admitted() {
+    struct RemoveOnDrop(std::path::PathBuf);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let path = std::env::temp_dir().join(format!(
+        "pdrs-zone-cap-{}-{:x}.tzif",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0),
+    ));
+    let _guard = RemoveOnDrop(path.clone());
+    let fixture = tzif_fixture(0, 0, &[0, 1], "UTC0");
+    // At the cap the whole file is admitted, byte for byte.
+    let mut capped = fixture.clone();
+    capped.resize(1_048_576, 0);
+    std::fs::write(&path, &capped).expect("#360 write capped zone file");
+    assert_eq!(
+        system_clock::bounded_zone_read(&path),
+        Some(capped),
+        "#360 a 1 MiB zone file must be admitted in full"
+    );
+    // One byte past the cap the file is not an admitted profile.
+    let mut oversized = fixture;
+    oversized.resize(1_048_577, 0);
+    std::fs::write(&path, &oversized).expect("#360 write oversized zone file");
+    assert_eq!(
+        system_clock::bounded_zone_read(&path),
+        None,
+        "#360 a zone file above the 1 MiB cap must not be admitted (nor truncated)"
+    );
+}

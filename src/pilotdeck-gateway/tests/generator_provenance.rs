@@ -2,6 +2,8 @@
 #[allow(dead_code)]
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/retry_after_dialects_guard.rs"]
+mod retry_after_dialects_guard;
 
 #[test]
 fn builtin_tools_glob_transport_keeps_exit_and_error_paths() {
@@ -331,6 +333,22 @@ regeneration!(
 regeneration!(pump_order_cases_regenerates_identically, "pump-order-cases");
 regeneration!(recorder_regenerates_identically, "recorder");
 regeneration!(replacement_regenerates_identically, "replacement");
+// #360-2 regen-r2 (fix C): not the shared macro — the runtime provenance has
+// two dimensions with different consequences (decision card 2026-10-31). ICU
+// stays a hard pin (a different ICU build can change Date.parse itself) and
+// must fail, while a differing tzdata is value-neutral for this corpus
+// (every local-resolving case sits in Shanghai's flat +08:00 era; the
+// homebrew ICU 78.2 / tzdata 2026a re-record reproduced all 62x2 values,
+// regen-r1 review) — but since regen-r3 (review P1) a mismatch fails the
+// gate with the `#360-2 BLOCKED` panic instead of the old println-and-return
+// skip that left cargo green on a host whose byte comparison never ran. The
+// gate lives in `common/retry_after_dialects_guard.rs`, shared with the twin
+// `model_stream.rs::retry_after_dialects_regenerate_identically`.
+#[test]
+#[ignore = "requires fixed PilotDeck baseline and Node v22.22.0 with ICU 78.2 on the gold-recorded tzdata"]
+fn retry_after_dialects_regenerates_identically() {
+    retry_after_dialects_guard::assert_calibrated_runtime_and_regenerate(None);
+}
 regeneration!(rewind_regenerates_identically, "rewind");
 regeneration!(router_decision_regenerates_identically, "router-decision");
 regeneration!(router_execute_regenerates_identically, "router-execute");

@@ -129,7 +129,7 @@ fn resolve_local(wall: i64) -> Result<i64, JsString> {
 // don't read arbitrary host/user files or silently guess UTC on lookup failure.
 fn system_tzif() -> Option<Vec<u8>> {
     let path = system_tzif_path(std::env::var_os("TZ").as_deref())?;
-    std::fs::read(path).ok()
+    bounded_zone_read(&path)
 }
 /// Safe process-TZ path selection shared with conservative stats retention.
 pub fn system_tzif_path(tz: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
@@ -352,7 +352,25 @@ fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
     if !canonical.starts_with(&canonical_root) {
         return None;
     }
-    std::fs::read(canonical).ok()
+    bounded_zone_read(&canonical)
+}
+
+/// Same 1 MiB bound as the conservative stats retention read: a zone file
+/// above the cap is not an admitted profile. The read takes one byte past the
+/// cap so an oversized file is detected and rejected here (returning `None`),
+/// never silently truncated and handed to the parser — the same semantics as
+/// `stats_tzif_local`'s explicit post-read rejection. A pub seam like
+/// [`system_tzif_path`] / [`resolve_tzif_local`]: the transport's
+/// `#[path]`-mounted test exercises it directly.
+pub fn bounded_zone_read(path: &std::path::Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(1_048_577)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= 1_048_576).then_some(bytes)
 }
 
 fn days_from_civil(year: i32, month: i32, day: i32) -> i64 {

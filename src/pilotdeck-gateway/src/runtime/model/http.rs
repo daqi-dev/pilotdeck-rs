@@ -3435,3 +3435,7 @@ mod encoding_tests;
 #[cfg(test)]
 #[path = "../../../tests/fixtures/provider-http-boundaries/proxy.rs"]
 mod boundary_proxy_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/fixtures/retry-after-dialects/retry_after.rs"]
+mod retry_after_dialect_tests;
