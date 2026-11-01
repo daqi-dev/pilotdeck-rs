@@ -1017,22 +1017,7 @@ async fn header_budget_431s_like_ts() {
         closed,
         "#1209 the boundary 431 closes the connection like TS"
     );
-    for size in [16384, 20 * 1024] {
-        let (raw, closed) =
-            exchange("a", single(size).as_bytes(), "pin-budget-431", &fixture).await;
-        assert!(
-            raw.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
-            "#1209 a {size}-byte single header is the TS 431: {raw:?}"
-        );
-        assert!(
-            raw.contains("\r\nConnection: close\r\n") && !raw.contains("\r\nDate:"),
-            "#1209 the {size}-byte 431 is the canned close response with no Date: {raw:?}"
-        );
-        assert!(
-            closed,
-            "#1209 the {size}-byte 431 closes the connection like TS"
-        );
-    }
+    // The 16384/20 KiB deep oversize cells live in their own test below.
     // Trailing value OWS counts on the TS side (16350+13 tracked 16384 → 431)
     // but hyper trims it, so the router under-counts and stays 200: the
     // registered residual, pinned here as the native behavior.
@@ -1150,6 +1135,40 @@ async fn header_budget_431s_like_ts() {
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
+/// #1209: the deep oversize cells of the same span budget — past the
+/// inclusive 16384 boundary, a 16384-byte single `x` value (tracked 16405)
+/// and a 20 KiB one stay 431 (probe `probe-fixr2-b2.out`). fix-r4 keeps them
+/// in their own test: the `native-http-header-budget-off` mutant un-serves
+/// the 16363 boundary cell too, so in the shared test its panic at that
+/// boundary assertion would never reach this test's anchor.
+#[tokio::test]
+async fn header_budget_deep_oversize_431s_like_ts() {
+    let fixture = roots();
+    let single = |size: usize| {
+        format!(
+            "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nx: {}\r\n\r\n",
+            "a".repeat(size)
+        )
+    };
+    for size in [16384, 20 * 1024] {
+        let (raw, closed) =
+            exchange("a", single(size).as_bytes(), "pin-budget-431", &fixture).await;
+        assert!(
+            raw.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+            "#1209 a {size}-byte single header is the TS 431: {raw:?}"
+        );
+        assert!(
+            raw.contains("\r\nConnection: close\r\n") && !raw.contains("\r\nDate:"),
+            "#1209 the {size}-byte 431 is the canned close response with no Date: {raw:?}"
+        );
+        assert!(
+            closed,
+            "#1209 the {size}-byte 431 closes the connection like TS"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
 /// #1209: llhttp accepts `<` in the request target (probe
 /// `probe-fixr1.out` C serves `/health?x=<`); hyper's URI parser rejects the
 /// byte and the connection answers 400 — registered diff A8.4-NATIVE-HTTP-002,
@@ -1199,8 +1218,9 @@ async fn wait_flag(flag: &mut watch::Receiver<bool>, what: &str) {
 
 /// Read the socket to EOF and return how long the close took after the
 /// capture window: the native port closes at Node's 5 s keep-alive idle
-/// deadline (TS at ~6 s on its 1 s cull interval), and neither a stop nor a
-/// completed response may close it earlier.
+/// deadline (TS at ~6 s with its fixed 1 s `keepAliveTimeoutBuffer` — the
+/// unconverged gap is registered in ledger A8.4-NATIVE-HTTP-001), and
+/// neither a stop nor a completed response may close it earlier.
 async fn eof_after_close(stream: &mut TcpStream, what: &str) -> Duration {
     let started = Instant::now();
     let mut buffer = [0u8; 1];
@@ -1502,8 +1522,10 @@ async fn stop_serves_in_flight_request_and_waits_like_ts_close() {
 /// `server.keepAliveTimeout` defaults to 5 s (the TS `GatewayServer` does not
 /// override it and advertises `Keep-Alive: timeout=5`), and a connection that
 /// made one request and went quiet closes 5 s after its response (probe
-/// `probe-fixr3-a.out` A: EOF at +6007 ms on Node's ~1 s cull interval, so TS
-/// lands at ~6 s and the port at exactly 5 s — the 3–7 s window below). No
+/// `probe-fixr3-a.out` A: EOF at +6007 ms — Node adds the fixed 1 s
+/// `keepAliveTimeoutBuffer`, so TS lands at ~6 s and the port at exactly
+/// 5 s; the unconverged gap fits the 3–7 s window below, which therefore
+/// cannot distinguish it; registered in ledger A8.4-NATIVE-HTTP-001). No
 /// stop is involved until after the EOF.
 #[tokio::test]
 async fn keep_alive_idle_close_matches_ts() {

@@ -34,7 +34,10 @@ switches = [
     # at the 2049-header TS-served boundary (Node has no count limit; its
     # binding constraint is the byte budget the row below covers).
     ('native-http-header-count-off', SOURCE_PROXY, 'header_counts_within_ts_bounds_stay_served', '#1209 2049 small headers stay served like TS'),
-    ('native-http-header-budget-off', SOURCE, 'header_budget_431s_like_ts', '#1209 a 16384-byte single header is the TS 431'),
+    # fix-r4: the 16384/20 KiB deep oversize cells live in their own test;
+    # under this mutant the shared test's 16363 boundary cell stays served
+    # and panics there first, so the old anchor inside it was unreachable.
+    ('native-http-header-budget-off', SOURCE, 'header_budget_deep_oversize_431s_like_ts', '#1209 a 16384-byte single header is the TS 431'),
     # fix-r2: the served-only guard is what keeps a connected-but-silent
     # connection open across stop like TS server.close(); the mutant
     # force-closes it, so the late request never gets its response.
