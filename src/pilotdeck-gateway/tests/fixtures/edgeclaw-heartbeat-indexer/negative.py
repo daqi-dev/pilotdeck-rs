@@ -644,13 +644,58 @@ cases = [
     # #1207 fix-r1 (review P1): the re-arm dropped from the abort path — an
     # indexed row keeps its file deleted forever while its L0 row survives
     # (nothing ever re-lists an indexed row). The bound test's re-arm
-    # assertion goes red.
+    # assertion goes red. fix-r2: the delete-step arm below grew the same
+    # re-arm line, so the anchor carries the tail arm's `Ok(ids)` context and
+    # its in-arm comments to stay unique.
     ('clear-abort-rearm-dropped',
      entries,
-     '                    self.storage.rearm_l0_indexed_for_session(session)?;\n',
-     '',
+     '''                Ok(ids) => ids,
+                Err(error) => {
+                    // The clear aborted with the session's memory files
+                    // already removed but its L0 rows still present. An
+                    // indexed row would keep its file deleted forever —
+                    // nothing ever re-lists an indexed row — so re-arm the
+                    // session's rows: `indexed` back to 0 lets the next
+                    // heartbeat re-list them and regenerate the files, the
+                    // same recovery an unindexed row already gets.
+                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    return Err(error);
+                }
+''',
+     '''                Ok(ids) => ids,
+                Err(error) => {
+                    // The clear aborted with the session's memory files
+                    // already removed but its L0 rows still present. An
+                    // indexed row would keep its file deleted forever —
+                    // nothing ever re-lists an indexed row — so re-arm the
+                    // session's rows: `indexed` back to 0 lets the next
+                    // heartbeat re-list them and regenerate the files, the
+                    // same recovery an unindexed row already gets.
+                    return Err(error);
+                }
+''',
      'clear_failing_after_l0_ids_selected_rearms_indexed_rows',
      '#1207 the clear that failed with the files already removed must re-arm its still-present indexed row'),
+    # #1207 fix-r2 (review P0): the re-arm dropped from the entry-deletion
+    # error arm — a clear that fails inside delete_memory_entries (a later
+    # unlink or the manifest repair, after the files are already removed)
+    # leaves the same indexed-row-without-its-file shape. The bound test's
+    # re-arm assertion goes red.
+    ('clear-abort-delete-rearm-dropped',
+     entries,
+     '''                Ok(deleted) => deleted,
+                Err(error) => {
+                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    return Err(error);
+                }
+''',
+     '''                Ok(deleted) => deleted,
+                Err(error) => {
+                    return Err(error);
+                }
+''',
+     'clear_failing_inside_delete_entries_rearms_indexed_rows',
+     '#1207 the clear that failed inside its entry deletion must re-arm its still-present indexed row'),
 ]
 only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
 

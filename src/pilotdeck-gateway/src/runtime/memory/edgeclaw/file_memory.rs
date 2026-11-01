@@ -158,6 +158,9 @@ pub struct FileMemoryStore {
     declared_root: PathBuf,
     core: Core,
     operations: Vec<(PathBuf, Arc<Mutex<()>>)>,
+    /// #1207 fix-r2 (review P2-1): test-only, fires on a contended operation
+    /// lock. `None` in production and in every test that does not install it.
+    wait_observer: Mutex<Option<OperationWaitObserver>>,
 }
 thread_local! {
     static HELD_OPERATIONS: RefCell<HashSet<usize>> = RefCell::default();
@@ -170,17 +173,46 @@ pub(crate) struct OperationGuard<'a> {
     key: usize,
 }
 pub(crate) type OperationScope<'a> = Vec<OperationGuard<'a>>;
+/// #1207 fix-r2 (review P2-1): fires when a caller is about to park on a
+/// contended operation lock, before it blocks. Tests use it to prove a thread
+/// is really waiting on the store's snapshot locks — a deterministic
+/// blocked/completed discrimination no wall-clock window can give. Production
+/// never installs one.
+pub type OperationWaitObserver = Arc<dyn Fn() + Send + Sync>;
 impl<'a> OperationGuard<'a> {
-    pub(super) fn enter(operation: &'a Mutex<()>) -> Result<Self> {
+    pub(super) fn enter(
+        operation: &'a Mutex<()>,
+        observer: Option<&Mutex<Option<OperationWaitObserver>>>,
+    ) -> Result<Self> {
         let key = std::ptr::from_ref(operation) as usize;
         if HELD_OPERATIONS.with(|held| held.borrow().contains(&key)) {
             return Ok(Self { outer: None, key });
         }
         #[cfg(test)]
         lock_test_hook::notify(key, false);
-        let outer = operation
-            .lock()
-            .map_err(|_| FileMemoryError::Invalid("file memory operation mutex poisoned".into()))?;
+        // #1207 fix-r2 (review P2-1): try first, observe only real
+        // contention; the uncontended path keeps the plain acquisition
+        // semantics and the poisoned one keeps Node-style rejection.
+        let outer = match operation.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(FileMemoryError::Invalid(
+                    "file memory operation mutex poisoned".into(),
+                ));
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if let Some(hook) = observer.and_then(|slot| {
+                    slot.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone()
+                }) {
+                    hook();
+                }
+                operation.lock().map_err(|_| {
+                    FileMemoryError::Invalid("file memory operation mutex poisoned".into())
+                })?
+            }
+        };
         HELD_OPERATIONS.with(|held| held.borrow_mut().insert(key));
         let guard = Self {
             outer: Some(outer),
@@ -292,6 +324,7 @@ impl FileMemoryStore {
             declared_root,
             core,
             operations,
+            wait_observer: Mutex::new(None),
         };
         {
             let _guards = store.operation_scope()?;
@@ -328,8 +361,20 @@ impl FileMemoryStore {
     pub(crate) fn operation_scope(&self) -> Result<OperationScope<'_>> {
         self.operations
             .iter()
-            .map(|(_, lock)| OperationGuard::enter(lock))
+            .map(|(_, lock)| OperationGuard::enter(lock, Some(&self.wait_observer)))
             .collect()
+    }
+
+    /// #1207 fix-r2 (review P2-1): install the operation-lock wait observer
+    /// (tests only; production never installs one). It fires on this store's
+    /// own contended acquisitions, so other stores' contention stays
+    /// invisible to the installing test.
+    #[doc(hidden)]
+    pub fn set_operation_wait_observer(&self, hook: OperationWaitObserver) {
+        *self
+            .wait_observer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hook);
     }
     object_methods! {
         upsert_candidate => "upsertCandidate", upsert_user_profile => "upsertUserProfile",
