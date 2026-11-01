@@ -65,12 +65,10 @@ the committed #1190 events by name and refuses any ``frozen/`` file whose
 name carries 1190 but matches no scan glob, so a deleted or renamed-away
 event is ``COUNT DRIFT`` (exit 2) instead of a silently green gate.
 
-fix-r4 (#1190 r4 review, coordinator "change the design, not another patch"):
-the scanned ``frozen/`` directory is a parameter (``--frozen-dir``, default
-the repository's own directory), so the drift gates still run their production
-path unmodified while ``meta_controls.py`` creates every fixture scenario on a
-throwaway ``shutil.copytree`` copy under ``tempfile.TemporaryDirectory()`` --
-the repository's ``frozen/`` is never written to.
+fix-r5: doc_counts/check_docs/check_scan_set and the binding checker are
+pure functions over in-memory inputs. The CLI reads only the real frozen/
+directory, rejecting nonregular entries without following links. Meta controls
+construct corruptions in memory; there is no alternate-directory CLI option.
 
 Per-row results live in memory only.  ``summary.json`` is published exactly
 once, after ``mutating_sources`` restored every guarded file and verified it
@@ -81,11 +79,15 @@ summary, and the payload is written to a sibling temp file and renamed.
 """
 import argparse
 import ast
+import fnmatch
 import json
+import os
+import stat
 from pathlib import Path
 import re
 import sys
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, new_output_directory, run_owned
 from negative_suite import invalidate_completed, publish_summary
@@ -96,38 +98,59 @@ COMMON = ROOT / 'scripts/gateway-parity/common.py'
 PANEL = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 RUN_CONTROL = Path(__file__).resolve().with_name('run_control.py')
 
-# fix-r4 (r4 review): the scanned frozen directory is a parameter -- the
-# production default below is the repository's own directory, and
-# ``meta_controls.py`` passes its throwaway copy so its fixture scenarios can
-# exercise the same production scan without writing anything into the
-# repository's ``frozen/``.
-FROZEN = ROOT / 'specs/gateway-parity/frozen'
-
-# The registration documents whose narrative must reference derived counts
-# instead of pinning them (#1190 review P2-2, r2 review P2-2).  Anything they
-# say about how many requires / controls / cases exist is a claim about the
-# tables this runner parses, so the scan below reconciles the prose with the
-# same derived counters that ``derived-counts.json`` records.  The freeze
-# events are derived from the directory glob, so a new #1190 event file can
-# never be silently left out of the scan (other issues' events keep their own
-# counts and stay out).
-def doc_counts(frozen_dir=None):
-    if frozen_dir is None:
-        frozen_dir = FROZEN
-    return (
-        (Path(__file__).resolve().with_name('README.md'), 'README'),
-        (ROOT / 'specs/gateway-parity/diffs/A19-HOST-001-R1.md', 'A19-HOST-001-R1'),
-        *((path, path.name) for path in sorted({
-            event for pattern in ('*-1190.md', '*-1190-*.md')
-            for event in frozen_dir.glob(pattern)})),
-    )
-
-# fix-r3 (r3 review P1): the floor of the glob-derived scan set.  A shrunk or
-# empty scan set used to read as "no drift" (an all-glob doc_counts cannot
-# raise on a file it never saw), so the committed #1190 events are pinned by
-# name and every file in frozen/ whose name carries 1190 must be inside the
-# scan set -- renaming an event out of the glob cannot drop it either.
+# Only this adapter knows filesystem paths. All drift checks below use maps.
+DOCUMENTS = {
+    'README': Path(__file__).resolve().with_name('README.md'),
+    'A19-HOST-001-R1': ROOT / 'specs/gateway-parity/diffs/A19-HOST-001-R1.md',
+}
+SCAN_GLOBS = ('*-1190.md', '*-1190-*.md')
 KNOWN_EVENTS = ('20261101-1190.md', '20261101-1190-r2.md')
+
+
+def read_frozen():
+    """Read the fixed real directory, never links, subdirectories or devices.
+
+    Open each directory component relative to its parent's descriptor with
+    O_NOFOLLOW. Reject nonregular children before opening, and recheck the
+    opened descriptor; O_NONBLOCK also prevents a raced FIFO from hanging.
+    The returned bytes are reused by the meta-control read-only regression.
+    """
+    descriptor = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for component in ('specs', 'gateway-parity', 'frozen'):
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        data = {}
+        for name in sorted(os.listdir(descriptor)):
+            if not stat.S_ISREG(os.stat(name, dir_fd=descriptor,
+                                       follow_symlinks=False).st_mode):
+                raise ValueError(f'#1190 FROZEN INPUT: nonregular entry {name}')
+            child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                            dir_fd=descriptor)
+            with os.fdopen(child, 'rb') as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise ValueError(f'#1190 FROZEN INPUT: nonregular opened entry {name}')
+                data[name] = stream.read()
+        return data
+    finally:
+        os.close(descriptor)
+
+
+def read_documents():
+    return {label: path.read_text(encoding='utf-8') for label, path in DOCUMENTS.items()}
+
+
+def decode_frozen(data):
+    return {name: content.decode('utf-8') for name, content in data.items()}
+
+
+def doc_counts(documents, frozen):
+    """Select registered prose from memory using the single scan-glob source."""
+    return {**documents, **{name: frozen[name] for name in sorted(frozen)
+                           if any(fnmatch.fnmatchcase(name, pattern)
+                                  for pattern in SCAN_GLOBS)}}
 
 # <number>(条|档|项|个|处): the count units of the drifted phrases the
 # reviews found.  The number must stand alone (no adjacent alphanumerics); a
@@ -276,7 +299,7 @@ def panel_table(name):
     raise ValueError(f'no module-level {name} assignment found')
 
 
-def check_bindings(expectation_cases):
+def check_bindings(expectation_cases, mutations, bound, unaffected):
     """The binding tables must agree with the panel's registered controls.
 
     #1190 count drift: every bound/unaffected entry names a registered control
@@ -295,7 +318,7 @@ def check_bindings(expectation_cases):
     """
     errors = []
     names = set()
-    for row in MUTATIONS:
+    for row in mutations:
         if (not isinstance(row, tuple) or len(row) != 4
                 or not isinstance(row[0], str) or not row[0]):
             errors.append(f'MUTATIONS row is not a (name, source, old, new) '
@@ -304,23 +327,23 @@ def check_bindings(expectation_cases):
         if row[0] in names:
             errors.append(f'MUTATIONS names are not unique: {row[0]}')
         names.add(row[0])
-    for label, table in (('BOUND', BOUND), ('UNAFFECTED', UNAFFECTED)):
+    for label, table in (('BOUND', bound), ('UNAFFECTED', unaffected)):
         for extra in sorted(set(table) - names):
             errors.append(f'{label} names unknown mutation {extra}')
         for missing in sorted(names - set(table)):
             errors.append(f'{label} has no entry for mutation {missing}')
     bound_exercised = set()
-    for name in sorted(names & set(BOUND) & set(UNAFFECTED)):
-        if isinstance(BOUND[name], (list, tuple)):
-            entries = list(BOUND[name])
+    for name in sorted(names & set(bound) & set(unaffected)):
+        if isinstance(bound[name], (list, tuple)):
+            entries = list(bound[name])
             if not entries:
                 errors.append(f'BOUND[{name}] is empty')
         else:
             errors.append(f'BOUND[{name}] is not a sequence of (case, rule) '
-                          f'pairs: {BOUND[name]!r}')
+                          f'pairs: {bound[name]!r}')
             entries = []
         for table, entry in ([('BOUND', entry) for entry in entries]
-                             + [('UNAFFECTED', UNAFFECTED[name])]):
+                             + [('UNAFFECTED', unaffected[name])]):
             if (not isinstance(entry, tuple) or len(entry) != 2
                     or not all(isinstance(part, str) and part for part in entry)):
                 errors.append(f'{name}: {table} entry is not a (case, rule) '
@@ -341,21 +364,10 @@ def check_bindings(expectation_cases):
     return errors
 
 
-def check_docs(counts, frozen_dir=None):
-    """The registration prose must not pin a count the tables have drifted from.
-
-    #1190 review P2-2: the README, the diff entry and the freeze events claim
-    that counts are derived, so every count phrase (条/档/项/个/处) they
-    contain is reconciled with ``derived-counts.json``.  A phrase whose line
-    cannot be mapped to a derivable counter is drift too: reword it to
-    reference the table (or ``derived-counts.json``) instead of a number.
-    fix-r4: the event files come from ``doc_counts(frozen_dir)`` -- the
-    repository directory by default, ``meta_controls.py``'s throwaway copy for
-    its scenarios.
-    """
+def check_docs(counts, documents, frozen):
+    """Pure count-phrase check of the selected registration prose."""
     errors = []
-    for path, label in doc_counts(frozen_dir):
-        text = path.read_text(encoding='utf-8')
+    for label, text in doc_counts(documents, frozen).items():
         for number, line in enumerate(text.splitlines(), 1):
             for match in COUNT_PHRASE.finditer(line):
                 value = _count_value(match[1])
@@ -375,30 +387,26 @@ def check_docs(counts, frozen_dir=None):
     return errors
 
 
-def check_scan_set(frozen_dir=None):
-    """The doc-scan set must cover the known #1190 events (fix-r3, r3 review P1).
-
-    ``doc_counts`` is glob-derived, so a deleted, renamed-away or otherwise
-    shrunken scan set used to read as "no drift" and the gate stayed green.
-    The committed events in ``KNOWN_EVENTS`` are the floor; and every file
-    under ``frozen/`` whose name carries 1190 must be inside the scan set,
-    so a name the two globs do not match (``20261101-1190r2.md``) is refused
-    instead of silently left unscanned.  fix-r4: the directory is the
-    ``frozen_dir`` argument (the repository's own ``frozen/`` by default).
-    """
+def check_scan_set(frozen):
+    """Pure floor and reverse-coverage check, including unscanned event names."""
     errors = []
-    scanned = {path.name for path, _label in doc_counts(frozen_dir)}
+    scanned = set(doc_counts({}, frozen))
     for name in KNOWN_EVENTS:
         if name not in scanned:
             errors.append(f'event file {name} is missing from the doc scan set')
-    directory = FROZEN if frozen_dir is None else frozen_dir
-    if not directory.is_dir():
-        errors.append(f'frozen event directory is missing: {directory}')
-        return errors
-    for path in sorted(directory.iterdir()):
-        if '1190' in path.name and path.is_file() and path.name not in scanned:
-            errors.append(f'frozen event {path.name} matches no doc scan glob')
+    for name in sorted(frozen):
+        if '1190' in name and name not in scanned:
+            errors.append(f'frozen event {name} matches no doc scan glob')
     return errors
+
+
+def derived_counts(expectation_cases, calibration_cases, mutations):
+    return {'expectationCases': len(expectation_cases),
+            'derivationExpectationCases':
+                sum(rule == 'EXPECTATION_RUST_DERIVATION'
+                    for rule in expectation_cases.values()),
+            'calibrationCases': len(calibration_cases),
+            'mutationRows': len(mutations)}
 
 
 def run_control(out, label, name, source):
@@ -461,38 +469,34 @@ def _counts(results):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--source', type=Path,
                         help='fresh A5.2a calibration output (six-cells raw data)')
     parser.add_argument('--only', action='append')
     parser.add_argument('--check-anchors', action='store_true')
-    parser.add_argument('--frozen-dir', type=Path, default=None,
-                        help='directory standing in for specs/gateway-parity/frozen '
-                             '(a meta-controls throwaway copy); default is the '
-                             'repository directory')
     parser.add_argument('--baseline', default='HEAD',
                         help='tree-ish the guarded sources must equal; HEAD for '
                              'the delivered post-commit run (a dirty rehearsal may '
                              'pass git stash create)')
     args = parser.parse_args()
-    frozen_dir = args.frozen_dir.resolve() if args.frozen_dir is not None else None
     expectation_cases = panel_table('EXPECTATION_CASES')
     # Counts are derived, never pinned in prose (#1190): the same
     # EXPECTATION_CASES table this runner machine-checks is the authority for
     # how many controls exist, and the mutation table for how many requires
     # are covered.  Both drift gates run in every mode (including
     # --check-anchors) before any mutation row executes.
-    counts = {'expectationCases': len(expectation_cases),
-              'derivationExpectationCases':
-                  sum(rule == 'EXPECTATION_RUST_DERIVATION'
-                      for rule in expectation_cases.values()),
-              'calibrationCases': len(panel_table('CALIBRATION_CASES')),
-              'mutationRows': len(MUTATIONS)}
-    drift = [('BINDING DRIFT', message)
-             for message in check_bindings(expectation_cases)]
-    drift += [('COUNT DRIFT', message) for message in check_docs(counts, frozen_dir)]
-    drift += [('COUNT DRIFT', message) for message in check_scan_set(frozen_dir)]
+    counts = derived_counts(expectation_cases, panel_table('CALIBRATION_CASES'), MUTATIONS)
+    try:
+        frozen = decode_frozen(read_frozen())
+        documents = read_documents()
+    except (OSError, UnicodeError, ValueError) as error:
+        print(f'COUNT DRIFT: #1190 registration input: {error}', file=sys.stderr)
+        return 2
+    drift = [('BINDING DRIFT', message) for message in
+             check_bindings(expectation_cases, MUTATIONS, BOUND, UNAFFECTED)]
+    drift += [('COUNT DRIFT', message) for message in check_docs(counts, documents, frozen)]
+    drift += [('COUNT DRIFT', message) for message in check_scan_set(frozen)]
     if drift:
         for prefix, message in drift:
             print(prefix + ': ' + message, file=sys.stderr)
