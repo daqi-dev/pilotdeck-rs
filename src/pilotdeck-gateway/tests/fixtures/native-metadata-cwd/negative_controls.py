@@ -9,7 +9,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import matrix_main
 
 ROOT = Path(__file__).resolve().parents[5]
-REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/metadata.rs'
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 METADATA = ROOT / 'src/pilotdeck-gateway/src/metadata.rs'
 PROJECT_FILES = ROOT / 'src/pilotdeck-gateway/src/project_files.rs'
