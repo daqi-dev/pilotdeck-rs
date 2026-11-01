@@ -3,7 +3,7 @@
 
 --check remains a compatibility alias for --check-anchors.
 
-The catalog has exactly forty-one controls. Each selected control runs its named
+The catalog has exactly 75 controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -45,7 +45,7 @@ skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 41
+EXPECTED_TOTAL = 75
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
@@ -130,8 +130,8 @@ mutations = [
     ('rust-stderr-never-normalized', replay, 'ts_stderr(ts).as_bytes() == rust', 'ts_stderr(ts) == ts_stderr(std::str::from_utf8(rust).expect("#1145 mutant Rust UTF8"))', 'signal_replay::comparison_tests::stderr_rust_node_stack_is_not_normalized', '#1145 Rust Node stack cannot pass'),
     # #1252: preserve observer, exact-match and approved-reason order independently.
     ('close-observer-order', replay, '                self.closes.push(\n                    json!({"connection":connection,"code":code,"reason":reason,"cleanup":cleanup}),\n                );', '                self.closes.push(\n                    json!({"connection":connection,"code":code,"reason":reason,"cleanup":cleanup}),\n                );\n                self.closes.sort_by_key(|row| row["connection"].as_u64());', 'signal_replay::comparison_tests::close_events_keep_arrival_order', '#1252 close events retain arrival order and fields'),
-    ('close-exact-order', replay, '    if *actual == json!(closes) {', '    closes.sort_by_key(|row| row["connection"].as_u64());\n    if *actual == json!(closes) {', 'signal_replay::comparison_tests::close_order_is_strict_including_reason_exception', '#1252 swapped actual closes must fail despite unchanged trace'),
-    ('close-approved-order', replay, '            }\n        }\n    }\n    *actual == json!(closes)', '            }\n        }\n        closes.sort_by_key(|row| row["connection"].as_u64());\n    }\n    *actual == json!(closes)', 'signal_replay::comparison_tests::close_order_is_strict_including_reason_exception', '#1252 swapped actual closes must fail despite unchanged trace'),
+    ('close-exact-order', replay, '    if close_rows_match(id, &closes, actual) {', '    closes.sort_by_key(|row| row["connection"].as_u64());\n    if close_rows_match(id, &closes, actual) {', 'signal_replay::comparison_tests::close_order_is_strict_including_reason_exception', '#1252 swapped actual closes must fail despite unchanged trace'),
+    ('close-approved-order', replay, '            }\n        }\n    }\n    close_rows_match(id, &closes, actual)', '            }\n        }\n        closes.sort_by_key(|row| row["connection"].as_u64());\n    }\n    close_rows_match(id, &closes, actual)', 'signal_replay::comparison_tests::close_order_is_strict_including_reason_exception', '#1252 swapped actual closes must fail despite unchanged trace'),
 
     ('close-exception-scoped', replay, 'let approved = matches!(', 'let approved = true || matches!(', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 unregistered close case cannot pass'),
     ('close-code-scoped', replay, '&& row["code"] == 4003', '&& !row["code"].is_null()', 'signal_replay::comparison_tests::close_reason_exception_is_exact_and_scoped', '#1145 close exception requires TS code'),
@@ -159,6 +159,42 @@ mutations = [
 
     ('nested-marker-child-name', skills_tests, '"::marker_child_over_file_size_limit"', '"::marker_child_over_file_size_limit_renamed"', 'product::skills::tests::marker_write_reports_the_write_stage_like_node', '#1145 marker child emitted no WRITE_ERROR line'),
     ('nested-umask-child-name', migrate_tests, '"::copy_tree_preserves_modes_like_node_async_cp"', '"::copy_tree_preserves_modes_like_node_async_cp_renamed"', 'product::skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp', '#273 umask rerun matched no test'),
+
+    # #1252 measured order policy: one independently bound control per ID.
+    ('unordered-close-run--query-resume-hold-sigint', replay, '\n    "run--query-resume-hold-sigint",\n', '\n    "run--query-resume-hold-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--query-resume-hold-sigint'),
+    ('unordered-close-run--query-model-hold-sigint', replay, '\n    "run--query-model-hold-sigint",\n', '\n    "run--query-model-hold-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--query-model-hold-sigint'),
+    ('unordered-close-run--abort-error-sigint', replay, '\n    "run--abort-error-sigint",\n', '\n    "run--abort-error-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--abort-error-sigint'),
+    ('unordered-close-run--second-sigint', replay, '\n    "run--second-sigint",\n', '\n    "run--second-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--second-sigint'),
+    ('unordered-close-run--second-sigint-sigterm', replay, '\n    "run--second-sigint-sigterm",\n', '\n    "run--second-sigint-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--second-sigint-sigterm'),
+    ('unordered-close-run--terminal-consumed-failed-sigint', replay, '\n    "run--terminal-consumed-failed-sigint",\n', '\n    "run--terminal-consumed-failed-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--terminal-consumed-failed-sigint'),
+    ('unordered-close-run--terminal-during-abort-final-sigint', replay, '\n    "run--terminal-during-abort-final-sigint",\n', '\n    "run--terminal-during-abort-final-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--terminal-during-abort-final-sigint'),
+    ('unordered-close-run--query-resume-hold-sigterm', replay, '\n    "run--query-resume-hold-sigterm",\n', '\n    "run--query-resume-hold-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--query-resume-hold-sigterm'),
+    ('unordered-close-run--abort-error-sigterm', replay, '\n    "run--abort-error-sigterm",\n', '\n    "run--abort-error-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--abort-error-sigterm'),
+    ('unordered-close-run--second-sigterm-sigint', replay, '\n    "run--second-sigterm-sigint",\n', '\n    "run--second-sigterm-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--second-sigterm-sigint'),
+    ('unordered-close-run--terminal-during-abort-final-sigterm', replay, '\n    "run--terminal-during-abort-final-sigterm",\n', '\n    "run--terminal-during-abort-final-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--terminal-during-abort-final-sigterm'),
+    ('unordered-close-run--query-resume-pending', replay, '\n    "run--query-resume-pending",\n', '\n    "run--query-resume-pending-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--query-resume-pending'),
+    ('unordered-close-run--query-model-pending', replay, '\n    "run--query-model-pending",\n', '\n    "run--query-model-pending-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: run--query-model-pending'),
+    ('unordered-close-resume--query-resume-hold-sigint', replay, '\n    "resume--query-resume-hold-sigint",\n', '\n    "resume--query-resume-hold-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-resume-hold-sigint'),
+    ('unordered-close-resume--query-resume-release-sigint', replay, '\n    "resume--query-resume-release-sigint",\n', '\n    "resume--query-resume-release-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-resume-release-sigint'),
+    ('unordered-close-resume--query-model-hold-sigint', replay, '\n    "resume--query-model-hold-sigint",\n', '\n    "resume--query-model-hold-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-model-hold-sigint'),
+    ('unordered-close-resume--abort-error-sigint', replay, '\n    "resume--abort-error-sigint",\n', '\n    "resume--abort-error-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--abort-error-sigint'),
+    ('unordered-close-resume--abort-hold-sigint', replay, '\n    "resume--abort-hold-sigint",\n', '\n    "resume--abort-hold-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--abort-hold-sigint'),
+    ('unordered-close-resume--second-sigint', replay, '\n    "resume--second-sigint",\n', '\n    "resume--second-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--second-sigint'),
+    ('unordered-close-resume--second-sigint-sigterm', replay, '\n    "resume--second-sigint-sigterm",\n', '\n    "resume--second-sigint-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--second-sigint-sigterm'),
+    ('unordered-close-resume--terminal-during-abort-final-sigint', replay, '\n    "resume--terminal-during-abort-final-sigint",\n', '\n    "resume--terminal-during-abort-final-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--terminal-during-abort-final-sigint'),
+    ('unordered-close-resume--query-resume-hold-sigterm', replay, '\n    "resume--query-resume-hold-sigterm",\n', '\n    "resume--query-resume-hold-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-resume-hold-sigterm'),
+    ('unordered-close-resume--query-resume-release-sigterm', replay, '\n    "resume--query-resume-release-sigterm",\n', '\n    "resume--query-resume-release-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-resume-release-sigterm'),
+    ('unordered-close-resume--query-model-hold-sigterm', replay, '\n    "resume--query-model-hold-sigterm",\n', '\n    "resume--query-model-hold-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-model-hold-sigterm'),
+    ('unordered-close-resume--abort-error-sigterm', replay, '\n    "resume--abort-error-sigterm",\n', '\n    "resume--abort-error-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--abort-error-sigterm'),
+    ('unordered-close-resume--abort-hold-sigterm', replay, '\n    "resume--abort-hold-sigterm",\n', '\n    "resume--abort-hold-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--abort-hold-sigterm'),
+    ('unordered-close-resume--second-sigterm', replay, '\n    "resume--second-sigterm",\n', '\n    "resume--second-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--second-sigterm'),
+    ('unordered-close-resume--second-sigterm-sigint', replay, '\n    "resume--second-sigterm-sigint",\n', '\n    "resume--second-sigterm-sigint-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--second-sigterm-sigint'),
+    ('unordered-close-resume--terminal-during-abort-final-sigterm', replay, '\n    "resume--terminal-during-abort-final-sigterm",\n', '\n    "resume--terminal-during-abort-final-sigterm-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--terminal-during-abort-final-sigterm'),
+    ('unordered-close-resume--query-resume-pending', replay, '\n    "resume--query-resume-pending",\n', '\n    "resume--query-resume-pending-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-resume-pending'),
+    ('unordered-close-resume--query-model-pending', replay, '\n    "resume--query-model-pending",\n', '\n    "resume--query-model-pending-unregistered",\n', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 unordered close swap must pass: resume--query-model-pending'),
+    ('unordered-close-overbroad', replay, '    if !UNORDERED_CLOSE_CASES.contains(&id) {', '    if false && !UNORDERED_CLOSE_CASES.contains(&id) {', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 stable close swap must fail:'),
+    ('unordered-close-unregistered-id', replay, 'const UNORDERED_CLOSE_CASES: &[&str] = &[\n', 'const UNORDERED_CLOSE_CASES: &[&str] = &[\n    "not-a-registered-signal-cell",\n', 'signal_replay::comparison_tests::unordered_close_scope_equals_registration', '#1252 unordered close scope equals measured registration'),
+    ('unordered-close-non-array', replay, '    let Some(actual) = actual.as_array() else {\n        return false;\n    };', '    let Some(actual) = actual.as_array() else {\n        return true;\n    };', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 non-array closes must fail:'),
 
 ]
 
@@ -304,6 +340,7 @@ def main():
         root / "src/Cargo.lock",
         root / "src/pilotdeck-cli/tests/sdk_signal_exit.rs",
         root / "src/pilotdeck-cli/tests/common/signal_replay.rs",
+        root / "specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md",
         root / "src/pilotdeck-cli/tests/common/negative_receipt.rs",
         root / "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md",
         *sorted(path for path in fixture.iterdir() if path.is_file()),

@@ -2,7 +2,7 @@
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "nodeVersion": "v22.22.0",
   "generatorSha256": "e2ed8290fd9d96268db2e0be2fa438fda27f0d8b9edd88ca2edfc545297d1a35",
-  "signalSourceSha256": "ac9be8f71f8dd6b1226092ebb3112d1d6f4a6514e9d0937589a2cac09cf2c55b",
+  "signalSourceSha256": "2e60cbe8f5a63b79af05527cef06ef9e14f20d3c3fd9b0d98ec2f674ab010562",
   "sourceSha256": {
     "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
     "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",

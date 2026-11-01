@@ -62,6 +62,10 @@ const mutations = [
   ['socket-left-active', data => { first(data).activeAfterExit = 1; }, 'no remaining observed sockets after process exit'],
   ['close-missing', data => { first(data).closes.pop(); }, 'every connection has a close observation'],
   ['close-wrong-identity', data => { first(data).closes[0].connection = 42; }, 'distinct connection closure identities'],
+  ['close-order', data => {
+    const row = find(data, row => row.closes.length >= 2);
+    [row.closes[0], row.closes[1]] = [row.closes[1], row.closes[0]];
+  }, 'closes follow trace order (#1252)'],
   ['trace-order', data => { first(data).trace[0].seq = 42; }, 'ordered trace sequence'],
   ['projection-forged', data => { first(data).hooks[0].hook.kind = 'forged'; }, 'evidence projections preserve original trace'],
   ['observer-missing', data => { first(data).hooks = []; }, 'client observer initialized'],

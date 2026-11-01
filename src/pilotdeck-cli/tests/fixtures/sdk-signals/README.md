@@ -84,7 +84,7 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 跑完再汇总 KILLED/SURVIVED/INVALID，并在每轮重验原件。它不修改产品源码、不使用
 影子 git、不绕过 HEAD 守卫，也不需要变异 Rust 编译。产品源码负控见下节。
 
-固定分母为 **61 个数据变异 + 11 个额外控制 = 72**：额外控制包括 cleanup、
+固定分母为 **62 个数据变异 + 11 个额外控制 = 73**：额外控制包括 cleanup、
 磁盘漂移、合法但错误的哈希、空/缩短变异表、空结果表，以及三个真实生成器入口
 漂移负控。入口负控在独占临时 fixture 目录运行正控→改坏→恢复正控；不复制 Git
 仓库、不改原件。所有项跑完再汇总；Rust 解析末行并核 total 与三种状态计数。
@@ -112,14 +112,37 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 不能作为成功格。下面命令必须恰好执行 **96** 个测试；0 个测试不构成验收。
 每次使用新的绝对证据路径，保存原始 stdout/stderr、actual/comparison、连接 wire
 与完整初末树。TS stderr 仅按 `specs/cli-parity/normalization.md` §6/§7 剥精确启动前缀与完整业务行后异常尾段。
-关闭帧只应用 `D1-SDK-WS-CLOSE-REASON-001` 的四格单字段例外。
-#1252 收集器与比较器均保留关闭事件到达次序；TS 原件的全局 seq 可确定此顺序。
-trace 来源校验不替代跨端关闭顺序比较；对调两条关闭记录必须产生 `connection closures` 差异。
+关闭帧的 reason 只应用 `D1-SDK-WS-CLOSE-REASON-001` 的四格单字段例外。
+#1252 收集器始终保留原始到达次序；TS 数据契约还要求 closes 数组的 seq 严格递增。
+全局 seq 记录观察先后，不能为同时关闭的连接创造产品因果序。fix-r2 对全部 88 个
+多关闭格（62 个自然退出 / 26 个观察超时）在真实 TS 与 Rust 各重复十次，得到
+**41 STABLE-SAME / 16 STABLE-DIFF / 31 UNSTABLE**。只有实测 UNSTABLE 的 31 个完整 ID
+按 `specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md` 作序不敏感比较；排序只作用于
+比较副本，不去重，不剥实际字段。各条 connection/code/reason/cleanup、条数、重复和
+额外字段仍严格；所有 STABLE 格、单关闭格和未登记 ID 保持原比较。
+完整逐格十次分布和原始 closes 见 `_tmp/20261026-issue-1252/fix-r2/repeat/classification.md`
+及 `classification.json`；STABLE 只表示这十次稳定，不推论所有未来调度。
+
+原 58 PASS / 38 FAIL 的重分类如下（八个单关闭 PASS 不计入多关闭分母）：
+
+| 原结果 | STABLE-SAME | STABLE-DIFF | UNSTABLE | 单关闭 |
+|---|---:|---:|---:|---:|
+| 58 PASS | 38 | 0 | 12 | 8 |
+| 38 FAIL | 3 | 16 | 19 | 0 |
+
+#1260 原新增失败的 36 格中，16 格是稳定不同序，19 格确认重复噪声，1 格
+`run--second-sigterm` 是新 TS 十次同序且与 Rust 一致、旧单次金样不同。
+该格仅按纯 TS 条件取 ts-01 完整 capture 刷新 source，并重生成主 oracle 及
+绑定父 source 哈希的 abort-state oracle，仍保持严格比较；原始来源与哈希见
+`_tmp/20261026-issue-1252/fix-r2/reference-refresh.json`。#1260 的当前产品差异范围应为
+那 16 个 STABLE-DIFF 格，另外两格动态 UUID 差异仍独立存在。
+修复后当前实现已重新实跑全部96格：**78 PASS / 18 FAIL**，失败恰为上述16格顺序与2格UUID，
+无意外差异；原始结果见 `_tmp/20261026-issue-1252/fix-r2/matrix-final-summary.json`。
 未处理 rejection 仅按 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` 的八个完整 ID
 接受各自固定的 Rust 单行错误，不匹配或推广 Node 堆栈形状；stdout、退出码、
 abort、连接、监听器和文件树继续严格比较。96 个有效观察格（不含另列的六个 stdin 缺口）在 phase4 登记为 94 PASS / 2 FAIL；
-#1252 恢复严格关闭顺序比较后必须逐格重跑，不能沿用该历史结果。
-`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较；新增关闭顺序差异也保留 FAIL。
+#1252 首轮严格比较的 58 PASS / 38 FAIL 已按上述真实重复结果重新归因，不能沿用 phase4 历史结论。
+`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较；16 个稳定关闭顺序差异保留 FAIL。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 `approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
@@ -148,12 +171,18 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
   python3 -I -B src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
-产品及比较边界负控固定 41 个变异（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），完整绑定测试名与单行断言；每项先正控、变异编译、负控、
+产品及比较边界负控固定 75 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），新增 31 个精确名单项变异，以及
+范围扩大、未登记条目、非数组放行三个边界变异。每个名单项独立绑定
+`signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics`
+与含完整格名的 `#1252 unordered close swap must pass: <ID>` 消息；其余完整绑定见脚本。
+该测试从 source 动态枚举全部 88 格，期望策略独立读取差异账本；逐格交换与字段损坏配对验证。
+`unordered_close_scope_equals_registration` 另核精确登记与固定分母，旧五格严格 / reason 集成测试仍保留。
+每项先正控、变异编译、负控、
 恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
 
-`--check-anchors` 与兼容入口 `--check` 共用同一份 40 项目录校验。#1252 修复轮只调整下列绑定：
+`--check-anchors` 与兼容入口 `--check` 共用同一份 75 项目录校验。#1252 修复轮只调整下列绑定：
 
 | 变异体 | 完整测试名 | 专属失败消息 |
 |---|---|---|
@@ -161,8 +190,8 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
 
 该格的 `--model` 使 `initialize_turn` 等待被 mock 持有的 `model_catalog_list`；
 SIGTERM 已消费后仍不释放前驱，覆盖同一处两秒提前返回变异。
-严格关闭顺序下该格 TS/Rust 均为 `[2,1]`；旧 `run_query_resume_hold_sigint`
-的关闭顺序差异归 #1260，不再用作此负控的正控，也不放宽比较器。
+本轮该格真实 TS/Rust 各 10/10 为 `[2,1]`（STABLE-SAME），继续作为严格比较的正控。
+旧 `run_query_resume_hold_sigint` 已实测为 UNSTABLE，其观察噪声不再归入 #1260 的稳定产品差异。
 
 fix-r6 的 hello/request 三格为：持续零间隔非应答帧、前驱永不回复、期限前匹配回复。
 Node v22.22.0 的真实 SDK 计时器由 mock.timers 推进；Rust 用每连接独立的 cfg(test)
