@@ -696,9 +696,9 @@ async fn registered_transport_diffs_stay_pinned() {
 
 /// #1209: raw-byte pins the replay normalization cannot swallow: the bare
 /// parser-level 400s (FOO, garbage) carry no Date (only the missing-Host 400
-/// does), and a HEAD response carries neither Content-Length nor
-/// Transfer-Encoding (Node omits both rather than describing a body it will
-/// not write).
+/// does) and close the connection, and a HEAD response carries neither
+/// Content-Length nor Transfer-Encoding (Node omits both rather than
+/// describing a body it will not write).
 #[tokio::test]
 async fn rejection_and_head_bytes_stay_pinned() {
     let fixture = roots();
@@ -708,11 +708,15 @@ async fn rejection_and_head_bytes_stay_pinned() {
         } else {
             "GARBAGE\r\n\r\n"
         };
-        let bare = exchange("a", &latin1_bytes(request), id, &fixture).await.0;
+        let (bare, closed) = exchange("a", &latin1_bytes(request), id, &fixture).await;
         assert!(
             bare.starts_with("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n")
                 && !bare.contains("\r\nDate:"),
             "#1209 pin {id}: the bare 400 has no Date: {bare:?}"
+        );
+        assert!(
+            closed,
+            "#1209 pin {id}: the bare 400 closes the connection like TS"
         );
     }
     let head = exchange(
@@ -733,35 +737,80 @@ async fn rejection_and_head_bytes_stay_pinned() {
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
+/// #1209: `Connection: close` reaches every response family, not just
+/// `/health`: the static file response and the final 404 are also answered
+/// `Connection: close` with no Keep-Alive and a closed socket, like Node v22
+/// (the `health-conn-close`/`head-conn-close` golden cells cover the handler
+/// family; probe `probe-fixr1.out` A).
+#[tokio::test]
+async fn connection_close_reaches_every_response_family() {
+    let fixture = roots();
+    for (id, target) in [
+        ("pin-static-close", "/app.js"),
+        ("pin-404-close", "/missing"),
+    ] {
+        let (raw, closed) = exchange(
+            "a",
+            &latin1_bytes(&format!(
+                "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            )),
+            id,
+            &fixture,
+        )
+        .await;
+        assert!(
+            raw.contains("\r\nConnection: close\r\n")
+                && !raw.to_ascii_lowercase().contains("keep-alive"),
+            "#1209 pin {id}: the close request is answered close with no keep-alive: {raw:?}"
+        );
+        assert!(
+            closed,
+            "#1209 pin {id}: the close request closes the connection like TS"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
 /// #1209: HTTP/1.0 (and any close request) is answered `Connection: close`
-/// without a Keep-Alive header, like Node v22 (probe `probe-fixr1.out` A);
-/// the body is close-delimited. hyper writes a `HTTP/1.0` status line where
-/// Node writes `HTTP/1.1` — a registered transport diff, which is why this
-/// is a raw pin and not a golden cell.
+/// without a Keep-Alive header, like Node v22 — including an HTTP/1.0 request
+/// that asks for keep-alive (probe `probe-fixr1.out` A `1.0+keep`); the body
+/// is close-delimited and the socket closes. hyper writes a `HTTP/1.0` status
+/// line where Node writes `HTTP/1.1` — a registered transport diff, which is
+/// why this is a raw pin and not a golden cell.
 #[tokio::test]
 async fn http10_close_delimited_response() {
     let fixture = roots();
-    let raw = exchange(
-        "a",
-        &latin1_bytes("GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"),
-        "pin-http10",
-        &fixture,
-    )
-    .await
-    .0;
-    assert!(
-        raw.starts_with("HTTP/1.0 200 OK\r\n"),
-        "#1209 pin: HTTP/1.0 is answered with a 1.0 status line (registered diff vs Node's 1.1 line): {raw:?}"
-    );
-    assert!(
-        raw.contains("\r\nConnection: close\r\n")
-            && !raw.to_ascii_lowercase().contains("keep-alive"),
-        "#1209 pin: HTTP/1.0 is answered close with no keep-alive: {raw:?}"
-    );
-    assert!(
-        raw.ends_with("{\"ok\":true}"),
-        "#1209 pin: the HTTP/1.0 body is close-delimited, not chunked: {raw:?}"
-    );
+    for (id, connection) in [
+        ("pin-http10", ""),
+        ("pin-http10-keep", "Connection: keep-alive\r\n"),
+    ] {
+        let (raw, closed) = exchange(
+            "a",
+            &latin1_bytes(&format!(
+                "GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\n{connection}\r\n"
+            )),
+            id,
+            &fixture,
+        )
+        .await;
+        assert!(
+            raw.starts_with("HTTP/1.0 200 OK\r\n"),
+            "#1209 pin {id}: HTTP/1.0 is answered with a 1.0 status line (registered diff vs Node's 1.1 line): {raw:?}"
+        );
+        assert!(
+            raw.contains("\r\nConnection: close\r\n")
+                && !raw.to_ascii_lowercase().contains("keep-alive"),
+            "#1209 pin {id}: HTTP/1.0 is answered close with no keep-alive: {raw:?}"
+        );
+        assert!(
+            raw.ends_with("{\"ok\":true}"),
+            "#1209 pin {id}: the HTTP/1.0 body is close-delimited, not chunked: {raw:?}"
+        );
+        assert!(
+            closed,
+            "#1209 pin {id}: the HTTP/1.0 response closes the connection like TS"
+        );
+    }
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
@@ -871,49 +920,91 @@ async fn trailing_separator_root_still_serves() {
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
-/// #1209: llhttp has no header-count limit (probe `probe-fixr1.out` C serves
-/// 2001 small headers); hyper's default cap of 100 would 431 requests TS
-/// serves, so the native builder raises it and 150 small headers stay served.
+/// #1209: Node v22.22.0 has no header-count limit — the binding constraint is
+/// the 16384-byte URL+header span budget (probe `probe-fixr2.out` A serves
+/// 2049/2500/8000 `a: b` headers, 16020 tracked bytes at the top end); the
+/// native builder's count cap must never bind before that budget.
 #[tokio::test]
 async fn header_counts_within_ts_bounds_stay_served() {
     let fixture = roots();
-    let mut request = String::from("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
-    for index in 0..150 {
-        request.push_str(&format!("x{index:04}: v\r\n"));
+    for count in [2049, 2500] {
+        let mut request = String::from("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+        for _ in 0..count {
+            request.push_str("a: b\r\n");
+        }
+        request.push_str("\r\n");
+        let (raw, _) = exchange("a", request.as_bytes(), "pin-headers-count", &fixture).await;
+        assert!(
+            raw.starts_with("HTTP/1.1 200 OK\r\n"),
+            "#1209 {count} small headers stay served like TS: {raw:?}"
+        );
     }
-    request.push_str("\r\n");
-    let (raw, _) = exchange("a", request.as_bytes(), "pin-headers-150", &fixture).await;
-    assert!(
-        raw.starts_with("HTTP/1.1 200 OK\r\n"),
-        "#1209 150 small headers stay served like TS: {raw:?}"
-    );
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
-/// #1209: parse-layer size limits where TS 431s and hyper serves — a 20 KiB
-/// header value and a 20 KiB query (probe `probe-fixr1.out` C); registered
-/// diff A8.4-NATIVE-HTTP-002, pending approval. The raw pins keep the
-/// divergence visible instead of normalized away.
+/// #1209: Node v22.22.0's actual size limit, replicated at the router: the
+/// current message's URL span plus every header-name and header-value span
+/// accumulate (separators and CRLF excluded), and 16384 is the canned 431
+/// with `Connection: close` and no Date (probe `probe-fixr2.out` A/B/C and
+/// `probe-fixr2-b2.out`: single header 16300 tracked 16321 → 200, 16384
+/// tracked 16405 → 431, the exact boundary value-16362/16363; URL
+/// 16350 tracked 16373 → 200, 20 KiB → 431). The 431's `content-length: 0`
+/// is the registered transport diff of the bare-400 family.
 #[tokio::test]
-async fn parse_size_limits_stay_pinned() {
+async fn header_budget_431s_like_ts() {
     let fixture = roots();
-    let header = format!(
-        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nbig: {}\r\n\r\n",
-        "a".repeat(20 * 1024)
-    );
-    let (raw, _) = exchange("a", header.as_bytes(), "pin-20kb-header", &fixture).await;
+    let single = |size: usize| {
+        format!(
+            "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nx: {}\r\n\r\n",
+            "a".repeat(size)
+        )
+    };
+    let (raw, _) = exchange("a", single(16300).as_bytes(), "pin-budget-16300", &fixture).await;
     assert!(
         raw.starts_with("HTTP/1.1 200 OK\r\n"),
-        "#1209 20KB header stays served (registered diff vs TS 431): {raw:?}"
+        "#1209 a 16300-byte single header (tracked 16321) stays served like TS: {raw:?}"
     );
-    let url = format!(
-        "GET /health?x={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-        "a".repeat(20 * 1024)
-    );
-    let (raw, _) = exchange("a", url.as_bytes(), "pin-20kb-url", &fixture).await;
+    for size in [16384, 20 * 1024] {
+        let (raw, closed) =
+            exchange("a", single(size).as_bytes(), "pin-budget-431", &fixture).await;
+        assert!(
+            raw.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+            "#1209 a {size}-byte single header is the TS 431: {raw:?}"
+        );
+        assert!(
+            raw.contains("\r\nConnection: close\r\n") && !raw.contains("\r\nDate:"),
+            "#1209 the {size}-byte 431 is the canned close response with no Date: {raw:?}"
+        );
+        assert!(
+            closed,
+            "#1209 the {size}-byte 431 closes the connection like TS"
+        );
+    }
+    let url = |size: usize| {
+        format!(
+            "GET /health?x={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "a".repeat(size)
+        )
+    };
+    let (raw, _) = exchange("a", url(16000).as_bytes(), "pin-budget-url-200", &fixture).await;
     assert!(
         raw.starts_with("HTTP/1.1 200 OK\r\n"),
-        "#1209 20KB URL stays served (registered diff vs TS 431): {raw:?}"
+        "#1209 a 16000-byte URL (tracked 16023) stays served like TS: {raw:?}"
+    );
+    let (raw, closed) = exchange(
+        "a",
+        url(20 * 1024).as_bytes(),
+        "pin-budget-url-431",
+        &fixture,
+    )
+    .await;
+    assert!(
+        raw.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "#1209 a 20KiB URL is the TS 431: {raw:?}"
+    );
+    assert!(
+        closed,
+        "#1209 the URL-budget 431 closes the connection like TS"
     );
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
@@ -1041,6 +1132,143 @@ async fn stop_waits_for_never_requested_connections() {
     assert!(
         drained.is_err(),
         "#1209 a never-requested connection keeps the drain open like TS server.close(): {drained:?}"
+    );
+}
+
+/// #1209: Node's server.close() answers a request that arrives only after the
+/// stop with the normal keep-alive response and never force-closes that
+/// connection (probe `probe-fixr2.out` D1/D3: 200 + `Connection: keep-alive`,
+/// the socket lives until its own idle timeout and close() resolves only
+/// then). The runner surfaces that unbounded wait as the bounded drain error.
+#[tokio::test]
+async fn stop_serves_late_request_and_waits_like_ts_close() {
+    let host = gateway::tests::native_ws_fixture(Arc::new(Unused));
+    let server = crate::native_ws::NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#1209 native listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#1209 bind native listener");
+    let address = server
+        .local_addr()
+        .expect("#1209 native listener local address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        Duration::from_secs(1),
+    ));
+
+    let mut late = timeout(DEADLINE, TcpStream::connect(address))
+        .await
+        .expect("#1209 connect deadline")
+        .expect("#1209 connect to the native listener");
+    // Let the accept loop take the connection before stop, so the drain is
+    // held by the connection task and not by the listener's backlog.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    stop.send(()).expect("#1209 stop native listener");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    late.write_all(&latin1_bytes(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+    ))
+    .await
+    .expect("#1209 write the late request");
+    let (response, closed) = capture(&mut late, "stop-late").await;
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1209 the late request is still served after stop: {response:?}"
+    );
+    assert!(
+        response
+            .to_ascii_lowercase()
+            .contains("connection: keep-alive"),
+        "#1209 the late response keeps the connection alive like TS server.close(): {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1209 the late-request connection is not force-closed after the response, like TS server.close()"
+    );
+    let drained = timeout(Duration::from_secs(10), task)
+        .await
+        .expect("#1209 stop joins the late-request listener")
+        .expect("#1209 stop task");
+    let error = drained.expect_err(
+        "#1209 a connection that only requested after stop keeps the drain open like TS server.close()",
+    );
+    assert!(
+        error.to_string().contains("drain"),
+        "#1209 the drain deadline is the bounded equivalent of TS close() waiting: {error}"
+    );
+}
+
+/// #1209: the same Node behavior for a request that was in flight when
+/// server.close() arrived (probe `probe-fixr2.out` D2: the half-sent request
+/// line is completed after the stop, answered 200 + keep-alive, never
+/// force-closed); again the drain deadline is the bounded equivalent.
+#[tokio::test]
+async fn stop_serves_in_flight_request_and_waits_like_ts_close() {
+    let host = gateway::tests::native_ws_fixture(Arc::new(Unused));
+    let server = crate::native_ws::NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#1209 native listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#1209 bind native listener");
+    let address = server
+        .local_addr()
+        .expect("#1209 native listener local address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        Duration::from_secs(1),
+    ));
+
+    let mut inflight = timeout(DEADLINE, TcpStream::connect(address))
+        .await
+        .expect("#1209 connect deadline")
+        .expect("#1209 connect to the native listener");
+    inflight
+        .write_all(&latin1_bytes("GET /heal"))
+        .await
+        .expect("#1209 write the partial request line");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    stop.send(()).expect("#1209 stop native listener");
+    inflight
+        .write_all(&latin1_bytes("th HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+        .await
+        .expect("#1209 complete the request line");
+    let (response, closed) = capture(&mut inflight, "stop-inflight").await;
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1209 the in-flight request is still served after stop: {response:?}"
+    );
+    assert!(
+        response
+            .to_ascii_lowercase()
+            .contains("connection: keep-alive"),
+        "#1209 the in-flight response keeps the connection alive like TS server.close(): {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1209 the in-flight connection is not force-closed after the response, like TS server.close()"
+    );
+    let drained = timeout(Duration::from_secs(10), task)
+        .await
+        .expect("#1209 stop joins the in-flight listener")
+        .expect("#1209 stop task");
+    let error = drained.expect_err(
+        "#1209 a connection whose request was in flight at stop keeps the drain open like TS server.close()",
+    );
+    assert!(
+        error.to_string().contains("drain"),
+        "#1209 the drain deadline is the bounded equivalent of TS close() waiting: {error}"
     );
 }
 

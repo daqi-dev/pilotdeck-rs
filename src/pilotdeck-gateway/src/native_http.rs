@@ -5,8 +5,10 @@
 //! default proxy routing is untouched. Transport byte-level divergences
 //! (header name case, chunk-size case, the bare 400's `content-length: 0`,
 //! the HTTP/1.0 status line echo) and parse-layer divergences (target
-//! charset, header/URI size limits) are registered in the gateway-parity
-//! diff ledger.
+//! charset, the fragment-stripping under-count of hyper's `Uri`, the
+//! OWS-padding reach of hyper's read buffer) are registered in the
+//! gateway-parity diff ledger; Node's 16384-byte URL+header span budget
+//! is replicated here rather than registered.
 use crate::{Body, ProxyError, http_proxy};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -89,6 +91,24 @@ pub(crate) async fn serve<B>(
     request: &hyper::Request<B>,
     config: &Config,
 ) -> Result<hyper::Response<Body>, io::Error> {
+    let mut response = route(request, config).await?;
+    if request.version() == hyper::Version::HTTP_10 {
+        // Node v22.22.0 answers every HTTP/1.0 request with `Connection:
+        // close` and a closed socket, even one asking to keep alive (probe
+        // `probe-fixr1.out` A). An explicit 1.0 response version keeps hyper's
+        // `fix_keep_alive` (proto/h1/conn.rs) in its HTTP/1.0 branch, which
+        // disables the connection's keep-alive instead of replacing that
+        // `Connection: close` with `keep-alive` because the request asked to
+        // keep alive.
+        *response.version_mut() = hyper::Version::HTTP_10;
+    }
+    Ok(response)
+}
+
+async fn route<B>(
+    request: &hyper::Request<B>,
+    config: &Config,
+) -> Result<hyper::Response<Body>, io::Error> {
     if !crate::mutants::on("native-http-method-allowlist-off")
         && !LLHTTP_METHODS.contains(&request.method().as_str())
     {
@@ -111,7 +131,16 @@ pub(crate) async fn serve<B>(
     {
         return Ok(parser_bad_request());
     }
+    // llhttp validates the request-target grammar during the URL scan, so a
+    // bad form (authority-form for non-CONNECT, non-alpha scheme) is a bare
+    // 400 even when the target is huge, while a huge but grammatical target
+    // (a CONNECT authority included) crosses the 16 KiB span budget first.
+    let budget_exceeded = !crate::mutants::on("native-http-header-budget-off")
+        && tracked_header_bytes(request) >= 16_384;
     if request.method() == hyper::Method::CONNECT {
+        if budget_exceeded {
+            return Ok(request_header_fields_too_large());
+        }
         // TS destroys the socket with no bytes; a service error makes hyper
         // close the connection without writing a response.
         return Err(io::Error::other("CONNECT rejected by native HTTP routing"));
@@ -124,6 +153,9 @@ pub(crate) async fn serve<B>(
         && (!llhttp_scheme_alpha(request.uri().scheme()) || !llhttp_target_form(target))
     {
         return Ok(parser_bad_request());
+    }
+    if budget_exceeded {
+        return Ok(request_header_fields_too_large());
     }
     if request.version() == hyper::Version::HTTP_11
         && !request.headers().contains_key(hyper::header::HOST)
@@ -229,6 +261,35 @@ fn whatwg_path(target: &str) -> String {
 fn parser_bad_request() -> hyper::Response<Body> {
     let mut response = hyper::Response::new(http_proxy::empty());
     *response.status_mut() = hyper::StatusCode::BAD_REQUEST;
+    response
+        .headers_mut()
+        .insert(hyper::header::CONNECTION, "close".parse().expect("header"));
+    response
+}
+
+/// The byte budget Node v22.22.0 actually enforces (node_http_parser.cc
+/// `TrackHeader`, probe `probe-fixr2.out` A/B): the current message's URL
+/// span plus every header-name and header-value span accumulate (separators,
+/// OWS, and CRLF excluded; reset per message and per chunk), and reaching
+/// 16384 is the parser's header overflow — the canned 431 below. hyper
+/// strips the fragment from the parsed URI, so a fragmented target
+/// under-counts here (registered residual in the parity ledger).
+fn tracked_header_bytes<B>(request: &hyper::Request<B>) -> usize {
+    request.uri().to_string().len()
+        + request
+            .headers()
+            .iter()
+            .map(|(name, value)| name.as_str().len() + value.len())
+            .sum::<usize>()
+}
+
+/// Node's canned 431 (`_http_server.js` `requestHeaderFieldsTooLargeResponse`):
+/// `HTTP/1.1 431 Request Header Fields Too Large`, `Connection: close`, no
+/// Date, no body bytes — the same shape as the bare 400 (hyper's
+/// `content-length: 0` transport diff included).
+fn request_header_fields_too_large() -> hyper::Response<Body> {
+    let mut response = hyper::Response::new(http_proxy::empty());
+    *response.status_mut() = hyper::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE;
     response
         .headers_mut()
         .insert(hyper::header::CONNECTION, "close".parse().expect("header"));
