@@ -39,7 +39,7 @@ REPLAY = "runtime::mcp::gateway_tests::mcp_gateway_replays_the_real_ts_oracle"
 DISPATCH = "runtime::mcp::gateway_tests::mcp_gateway_dispatch_returns_none_for_non_control_methods"
 SHUTDOWN_RACE = (
     "runtime::mcp::gateway_tests::"
-    "mcp_gateway_close_during_owner_shutdown_surfaces_the_shutdown_result"
+    "mcp_gateway_close_during_owner_shutdown_awaits_the_keys_own_eviction"
 )
 
 
@@ -249,20 +249,21 @@ MUTATIONS = {
         ],
     ),
     # The close-error mapping must pass the owner error's message through,
-    # not answer a fixed dispose literal (fix-r2 P1). Every golden close-fault
-    # row's message coincides with the literal, so the dedicated kill is the
-    # shutdown race: `SessionOwner::close` during a shutdown surfaces the
-    # whole-shutdown aggregate `Failed to shut down all agent sessions.`
-    # (owner.rs), which the literal never equals.
+    # not answer a fixed literal (fix-r2 P1, #1245). Since the
+    # close-during-shutdown alignment every close window answers the per-key
+    # dispose text `Failed to dispose agent handle.`, the old per-key literal
+    # would now survive every row, so the mutation hardcodes the OLD
+    # whole-shutdown aggregate instead: the shutdown race (pinned to the
+    # real-router probe) answers the per-key text and never matches it.
     "close-message-hardcoded": (
         gateway,
         '            .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))',
         '            .map_err(|_error| SdkMcpError::plain("Error", '
-        'JsString::from("Failed to dispose agent handle.")))',
+        'JsString::from("Failed to shut down all agent sessions.")))',
         SHUTDOWN_RACE,
         [
-            "#1215 close during owner shutdown surfaces the shutdown aggregate, "
-            "not the hardcoded dispose text",
+            "#1245 close during owner shutdown transmits the key's own dispose "
+            "aggregate",
         ],
     ),
 }

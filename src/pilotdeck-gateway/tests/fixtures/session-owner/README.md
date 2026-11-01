@@ -62,6 +62,20 @@ sweep 会停止，以及发布时旧 handle 的 admission cutoff 无需执行资
 不与真实树或另一装置共享；结束时与副本一起删除。首次 baseline 冷构建限时 600 秒，
 其余变异限时 240 秒。每次编译前运行任务指定的 cargo-slots 命令。
 
+`negative_close_shutdown.py <evidence-directory>` 是 #1245（close 在 shutdown 进行中
+的错误语义对齐 TS）的专用负控，走共享 M6 执行器（`mutating_sources` 原位变异 +
+`negative_suite.run_cases` 逐项 KILLED/SURVIVED/INVALID），要求提交后源码等于
+`HEAD`，与 `negative.py` 的独立 `/tmp` 副本方式并存。五项变异各绑定一个确切的单测
+断言：close 的 shutdown 窗口变异回旧的整个 shutdown 聚合分支、else 分支不 await
+就放行、close 任务的 closing 登记、idle sweep 的 closing 登记、shutdown drain 的
+closing 登记（后三项去掉登记后，对应窗口的 close 漂移为 Ok，A2/B2/B4 的 per-key
+断言必须红）。TS 依据为真实路由探针
+`_tmp/20261026-issue-1245/probe/close-during-shutdown.out`（Node v22.22.0），
+差异与修正在
+`specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001{-R1}.md`。
+`--check-anchors` 预检锚点；`--compile-only` 只证明每个变异体能编译；
+`--sample` 只跑 `close-else-awaits-nothing` 一项抽样。
+
 本包提供真实生命周期组件和可注入的 LiveSession/SessionFactory 接口，不提供默认
 空 session。完整 submit/持久接纳、seed/compact 业务执行、MCP/native host adapter
 和默认代理切换仍分别属于 A7.2、A7.5/A7.6、后续 provider/domain 装配。

@@ -25,10 +25,14 @@ use crate::runtime::session::{
 };
 use crate::runtime::{plugins, sdk_session};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use std::collections::HashMap;
+use std::future::poll_fn;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 use std::vec;
+use tokio::sync::watch;
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/mcp-gateway/oracle.json");
 
@@ -87,8 +91,21 @@ impl LiveSession for FakeSession {
     fn dispose(&self) -> DisposeFuture<'_> {
         let key = self.key.clone();
         let fails = self.key == "f";
+        let gate = lock(&self.probe.0.dispose_gates)
+            .get(&self.key)
+            .map(|gate| gate.subscribe());
         self.probe.event(format!("dispose:{key}"));
         Box::pin(async move {
+            // #1245: a registered gate parks the disposal mid-flight, the
+            // exact window the real-router probe pins for a close that
+            // arrives while the eviction is in flight.
+            if let Some(mut gate) = gate {
+                let opened = gate
+                    .wait_for(|open| *open)
+                    .await
+                    .expect("#1245 the dispose gate must be opened before the probe ends");
+                assert!(*opened, "#1245 the dispose gate must open, not just drop");
+            }
             // The TS fixture's session throws `Error('fixture dispose
             // failure')` for key `f`; the real #1011 `LiveSessionHandle`
             // aggregation (session/handle.rs, the AgentHandle.ts:290
@@ -112,6 +129,7 @@ struct ProbeState {
     turn_on_next_refresh: Mutex<Option<(String, String)>>,
     owner: Mutex<Option<SessionOwner>>,
     plugins: Mutex<Vec<(String, Vec<Arc<plugins::LoadedPlugin>>)>>,
+    dispose_gates: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 #[derive(Clone)]
 struct Probe(Arc<ProbeState>);
@@ -123,6 +141,7 @@ impl Probe {
             turn_on_next_refresh: Mutex::new(None),
             owner: Mutex::new(None),
             plugins: Mutex::new(Vec::new()),
+            dispose_gates: Mutex::new(HashMap::new()),
         }))
     }
     fn event(&self, event: impl Into<String>) {
@@ -133,6 +152,26 @@ impl Probe {
     }
     fn clear_events(&self) {
         lock(&self.0.events).clear();
+    }
+    /// #1245: hold the next disposal of `key` mid-flight until `open_dispose`.
+    fn hold_dispose(&self, key: &str) {
+        lock(&self.0.dispose_gates).insert(key.to_string(), watch::channel(false).0);
+    }
+    fn open_dispose(&self, key: &str) {
+        lock(&self.0.dispose_gates)
+            .get_mut(key)
+            .expect("#1245 a held dispose must have a registered gate")
+            .send_replace(true);
+    }
+    async fn until_1245(&self, event: &str) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !self.events().iter().any(|item| item == event) {
+            assert!(
+                Instant::now() < deadline,
+                "#1245 the gated disposal must start within 3s: {event}"
+            );
+            tokio::task::yield_now().await;
+        }
     }
     fn owner(&self) -> SessionOwner {
         lock(&self.0.owner)
@@ -669,41 +708,50 @@ async fn mcp_gateway_dispatch_returns_none_for_non_control_methods() {
 }
 
 /// A control method's post-success `close` racing an owner shutdown (fix-r2
-/// review P1). The override path never closes through the registry, so the
-/// component's own close is the first owner port the method touches after
-/// its callback — and `SessionOwner::close` during a shutdown answers with
-/// the whole-shutdown aggregate (`owner.rs:676`), not the per-key dispose
-/// text the port's own aggregation produces. TS diverges here: the real
-/// `SessionRouter.close` during shutdown fulfills (probe
-/// `_tmp/20261026-issue-1215/fix-r2/probe/close-during-shutdown.out`,
-/// Node v22.22.0); the divergence is registered as
-/// `specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001.md`.
+/// review P1, #1245). The override path never closes through the registry,
+/// so the component's own close is the first owner port the method touches
+/// after its callback. The disposal is held mid-flight, the exact window of
+/// the real-router probe
+/// `_tmp/20261026-issue-1245/probe/close-during-shutdown.out` (Node v22.22.0,
+/// probe2's `close:a:mid-flight:failing` cell): TS `SessionRouter.close` has
+/// no shutdown branch — once `shutdown()` cleared the records it falls to
+/// the else branch and awaits the key's registered in-flight eviction
+/// (SessionRouter.ts:327-338), so the method surfaces the per-key dispose
+/// text, and the whole-shutdown aggregate stays shutdown()'s own answer
+/// (A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001-R1).
 #[tokio::test]
-async fn mcp_gateway_close_during_owner_shutdown_surfaces_the_shutdown_result() {
+async fn mcp_gateway_close_during_owner_shutdown_awaits_the_keys_own_eviction() {
     let harness = harness(&["f".to_string()]);
     harness.run_setup("ensure-session:f").await;
+    harness.probe.hold_dispose("f");
     let shutdown = harness.probe.owner().shutdown();
+    harness.probe.until_1245("dispose:f").await;
     let input = parse_json(r#"{"sessionKey":"f","serverName":"alpha","mode":"auto"}"#)
-        .expect("#1215 shutdown-race override input must parse");
-    let error = harness
-        .gateway
-        .set_mcp_permission_mode_override(&input)
+        .expect("#1245 shutdown-race override input must parse");
+    let mut method = std::pin::pin!(harness.gateway.set_mcp_permission_mode_override(&input));
+    let parked = poll_fn(|cx| std::task::Poll::Ready(method.as_mut().poll(cx).is_ready())).await;
+    assert!(
+        !parked,
+        "#1245 the method must park on the mid-flight shutdown eviction, not settle while the dispose is held"
+    );
+    harness.probe.open_dispose("f");
+    let error = method
         .await
-        .expect_err("#1215 the post-success close must surface the in-flight shutdown");
+        .expect_err("#1245 the post-success close must surface the key's own eviction");
     let message = error
         .message()
         .to_utf8()
         .unwrap_or_else(|_| String::from("<invalid UTF-8>"));
     assert!(
-        message == "Failed to shut down all agent sessions.",
-        "#1215 close during owner shutdown surfaces the shutdown aggregate, not the hardcoded dispose text: got {message}"
+        message == "Failed to dispose agent handle.",
+        "#1245 close during owner shutdown transmits the key's own dispose aggregate, not the shutdown aggregate: got {message}"
     );
     let shutdown_error = shutdown
         .await
-        .expect_err("#1215 the failing dispose must fail the shutdown");
+        .expect_err("#1245 the failing dispose must fail the shutdown");
     assert!(
         shutdown_error.message == "Failed to shut down all agent sessions.",
-        "#1215 the shutdown the close surfaced must be the failing one: got {}",
+        "#1245 the whole-shutdown aggregate stays shutdown's own answer: got {}",
         shutdown_error.message
     );
 }

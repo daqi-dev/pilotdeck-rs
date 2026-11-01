@@ -50,9 +50,11 @@ fix-r2 补齐三控制面共享校验的余格：`toggle-nonstring-session-key`�
 接线层，组件刻意不接（`dispatch.rs` 未动），故只记录不重放。
 close 与 owner shutdown 竞争的行为不在金样里（fixture 不建模 shutdown），
 由 Rust 单测
-`mcp_gateway_close_during_owner_shutdown_surfaces_the_shutdown_result` 钉住；
-TS 与 Rust 在该格的差异登记为
-`specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001.md`。
+`mcp_gateway_close_during_owner_shutdown_awaits_the_keys_own_eviction` 钉住
+（#1245 对齐后：门控 dispose 使驱逐 mid-flight，close 透传该 key 自己的
+per-key 文案；TS 依据为真实路由探针
+`_tmp/20261026-issue-1245/probe/close-during-shutdown.out`，登记为
+`specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001-R1.md`）。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
@@ -106,7 +108,8 @@ fix-r1 P2-3）、
 `undefined-params-conflated`（`require_input` 去掉 Undefined 臂（只保留
 Null 臂）后 Undefined 落入透传臂，`set-params-omitted` 行应答漂移，
 fix-r1 P2-2）、
-`close-message-hardcoded`（gateway.rs close 的错误映射改为硬编码 dispose
-文案——金样 close-fault 行的终稿恰与该字面量相同，杀点在 shutdown 竞争
-单测：owner shutdown 期间 close 返回整个 shutdown 聚合
-`Failed to shut down all agent sessions.`，字面量永不等于它，fix-r2 P1）。
+`close-message-hardcoded`（gateway.rs close 的错误映射改为硬编码字面量
+——#1245 对齐后所有 close 窗口都答 per-key dispose 文案，旧的 per-key
+字面量会存活，故变异硬编码旧的整个 shutdown 聚合
+`Failed to shut down all agent sessions.`，杀点在 shutdown 竞争单测的
+per-key 断言，fix-r2 P1 / #1245）。

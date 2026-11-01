@@ -152,6 +152,10 @@ struct State {
     order: Vec<JsString>,
     gates: HashMap<JsString, Weak<Serial>>,
     pending: Vec<Pending>,
+    /// TS closingSessions: each key's in-flight eviction completion, from a
+    /// close task, the idle sweep or a shutdown drain. A record-less close
+    /// awaits the entry; a settled entry behaves as removed.
+    closings: HashMap<JsString, watch::Receiver<Option<RuntimeResult>>>,
     paused_projects: HashSet<JsString>,
     shutdown: Option<watch::Receiver<Option<RuntimeResult>>>,
 }
@@ -673,8 +677,18 @@ impl SessionOwner {
 
     pub fn close(&self, key: &JsString) -> BoxFuture<RuntimeResult> {
         let mut state = self.0.state.lock().unwrap();
-        if let Some(shutdown) = &state.shutdown {
-            return Box::pin(wait_result(shutdown.clone()));
+        // TS SessionRouter.close's else branch (SessionRouter.ts:327-338): a
+        // key without a cached record — evicted by an in-flight close, idle
+        // sweep or shutdown drain, or after the router shut down — awaits the
+        // key's registered in-flight eviction and transmits that eviction's
+        // own result; no entry means `await undefined`: fulfilled. The
+        // whole-shutdown aggregate stays shutdown()'s own answer
+        // (A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001, #1245).
+        if let Some(closing) = unsettled_closing(&mut state, key) {
+            return Box::pin(wait_result(closing));
+        }
+        if state.shutdown.is_some() {
+            return Box::pin(async { Ok(()) });
         }
         let ticket = ticket(&mut state, key);
         let (done, completion) = watch::channel(None);
@@ -683,6 +697,7 @@ impl SessionOwner {
             .get(key)
             .and_then(|record| record.context.project_key.clone());
         track(&mut state, project, completion.clone());
+        state.closings.insert(key.clone(), completion.clone());
         let owner = self.clone();
         let key = key.clone();
         super::super::cleanup_task::spawn_with_error(
@@ -819,7 +834,12 @@ impl SessionOwner {
             state.order.retain(|item| item != &key);
             let ticket = ticket(&mut state, &key);
             let (done, completion) = watch::channel(None);
-            track(&mut state, record.context.project_key.clone(), completion);
+            track(
+                &mut state,
+                record.context.project_key.clone(),
+                completion.clone(),
+            );
+            state.closings.insert(key.clone(), completion);
             let owner = self.clone();
             super::super::cleanup_task::spawn_with_error(
                 &tokio::runtime::Handle::current(),
@@ -872,16 +892,30 @@ impl SessionOwner {
                 let mut drains = Vec::new();
                 for (key, record) in records {
                     let owner = owner.clone();
+                    // TS finishShutdown's beginEviction registers each key in
+                    // closingSessions as its eviction starts, so a close that
+                    // arrives mid-flight transmits this drain's own result
+                    // instead of the whole-shutdown aggregate.
+                    let (drain_done, drain_completion) = watch::channel(None);
+                    owner
+                        .0
+                        .state
+                        .lock()
+                        .unwrap()
+                        .closings
+                        .insert(key.clone(), drain_completion);
                     drains.push(tokio::spawn(async move {
                         // #1055 ②: fold each record's unconsumed creation or
                         // cleanup error into the shutdown aggregate, aggregated
                         // beside a failed disposal's own error, so neither is
                         // dropped.
                         let pending = record.unreported_creation_error.clone();
-                        combine_pending_error(
+                        let result = combine_pending_error(
                             owner.evict(&key, record, EvictionReason::Shutdown).await,
                             pending,
-                        )
+                        );
+                        drain_done.send_replace(Some(result.clone()));
+                        result
                     }));
                 }
                 for drain in drains {
@@ -1034,10 +1068,28 @@ fn track(
     state
         .pending
         .retain(|pending| pending.completion.borrow().is_none());
+    state
+        .closings
+        .retain(|_, closing| closing.borrow().is_none());
     state.pending.push(Pending {
         project,
         completion,
     });
+}
+
+/// The in-flight eviction a record-less close awaits (TS closingSessions). A
+/// settled entry is finishEviction's removal: a task that panicked before its
+/// own cleanup cannot leak a stale result either, because the completion
+/// guard guarantees settlement.
+fn unsettled_closing(
+    state: &mut State,
+    key: &JsString,
+) -> Option<watch::Receiver<Option<RuntimeResult>>> {
+    state
+        .closings
+        .get(key)
+        .filter(|closing| closing.borrow().is_none())
+        .cloned()
 }
 
 pub struct MaintenanceReservation {
