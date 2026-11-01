@@ -7,6 +7,7 @@ pub mod background_snapshot;
 mod cleanup_task;
 pub mod connection;
 pub mod context;
+pub mod cron;
 pub mod hooks;
 pub mod interaction;
 pub mod manager;
