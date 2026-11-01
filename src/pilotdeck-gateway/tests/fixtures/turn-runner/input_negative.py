@@ -13,19 +13,21 @@ recording = live.with_name('runner_recording.rs')
 factory = live.with_name('host_factory.rs')
 oracle = 'live_input_matches_ts_original_history_synthetic_and_metadata'
 mutations = [
-    ('host-factory-recorder', factory, 'into_live_session', 'factory.create(&identity, recorder).await', 'factory.create(&identity, Arc::new(Recorder::from_writer(recorder.writer().clone()))).await', 'live_session_shares_recorder_and_reads_current_history', '#741k ports factory must receive the session Recorder'),
+    ('host-factory-recorder', factory, 'into_live_session', '.create_with_signal(&identity, recorder, signal)', '.create_with_signal(&identity, Arc::new(Recorder::from_writer(recorder.writer().clone())), signal)', 'live_session_shares_recorder_and_reads_current_history', '#741k ports factory must receive the session Recorder'),
     ('new-recorder', live, None, 'host_factory(recorder)', 'host_factory(Arc::new(Recorder::from_writer(recorder.writer().clone())))', 'live_input_new_factory_shares_recorder', '#741k factory must receive the session Recorder'),
-    ('interaction-recorder', live, 'with_interaction', 'factory(identity.clone(), recorder.clone())', 'factory(identity.clone(), Arc::new(Recorder::from_writer(recorder.writer().clone())))', 'live_input_interaction_factory_shares_recorder', '#741k factory must receive the session Recorder'),
+    ('interaction-recorder', live, 'with_interaction', 'factory(identity, recorder)', 'factory(identity, Arc::new(Recorder::from_writer(recorder.writer().clone())))', 'live_input_interaction_factory_shares_recorder', '#741k factory must receive the session Recorder'),
     ('history', live, 'submit', '(self.history)()', 'vec![]', 'live_input_reads_current_history_on_every_submit', '#741k fresh history per submit'),
     ('synthetic', live, None, 'Some(JsValue::Array(messages)) => messages.clone(),', 'Some(JsValue::Array(_)) => vec![],', oracle, '#741k TS loop input'),
     ('nullish', live, None, 'Some(JsValue::Null | JsValue::Undefined)', 'Some(JsValue::Undefined)', 'live_input_nullish_synthetic_is_empty', '#741k nullish synthetic must parse'),
     ('synthetic-shape', live, None, '_ => return Err(RuntimeError::new("Expected syntheticMessages array.")),', '_ => vec![],', 'execute_request_rejects_flattened_and_invalid_input', '#741k reject synthetic shape'),
     ('synthetic-duplicate', live, None, '!key.equals_str("syntheticMessages")', 'true', oracle, '#741k synthetic must not be applied twice'),
     ('expanded-messages', live, None, 'payload.insert("messages".into(), JsValue::Array(input.loop_messages()));', 'if !payload.contains_key("messages") { payload.insert("messages".into(), JsValue::Array(input.loop_messages())); }', 'execute_request_preserves_host_options_and_original_input', '#741k raw input wins'),
-    # #996-pr2 fix-r5: the prompt-abort-context switch added a second
-    # loop_messages() inside aborted_result; bind the no-runner fallback arm
-    # (the pre-switch mutation site) instead of the bare call.
-    ('abort-messages', live, 'aborted_result', '.unwrap_or_else(|| self.input.loop_messages())', '.unwrap_or_else(|| self.input.accepted_messages())', 'live_input_reads_current_history_on_every_submit', '#741k abort preserves history and synthetic'),
+    # #1220 fix-r5: the no-runner fallback moved out of aborted_result into
+    # abort_messages(), where the same arm text also backs the
+    # live-abort-finish-messages switch (two in-scope occurrences, so the old
+    # arm needle cannot bind there). Bind aborted_result's call site — HEAD's
+    # actual writing — so a broken terminal loses history and synthetic.
+    ('abort-messages', live, 'aborted_result', 'self.abort_messages()', 'self.input.accepted_messages()', 'live_input_reads_current_history_on_every_submit', '#741k abort preserves history and synthetic'),
     ('accepted-text', recording, 'accepted_messages', 'JsValue::String(text.clone())', 'JsValue::String(String::from_utf16_lossy(text.units()).into())', oracle, '#741k TS loop input'),
     ('accepted-blocks', recording, 'accepted_messages', 'content.clone()', 'vec![]', oracle, '#741k TS loop input'),
     ('metadata', recording, 'from_agent_input', '(!metadata.is_empty()).then_some(metadata)', 'None', oracle, '#741k TS metadata'),
