@@ -143,14 +143,26 @@ runId、两种流失败与待决 abort、三种 iterator/consumer 错误。仅 W
 scripts/cargo-slots.sh
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli --test sdk_signal_exit \
   product::sdk::turn::tests::pending_abort_keeps_query_until_reply -- --exact --ignored
-python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py --check
-python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py --check-anchors
+python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
+  python3 -I -B src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
 产品及比较边界负控固定 41 个变异（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），完整绑定测试名与单行断言；每项先正控、变异编译、负控、
 恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
+
+`--check-anchors` 与兼容入口 `--check` 共用同一份 40 项目录校验。#1252 修复轮只调整下列绑定：
+
+| 变异体 | 完整测试名 | 专属失败消息 |
+|---|---|---|
+| `held-predecessor-exits-early` | `signal_cases::run_query_model_hold_sigterm` | `#1145 run--query-model-hold-sigterm four surfaces, abort count, listeners and connections match TS` |
+
+该格的 `--model` 使 `initialize_turn` 等待被 mock 持有的 `model_catalog_list`；
+SIGTERM 已消费后仍不释放前驱，覆盖同一处两秒提前返回变异。
+严格关闭顺序下该格 TS/Rust 均为 `[2,1]`；旧 `run_query_resume_hold_sigint`
+的关闭顺序差异归 #1260，不再用作此负控的正控，也不放宽比较器。
 
 fix-r6 的 hello/request 三格为：持续零间隔非应答帧、前驱永不回复、期限前匹配回复。
 Node v22.22.0 的真实 SDK 计时器由 mock.timers 推进；Rust 用每连接独立的 cfg(test)

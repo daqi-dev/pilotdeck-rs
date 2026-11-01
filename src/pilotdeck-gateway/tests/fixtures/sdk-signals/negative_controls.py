@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""#1145 HEAD-only product controls: [--check] | NEW_OUTPUT_DIR [mutation ...].
+"""#1145 HEAD-only controls: --check-anchors | NEW_OUTPUT_DIR [mutation ...].
+
+--check remains a compatibility alias for --check-anchors.
 
 The catalog has exactly forty-one controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
@@ -101,8 +103,9 @@ mutations = [
         "                Ok(result) => result,\n"
         "                Err(_) => Err(Failure::Error(\"mutant predecessor deadline\".into())),\n"
         "            }",
-        "signal_cases::run_query_resume_hold_sigint",
-        "#1145 run--query-resume-hold-sigint four surfaces, abort count, listeners and connections match TS",
+        # #1252: this held model predecessor still passes strict close order.
+        "signal_cases::run_query_model_hold_sigterm",
+        "#1145 run--query-model-hold-sigterm four surfaces, abort count, listeners and connections match TS",
     ),
     (
         "completed-query-connection-retained",
@@ -188,12 +191,12 @@ def raw_text(value):
 def main():
     check_catalog()
     args = sys.argv[1:]
-    if args == ["--check"]:
+    if args in (["--check"], ["--check-anchors"]):
         print(f"#1145 {EXPECTED_TOTAL} product anchors: PASS")
         return 0
     if not args:
         raise SystemExit(
-            "usage: negative_controls.py --check | NEW_OUTPUT_DIR [mutation ...]"
+            "usage: negative_controls.py --check-anchors (alias: --check) | NEW_OUTPUT_DIR [mutation ...]"
         )
 
     selected_names = args[1:]
