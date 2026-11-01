@@ -181,6 +181,7 @@ impl ProjectionCache {
                 state.permission_denials = denials;
             }
         }
+        *lock(&self.projection.completed_turns) = completed_turns(&entries);
         *live = entries;
         *lock(&self.projection.last_valid) = state;
         self.projection.valid.store(true, Ordering::SeqCst);
