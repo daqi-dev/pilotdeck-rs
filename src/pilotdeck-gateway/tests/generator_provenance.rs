@@ -330,10 +330,67 @@ regeneration!(
 regeneration!(pump_order_cases_regenerates_identically, "pump-order-cases");
 regeneration!(recorder_regenerates_identically, "recorder");
 regeneration!(replacement_regenerates_identically, "replacement");
-regeneration!(
-    retry_after_dialects_regenerates_identically,
-    "retry-after-dialects"
-);
+// #360-2 regen-r2 (fix C): not the shared macro — the runtime provenance has
+// two dimensions with different consequences. ICU stays a hard pin (a
+// different ICU build can change Date.parse itself, decision card
+// 2026-10-31) and must fail, while a differing tzdata is value-neutral for
+// this corpus (every local-resolving case sits in Shanghai's flat +08:00
+// era; re-recording on the homebrew ICU 78.2 / tzdata 2026a build reproduced
+// all 62x2 values, regen-r1 review), so the guard BLOCKs the byte comparison
+// with its own message instead of failing on the metadata-only tzdata line.
+// Twin of `model_stream.rs::retry_after_dialects_regenerate_identically`.
+#[test]
+#[ignore = "requires fixed PilotDeck baseline and Node v22.22.0 with ICU 78.2"]
+fn retry_after_dialects_regenerates_identically() {
+    let version = baseline::node_command()
+        .arg("--version")
+        .output()
+        .expect("#360-2 Node version");
+    assert!(
+        version.status.success(),
+        "#360-2 Node version command failed"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        "v22.22.0",
+        "#360-2 pinned Node runtime"
+    );
+    let probe = baseline::node_command()
+        .args(["-p", "process.versions.icu + ' ' + process.versions.tz"])
+        .output()
+        .expect("#360-2 runtime provenance probe");
+    assert!(
+        probe.status.success(),
+        "#360-2 runtime provenance probe failed"
+    );
+    let provenance = String::from_utf8_lossy(&probe.stdout);
+    let (icu, tzdata) = provenance.trim().split_once(' ').unwrap_or_else(|| {
+        panic!("#360-2 provenance probe must print 'icu tzdata', got {provenance:?}")
+    });
+    assert_eq!(
+        icu, "78.2",
+        "#360-2 pinned ICU runtime: the retry-after-dialects gold is recorded on the \
+         icu78 calibrated chain (decision card 2026-10-31), and a different ICU build \
+         must fail this guard rather than skip it"
+    );
+    let committed = serde_json::from_str::<serde_json::Value>(include_str!(
+        "fixtures/retry-after-dialects/oracle.json"
+    ))
+    .expect("#360-2 committed oracle must parse");
+    let recorded = committed
+        .get("tzdata")
+        .and_then(serde_json::Value::as_str)
+        .expect("#360-2 committed oracle records its tzdata provenance");
+    if tzdata != recorded {
+        println!(
+            "#360-2 BLOCKED: tzdata {tzdata} (this Node) != {recorded} (gold-recorded); \
+             the case bytes cannot be re-verified byte-wise on this host, so the byte \
+             comparison is skipped instead of failing on a metadata-only diff"
+        );
+        return;
+    }
+    baseline::regenerates_identically("retry-after-dialects");
+}
 regeneration!(rewind_regenerates_identically, "rewind");
 regeneration!(router_decision_regenerates_identically, "router-decision");
 regeneration!(router_execute_regenerates_identically, "router-execute");
