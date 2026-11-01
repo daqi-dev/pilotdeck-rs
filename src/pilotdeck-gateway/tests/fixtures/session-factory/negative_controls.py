@@ -294,6 +294,14 @@ cases = [
      '(Ok(()), Some(pending)) if true => Err((*pending).clone()),',
      None, prefix+'recreation_cancelled_timeout_busy_is_not_delivered_by_close_or_shutdown',
      '#1218 close returns only the evict result for a retriable BUSY'),
+    # fix-r2 (DeepSeek P2): the false half of the Err arm's !pending_is_busy
+    # guard — a retained BUSY beside a failed disposal — must not fold the
+    # BUSY into the close/shutdown aggregate either.
+    ('1055-busy-aggregated-beside-failed-disposal', owner,
+     '(Err(error), Some(pending)) if !pending_is_busy(&pending) => aggregate(',
+     '(Err(error), Some(pending)) => aggregate(',
+     None, prefix+'recreation_cancelled_timeout_busy_is_not_aggregated_with_failed_disposal_by_close',
+     '#1218 close keeps only the failed disposal error beside a retriable BUSY'),
 ]
 
 # These cfg(test) branches are selected at compile time by option_env!.

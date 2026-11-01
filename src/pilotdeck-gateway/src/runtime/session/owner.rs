@@ -701,9 +701,10 @@ impl SessionOwner {
                     )
                 };
                 if let Some(record) = record {
-                    // #1055 ②: an evicted record's unconsumed creation error
-                    // would otherwise die with it; the closing caller receives
-                    // it, aggregated beside a failed disposal's own error.
+                    // #1055 ②: an evicted record's unconsumed creation or
+                    // cleanup error would otherwise die with it; the closing
+                    // caller receives it, aggregated beside a failed
+                    // disposal's own error.
                     let pending = record.unreported_creation_error.clone();
                     let result = owner.evict(&key, record, EvictionReason::Closed).await;
                     let _state = owner.0.state.lock().unwrap();
@@ -872,9 +873,10 @@ impl SessionOwner {
                 for (key, record) in records {
                     let owner = owner.clone();
                     drains.push(tokio::spawn(async move {
-                        // #1055 ②: fold each record's unconsumed creation
-                        // error into the shutdown aggregate, aggregated beside
-                        // a failed disposal's own error, so neither is dropped.
+                        // #1055 ②: fold each record's unconsumed creation or
+                        // cleanup error into the shutdown aggregate, aggregated
+                        // beside a failed disposal's own error, so neither is
+                        // dropped.
                         let pending = record.unreported_creation_error.clone();
                         combine_pending_error(
                             owner.evict(&key, record, EvictionReason::Shutdown).await,
@@ -1005,11 +1007,11 @@ fn pending_is_busy(error: &RuntimeError) -> bool {
 }
 
 /// #1055 ②: after an eviction removed the record, an unconsumed non-retriable
-/// creation error has no other delivery path left. Return it to the evicting
-/// caller when the disposal itself succeeded, and aggregate it beside the
-/// disposal error when it failed, so neither is dropped (both may stem from
-/// the same cleanup failure and then appear twice). A retriable BUSY is never
-/// delivered by close/shutdown.
+/// creation or cleanup error has no other delivery path left. Return it to
+/// the evicting caller when the disposal itself succeeded, and aggregate it
+/// beside the disposal error when it failed, so neither is dropped (both may
+/// stem from the same cleanup failure and then appear twice). A retriable
+/// BUSY is never delivered by close/shutdown.
 fn combine_pending_error(
     result: RuntimeResult,
     pending: Option<Arc<RuntimeError>>,
@@ -1017,7 +1019,7 @@ fn combine_pending_error(
     match (result, pending) {
         (Ok(()), Some(pending)) if !pending_is_busy(&pending) => Err((*pending).clone()),
         (Err(error), Some(pending)) if !pending_is_busy(&pending) => aggregate(
-            "Failed to dispose the agent session and report its unconsumed creation error.",
+            "Failed to dispose the agent session and report its unconsumed creation or cleanup error.",
             vec![error, (*pending).clone()],
         ),
         (result, _) => result,

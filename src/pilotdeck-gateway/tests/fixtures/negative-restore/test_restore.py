@@ -497,8 +497,11 @@ class SessionRunnerTests(unittest.TestCase):
     def test_two_rows_without_guard_fault_are_both_killed(self):
         # fix-r1 (#1218 P2-4): every row consumes its own positive, negative
         # and restored stages in table order, so in a multi-row no-fault run
-        # each bound positive test actually executes. A leftover stage would
-        # make the second row fail as "bound positive test failed" instead.
+        # each bound positive test actually executes. A leftover stage answers
+        # the next row's positive run with the PREVIOUS row's test name (exit
+        # 0); passed() only accepts the exact named "... ok" line, so that row
+        # fails as "bound positive test failed" — the shift never silently
+        # reaches a later stage (pinned by session-restored-stage-skipped).
         code, rows, _guard_calls, restored_files = self.run_session_runner(
             SESSION_SOURCE,
             ['same-key-concurrent', 'recreate-disposed'],
@@ -699,9 +702,12 @@ def negative_controls():
              "        status,reason=classify(run(name+'-negative',test),\n"
              "                               RunnerCase(name, changes[:1], test, assertion))")})),
         # fix-r1 (#1218 P2-4): skipping the restored run leaves its stage
-        # unconsumed, so the next row's positive run pops it and fails as a
-        # bound positive instead of actually running — the misalignment the
-        # review feared. The no-fault two-row test must catch exactly that.
+        # unconsumed, so the next row's positive run pops it. The mock answers
+        # a leftover stage with the previous row's test name (exit 0), and
+        # passed() only accepts the exact named "... ok" line, so the next row
+        # fails as a bound positive (INVALID, "bound positive test failed")
+        # instead of actually running — the misalignment the review feared. The
+        # no-fault two-row test catches exactly that.
         ('session-restored-stage-skipped', (SessionRunnerTests,),
          {(SessionRunnerTests, 'test_two_rows_without_guard_fault_are_both_killed'): '#1210 the second row must actually run its bound positive test'},
          lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
