@@ -17,7 +17,9 @@
 #
 # Exit codes: 0 = positives verified and all negatives KILLED; 1 = FAILED;
 # 2 = BLOCKED (caller environment); 3 = BLOCKED (pinned Node or locale gate);
-# 77 = positives verified but negatives NOT_RUN (pre-commit; rerun post-commit).
+# 77 = positives verified but negatives NOT_RUN (pre-commit only — while this
+# runner itself is not the committed one; a refusal afterwards means a dirty
+# tree and is FAILED; synced in #283 fix-r2 after the opus r2 review).
 set -u
 set -o pipefail
 
@@ -173,8 +175,18 @@ neg133=$?
 negatives_not_run=0
 if [ "$neg133" -eq 0 ]; then
   echo "KILLED all #133 mutants"
-elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issue-133-negatives.log"; then
+elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issue-133-negatives.log" \
+  && ! git -C "$repo" show "HEAD:src/pilotdeck-gateway/tests/fixtures/project-files-linux-dirent/run-linux.sh" 2>/dev/null | cmp -s - "$0"; then
+  # Pre-commit only, and provably so (same discriminator as the #283 runner,
+  # synced in fix-r2 after the opus r2 review): mutating_sources refused the
+  # tree AND this running runner's own bytes are not what HEAD carries.
+  # Once this runner IS the committed one, a refusal means a dirty tree —
+  # residue from a killed mutant or a hand edit — and is FAILED, not a
+  # benign rerun-me-later; the 77 is accompanied by the dirty set so the
+  # coordinator can tell residue from a genuine pending patch.
   echo "NOT_RUN: uncommitted/untracked product sources (mutating_sources refuses them); rerun after the commit (coordinator)"
+  echo "-- dirty set (git status --porcelain; must be exactly this patch's files for the 77 to be benign):"
+  git -C "$repo" status --porcelain
   negatives_not_run=1
 else
   echo "FAIL: #133 negative controls (rc=$neg133)" >&2
@@ -188,8 +200,14 @@ wait_for_cargo_slot
 neg117=$?
 if [ "$neg117" -eq 0 ]; then
   echo "KILLED all #117 mutants"
-elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issue-117-negatives.log"; then
+elif grep -qE '\((untracked build input at|differs from) HEAD\)' "$evidence/issue-117-negatives.log" \
+  && ! git -C "$repo" show "HEAD:src/pilotdeck-gateway/tests/fixtures/project-files-linux-dirent/run-linux.sh" 2>/dev/null | cmp -s - "$0"; then
+  # Same discriminator as the #133 branch above (synced in #283 fix-r2 after
+  # the opus r2 review): NOT_RUN only while this running runner itself is
+  # not the committed one; the dirty set is printed for the coordinator.
   echo "NOT_RUN: uncommitted/untracked product sources (mutating_sources refuses them); rerun after the commit (coordinator)"
+  echo "-- dirty set (git status --porcelain; must be exactly this patch's files for the 77 to be benign):"
+  git -C "$repo" status --porcelain
   negatives_not_run=1
 else
   echo "FAIL: #117 negative controls (rc=$neg117)" >&2
