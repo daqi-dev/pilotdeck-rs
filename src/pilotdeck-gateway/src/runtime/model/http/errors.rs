@@ -122,9 +122,12 @@ pub(crate) fn retry_after_from_message(message: &str) -> Option<f64> {
 /// dialect set — IMF-fixdate, RFC 850, asctime, ISO and the V8-lenient forms
 /// — shared with the execution clock (`pilotdeck_transport::system_clock`,
 /// #360-2). A wall time without a timezone resolves against the process
-/// timezone exactly like a Node `Date.parse`; where no admitted system TZif
-/// can establish that offset — a state TS does not have — the value counts
-/// as unparseable and the header is ignored.
+/// timezone through the admitted system TZif subset; Node also parses such
+/// values in environments that subset does not admit (POSIX TZ rules, custom
+/// TZ paths, unreadable tzdata), where this parser counts the value as
+/// unparseable and the header is ignored — the retained TZ-subset difference
+/// recorded under A6.4-STATS-RETENTION-001 in
+/// `specs/gateway-parity/accepted-diffs.md`.
 pub(crate) fn retry_after_header(value: Option<&str>, now_ms: f64) -> Option<f64> {
     retry_after_header_parsed(
         value,

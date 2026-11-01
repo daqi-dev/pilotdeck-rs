@@ -330,6 +330,10 @@ regeneration!(
 regeneration!(pump_order_cases_regenerates_identically, "pump-order-cases");
 regeneration!(recorder_regenerates_identically, "recorder");
 regeneration!(replacement_regenerates_identically, "replacement");
+regeneration!(
+    retry_after_dialects_regenerates_identically,
+    "retry-after-dialects"
+);
 regeneration!(rewind_regenerates_identically, "rewind");
 regeneration!(router_decision_regenerates_identically, "router-decision");
 regeneration!(router_execute_regenerates_identically, "router-execute");
