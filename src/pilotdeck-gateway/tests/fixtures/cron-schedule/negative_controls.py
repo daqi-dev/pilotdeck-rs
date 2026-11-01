@@ -8,12 +8,15 @@ Every selected row is reported, including anchor/build/source-guard failures.
 
 Rows bind one mutation to one named cell replay in
 `runtime::cron::schedule_tests` (a lib test, run with `--exact`); the kill
-evidence is that test's own panic payload carrying its `#1324` message. Nine
+evidence is that test's own panic payload carrying its `#1324` message. The
 rows pin the port's load-bearing behaviors: the version-3 day-field OR rule,
 the dow 7→0 normalization, the floor (not trunc) minute alignment, the
-leap-day shortcut, the schedule-timezone `??` precedence, the recorded-ICU
-timezone acceptance, the delay unit table, NaN `parseInt` rejection, and the
-UTC-offset-identifier resolution through the shared transport resolver.
+leap-day shortcut (and its Date.UTC 0-99→1900-1999 year mapping), the
+schedule-timezone `??` precedence, the recorded-ICU timezone acceptance, the
+delay unit table, NaN/Infinity `parseInt` rejection, the UTC-offset-identifier
+resolution through the shared transport resolver (incl. the hour-only `+HH`
+form), the fail-closed branches of both unresolvable-zone and local-wall
+once parsing, and TimeClip's -0→+0 normalization.
 
 All bound replays are host-tzdata-independent (they pin UTC, IANA, or offset
 identifiers), so every row runs on both Linux and macOS.
@@ -82,7 +85,7 @@ mutations = [
     # `Not/AZone`) becomes a valid cron timezone.
     ('valid-timezone-accepts-all', source,
      'pub fn is_valid_cron_timezone(timezone: &str) -> bool {\n'
-     '    crate::config::sections::valid_timezone(timezone)\n'
+     '    crate::config::valid_timezone(timezone)\n'
      '}',
      'pub fn is_valid_cron_timezone(_timezone: &str) -> bool {\n'
      '    true\n'
@@ -113,6 +116,55 @@ mutations = [
      '            Some(_offset) => Err(JsString::from("Invalid time zone specified")),',
      'runtime::cron::schedule_tests::cron_offset_identifier',
      NEXT_RUN.format(cell='cron/offset-identifier')),
+    # fix-r1 P1-1: an Infinity step (>308 digits) parses as a huge integer
+    # again, so `*/999… * * * *` computes a run instead of TS's undefined.
+    ('infinite-step-accepted', source,
+     '        if !step.is_finite() || step <= 0.0 {',
+     '        if step <= 0.0 {',
+     'runtime::cron::schedule_tests::cron_infinite_step_rejected',
+     NEXT_RUN.format(cell='cron/infinite-step-rejected')),
+    # fix-r1 P1-2: the Date.UTC 0-99→1900-1999 year mapping is dropped, so
+    # the leap-day scan under a two-digit year lands in year 52, not 1952.
+    ('leap-day-year-mapping-dropped', source,
+     '    let year = if (0..=99).contains(&year) {\n'
+     '        year + 1900\n'
+     '    } else {\n'
+     '        year\n'
+     '    };',
+     '    let year = year;',
+     'runtime::cron::schedule_tests::cron_leap_day_after_year_0050',
+     NEXT_RUN.format(cell='cron/leap-day-after-year-0050')),
+    # fix-r1: a local-wall once runAt whose process-TZ resolution fails is
+    # guessed as epoch 0 instead of failing closed to undefined.
+    ('once-local-wall-guessed-utc', source,
+     '        Ok(Some(epoch_ms)) => ComputedRunAt::Valid(epoch_ms),\n'
+     '        Ok(None) | Err(_) => ComputedRunAt::Undefined,',
+     '        Ok(Some(epoch_ms)) => ComputedRunAt::Valid(epoch_ms),\n'
+     '        Ok(None) => ComputedRunAt::Undefined,\n'
+     '        Err(_) => ComputedRunAt::Valid(0.0),',
+     'runtime::cron::schedule_tests::once_local_wall_unresolvable_fails_closed',
+     '#1324 once local-wall unresolved: must fail closed to undefined, not guess a date'),
+    # fix-r1: a zone construction failure returns a run instead of failing
+    # closed to undefined (never silently fall back to UTC).
+    ('zone-resolver-failure-returns-run', source,
+     '    let Ok(resolver) = resolver else {\n        return Ok(None);\n    };',
+     '    let Ok(resolver) = resolver else {\n        return Ok(Some(0.0));\n    };',
+     'runtime::cron::schedule_tests::zone_resolver_failure_fails_closed',
+     '#1324 zone resolver failure: must fail closed to undefined, not fall back to UTC'),
+    # fix-r1: the hour-only `+HH` branch is dropped from the shared transport
+    # resolver, so `+05` resolves fail-closed instead of computing the 9am run.
+    ('offset-hour-only-branch-dropped', clock,
+     '    } else if body.len() == 2 {\n        (body, "0")',
+     '    } else if body.len() == 12 {\n        (body, "0")',
+     'runtime::cron::schedule_tests::cron_offset_hour_only',
+     NEXT_RUN.format(cell='cron/offset-hour-only')),
+    # fix-r1: TimeClip's -0→+0 normalization is dropped, so a sub-ms delay
+    # over a pre-epoch after yields the -0.0 bit pattern.
+    ('negative-zero-not-normalized', source,
+     '        ComputedRunAt::Valid(epoch_ms.trunc() + 0.0)',
+     '        ComputedRunAt::Valid(epoch_ms.trunc())',
+     'runtime::cron::schedule_tests::delay_negative_zero_is_positive_zero',
+     '#1324 delay negative zero: TimeClip must normalize -0 to +0'),
 ]
 
 

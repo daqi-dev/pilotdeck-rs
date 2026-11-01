@@ -13,7 +13,7 @@
 //! acceptance, which is host independent).
 use std::sync::LazyLock;
 
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 
 use super::{
     ComputedRunAt, CronCreateSchedule, DelayUnit, compute_next_run_at, cron_day_fields_use_or,
@@ -249,9 +249,9 @@ fn replay_delay_cell(entry: &JsValue) {
 #[test]
 fn oracle_matrix_counts_match_generator() {
     for (section, count) in [
-        ("nextRuns", 117),
+        ("nextRuns", 126),
         ("dayOr", 13),
-        ("validTimezones", 37),
+        ("validTimezones", 39),
         ("resolveTimezones", 12),
         ("delayMs", 12),
     ] {
@@ -263,12 +263,82 @@ fn oracle_matrix_counts_match_generator() {
     }
 }
 
-/// `CRON_SCHEDULE_COMPUTATION_VERSION` (CronSchedule.ts:4) is recorded by the
-/// store schema; the value is pinned against the baseline source hash table
-/// in the oracle.
+/// `CRON_SCHEDULE_COMPUTATION_VERSION` (CronSchedule.ts:4), recorded by the
+/// generator next to the baseline source hashes so the pin moves with the
+/// baseline instead of comparing a literal to itself.
 #[test]
 fn computation_version_matches_baseline_constant() {
-    assert_eq!(super::CRON_SCHEDULE_COMPUTATION_VERSION, 3);
+    let recorded = match oracle().get("computationVersion") {
+        Some(JsValue::Number(version)) => *version,
+        other => panic!("#1324 oracle computationVersion must be a number: {other:?}"),
+    };
+    assert_eq!(
+        f64::from(super::CRON_SCHEDULE_COMPUTATION_VERSION),
+        recorded,
+        "#1324 computation version differs from the TS oracle"
+    );
+}
+
+/// #1324: a local-wall `once` `runAt` whose process-TZ resolution is
+/// unavailable on this host fails closed to `Undefined` — TS never fails
+/// there (Node's date parser has ICU-local built in). Registered in
+/// `specs/gateway-parity/diffs/A8.3-CRON-ONCE-LOCALWALL-001.md`.
+#[test]
+fn once_local_wall_unresolvable_fails_closed() {
+    let actual = super::schedule::once_computed_run_at(&"2026-03-05T09:30:00".into(), &|_| {
+        Err(JsString::from("NODE22_DATE_LOCAL_SYSTEM_TZIF_UNSUPPORTED"))
+    });
+    assert_eq!(
+        actual,
+        ComputedRunAt::Undefined,
+        "#1324 once local-wall unresolved: must fail closed to undefined, not guess a date"
+    );
+}
+
+/// #1324: an ICU-valid zone whose resolver construction fails (a legacy
+/// alias the host zoneinfo tree lacks) fails closed to `Undefined`, never
+/// silently falls back to UTC.
+#[test]
+fn zone_resolver_failure_fails_closed() {
+    let expression: JsString = "0 9 * * *".into();
+    let Some(parsed) = super::schedule::parse_cron_expression(&expression) else {
+        panic!("#1324 zone resolver failure: the probe expression must parse")
+    };
+    let actual = super::schedule::compute_next_resolved(
+        &parsed,
+        0.0,
+        Err(JsString::from("Invalid time zone specified")),
+    );
+    assert_eq!(
+        actual,
+        Ok(None),
+        "#1324 zone resolver failure: must fail closed to undefined, not fall back to UTC"
+    );
+}
+
+/// TimeClip normalizes `-0` to `+0` after `ToIntegerOrInfinity`, verified on
+/// Node v22.22.0 (`new Date(-0.5).getTime()` is `+0`, `Object.is(…, -0)`
+/// false); the oracle's JSON cannot distinguish the two zero bits, so this
+/// pins the sign bit directly.
+#[test]
+fn delay_negative_zero_is_positive_zero() {
+    let actual = compute_next_run_at(
+        &CronCreateSchedule::Delay {
+            amount: 0.0005,
+            unit: DelayUnit::Second,
+        },
+        -1.0,
+        "UTC",
+    )
+    .unwrap_or_else(|error| panic!("#1324 delay negative zero: unexpected scan error {error}"));
+    let ComputedRunAt::Valid(epoch) = actual else {
+        panic!("#1324 delay negative zero: expected a valid date, got {actual:?}")
+    };
+    assert_eq!(
+        epoch.to_bits(),
+        0,
+        "#1324 delay negative zero: TimeClip must normalize -0 to +0"
+    );
 }
 
 macro_rules! next_run_tests {
@@ -357,6 +427,7 @@ next_run_tests! {
     delay_nan_after_zero_amount => "delay/nan-after-zero-amount",
     delay_two_and_a_half_days => "delay/two-and-a-half-days",
     delay_pre_epoch => "delay/pre-epoch",
+    delay_sub_ms_negative_after => "delay/sub-ms-negative-after",
     delay_one_millisecond => "delay/one-millisecond",
     cron_daily_9am_before => "cron/daily-9am-before",
     cron_daily_9am_after => "cron/daily-9am-after",
@@ -391,6 +462,7 @@ next_run_tests! {
     cron_ist_9am_same_day => "cron/ist-9am-same-day",
     cron_ist_9am_next_day => "cron/ist-9am-next-day",
     cron_offset_identifier => "cron/offset-identifier",
+    cron_offset_hour_only => "cron/offset-hour-only",
     cron_etc_gmt_plus_5 => "cron/etc-gmt-plus-5",
     cron_lowercase_zone => "cron/lowercase-zone",
     cron_fallback_timezone_used => "cron/fallback-timezone-used",
@@ -402,6 +474,9 @@ next_run_tests! {
     cron_leap_day_ny_midnight => "cron/leap-day-ny-midnight",
     cron_leap_day_kiritimati => "cron/leap-day-kiritimati",
     cron_leap_day_dow_breaks_shortcut => "cron/leap-day-dow-breaks-shortcut",
+    cron_leap_day_after_year_0050 => "cron/leap-day-after-year-0050",
+    cron_leap_day_after_year_0000 => "cron/leap-day-after-year-0000",
+    cron_leap_day_after_year_1999 => "cron/leap-day-after-year-1999",
     cron_leap_day_nan_after => "cron/leap-day-nan-after",
     cron_nan_after_throws => "cron/nan-after-throws",
     cron_after_clip_throws => "cron/after-clip-throws",
@@ -420,6 +495,10 @@ next_run_tests! {
     cron_month_out_of_range => "cron/month-out-of-range",
     cron_dow_out_of_range => "cron/dow-out-of-range",
     cron_zero_step => "cron/zero-step",
+    cron_infinite_step_rejected => "cron/infinite-step-rejected",
+    cron_infinite_step_dow_rejected => "cron/infinite-step-dow-rejected",
+    cron_huge_finite_step => "cron/huge-finite-step",
+    cron_dot_leading_step_rejected => "cron/dot-leading-step-rejected",
     cron_too_many_fields => "cron/too-many-fields",
     cron_too_few_fields => "cron/too-few-fields",
     cron_empty_expression => "cron/empty-expression",
@@ -490,6 +569,8 @@ timezone_tests! {
     tz_34_blank => "34-blank",
     tz_35_not_azone => "35-Not-AZone",
     tz_36_z => "36-Z",
+    tz_37_plus_05 => "37-05",
+    tz_38_plus_00 => "38-00",
 }
 
 resolve_tests! {

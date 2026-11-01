@@ -14,7 +14,11 @@
 use std::fmt;
 
 use pilotdeck_protocol::JsString;
-use pilotdeck_transport::system_clock::{ZonedPartsResolver, parse_node22_date};
+use pilotdeck_transport::system_clock::{
+    ZonedPartsResolver, civil_from_days, parse_node22_date_with_local, resolve_local,
+};
+
+use crate::runtime::tools::builtin::time::days_from_civil;
 
 const MINUTE_MS: f64 = 60_000.0;
 const DAY_MS: f64 = 86_400_000.0;
@@ -111,10 +115,7 @@ pub fn compute_next_run_at(
     fallback_timezone: &str,
 ) -> Result<ComputedRunAt, InvalidTimeValue> {
     match schedule {
-        CronCreateSchedule::Once { run_at } => Ok(match parse_node22_date(run_at) {
-            Ok(Some(epoch_ms)) => ComputedRunAt::Valid(epoch_ms),
-            Ok(None) | Err(_) => ComputedRunAt::Undefined,
-        }),
+        CronCreateSchedule::Once { run_at } => Ok(once_computed_run_at(run_at, &resolve_local)),
         CronCreateSchedule::Delay { amount, unit } => {
             Ok(match delay_to_milliseconds(*amount, *unit) {
                 Some(delay_ms) => js_new_date(after_epoch_ms + delay_ms),
@@ -140,6 +141,21 @@ pub fn compute_next_run_at(
     }
 }
 
+/// The `once` arm with an injectable local-wall resolver: the production
+/// entry uses the transport system-TZ resolver, and a local-wall `runAt`
+/// whose process-TZ resolution is unavailable on this host fails closed to
+/// `Undefined` (TS never fails there — Node's date parser has ICU-local
+/// built in). Registered in `specs/gateway-parity/diffs/`.
+pub(super) fn once_computed_run_at(
+    run_at: &JsString,
+    local: &impl Fn(i64) -> Result<i64, JsString>,
+) -> ComputedRunAt {
+    match parse_node22_date_with_local(run_at, local) {
+        Ok(Some(epoch_ms)) => ComputedRunAt::Valid(epoch_ms),
+        Ok(None) | Err(_) => ComputedRunAt::Undefined,
+    }
+}
+
 /// `computeNextCronRunAt` (CronSchedule.ts:44). `Err(InvalidTimeValue)` is
 /// the TS `RangeError` from formatting an Invalid Date candidate.
 pub fn compute_next_cron_run_at(
@@ -153,15 +169,25 @@ pub fn compute_next_cron_run_at(
     if !is_valid_cron_timezone(timezone) {
         return Ok(None);
     }
-    // Valid per the recorded ICU list but unresolvable through the host
-    // zoneinfo tree (legacy alias zones on split tzdata installs): fail
-    // closed rather than silently computing in UTC.
-    let Ok(resolver) = ZonedPartsResolver::new(timezone) else {
+    compute_next_resolved(&parsed, after_epoch_ms, ZonedPartsResolver::new(timezone))
+}
+
+/// The minute scan with the resolver-construction result injected: a valid
+/// per the recorded ICU list but unresolvable zone (legacy alias zones on
+/// split tzdata installs) fails closed to `Ok(None)` rather than silently
+/// computing in UTC. Kept as its own entry point so that branch stays pinned
+/// by a gateway test without depending on this host lacking a zone file.
+pub(super) fn compute_next_resolved(
+    cron: &ParsedCron,
+    after_epoch_ms: f64,
+    resolver: Result<ZonedPartsResolver, JsString>,
+) -> Result<Option<f64>, InvalidTimeValue> {
+    let Ok(resolver) = resolver else {
         return Ok(None);
     };
     let candidate = (after_epoch_ms / MINUTE_MS).floor() * MINUTE_MS + MINUTE_MS;
-    if is_leap_day_only_schedule(&parsed) {
-        return Ok(compute_next_leap_day_run_at(candidate, &parsed, &resolver));
+    if is_leap_day_only_schedule(cron) {
+        return Ok(compute_next_leap_day_run_at(candidate, cron, &resolver));
     }
     let mut candidate = candidate;
     for _ in 0..MAX_SEARCH_MINUTES {
@@ -170,7 +196,7 @@ pub fn compute_next_cron_run_at(
         if candidate.is_nan() || candidate.abs() > TIME_CLIP {
             return Err(InvalidTimeValue);
         }
-        if matches_cron(candidate, &parsed, &resolver) {
+        if matches_cron(candidate, cron, &resolver) {
             return Ok(Some(candidate));
         }
         candidate += MINUTE_MS;
@@ -182,7 +208,7 @@ pub fn compute_next_cron_run_at(
 /// list plus UTC-offset identifiers, the same acceptance as Node 22's
 /// `Intl.DateTimeFormat` constructor (shared with config validation).
 pub fn is_valid_cron_timezone(timezone: &str) -> bool {
-    crate::config::sections::valid_timezone(timezone)
+    crate::config::valid_timezone(timezone)
 }
 
 /// `resolveCronTimezone` (CronTimezone.ts:10): the first non-empty *valid*
@@ -210,13 +236,14 @@ fn js_new_date(epoch_ms: f64) -> ComputedRunAt {
     if epoch_ms.is_nan() || epoch_ms.abs() > TIME_CLIP {
         ComputedRunAt::Invalid
     } else {
-        ComputedRunAt::Valid(epoch_ms.trunc())
+        // TimeClip's final step normalizes `-0` to `+0`.
+        ComputedRunAt::Valid(epoch_ms.trunc() + 0.0)
     }
 }
 
 /// One parsed five-field expression (CronSchedule.ts:98). Every field is a
 /// bitmask over its range (`minutes` bit 0..59, `months` bit 1..12, ...).
-struct ParsedCron {
+pub(super) struct ParsedCron {
     minutes: u64,
     hours: u64,
     days_of_month: u64,
@@ -274,8 +301,15 @@ fn is_leap_year(year: i64) -> bool {
 }
 
 /// `Date.UTC(year, month, day)` for the leap-day window: TimeClip'd, so a
-/// time beyond the Date range is NaN.
+/// time beyond the Date range is NaN. ECMAScript `MakeFullYear` maps 0..=99
+/// to 1900..=1999, so a two-digit loop year lands its window in the 1900s
+/// (`isLeapYear` still sees the unmapped year, matching TS).
 fn date_utc(year: i64, month: i64, day: i64) -> f64 {
+    let year = if (0..=99).contains(&year) {
+        year + 1900
+    } else {
+        year
+    };
     let days = days_from_civil(year, month, day);
     let epoch_ms = days as f64 * DAY_MS;
     if epoch_ms.abs() > TIME_CLIP {
@@ -306,7 +340,7 @@ fn matches_cron(epoch_ms: f64, cron: &ParsedCron, resolver: &ZonedPartsResolver)
 
 /// `parseCronExpression` (CronSchedule.ts:107): five whitespace-separated
 /// fields; day fields keep Unix AND semantics unless neither starts with `*`.
-fn parse_cron_expression(expression: &JsString) -> Option<ParsedCron> {
+pub(super) fn parse_cron_expression(expression: &JsString) -> Option<ParsedCron> {
     let parts = js_trim_split(expression.units());
     if parts.len() != 5 {
         return None;
@@ -365,7 +399,10 @@ fn parse_field(field: &[u16], min: u32, max: u32) -> Option<u64> {
             None => 1.0,
             Some(units) => parse_int_radix10(units)?,
         };
-        if step <= 0.0 {
+        // `!Number.isInteger(step)`: `Number.parseInt` only returns integers
+        // or Infinity, and a >308-digit step parses to Infinity, so the
+        // non-finite check is the whole divergence surface of the TS check.
+        if !step.is_finite() || step <= 0.0 {
             return None;
         }
         let (start, end) = if base == [u16::from(b'*')] {
@@ -467,28 +504,4 @@ fn js_trim_split(units: &[u16]) -> Vec<&[u16]> {
         parts.push(&units[begin..]);
     }
     parts
-}
-
-/// Days since 1970-01-01 (Howard Hinnant), proleptic Gregorian.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let y = year - era * 400;
-    let m = month + if month > 2 { -3 } else { 9 };
-    let doy = (153 * m + 2) / 5 + day - 1;
-    era * 146_097 + y * 365 + y / 4 - y / 100 + doy - 719_468
-}
-
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let mut y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = mp + if mp < 10 { 3 } else { -9 };
-    y += i64::from(m <= 2);
-    (y, m, d)
 }
