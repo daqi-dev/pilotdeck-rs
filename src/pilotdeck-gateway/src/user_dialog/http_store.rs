@@ -2200,7 +2200,7 @@ impl KeepAliveTimer {
 /// part of the value callback and is counted (probed on v22.22.0:
 /// `_tmp/20261025-issue-699/fix-r1/node/node-header-budget.json`; the body,
 /// pipelined-head, chunked and trailer shapes re-probed for #1232 in
-/// `_tmp/20261026-issue-1232/node/probe-408-431-shape.json`).
+/// `_tmp/20261026-issue-1232/fix-r1/node/probe-408-431-shape.json`).
 ///
 /// hyper buffers the whole head before its parser runs, and its `max_buf_size`
 /// would answer with its own 431 shape. The guard therefore also caps the raw
@@ -2219,10 +2219,17 @@ impl KeepAliveTimer {
 /// `Content-Length` and canonical chunked framing to skip body bytes without
 /// counting them, resets the per-message budget at every message boundary, and
 /// counts trailer fields like head fields. Framing the guard cannot replay
-/// (duplicate `Content-Length` values, extra transfer codings beyond
-/// `chunked`, malformed chunk-size lines) makes it step aside; hyper still
-/// parses those requests and [`serve`]'s `header_bytes` backstop answers an
-/// oversized pipelined head with the same Node bytes.
+/// (duplicate `Content-Length` values, an empty `Content-Length:` value,
+/// extra transfer codings beyond `chunked`, malformed chunk-size lines) makes
+/// it step aside — immediately, in the middle of the read chunk it tripped
+/// in, and for the rest of the connection: hyper greedily buffers past the
+/// request it is serving, so its pull point can already sit inside the next
+/// message while the connection timer still reports `Idle`/`NextHeaders`,
+/// and no phase-driven re-arm can be proven to sit at a message boundary.
+/// hyper still parses those requests and [`serve`]'s `header_bytes` backstop
+/// answers an oversized pipelined head with the same Node bytes, up to
+/// hyper's buffer cap: a raw head past [`hyper_buffer_bytes`] is answered by
+/// hyper's own 431 shape instead (registered, R4).
 #[derive(Debug)]
 struct HeaderGuard {
     max_header_bytes: usize,
@@ -2312,9 +2319,15 @@ enum NameMatch {
 enum FramingValue {
     /// Not capturing (the field does not decide framing).
     None,
-    /// `Content-Length` digits; `invalid` on any other byte (hyper rejects
-    /// those with a 400 of its own).
-    ContentLength { value: u64, invalid: bool },
+    /// `Content-Length` digits; `invalid` on any other byte, or when no digit
+    /// ever arrived — an empty `Content-Length:` value is not `0` (llhttp and
+    /// hyper both reject it), so it is untrackable like any other malformed
+    /// value.
+    ContentLength {
+        value: u64,
+        digits: bool,
+        invalid: bool,
+    },
     /// `Transfer-Encoding` must be the single token `chunked`; more codings
     /// or another token make the framing untrackable for the guard (hyper
     /// accepts some of those, so it keeps parsing and [`serve`]'s backstop
@@ -2372,29 +2385,6 @@ impl HeaderGuard {
         self.transfer_chunked = false;
     }
 
-    fn reset(&mut self) {
-        self.active = true;
-        self.begin_next_head();
-    }
-
-    /// The guard scans bodies and pipelined heads too (#1232), so the
-    /// `Request` phase no longer pauses it: a head pipelined behind a body
-    /// must trip before hyper can answer the request it rode in with. Between
-    /// messages (`Idle` / `NextHeaders`) a completed message or an inactive
-    /// guard re-arms — the wire is at a message boundary there — while a
-    /// partially scanned head is kept across polls.
-    fn begin(&mut self, phase: TimeoutPhase) {
-        match phase {
-            TimeoutPhase::Request | TimeoutPhase::InitialHeaders => {}
-            TimeoutPhase::Idle | TimeoutPhase::NextHeaders => {
-                if self.completed || !self.active {
-                    self.reset();
-                }
-                self.active = true;
-            }
-        }
-    }
-
     fn count(&mut self, bytes: usize) -> bool {
         self.counted_bytes = self.counted_bytes.saturating_add(bytes);
         if self.counted_bytes >= self.max_header_bytes {
@@ -2408,11 +2398,20 @@ impl HeaderGuard {
     /// Node's limit (or over the raw bound that keeps hyper's 431 from
     /// preempting). The head cannot be complete at that point, so the caller
     /// must write the 431 and close without handing the bytes to hyper.
+    ///
+    /// #1232 fix-r1: once the guard steps aside it stops scanning the rest of
+    /// the very buffer it tripped in — those bytes belong to the untrackable
+    /// message — and it never re-arms afterwards. hyper greedily buffers past
+    /// the request it is serving, so its pull point can already sit inside
+    /// the next message while the timer still reports `Idle`/`NextHeaders`:
+    /// no phase-driven re-arm can be proven to sit at a message boundary, so
+    /// later messages are left to `serve`'s `header_bytes` backstop (and,
+    /// past hyper's buffer cap, to hyper's own registered 431 shape).
     fn push(&mut self, bytes: &[u8]) -> bool {
-        if !self.active {
-            return false;
-        }
         for &byte in bytes {
+            if !self.active {
+                return false;
+            }
             if matches!(self.body, BodyFraming::None) {
                 if self.push_head(byte) {
                     return true;
@@ -2631,8 +2630,12 @@ impl HeaderGuard {
     /// A field line ended; fold the captured framing value in.
     fn finish_field(&mut self) {
         match self.framing_value {
-            FramingValue::ContentLength { value, invalid } => {
-                if invalid || self.content_length.is_some() {
+            FramingValue::ContentLength {
+                value,
+                digits,
+                invalid,
+            } => {
+                if invalid || !digits || self.content_length.is_some() {
                     // Invalid or duplicate `Content-Length`: hyper answers some
                     // of these shapes itself and Node others, so the guard
                     // steps aside and lets `serve`'s backstop own any pipelined
@@ -2661,6 +2664,7 @@ impl HeaderGuard {
         self.framing_value = match self.framing_name {
             NameMatch::Full(FramingField::ContentLength) => FramingValue::ContentLength {
                 value: 0,
+                digits: false,
                 invalid: false,
             },
             NameMatch::Full(FramingField::TransferEncoding) => FramingValue::TransferEncoding {
@@ -2715,8 +2719,13 @@ impl HeaderGuard {
     fn push_framing_value_byte(&mut self, byte: u8) {
         match &mut self.framing_value {
             FramingValue::None => {}
-            FramingValue::ContentLength { value, invalid } => {
+            FramingValue::ContentLength {
+                value,
+                digits,
+                invalid,
+            } => {
                 if byte.is_ascii_digit() {
+                    *digits = true;
                     *value = (*value)
                         .saturating_mul(10)
                         .saturating_add((byte - b'0') as u64);
@@ -2941,11 +2950,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
             // guard still has to see everything that arrived, so keep reading
             // (the trip below must land before hyper can answer the request
             // the pipelined head rode in with, #1232).
-            this.header_guard.begin(this.timer.phase());
             let limit = this
                 .read_buffer
                 .len()
                 .min(READ_AHEAD_BYTES - this.ahead.len());
+            if limit == 0 {
+                // #1232: the caller has no room and the read-ahead buffer is
+                // at its cap. A zero-capacity read would return an empty
+                // `filled`, which the EOF branch below would latch as the
+                // peer's EOF — surfacing a fake 47-byte 400 (or a truncated
+                // request) for bytes still in flight. Park instead; the next
+                // poll delivers them and then the EOF.
+                break;
+            }
             let mut scratch = ReadBuf::new(&mut this.read_buffer[..limit]);
             match Pin::new(&mut this.inner).poll_read(cx, &mut scratch) {
                 Poll::Ready(Ok(())) => {
