@@ -41,18 +41,43 @@ pub struct MigrationInput<'a> {
 
 /// CronStoreMigration.ts:29-106.
 pub fn migrate_cron_stores(input: &MigrationInput<'_>) -> Result<(), CronStoreError> {
-    let root_dir = metadata::resolve(&input.pilot_home, "cron");
+    // CronStoreMigration.ts:33: `resolve(input.pilotHome, "cron")` — the one
+    // resolve that also absolutizes a relative pilot home. Every derived key
+    // (snapshot directories, routing targets, blocked directories) must come
+    // from this single absolute home: deriving some from the raw relative
+    // input would key the same physical directory twice (a relative and an
+    // absolute `PathBuf`), and the later empty bucket would overwrite the
+    // migrated tasks and runs there.
+    let cwd = std::env::current_dir()?;
+    let home = metadata::resolve_process_path(&cwd, &input.pilot_home)?;
+    let root_dir = metadata::resolve(&home, "cron");
     let lock_path = acquire_migration_lock(input, &root_dir)?;
-    let body = migrate_locked(input, &root_dir);
-    // CronStoreMigration.ts:103-105: `finally { await releaseLock(); }` — a
-    // release failure replaces the body result, like a rejected finally.
-    match release_migration_lock(&lock_path) {
+    // CronStoreMigration.ts:102-105: `finally { await releaseLock(); }` runs on
+    // a throw too, so a panic in the body must still release the lock.
+    let _release = LockRelease(lock_path.clone());
+    let body = migrate_locked(input, &home.to_string_lossy(), &root_dir);
+    // A release failure replaces the body result, like a rejected finally;
+    // the guard's own second removal is a `rm(force)` on a vanished path.
+    match remove_lock(&lock_path) {
         Ok(()) => body,
         Err(error) => Err(error.into()),
     }
 }
 
-fn migrate_locked(input: &MigrationInput<'_>, root_dir: &Path) -> Result<(), CronStoreError> {
+/// The `finally` half of CronStoreMigration.ts:102-105 for panicking bodies.
+struct LockRelease(PathBuf);
+
+impl Drop for LockRelease {
+    fn drop(&mut self) {
+        let _ = remove_lock(&self.0);
+    }
+}
+
+fn migrate_locked(
+    input: &MigrationInput<'_>,
+    home: &str,
+    root_dir: &Path,
+) -> Result<(), CronStoreError> {
     let snapshots = read_snapshots(&metadata::resolve(root_dir, "projects"))?;
     if snapshots.is_empty() {
         return Ok(());
@@ -82,7 +107,7 @@ fn migrate_locked(input: &MigrationInput<'_>, root_dir: &Path) -> Result<(), Cro
     for snapshot in &snapshots {
         for task in &snapshot.tasks {
             let target_dir =
-                resolve_task_target_dir(input, &snapshot.dir, task, &blocked_task_dirs)?;
+                resolve_task_target_dir(home, &snapshot.dir, task, &blocked_task_dirs)?;
             match final_tasks.iter_mut().find(|(dir, _)| *dir == target_dir) {
                 Some((_, values)) => values.push(task.clone()),
                 None => final_tasks.push((target_dir, vec![task.clone()])),
@@ -95,7 +120,7 @@ fn migrate_locked(input: &MigrationInput<'_>, root_dir: &Path) -> Result<(), Cro
         }
         for run in &snapshot.runs {
             let target_dir = resolve_run_target_dir(
-                input,
+                home,
                 &snapshot.dir,
                 run,
                 &task_projects,
@@ -208,7 +233,9 @@ fn read_tasks(path: &Path) -> Result<(Vec<JsValue>, bool), CronStoreError> {
     let raw = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), true)),
-        Err(error) => return Err(error.into()),
+        // The `catch` treats every other read error (EACCES, EISDIR, …) as the
+        // same blocked, preserved store as a parse failure.
+        Err(_) => return Ok((Vec::new(), false)),
     };
     let parsed = match parse_json(&String::from_utf8_lossy(&raw)) {
         Ok(parsed) => parsed,
@@ -271,7 +298,7 @@ fn build_task_project_index(
 
 /// CronStoreMigration.ts:189-201.
 fn resolve_task_target_dir(
-    input: &MigrationInput<'_>,
+    home: &str,
     source_dir: &Path,
     task: &JsValue,
     blocked_task_dirs: &[PathBuf],
@@ -282,7 +309,7 @@ fn resolve_task_target_dir(
     let Some(project_key) = normalized_project_key(record.get("projectKey"))? else {
         return Ok(source_dir.to_path_buf());
     };
-    let target_dir = resolve_cron_paths(&home_string(input), &project_key)?.project_dir;
+    let target_dir = resolve_cron_paths(home, &project_key)?.project_dir;
     Ok(if blocked_task_dirs.contains(&target_dir) {
         source_dir.to_path_buf()
     } else {
@@ -292,7 +319,7 @@ fn resolve_task_target_dir(
 
 /// CronStoreMigration.ts:203-220.
 fn resolve_run_target_dir(
-    input: &MigrationInput<'_>,
+    home: &str,
     source_dir: &Path,
     run: &JsValue,
     task_projects: &HashMap<JsString, std::collections::BTreeSet<String>>,
@@ -302,7 +329,7 @@ fn resolve_run_target_dir(
     if let Some(explicit_project) =
         normalized_project_key(run.and_then(|record| record.get("projectKey")))?
     {
-        let target_dir = resolve_cron_paths(&home_string(input), &explicit_project)?.project_dir;
+        let target_dir = resolve_cron_paths(home, &explicit_project)?.project_dir;
         return Ok(if blocked_task_dirs.contains(&target_dir) {
             source_dir.to_path_buf()
         } else {
@@ -322,16 +349,12 @@ fn resolve_run_target_dir(
         return Ok(source_dir.to_path_buf());
     }
     let project_key = projects.iter().next().expect("the only project key");
-    let target_dir = resolve_cron_paths(&home_string(input), project_key)?.project_dir;
+    let target_dir = resolve_cron_paths(home, project_key)?.project_dir;
     Ok(if blocked_task_dirs.contains(&target_dir) {
         source_dir.to_path_buf()
     } else {
         target_dir
     })
-}
-
-fn home_string(input: &MigrationInput<'_>) -> String {
-    input.pilot_home.to_string_lossy().into_owned()
 }
 
 /// CronStoreMigration.ts:222-247.
@@ -661,7 +684,10 @@ fn atomic_write(path: &Path, content: &str, now_ms: f64) -> Result<(), CronStore
     }
 }
 
-/// CronStoreMigration.ts:417-449.
+/// CronStoreMigration.ts:417-449. The stale branch keeps the TS `stat` →
+/// `rm` pair as-is: it is not atomic (two concurrent migrators that both
+/// judged the same stale lock can end up both holding the next lock), which
+/// is the baseline's own defect and stays ported, not fixed here.
 fn acquire_migration_lock(
     input: &MigrationInput<'_>,
     root_dir: &Path,
@@ -702,7 +728,10 @@ fn acquire_migration_lock(
                             ("ageMs", JsValue::Number(age)),
                         ],
                     );
-                    fs::remove_file(&lock_path)?;
+                    // `rm(lockPath, {force: true})` and `continue`: a second
+                    // migrator that also judged this lock stale may already
+                    // have removed it, and the ENOENT here is not a failure.
+                    remove_lock(&lock_path)?;
                     continue;
                 }
                 thread::sleep(input.lock_retry_delay);
@@ -716,8 +745,10 @@ fn acquire_migration_lock(
     )))
 }
 
-/// `rm(lockPath, {force: true})`: a vanished lock is success.
-fn release_migration_lock(lock_path: &Path) -> io::Result<()> {
+/// `rm(lockPath, {force: true})`: a vanished lock is success, both on the
+/// stale-removal path (CronStoreMigration.ts:438) and in the `finally`
+/// release (`:445-447`).
+pub(super) fn remove_lock(lock_path: &Path) -> io::Result<()> {
     match fs::remove_file(lock_path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -731,9 +762,11 @@ fn normalized_project_key(value: Option<&JsValue>) -> Result<Option<String>, Cro
     let Some(JsValue::String(text)) = value else {
         return Ok(None);
     };
-    let text = text
-        .to_utf8()
-        .map_err(|_| CronStoreError::Type("projectKey is not valid UTF-8".into()))?;
+    // `resolve` keeps a lone surrogate in the JS string. The key only feeds
+    // the ASCII `createProjectId` fold, where every non-allowed unit (the
+    // surrogate or its U+FFFD replacement) collapses into the same `-`, so
+    // lossy UTF-16 conversion preserves the routed project id.
+    let text = String::from_utf16_lossy(text.units());
     if js_trim(&text).is_empty() {
         return Ok(None);
     }

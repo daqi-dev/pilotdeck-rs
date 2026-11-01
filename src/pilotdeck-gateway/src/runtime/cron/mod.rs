@@ -193,28 +193,10 @@ pub(crate) fn temp_suffix(now_ms: f64) -> String {
     )
 }
 
-/// `new Date(now_ms).toISOString()`. Gregorian civil date from days since the
-/// Unix epoch, no process locale or timezone.
+/// `new Date(now_ms).toISOString()` — the shared `format_epoch_iso` port
+/// (extended years included); see `pilotdeck-transport`'s `system_clock`.
 pub(crate) fn iso_from_epoch_ms(now_ms: f64) -> String {
-    let total = now_ms.floor() as i64;
-    let (days, time) = (total.div_euclid(86_400_000), total.rem_euclid(86_400_000));
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day = z.rem_euclid(146_097);
-    let year_of_era = (day - day / 1460 + day / 36_524 - day / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month = (5 * day_of_year + 2) / 153;
-    let date = day_of_year - (153 * month + 2) / 5 + 1;
-    let month = if month < 10 { month + 3 } else { month - 9 };
-    let year = year + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{date:02}T{:02}:{:02}:{:02}.{:03}Z",
-        time / 3_600_000,
-        time / 60_000 % 60,
-        time % 60_000 / 1000,
-        time % 1000
-    )
+    pilotdeck_transport::system_clock::format_epoch_iso(now_ms.floor() as i64)
 }
 
 /// The parent directory for `mkdir dirname(path)`: TS would throw on a

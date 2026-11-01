@@ -8,7 +8,11 @@ Every selected row is reported, including anchor/build/source-guard failures.
 
 Rows bind one mutation to one named cell replay in
 `runtime::cron::tests` (a lib test, run with `--exact`); the kill evidence is
-that test's own panic payload carrying its `#1216` message.
+that test's own panic payload carrying its `#1216` message. The last six rows
+pin the fix-r1 behaviors: per-file put serialization, the absolute-home entry
+resolve, blocked stores on read errors (EACCES/EISDIR), ENOENT-tolerant lock
+removal, explicit-projectKey run routing, and the lone-surrogate projectKey
+fold.
 """
 from pathlib import Path
 import json
@@ -29,26 +33,28 @@ mutations = [
     # Migration routing removed: projectKey-routed tasks stay in their source
     # directory, so the recorded move never happens (issue scope 3, 迁移跳过).
     ('migration-routing-removed', migration,
-     '    let target_dir = resolve_cron_paths(&home_string(input), &project_key)?.project_dir;\n'
+     '    let target_dir = resolve_cron_paths(home, &project_key)?.project_dir;\n'
      '    Ok(if blocked_task_dirs.contains(&target_dir) {\n'
      '        source_dir.to_path_buf()\n'
      '    } else {\n'
      '        target_dir\n'
      '    })',
-     '    let target_dir = resolve_cron_paths(&home_string(input), &project_key)?.project_dir;\n'
-     '    Ok(if blocked_task_dirs.contains(&target_dir) {\n'
-     '        source_dir.to_path_buf()\n'
-     '    } else {\n'
-     '        source_dir.to_path_buf()\n'
-     '    })',
+     '    let _ = resolve_cron_paths(home, &project_key)?;\n'
+     '    Ok(source_dir.to_path_buf())',
      'runtime::cron::tests::migration_tasks_move_to_projectkey_dir_matches_ts',
      f'#1216 migration tasks-move-to-projectkey-dir {TREE}'),
     # Corrupt tasks.json stops being "blocked": the parse-error branch now
     # reports a writable empty store, so the migration rewrites it and drops
     # the preservation warning (issue scope 3, 损坏文件不报错).
     ('corrupt-tasks-parse-error', migration,
-     '        Err(_) => return Ok((Vec::new(), false)),',
-     '        Err(_) => return Ok((Vec::new(), true)),',
+     '    let parsed = match parse_json(&String::from_utf8_lossy(&raw)) {\n'
+     '        Ok(parsed) => parsed,\n'
+     '        Err(_) => return Ok((Vec::new(), false)),\n'
+     '    };',
+     '    let parsed = match parse_json(&String::from_utf8_lossy(&raw)) {\n'
+     '        Ok(parsed) => parsed,\n'
+     '        Err(_) => return Ok((Vec::new(), true)),\n'
+     '    };',
      'runtime::cron::tests::migration_blocked_dir_keeps_source_tasks_matches_ts',
      f'#1216 migration blocked-dir-keeps-source-tasks {TREE}'),
     # Same, for the non-array `tasks` branch.
@@ -107,6 +113,72 @@ mutations = [
      '    let schedule_kind = |_: &str| false;',
      'runtime::cron::tests::store_list_normalize_matches_ts',
      '#1216 store list-normalize: op list result differs from the TS oracle'),
+    # fix-r1 P0: without the entry resolve, a relative pilot home keys the
+    # same physical directory twice (relative snapshots vs the absolute
+    # resolveCronPaths targets) and the later empty bucket overwrites it.
+    ('relative-home-unresolved', migration,
+     '    let cwd = std::env::current_dir()?;\n'
+     '    let home = metadata::resolve_process_path(&cwd, &input.pilot_home)?;\n'
+     '    let root_dir = metadata::resolve(&home, "cron");',
+     '    let home = input.pilot_home.clone();\n'
+     '    let root_dir = metadata::resolve(&home, "cron");',
+     'runtime::cron::tests::migration_relative_home_same_dir_projectkey_matches_ts',
+     f'#1216 migration relative-home-same-dir-projectkey {TREE}'),
+    # fix-r1 P1: a non-ENOENT read error aborts the whole migration instead of
+    # treating the store as blocked and preserving it.
+    ('read-tasks-error-aborts', migration,
+     '        // The `catch` treats every other read error (EACCES, EISDIR, …) as the\n'
+     '        // same blocked, preserved store as a parse failure.\n'
+     '        Err(_) => return Ok((Vec::new(), false)),',
+     '        // The `catch` treats every other read error (EACCES, EISDIR, …) as the\n'
+     '        // same blocked, preserved store as a parse failure.\n'
+     '        Err(error) => return Err(error.into()),',
+     'runtime::cron::tests::migration_blocked_dir_tasks_eacces_matches_ts',
+     '#1216 migration blocked-dir-tasks-eacces: unexpected error'),
+    # fix-r1 P2: lock removal no longer tolerates a lock another migrator
+    # already deleted (`rm(force)` semantics).
+    ('stale-lock-enoent-errors', migration,
+     '        Ok(()) => Ok(()),\n'
+     '        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),\n'
+     '        Err(error) => Err(error),',
+     '        Ok(()) => Ok(()),\n'
+     '        Err(error) => Err(error),',
+     'runtime::cron::tests::lock_removal_tolerates_a_vanished_lock_file',
+     '#1216 remove_lock must tolerate a vanished lock file'),
+    # fix-r1 P0: without the per-file tail, concurrent puts over one tasks
+    # file interleave read-modify-write cycles and lose tasks.
+    ('concurrency-serialization-removed', source,
+     '    pub fn put_task(&self, task: &JsValue) -> Result<(), CronStoreError> {\n'
+     '        let tail = task_file_tail(&self.paths.tasks_file);\n'
+     '        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());\n'
+     '        let mut file = self.read_task_file()?',
+     '    pub fn put_task(&self, task: &JsValue) -> Result<(), CronStoreError> {\n'
+     '        let mut file = self.read_task_file()?',
+     'runtime::cron::tests::store_concurrent_puts_across_threads_keep_every_task',
+     '#1216 concurrent store: lost updates'),
+    # fix-r1 P2: run records with an explicit projectKey stop routing to the
+    # project directory and stay in their source store.
+    ('run-routing-removed', migration,
+     '        let target_dir = resolve_cron_paths(home, &explicit_project)?.project_dir;\n'
+     '        return Ok(if blocked_task_dirs.contains(&target_dir) {\n'
+     '            source_dir.to_path_buf()\n'
+     '        } else {\n'
+     '            target_dir\n'
+     '        });',
+     '        let _ = resolve_cron_paths(home, &explicit_project)?;\n'
+     '        return Ok(source_dir.to_path_buf());',
+     'runtime::cron::tests::migration_runs_by_explicit_projectkey_matches_ts',
+     f'#1216 migration runs-by-explicit-projectkey {TREE}'),
+    # fix-r1 P3: a strict UTF-16 conversion rejects the lone-surrogate
+    # projectKey instead of folding it into the routed project id.
+    ('surrogate-lossy-reverted', migration,
+     '    let text = String::from_utf16_lossy(text.units());',
+     '    let text = match String::from_utf16(text.units()) {\n'
+     '        Ok(text) => text,\n'
+     '        Err(_) => return Ok(None),\n'
+     '    };',
+     'runtime::cron::tests::migration_lone_surrogate_projectkey_matches_ts',
+     f'#1216 migration lone-surrogate-projectkey {TREE}'),
 ]
 
 

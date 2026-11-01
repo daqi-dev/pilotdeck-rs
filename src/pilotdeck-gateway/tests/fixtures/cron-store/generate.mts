@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises';
-import { utimesSync } from 'node:fs';
+import { chmodSync, utimesSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 import { installFixedClock } from '../_shared/generator_guard.mjs';
@@ -346,6 +346,32 @@ const migrationScenarios: any[] = [
     { path: `${A}/run-history.jsonl`, text: jsonl(compact(r('r1'))) },
     { path: `${B}/tasks.json`, text: tasksFile([t('b1', { projectKey: '/w/proj-a' })]) },
   ] },
+  // fix-r1 P0: a relative pilotHome must resolve once at the entry, so the
+  // snapshot directories and the projectKey-routed targets key the same
+  // physical directory instead of a relative/absolute pair whose later empty
+  // bucket overwrites the migrated data.
+  { name: 'relative-home-same-dir-projectkey', pilotHomeRelative: true, files: [
+    { path: 'cron/projects/w-same/tasks.json', text: tasksFile([t('a1', { projectKey: '/w/same' })]) },
+  ] },
+  { name: 'relative-home-blocked-dir', pilotHomeRelative: true, files: [
+    { path: `${PB}/tasks.json`, text: '{"schemaVersion": 1, "tasks": [' },
+    { path: `${PB}/run-history.jsonl`, text: jsonl(compact(r('rb'))) },
+    { path: `${A}/tasks.json`, text: tasksFile([t('a1', { projectKey: '/w/proj-b' }), t('a2')]) },
+    { path: `${A}/run-history.jsonl`, text: jsonl(compact(r('r1', { projectKey: '/w/proj-b' })), compact(r('r2'))) },
+  ] },
+  // fix-r1 P1: non-ENOENT read errors are blocked, preserved stores.
+  { name: 'blocked-dir-tasks-eacces', chmod000: [`${B}/tasks.json`], files: [
+    { path: `${B}/tasks.json`, text: tasksFile([t('b1')]) },
+    { path: `${A}/tasks.json`, text: tasksFile([t('a1', { projectKey: '/w/proj-b' })]) },
+  ] },
+  { name: 'blocked-dir-tasks-isdir', files: [
+    { path: `${B}/tasks.json/keep`, text: 'x' },
+    { path: `${A}/tasks.json`, text: tasksFile([t('a1', { projectKey: '/w/proj-b' })]) },
+  ] },
+  // fix-r1 P3: a lone-surrogate projectKey routes like any other key.
+  { name: 'lone-surrogate-projectkey', files: [
+    { path: `${A}/tasks.json`, text: tasksFile([t('s1', { projectKey: '/w/\ud800x' })]) },
+  ] },
   { name: 'non-directory-entries-skipped', files: [
     { path: 'cron/projects/plain-file', text: 'not a dir' },
     { path: `${A}/tasks.json`, text: tasksFile([t('a1')]) },
@@ -366,6 +392,9 @@ const migrationOracle = [];
 for (const scenario of migrationScenarios) {
   const home = join(out, 'migration-' + scenario.name);
   await writeInputs(home, scenario.files);
+  // A relative pilotHome exercises the entry `resolve(pilotHome, "cron")`
+  // against the process cwd, exactly like a caller that passes one.
+  const pilotHome = scenario.pilotHomeRelative ? relative(process.cwd(), home) : home;
   const warnings: any[] = [];
   const logger = { warn(message: string, meta: any) { warnings.push({ message, meta }); } };
   if (scenario.staleLockMs !== undefined || scenario.freshLockMs !== undefined) {
@@ -377,12 +406,16 @@ for (const scenario of migrationScenarios) {
     await writeFile(lock, 'held\n', { flag: 'wx' });
     utimesSync(lock, stamp, stamp);
   }
+  // Read-error seeds: chmod 000 before the migration, restored before the
+  // tree is recorded (the migration leaves the blocked store untouched).
+  for (const blocked of scenario.chmod000 ?? []) chmodSync(join(home, blocked), 0o000);
   let error: string | null = null;
   try {
-    await migrateCronStores({ pilotHome: home, logger });
+    await migrateCronStores({ pilotHome, logger });
   } catch (caught) {
     error = String(caught);
   }
+  for (const blocked of scenario.chmod000 ?? []) chmodSync(join(home, blocked), 0o644);
   const once = await tree(home);
   let twice = null;
   if (scenario.twice && !error) {
@@ -394,6 +427,7 @@ for (const scenario of migrationScenarios) {
   const masked = clone(warnings.map((entry) => ({ ...entry,
     meta: JSON.parse(JSON.stringify(entry.meta).split(home).join('{HOME}')) })));
   migrationOracle.push({ name: scenario.name, home: 'migration-' + scenario.name,
+    pilotHomeRelative: scenario.pilotHomeRelative ?? null, chmod000: scenario.chmod000 ?? null,
     input: scenario.files.map((file: any) => ({ path: file.path, text: file.text ?? null, bytes: file.bytes ?? null })),
     warnings: masked, error: error && error.split(home).join('{HOME}'), once, twice });
 }
@@ -406,7 +440,7 @@ for (const [label, actual, expected] of [
   ['paths', pathsOracle.length, 9],
   ['eventsPaths', eventsPaths.length, 10],
   ['store', storeOracle.length, 33],
-  ['migration', migrationOracle.length, 18],
+  ['migration', migrationOracle.length, 23],
 ] as const) {
   assert.equal(actual, expected, `${label} cell count drifted`);
 }
