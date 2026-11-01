@@ -1162,8 +1162,8 @@ impl HeartbeatIndexer {
             // fix-r3 (review P0): the generation mismatch alone says "some
             // clear completed since the baseline", not "this row was cleared"
             // — a turn captured after that clear completed must survive it,
-            // so the mismatch arm discriminates per row via the removed-id
-            // set.
+            // so the mismatch arm discriminates per row via the removed
+            // record (row id → the generation of the clear that deleted it).
             let session_cleared =
                 self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
 
@@ -1708,7 +1708,8 @@ impl HeartbeatIndexer {
     /// since the baseline — but only for the rows that clear deleted. A turn
     /// captured after the clear finished is new data and must be persisted,
     /// exactly like the TS baseline persists it on the next run, so the
-    /// mismatch arm consults the per-row removed-id set.
+    /// mismatch arm consults the per-row removed record (row id → the
+    /// generation of the clear that deleted it).
     fn session_cleared(
         &self,
         session_key: &str,
