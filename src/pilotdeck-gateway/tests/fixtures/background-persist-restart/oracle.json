@@ -277,6 +277,34 @@
         "error": "Unknown taskId: task-settle"
       },
       "secondRuntimeDiagnostics": []
+    },
+    {
+      "id": "corrupt-bad-json",
+      "restart": {
+        "name": "BackgroundTaskSnapshotRecoveryError",
+        "message": "Background task snapshot <state>/state.json is not valid JSON; recovery is required."
+      }
+    },
+    {
+      "id": "corrupt-version-2",
+      "restart": {
+        "name": "BackgroundTaskSnapshotRecoveryError",
+        "message": "Background task snapshot <state>/state.json has an unsupported schema; recovery is required."
+      }
+    },
+    {
+      "id": "corrupt-duplicate-id",
+      "restart": {
+        "name": "BackgroundTaskSnapshotRecoveryError",
+        "message": "Background task snapshot <state>/state.json repeats taskId \"task-a\"; recovery is required."
+      }
+    },
+    {
+      "id": "corrupt-invalid-status",
+      "restart": {
+        "name": "BackgroundTaskSnapshotRecoveryError",
+        "message": "Background task snapshot <state>/state.json has an invalid task at index 0; recovery is required."
+      }
     }
   ]
 }
