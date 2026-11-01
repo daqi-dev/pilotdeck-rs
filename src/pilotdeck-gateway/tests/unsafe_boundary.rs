@@ -2,7 +2,13 @@
 //! 内容、全部 workspace 成员的解析后依赖闭包及其所有声明依赖的 source/path
 //! （含 dev/build/target 与未启用的可选依赖）、仓内 Cargo 配置与 toolchain 文件、
 //! workspace manifest 树内的测试 cwd 到根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
-//! config*，以及测试进程可见的编译相关环境变量。
+//! config*、测试进程可见的编译相关环境变量（#448 补 RUSTDOC / RUSTC_BOOTSTRAP；
+//! RUSTUP_TOOLCHAIN 仅在 RUSTUP_TOOLCHAIN_SOURCE=toolchain-file 且值等于本仓
+//! rust-toolchain.toml 钉住 channel（或 channel-host）时放行），以及 #448 在
+//! Linux 上经 /proc 读到的真实调用上下文：父进程（cargo / cargo-nextest 本尊）
+//! 的 cwd 到根的 Cargo 配置链、其 argv 里的 `--config` 覆盖、其进程像与
+//! CARGO 环境的一致性（防树外 config 用 `[env] force = true` 把守卫的
+//! cargo metadata 审计指向假 cargo）。
 //! vendored 包（`vendor/tiktoken-rs`、`data/icu_collator_data`）不在 workspace
 //! lint 继承内，因此其声明/源码包含边与成员同受检查：path 依赖（含 dev/build/
 //! target 与未启用的可选依赖）、build script、proc-macro 及其它非 lib target、
@@ -31,6 +37,15 @@
 //! 字面量一律拒绝。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
 //! vendored 源码内容不做哈希 pin：内容本身是否可信属于冻结件/人工评审边界；
 //! 本守卫只锁“声明边与源码包含边不能引出该目录”。
+//! #448 登记的剩余边界（做不到的部分，明确写出）：测试进程 cwd 恒为包根，
+//! 没有 /proc 的平台（macOS / Windows）读不到父进程的 cwd / argv / 进程像，
+//! 那些平台上的树外调用目录 `.cargo/config*`、`cargo --config` 与
+//! `[env]` CARGO 覆盖不可核实，与下方 CI 脚本替换编译器同归人工评审；
+//! `cargo nextest` 下父进程是 cargo-nextest，cargo 自身的 `--config` 与
+//! 调用目录经 nextest 转达后对测试进程同样不可见（nextest 自身的
+//! `--config-file` 是另一个 token，不受 `--config` 检查影响）；直接运行
+//! 已编译守卫二进制（父进程不是 cargo）时进程像一致性也无法核实，仅当
+//! 祖先里出现名为 cargo 的进程时才比对 CARGO。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
 //! CARGO 包装器）由人工评审负责，不靠扫描脚本文本覆盖；依据：
 //! state/decisions-20261021.md「卡 · #386 守卫的构建配置检查改为「一律不许存在」，并划清守卫边界（AI 代批，待人复核）」。
@@ -791,6 +806,24 @@ fn build_configuration_boundary(root: &Path, directory: &Path) {
     }
 }
 
+// #448: one rejection for every directory chain that Cargo config discovery
+// walks. The boundary text names the origin so a rejection explains which
+// chain carried the configuration; anything but a definite NotFound fails
+// closed.
+fn assert_no_ancestor_cargo_configuration(chain: &Path, boundary: &str, remedy: &str) {
+    for directory in chain.ancestors() {
+        for name in ["config", "config.toml"] {
+            let path = directory.join(".cargo").join(name);
+            assert!(
+                fs::symlink_metadata(&path)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                "{boundary} can replace the compiler or override lint policy and is forbidden: {}. {remedy}",
+                path.display()
+            );
+        }
+    }
+}
+
 fn cargo_configuration_locations_boundary(manifest: &Path) {
     // Cargo discovers config from the build cwd through all ancestors, even
     // above a nested worktree. Enforce the supported workspace manifest tree
@@ -802,17 +835,11 @@ fn cargo_configuration_locations_boundary(manifest: &Path) {
         cwd.display(),
         manifest.display()
     );
-    for directory in cwd.ancestors() {
-        for name in ["config", "config.toml"] {
-            let path = directory.join(".cargo").join(name);
-            assert!(
-                fs::symlink_metadata(&path)
-                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-                "ancestor Cargo configuration can replace the compiler or override lint policy and is forbidden: {}. For this guard test only, use a checkout whose manifest ancestors have no .cargo/config or .cargo/config.toml",
-                path.display()
-            );
-        }
-    }
+    assert_no_ancestor_cargo_configuration(
+        &cwd,
+        "ancestor Cargo configuration",
+        "For this guard test only, use a checkout whose manifest ancestors have no .cargo/config or .cargo/config.toml",
+    );
     let cargo_home = std::env::var_os("CARGO_HOME").map_or_else(
         || {
             PathBuf::from(std::env::var_os("HOME").expect("HOME required when CARGO_HOME is unset"))
@@ -863,13 +890,143 @@ fn compiler_environment_boundary() {
     }
 }
 
+// #448: the toolchain-selection family rounds out the compiler overrides.
+// RUSTDOC swaps the documentation compiler and RUSTC_BOOTSTRAP unlocks
+// unstable rustc options on the pinned stable channel; neither may be set to
+// a nonempty value. RUSTUP_TOOLCHAIN is the one toolchain variable the normal
+// flow itself sets: rustup's shim resolves this repository's hash-pinned
+// rust-toolchain.toml and exports RUSTUP_TOOLCHAIN with
+// RUSTUP_TOOLCHAIN_SOURCE=toolchain-file, so exactly that combination (with
+// the resolved name equal to the pinned channel or channel plus host triple)
+// passes; +toolchain CLI, a user-exported RUSTUP_TOOLCHAIN, and a different
+// toolchain file on an out-of-tree invocation directory are all rejected.
+fn toolchain_environment_boundary(root: &Path) {
+    for key in ["RUSTDOC", "RUSTC_BOOTSTRAP"] {
+        assert!(
+            std::env::var_os(key).is_none_or(|value| value.is_empty()),
+            "#448 {key} can swap the documentation compiler or unlock unstable rustc options on the pinned stable channel, and is not covered by the toolchain file pin; nonempty values are forbidden. For this guard test only, run: env -u {key} cargo test -p pilotdeck-gateway --test unsafe_boundary -- --exact compiler_enforces_gateway_boundary"
+        );
+    }
+    if let Some(toolchain) = std::env::var_os("RUSTUP_TOOLCHAIN") {
+        let toolchain = toolchain.to_string_lossy();
+        let source = std::env::var_os("RUSTUP_TOOLCHAIN_SOURCE")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let manifest = fs::read_to_string(root.join("rust-toolchain.toml"))
+            .expect("#448 pinned rust-toolchain.toml is readable");
+        let channel = section(&manifest, "[toolchain]")
+            .iter()
+            .find_map(|line| line.strip_prefix("channel = "))
+            .and_then(|value| value.strip_prefix('"').and_then(|v| v.strip_suffix('"')))
+            .expect("#448 pinned toolchain channel is declared");
+        assert!(
+            source == "toolchain-file"
+                && (toolchain.as_ref() == channel || toolchain.starts_with(&format!("{channel}-"))),
+            "#448 RUSTUP_TOOLCHAIN={toolchain} (RUSTUP_TOOLCHAIN_SOURCE={source}) does not come from this repository's pinned rust-toolchain.toml (channel {channel}); the unsafe_code=forbid guarantee is defined for the pinned rustc only. For this guard test only, run cargo without +toolchain, an exported RUSTUP_TOOLCHAIN, or an invocation directory outside this checkout"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn parent_process_id(pid: u32) -> Option<u32> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The comm field may contain ')' and spaces; the fixed fields resume
+    // after the final closing parenthesis: state, then ppid.
+    stat.rsplit(')')
+        .next()?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
+// #448: the test process cwd is always the package root, so walking the cwd
+// ancestors can never see where cargo itself was invoked from — and Cargo
+// discovers .cargo/config* from that invocation directory, not from the
+// manifest tree. On Linux the immediate parent is the runner that spawned
+// this binary (cargo itself, or cargo-nextest forwarding cargo's context),
+// and /proc exposes exactly the inputs that were effective for the
+// invocation: its cwd carries the out-of-tree configuration discovery chain,
+// its argv shows the otherwise unobservable `--config` overrides, and its
+// process image is the real cargo that a `[env] force=true` CARGO override
+// would have to impersonate.
+#[cfg(target_os = "linux")]
+fn cargo_invocation_boundary() {
+    let ppid = parent_process_id(std::process::id())
+        .expect("#448 the parent runner process must be identifiable through /proc");
+    let parent = PathBuf::from(format!("/proc/{ppid}"));
+    let argv: Vec<String> = fs::read(parent.join("cmdline"))
+        .expect("#448 parent runner cmdline must be readable")
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .map(|argument| String::from_utf8_lossy(argument).into_owned())
+        .collect();
+    for argument in &argv {
+        assert!(
+            argument != "--config" && !argument.starts_with("--config="),
+            "#448 cargo --config overrides (build.rustc, build.rustflags, target tables, [env]) are not observable through files or the test environment and are forbidden: {argv:?}. For this guard test only, run cargo without --config"
+        );
+    }
+    let cwd = fs::read_link(parent.join("cwd"))
+        .expect("#448 parent runner working directory must be readable");
+    assert_no_ancestor_cargo_configuration(
+        &cwd,
+        "#448 cargo invocation directory Cargo configuration (the test process cwd is always the package root and cannot see it)",
+        "For this guard test only, invoke cargo from a directory whose ancestors have no .cargo/config or .cargo/config.toml",
+    );
+    // The runner image identifies the real cargo behind the CARGO variable;
+    // an out-of-tree `[env] force=true` CARGO override would otherwise point
+    // this guard's own `cargo metadata` audit at a fake cargo. Plain
+    // `cargo test` exposes the cargo as the parent; `cargo nextest run`
+    // exposes it one level above cargo-nextest. With no cargo ancestry
+    // (direct execution of the compiled guard binary) the identity cannot
+    // be verified and stays within the declared manual-review boundary; with
+    // any cargo ancestry visible, CARGO must name one of those ancestors.
+    let cargo = PathBuf::from(
+        std::env::var_os("CARGO")
+            .expect("#448 the guard environment must name its cargo through CARGO"),
+    );
+    let mut saw_cargo = false;
+    let mut verified = false;
+    let mut pid = ppid;
+    for _ in 0..8 {
+        let exe = match fs::read_link(format!("/proc/{pid}/exe")) {
+            Ok(exe) => exe,
+            Err(_) => break,
+        };
+        if exe.file_name().and_then(|name| name.to_str()) == Some("cargo") {
+            saw_cargo = true;
+            verified |= Path::new(&cargo)
+                .canonicalize()
+                .is_ok_and(|cargo| cargo == exe);
+        }
+        match parent_process_id(pid) {
+            Some(next) if next > 1 => pid = next,
+            _ => break,
+        }
+    }
+    assert!(
+        !saw_cargo || verified,
+        "#448 the CARGO executable in the guard environment does not match any cargo process in this run's ancestry; an out-of-tree [env] override can point the cargo metadata audit at a fake cargo: {}",
+        cargo.display()
+    );
+}
+
+// #448 declared boundary (module header): without /proc the invocation
+// directory chain, the runner argv and the runner image are unavailable to
+// the test process, so those platforms keep the manual-review boundary.
+#[cfg(not(target_os = "linux"))]
+fn cargo_invocation_boundary() {}
+
 #[test]
 fn compiler_enforces_gateway_boundary() {
     let gateway = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = gateway.parent().unwrap();
-    compiler_environment_boundary();
-    cargo_configuration_locations_boundary(workspace);
     let root = workspace.parent().unwrap();
+    compiler_environment_boundary();
+    toolchain_environment_boundary(root);
+    cargo_configuration_locations_boundary(workspace);
+    cargo_invocation_boundary();
     registered_build_files(root);
     build_configuration_boundary(root, root);
     let workspace_manifest = fs::read_to_string(workspace.join("Cargo.toml")).unwrap();
