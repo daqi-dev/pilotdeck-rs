@@ -318,6 +318,12 @@ impl LiveSession for LiveSessionAdapter {
         // and finish()'s second, contradiction-only check; see StreamHandler.
         let integrity = Arc::new(StreamIntegrity::new());
         let hook_integrity = integrity.clone();
+        // #1220: one coordinate allocator per turn, shared by the wire/host
+        // event projection and the terminal block positioning.
+        let timeline = Arc::new(Mutex::new(super::timeline::TurnTimeline::new(
+            request.identity.turn_id.clone(),
+        )));
+        let stream_timeline = timeline.clone();
         // Keep at most one delivered event ahead of the submit consumer.
         let (events, receiver) = mpsc::channel(1);
         let (session_sender, session_ready) = oneshot::channel();
@@ -383,7 +389,14 @@ impl LiveSession for LiveSessionAdapter {
                     inner,
                     events,
                     integrity: hook_integrity,
-                    forwarding: Arc::default(),
+                    forwarding: Arc::new(Mutex::new(Forwarding {
+                        timeline: if crate::mutants::on("timeline-forwarding-unwired") {
+                            None
+                        } else {
+                            Some(timeline.clone())
+                        },
+                        ..Default::default()
+                    })),
                     callback_cancel: Some(cancellation.clone()),
                 });
                 let client_integrity = handler.integrity.clone();
@@ -438,7 +451,13 @@ impl LiveSession for LiveSessionAdapter {
             accepted: false,
             preflight: 0,
             execute_ready: Some(execute_ready),
+            execute_messages: None,
             recorded: std::collections::VecDeque::new(),
+            timeline: if crate::mutants::on("timeline-terminal-unwired") {
+                None
+            } else {
+                Some(stream_timeline)
+            },
         };
         Ok(Box::new(super::live_session::SessionStream::new(
             turn,
@@ -559,7 +578,14 @@ pub(super) struct LiveTurnStream {
     accepted: bool,
     preflight: u8,
     execute_ready: Option<oneshot::Sender<Vec<JsValue>>>,
+    // #1220: the messages snapshot actually sent through execute_ready — the
+    // aborted terminal's message source (TS input.messages), kept separate
+    // from the runner the stream keeps recording into afterwards.
+    execute_messages: Option<Vec<JsValue>>,
     recorded: std::collections::VecDeque<JsValue>,
+    // #1220: the turn's coordinate allocator, shared with the handler's
+    // Forwarding so terminal blocks reuse the positions the stream assigned.
+    timeline: Option<Arc<Mutex<super::timeline::TurnTimeline>>>,
 }
 
 impl LiveTurn for LiveTurnStream {
@@ -659,6 +685,12 @@ impl LiveTurn for LiveTurnStream {
                     } else {
                         runner.messages().to_vec()
                     };
+                    // #1220: retain exactly what the sidecar receives.
+                    // abortedResult reads input.messages (TS client:1434-1450),
+                    // pristine because the loop copies it (AgentLoop.ts:367), so
+                    // an aborted terminal must report this execute-time snapshot
+                    // — never the runner's later in-turn durable loop messages.
+                    self.execute_messages = Some(messages.clone());
                     let _ = self.execute_ready.take().unwrap().send(messages);
                 }
                 let mut delivered = None;
@@ -991,13 +1023,32 @@ impl LiveTurnStream {
                 }
                 Ok(Some(self.completed_event(
                     terminal.get("payload").unwrap_or(&JsValue::Undefined),
+                    true,
                 )?))
             }
             Ok(ExecuteResult::Aborted { terminal }) => {
                 self.integrity.observe_aborted()?;
                 self.delivered.observe_aborted()?;
-                let terminal = terminal.unwrap_or_else(|| self.aborted_result());
-                Ok(Some(self.completed_event(&terminal)?))
+                // TS synthesizes its aborted result outside the projector
+                // (agentLoopSidecarClient.ts:330/:593); only a terminal
+                // the sidecar actually sent gets block coordinates.
+                let (terminal, position) = match terminal {
+                    Some(terminal) => (terminal, true),
+                    None => (self.aborted_result(), false),
+                };
+                Ok(Some(self.completed_event(&terminal, position)?))
+            }
+            Ok(ExecuteResult::AbortedCompaction) => {
+                self.integrity.observe_aborted()?;
+                self.delivered.observe_aborted()?;
+                // TS client:1348 substitutes abortedResult(input) inside
+                // readFinalTerminal and routes it through recordKnownTerminal
+                // -> projectTerminal, so unlike the pre-execute cancels the
+                // original input messages get block coordinates.
+                let position = !crate::mutants::on("timeline-compaction-unpositioned");
+                Ok(Some(
+                    self.completed_event(&self.aborted_result(), position)?,
+                ))
             }
             Ok(ExecuteResult::Rejected(error)) => Err(RuntimeError {
                 message: "Turn execution rejected.".into(),
@@ -1014,7 +1065,7 @@ impl LiveTurnStream {
         }
     }
 
-    fn completed_event(&self, terminal: &JsValue) -> Result<JsValue, RuntimeError> {
+    fn completed_event(&self, terminal: &JsValue, position: bool) -> Result<JsValue, RuntimeError> {
         let mut terminal = terminal.clone();
         if let (Some(module), JsValue::Object(fields)) = (
             self.integrity.module_id.lock().unwrap().as_ref(),
@@ -1033,6 +1084,40 @@ impl LiveTurnStream {
                 let mut messages = messages.clone();
                 for message in &mut messages {
                     mark_module_message(message, module)?;
+                }
+                fields.insert("messages".into(), JsValue::Array(messages));
+            }
+        }
+        if position
+            && let Some(timeline) = &self.timeline
+            && let JsValue::Object(fields) = &mut terminal
+        {
+            // TS projectTerminal positions every block of the final message
+            // and history messages (agentLoopSidecarClient.ts:1530); a block
+            // the stream already located reuses its position without a
+            // revision bump, while a new block allocates one and bumps the
+            // revision like any other located event.
+            if let Some(mut result) = fields.get("result").and_then(JsValue::as_object).cloned()
+                && let Some(mut message) = result.get("finalMessage").cloned()
+                && super::submit::truthy(&message)
+                && let JsValue::Object(message_fields) = &mut message
+            {
+                super::timeline::project_terminal_message(
+                    &mut timeline.lock().unwrap(),
+                    message_fields,
+                );
+                result.insert("finalMessage".into(), message);
+                fields.insert("result".into(), JsValue::Object(result));
+            }
+            if let Some(JsValue::Array(messages)) = fields.get("messages") {
+                let mut messages = messages.clone();
+                for message in &mut messages {
+                    if let JsValue::Object(message_fields) = message {
+                        super::timeline::project_terminal_message(
+                            &mut timeline.lock().unwrap(),
+                            message_fields,
+                        );
+                    }
                 }
                 fields.insert("messages".into(), JsValue::Array(messages));
             }
@@ -1087,23 +1172,41 @@ impl LiveTurnStream {
         }
         let mut terminal = JsObject::new();
         terminal.insert("result".into(), JsValue::Object(result));
-        terminal.insert(
-            "messages".into(),
-            JsValue::Array(
-                self.recording
-                    .as_ref()
-                    .and_then(Recording::runner)
-                    .map(|runner| {
-                        if crate::mutants::on("prompt-abort-context") {
-                            self.input.loop_messages()
-                        } else {
-                            runner.messages().to_vec()
-                        }
-                    })
-                    .unwrap_or_else(|| self.input.loop_messages()),
-            ),
-        );
+        terminal.insert("messages".into(), JsValue::Array(self.abort_messages()));
         JsValue::Object(terminal)
+    }
+
+    /// The message list an aborted terminal reports. TS `abortedResult(input)`
+    /// (agentLoopSidecarClient.ts:1434-1450) returns `input.messages` — the
+    /// snapshot the client handed the sidecar at execute time, still pristine
+    /// because the loop works on a copy (AgentLoop.ts:367). In-turn durable
+    /// assistant/tool messages land in the runner afterwards and must not leak
+    /// into this list. Before the execute snapshot exists (pre-execute
+    /// cancels) the runner already carries what submit_prompt recorded —
+    /// including the UserPromptSubmit hook's injected messages (#741 extends
+    /// `self.messages` before execute) — so the fallback must report the
+    /// runner's list, never the bare loop input: the two only agree when no
+    /// hook contributed anything (#741 context-abort pins the hooked shape).
+    fn abort_messages(&self) -> Vec<JsValue> {
+        if crate::mutants::on("prompt-abort-context") {
+            return self.input.loop_messages();
+        }
+        if crate::mutants::on("live-abort-finish-messages") {
+            return self
+                .recording
+                .as_ref()
+                .and_then(Recording::runner)
+                .map(|runner| runner.messages().to_vec())
+                .unwrap_or_else(|| self.input.loop_messages());
+        }
+        if let Some(messages) = &self.execute_messages {
+            return messages.clone();
+        }
+        self.recording
+            .as_ref()
+            .and_then(Recording::runner)
+            .map(|runner| runner.messages().to_vec())
+            .unwrap_or_else(|| self.input.loop_messages())
     }
 }
 
@@ -1182,6 +1285,9 @@ struct Forwarding {
     stopped: bool,
     parent: Option<ExecutionIdentity>,
     subagents: Vec<HostSubagent>,
+    // #1220: the turn's coordinate allocator. Only submit() assembles it;
+    // embedded test handlers keep `Arc::default()` and pass events through.
+    timeline: Option<Arc<Mutex<super::timeline::TurnTimeline>>>,
 }
 
 struct HostSubagent {
@@ -1237,7 +1343,15 @@ impl Forwarding {
 
     // Only host-buffer events update the active map, like TS drain(). Wire
     // events go through project(), which does not track host subagents.
-    fn project_host(&mut self, events: Vec<JsObject>, heartbeat: bool) -> Vec<JsObject> {
+    // #1220: with an assembled timeline every drained event — and every
+    // derived subagent status — is projected through the coordinate
+    // allocator before publication, exactly like TS drain().
+    fn project_host(
+        &mut self,
+        events: Vec<JsObject>,
+        heartbeat: bool,
+        module: Option<&JsString>,
+    ) -> Vec<JsObject> {
         let now = Instant::now();
         let mut projected = Vec::new();
         let Some(parent) = &self.parent else {
@@ -1320,8 +1434,15 @@ impl Forwarding {
                     }
                 }
             }
+            let mut event = event;
+            self.project_event(&mut event, module);
             projected.push(event);
-            projected.extend(derived);
+            if let Some(mut status) = derived {
+                if !crate::mutants::on("timeline-derived-unprojected") {
+                    self.project_event(&mut status, module);
+                }
+                projected.push(status);
+            }
         }
         if heartbeat {
             for state in &mut self.subagents {
@@ -1330,6 +1451,8 @@ impl Forwarding {
                 }
                 state.heartbeat = now;
                 let running = state.name.as_ref().is_some_and(super::submit::truthy);
+                // TS heartbeats bypass project(): no module stamp, no child
+                // stripping, and timeline.event is the identity for them.
                 projected.push(state.status(
                     parent,
                     if running { "running" } else { "waiting_model" },
@@ -1339,6 +1462,12 @@ impl Forwarding {
             }
         }
         projected
+    }
+
+    fn project_event(&self, event: &mut JsObject, module: Option<&JsString>) {
+        if let Some(timeline) = &self.timeline {
+            super::timeline::project(&mut timeline.lock().unwrap(), event, module);
+        }
     }
 }
 impl Forwarding {
@@ -1391,11 +1520,44 @@ impl StreamHandler {
             result = &mut execution => result,
             error = async {
                 loop {
+                    // #1220 cancel window (top-of-loop twin): the equivalent
+                    // of the in-tick checkpoint below, placed at the loop top
+                    // beside the `stopped` check — the shape a cancel assembly
+                    // would most naturally take. It still lets the iteration
+                    // that already passed this check drain one more host batch,
+                    // so only the *second* post-abort host event catches it.
+                    if crate::mutants::on("timeline-cancel-parks-pump")
+                        && self
+                            .callback_cancel
+                            .as_ref()
+                            .is_some_and(|cancel| cancel.is_cancelled())
+                    {
+                        std::future::pending::<()>().await;
+                    }
                     if self.forwarding.lock().unwrap().stopped { std::future::pending::<()>().await; }
                     let deadline = self.forwarding.lock().unwrap().deadline();
                     sleep_until(deadline).await;
                     let mut delivery = self.forwarding.lock().unwrap().reserve();
                     delivery.wait().await;
+                    // #1220 cancel window: a cancelled turn must keep pumping —
+                    // only the module final or dispose stops the loop. The
+                    // mutated branch simulates a cancel assembly that parks the
+                    // pump once the host's cancellation signal has fired by the
+                    // tick, so post-abort host events stop being drained there.
+                    if crate::mutants::on("timeline-cancel-stops-pump")
+                        && self
+                            .callback_cancel
+                            .as_ref()
+                            .is_some_and(|cancel| cancel.is_cancelled())
+                    {
+                        // Release the reserved slot to any successor first, so
+                        // wire callbacks are not blocked behind the parked pump;
+                        // the pending await below never resolves (the `continue`
+                        // only exists to end the moved value's control flow).
+                        drop(delivery);
+                        std::future::pending::<()>().await;
+                        continue;
+                    }
                     if self.forwarding.lock().unwrap().stopped || Instant::now() < self.forwarding.lock().unwrap().deadline() { continue; }
                     self.forwarding.lock().unwrap().activity = Some(Instant::now());
                     if let Err(error) = self.forward(Box::pin(async { Ok(()) }), None, Some(delivery), false, true).await { break error; }
@@ -1429,7 +1591,9 @@ impl StreamHandler {
         }
         // A received wire payload owns the earlier slot. Leave later host
         // writes for the pump/module boundary instead of prepending them to it.
-        let buffered = if payload.is_some() {
+        // #821 deviation: the TS wire branch drains the host buffer before it
+        // yields the wire event; this port keeps the writes buffered.
+        let buffered = if payload.is_some() && !crate::mutants::on("wire-drains-host") {
             Ok(Vec::new())
         } else {
             self.inner.drain_events()
@@ -1469,7 +1633,23 @@ impl StreamHandler {
             let buffered = buffered?;
             let sending = async move {
                 delivery.wait().await;
-                let buffered = forwarding.lock().unwrap().project_host(buffered, heartbeat);
+                // TS reads the bound module at project time (protocol?.moduleId).
+                let bound_module = integrity.module_id.lock().unwrap().clone();
+                let (buffered, timeline) = {
+                    let mut state = forwarding.lock().unwrap();
+                    let buffered = state.project_host(buffered, heartbeat, bound_module.as_ref());
+                    (buffered, state.timeline.clone())
+                };
+                let mut payload = payload;
+                if let (Some(JsValue::Object(fields)), Some(timeline)) =
+                    (payload.as_mut(), timeline)
+                {
+                    super::timeline::project(
+                        &mut timeline.lock().unwrap(),
+                        fields,
+                        bound_module.as_ref(),
+                    );
+                }
                 for (event, wire) in buffered
                     .into_iter()
                     .map(|e| (JsValue::Object(e), false))
@@ -1956,11 +2136,13 @@ mod tests {
             accepted: false,
             preflight: 0,
             execute_ready: None,
+            execute_messages: None,
             recorded: std::collections::VecDeque::new(),
+            timeline: None,
         };
         for case in cases {
             let actual = turn
-                .completed_event(case.get("input").expect("#748 terminal case input"))
+                .completed_event(case.get("input").expect("#748 terminal case input"), true)
                 .map(|event| {
                     crate::metadata::object([
                         (

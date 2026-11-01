@@ -9,7 +9,9 @@ and the module final carries {result, messages}. The mode selects the turn
 lifecycle under test.
 """
 import json
+import os
 import sys
+import time
 
 
 def read():
@@ -34,7 +36,8 @@ send(response(hello, **binding))
 capabilities = read()
 assert capabilities["method"] == "capabilities"
 methods = [dict(name="execute", profiles=["streaming"])]
-if mode in ("live-cancel-compaction", "live-cancel-full-aborted", "live-session-cancel"):
+if mode in ("live-cancel-compaction", "live-cancel-full-aborted", "live-session-cancel",
+            "live-cancel-window-timeline", "live-prompt-compaction"):
     methods.append(dict(name="cancel"))
 send(response(capabilities, **binding, payload=dict(
     capabilitiesVersion="v1", methods=methods)))
@@ -246,12 +249,73 @@ elif mode == "live-failed-then-max-turns":
 elif mode == "live-cancel-compaction":
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="hello")))
+    # Durable loop output before the incomplete compaction final: the terminal
+    # must report only the execute-time input messages, never this message.
+    send_event(1, dict(type="assistant_message", sessionId=session, turnId=turn,
+                      message=dict(role="assistant",
+                          content=[dict(type="text", text="partial", blockId="am1")],
+                          metadata=dict())))
     while True:
         frame = read()
         if frame.get("method") == "cancel":
             assert frame["reason"] == "compaction_persistence_failed", frame
             break
-    send(agent_event(1, dict(compaction="incomplete"), final=True,
+    send(agent_event(2, dict(compaction="incomplete"), final=True,
+                     outcome="cancelled"))
+elif mode == "live-cancel-window-timeline":
+    # The issue's "arrives after cancel" window on a real session: a wire
+    # block before the abort, two host events the session queues after it on
+    # two separate pump ticks (each tick must still drain and position its
+    # batch), then one more wire event. The second wire frame waits for a
+    # release file the test publishes only after the second host event was
+    # drained, so the hb1 -> hb2 -> b2 ordering is causal; no wall-clock
+    # window separates them.
+    scratch = sys.argv[2]
+    send_event(0, dict(type="model_request_started", sessionId=session, turnId=turn,
+                      model="m", provider="p"))
+    send_event(1, dict(type="model_event", sessionId=session, turnId=turn,
+                      blockId="b1", event=dict(type="text_delta", text="x")))
+    while True:
+        frame = read()
+        if frame.get("method") == "cancel":
+            assert frame["reason"] == "user-stop", frame
+            break
+    while not os.path.exists(os.path.join(scratch, "release-wire")):
+        time.sleep(0.005)
+    send_event(2, dict(type="model_event", sessionId=session, turnId=turn,
+                      blockId="b2", event=dict(type="text_delta", text="after")))
+    send(agent_event(3, dict(result=dict(
+        type="aborted", sessionId=session, turnId=turn,
+        stopReason="aborted_streaming", turns=1,
+        usage=dict(inputTokens=12, outputTokens=34, totalTokens=46),
+        permissionDenials=[], startedAt="2026-10-25T00:00:00Z",
+        completedAt="2026-10-25T00:00:01Z"),
+        messages=[dict(role="assistant",
+            content=[dict(type="text", text="final", blockId="fb1")])]),
+        final=True, outcome="cancelled"))
+elif mode == "live-prompt-compaction":
+    # #1220 fix-r3: a hooked turn whose execute already happened before the
+    # cancel. The exact messages payload received at execute time is echoed
+    # (atomically) into the scratch directory, then one durable assistant
+    # message streams inside the turn (it must never reach the aborted
+    # terminal), and the cancel is answered with an incomplete compaction
+    # final so the terminal is synthesized from the turn's own input.
+    scratch = sys.argv[2]
+    send_event(0, dict(type="model_request_started", sessionId=session, turnId=turn))
+    pending = os.path.join(scratch, "execute-messages.json.tmp")
+    with open(pending, "w") as handle:
+        handle.write(json.dumps(messages))
+    os.replace(pending, os.path.join(scratch, "execute-messages.json"))
+    send_event(1, dict(type="assistant_message", sessionId=session, turnId=turn,
+                      message=dict(role="assistant",
+                          content=[dict(type="text", text="partial", blockId="am1")],
+                          metadata=dict())))
+    while True:
+        frame = read()
+        if frame.get("method") == "cancel":
+            assert frame["reason"] == "compaction_persistence_failed", frame
+            break
+    send(agent_event(2, dict(compaction="incomplete"), final=True,
                      outcome="cancelled"))
 elif mode in ("live-cancel-full-aborted", "live-session-cancel"):
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,

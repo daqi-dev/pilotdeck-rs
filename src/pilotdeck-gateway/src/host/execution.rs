@@ -62,7 +62,9 @@ fn terminal_result(event: Arc<Frame>, aborted: bool, progress: &mut Progress) ->
     let event = Arc::try_unwrap(event).expect("terminal exclusively owned");
     progress.terminal_lease = Some(event.lease);
     if aborted {
-        ExecuteResult::Aborted { terminal: None }
+        // Only the incomplete compaction final reaches here (validate_event's
+        // compaction branch); a pre-execute cancel never had a frame.
+        ExecuteResult::AbortedCompaction
     } else {
         ExecuteResult::Terminal(event.value)
     }
