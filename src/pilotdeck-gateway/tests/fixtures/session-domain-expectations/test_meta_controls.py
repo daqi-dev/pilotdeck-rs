@@ -239,9 +239,9 @@ class DriftTests(unittest.TestCase):
             finally:
                 active = False
         self.assertTrue(anchors.call_count == 1
-                        and [row[0] for row in anchors.call_args.args[0]]
-                        == [row[0] for row in gate.MUTATIONS],
-                        '#1279 standalone-anchors: the full mutation table must be preflighted')
+                        and list(anchors.call_args.args[0]) == list(gate.MUTATIONS),
+                        '#1279 standalone-anchors: the full mutation table must be preflighted, '
+                        'rows compared whole (name, source, old, new) — not just the names')
         lines = output.getvalue().splitlines()
         self.assertTrue(lines and lines[-1] == f'{len(gate.MUTATIONS)} anchors: ok',
                         '#1279 standalone-anchors: the anchor report must be the final output line')

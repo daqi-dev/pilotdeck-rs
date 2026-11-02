@@ -61,7 +61,7 @@ def run(name, package, test):
     # `test <name> ... ok/FAILED` status line (#938 r14) that the
     # green/red/restored assert checks match exactly (#1053).
     result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', package,
-                        '--lib', test, '--'], cwd=root, env=os.environ.copy(), timeout=900)
+                        '--lib', test], cwd=root, env=os.environ.copy(), timeout=900)
     log(name + '.log', result.stdout + result.stderr)
     return result
 for name in selected:
