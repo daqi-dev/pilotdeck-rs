@@ -39,10 +39,12 @@
 //! `String(value)` conversions go through [`crate::js_value`]. One
 //! wire-reachable divergence is registered in the gateway-parity diff ledger
 //! (`U7-EXTENSIONS-RELOAD-STRING-COERCION-001`, to converge with #1320's
-//! wiring): a non-string `reload_extensions` `projectKey` or `changedPaths`
-//! entry is coerced to `String(value)` here, while TS passes the raw value
-//! through (its per-project branch and broadcast/response keep `1`/`true`/
-//! `null` as-is); both cells are outside the golden's string-only contract.
+//! wiring): the `reload_extensions` `projectKey` branch follows the original
+//! JS truthiness (`0`/`false`/`NaN`/`""` take the all-runtimes branch exactly
+//! like TS, while a truthy non-string key or `changedPaths` entry is coerced
+//! to `String(value)` here and TS passes the raw value through (its
+//! per-project branch and broadcast/response keep `1`/`true`/`null`/`[]`
+//! as-is); those cells are outside the golden's string-only contract.
 
 mod gateway;
 #[cfg(test)]

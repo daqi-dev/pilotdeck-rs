@@ -1474,6 +1474,129 @@ async fn update_settings_detaches_the_capture_listener_when_dropped_mid_reload()
     );
 }
 
+/// `reload_extensions` branches on the *original* JS truthiness of
+/// `projectKey` (`if (input?.projectKey)`), measured on the real TS bundle in
+/// `_tmp/20261026-issue-1318/fix-r2/probe-extensions-truthiness.out` (Node
+/// v22.22.0): `0` / `false` / `NaN` / `""` / `null` / omitted take the
+/// all-runtimes branch exactly like the nullish values, while a truthy
+/// non-string key enters the project branch coerced by `String()` — the
+/// registered divergence `U7-EXTENSIONS-RELOAD-STRING-COERCION-001`. `[]` is
+/// truthy in TS but coerces to `""`, so it still lands on the all-runtimes
+/// branch (that cell cannot converge before `ExtensionsReload` carries
+/// `JsValue`, registered in the same ledger entry, #1320).
+#[tokio::test]
+async fn extensions_reload_branches_on_the_original_project_key_truthiness() {
+    let harness = harness(&[]);
+    let gateway = harness.gateway();
+    let standard = as_serde(
+        &parse_json(r#"{"reloaded":true,"changedPaths":[]}"#)
+            .expect("#1318-r2 extensions-truthiness: the standard outcome must parse"),
+    );
+    let all_runtimes = || {
+        vec![
+            "log:[pilotdeck] Extensions reload requested for all runtimes: (manual)".to_owned(),
+            "invalidate:null".to_owned(),
+            "mark-all-dirty:extension_changed".to_owned(),
+            r#"broadcast:config_changed:{"changedPaths":[],"changeClasses":["extension-changed"]}"#
+                .to_owned(),
+        ]
+    };
+    let project = |key: &str| {
+        vec![
+            format!("log:[pilotdeck] Extensions reload requested for project {key}: (manual)"),
+            format!("invalidate:{key}"),
+            format!("mark-project-dirty:{key}:extension_changed"),
+            r#"broadcast:config_changed:{"changedPaths":[],"changeClasses":["extension-changed"]}"#
+                .to_owned(),
+        ]
+    };
+    let key_params = |value: JsValue| {
+        let mut object = JsObject::new();
+        object.insert("projectKey".into(), value);
+        JsValue::Object(object)
+    };
+    let cells = [
+        ("omitted", JsValue::Object(JsObject::new()), all_runtimes()),
+        ("null", key_params(JsValue::Null), all_runtimes()),
+        ("zero", key_params(JsValue::Number(0.0)), all_runtimes()),
+        ("false", key_params(JsValue::Bool(false)), all_runtimes()),
+        ("nan", key_params(JsValue::Number(f64::NAN)), all_runtimes()),
+        (
+            "empty-string",
+            key_params(JsValue::String(JsString::from(""))),
+            all_runtimes(),
+        ),
+        // Truthy in TS, but `String([])` is `""`: the registered divergence
+        // keeps this cell on the all-runtimes branch until #1320.
+        (
+            "empty-array",
+            key_params(JsValue::Array(Vec::new())),
+            all_runtimes(),
+        ),
+        (
+            "object",
+            key_params(JsValue::Object(JsObject::new())),
+            project("[object Object]"),
+        ),
+        ("five", key_params(JsValue::Number(5.0)), project("5")),
+    ];
+    for (cell, params, expected) in cells {
+        let result = gateway
+            .reload_extensions(&params)
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "#1318-r2 extensions-truthiness: projectKey {cell} must succeed, got {error:?}"
+                )
+            });
+        assert_eq!(
+            as_serde(&result),
+            standard,
+            "#1318-r2 extensions-truthiness: projectKey {cell} must answer the standard outcome"
+        );
+        assert_eq!(
+            harness.probe.events(),
+            expected,
+            "#1318-r2 extensions-truthiness: a JS-falsy projectKey must take the all-runtimes branch (projectKey {cell})"
+        );
+        harness.probe.clear_events();
+    }
+    // `changedPaths` entries are `String()`-coerced (the registered divergence;
+    // TS keeps `[1, true, null]` as-is in the result and the broadcast).
+    let mut object = JsObject::new();
+    object.insert(
+        "changedPaths".into(),
+        JsValue::Array(vec![
+            JsValue::Number(1.0),
+            JsValue::Bool(true),
+            JsValue::Null,
+        ]),
+    );
+    let result = gateway
+        .reload_extensions(&JsValue::Object(object))
+        .await
+        .expect("#1318-r2 extensions-truthiness: the changedPaths coercion call must succeed");
+    assert_eq!(
+        as_serde(&result),
+        as_serde(
+            &parse_json(r#"{"reloaded":true,"changedPaths":["1","true",""]}"#)
+                .expect("#1318-r2 extensions-truthiness: the coercion expectation must parse")
+        ),
+        "#1318-r2 extensions-truthiness: changedPaths entries are String()-coerced (registered divergence U7-EXTENSIONS-RELOAD-STRING-COERCION-001)"
+    );
+    assert_eq!(
+        harness.probe.events(),
+        vec![
+            "log:[pilotdeck] Extensions reload requested for all runtimes: 1, true, ".to_owned(),
+            "invalidate:null".to_owned(),
+            "mark-all-dirty:extension_changed".to_owned(),
+            r#"broadcast:config_changed:{"changedPaths":["1","true",""],"changeClasses":["extension-changed"]}"#
+                .to_owned(),
+        ],
+        "#1318-r2 extensions-truthiness: the all-runtimes events for a coerced changedPaths list"
+    );
+}
+
 /// Regeneration guard for the TS golden; run once with `PDRS_BASELINE` set.
 #[test]
 #[ignore = "regenerates the TS fixture; needs PDRS_BASELINE and Node"]
