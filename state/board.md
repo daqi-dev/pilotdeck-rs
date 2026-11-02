@@ -2935,3 +2935,42 @@ updated: 2026-11-02 07:55 · by Claude Code 子代理（READY 重写）
 - 08:1x READY 重写 PR #1388 合入 da4c90086（96 条：doing 28 / ready 13 / human 1 / blocked 54）。A 链队首 #1292 + #1366（同改 native_http 一包）→ GLM cb8：在审 18 里 8 单是非 A 收尾，A 链队首不受在审上限（资源调度自决，记卡）。#1349 r1 macmini lib 2 failed：static_upper_lower（分支缺 4dc943604，收货后 rebase）+ token_trailing（cb8 同测通过、本 PR 未改 native_http → macmini 偶发，记一次，再现开单）。
 - 08:1x #1368 fix-r2（Codex）收货 da69654d1 → r3 opus + DeepSeek + macmini + cb8。#1324 r2 DeepSeek 0 P0/P1（P2 2），等 opus 与宿主。
 - 08:3x **两小时交接** → `_tmp/20261102-handoff-0835.md`。下一步：收 a5b（#1374）/ #1220 / #1253 关键路径，#1305 合入解锁 A7 / A8 接线；#1292 + #1366 GLM cb8 在做。
+
+## 11-02 08:35–10:55
+
+- 08:2x #1349 fix-r1（GLM 本机）收货 84e602f28 → rebase 到 main（补 4dc943604）推 f61a0bdcf → r2 opus + DeepSeek + macmini + cb8。#1368 r3 DeepSeek 0/0/0/0。
+- 08:2x #1327 pr1（Codex 本机接续 GLM 半成品）交付 a3c3ca580（channel 注册 / 15 key 配置加载 / 同 key 串行启停重载回滚，32 文件 +6834，未接线）→ 草稿 PR #1391 → r1 opus + DeepSeek + macmini + cb8（先起成 opus + GLM，GLM 写过半成品不算非作者，停掉改 DeepSeek）。
+- 08:4x PR #1387（决策卡 + 002-R1）合入 7f3afb162、交接 PR #1389 合入 381fa0bb9（邮箱 noreply）；决策卡 PR #1390 等 CI 入队。#1261 r3 macmini neg FAILED：native-entry-authority 正控截止期内子进程未拒绝也未监听（macmini 进程启动卡顿同类，cb8 同套全绿）→ 本机单套重跑；#1349 r2 DeepSeek 0/0/0/0。磁盘 194.7 GiB → 回收 8 棵可回收树交子代理。
+- 08:4x #1155 r4 cb8 全绿（neg / targeted / lib）+ opus 无同类 → 按 06:0x 预登记规则：Codex 读码 P1 登记 P2b 跟进、不开第 4 轮，决策卡标 AI 代批待复核（与「P2b 按 P1」有张力，卡里写明）→ 收口交子代理。#1318 r2 cb8 lib 1 failed：main 既有 test_scratch_publication::a_dead_helper_with_a_stranger_reader（#1141 区，本 PR 未碰）→ 记入 #1155 跟进；opus / DeepSeek 均 0 P0/P1，等 macmini。#1368 r3 cb8 done。
+- 08:5x 磁盘 202.5 GiB 超限：回收 9 棵已合 state / 差异小树（35→26 棵，几乎不腾空间）；大头是 wt-1324 / 1265 / 1349 / 1318 / 1368 内嵌 _build/cargo-target（本机 worker 跑过的可重建产物，均无进程在用、git 忽略）→ 删除，回到 97 GiB。
+- 08:5x #1327 r1 DeepSeek P1×3（读码推断，具体）：replace 的 closing 检查与 previous 读取分两次加锁、stop 摘 entry 后才 begin_stop（close 可先关宿主）、loader 金样不比 option 顺序与 construction/error 交错（尺子假 PASS）→ 等 opus 出块后合并成 fix-r1 派 Codex；宿主旧 head 不撤（负控大部分可复用）。
+- 08:5x #1261 r3：macmini native-entry-authority 两条 INVALID 本机单套重跑全 KILLED（rc=0，macmini 进程启动卡顿同类）；macmini 另有 native-process 1 INVALID 且链在 neg 即止、lib 未跑 → 本机 host-local 整套补 macOS（opus / DeepSeek / cb8 均已绿）。
+- 09:0x #1277（PR #1381）入队（opus 全 diff 三角色超时 → --paths 两批四角色全 PASS）；跟进 #1394（3 项）；其第 4 项零容量 park 丢唤醒为挂起类 → 拆出 #1395 按 P0 登记先实测可达性（产品码既有，本 PR 未改，不挡合入）。
+- 09:0x 缺角色补跑：#1220 sibling PASS、#360 simplify PASS、a5b concurrency / boundary PASS（zai 重试即过）；#1305 夹具批三角色 PASS，boundary 报的 P0（test_protocol.py:192）判不成立（文件 129 行，实为缺 restored 计数用例 → P2）；Rust 源码批 sibling / boundary 两次超时 → 按文件再拆。
+- 09:1x #1305（W0）r2 缺角色补齐：opus Rust 批 sibling / boundary 按文件三批全 PASS，增量 7 文件全覆盖；glm 全 PASS；cb8 neg / targeted / lib 全绿 → macmini（ENOSPC 作废那次）关键道重跑，过即收口。
+- 09:1x P2 批次 2 fix-r1（GLM cb8）收货 23a99930c：entries-locale-pin merge-base 与 HEAD 同红 → main 既有 Linux 平台差异，开 #1396；r2 opus + DeepSeek + macmini + cb8。
+- 09:1x macmini 负载 29（5 条链：#360 / #1318 / #1324 / #1220 + 关键道 #1305），慢但都在走；#1318 macmini neg / targeted 已过、lib 在跑。A 链派 #1244（transcript_adapter 去空白函数合并共享实现 / 补穷举，Node 实测生成期望）→ GLM cb8。
+- 09:2x #1318 r2 macmini lib 1 failed static_upper_lower（分支缺 4dc943604，合 main 即消失）；opus / DeepSeek 均 0 P0/P1、两宿主 neg / targeted 全过 → 收口交子代理（P2 有 a / b 类先报回）。
+- 09:2x #1318 收口子代理分诊 opus r2 P2：基线 SHA 不入 summary（b 类按 P1）+ extensions_reload projectKey 先转字符串再判真（与 TS 分支相反，a）+ 差异无测试钉（a）→ fix-r2 GLM cb8；金样标量 / null 行开跟进（前置于 #1320）。
+- 09:3x 合入：#1277（PR #1381）ad4330bd4、决策卡 PR #1390 cbd6ccc5b（邮箱 noreply），收尾完（#1277 自查评论、Done、回收、远端清理）。P2 批次 2 r2 三家同条（DeepSeek P1 / opus boundary P0 / sibling P1）：只 SKIPPED 零 KILLED 仍退出 0 → fix-r2 GLM cb8（对齐 verdict_exit 契约）。#1327 r1 opus 再报 P1（oracle cases 空数组假 PASS），sibling 超时 → 与 DeepSeek 3 条 P1 合并 fix-r1 派 Codex 本机（并发两格先 TS 实测矩阵）。
+- 09:2x 人回：#1373 选 A（授权 #1372 在 N 新增信封 → in-process 观测投影，走冻结程序）→ 关单、#1372 只等 #1371；#1157 人批多机负载 CLI → pdrs-ops fleet 交子代理。#1324 r2 opus 全 PASS 0/0，cb8 host FAILED 待看。
+- 09:3x #1324 r2 cb8：负控 cron-schedule 15 / cron-store 21 / metadata-process-cwd 26 全 KILLED，仅 repo-anchors errors=1（新增证据脚本 tz_zoneinfo_parts.py 缺 unsupported 声明）→ 协调者补首部一行推 bb8513443（本地 --anchors-only errors=0）；作者谱系现 GLM + Claude，增量复核走 DeepSeek，等 macmini 后收口。
+- 09:3x #1324 macmini 链因分支前移（bb8513443）被 branch-watch 停（设计行为），新 head 重起 macmini。
+- 09:4x a5b（PR #1374）r2 macmini neg / targeted 过、lib 仅 static_upper_lower（缺 4dc943604）；DeepSeek 0 P0/P1、GLM 补跑四角色齐 → 收口交子代理（作者含 Claude，块只用 zai）。
+- 09:5x fleet 工具交付（pdrs-ops da06463，~/ws/pdrs-ops/bin/fleet，15 s 一屏四机）：实测 mbp2 全空、macmini 盘 39G < 45G 又卡四条链 → 删 macmini 已结束的 1261 / 1318 / a5b runner build 回 97G。a5b 收口分诊：DeepSeek 2 条 a 类 P2（信号注册无覆盖、负控 case 数无独立期望）→ fix-r2 Codex 本机（只修 P2，一家复核）；GLM 5 条 c 类开跟进。
+- 09:5x #1155（PR #1272）决策卡 PR #1393 合入 7f0c6e5df；合 main 检查过、PR 转 ready；CI 红为 base.sha 陈旧（冻结检查把 main 上 #1140 改 session_domain.py 算到本 PR）→ 关闭重开重触发 CI，绿即入队（不 rebase，免 opus 块指纹作废）。
+- 09:5x #1327 fix-r1（Codex 本机）收货 a88449d58（关闭竞态 + 金样保序 / cases 非空）→ r2 opus + DeepSeek（增量）+ macmini + cb8；r1 sibling 超时未出块，全 diff sibling 按 --paths 分批另补。
+- 09:5x #1318 fix-r2（GLM cb8）收货 a4e777339 → r3 opus + DeepSeek + macmini + cb8。
+- 10:0x #1244（GLM cb8）交付 738910435（共享 js_trim_units，草稿 PR #1399）→ r1 opus + DeepSeek + macmini + cb8。a5b fix-r2（Codex 本机）收货 8a6451d6e → r3 增量 opus + DeepSeek + macmini（终块仍用 zai，因整 PR 含 Claude 机械重登记提交）。
+- 10:1x #1327 r2 DeepSeek P1：fix-r1 只并了 closing 检查与快照，claim 仍在 stop() 第二次加锁里，close 可插在快照与 claim 之间（与 TS 不符，单线程用例不覆盖）→ 等 opus r2 合并 fix-r2。#1318 r3 DeepSeek 输出截断无 VERDICT → 单独重跑。#1244 r1、a5b r3 DeepSeek 均 0/0/0/0。
+- 10:1x macmini 4 车道全满（#1220 3h52 / #360 / #1305 / #1327）、盘 47G，#1368 / #1349 / #1324 排队 → 改派 mbp2 宿主（3 车道全空）。#1272 关重开后 base.sha 不刷新、CI 照红 → rebase 到 main 推 dd83b266a（patch-id 前后一致 92c14239f641），等新 CI；pr-gate 若拒指纹则补跑 opus。#1292 cb8 GLM 7200 s 时限（留 TS 实测与 5 处改动）→ 本机 dispatch-resume。p2b2 r3 DeepSeek 0 P0/P1。
+- 10:2x #1318 r3 DeepSeek 重跑 0/0/0/0（opus 亦 0/0），等宿主。#1261 本机 macOS lib 第 2 条失败 migration_non_utf8_home 为 main 既有（APFS EILSEQ，#1140 macmini 同样）→ 开 #1400；#1261 两家 0 P0/P1、cb8 全绿、macOS 负控全 KILLED → 收口交子代理。
+- 10:2x #1327 r2 opus 已跑 40 min 未出；DeepSeek P1（claim 仍在 stop() 第二把锁）具体可修 → 不等 opus 先派 fix-r2 Codex 本机；撤 r2 旧 head 的 cb8 / macmini 宿主（本机侧 stop-tree 核实 + 远端进程归零）。
+- 10:3x #1327 r2 opus 四角色全超时（2400 s，增量 diff 约 2–3 千行 / 并发 + 生命周期，单块过大）→ 记：大型并发单 opus 一律 --paths 分批；r3 起按此派。macmini r2 链因撤链判「seq 非本轮」属预期。
+- 10:3x #1327 fix-r2（Codex）收货 023980eae（原子摘除 + 多线程 close 窗口用例）→ r3：DeepSeek 审增量、cb8 + mbp2 宿主（macmini 满）、opus 对全 diff 按路径分 4 批（oracle.json 不送审）交子代理。
+- 10:3x 评审侧干净、只等宿主的单：#1368（mbp2 lib 仅 static_upper_lower）、#1349、#1318 → 合成一个子代理串行收口（已知宿主噪音三条：static_upper_lower / #1392 / #1400 写进任务书）。
+- 10:4x 人问 #1140 / #1220 / #1219 / #1281 / fleet。发现 #1253（PR #1275）cb8 宿主 11-01 20:02 neg FAILED 后 14 h 无人跟进（live-e2e 10 INVALID、session-factory 2 INVALID、append-delta rc=1）——它挡 #1281 / #897 → 分诊交子代理。
+- 10:4x #1253 cb8 失败分诊：live-e2e 10 INVALID = #1204 平台行、session-factory 2 INVALID + append-delta rc=1 = cargo 名额排队超时，非 PR 问题 → mbp2 整套重跑，过即收口（解锁 #1281 / #897）。#1327 r3 DeepSeek 0/0/0/0。
+- 10:5x #1272 rebase 后 CI 全绿、仅 pr-gate 拒旧块指纹 → 对新 head 全 diff 分 3 批补 opus 块 + 改正文 + 入队交子代理。fleet 接入 round-start 与 worktree 计数改快（git worktree list）交子代理。#1253 review-r2/phase.exit 的 done 是 11-01 本机队列占位（无判定文件），macOS 证据以 mbp2 r2 为准。
+- 10:5x #1261（PR #1300）合入 c2364ffb0（邮箱 noreply）→ 关单 Done、wt-1261 回收、三台远端清理；r1–r3 剩余 P2 合并开 #1401（7 项，前置于 #1323）。
+- 10:5x **两小时交接** → `_tmp/20261102-handoff-1055.md`。下一步：收 #1305（A 主链首，macmini 关键道）/ a5b（#1374）/ #1220 / #1253 关键路径，#1272 补块后入队；#1292 + #1366 本机 GLM 接续、#1327 fix-r2 r3 等宿主。
