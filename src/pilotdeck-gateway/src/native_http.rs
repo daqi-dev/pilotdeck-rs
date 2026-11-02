@@ -139,13 +139,7 @@ async fn route<B>(
     // exactly 16384 accumulated span bytes (probe `probe-fixr3-c.out` C1:
     // tracked 16383 stays served, 16384 is the 431), which is what the
     // off-by-one mutant below removes.
-    let tracked = tracked_header_bytes(request);
-    let over_budget = if crate::mutants::on("native-http-header-budget-boundary") {
-        tracked > 16_384
-    } else {
-        tracked >= 16_384
-    };
-    let budget_exceeded = !crate::mutants::on("native-http-header-budget-off") && over_budget;
+    let budget_exceeded = over_header_budget(request);
     if request.method() == hyper::Method::CONNECT {
         if budget_exceeded {
             return Ok(request_header_fields_too_large());
@@ -286,7 +280,18 @@ fn parser_bad_request() -> hyper::Response<Body> {
 /// value under-counts here, and hyper also strips the fragment from the
 /// parsed URI (both registered residuals in the parity ledger).
 fn tracked_header_bytes<B>(request: &hyper::Request<B>) -> usize {
-    request.uri().to_string().len()
+    // Node's TrackHeader counts the raw request-line span plus every header
+    // line's name and value bytes. hyper's `uri()` splits the target into
+    // scheme/authority/path-and-query parts; re-rendering via `to_string()`
+    // would allocate a fresh String per request, so the parts are summed in
+    // place instead — for every form llhttp accepts (origin, authority,
+    // absolute, absolute without a path where `Uri` keeps the implicit slash)
+    // the sum renders byte-for-byte like `to_string()`, which is why the
+    // allocation, not the value, is the whole change.
+    let uri = request.uri();
+    uri.scheme().map_or(0, |value| value.as_str().len() + 3)
+        + uri.authority().map_or(0, |value| value.as_str().len())
+        + uri.path_and_query().map_or(0, |value| value.as_str().len())
         + request
             .headers()
             .iter()
@@ -294,11 +299,27 @@ fn tracked_header_bytes<B>(request: &hyper::Request<B>) -> usize {
             .sum::<usize>()
 }
 
+/// The 16 KiB span-budget decision shared by both native lanes: Node's
+/// TrackHeader counts every parsed request, upgrade requests included
+/// (#1292 probe `b4-U1.out`: an over-budget `/ws` upgrade head is the same
+/// 431 + close as the non-upgrade `b4-U2.out`), so the upgrade diversion
+/// checks this before it diverts, instead of leaving upgrade heads outside
+/// the budget.
+pub(crate) fn over_header_budget<B>(request: &hyper::Request<B>) -> bool {
+    let tracked = tracked_header_bytes(request);
+    let over_budget = if crate::mutants::on("native-http-header-budget-boundary") {
+        tracked > 16_384
+    } else {
+        tracked >= 16_384
+    };
+    !crate::mutants::on("native-http-header-budget-off") && over_budget
+}
+
 /// Node's canned 431 (`_http_server.js` `requestHeaderFieldsTooLargeResponse`):
 /// `HTTP/1.1 431 Request Header Fields Too Large`, `Connection: close`, no
 /// Date, no body bytes — the same shape as the bare 400 (hyper's
 /// `content-length: 0` transport diff included).
-fn request_header_fields_too_large() -> hyper::Response<Body> {
+pub(crate) fn request_header_fields_too_large() -> hyper::Response<Body> {
     let mut response = hyper::Response::new(http_proxy::empty());
     *response.status_mut() = hyper::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE;
     response

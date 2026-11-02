@@ -193,17 +193,115 @@ struct UpgradeReadGate<S> {
     /// all (probe `node-first-head-segmented.out`: a first-head segment
     /// followed by an 8 s gap stays open, the completed head is answered
     /// `Connection: keep-alive`, and the socket stays reusable). The first
-    /// head is bounded by Node's `headersTimeout` instead (registered in the
-    /// ledger as A8.4-NATIVE-HTTP-002 family, out of scope here). This is
-    /// the same `served` flag the stop-close logic uses.
+    /// head is bounded by Node's `headersTimeout` instead (#1292:
+    /// [`Self::headers_deadline`]). This is the same `served` flag the
+    /// stop-close logic uses.
     served: Arc<AtomicBool>,
+    /// #1292: when the still-unserved first head's `headersTimeout` expires
+    /// ([`NODE_HEADERS_TIMEOUT`]), `None` once disarmed. Disarmed the moment
+    /// a head completed (`served`, probe `b1-T2.out`: the 6 s idle close owns
+    /// a follow-up head, never a 408) or the stop was sent (`b3-T3d.out`:
+    /// `server.close()` clears Node's connections checker, so the deadline
+    /// stays silent after it).
+    headers_deadline: Option<tokio::time::Instant>,
+    /// The connection's own stop signal, consulted only while
+    /// [`Self::headers_deadline`] is armed: a stop disarms it.
+    stop: watch::Receiver<bool>,
+    /// The parked [`NODE_HEADERS_TIMEOUT`] sleep, polled under the socket
+    /// read's waker so a silent first head still wakes at its deadline.
+    /// Created only once the deadline is actually consulted: a `Sleep` cannot
+    /// exist outside a Tokio runtime, and the gate's own unit test constructs
+    /// one runtime-less (with no deadline).
+    headers_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// #1292: Node's 408 bytes still to write, and how much of them was
+    /// written; the read side reports EOF and hyper's own writes are refused
+    /// once they are on the socket.
+    timeout_408: Option<&'static [u8]>,
+    timeout_408_written: usize,
+    timeout_408_closed: bool,
 }
-impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
+impl<S> UpgradeReadGate<S> {
+    fn new(
+        stream: S,
+        state: SharedReadState,
+        activity: watch::Sender<Option<tokio::time::Instant>>,
+        served: Arc<AtomicBool>,
+        headers_deadline: Option<tokio::time::Instant>,
+        stop: Option<watch::Receiver<bool>>,
+    ) -> Self {
+        // A stop-less connection gets a never-true receiver: the gate only
+        // consults its stop while the deadline is armed.
+        let (never_stop, gate_stop) = watch::channel(false);
+        drop(never_stop);
+        Self {
+            stream,
+            state,
+            activity,
+            served,
+            headers_deadline,
+            stop: stop.unwrap_or(gate_stop),
+            headers_sleep: headers_deadline
+                .map(|deadline| Box::pin(tokio::time::sleep_until(deadline))),
+            timeout_408: None,
+            timeout_408_written: 0,
+            timeout_408_closed: false,
+        }
+    }
+}
+impl<S: AsyncWrite + Unpin> UpgradeReadGate<S> {
+    /// Write Node's 408 on the task that owns the socket, then report EOF.
+    /// The bytes stay in the kernel buffer exactly like Node's
+    /// `socket.write(response)` followed by `destroy()`.
+    fn poll_headers_timeout_408(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        while let Some(raw) = self.timeout_408 {
+            match Pin::new(&mut self.stream).poll_write(cx, &raw[self.timeout_408_written..]) {
+                Poll::Ready(Ok(0)) => break,
+                Poll::Ready(Ok(written)) => {
+                    self.timeout_408_written += written;
+                    if self.timeout_408_written == raw.len() {
+                        break;
+                    }
+                }
+                Poll::Ready(Err(_)) => break,
+                // `poll_write` registered the write waker; self-waking here
+                // would spin the executor until the socket drains.
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        self.timeout_408 = None;
+        self.timeout_408_closed = true;
+        Poll::Ready(Ok(()))
+    }
+}
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        if self.timeout_408_closed {
+            return Poll::Ready(Ok(()));
+        }
+        if self.timeout_408.is_some() {
+            return self.poll_headers_timeout_408(cx);
+        }
+        if let Some(deadline) = self.headers_deadline {
+            if self.served.load(Ordering::Relaxed) || *self.stop.borrow_and_update() {
+                self.headers_deadline = None;
+            } else {
+                let sleep = self
+                    .headers_sleep
+                    .get_or_insert_with(|| Box::pin(tokio::time::sleep_until(deadline)));
+                let _ = sleep.as_mut().poll(cx);
+                if tokio::time::Instant::now() >= deadline
+                    && !crate::mutants::on("native-http-headers-timeout-off")
+                {
+                    self.timeout_408 = Some(NODE_HEADERS_TIMEOUT_408);
+                    self.timeout_408_written = 0;
+                    return self.poll_headers_timeout_408(cx);
+                }
+            }
+        }
         {
             let mut state = self.state.lock().expect("upgrade read state");
             if state.paused {
@@ -237,6 +335,24 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        // #1292: Node's 408 already terminated this connection; finish the
+        // terminal write, then refuse every hyper byte so none of its own
+        // encoding follows it.
+        if self.timeout_408.is_some() {
+            if self.poll_headers_timeout_408(cx).is_pending() {
+                return Poll::Pending;
+            }
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "connection closed",
+            )));
+        }
+        if self.timeout_408_closed {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "connection closed",
+            )));
+        }
         Pin::new(&mut self.stream).poll_write(cx, buf)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -267,7 +383,7 @@ where
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
-    serve_connection_configured(stream, handler, false, None).await
+    serve_connection_configured(stream, handler, false, None, None, None).await
 }
 
 /// Node v22.22.0's default `server.keepAliveTimeout` (the TS
@@ -283,6 +399,31 @@ const NODE_KEEP_ALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// 6000 ms — a response's quiet +5749 ms, a follow-up head's last segment
 /// +6006 ms).
 const NODE_KEEP_ALIVE_TIMEOUT_BUFFER: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Node `http.createServer`'s default `headersTimeout` (v22.22.0: 60 000 ms).
+/// The native listener bounds the still-unserved first request head with it
+/// (#1292 probes `b1-T1a.out`/`b1-T1b.out`: a partial head and even a
+/// zero-byte connection are answered with the 51-byte 408 at +60.05 s), like
+/// the `user_dialog` store lane already does. Node's connections checker
+/// quantizes the landing to its 30 s interval (`mech-P1..P4.out`: an
+/// overridden 5 s timeout only lands at the next checkpoint), registered as
+/// a residual in A8.4-NATIVE-HTTP-002-R2 — this lane fires at the deadline
+/// itself. Once a head completed, no 408 exists anymore: the 6 s keep-alive
+/// idle close owns a follow-up head (`b1-T2.out`), and a stop disarms the
+/// timer like Node clears its connections checker in `server.close()`
+/// (`b3-T3d.out`). `requestTimeout` (300 s) is not replicated: on every
+/// probeable TS path it is unreachable (`b3-T3b.out`: a real route answers
+/// immediately; `b3-T5.out`: the one body-consuming route answers 401 before
+/// its body loop), also registered in 002-R2.
+const NODE_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Node v22.22.0 `_http_server.js` `onRequestTimeout`: exactly these bytes —
+/// the same 51 the `user_dialog` store lane writes (its fixture
+/// `user-dialog-http-store/header-lifecycle/node-408.bin` records the TS
+/// shape; each lane keeps its own copy of the canned Node bytes, like the
+/// two 431s).
+const NODE_HEADERS_TIMEOUT_408: &[u8] =
+    b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
 
 /// The native listener's connection serving. TS emits literal header cases
 /// (`Date`, `Connection` capitalized), so responses render Title-Case, and
@@ -302,17 +443,36 @@ const NODE_KEEP_ALIVE_TIMEOUT_BUFFER: std::time::Duration = std::time::Duration:
 /// `graceful_shutdown` is hyper's equivalent for the idle-at-close case and
 /// is a no-op for an already-upgraded connection. A dropped sender means no
 /// stop signal, and the connection simply runs to its natural end.
+///
+/// The still-unserved first head is additionally bounded by Node's
+/// `headersTimeout` ([`NODE_HEADERS_TIMEOUT`], #1292): a partial or zero-byte
+/// first head is answered with Node's 51-byte 408 and closed at the deadline.
+///
+/// #1292: `stop_observed` is a test-only observation — it counts how often
+/// this connection's serving loop has consumed a genuine stop (a dropped
+/// sender is not one), so a test can deterministically sequence its next
+/// step after the stop, the replacement for the fixed 100/200 ms sleeps the
+/// #1209 stop tests used to race; it observes no production behavior.
 pub(crate) async fn serve_connection_native_with_shutdown<S, F, Fut>(
     stream: S,
     handler: F,
     stop: watch::Receiver<bool>,
+    stop_observed: Option<Arc<AtomicUsize>>,
 ) -> Result<(), hyper::Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
-    serve_connection_configured(stream, handler, true, Some(stop)).await
+    serve_connection_configured(
+        stream,
+        handler,
+        true,
+        Some(stop),
+        Some(NODE_HEADERS_TIMEOUT),
+        stop_observed,
+    )
+    .await
 }
 
 /// Decrements the in-flight request count when the response future is done
@@ -377,6 +537,8 @@ async fn serve_connection_configured<S, F, Fut>(
     handler: F,
     native: bool,
     stop: Option<watch::Receiver<bool>>,
+    headers_timeout: Option<std::time::Duration>,
+    stop_observed: Option<Arc<AtomicUsize>>,
 ) -> Result<(), hyper::Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -387,12 +549,20 @@ where
     let served = Arc::new(AtomicBool::new(false));
     let in_flight = Arc::new(AtomicUsize::new(0));
     let (activity, mut activity_rx) = watch::channel(None::<tokio::time::Instant>);
-    let stream = UpgradeReadGate {
+    // #1292: the native lane bounds its still-unserved first head with
+    // Node's `headersTimeout`; the proxy lane fronts a different TS
+    // counterpart and keeps its previous behavior (no probe).
+    let headers_deadline = native
+        .then(|| headers_timeout.map(|timeout| tokio::time::Instant::now() + timeout))
+        .flatten();
+    let stream = UpgradeReadGate::new(
         stream,
-        state: state.clone(),
-        activity: activity.clone(),
-        served: served.clone(),
-    };
+        state.clone(),
+        activity.clone(),
+        served.clone(),
+        headers_deadline,
+        stop.clone(),
+    );
     let served_in_connection = served.clone();
     let in_flight_in_connection = in_flight.clone();
     let activity_in_connection = activity.clone();
@@ -537,6 +707,15 @@ where
                     // arrive, so only the idle close and the peer end this.
                     stop = None;
                     continue;
+                }
+                // #1292: test-only observation that this connection's
+                // serving loop has consumed a genuine stop, so a test can
+                // sequence its next step after it deterministically (the
+                // replacement for the #1209 stop tests' fixed sleeps).
+                if let Some(observed) = &stop_observed
+                    && !crate::mutants::on("native-http-stop-observed-off")
+                {
+                    observed.fetch_add(1, Ordering::SeqCst);
                 }
                 let idle_now = (served.load(Ordering::Relaxed)
                     && (in_flight.load(Ordering::Relaxed) == 0

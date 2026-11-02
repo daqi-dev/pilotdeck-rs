@@ -491,12 +491,16 @@ fn cancelling_service_lease_wakes_paused_reader() {
         waker: None,
     }));
     let (io, mut client) = tokio::io::duplex(64);
-    let mut gated = UpgradeReadGate {
-        stream: io,
-        state: state.clone(),
-        activity: tokio::sync::watch::channel(None).0,
-        served: Arc::new(AtomicBool::new(true)),
-    };
+    let mut gated = UpgradeReadGate::new(
+        io,
+        state.clone(),
+        tokio::sync::watch::channel(None).0,
+        Arc::new(AtomicBool::new(true)),
+        // #1292: no headersTimeout in this gate-level test — it pins the
+        // lease wake path, not the deadline.
+        None,
+        None,
+    );
     let lease = ReadLease(state.clone());
     let mut bytes = [0; 1];
     assert!(

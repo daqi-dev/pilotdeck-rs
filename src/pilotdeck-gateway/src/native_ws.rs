@@ -21,6 +21,24 @@ use tokio::{
     task::JoinSet,
 };
 
+/// The TS literal the token route's loopback gate is derived from
+/// (GatewayServer.ts: `host === "127.0.0.1" || host === "localhost"`), as a
+/// predicate on the resolved bind address: `localhost` resolves to
+/// 127.0.0.1, so the literal is exactly the Ipv4Addr::LOCALHOST arm — not
+/// the wider `is_loopback()` class, which also accepts all of 127.0.0.0/8
+/// and ::1 (probes `b4-L1.out`: 127.0.0.2 is a 404 even with
+/// allowRemoteHost, `b4-L2.out`/`b4-L3.out`: localhost and 127.0.0.1 serve
+/// the token). The bind policy above still only ever passes
+/// Ipv4Addr::LOCALHOST here (pinned by the `native_configuration` refusal
+/// cases), so the tightening precedes any widening of that policy (#1292).
+fn ts_loopback_literal(ip: std::net::IpAddr) -> bool {
+    if crate::mutants::on("native-ws-loopback-literal") {
+        ip.is_loopback()
+    } else {
+        matches!(ip, std::net::IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
+}
+
 /// Native is opt-in through this constructor; no default port is claimed.
 /// Port zero is intended for isolated probes. Deployed ports must be >= 1024.
 pub struct NativeWsServer {
@@ -30,6 +48,10 @@ pub struct NativeWsServer {
     version: String,
     resources: Resources,
     http: native_http::Config,
+    /// #1292: how many connection servings consumed a genuine stop, so a
+    /// test can deterministically sequence its next step after the stop (the
+    /// replacement for the #1209 stop tests' fixed 100/200 ms sleeps).
+    stop_observed: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl NativeWsServer {
     pub async fn bind(
@@ -47,18 +69,19 @@ impl NativeWsServer {
         if !crate::mutants::on("native-ws-token-policy") && token.trim().is_empty() {
             return Err("native WS requires an explicit nonempty token".into());
         }
-        // The token route's loopback gate is derived from the bind address
-        // (TS: host === "127.0.0.1" || host === "localhost"), not asserted:
-        // a future non-loopback bind policy must not leak /auth/local-token.
-        // The derivation is wider than the TS literal (`is_loopback()`
-        // accepts all of 127.0.0.0/8 and ::1); the bind policy above — only
-        // Ipv4Addr::LOCALHOST ever reaches here, pinned by the
-        // `native_configuration` refusal cases — is what keeps that
-        // unreachable. The test-only loopback:false routing goes through the
-        // native_http router tests' own Config construction.
+        // The token route's loopback gate is derived from the bind address,
+        // not asserted: a future non-loopback bind policy must not leak
+        // /auth/local-token. #1292 tightened the derivation to the TS literal
+        // (`host === "127.0.0.1" || host === "localhost"` — probes
+        // `b4-L1.out`/`b4-L2.out`/`b4-L3.out`: 127.0.0.2 + allowRemoteHost
+        // is a 404, localhost and 127.0.0.1 serve the token): the wide
+        // `is_loopback()` (all of 127.0.0.0/8 and ::1) had to shrink before
+        // the bind policy ever opens to those addresses. The test-only
+        // loopback:false routing goes through the native_http router tests'
+        // own Config construction.
         let http = native_http::Config {
             token: token.clone(),
-            loopback: address.ip().is_loopback(),
+            loopback: ts_loopback_literal(address.ip()),
             static_root: None,
         };
         Ok(Self {
@@ -79,6 +102,7 @@ impl NativeWsServer {
                 },
             ),
             http,
+            stop_observed: Arc::default(),
         })
     }
 
@@ -101,6 +125,15 @@ impl NativeWsServer {
     #[cfg(test)]
     pub(crate) fn accepted_connections(&self) -> Arc<std::sync::atomic::AtomicUsize> {
         self.resources.task_high_watermark.clone()
+    }
+
+    /// Test-only: how many connection servings consumed a genuine stop, so
+    /// a test can deterministically wait for the stop to reach its
+    /// connection before sending the next step, instead of racing a fixed
+    /// sleep against the serving loop.
+    #[cfg(test)]
+    pub(crate) fn stop_observed(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        self.stop_observed.clone()
     }
 
     /// Stop accepting on `stop`, then drain existing sockets and their owned
@@ -131,6 +164,7 @@ impl NativeWsServer {
                 version,
                 resources,
                 http,
+                stop_observed,
             } = self;
             let mut connections = JoinSet::new();
             // Node's server.close() closes idle keep-alive connections (probe
@@ -158,6 +192,7 @@ impl NativeWsServer {
                             let input = resources.input.clone();
                             let http = http.clone();
                             let stop_http = stop_http_rx.clone();
+                            let stop_observed = stop_observed.clone();
                             connections.spawn(async move {
                                 let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
                                     drop(permit);
@@ -166,7 +201,7 @@ impl NativeWsServer {
                                     Some(permit)
                                 };
                                 if let Err(error) =
-                                    serve_socket(socket, host, token, version, input, http, stop_http)
+                                    serve_socket(socket, host, token, version, input, http, stop_http, stop_observed)
                                         .await
                                 {
                                     eprintln!("native WS connection: {error}");
@@ -536,6 +571,7 @@ async fn closing_deadline(mut closing: watch::Receiver<Option<tokio::time::Insta
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve_socket(
     socket: TcpStream,
     host: TurnGateway,
@@ -544,6 +580,7 @@ async fn serve_socket(
     input: Arc<Semaphore>,
     http: native_http::Config,
     stop: watch::Receiver<bool>,
+    stop_observed: Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<(), ProxyError> {
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
@@ -552,6 +589,18 @@ async fn serve_socket(
     http_proxy::serve_connection_native_with_shutdown(
         socket,
         move |mut request, lease| async move {
+            // Node applies its TrackHeader span budget to upgrade requests
+            // too (`b4-U1.out`: the over-budget `/ws` upgrade head gets the
+            // same 431 + close as `b4-U2.out`'s non-upgrade head). The check
+            // is gated on the diversion, not the whole closure, so the
+            // non-upgrade lane keeps its own llhttp ordering — method and
+            // target-grammar 400s before the budget, inside `route`.
+            if http_proxy::is_upgrade(&request)
+                && !crate::mutants::on("native-http-upgrade-budget-off")
+                && native_http::over_header_budget(&request)
+            {
+                return Ok(native_http::request_header_fields_too_large());
+            }
             if http_proxy::is_upgrade(&request) {
                 match (
                     request.uri().path(),
@@ -576,6 +625,7 @@ async fn serve_socket(
             }
         },
         stop,
+        Some(stop_observed),
     )
     .await?;
     drop(upgrade);
