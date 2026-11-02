@@ -17,6 +17,7 @@ import {connect} from 'node:net';
 import {once} from 'node:events';
 import {assertBaseline, baselineSourceHashes} from '../_shared/baseline.mts';
 assert.equal(process.version, 'v22.22.0', '#1349 pinned Node');
+assert.equal(process.versions.icu, '78.2', '#1349 pinned ICU');
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const sourceCommit = assertBaseline(baseline);
 const sourceSha256 = await baselineSourceHashes(baseline, ['src/gateway/server/GatewayServer.ts', 'src/composition/publicHostHttpTransport.ts', 'src/composition/publicHostWire.ts']);
@@ -58,6 +59,9 @@ const scenarios: Record<string, Scenario> = {
   jsonstring: () => ({status: 200, headers: {'content-type': 'application/json'}, body: 'hello'}),
   emptystring_json: () => ({status: 200, headers: {'content-type': 'application/json'}, body: ''}),
   bytes: () => ({status: 200, headers: {'content-type': 'application/octet-stream'}, body: new Uint8Array([0, 1, 2, 250])}),
+  empty_ct_string: () => ({status: 200, headers: {'content-type': '', 'etag': 'W/"x"'}, body: 'x'}),
+  empty_ct_value: () => ({status: 200, headers: {'content-type': ''}, body: {ok: 1}}),
+  empty_ct_bytes: () => ({status: 200, headers: {'content-type': ''}, body: new Uint8Array([0, 1, 2, 250])}),
   rawbody: () => ({status: 201, headers: {'content-type': 'text/xml'}, rawBody: '<raw/>', body: {ignored: true}}),
   rawbody_noct: () => ({status: 202, rawBody: 'raw-noct', body: {ignored: true}}),
   nullbody: () => ({status: 200, body: null}),
@@ -91,9 +95,14 @@ const scenarios: Record<string, Scenario> = {
   ndjson_array_event: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: events({a: 1}, [1, 2])}),
   sse_object_event: () => ({status: 200, headers: {'content-type': 'text/event-stream'}, body: events({a: 1})}),
   stream_plain_ct: () => ({status: 200, headers: {'content-type': 'application/json'}, body: events({a: 1})}),
+  stream_plain_ct_headers: () => ({status: 200, headers: {'content-type': 'application/json', 'etag': 'W/"x"', 'x-request-id': 'r1'}, body: events({a: 1})}),
   stream_missing: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: null}),
+  stream_missing_headers: () => ({status: 200, headers: {'content-type': 'application/x-ndjson', 'etag': 'W/"x"', 'x-request-id': 'r1', 'retry-after': '3'}, body: null}),
+  stream_noct_headers: () => ({status: 200, headers: {'etag': 'W/"x"', 'x-request-id': 'r1'}, body: events({a: 1})}),
   ndjson_empty_string: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: ''}),
   ndjson_string_body: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: 'abc'}),
+  ndjson_string_emoji: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: 'a😀b'}),
+  ndjson_string_surrogate: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: '\uD800a😀'}),
   ndjson_array_body: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: ['a', {b: 2}]}),
   ndjson_object_body: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: {x: 1}}),
   ndjson_bytes_body: () => ({status: 200, headers: {'content-type': 'application/x-ndjson'}, body: new Uint8Array([65, 66])}),
@@ -199,6 +208,9 @@ const cells: Array<{id: string, server: string, request: string, pad?: {marker: 
   {id: 'principal-empty', server: 'main', request: post('/api/module-host/call', JSON.stringify({principal: {}, operation: 'list_tools', input: {}}))},
   {id: 'principal-empty-string', server: 'main', request: C('')},
   {id: 'principal-whitespace', server: 'main', request: C(' ')},
+  // U+2028/U+2029/U+FEFF: ECMAScript whitespace outside the ASCII set, so
+  // the trim gate is pinned beyond the NBSP cell above.
+  {id: 'principal-unicode-ws', server: 'main', request: C('\u2028\u2029\uFEFF')},
   {id: 'principal-nbsp', server: 'main', request: post('/api/module-host/call', JSON.stringify({principal: {pilotDeckUserId: 'u1', tenantId: 't1', actorUserId: 'a1', agentId: ' '}, operation: 'list_tools', input: {}}))},
   {id: 'principal-number', server: 'main', request: post('/api/module-host/call', JSON.stringify({principal: {pilotDeckUserId: 'u1', tenantId: 5, actorUserId: 'a1', agentId: 'ok'}, operation: 'list_tools', input: {}}))},
   {id: 'principal-three', server: 'main', request: post('/api/module-host/call', JSON.stringify({principal: {pilotDeckUserId: 'u1', tenantId: 't1', actorUserId: 'a1'}, operation: 'list_tools', input: {}}))},
@@ -228,6 +240,9 @@ const cells: Array<{id: string, server: string, request: string, pad?: {marker: 
   {id: 'jsonstring', server: 'main', request: C('jsonstring')},
   {id: 'emptystring-json', server: 'main', request: C('emptystring_json')},
   {id: 'bytes', server: 'main', request: C('bytes')},
+  {id: 'empty-ct-string', server: 'main', request: C('empty_ct_string')},
+  {id: 'empty-ct-value', server: 'main', request: C('empty_ct_value')},
+  {id: 'empty-ct-bytes', server: 'main', request: C('empty_ct_bytes')},
   {id: 'rawbody', server: 'main', request: C('rawbody')},
   {id: 'rawbody-noct', server: 'main', request: C('rawbody_noct')},
   {id: 'nullbody', server: 'main', request: C('nullbody')},
@@ -250,9 +265,14 @@ const cells: Array<{id: string, server: string, request: string, pad?: {marker: 
   {id: 'ndjson-array-event', server: 'main', request: C('ndjson_array_event')},
   {id: 'sse-object-event', server: 'main', request: C('sse_object_event')},
   {id: 'stream-plain-ct', server: 'main', request: C('stream_plain_ct')},
+  {id: 'stream-plain-ct-headers', server: 'main', request: C('stream_plain_ct_headers')},
   {id: 'stream-missing', server: 'main', request: C('stream_missing')},
+  {id: 'stream-missing-headers', server: 'main', request: C('stream_missing_headers')},
+  {id: 'stream-noct-headers', server: 'main', request: C('stream_noct_headers')},
   {id: 'ndjson-empty-string', server: 'main', request: C('ndjson_empty_string')},
   {id: 'ndjson-string-body', server: 'main', request: C('ndjson_string_body')},
+  {id: 'ndjson-string-emoji', server: 'main', request: C('ndjson_string_emoji')},
+  {id: 'ndjson-string-surrogate', server: 'main', request: C('ndjson_string_surrogate')},
   {id: 'ndjson-array-body', server: 'main', request: C('ndjson_array_body')},
   {id: 'ndjson-object-body', server: 'main', request: C('ndjson_object_body')},
   {id: 'ndjson-bytes-body', server: 'main', request: C('ndjson_bytes_body')},
@@ -278,7 +298,7 @@ try {
     if (!response && !closed) { console.error(`#1349 cell ${cell.id} produced no bytes and stayed open`); process.exit(1); }
     observations.push({id: cell.id, server: cell.server, request: cell.request, pad: cell.pad ?? null, halfClose: cell.halfClose === true, response, closed});
   }
-  const output = {sourceCommit, sourceSha256, node: process.version, cells: observations};
+  const output = {sourceCommit, sourceSha256, node: process.version, icu: process.versions.icu, cells: observations};
   await mkdir(process.argv[2], {recursive: true});
   await writeFile(join(process.argv[2], 'oracle.json'), JSON.stringify(output, null, 2) + '\n', {flag: 'wx'});
   console.log(JSON.stringify(output, null, 2));

@@ -3,8 +3,9 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one module_host transport gate and is killed by the replay
-cell that pins that gate's TS bytes. Run one sample in the authoring session;
-the coordinator runs the complete list after the patch is committed.
+cell that pins that gate's TS bytes (20 switches). Run one sample in the
+authoring session; the coordinator runs the complete list after the patch is
+committed.
 """
 import argparse
 import os
@@ -42,8 +43,17 @@ switches = [
     ('module-host-input-budget-off', SOURCE, 'budget_over', '#1349 cell budget-over normalized response'),
     # stream content-type gate off: the plain-ct stream is served empty.
     ('module-host-stream-ct-off', SOURCE, 'stream_plain_ct', '#1349 cell stream-plain-ct normalized response'),
+    # stream-CT 502 wire-header merge off: the 502 loses the provider's
+    # copied wire headers (etag, x-request-id).
+    ('module-host-502-wire-headers-off', SOURCE, 'stream_plain_ct_headers', '#1349 cell stream-plain-ct-headers normalized response'),
     # JSON default content-type off: the value body carries no content-type.
     ('module-host-json-ct-off', SOURCE, 'ok', '#1349 cell ok normalized response'),
+    # empty content-type falsiness off: the empty string is treated as a set
+    # content-type, so the string body stays raw and no default lands.
+    ('module-host-empty-ct-off', SOURCE, 'empty_ct_string', '#1349 cell empty-ct-string normalized response'),
+    # string code-point iteration off: the non-BMP string iterates one UTF-16
+    # unit at a time again (two U+FFFD events for one emoji).
+    ('module-host-string-codepoint-off', SOURCE, 'ndjson_string_emoji', '#1349 cell ndjson-string-emoji normalized response'),
     # missing-stream gate off: the falsy stream body is destroyed after headers.
     ('module-host-missing-stream-off', SOURCE, 'stream_missing', '#1349 cell stream-missing normalized response'),
     # wire-header allowlist off: the non-wire headers are copied through.
