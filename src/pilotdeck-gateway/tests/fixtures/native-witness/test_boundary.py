@@ -9,11 +9,31 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[5]
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_expected_case_count(self):
+        marker = '#a5b boundary negative case inventory is complete'
+        path = Path(__file__).with_name('negative_boundary.py')
+        try:
+            spec = importlib.util.spec_from_file_location('boundary_inventory', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            module.validate_case_count()
+            for arguments in ([], ['--check-anchors'], ['--memory-run', 'unused'],
+                              ['unused-output'], ['unused-output', '--memory', '--case', 'unused']):
+                with self.subTest(arguments=arguments), \
+                        patch.object(module, 'cases', module.cases[:-1]), \
+                        patch.object(sys, 'argv', [str(path), *arguments]):
+                    with self.assertRaises(SystemExit, msg=marker) as rejected:
+                        module.main()
+                    self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
     def test_guarded_sources_include_common(self):
         marker = '#a5b parity mutation guards include common.py'
         path = Path(__file__).with_name('negative_boundary.py')

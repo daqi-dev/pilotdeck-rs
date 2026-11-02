@@ -11,4 +11,6 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-lease/negative.py --chec
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-lease/negative.py NEW_OUTPUT
 ```
 
-`negative.py` 的 `cases` 与 summary 是数量正本。源码/文档负控覆盖旧的仅按判分释放、非 PASS 清理、登记、reap/身份/pgid、严格布尔证据、清理错误、探针错误、仍存活的组、有限等待。每项先编译 Python 变异，绑定单测与 #1221 单行消息，恢复后重跑；全部变异汇总 KILLED/SURVIVED/INVALID，锚点过期在运行前拒绝。源码保护使用 mutating_sources，正式原地验证必须在提交后运行。`--memory` 仅在独立子进程编译并注入候选，不改磁盘、不冒充已提交验证；`--case NAME` 选择单个样本。另覆盖 guarded sources 中 common.py 不可漏项、allStopped 文档定义与 CLI 的 TERM/ALRM 重复取消抑制。CLI 测试通过真实信号覆盖正常执行、finally 展开、except 处理及恢复正常后的新取消，无 TS 对应实现。真实 calibrate → deadline 的集成复算仍须提交后的 HEAD/FROZEN 校验通过，单测不代替它。
+`negative.py` 的独立 `EXPECTED_CASES = 22` 钉住完整清单：原 19 项，加 TERM/ALRM 注册遗漏与清单删项 3 项。全部入口（含 `--case`、`--memory`、`--check-anchors`）先核完整清单数量，漏项立即非零；summary 另核所选项执行结果。源码/文档负控覆盖旧的仅按判分释放、非 PASS 清理、登记、reap/身份/pgid、严格布尔证据、清理错误、探针错误、仍存活的组、有限等待。每项先编译 Python 变异，绑定单测与专属单行消息，恢复后重跑；全部变异汇总 KILLED/SURVIVED/INVALID，锚点过期在运行前拒绝。源码保护使用 mutating_sources，正式原地验证必须在提交后运行。`--memory` 仅在独立子进程编译并注入候选，不改磁盘、不冒充已提交验证；`--case NAME` 选择单个样本。另覆盖 guarded sources 中 common.py 不可漏项、allStopped 文档定义与 CLI 的 TERM/ALRM 重复取消抑制。CLI 测试通过真实信号覆盖正常执行、finally 展开、except 处理及恢复正常后的新取消，无 TS 对应实现。真实 calibrate → deadline 的集成复算仍须提交后的 HEAD/FROZEN 校验通过，单测不代替它。
+
+#a5b 注册检查先设置 sentinel，再调用生产 `install_handlers()` / `install_handlers(lease=True)`，用 `signal.getsignal` 核 TERM/ALRM 注册和原 ALRM 返回值；保留原入口/取得租约后的安装时机。信号类负控在后台或 nohup 下须经宿主 `sigint-default.py` 恢复 SIGINT 默认行为后启动。

@@ -23,6 +23,8 @@ session = root / 'scripts/gateway-parity/session_domain.py'
 common = root / 'scripts/gateway-parity/common.py'
 test_file = Path(__file__).with_name('test_boundary.py')
 guarded_sources = [common, gateway_doc, witness_doc, controls_doc, session, test_file, Path(__file__).resolve()]
+EXPECTED_CASES = 8
+# Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('omit-common-guard', Path(__file__).resolve(), 'guarded_' + 'sources = [common,', 'guarded_' + 'sources = [', 'test_guarded_sources_include_common'),
     ('gateway-independent-claim', gateway_doc, '只防协作写者', 'driver 记录独立锚', 'test_documented_boundary'),
@@ -31,15 +33,24 @@ cases = [
     ('witness-independent-claim', witness_doc, '能够同时重写三者的对抗写者不在此威胁模型内', 'driver 记录提供独立锚', 'test_documented_boundary'),
     ('controls-independent-claim', controls_doc, '不防共同重钉', '独立锚', 'test_documented_boundary'),
     ('drop-consistency-check', session, "isinstance(driver, dict) and driver.get('binding') == contract['binding']", 'True', 'test_binding_writer_boundary'),
+    ('omit-boundary-case', Path(__file__).resolve(), "    ('om" + "it-common-guard', Path(__file__).resolve(), 'guarded_' + 'sources = [common,', 'guarded_' + 'sources = [', 'test_guarded_sources_include_common'),\n", '', 'test_expected_case_count'),
 ]
 messages = {
+    'test_expected_case_count': '#a5b boundary negative case inventory is complete',
     'test_guarded_sources_include_common': '#a5b parity mutation guards include common.py',
     'test_documented_boundary': '#1206 document the cooperative-writer boundary',
     'test_binding_writer_boundary': '#1206 observer-only edit rejected, joint rewrite is a known boundary',
 }
 
 
+def validate_case_count():
+    if len(cases) != EXPECTED_CASES:
+        raise SystemExit(f'#a5b boundary negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES}, got {len(cases)}')
+
+
 def preflight():
+    validate_case_count()
     errors = []
     test_source = test_file.read_text()
     compile(test_source, str(test_file), 'exec')
@@ -99,6 +110,7 @@ def memory_run(name):
 
 
 def main():
+    validate_case_count()
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
     if sys.argv[1:] == ['--check-anchors']:

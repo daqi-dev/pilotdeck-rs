@@ -197,6 +197,13 @@ def interrupted(signum, frame):
     raise KeyboardInterrupt(f'signal {signum}')
 
 
+def install_handlers(*, lease=False):
+    """Keep TERM at entry and ALRM scoped to the acquired lease."""
+    if lease:
+        return signal.signal(signal.SIGALRM, lease_expired)
+    return signal.signal(signal.SIGTERM, interrupted)
+
+
 def process_table():
     result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=,comm='],
                             capture_output=True, text=True, timeout=5,
@@ -661,7 +668,7 @@ def main():
         with parity_lock() as owner:
             # Stop before other runners may consider the lease expired. The
             # handler raises through capture's finally so owned groups are reaped.
-            previous_alarm = signal.signal(signal.SIGALRM, lease_expired)
+            previous_alarm = install_handlers(lease=True)
             signal.alarm(2280)
             save(output / 'lock.json', owner)
             fixture(runtime)
@@ -740,7 +747,7 @@ def main():
 
 
 if __name__ == '__main__':
-    signal.signal(signal.SIGTERM, interrupted)
+    install_handlers()
     try:
         code = main()
     except (Blocked, OSError) as error:

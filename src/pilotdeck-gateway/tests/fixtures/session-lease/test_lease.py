@@ -48,6 +48,52 @@ class LeaseTests(unittest.TestCase):
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
 
+    def test_expected_case_count(self):
+        marker = '#a5b lease negative case inventory is complete'
+        path = Path(__file__).with_name('negative.py')
+        try:
+            spec = importlib.util.spec_from_file_location('lease_inventory', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            module.validate_case_count()
+            for arguments in ([], ['--check-anchors'], ['--memory-run', 'unused'],
+                              ['unused-output'], ['unused-output', '--memory', '--case', 'unused']):
+                with self.subTest(arguments=arguments), \
+                        patch.object(module, 'cases', module.cases[:-1]), \
+                        patch.object(sys, 'argv', [str(path), *arguments]):
+                    with self.assertRaises(SystemExit, msg=marker) as rejected:
+                        module.main()
+                    self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_cli_signal_handlers_registered(self):
+        marker = '#a5b CLI signal handlers are installed by production code'
+        path = ROOT / 'scripts/cli-parity/run_round.py'
+        previous = {}
+
+        def sentinel(signum, frame):
+            self.fail(marker + ': sentinel must not be called')
+
+        try:
+            spec = importlib.util.spec_from_file_location('cli_handler_registration', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            for signum in (signal.SIGTERM, signal.SIGALRM):
+                previous[signum] = signal.signal(signum, sentinel)
+            module.install_handlers()
+            self.assertTrue(signal.getsignal(signal.SIGTERM) is module.interrupted, marker)
+            self.assertTrue(signal.getsignal(signal.SIGALRM) is sentinel, marker)
+            old_alarm = module.install_handlers(lease=True)
+            self.assertTrue(old_alarm is sentinel, marker)
+            self.assertTrue(signal.getsignal(signal.SIGALRM) is module.lease_expired, marker)
+            self.assertTrue(signal.getsignal(signal.SIGTERM) is module.interrupted, marker)
+        except (Exception, SystemExit, KeyboardInterrupt) as error:
+            self.fail(marker + ': ' + repr(error))
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
+
     def test_cli_cancel_unwind(self):
         marker = '#1194 CLI preserves first cancellation and accepts later signals'
         path = ROOT / 'scripts/cli-parity/run_round.py'
