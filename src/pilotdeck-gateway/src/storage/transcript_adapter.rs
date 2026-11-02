@@ -17,7 +17,7 @@ use super::{
         LedgerLock, create_temporary, private_dirs, private_open, read_transcript_limited_at, uuid,
     },
 };
-use crate::js_value;
+use crate::{js_value, runtime::memory::js_trim_units};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     collections::HashSet,
@@ -1431,15 +1431,51 @@ fn lossy(value: &JsString) -> String {
 fn lossy_value(value: &JsValue) -> String {
     value.as_string().map(lossy).unwrap_or_default()
 }
-/// String.prototype.trim on UTF-16 units (all JS whitespace is in the BMP).
-pub(super) fn js_trim_units(units: &[u16]) -> &[u16] {
-    let space = |u: &u16| matches!(*u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff);
-    let start = units.iter().position(|u| !space(u)).unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|u| !space(u))
-        .map_or(start, |i| i + 1);
-    &units[start..end]
+#[cfg(test)]
+mod trim_tests {
+    use super::*;
+
+    /// #1244: the storage transcript path must trim with the full JS
+    /// whitespace set. The 25 units are the `String.prototype.trim` set
+    /// measured by scanning every UTF-16 code unit on Node v22.22.0
+    /// (#1244 delivery evidence `node-probe/whitespace-probe.log`); the
+    /// pre-merge private `js_trim_units` in this module had no test and
+    /// could drift from the shared `runtime::memory` set unnoticed.
+    const TRIM_SPACE_UNITS: [u16; 25] = [
+        0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680, 0x2000, 0x2001, 0x2002,
+        0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F,
+        0x205F, 0x3000, 0xFEFF,
+    ];
+
+    /// #1244: exhaustive pin of [`non_empty_string`] over the whole UTF-16
+    /// code-unit range: a one-unit string is empty after trimming exactly
+    /// when the unit is in the measured TS trim set. This routes through the
+    /// shared `runtime::memory::js_trim_units`, so a dropped unit, a moved
+    /// range bound or a locally rewritten predicate (Rust whitespace,
+    /// ASCII-only) all drift.
+    #[test]
+    fn non_empty_string_pins_the_js_trim_whitespace_set() {
+        let drifted: Vec<String> = (0u16..=u16::MAX)
+            .filter(|&unit| {
+                let value = JsValue::String(JsString::from_utf16(vec![unit]));
+                non_empty_string(&value).is_some() == TRIM_SPACE_UNITS.contains(&unit)
+            })
+            .map(|unit| format!("U+{unit:04X}"))
+            .collect();
+        assert!(
+            drifted.is_empty(),
+            "#1244 non_empty_string drifted from the TS trim whitespace set: {drifted:?}"
+        );
+        // Named non-whitespace counterexamples (issue #1244): U+180E and
+        // U+200B are White_Space-adjacent but not JS trim whitespace.
+        for &unit in &[0x180Eu16, 0x200Bu16] {
+            let value = JsValue::String(JsString::from_utf16(vec![unit]));
+            assert!(
+                non_empty_string(&value).is_some(),
+                "#1244 U+{unit:04X} is not JS whitespace and must stay a non-empty string"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -52,7 +52,7 @@ fn text_is(value: &JsValue, text: &str) -> bool {
 fn trimmed(value: &JsValue) -> bool {
     value
         .as_string()
-        .is_some_and(|s| !super::transcript_adapter::js_trim_units(s.units()).is_empty())
+        .is_some_and(|s| !crate::runtime::memory::js_trim_units(s.units()).is_empty())
 }
 fn nonblank(value: &JsValue) -> bool {
     trimmed(value)
