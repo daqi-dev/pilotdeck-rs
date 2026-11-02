@@ -5,7 +5,11 @@ Every row changes one existing anchor in `heartbeat/indexer.rs`, runs the one
 named integration test and restores the original bytes in `finally`. A stale
 anchor aborts with status 2 instead of being reported as SURVIVED, and the
 runner never stops at the first non-kill: it records every KILLED / SURVIVED /
-INVALID row and exits non-zero if any row is not KILLED.
+SKIPPED / INVALID row and exits non-zero if any row is SURVIVED or INVALID.
+A row is SKIPPED (not a failure) when its bound test printed the `#1263 skip:`
+line — the 0444 write probe found a caller that writes through the mode
+(root or CAP_DAC_OVERRIDE), so the re-arm contract is untestable on that host
+and the row says so instead of reporting an honest SURVIVED mutant.
 
 Rows are `(name, path, before, after, test, anchor)` tuples for single edits,
 or `dict(name=..., changes=[(path, before, after), ...], test=...,
@@ -733,7 +737,7 @@ def assertion_failure(log, anchor):
             and anchor in log)
 
 
-killed, survived = [], []
+killed, survived, skipped = [], [], []
 with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) as originals:
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     run = cargo_test(None)
@@ -764,7 +768,16 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
             run = cargo_test(test)
             log = run.stdout + run.stderr
             (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-            if run.returncode == 0:
+            if run.returncode == 0 and '#1263 skip:' in log:
+                # The bound test's native write probe (#1263) found a caller
+                # that writes through the 0444 mode — root or
+                # CAP_DAC_OVERRIDE — restored 0644, printed its recognizable
+                # skip line straight to the stderr handle and passed. The
+                # re-arm contract was never exercised on this host, so the
+                # row is SKIPPED (machine-readable in the summary line and
+                # in the log), never an honest-SURVIVED red.
+                reason = 'skipped'
+            elif run.returncode == 0:
                 reason = 'bound test still passed'
             elif not assertion_failure(log, anchor):
                 reason = 'did not fail at the bound assertion'
@@ -781,6 +794,10 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
         if reason is None:
             killed.append(name)
             print(f'KILLED   {name}: {anchor}', flush=True)
+        elif reason == 'skipped':
+            skipped.append(name)
+            print(f'SKIPPED  {name}: #1263 skip line in the bound test log '
+                  '(root or CAP_DAC_OVERRIDE host)', flush=True)
         else:
             survived.append((name, reason))
             print(f'SURVIVED {name}: {reason}', flush=True)
@@ -797,6 +814,7 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
         sys.exit(1)
 
 print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
+print(f'SKIPPED  {len(skipped)}: ' + ', '.join(skipped))
 print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
 if survived:
     sys.exit(1)

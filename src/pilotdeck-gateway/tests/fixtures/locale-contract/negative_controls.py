@@ -139,8 +139,10 @@ def main():
             return result
 
         # No `--nocapture`: it splices the test's stdout into the
-        # `test <name> ... ok/FAILED` status line (#938 r14) that
-        # negative_suite.passed()/classify() match exactly.
+        # `test <name> ... FAILED` status line, and the shared classify()
+        # kill needs that whole line exact (negative_panic.named_test_failed;
+        # #938 r14). The shared passed() ok regex tolerates interleaved
+        # bytes after the name, so the kill path is the one capture protects.
         args = command + [test, '--', '--exact', '--format', 'pretty']
         entered = False
         try:

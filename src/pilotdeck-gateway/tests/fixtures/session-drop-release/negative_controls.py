@@ -412,8 +412,10 @@ def run(label, test, compile=False):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
     (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
     # No `--nocapture`: it splices the test's stdout into the
-    # `test <name> ... ok/FAILED` status line (#938 r14) that the shared
-    # negative_suite.passed()/classify() judge matches exactly (#1053).
+    # `test <name> ... FAILED` status line, and the shared classify() kill
+    # needs that whole line exact (negative_panic.named_test_failed; #938
+    # r14). The shared passed() ok regex tolerates interleaved bytes after
+    # the name, so the kill path is the one capture protects (#1053).
     args = ['--no-run'] if compile else [test, '--', '--exact', '--include-ignored']
     result = run_owned(command + args, cwd=root, env=env, timeout=900)
     with (out / (label + '.log')).open('x') as log:

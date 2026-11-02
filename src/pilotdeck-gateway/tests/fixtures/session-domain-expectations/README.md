@@ -12,7 +12,8 @@
 （如 `6 anchors: ok`）再输出 JSON，stdout 不再是纯 JSON，下游解析需先剥
 锚点行；`--only` 非法或重复时返回 2 且不输出清单，锚点预检失败同样
 返回 2 且不列清单（#1279）。`--check-anchors` 单独调用（不带 `--list`）
-只做锚点预检：打印 `N anchors: ok` 后返回 0，不要求 `--output` / `--source`。
+只做锚点预检：先打印 `derived counts: …` 再打印 `N anchors: ok` 后返回 0，
+不要求 `--output` / `--source`。
 
 ## 源码 require 负控
 

@@ -128,8 +128,11 @@ injection natively right after `set_permissions` (#1263): when this caller
 can write through the mode (root or CAP_DAC_OVERRIDE) it restores 0644 and
 skips with a recognizable `#1263 skip:` line written straight to the stderr
 handle (libtest captures a passing test's `eprintln!`), so a root host gets
-an honest observable skip — and the row above reports SURVIVED with the skip
-line in the log — instead of an environment red. Both blocking-witness tests
+an honest observable skip — and `negative.py` reads that line back and records
+the row as `SKIPPED` (machine-readable in the per-row stdout line and the
+final summary; not a failure, so a root host's suite stays green on the rows
+that really ran) instead of a false SURVIVED that keeps the whole suite red
+for environment reasons. Both blocking-witness tests
 (`concurrent_capture_cannot_land_between_l0_id_selection_and_delete` and
 `commit_segment_blocks_concurrent_clear_until_writes_complete`) judge through
 doc-hidden lock-wait observers (`EdgeClawStorage::set_process_wait_observer`,
