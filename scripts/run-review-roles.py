@@ -10,8 +10,13 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
 原始事件流、stderr、最终文本、状态各自落盘。主进程不读角色全文，只汇总 summary.md（含 PR 用结果块）。
 
 执行层只读证明：解析 stream-json 的 init 事件，工具集合不是白名单子集 → 立即杀进程，记 TOOLS_VIOLATION。
-状态：PASS（有 final 且末行 VERDICT 合规）· PARTIAL（有 final 但缺 VERDICT/覆盖行）· TIMEOUT · ERROR · TOOLS_VIOLATION。
+状态：PASS（有 final 且末行 VERDICT 合规）· PARTIAL（有 final 但缺 VERDICT/覆盖行）· TIMEOUT · STALLED · ERROR · TOOLS_VIOLATION。
 只有 PASS 计入闸门；exit0 或 type=result 不等于完成评审（state/memory/20261016-review-bounds.md）。
+
+速率看门狗：按到达墙钟统计模型输出（thinking_tokens 事件的估计增量 + assistant 文本 / 工具入参字符÷4；tool_result
+是本地工具输出，不计）。启动满宽限期后，最近窗口内输出低于阈值持续 hold 秒 → STALLED，杀进程组。
+STALLED / TIMEOUT 的角色按退避自动重跑（默认最多 2 次），每次原始流另存 <角色>.attempt<k>.jsonl/.err，
+最后一次仍叫 <角色>.jsonl；status.json 记每次尝试，最终状态取最后一次。并行模式下各角色在自己线程里重试，互不阻塞。
 
 用法：
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate
@@ -22,10 +27,12 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime as dt
 import importlib.util
 import json
 import os
+import random
 import shutil
 import signal
 import subprocess
@@ -94,6 +101,17 @@ def runner_env(key: str) -> dict[str, str]:
     """子进程的全部模型相关环境（白名单之外的父环境一概不带）。"""
     return {"ANTHROPIC_API_KEY": key, "ANTHROPIC_BASE_URL": LLM_CENTER_BASE_URL}
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
+# 速率看门狗默认值。依据：11-02 对 wt-tools-main/_tmp/*-gate 历史 5000+ 角色流离线回放（原件与脚本
+# _tmp/20261102-review-watchdog/serial-control/replay-grid*.txt）：宽限 180 / 窗口 120 / 5 tok/s / 持续 60 s 抓住
+# anthropic TIMEOUT 55/72（中位第 1050 s 触发，原本要等满 2400 s），误杀 anthropic PASS 152/3161（4.8%；10-28~31 平稳
+# 时段 12/1320 = 0.9%），误杀者自动重跑。GLM 通道同参数误杀 PASS 54/1918 而 TIMEOUT 仅 4/1934，默认不开（--stall-min-rate 显式开）。
+STALL_GRACE = 180.0
+STALL_WINDOW = 120.0
+STALL_MIN_RATE = {"zai": 0.0, "anthropic": 5.0}
+STALL_HOLD = 60.0
+RETRIES = 2
+RETRY_BACKOFF = (30.0, 90.0)  # 第 k 次重试前等待基数（秒），实际 ×U(0.8, 1.2) 抖动
+RETRY_STATUSES = ("STALLED", "TIMEOUT")
 
 
 def render(text: str, values: dict[str, str]) -> str:
@@ -141,13 +159,85 @@ def validate_final(text: str) -> tuple[str, dict[str, int] | None, str]:
     return "PASS", counts, ""
 
 
-def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int,
-             extra_env: dict[str, str] | None = None, model: str = "") -> dict:
+def output_tokens(ev: dict) -> float:
+    """一条 stream-json 事件里的模型输出量（估计 token）：thinking_tokens 增量 + assistant 文本 / 工具入参字符÷4。"""
+    if ev.get("type") == "system" and ev.get("subtype") == "thinking_tokens":
+        d = ev.get("estimated_tokens_delta")
+        return float(d) if isinstance(d, (int, float)) and not isinstance(d, bool) and d > 0 else 0.0
+    if ev.get("type") != "assistant":
+        return 0.0
+    msg = ev.get("message")
+    n = 0
+    for c in (msg.get("content") if isinstance(msg, dict) else None) or []:
+        if not isinstance(c, dict):
+            continue
+        if c.get("type") == "text" and isinstance(c.get("text"), str):
+            n += len(c["text"])
+        elif c.get("type") == "thinking" and isinstance(c.get("thinking"), str):
+            n += len(c["thinking"])
+        elif c.get("type") == "tool_use":
+            n += len(json.dumps(c.get("input"), ensure_ascii=False))
+    return n / 4
+
+
+class Watchdog:
+    """滑动窗口速率看门狗。min_rate<=0 关闭。feed 由 pump 线程调用，check 由主线程轮询。"""
+
+    def __init__(self, grace: float, window: float, min_rate: float, hold: float):
+        self.grace, self.window, self.min_rate, self.hold = grace, window, min_rate, hold
+        self.start = time.monotonic()
+        self.events: collections.deque[tuple[float, float]] = collections.deque()
+        self.lock = threading.Lock()
+        self.total = 0.0
+        self.first: float | None = None
+        self.below_since: float | None = None
+
+    def feed(self, tokens: float) -> None:
+        if tokens <= 0:
+            return
+        now = time.monotonic()
+        with self.lock:
+            self.events.append((now, tokens))
+            self.total += tokens
+            if self.first is None:
+                self.first = now - self.start
+
+    def check(self) -> str:
+        """返回空串表示正常；否则返回 STALLED 说明。"""
+        if self.min_rate <= 0:
+            return ""
+        now = time.monotonic()
+        if now - self.start < self.grace:
+            return ""
+        with self.lock:
+            while self.events and self.events[0][0] <= now - self.window:
+                self.events.popleft()
+            got = sum(v for _, v in self.events)
+        if got >= self.min_rate * self.window:
+            self.below_since = None
+            return ""
+        if self.below_since is None:
+            self.below_since = now
+        if now - self.below_since >= self.hold:
+            return (f"流式速率低于 {self.min_rate:g} tok/s（最近 {self.window:g}s 仅 {got:.0f} tok）"
+                    f"持续 {self.hold:g}s，已杀进程组")
+        return ""
+
+    def stats(self, seconds: float) -> dict:
+        with self.lock:
+            return {"first_output_s": None if self.first is None else round(self.first, 1),
+                    "out_tokens_est": round(self.total), "tok_per_s": round(self.total / seconds, 1) if seconds > 0 else None}
+
+
+def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int,
+                  extra_env: dict[str, str] | None = None, model: str = "", stall: tuple[float, float, float, float] | None = None,
+                  poll: float = 0.5) -> dict:
     raw = out_dir / f"{role}.jsonl"
     err = out_dir / f"{role}.err"
     started = time.time()
     rec: dict = {"role": role, "status": "ERROR", "detail": "", "counts": None, "cost_usd": None,
                  "started": dt.datetime.now().isoformat(timespec="seconds")}
+    wd = Watchdog(*(stall or (0.0, 1.0, 0.0, 0.0)))
     cfg = Path(tempfile.mkdtemp(prefix=f"pdrs-review-cfg-{role}-"))
     env = {k: os.environ[k] for k in ENV_KEEP if k in os.environ}
     env.update(extra_env or {}, PWD=str(cwd), CLAUDE_CONFIG_DIR=str(cfg))  # 绑定 cwd 与 PWD（review-permissions）
@@ -169,6 +259,7 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
                         continue
                     if not isinstance(ev, dict):
                         raise TypeError(f"stream-json 行不是对象：{line[:80]!r}")
+                    wd.feed(output_tokens(ev))
                     if ev.get("type") == "system" and ev.get("subtype") == "init":
                         tools = ev.get("tools")
                         # fail-closed：init 缺 tools 字段=无法证明只读，按越权处理（boundary 审 #4），
@@ -199,22 +290,33 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
 
         t = threading.Thread(target=pump, daemon=True)
         t.start()
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-            rec["status"] = "TIMEOUT"
-            rec["detail"] = f"超时 {timeout}s，已杀进程组"
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                proc.wait(timeout=max(0.01, min(poll, deadline - time.monotonic())))
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            why = "TIMEOUT" if time.monotonic() >= deadline else ("STALLED" if (msg := wd.check()) else "")
+            if why:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                rec["status"] = why
+                rec["detail"] = f"超时 {timeout}s，已杀进程组" if why == "TIMEOUT" else msg
+                break
         t.join(timeout=10)
 
     shutil.rmtree(cfg, ignore_errors=True)
     rec["seconds"] = round(time.time() - started, 1)
     rec["exit"] = proc.returncode
+    rec.update(wd.stats(rec["seconds"]))
     if violation:
         rec["status"], rec["detail"] = "TOOLS_VIOLATION", f"init 工具集合超出白名单：{violation}"
         return rec
-    if rec["status"] == "TIMEOUT":
+    if rec["status"] in RETRY_STATUSES:
         return rec
     if not result.get("init_seen"):
         rec["detail"] = "未见 init 事件，无法证明工具白名单生效"
@@ -232,6 +334,31 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
         rec["detail"] = f"result subtype={result.get('subtype')} is_error={result.get('is_error')}"
         return rec
     rec["status"], rec["counts"], rec["detail"] = validate_final(text or "")
+    return rec
+
+
+def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int,
+             extra_env: dict[str, str] | None = None, model: str = "", stall: tuple[float, float, float, float] | None = None,
+             retries: int = 0, backoff: tuple[float, ...] = RETRY_BACKOFF, poll: float = 0.5) -> dict:
+    """单角色：STALLED / TIMEOUT 时按退避重跑，至多 retries 次；被重跑的那次原始流改名为 <角色>.attempt<k>.*。"""
+    attempts: list[dict] = []
+    while True:
+        rec = run_role_once(role, prompt_path, out_dir, cmd, cwd, timeout, extra_env, model, stall, poll)
+        attempts.append({k: rec.get(k) for k in ("status", "detail", "seconds", "started", "first_output_s",
+                                                 "out_tokens_est", "tok_per_s")})
+        k = len(attempts)
+        if rec["status"] not in RETRY_STATUSES or k > retries:
+            break
+        for ext in ("jsonl", "err"):
+            src = out_dir / f"{role}.{ext}"
+            if src.exists():
+                src.replace(out_dir / f"{role}.attempt{k}.{ext}")
+        base = backoff[min(k - 1, len(backoff) - 1)] if backoff else 0.0
+        time.sleep(base * random.uniform(0.8, 1.2))
+    rec["attempts"] = attempts
+    if len(attempts) > 1:
+        trail = " → ".join(f"{a['status']} {a['seconds']}s" for a in attempts)
+        rec["detail"] = f"尝试 {len(attempts)} 次：{trail}" + (f"；{rec['detail']}" if rec["detail"] else "")
     return rec
 
 
@@ -255,9 +382,29 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="只渲染任务书与命令，不起进程")
     ap.add_argument("--serial", action="store_true",
                     help="角色逐个顺序跑（同一进程、同一 diff，产出单个四角色结果块）；并行全跑在本机会挂起时用")
+    ap.add_argument("--stall-grace", type=float, default=STALL_GRACE, help=f"看门狗宽限秒数（默认 {STALL_GRACE:g}）")
+    ap.add_argument("--stall-window", type=float, default=STALL_WINDOW, help=f"速率滑动窗口秒数（默认 {STALL_WINDOW:g}）")
+    ap.add_argument("--stall-min-rate", type=float, default=None,
+                    help="窗口内最低输出速率 tok/s；0 关闭看门狗（默认 anthropic→5，zai→0 不开）")
+    ap.add_argument("--stall-hold", type=float, default=STALL_HOLD, help=f"低于阈值持续多少秒判 STALLED（默认 {STALL_HOLD:g}）")
+    ap.add_argument("--retries", type=int, default=RETRIES, help=f"STALLED/TIMEOUT 自动重跑次数（默认 {RETRIES}；0 不重跑）")
+    ap.add_argument("--retry-backoff", default=",".join(f"{x:g}" for x in RETRY_BACKOFF),
+                    help="逗号分隔的各次重试前等待基数秒（实际 ×0.8–1.2 抖动；次数多于列表时取最后一个）")
     a = ap.parse_args()
     if a.timeout is None:
         a.timeout = DEFAULT_TIMEOUT[a.runner]
+    if a.stall_min_rate is None:
+        a.stall_min_rate = STALL_MIN_RATE[a.runner]
+    try:
+        backoff = tuple(float(x) for x in a.retry_backoff.split(",") if x.strip())
+    except ValueError:
+        print(f"run-review-roles: --retry-backoff 须为逗号分隔的秒数：{a.retry_backoff!r}", file=sys.stderr)
+        return 2
+    if (a.retries < 0 or a.stall_window <= 0 or a.stall_grace < 0 or a.stall_hold < 0 or a.stall_min_rate < 0
+            or any(x < 0 for x in backoff)):
+        print("run-review-roles: --retries/--stall-*/--retry-backoff 不得为负，--stall-window 须 > 0", file=sys.stderr)
+        return 2
+    stall = (a.stall_grace, a.stall_window, a.stall_min_rate, a.stall_hold)
 
     wt = Path(a.worktree).resolve()
     out = Path(a.out).resolve()
@@ -326,7 +473,8 @@ def main() -> int:
         p.write_text(body, encoding="utf-8")
         jobs.append((role, p))
 
-    (out / "command.txt").write_text(" ".join(cmd) + f"\n# cwd={wt} timeout={a.timeout}s\n", encoding="utf-8")
+    (out / "command.txt").write_text(" ".join(cmd) + f"\n# cwd={wt} timeout={a.timeout}s stall={','.join(f'{x:g}' for x in stall)}"
+                                     f" retries={a.retries} backoff={','.join(f'{x:g}' for x in backoff)}\n", encoding="utf-8")
     if a.dry_run:
         print(f"run-review-roles: dry-run，任务书在 {out}/*.prompt.md，命令见 command.txt")
         return 0
@@ -334,7 +482,7 @@ def main() -> int:
     results: dict[str, dict] = {}
     def guarded(r: str, p: Path) -> None:
         try:
-            results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model)
+            results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model, stall, a.retries, backoff)
         except Exception as e:  # noqa: BLE001 —— 线程异常不得让 results 缺键、summary 丢失
             results[r] = {"role": r, "status": "ERROR", "detail": f"运行器异常 {type(e).__name__}", "counts": None}
 
@@ -364,7 +512,7 @@ def main() -> int:
         c = results[r]["counts"] or {}
         lines.append(f"| {r} | {results[r]['status']} | {c.get('P0', '-')} | {c.get('P1', '-')} | {c.get('P2', '-')} | "
                      f"{c.get('P3', '-')} | {results[r].get('seconds')} | {results[r]['detail'] or '—'} |")
-    lines += ["", f"原件：`{out.relative_to(ROOT)}/`（<角色>.md 为结论，.jsonl/.err 为原始流）"]
+    lines += ["", f"原件：`{out.relative_to(ROOT)}/`（<角色>.md 为结论，.jsonl/.err 为原始流；重跑过的角色另有 <角色>.attempt<k>.jsonl）"]
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"run-review-roles: {'全部 PASS' if ok else '有非 PASS'}；P0={tot['P0']} P1={tot['P1']} P2={tot['P2']}；见 {out}/summary.md")
     return 0 if ok else 1

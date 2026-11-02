@@ -51,12 +51,36 @@ if trace:
     with open(trace, "a") as f:
         f.write(f"start {time.time()}\n")
     time.sleep(0.3)
+def first_claim(path):  # 原子占位：并行四角色里只有一个抢到（O_EXCL）
+    try:
+        os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        return True
+    except FileExistsError:
+        return False
 hang_first = conf.get("hang_first")
-if hang_first and not os.path.exists(hang_first):
-    open(hang_first, "w").close()
+if hang_first and first_claim(hang_first):
     mode = "hang"
+drip_first = conf.get("drip_first")  # 首次尝试慢滴漏，之后正常（模拟时段性流式饥饿后重试即过）
+if drip_first and first_claim(drip_first):
+    mode = "drip"
+def thinking(delta):
+    print(json.dumps({"type": "system", "subtype": "thinking_tokens", "estimated_tokens_delta": delta}), flush=True)
 if mode == "hang":
     time.sleep(30)
+if mode == "drip":  # 1 tok / 0.2 s ≈ 5 tok/s，持续 30 s：活着但几乎不出字
+    for _ in range(150):
+        thinking(1)
+        time.sleep(0.2)
+if mode == "tool_flood":  # 只有本地工具结果在刷（tool_result 不是模型输出），模型本身一字不出
+    for _ in range(100):
+        print(json.dumps({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t", "content": [{"type": "text", "text": "x" * 4000}]},
+            {"type": "text", "text": "y" * 4000}]}}), flush=True)
+        time.sleep(0.1)
+if mode == "steady":  # 50 tok / 0.1 s ≈ 500 tok/s，持续 3 s：正常速率但跑得比宽限 + 持续期长
+    for _ in range(30):
+        thinking(50)
+        time.sleep(0.1)
 if mode != "no_assistant":
     resp = "wrong-model-x" if mode == "wrong_resp" else {"glm-5.3-mb": "GLM-5.3"}.get(model, model)  # 真网关回显展示名
     print(json.dumps({"type": "assistant", "message": {"model": resp, "content": []}}), flush=True)
@@ -112,10 +136,12 @@ def _run(gate, rrr, out_base: Path) -> int:
         polluted = {"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_BEDROCK",
                     "CLAUDE_CODE_USE_VERTEX", "GITHUB_TOKEN", "ZAI_API_KEY", "FAKE_MODE"}
 
-        def run(name: str, mode: str, runner: str = "zai", timeout: int = 20) -> tuple[int, str]:
+        def run(name: str, mode: str, runner: str = "zai", timeout: int = 20, extra: tuple[str, ...] = ("--retries", "0"),
+                conf_extra: dict | None = None) -> tuple[int, str]:
             # 污染的父环境：旧网关头、provider 选择器、他家令牌都不得传进评审进程
             (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL, "keys": {
-                "zai_file": secret, "anth_file": anth_secret, "zai_parent": "zai-parent-x", "anth_parent": "anth-parent-x"}}))
+                "zai_file": secret, "anth_file": anth_secret, "zai_parent": "zai-parent-x", "anth_parent": "anth-parent-x"},
+                **(conf_extra or {})}))
             # 父环境放另一组键：运行器只认 --env-file，父环境的键不得被用
             env = dict(os.environ, FAKE_MODE=mode, ZAI_API_KEY="zai-parent-x",
                        ANTHROPIC_API_KEY="anth-parent-x", ANTHROPIC_BASE_URL="http://parent-shell-leak.invalid",
@@ -125,7 +151,7 @@ def _run(gate, rrr, out_base: Path) -> int:
             cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner, "--claude-bin", str(fake),
                                  "--env-file", str(envfile),
                                  "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out), "--roles", ROLES,
-                                 "--timeout", str(timeout)], capture_output=True, text=True, env=env)
+                                 "--timeout", str(timeout), *extra], capture_output=True, text=True, env=env)
             s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
             return cp.returncode, s
 
@@ -188,6 +214,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         rc, s = run("timeout", "hang", timeout=2)
         if rc == 0 or "TIMEOUT" not in s or not gate_errs(s):
             fails.append(f"timeout：应判 TIMEOUT 且闸门拒收（rc={rc}）")
+        _watchdog_tests(run, gate_errs, out_base, tmp, fake, envfile, wt, log, fails)
 
         # 缺钥：fixture 文件没有该键、父环境却有——必须拒绝，不回退父环境（无条件断言，开发机与 CI 一致）
         empty = tmp / "empty.env"
@@ -254,7 +281,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         out = out_base / "serial-timeout-first"
         cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
                              "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out), "--roles", ROLES,
-                             "--serial", "--timeout", "2"], capture_output=True, text=True)
+                             "--serial", "--timeout", "2", "--retries", "0"], capture_output=True, text=True)
         ends = trace.read_text().split().count("end")
         s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
         first, rest = ROLES.split(",")[0], ROLES.split(",")[1:]
@@ -267,6 +294,107 @@ def _run(gate, rrr, out_base: Path) -> int:
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")
     return 1 if fails else 0
 
+
+
+# 看门狗测试参数：宽限 0.5 s、窗口 1 s、阈值 20 tok/s、持续 1 s；drip（≈5 tok/s）必被判 STALLED，steady（≈500 tok/s、跑 3 s）不得误杀
+FAST_STALL = ("--stall-grace", "0.5", "--stall-window", "1", "--stall-min-rate", "20", "--stall-hold", "1",
+              "--retry-backoff", "0.1,0.1")
+
+
+def _status(out: Path) -> dict:
+    try:
+        return json.loads((out / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _watchdog_tests(run, gate_errs, out_base: Path, tmp: Path, fake: Path, envfile: Path, wt: Path, log: Path,
+                    fails: list[str]) -> None:
+    """速率看门狗 + 单角色自动重试（11-02 时段性流式饥饿）。"""
+    # 1. 慢滴漏 → STALLED → 重试 PASS：只有首个起跑的角色滴漏，重试后四角色全 PASS，过闸；滴漏那次原始流另存
+    marker = tmp / "drip-first.flag"
+    marker.unlink(missing_ok=True)
+    rc, s = run("drip-retry-pass", "ok", extra=(*FAST_STALL, "--retries", "2"), conf_extra={"drip_first": str(marker)})
+    st = _status(out_base / "drip-retry-pass")
+    retried = [r for r, v in st.items() if len(v.get("attempts") or []) > 1]
+    if (rc != 0 or gate_errs(s) or len(retried) != 1
+            or [a["status"] for a in st[retried[0]]["attempts"]] != ["STALLED", "PASS"]
+            or not (out_base / "drip-retry-pass" / f"{retried[0]}.attempt1.jsonl").is_file()
+            or not (out_base / "drip-retry-pass" / f"{retried[0]}.jsonl").is_file()
+            or "尝试 2 次：STALLED" not in s):
+        fails.append(f"drip-retry-pass：应恰一角色 STALLED→PASS、另存 attempt1 原始流且全 PASS 过闸（rc={rc}，"
+                     f"{ {r: [a['status'] for a in v.get('attempts') or []] for r, v in st.items()} }）")
+    elif "thinking_tokens" not in (out_base / "drip-retry-pass" / f"{retried[0]}.attempt1.jsonl").read_text():
+        fails.append("drip-retry-pass：attempt1.jsonl 应是滴漏那次的原始流")
+
+    # 2. 两次都 STALLED（--retries 1）→ 最终 STALLED，闸门拒收，尝试数 2、每次都有原始流
+    rc, s = run("drip-always", "drip", timeout=20, extra=(*FAST_STALL, "--retries", "1"))
+    st = _status(out_base / "drip-always")
+    att = {r: [a["status"] for a in v.get("attempts") or []] for r, v in st.items()}
+    if (rc == 0 or not gate_errs(s) or any(v != ["STALLED", "STALLED"] for v in att.values()) or len(att) != 4
+            or "simplify:STALLED" not in s
+            or any(not (out_base / "drip-always" / f"{r}.attempt1.jsonl").is_file() for r in att)
+            or any(st[r].get("seconds", 99) > 10 for r in att)):
+        fails.append(f"drip-always：应两次 STALLED、最终 STALLED 且闸门拒收、远早于 20 s 超时（rc={rc}，{att}）")
+
+    # 2b. 只有 tool_result 在刷不算模型输出 → 仍判 STALLED
+    rc, s = run("tool-flood", "tool_flood", extra=(*FAST_STALL, "--retries", "0"))
+    if rc == 0 or "simplify:STALLED" not in s:
+        fails.append(f"tool-flood：本地工具结果不计入输出速率，应判 STALLED（rc={rc}）")
+
+    # 3. 正常速率不误杀：steady 跑 3 s（> 宽限 + 窗口 + 持续），全 PASS、单次尝试
+    rc, s = run("steady-ok", "steady", extra=(*FAST_STALL, "--retries", "2"))
+    st = _status(out_base / "steady-ok")
+    if rc != 0 or gate_errs(s) or any(len(v.get("attempts") or []) != 1 for v in st.values()) or len(st) != 4:
+        fails.append(f"steady-ok：正常速率不得被判 STALLED（rc={rc}，"
+                     f"{ {r: [a['status'] for a in v.get('attempts') or []] for r, v in st.items()} }）")
+    elif any((v.get("out_tokens_est") or 0) < 1000 for v in st.values()):
+        fails.append(f"steady-ok：status.json 应记输出量估计（{ {r: v.get('out_tokens_est') for r, v in st.items()} }）")
+
+    # 4. 看门狗关（--stall-min-rate 0）时 drip 不被杀，只能等超时 → TIMEOUT（证明 STALLED 来自看门狗而非别处）
+    rc, s = run("drip-wd-off", "drip", timeout=3, extra=(*FAST_STALL, "--stall-min-rate", "0", "--retries", "0"))
+    if rc == 0 or "simplify:TIMEOUT" not in s or "STALLED" in s:
+        fails.append(f"drip-wd-off：看门狗关闭时滴漏应只判 TIMEOUT（rc={rc}）")
+
+    # 5. TIMEOUT 也重试：首个起跑的角色挂住超时，重试后 PASS
+    marker = tmp / "hang-first-retry.flag"
+    marker.unlink(missing_ok=True)
+    rc, s = run("timeout-retry-pass", "ok", timeout=2, extra=("--retries", "1", "--retry-backoff", "0.1"),
+                conf_extra={"hang_first": str(marker)})
+    st = _status(out_base / "timeout-retry-pass")
+    att = sorted([a["status"] for a in v.get("attempts") or []] for v in st.values())
+    if rc != 0 or gate_errs(s) or att != [["PASS"]] * 3 + [["TIMEOUT", "PASS"]]:
+        fails.append(f"timeout-retry-pass：TIMEOUT 应自动重跑并 PASS（rc={rc}，{att}）")
+
+    # 6. 并行模式下重试不阻塞其它角色：滴漏角色重试（退避 1 s）期间，其余三角色已完成
+    trace = tmp / "trace-par.txt"
+    trace.write_text("")
+    marker = tmp / "drip-first-par.flag"
+    marker.unlink(missing_ok=True)
+    rc, s = run("drip-parallel", "ok", extra=(*FAST_STALL[:-2], "--retry-backoff", "1", "--retries", "1"),
+                conf_extra={"drip_first": str(marker), "trace": str(trace)})
+    ev = sorted((float(x.split()[1]), x.split()[0]) for x in trace.read_text().splitlines())
+    starts = [t for t, k in ev if k == "start"]
+    ends = [t for t, k in ev if k == "end"]
+    if rc != 0 or len(starts) != 5 or len(ends) != 4 or not starts[3] < ends[0] or not ends[2] < starts[4]:
+        fails.append(f"drip-parallel：其余角色应在滴漏角色重试前完成（rc={rc}，start {len(starts)} end {len(ends)}）")
+
+    # 7. 通道默认：anthropic 默认开看门狗（5 tok/s），zai 默认关；默认重试 2 次、退避 30,90
+    for runner_, want in (("anthropic", "stall=180,120,5,60 retries=2 backoff=30,90"),
+                          ("zai", "stall=180,120,0,60 retries=2 backoff=30,90")):
+        dout = out_base / f"dry-wd-{runner_}"
+        subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner_, "--claude-bin", str(fake),
+                        "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1",
+                        "--out", str(dout), "--roles", ROLES, "--dry-run"], capture_output=True, text=True)
+        cmdtxt = (dout / "command.txt").read_text(encoding="utf-8") if (dout / "command.txt").exists() else ""
+        if want not in cmdtxt:
+            fails.append(f"看门狗默认：--runner {runner_} 应记 {want}，实际 {cmdtxt.splitlines()[-1:]}")
+    for bad in (("--retries", "-1"), ("--stall-window", "0"), ("--retry-backoff", "x")):
+        cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                             "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out_base / "badarg"), "--dry-run", *bad],
+                            capture_output=True, text=True)
+        if cp.returncode != 2:
+            fails.append(f"看门狗参数：{' '.join(bad)} 应拒绝（rc={cp.returncode}）")
 
 
 def _carry_tests(gate, fails: list[str]) -> None:
