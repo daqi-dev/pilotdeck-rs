@@ -156,6 +156,11 @@ regeneration!(background_tasks_regenerates_identically, "background-tasks");
 regeneration!(bash_session_regenerates_identically, "bash-session");
 regeneration!(bash_tool_regenerates_identically, "bash-tool");
 regeneration!(builtin_tools_regenerates_identically, "builtin-tools");
+regeneration!(
+    channel_lifecycle_regenerates_identically,
+    "channel-lifecycle"
+);
+regeneration!(channel_loader_regenerates_identically, "channel-loader");
 regeneration!(commands_catalog_regenerates_identically, "commands-catalog");
 regeneration!(compaction_regenerates_identically, "compaction");
 regeneration!(
