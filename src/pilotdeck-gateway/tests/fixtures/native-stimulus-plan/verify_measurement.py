@@ -25,7 +25,15 @@ def matches(row, selector):
         for key, value in selector.items())
 
 
+def require_order(target):
+    # Registry construction is the sole explicitly unchecked declaration.
+    # Validate independently of plan generation, even before skipping events.
+    if target['name'] != 'registry' and not target['before']:
+        raise ValueError('#1368 missing required order edges: ' + target['name'])
+
+
 def witnessed(target, timeline):
+    require_order(target)
     def positions(selector):
         return [index for index, row in enumerate(timeline) if matches(row, selector)]
     return (bool(target['events'])
@@ -40,7 +48,7 @@ def verify(folder):
         raise ValueError('#1368 measured preregistration differs from native declaration')
     if type(registration['repeats']) is not int or registration['repeats'] <= 0:
         raise ValueError('#1368 measured repeats must be a positive integer')
-    seen, event_controls, order_controls = [], 0, 0
+    seen, event_controls, order_controls, empty_before_controls = [], 0, 0, 0
     unchecked = []
     for cell in registration['cells']:
         document = json.loads((folder / (cell['name'] + '.json')).read_text())
@@ -52,6 +60,7 @@ def verify(folder):
                 raise ValueError('#1368 measured registry/phase/variant mismatch: ' + case)
             timeline = observation['timeline']
             for target in plan['boundaries']:
+                require_order(target)
                 if not target['events']:
                     unchecked.append({'measurement': observation['id'], 'boundary': target['name'],
                                       'reason': '未执行：缺少可机检的边界事件声明'})
@@ -71,6 +80,16 @@ def verify(folder):
                     if witnessed(target, damaged):
                         raise ValueError('#1368 reversed-order data control SURVIVED: ' + case + '/' + target['name'])
                     order_controls += 1
+                if target['name'] != 'registry':
+                    damaged = dict(target, before=[])
+                    try:
+                        witnessed(damaged, timeline)
+                    except ValueError as error:
+                        if str(error) != '#1368 missing required order edges: ' + target['name']:
+                            raise
+                    else:
+                        raise ValueError('#1368 empty-before data control SURVIVED: ' + case + '/' + target['name'])
+                    empty_before_controls += 1
                 if not witnessed(target, timeline):
                     raise ValueError('#1368 restored measured target failed: ' + case)
             seen.append(observation['id'])
@@ -82,6 +101,7 @@ def verify(folder):
             'uncheckedBoundaries': unchecked,
             'measurements': len(seen), 'cases': len(s.plans()),
             'missingEventControls': event_controls, 'reversedOrderControls': order_controls,
+            'emptyBeforeControls': empty_before_controls,
             'scope': 'TS input and boundary validation only; native remains NOT_RUN'}
 
 

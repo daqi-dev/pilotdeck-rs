@@ -197,15 +197,16 @@ def main():
                 raise ValueError('positive bound test did not pass')
             if not memory:
                 path.write_text(changed)
-            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-            (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
-            build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-                               '-p', 'pilotdeck-gateway', '--test', 'native_session_e2e', '--no-run'],
-                              cwd=root, env=env, timeout=900)
-            (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
-            if build.returncode != 0:
-                raise ValueError('no-run failed')
-            compiled = True
+            if not memory:
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+                (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
+                build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                                   '-p', 'pilotdeck-gateway', '--test', 'native_session_e2e', '--no-run'],
+                                  cwd=root, env=env, timeout=900)
+                (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
+                if build.returncode != 0:
+                    raise ValueError('no-run failed')
+                compiled = True
             status = classify(run(name + '-negative', test, name if memory else None), test, messages[name])
             reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
                       'INVALID': 'exit/test identity/assertion marker did not match'}[status]
