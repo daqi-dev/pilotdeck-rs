@@ -3,6 +3,7 @@
 # original run was cb8, Python zoneinfo over tzdata 2025b).
 # System-TZif side: same local parts via Python zoneinfo (reads the same
 # /usr/share/zoneinfo files the tz-rs parser would), then diff against Node.
+# anchor-selfcheck: unsupported evidence probe script for the A8.3-CRON-TZ-ALIAS-001 diff entry, no product mutations
 import json
 import os
 from datetime import datetime, timezone
