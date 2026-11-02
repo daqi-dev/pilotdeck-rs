@@ -51,8 +51,11 @@ Rust 重放（`runtime/settings/gateway_tests.rs`）逐行执行同一 setup 词
 `#[ignore]` 的 `settings_gateway_fixture_regenerates_identically_from_ts` 为
 重生成守卫（`PDRS_BASELINE` 下实跑）。
 
-负控（独占本 worktree，不与任何编译或写入并发；六个变异的目标文件在本分支
-新增，须提交后由 `mutating_sources` 在 HEAD 字节上执行）：
+负控（独占本 worktree，不与任何编译或写入并发；七个变异的目标文件在本分支
+新增，宿主提交后由 `mutating_sources` 在 HEAD 字节上执行；沙箱验证轮用
+`PDRS_NEGATIVE_BASELINE=<git stash create 的悬空提交>` 钉住评审树，实际基线
+SHA 与来源写进每条 summary 记录、`baseline.json` 与 `baseline-replay.log`
+首行，非 HEAD 基线显式打 `NON-HEAD BASELINE`，宿主口径只认 HEAD）：
 
 ```sh
 CARGO_TARGET_DIR=… python3 \
@@ -64,10 +67,12 @@ CARGO_TARGET_DIR=… python3 \
 （每变异绑定专属判杀标记：`case apply-busy`、
 `case update-merges-store-paths`、`the bare assembly must answer reload_config`、
 `dispatch must own the five settings methods`、`case apply-effort-low`、
-`#1318-r1 update-drop: dropping the future must detach the capture listener`；
-前五个由 `settings_gateway_replays_the_real_ts_oracle` 判杀，最后一个由
-`update_settings_detaches_the_capture_listener_when_dropped_mid_reload` 判杀；
-`case <id>` 标记与金样行的绑定由脚本启动断言机检）；
+`#1318-r1 update-drop: dropping the future must detach the capture listener`、
+`#1318-r2 extensions-truthiness: a JS-falsy projectKey must take the
+all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle`
+判杀，第六个由 `update_settings_detaches_the_capture_listener_when_dropped_mid_reload`
+判杀，最后一个由 `extensions_reload_branches_on_the_original_project_key_truthiness`
+判杀；`case <id>` 标记与金样行的绑定由脚本启动断言机检）；
 编译错误、信号退出、锚点过期（出现次数 ≠ 1）都不算杀死，直接报错退出。
 每轮 finally 恢复原始源码并核 SHA-256；输出每条补丁、原始日志、失败摘要，
 结束后应重跑正常测试和 fmt/clippy。
@@ -76,8 +81,12 @@ CARGO_TARGET_DIR=… python3 \
 `applyFlagSettingsForSdk` / `reloadOutputStylesForSdk` 与
 `updatePilotLocalSettings` 生产写盘件为镜像端口（`MirrorWriter` 保持同一
 allowlist / YAML 编辑语义），随接线单评估替换。已知未收敛差异：
-`reload_extensions` 的非字符串 `projectKey` / `changedPaths` 元素被
-`String(value)` 强转而 TS 原值透传（金样 54 行均为字符串，不触发；两格
-`changedPaths:[1]` / `projectKey:5` 随 #1320 接线补入），登记于
+`reload_extensions` 的 `projectKey` 分支按原值 JS 真值选择（fix-r2，
+`0` / `false` / `NaN` / `""` 与 TS 同走全量分支；实测
+`_tmp/20261026-issue-1318/fix-r2/probe-extensions-truthiness.out`）；真值
+非字符串 `projectKey` / `changedPaths` 元素仍被 `String(value)` 强转而 TS
+原值透传，`[]`（真值但强转为空）仍走全量分支而 TS 走项目 no-op（金样 54
+行均为字符串，不触发；`changedPaths:[1]` / `projectKey:5` 两格随 #1320
+接线补入），登记于
 `specs/gateway-parity/diffs/U7-EXTENSIONS-RELOAD-STRING-COERCION-001.md`，
 前置于 #1320。

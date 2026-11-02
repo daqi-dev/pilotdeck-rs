@@ -4,7 +4,7 @@ killed by its named test's own #1318 panic markers, then restore.
 
 Run with no other writers/builds in this worktree. Evidence goes in a new
 output folder; original source bytes and hashes are verified after every
-mutation. The six mutants all target
+mutation. The seven mutants all target
 ``src/pilotdeck-gateway/src/runtime/settings/gateway.rs``:
 
 * ``apply-busy-gate-removed`` — the SESSION_BUSY gate never fires; the
@@ -20,12 +20,20 @@ mutation. The six mutants all target
   tail) pins the close.
 * ``update-drop-leak`` — the capture guard no longer unsubscribes; the
   dedicated drop-mid-reload test pins the listener detachment.
+* ``extensions-truthiness-flipped`` — ``projectKey`` branches on the
+  ``String()`` coercion again instead of the original JS truthiness; the
+  dedicated truthiness-matrix test pins the all-runtimes branch of the
+  JS-falsy cells.
 
 The mutated files must match the baseline tree byte-for-byte
 (``mutating_sources`` proves it); on the host that baseline is ``HEAD``.
 ``PDRS_NEGATIVE_BASELINE`` may name another commit object (the sandbox
 verification pass pins a ``git stash create`` commit of the reviewed tree,
-because the sandbox cannot commit); unset it everywhere else.
+because the sandbox cannot commit); unset it everywhere else. The resolved
+baseline commit and its source are recorded in every summary row and in
+``baseline-replay.log``; a non-``HEAD`` baseline is flagged as ``NON-HEAD
+BASELINE`` on stdout and in the log, because the host gate only trusts
+``HEAD`` evidence.
 ``CARGO_TARGET_DIR`` must be supplied by the caller.
 """
 import difflib
@@ -33,6 +41,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -47,6 +56,8 @@ source = root / 'src/pilotdeck-gateway/src/runtime/settings'
 REPLAY = 'runtime::settings::tests::settings_gateway_replays_the_real_ts_oracle'
 UPDATE_DROP = ('runtime::settings::tests::'
                'update_settings_detaches_the_capture_listener_when_dropped_mid_reload')
+EXTENSIONS_TRUTHINESS = ('runtime::settings::tests::'
+                         'extensions_reload_branches_on_the_original_project_key_truthiness')
 # Each row: (name, file, original anchor text, mutant text, killed test).
 # The kill marker must appear inside that test's own panic payload.
 mutations = [
@@ -68,6 +79,9 @@ mutations = [
     ('update-drop-leak', 'gateway.rs',
      'subscription.unsubscribe();',
      'drop(subscription);', UPDATE_DROP),
+    ('extensions-truthiness-flipped', 'gateway.rs',
+     'Some(value) if truthy(value) => Some(JsString::from_utf16(',
+     'Some(value) => Some(JsString::from_utf16(', EXTENSIONS_TRUTHINESS),
 ]
 MARKERS = {
     'apply-busy-gate-removed': 'case apply-busy',
@@ -76,6 +90,8 @@ MARKERS = {
     'dispatch-drops-reload-extensions': 'dispatch must own the five settings methods',
     'apply-close-skipped': 'case apply-effort-low',
     'update-drop-leak': '#1318-r1 update-drop: dropping the future must detach the capture listener',
+    'extensions-truthiness-flipped': ('#1318-r2 extensions-truthiness: a JS-falsy projectKey '
+                                       'must take the all-runtimes branch'),
 }
 selected = sys.argv[2:]
 if selected:
@@ -84,6 +100,25 @@ if selected:
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
+# The actual baseline must be resolved and recorded (fix-r2 P1): every
+# summary row and the replay log carry the full commit SHA and where it came
+# from, so sandbox stash-commit evidence cannot be mistaken for host HEAD
+# evidence — the host gate only trusts HEAD.
+baseline_ref = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
+baseline_source = ('PDRS_NEGATIVE_BASELINE'
+                   if os.environ.get('PDRS_NEGATIVE_BASELINE') else 'HEAD')
+resolved = subprocess.run(
+    ['git', '-C', str(root), 'rev-parse', '--verify', baseline_ref + '^{commit}'],
+    capture_output=True, check=False)
+if resolved.returncode != 0:
+    sys.exit(f'cannot resolve baseline {baseline_ref!r}: '
+             f'{resolved.stderr.decode(errors="replace").strip()}')
+baseline_sha = resolved.stdout.decode().strip()
+baseline_line = f'baseline: {baseline_sha} (source: {baseline_source})'
+print(baseline_line, flush=True)
+if baseline_source != 'HEAD':
+    print(f'NON-HEAD BASELINE: {baseline_sha} via PDRS_NEGATIVE_BASELINE; '
+          'the host gate only trusts HEAD evidence', flush=True)
 # A `case <id>` marker must name a real oracle row, or the mutant can never
 # be judged KILLED (fix-r1 P1: `apply-success-closes` never existed).
 oracle = json.loads((Path(__file__).with_name('oracle.json')).read_text(encoding='utf-8'))
@@ -97,7 +132,7 @@ slot_script = root / 'scripts/cargo-slots.sh'
 
 
 with mutating_sources(root, sorted({source / filename for _, filename, *_ in mutations}),
-                      baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as snapshots:
+                      baseline=baseline_ref) as snapshots:
     def run(tests):
         # libtest takes several full-name filters after `--` (one positional
         # TESTNAME per cargo invocation); `--exact` keeps them literal.
@@ -108,10 +143,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
 
     # An unmutated baseline must be green first, or every verdict is INVALID.
     wait_for_slot(slot_script)
-    code, log = run([REPLAY, UPDATE_DROP])
-    (out / 'baseline-replay.log').write_text(log)
+    code, log = run([REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS])
+    (out / 'baseline-replay.log').write_text(baseline_line + '\n\n' + log)
     if code == 0 and all(baseline_passed(log, test)
-                         for test in {REPLAY, UPDATE_DROP}):
+                         for test in {REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS}):
         print('baseline replay: PASS', flush=True)
     else:
         print('baseline replay: INVALID', flush=True)
@@ -133,7 +168,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
             wait_for_slot(slot_script)
             path.write_text(changed)
             code, log = run([test])
-            (out / f'{name}.log').write_text(log)
+            (out / f'{name}.log').write_text(baseline_line + '\n\n' + log)
             evidence = panic_evidence(log, test)
             killed = (code == 101
                       and named_test_failed(log, test)
@@ -146,24 +181,34 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
                 'SURVIVED' if code == 0 else 'INVALID')
             summary.append(dict(name=name, test=test, status=status,
                                 returncode=code, failure=failure,
-                                marker=marker, sourceSha256=before))
+                                marker=marker, sourceSha256=before,
+                                baseline=baseline_sha,
+                                baselineSource=baseline_source))
             print(f'{name}: {status} rc={code} {failure}', flush=True)
             if status != 'KILLED':
                 failures.append(name)
         except Exception as error:
             summary.append(dict(name=name, test=test, status='INVALID',
                                 reason=f'{type(error).__name__}: {error}',
-                                sourceSha256=before))
+                                sourceSha256=before,
+                                baseline=baseline_sha,
+                                baselineSource=baseline_source))
             failures.append(name)
         finally:
             path.write_bytes(original)
             assert hashlib.sha256(path.read_bytes()).hexdigest() == before
             (out / 'summary.json').write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+            (out / 'baseline.json').write_text(json.dumps(
+                {'baseline': baseline_sha, 'baselineSource': baseline_source,
+                 'nonHeadBaseline': baseline_source != 'HEAD',
+                 'mutations': [row['name'] for row in summary]},
+                ensure_ascii=False, indent=2) + '\n')
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
 if failures:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
     sys.exit(1)
-print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte', flush=True)
+print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte '
+      f'against baseline {baseline_sha} ({baseline_source})', flush=True)

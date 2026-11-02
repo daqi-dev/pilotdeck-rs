@@ -573,9 +573,23 @@ fn to_string_throw(error: js_value::ToStringError) -> SettingsError {
     SettingsError::plain(error.name(), error.message())
 }
 
+/// JS truthiness (`if (input?.projectKey)`).
+fn truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(flag) => *flag,
+        JsValue::Number(number) => *number != 0.0 && !number.is_nan(),
+        JsValue::String(text) => !text.is_empty(),
+        JsValue::Array(_) | JsValue::Object(_) => true,
+    }
+}
+
 /// `frame.params` → `ExtensionsReload` for the bundle delegate. Only an
-/// object params has own properties in TS (`input?.projectKey`); a non-string
-/// truthy `projectKey` or a non-string `changedPaths` entry is coerced with
+/// object params has own properties in TS (`input?.projectKey`); the branch is
+/// selected by the *original* JS truthiness of `projectKey` (`0` / `false` /
+/// `NaN` / `""` take the all-runtimes branch exactly like the nullish values,
+/// fix-r2 of the review flip), and only the surviving truthy non-string
+/// `projectKey` or non-string `changedPaths` entry is coerced with
 /// `String(value)` (the registered divergence
 /// `U7-EXTENSIONS-RELOAD-STRING-COERCION-001`, to converge with #1320).
 fn extensions_reload(params: &JsValue) -> Result<ExtensionsReload, SettingsError> {
@@ -585,10 +599,13 @@ fn extensions_reload(params: &JsValue) -> Result<ExtensionsReload, SettingsError
     };
     let project_key = match object.get("projectKey") {
         None | Some(JsValue::Undefined | JsValue::Null) => None,
-        Some(JsValue::String(key)) => Some(key.clone()),
-        Some(value) => Some(JsString::from_utf16(
+        // `if (input?.projectKey)` sees the original value, so a JS-falsy
+        // key never reaches the project branch its `String()` coercion
+        // would select.
+        Some(value) if truthy(value) => Some(JsString::from_utf16(
             js_value::to_string_units_checked(value).map_err(to_string_throw)?,
         )),
+        Some(_) => None,
     };
     let changed_paths = match object.get("changedPaths") {
         None | Some(JsValue::Undefined | JsValue::Null) => None,
