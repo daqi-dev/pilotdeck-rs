@@ -2982,3 +2982,31 @@ updated: 2026-11-02 12:22 · by Claude Code 子代理（READY 重写）
 - 10:5x #1261（PR #1300）合入 c2364ffb0（邮箱 noreply）→ 关单 Done、wt-1261 回收、三台远端清理；r1–r3 剩余 P2 合并开 #1401（7 项，前置于 #1323）。
 - 10:5x **两小时交接** → `_tmp/20261102-handoff-1055.md`。下一步：收 #1305（A 主链首，macmini 关键道）/ a5b（#1374）/ #1220 / #1253 关键路径，#1272 补块后入队；#1292 + #1366 本机 GLM 接续、#1327 fix-r2 r3 等宿主。
 - 12:2x READY 重写（子代理）：移出已关 4 条（#1261 #1277 #1368 #1373）；解锁 #1369（doing）、#1372 只等 #1371；ready→doing #1292 #1366 #1244 #1395；新跟进入列 #1392 #1394 #1395 #1396 #1397 #1398 #1400 #1401 #1402 #1404 #1406；队首 #1258；doing 30 / ready 14 / human 0 / blocked 59。
+
+## 11-02 10:55–13:10
+
+- 11:0x fleet：macmini 4/4（#1220 4h52 / #360 / #1305 / #1349）+ 排队 6，mbp2 1 空、cb8 2 空 → 撤 macmini 冗余：#1349（与 mbp2 同时在跑）、#1368（mbp2 已有 macOS 结果）、#1324（mbp2 已排）；macmini 留给 #1244 / #1318 / a5b / p2b2。
+- 11:1x #1368（PR #1380）合入 001718e0a、交接 PR #1403 合入 0c205929f（邮箱 noreply）。#1369（#1242-s2 registry 启闭入口）解锁 → GLM cb8（默认关、生产不变、不改冻结件 N）。
+- 11:1x #1292 + #1366（GLM 本机接续）交付 f69cd3eec（草稿 PR #1405，957 行，含 002-R2 更正条目；lib 3362 passed、check_frozen --base PASS）→ r1 opus + DeepSeek + cb8 + mbp2（macmini 满，phase 自带的 macmini 排队若到时仍未起就撤）。
+- 11:2x #1324：cb8 r2 FAILED 是旧 head（abb4a376，anchors）→ 新 head bb8513443 cb8 重跑；我补的 1 行豁免声明另派 DeepSeek 增量复核（作者谱系含 Claude）。
+- 11:2x 另一 Agent 发现（人转述）：opus TIMEOUT 28% 为 llm-center 流式饥饿（2.5 tok/s 滴漏、小块也挂、重试即过、sonnet 同样）→ 更正 10:3x「大单 opus 一律分批」的归因；评审执行器加速率看门狗 + 单角色退避重试 + --serial 对照交子代理（工具最小修复，PR 照 #1294 先例 waiver）；记忆已记。
+- 11:3x #1327 r3 opus 批 A / B 四角色全 TIMEOUT（与流式饥饿假设一致）→ 改为原批错峰重跑、不再拆文件（每批最多 2 次）。
+- 11:4x #1292 r1 DeepSeek P1×2（带 Node 实测原始输出）：served 后后续请求头不再受 headersTimeout（滴字节可无限挂住，Node 每请求重算）、002-R2 账本「60 s 恰在网格上」与实测矛盾 → 等 opus 出块后合并 fix-r1；宿主照跑。
+- 11:3x #1292 不等 opus（通道饥饿）先派 fix-r1 GLM cb8（每请求重武装 headersTimeout + 002-R2 按 TS 实测改写）；撤 r1 旧 head 宿主（本机 stop-tree 核实、三台远端归零）；opus r1 仍在旧 head 上跑，出块后追加 ADDENDUM。
+- 11:4x #1292 opus r1 出块（全 PASS，boundary P1：Node checker 30 s 网格以 listen 为锚，408 落点 [60, 90) s，与 DeepSeek P1-2 同源）→ 刚起的 fix-r1 停掉（远端进程归零、ctl 状态置 harvested）、任务书追加 ADDENDUM 后重派 GLM cb8。
+- 11:5x macmini：#1220 neg / targeted 过、lib 在跑；#360 7/11；#1305 5/10 → #1305（W0）在 mbp2 同时起一份 macOS，谁先过用谁。
+- 12:0x #1220 macmini 全绿（neg / targeted / lib 3091 passed）→ 收口交子代理（先补本轮 head 的 cb8 Linux、拼合格 opus 块）；合入即解锁 #1219 / #1274。#1327 r3 opus C 批 2 角色 PASS 其余超时，A 原批重跑中。
+- 12:1x #1349 mbp2 macOS done（批量收口用）；#1244 macmini 11:59 起跑；#1327 r3 cb8 已跑 13 套全 KILLED（channel-core 26/26，neg-for-diff 拉了 44 套含 edgeclaw 等无关套件，锚点推导偏宽）、mbp2 排队中（#1253 / #1324 占道）。
+- 12:2x READY 重写（超 4 h）交子代理；#1395（挂起候选 P0，零容量 park 丢唤醒）→ Codex 本机（先可达性实测再定修 / 钉前提）。issue-assemble 只组装不起 worker，按 dispatch-resume 写法直接 run-worker 起。
+- 12:3x a5b r3：DeepSeek 0/0/0/0（只修 P2 一家复核）、macmini lib 仅 static_upper_lower → 第二次收口交子代理（终块用 zai 分 2 批，#1398 不重开）。
+- 12:4x READY 重写 PR #1407 入队（103 条：doing 30 / ready 14 / blocked 59，队首 #1258）。核队首：#1258 改 runtime/cron/store.rs 与 #1324（PR #1375）相交 → 应 blocked 等 #1324；#1402 改 native-stimulus-plan 与在做的 #1369 相交 → 应 blocked 等 #1369；下次 READY 重写时改。a5b rebase 冲突（native-witness/README 一行，observer 取本分支 / cases 取 main）协调者解决推 7d480a55c，三套 check_frozen --base 全过 → DeepSeek 复核解法。
+- 12:3x p2b2 r3 cb8：exact-rerun 仅 entries-locale-pin INVALID（#1396 main 既有 Linux）+ rss-probe SKIPPED（macOS-only，fix-r2 起有 SKIPPED 即非 0），其余 KILLED → 已知平台项，以 macmini 为准。队列：#1378（#1349）、#1272（#1155）、#1407（READY）均 CLEAN 在队；#1384（#1318）草稿，批量收口子代理顺序处理中。
+- 12:5x 合入：#1349（PR #1378）45bf40d56、#1155（PR #1272）bfa14e288、READY 重写 PR #1407 152bdb75a（邮箱 noreply）。批量收口：#1368 跟进 #1402、#1349 跟进 #1404；#1402 第 6 项（R11 _collect 无总期限，潜在挂起）拆出 #1408 按 P0 登记先实测；#1318 r3 opus P2 有 a / b 类（baseline_ref 未解析即传入、非 HEAD 基线全杀仍 exit 0、[""] / [null] 未登记）→ fix-r3（上限内最后一轮）GLM cb8。a5b 解法 DeepSeek 0/0/0/0 → 第三次收口交子代理（zai 终块 + 入队）。
+- 13:0x #1155 收尾补完：cb8 5 个孤儿 until-pgrep 自匹配循环（19 h，clawbox-08）按 pid 停 + remote-closeout 清 44 GiB；r5 P2 分流开 #1409（第 1 项 /proc 读失败静默跳过 = 尺子假 PASS，A / C 两块撞上，按 P1）。
+- 13:0x #1395（Codex 本机）交付 404f4f583（草稿 PR #1410）：私有 TimeoutStream 零容量直调可复现丢 wake，但生产不可达（hyper reserve ≥ 8192 实测 zero_room_parks=0、begin_shutdown 同任务、request_timeout+1s 总截止）→ 降级，补丁钉前提；r1 opus + DeepSeek + macmini + cb8。
+- 13:1x mbp2 车道端口判定同 macmini / cb8 那处旧 bug（清单末尾全仓 test_safety / anchors 行含 gateway-parity → 每链判占端口，3 车道退化串行，#1327 / #1305 空等 2 h+）→ pdrs-ops 6a0c78a 修（新文件 + mv，冒烟核 #1327 / #1305 清单过滤后无命中）；排队进程启动时已算死 _needs_port → 停两条等待（stop-tree 核实）重起：#1327 12:47 已在 mbp2 开跑，#1305 排第 4。#1324 cb8 新 head 全绿，只差 macOS。
+- 13:1x a5b 终块（zai 分 2 批，四角色全 PASS）批 2 boundary P1「冻结事件 / 测试文件不在 diff」→ 协调者仲裁降级：所指文件在全 diff 内（分到批 1 已审），三套 check_frozen --base 实测 PASS；install_shutdown 未接管 SIGINT 并入 #1398；#1221 改 Refs 合后先自查再关 → 子代理继续入队。
+- 13:0x #1327 r3 cb8 全绿（neg / targeted / lib），DeepSeek 0/0；待 opus 分批块与 mbp2 macOS。
+- 13:1x #1369 cb8 GLM 7200 s 时限（8 文件 + native-registry-switch fixture + TS 探针半成品）→ 本机 dispatch-resume GLM。
+- 13:1x **人令暂停 loop、收尾交接** → 删 15 min cron、停两路守望，不派新单；在途进程照跑 → `_tmp/20261102-handoff-1310.md`。
+- 13:1x **两小时交接（人令暂停 loop）** → `_tmp/20261102-handoff-1310.md`。下一步：接手者重挂 watch-deliveries / watch-queue，按交接在途表收口（a5b / #1220 / #1327 / #1305 优先）。
