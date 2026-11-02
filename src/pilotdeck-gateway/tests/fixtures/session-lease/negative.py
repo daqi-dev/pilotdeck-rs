@@ -22,6 +22,8 @@ test_file = Path(__file__).with_name('test_lease.py')
 cli = root / 'scripts/cli-parity/run_round.py'
 readme = Path(__file__).with_name('README.md')
 guarded_sources = [common, source, test_file, Path(__file__).resolve(), cli, readme]
+EXPECTED_CASES = 22
+# Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('cli-term-raises-twice', cli, 'def interrupted(signum, frame):\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),
     ('cli-alarm-raises-twice', cli, 'def lease_expired(signum, frame):\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def lease_expired(signum, frame):\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),
@@ -42,8 +44,13 @@ cases = [
     ('probe-error-release', source, "audit['leaseGroupProbe'] = f'unverified: {type(error).__name__}: {error}'\n            return False", "audit['leaseGroupProbe'] = f'unverified: {type(error).__name__}: {error}'\n            return True", 'test_lease_probe_is_fail_closed'),
     ('live-group-release', source, "audit['leaseGroupProbe'] = 'group still exists after 2 seconds'\n            return False", "audit['leaseGroupProbe'] = 'group still exists after 2 seconds'\n            return True", 'test_lease_probe_is_fail_closed'),
     ('no-settle-window', source, "    deadline = time.monotonic() + 2\n    while True:", "    deadline = time.monotonic() + 0\n    while True:", 'test_lease_probe_waits_boundedly'),
+    ('omit-term-registration', cli, 'return signal.' + 'signal(signal.SIGTERM, interrupted)', 'return signal.getsignal(signal.SIGTERM)', 'test_cli_signal_handlers_registered'),
+    ('omit-alarm-registration', cli, 'return signal.' + 'signal(signal.SIGALRM, lease_expired)', 'return signal.getsignal(signal.SIGALRM)', 'test_cli_signal_handlers_registered'),
+    ('omit-lease-case', Path(__file__).resolve(), "    ('cl" + "i-term-raises-twice', cli, 'def interrupted(signum, frame):\\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),\n", '', 'test_expected_case_count'),
 ]
 messages = {
+    'test_cli_signal_handlers_registered': '#a5b CLI signal handlers are installed by production code',
+    'test_expected_case_count': '#a5b lease negative case inventory is complete',
     'test_cli_cancel_unwind': '#1194 CLI preserves first cancellation and accepts later signals',
     'test_documented_release_definition': '#1221 allStopped documents lease proof separately from scoring',
     'test_guarded_sources_include_common': '#a5b parity mutation guards include common.py',
@@ -54,7 +61,14 @@ messages = {
 }
 
 
+def validate_case_count():
+    if len(cases) != EXPECTED_CASES:
+        raise SystemExit(f'#a5b lease negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES}, got {len(cases)}')
+
+
 def preflight():
+    validate_case_count()
     errors = []
     test_source = test_file.read_text()
     compile(test_source, str(test_file), 'exec')
@@ -114,6 +128,7 @@ def memory_run(name):
 
 
 def main():
+    validate_case_count()
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
     if sys.argv[1:] == ['--check-anchors']:
