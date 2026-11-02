@@ -1315,21 +1315,21 @@ class WitnessTests(unittest.TestCase):
                         '#1140 an unanswered run key stays inapplicable with an empty record')
 
     def test_case_plan_and_ordering_variants(self):
-        # The hardcoded ordering list must stay reconciled with the frozen
-        # manifest (#1140 fix-r1 opus#7): a new manifest variant is never
-        # silently treated as timeout-first.
+        # Legacy transport budgets remain stable while #1368 independently
+        # declares and gates the actual registry/phase/fault/order stimuli.
         manifest = c.session_manifest()
         variants = {case.split('/')[1] for case in manifest}
         self.assertTrue(set(c.SESSION_ORDERING_VARIANTS) <= variants,
                         '#1140 every ordering variant is a manifest variant')
         for case in manifest:
             plan = c.case_plan(case)
+            transport = {key: plan[key] for key in ('timeoutMs', 'delay')}
             if case.split('/')[1] in c.SESSION_ORDERING_VARIANTS:
-                self.assertTrue(plan == {'timeoutMs': c.SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0},
-                                '#1140 ordering variants finish before the deadline: ' + case)
+                self.assertTrue(transport == {'timeoutMs': c.SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0},
+                                '#1368 legacy ordering transport budget: ' + case)
             else:
-                self.assertTrue(plan == {'timeoutMs': c.SESSION_TIMEOUT_MS, 'delay': c.SESSION_PROVIDER_DELAY},
-                                '#1140 non-ordering variants are timeout-first: ' + case)
+                self.assertTrue(transport == {'timeoutMs': c.SESSION_TIMEOUT_MS, 'delay': c.SESSION_PROVIDER_DELAY},
+                                '#1368 legacy timeout transport budget: ' + case)
 
     def test_bind_contract_rejects_preregistered(self):
         # The mirror of the frozen loader's rejection: a contract that already

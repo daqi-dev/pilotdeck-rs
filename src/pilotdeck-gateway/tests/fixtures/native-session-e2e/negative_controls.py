@@ -16,6 +16,7 @@ from unittest.mock import patch
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import target_environment
 
 session = root / 'scripts/gateway-parity/session_domain.py'
 common = root / 'scripts/gateway-parity/common.py'
@@ -44,6 +45,10 @@ cases = [
     ('drop-driver-binding-record', collector, "    w.save(staging / 'driver.json', driver)", "    w.save(staging / 'driver.json', dict(driver, binding=None))", 'test_e2e_capture_schema'),
     ('shrink-process-roles', collector, "                    'processRoles': (['host'] + ['sidecar'] * len(cases)) if session_domain else ['host', 'sidecar'],\n", "                    'processRoles': ['host', 'sidecar'],\n", 'test_collector_profile_roles'),
     ('drop-window-attribution', native, 'need(windows == [0] + [1] * len(cases),', 'need(True,', 'test_e2e_data_control_sidecar_misallocated'),
+    ('drop-unwitnessed-sources', collector, '                        sources.append(source)', "                        if row['stimulus']['status'] == 'WITNESSED':\n                            sources.append(source)", 'test_unwitnessed_stimuli_are_not_executed'),
+    ('drop-unwitnessed-transcript-path', collector, '                        sources.append(source)', "                        sources.append(dict(source, transcriptPath='') if row['stimulus']['status'] != 'WITNESSED' else source)", 'test_unwitnessed_stimuli_are_not_executed'),
+    ('unwitnessed-counts-executed', session, "            cell['executedCases'] = [row['case'] for row in native['verdicts']\n                                     if row['status'] != 'NOT_RUN']\n", "            cell['executedCases'] = [row['case'] for row in native['verdicts']]\n", 'test_unwitnessed_stimuli_are_not_executed'),
+    ('drop-unwitnessed-candidate', session, "            cell['cases'] = native['verdicts']", "            cell['cases'] = [] if all(row['status'] == 'NOT_RUN' for row in native['verdicts']) else native['verdicts']", 'test_unwitnessed_stimuli_are_not_executed'),
 ]
 messages = {
     'decoder-frame-for-send-rows': '#1140 e2e real capture scores 72/72 per-case PASS',
@@ -62,6 +67,10 @@ messages = {
     'drop-driver-binding-record': '#1140 e2e the driver hello record matches the observer hello binding',
     'shrink-process-roles': '#1140 session profile roles',
     'drop-window-attribution': '#1140 e2e a balanced sidecar misallocation is rejected on NATIVE_PROCESS',
+    'drop-unwitnessed-sources': '#1368 NOT_RUN retains all raw originals and missing target reasons',
+    'drop-unwitnessed-transcript-path': '#1368 NOT_RUN retains all raw originals and missing target reasons',
+    'unwitnessed-counts-executed': '#1368 unwitnessed stimuli never count as executed',
+    'drop-unwitnessed-candidate': '#1368 NOT_RUN retains exactly one native candidate',
 }
 
 
@@ -125,6 +134,12 @@ def memory_run(name):
     return 0 if result.wasSuccessful() else 1
 
 
+def execution_environment():
+    if not os.environ.get('CARGO_TARGET_DIR'):
+        raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')
+    return target_environment(root)
+
+
 def main():
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
@@ -153,8 +168,7 @@ def main():
     if output is None:
         raise SystemExit('usage: negative_controls.py NEW_OUTPUT [--case NAME] '
                          '[--baseline TREE] [--memory] | --check-anchors')
-    if not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller (never create a second target)')
+    env = execution_environment()
     selected = cases if only is None else [row for row in cases if row[0] == only]
     if not selected:
         raise SystemExit('unknown negative case')
@@ -162,12 +176,12 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     results = []
     def run(name, test, mutant=None):
-        # This suite executes Python only. wait_for_slot is intentionally not
-        # called: there is no cargo process or Rust product-source mutation.
+        # The bound test executes Python; the host Rust preflight below is
+        # recorded separately for each mutation as required by the taskbook.
         command = ([sys.executable, '-I', __file__, '--memory-run', mutant] if mutant else
                    [sys.executable, '-I', str(fixture), bound(test)])
         result = run_owned(command,
-                            cwd=root, env=os.environ.copy(), timeout=300)
+                            cwd=root, env=env, timeout=300)
         (out / (name + '.log')).write_text(result.stdout + result.stderr)
         return result
     def one(row):
@@ -179,11 +193,20 @@ def main():
                 raise ValueError('STALE ANCHOR ' + name)
             changed = text.replace(before, after, 1)
             compile(changed, str(path), 'exec')
-            compiled = True
             if not passed(run(name + '-positive', test)):
                 raise ValueError('positive bound test did not pass')
             if not memory:
                 path.write_text(changed)
+            if not memory:
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+                (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
+                build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                                   '-p', 'pilotdeck-gateway', '--test', 'native_session_e2e', '--no-run'],
+                                  cwd=root, env=env, timeout=900)
+                (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
+                if build.returncode != 0:
+                    raise ValueError('no-run failed')
+                compiled = True
             status = classify(run(name + '-negative', test, name if memory else None), test, messages[name])
             reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
                       'INVALID': 'exit/test identity/assertion marker did not match'}[status]
