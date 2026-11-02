@@ -731,6 +731,7 @@
   "command": "PDRS_BASELINE=/absolute/path/to/PilotDeck node --import \"$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs\" src/pilotdeck-gateway/tests/fixtures/channel-loader/generate.mts src/pilotdeck-gateway/tests/fixtures/channel-loader",
   "node": "v22.22.0",
   "icu": "78.2",
+  "expectedCaseCount": 8,
   "cases": [
     {
       "name": "unconfigured",
@@ -740,8 +741,7 @@
       "failures": {},
       "expected": {
         "result": [],
-        "constructions": [],
-        "errors": []
+        "events": []
       }
     },
     {
@@ -789,39 +789,66 @@
           "email",
           "sms"
         ],
-        "constructions": [
+        "events": [
           {
+            "kind": "construction",
             "key": "matrix",
-            "options": {
-              "accessToken": "<undefined>",
-              "homeserver": "<undefined>",
-              "userId": "<undefined>",
-              "pilotHome": "<undefined>"
-            }
+            "options": [
+              [
+                "accessToken",
+                "<undefined>"
+              ],
+              [
+                "homeserver",
+                "<undefined>"
+              ],
+              [
+                "userId",
+                "<undefined>"
+              ],
+              [
+                "pilotHome",
+                "<undefined>"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "bluebubbles",
-            "options": {
-              "serverUrl": "<undefined>",
-              "password": ""
-            }
+            "options": [
+              [
+                "serverUrl",
+                "<undefined>"
+              ],
+              [
+                "password",
+                ""
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "email",
-            "options": {
-              "extra": {
-                "text": "line separator"
-              }
-            }
+            "options": [
+              [
+                "extra",
+                {
+                  "text": "line separator"
+                }
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "sms",
-            "options": {
-              "extra": "<undefined>"
-            }
+            "options": [
+              [
+                "extra",
+                "<undefined>"
+              ]
+            ]
           }
-        ],
-        "errors": []
+        ]
       }
     },
     {
@@ -842,16 +869,22 @@
         "result": [
           "bluebubbles"
         ],
-        "constructions": [
+        "events": [
           {
+            "kind": "construction",
             "key": "bluebubbles",
-            "options": {
-              "serverUrl": "<undefined>",
-              "password": "fallback"
-            }
+            "options": [
+              [
+                "serverUrl",
+                "<undefined>"
+              ],
+              [
+                "password",
+                "fallback"
+              ]
+            ]
           }
-        ],
-        "errors": []
+        ]
       }
     },
     {
@@ -870,8 +903,7 @@
       "failures": {},
       "expected": {
         "result": [],
-        "constructions": [],
-        "errors": []
+        "events": []
       }
     },
     {
@@ -1010,127 +1042,243 @@
           "apiServer",
           "webhook"
         ],
-        "constructions": [
+        "events": [
           {
+            "kind": "construction",
             "key": "telegram",
-            "options": {
-              "token": "tg-token",
-              "webhookUrl": "https://tg.example/hook"
-            }
+            "options": [
+              [
+                "token",
+                "tg-token"
+              ],
+              [
+                "webhookUrl",
+                "https://tg.example/hook"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "discord",
-            "options": {
-              "token": "dc-token"
-            }
+            "options": [
+              [
+                "token",
+                "dc-token"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "slack",
-            "options": {
-              "botToken": "slack-token",
-              "appToken": "xapp-1"
-            }
+            "options": [
+              [
+                "botToken",
+                "slack-token"
+              ],
+              [
+                "appToken",
+                "xapp-1"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "matrix",
-            "options": {
-              "accessToken": "mx-token",
-              "homeserver": "https://mx.example",
-              "userId": "@bot:mx.example",
-              "pilotHome": "/pilot-home"
-            }
+            "options": [
+              [
+                "accessToken",
+                "mx-token"
+              ],
+              [
+                "homeserver",
+                "https://mx.example"
+              ],
+              [
+                "userId",
+                "@bot:mx.example"
+              ],
+              [
+                "pilotHome",
+                "/pilot-home"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "mattermost",
-            "options": {
-              "token": "mm-token",
-              "serverUrl": "https://mm.example",
-              "teamId": "team-9"
-            }
+            "options": [
+              [
+                "token",
+                "mm-token"
+              ],
+              [
+                "serverUrl",
+                "https://mm.example"
+              ],
+              [
+                "teamId",
+                "team-9"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "signal",
-            "options": {
-              "restUrl": "http://127.0.0.1:8080",
-              "account": "+15550100"
-            }
+            "options": [
+              [
+                "restUrl",
+                "http://127.0.0.1:8080"
+              ],
+              [
+                "account",
+                "+15550100"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "whatsapp",
-            "options": {
-              "bridgePath": "/tmp/bridge",
-              "bridgeUrl": "http://127.0.0.1:8081"
-            }
+            "options": [
+              [
+                "bridgePath",
+                "/tmp/bridge"
+              ],
+              [
+                "bridgeUrl",
+                "http://127.0.0.1:8081"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "bluebubbles",
-            "options": {
-              "serverUrl": "http://127.0.0.1:1234",
-              "password": "bb-pass"
-            }
+            "options": [
+              [
+                "serverUrl",
+                "http://127.0.0.1:1234"
+              ],
+              [
+                "password",
+                "bb-pass"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "dingtalk",
-            "options": {
-              "clientId": "dt-id",
-              "clientSecret": "dt-secret"
-            }
+            "options": [
+              [
+                "clientId",
+                "dt-id"
+              ],
+              [
+                "clientSecret",
+                "dt-secret"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "wecomCallback",
-            "options": {
-              "corpId": "ww1",
-              "agentId": "1000002",
-              "secret": "sec",
-              "token": "wc-token",
-              "encodingAesKey": "aes",
-              "port": 9011
-            }
+            "options": [
+              [
+                "corpId",
+                "ww1"
+              ],
+              [
+                "agentId",
+                "1000002"
+              ],
+              [
+                "secret",
+                "sec"
+              ],
+              [
+                "token",
+                "wc-token"
+              ],
+              [
+                "encodingAesKey",
+                "aes"
+              ],
+              [
+                "port",
+                9011
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "email",
-            "options": {
-              "extra": {
-                "imap": {
-                  "host": "imap.example"
-                },
-                "smtp": {
-                  "host": "smtp.example"
+            "options": [
+              [
+                "extra",
+                {
+                  "imap": {
+                    "host": "imap.example"
+                  },
+                  "smtp": {
+                    "host": "smtp.example"
+                  }
                 }
-              }
-            }
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "sms",
-            "options": {
-              "extra": {
-                "provider": "twilio"
-              }
-            }
+            "options": [
+              [
+                "extra",
+                {
+                  "provider": "twilio"
+                }
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "homeassistant",
-            "options": {
-              "url": "http://127.0.0.1:8123",
-              "token": "ha-token"
-            }
+            "options": [
+              [
+                "url",
+                "http://127.0.0.1:8123"
+              ],
+              [
+                "token",
+                "ha-token"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "apiServer",
-            "options": {
-              "port": 8787,
-              "apiKey": "api-key-1"
-            }
+            "options": [
+              [
+                "port",
+                8787
+              ],
+              [
+                "apiKey",
+                "api-key-1"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "webhook",
-            "options": {
-              "port": 9919,
-              "secret": "hook-secret"
-            }
+            "options": [
+              [
+                "port",
+                9919
+              ],
+              [
+                "secret",
+                "hook-secret"
+              ]
+            ]
           }
-        ],
-        "errors": []
+        ]
       }
     },
     {
@@ -1162,37 +1310,64 @@
           "email",
           "sms"
         ],
-        "constructions": [
+        "events": [
           {
+            "kind": "construction",
             "key": "matrix",
-            "options": {
-              "accessToken": "<undefined>",
-              "homeserver": "<undefined>",
-              "userId": "<undefined>",
-              "pilotHome": "/other-home"
-            }
+            "options": [
+              [
+                "accessToken",
+                "<undefined>"
+              ],
+              [
+                "homeserver",
+                "<undefined>"
+              ],
+              [
+                "userId",
+                "<undefined>"
+              ],
+              [
+                "pilotHome",
+                "/other-home"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "bluebubbles",
-            "options": {
-              "serverUrl": "<undefined>",
-              "password": "bb-from-token"
-            }
+            "options": [
+              [
+                "serverUrl",
+                "<undefined>"
+              ],
+              [
+                "password",
+                "bb-from-token"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "email",
-            "options": {
-              "extra": "<undefined>"
-            }
+            "options": [
+              [
+                "extra",
+                "<undefined>"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "sms",
-            "options": {
-              "extra": "<undefined>"
-            }
+            "options": [
+              [
+                "extra",
+                "<undefined>"
+              ]
+            ]
           }
-        ],
-        "errors": []
+        ]
       }
     },
     {
@@ -1224,30 +1399,49 @@
         "result": [
           "telegram"
         ],
-        "constructions": [
+        "events": [
           {
+            "kind": "construction",
             "key": "telegram",
-            "options": {
-              "token": "tg",
-              "webhookUrl": "<undefined>"
-            }
+            "options": [
+              [
+                "token",
+                "tg"
+              ],
+              [
+                "webhookUrl",
+                "<undefined>"
+              ]
+            ]
           },
           {
+            "kind": "construction",
             "key": "discord",
-            "options": {
-              "token": "dc"
-            }
+            "options": [
+              [
+                "token",
+                "dc"
+              ]
+            ]
           },
           {
+            "kind": "error",
+            "error": "[adapters] Failed to load channel \"discord\": Error: discord exploded"
+          },
+          {
+            "kind": "construction",
             "key": "email",
-            "options": {
-              "extra": "<undefined>"
-            }
+            "options": [
+              [
+                "extra",
+                "<undefined>"
+              ]
+            ]
+          },
+          {
+            "kind": "error",
+            "error": "[adapters] Failed to load channel \"email\": boom"
           }
-        ],
-        "errors": [
-          "[adapters] Failed to load channel \"discord\": Error: discord exploded",
-          "[adapters] Failed to load channel \"email\": boom"
         ]
       }
     },
@@ -1280,24 +1474,39 @@
           "slack",
           "whatsapp"
         ],
-        "constructions": [
+        "events": [
           {
+            "kind": "construction",
             "key": "slack",
-            "options": {
-              "botToken": "slack-token",
-              "appToken": "<undefined>"
-            }
+            "options": [
+              [
+                "botToken",
+                "slack-token"
+              ],
+              [
+                "appToken",
+                "<undefined>"
+              ]
+            ]
           },
           {
+            "kind": "error",
+            "error": "[adapters] Failed to load channel \"signal\": Error: connect ECONNREFUSED 127.0.0.1:8080"
+          },
+          {
+            "kind": "construction",
             "key": "whatsapp",
-            "options": {
-              "bridgePath": "<undefined>",
-              "bridgeUrl": "http://127.0.0.1:8081"
-            }
+            "options": [
+              [
+                "bridgePath",
+                "<undefined>"
+              ],
+              [
+                "bridgeUrl",
+                "http://127.0.0.1:8081"
+              ]
+            ]
           }
-        ],
-        "errors": [
-          "[adapters] Failed to load channel \"signal\": Error: connect ECONNREFUSED 127.0.0.1:8080"
         ]
       }
     }

@@ -18,6 +18,7 @@ struct Running {
 #[derive(Default)]
 struct State {
     closing: bool,
+    stop_prefixes: usize,
     running: Vec<Running>, // TS Map insertion order, including stop failure restoration.
 }
 enum Operation {
@@ -33,8 +34,13 @@ struct Reports {
     pending: VecDeque<ChannelStatus>,
     dispatching: bool,
 }
+#[cfg(test)]
+type TransitionHook = Arc<dyn Fn(&str, &ChannelKey) + Send + Sync>;
 struct Inner {
     state: Mutex<State>,
+    prefix_changed: watch::Sender<()>,
+    #[cfg(test)]
+    hook: Mutex<Option<TransitionHook>>,
     queues: Mutex<HashMap<ChannelKey, mpsc::UnboundedSender<Request>>>,
     deps: ChannelStartDeps,
     reports: Mutex<Reports>,
@@ -49,6 +55,9 @@ impl ChannelServer {
     pub fn new(deps: ChannelStartDeps, close_host: CloseHost) -> Self {
         Self(Arc::new(Inner {
             state: Mutex::new(State::default()),
+            prefix_changed: watch::Sender::new(()),
+            #[cfg(test)]
+            hook: Mutex::new(None),
             queues: Mutex::new(HashMap::new()),
             deps,
             reports: Mutex::new(Reports::default()),
@@ -184,6 +193,7 @@ impl ChannelServer {
                     ))),
                 }
             }
+            wait_stop_prefixes(&inner).await;
             let close_host = inner.close_host.clone();
             if let Err(error) = task_result(
                 tokio::spawn(async move { close_host().await }),
@@ -413,16 +423,19 @@ async fn start(
 async fn stop(inner: &Arc<Inner>, key: &ChannelKey, reason: &str) -> Result<bool, ChannelError> {
     let entry = {
         let mut state = inner.state.lock().expect("channel state");
-        state
-            .running
-            .iter()
-            .position(|entry| entry.key == *key)
-            .map(|index| state.running.remove(index))
+        let Some(index) = state.running.iter().position(|entry| entry.key == *key) else {
+            return Ok(false);
+        };
+        state.stop_prefixes += 1;
+        state.running.remove(index)
     };
-    let Some(entry) = entry else {
-        return Ok(false);
-    };
+    // Claim and prefix reservation are atomic. Keep external stop callbacks out
+    // of the state lock: a synchronous stop may itself reenter close().
+    let prefix = StopPrefix(inner.clone());
+    #[cfg(test)]
+    inner.transition("stop-claimed", key);
     let future = begin_stop(entry.handle.clone(), reason);
+    drop(prefix);
     finish_stop(inner, entry, future, reason).await
 }
 async fn finish_stop(
@@ -465,17 +478,19 @@ async fn replace(
     key: &ChannelKey,
     channel: Arc<dyn ChannelAdapter>,
 ) -> Result<(), ChannelError> {
-    if inner.state.lock().expect("channel state").closing {
-        return Err(closing_error());
-    }
-    let previous = inner
-        .state
-        .lock()
-        .expect("channel state")
-        .running
-        .iter()
-        .find(|entry| entry.key == *key)
-        .map(|entry| entry.adapter.clone());
+    let previous = {
+        let state = inner.state.lock().expect("channel state");
+        if state.closing {
+            return Err(closing_error());
+        }
+        #[cfg(test)]
+        inner.transition("replace-checked", key);
+        state
+            .running
+            .iter()
+            .find(|entry| entry.key == *key)
+            .map(|entry| entry.adapter.clone())
+    };
     if previous.is_some() {
         stop(inner, key, "hot-reload").await?;
     }
@@ -510,5 +525,49 @@ async fn replace(
             }
             Err(error)
         }
+    }
+}
+
+// Only the synchronous prefix is reserved; an already claimed handle's async
+// tail is deliberately outside close's drain set, as in the TS Map contract.
+struct StopPrefix(Arc<Inner>);
+impl Drop for StopPrefix {
+    fn drop(&mut self) {
+        let mut state = self.0.state.lock().expect("channel state");
+        state.stop_prefixes -= 1;
+        self.0.prefix_changed.send_replace(());
+    }
+}
+async fn wait_stop_prefixes(inner: &Arc<Inner>) {
+    let mut changed = inner.prefix_changed.subscribe();
+    while inner.state.lock().expect("channel state").stop_prefixes != 0 {
+        #[cfg(test)]
+        inner.transition("close-prefix-wait", &ChannelKey::new(""));
+        changed
+            .changed()
+            .await
+            .expect("channel prefix sender retained");
+    }
+}
+#[cfg(test)]
+impl Inner {
+    fn transition(&self, point: &str, key: &ChannelKey) {
+        let hook = self
+            .hook
+            .lock()
+            .expect("#1327 transition hook mutex")
+            .clone();
+        if let Some(hook) = hook {
+            hook(point, key);
+        }
+    }
+}
+#[cfg(test)]
+impl ChannelServer {
+    pub(super) fn set_hook(&self, hook: Option<TransitionHook>) {
+        *self.0.hook.lock().expect("#1327 transition hook mutex") = hook;
+    }
+    pub(super) fn state_available(&self) -> bool {
+        self.0.state.try_lock().is_ok()
     }
 }

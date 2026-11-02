@@ -272,6 +272,8 @@ async fn replay(case: &Value) -> Value {
             Box::pin(async move { error.map_or(Ok(()), |e| Err(ChannelError::error(e))) })
         }),
     );
+    let hook_hits = Arc::new(Mutex::new(Vec::<String>::new()));
+    let atomic_snapshot = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let mut channels: HashMap<String, Arc<Mock>> = HashMap::new();
     let mut pending: HashMap<String, BoxFuture<Value>> = HashMap::new();
     let mut results = Vec::new();
@@ -279,6 +281,39 @@ async fn replay(case: &Value) -> Value {
     for step in case["steps"].as_array().expect("#1327 lifecycle steps") {
         let mut future: Option<BoxFuture<Value>> = None;
         match step["op"].as_str().expect("#1327 lifecycle operation") {
+            "arm-hook" => {
+                let kind = text(step, "kind");
+                let target = server.clone();
+                let hits = hook_hits.clone();
+                let atomic = atomic_snapshot.clone();
+                let gates = gates.clone();
+                let fired = std::sync::atomic::AtomicBool::new(false);
+                server.set_hook(Some(Arc::new(move |point, key| {
+                    use std::sync::atomic::Ordering::SeqCst;
+                    if *key != ChannelKey::new("a") {
+                        return;
+                    }
+                    if kind == "replace-snapshot" && point == "replace-checked" {
+                        let locked = !target.state_available();
+                        atomic.store(locked, SeqCst);
+                        if !locked {
+                            // Reproduce close in the broken gap, but release the
+                            // old tail so a failing assertion never relies on timeout.
+                            fired.store(true, SeqCst);
+                            hits.lock().expect("#1327 target hooks").push(kind.clone());
+                            drop(target.close());
+                            gate(&gates, "stop").send_replace(true);
+                        }
+                    }
+                    if point == "stop-claimed" && !fired.swap(true, SeqCst) {
+                        hits.lock().expect("#1327 target hooks").push(kind.clone());
+                        drop(target.close());
+                    }
+                })));
+            }
+            "wait-host" => {
+                until(|| record.lock().expect("#1327 host record").host_closes == 1).await
+            }
             "create" => {
                 let id = text(step, "id");
                 record
@@ -395,19 +430,38 @@ async fn replay(case: &Value) -> Value {
             }
         }
     }
+    server.set_hook(None);
+    crate::negative_assert!(
+        atomic_snapshot.load(std::sync::atomic::Ordering::SeqCst),
+        "#1327 replace snapshot atomic"
+    );
+    let hits = hook_hits.lock().expect("#1327 target hooks");
+    if let Some(step) = case["steps"]
+        .as_array()
+        .expect("#1327 hook steps")
+        .iter()
+        .find(|s| s["op"] == "arm-hook")
+    {
+        assert_eq!(
+            *hits,
+            vec![text(step, "kind")],
+            "#1327 target hook hit exactly once"
+        );
+    }
     let record = record.lock().expect("#1327 record mutex");
-    json!({"traces":record.traces,"reports":record.reports,"results":results,"snapshots":snapshots,"logs":record.logs,"hostCloses":record.host_closes})
+    let mut actual = json!({"traces":record.traces,"reports":record.reports,"results":results,"snapshots":snapshots,"logs":record.logs,"hostCloses":record.host_closes});
+    if !hits.is_empty() {
+        actual["hookHits"] = json!(*hits);
+    }
+    actual
 }
 #[tokio::test]
 async fn lifecycle_matches_real_ts() {
     let oracle = oracle(LIFECYCLE);
-    for case in oracle["cases"].as_array().expect("#1327 lifecycle cases") {
+    let cases = lifecycle_cases(&oracle);
+    for case in cases {
         let actual = replay(case).await;
-        assert_eq!(
-            actual, case["expected"],
-            "#1327 lifecycle oracle {}",
-            case["name"]
-        );
+        crate::negative_assert_eq!(actual, case["expected"], "#1327 lifecycle oracle");
     }
 }
 
@@ -445,11 +499,12 @@ fn describe(value: &JsValue) -> Value {
 #[test]
 fn loader_matches_real_ts() {
     let oracle = oracle(LOADER);
-    for case in oracle["cases"].as_array().expect("#1327 loader cases") {
-        let constructions = Arc::new(Mutex::new(Vec::new()));
+    let cases = loader_cases(&oracle);
+    for case in cases {
+        let events = Arc::new(Mutex::new(Vec::new()));
         let mut mounts = ChannelLoaderMounts::default();
         for key in CHANNEL_LOADER_KEYS {
-            let output = constructions.clone();
+            let output = events.clone();
             let failure = case["failures"][key].clone();
             let import_fails = case["importFailures"][key].as_str().map(str::to_owned);
             mounts.register(
@@ -459,7 +514,7 @@ fn loader_matches_real_ts() {
                         return Err(ChannelError::error(error));
                     }
                     output.lock().expect("#1327 loader recording").push(
-                        json!({"key":key,"options":describe(&JsValue::Object(options.clone()))}),
+                        json!({"kind":"construction","key":key,"options":options.own_entries().into_iter().map(|(key,value)|json!([key.to_utf8().expect("#1327 option key"),describe(value)])).collect::<Vec<_>>()}),
                     );
                     if let Some(message) = failure["error"].as_str() {
                         return Err(ChannelError::error(message));
@@ -473,7 +528,6 @@ fn loader_matches_real_ts() {
         }
         let adapters = pilotdeck_protocol::parse_json(&case["adapters"].to_string())
             .expect("#1327 adapters JSON");
-        let mut errors = Vec::new();
         let result = load_enabled_channels(
             if case["adaptersUndefined"] == true {
                 None
@@ -484,14 +538,15 @@ fn loader_matches_real_ts() {
                 pilot_home: case["options"]["pilotHome"].as_str().map(JsString::from),
             },
             &mounts,
-            &mut |e| errors.push(e),
+            &mut |e| {
+                events
+                    .lock()
+                    .expect("#1327 loader events")
+                    .push(json!({"kind":"error","error":e}))
+            },
         );
-        let actual = json!({"result":result.iter().map(|c|c.channel_key().to_string()).collect::<Vec<_>>(),"constructions":*constructions.lock().expect("#1327 loader recording"),"errors":errors});
-        assert_eq!(
-            actual, case["expected"],
-            "#1327 loader oracle {}",
-            case["name"]
-        );
+        let actual = json!({"result":result.iter().map(|c|c.channel_key().to_string()).collect::<Vec<_>>(),"events":*events.lock().expect("#1327 loader recording")});
+        crate::negative_assert_eq!(actual, case["expected"], "#1327 loader oracle");
     }
 }
 #[test]
@@ -516,7 +571,7 @@ fn registry_missing_and_replacement() {
         &mounts,
         &mut |e| errors.push(e),
     );
-    assert_eq!(
+    crate::negative_assert_eq!(
         channels
             .iter()
             .map(|c| c.channel_key().to_string())
@@ -631,7 +686,7 @@ async fn cross_thread_status_order() {
     bounded(start)
         .await
         .expect("#1327 cross-thread status start completed");
-    assert_eq!(
+    crate::negative_assert_eq!(
         *states.lock().expect("#1327 cross-thread status record"),
         [
             ChannelState::Starting,
@@ -677,9 +732,9 @@ async fn adapter_panics_do_not_strand_lifecycle() {
         bounded(server.hot_start_channel(probe(false, mode)))
             .await
             .expect("#1327 panic stop setup");
-        let first = bounded(server.close())
-            .await
-            .expect_err("#1327 panic stop rejection");
+        let closed = bounded(server.close()).await;
+        crate::negative_assert!(closed.is_err(), "#1327 panic stop rejection");
+        let first = closed.expect_err("#1327 checked panic stop rejection");
         assert_eq!(
             bounded(server.close()).await,
             Err(first),
@@ -726,9 +781,12 @@ async fn status_callback_can_reenter_close() {
     bounded(server.hot_start_channel(adapter.clone()))
         .await
         .expect("#1327 reentrant start");
-    let rejected = bounded(server.hot_start_channel(probe(false, 0)))
-        .await
-        .expect_err("#1327 reentrant callback initiated close");
+    let rejected = bounded(server.hot_start_channel(probe(false, 0))).await;
+    crate::negative_assert!(
+        rejected.is_err(),
+        "#1327 reentrant callback initiated close"
+    );
+    let rejected = rejected.expect_err("#1327 checked reentrant rejection");
     assert_eq!(
         rejected.message(),
         "channel server is closing",
@@ -746,4 +804,209 @@ async fn status_callback_can_reenter_close() {
         "#1327 reentrant one stop"
     );
     slot.lock().expect("#1327 reentrant server slot").take();
+}
+
+fn lifecycle_cases(oracle: &Value) -> &[Value] {
+    let cases = oracle["cases"].as_array().expect("#1327 lifecycle cases");
+    crate::negative_assert!(
+        !cases.is_empty(),
+        "#1327 lifecycle oracle cases must be non-empty"
+    );
+    crate::negative_assert_eq!(cases.len(), 19, "#1327 lifecycle oracle case count");
+    crate::negative_assert_eq!(
+        oracle["expectedCaseCount"],
+        json!(19),
+        "#1327 lifecycle generator declaration"
+    );
+    cases
+}
+fn loader_cases(oracle: &Value) -> &[Value] {
+    let cases = oracle["cases"].as_array().expect("#1327 loader cases");
+    crate::negative_assert!(
+        !cases.is_empty(),
+        "#1327 loader oracle cases must be non-empty"
+    );
+    crate::negative_assert_eq!(cases.len(), 8, "#1327 loader oracle case count");
+    crate::negative_assert_eq!(
+        oracle["expectedCaseCount"],
+        json!(8),
+        "#1327 loader generator declaration"
+    );
+    cases
+}
+#[tokio::test]
+async fn replace_close_keeps_previous_snapshot() {
+    let oracle = oracle(LIFECYCLE);
+    let case = lifecycle_cases(&oracle)
+        .iter()
+        .find(|c| c["name"] == "close-after-replace-check")
+        .expect("#1327 replace close fixture present");
+    crate::negative_assert_eq!(
+        replay(case).await,
+        case["expected"],
+        "#1327 replace close aggregate"
+    );
+}
+#[tokio::test]
+async fn late_start_stop_failure_matches_real_ts() {
+    let oracle = oracle(LIFECYCLE);
+    let case = lifecycle_cases(&oracle)
+        .iter()
+        .find(|c| c["name"] == "late-start-stop-fails")
+        .expect("#1327 late stop failure fixture present");
+    crate::negative_assert_eq!(
+        replay(case).await,
+        case["expected"],
+        "#1327 late stop failure oracle"
+    );
+}
+
+struct PrefixHandle {
+    open: std::sync::atomic::AtomicBool,
+    reenter: Mutex<Option<ChannelServer>>,
+}
+impl ChannelHandle for PrefixHandle {
+    fn stop(&self, _reason: &str) -> BoxFuture<Result<(), ChannelError>> {
+        self.open.store(false, std::sync::atomic::Ordering::SeqCst);
+        let close = self
+            .reenter
+            .lock()
+            .expect("#1327 prefix reentry slot")
+            .take()
+            .map(|server| server.close());
+        Box::pin(async move {
+            if let Some(close) = close {
+                close.await?;
+            }
+            Ok(())
+        })
+    }
+}
+struct PrefixAdapter(Arc<PrefixHandle>);
+impl ChannelAdapter for PrefixAdapter {
+    fn channel_key(&self) -> &ChannelKey {
+        static KEY: std::sync::OnceLock<ChannelKey> = std::sync::OnceLock::new();
+        KEY.get_or_init(|| ChannelKey::new("a"))
+    }
+    fn start(
+        &self,
+        _deps: ChannelStartDeps,
+    ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
+        let handle = self.0.clone();
+        Box::pin(async move {
+            handle.open.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(handle as Arc<dyn ChannelHandle>)
+        })
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disable_close_seals_ingress_before_host() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let handle = Arc::new(PrefixHandle {
+        open: false.into(),
+        reenter: Mutex::new(None),
+    });
+    let (events, observed) = std::sync::mpsc::channel();
+    let host_events = events.clone();
+    let host_handle = handle.clone();
+    let server = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(move || {
+            host_events
+                .send(("host", host_handle.open.load(SeqCst)))
+                .expect("#1327 prefix host observation");
+            Box::pin(async { Ok(()) })
+        }),
+    );
+    bounded(server.hot_start_channel(Arc::new(PrefixAdapter(handle))))
+        .await
+        .expect("#1327 prefix setup");
+    let (release, blocked) = std::sync::mpsc::channel();
+    let blocked = Mutex::new(blocked);
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hit = hits.clone();
+    server.set_hook(Some(Arc::new(move |point, key| {
+        if point == "stop-claimed" && *key == ChannelKey::new("a") {
+            hit.fetch_add(1, SeqCst);
+            events
+                .send(("claimed", false))
+                .expect("#1327 prefix claim observation");
+            blocked
+                .lock()
+                .expect("#1327 prefix gate mutex")
+                .recv_timeout(Duration::from_secs(5))
+                .expect("#1327 prefix gate release");
+        } else if point == "close-prefix-wait" {
+            events
+                .send(("prefix-wait", false))
+                .expect("#1327 prefix wait observation");
+        }
+    })));
+    let disable = server.reconcile_channels(ReconcileInput {
+        channels: vec![],
+        managed_channel_keys: vec![ChannelKey::new("a")],
+    });
+    assert_eq!(
+        observed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("#1327 prefix claim reached"),
+        ("claimed", false),
+        "#1327 prefix target claim"
+    );
+    let close = server.close();
+    // Either a real wait notification or an early host close arrives. Release
+    // and collect both operations before judging, including the mutant path.
+    let first = observed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("#1327 prefix close observation");
+    release.send(()).expect("#1327 prefix release sender");
+    bounded(disable)
+        .await
+        .expect("#1327 prefix disable completion");
+    bounded(close).await.expect("#1327 prefix close completion");
+    server.set_hook(None);
+    assert_eq!(hits.load(SeqCst), 1, "#1327 prefix target hit exactly once");
+    crate::negative_assert_eq!(
+        first,
+        ("prefix-wait", false),
+        "#1327 disable close waits stop prefix"
+    );
+    let host = observed
+        .try_iter()
+        .find(|event| event.0 == "host")
+        .expect("#1327 prefix host completed");
+    assert_eq!(
+        host,
+        ("host", false),
+        "#1327 host closes after ingress sealed"
+    );
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_prefix_can_reenter_close() {
+    let handle = Arc::new(PrefixHandle {
+        open: false.into(),
+        reenter: Mutex::new(None),
+    });
+    let server = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    bounded(server.hot_start_channel(Arc::new(PrefixAdapter(handle.clone()))))
+        .await
+        .expect("#1327 prefix reentry setup");
+    *handle.reenter.lock().expect("#1327 prefix reentry slot") = Some(server.clone());
+    let result = bounded(server.reconcile_channels(ReconcileInput {
+        channels: vec![],
+        managed_channel_keys: vec![ChannelKey::new("a")],
+    }))
+    .await
+    .expect("#1327 prefix reentry completes");
+    assert_eq!(
+        result.stopped,
+        vec![ChannelKey::new("a")],
+        "#1327 prefix reentry stopped"
+    );
+    bounded(server.close())
+        .await
+        .expect("#1327 prefix reentry memoized close");
 }
