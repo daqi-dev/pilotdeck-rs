@@ -1,5 +1,7 @@
 //! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
+// Unwired channel component; production assembly is a separate unit.
+pub mod channel;
 pub mod config;
 mod dispatch;
 mod fetch_redirect;
