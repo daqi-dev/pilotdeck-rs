@@ -130,9 +130,12 @@ skips with a recognizable `#1263 skip:` line written straight to the stderr
 handle (libtest captures a passing test's `eprintln!`), so a root host gets
 an honest observable skip — and `negative.py` reads that line back and records
 the row as `SKIPPED` (machine-readable in the per-row stdout line and the
-final summary; not a failure, so a root host's suite stays green on the rows
-that really ran) instead of a false SURVIVED that keeps the whole suite red
-for environment reasons. Both blocking-witness tests
+final summary) instead of a false SURVIVED that keeps the whole suite red
+for environment reasons. SKIPPED is still not a KILLED row: the runner reuses
+`negative_selection.verdict_exit`, so rc=0 only when at least one row ran and
+every row was actually killed — a root host's run names its skipped rows and
+exits non-zero (fail-closed), and a skip-only `NEGATIVE_ONLY` sample is never
+read as a green zero-verified run (fixtures/README.md 退出码契约). Both blocking-witness tests
 (`concurrent_capture_cannot_land_between_l0_id_selection_and_delete` and
 `commit_segment_blocks_concurrent_clear_until_writes_complete`) judge through
 doc-hidden lock-wait observers (`EdgeClawStorage::set_process_wait_observer`,

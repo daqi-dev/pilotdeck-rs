@@ -58,8 +58,11 @@ def run(name, package, test):
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     log(name + '.slots.log', slots.stdout + slots.stderr)
     # No `--nocapture`: it splices the test's stdout into the
-    # `test <name> ... ok/FAILED` status line (#938 r14) that the
-    # green/red/restored assert checks match exactly (#1053).
+    # `test <name> ... ok/FAILED` status line (#938 r14) that this script's
+    # own substring checks read (`f'{test} ... FAILED' in stdout` and the
+    # `1 passed` receipt regex below). This runner keeps its own judge; the
+    # shared `negative_suite.passed()`/`classify()` whole-line contract does
+    # not apply here. No trailing `--` separator: nothing follows the filter.
     result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', package,
                         '--lib', test], cwd=root, env=os.environ.copy(), timeout=900)
     log(name + '.log', result.stdout + result.stderr)

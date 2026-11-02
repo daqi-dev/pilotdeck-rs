@@ -87,3 +87,16 @@ python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-dream-run/negative.py \
 ```
 
 禁止影子 git、第二份构建目录或任何绕过“源码须等于 baseline”守卫的方式。
+
+## 已知宿主限制（登记，未修）
+
+`edgeclaw_dream_run.rs` 的 P1 store-failure 金样用 `0o444` / `0o555` 权限故障
+（`profileReadOnly` / `notesReadOnly`）。权限位只拦非特权写者：root /
+`CAP_DAC_OVERRIDE` 宿主上写入直接成功，期望的故障不再发生，绑定测试按结果比对
+变红——这是环境红，不是重跑收据逻辑的缺陷。`negative.py` 对选中目标测试先跑
+未变异基线（见上节），这种宿主上一律 `BASELINE FAILED` 拒跑（rc=1，
+fail-closed），不会出现假 KILLED 或假 SURVIVED。修法（照
+`edgeclaw-heartbeat-indexer` 的 #1263：注入前原生写探针 + 识别行 + `SKIPPED`
+档 + `negative_selection.verdict_exit` 退出码）登记为 P2-跟进（编号待开单
+回填），前置于本装置下次需要在 root 宿主上全量跑之前。`edgeclaw-dream-runner`
+的目标测试无权限故障用例，不受影响。

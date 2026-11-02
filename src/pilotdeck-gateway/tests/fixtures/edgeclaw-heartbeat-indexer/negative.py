@@ -5,11 +5,14 @@ Every row changes one existing anchor in `heartbeat/indexer.rs`, runs the one
 named integration test and restores the original bytes in `finally`. A stale
 anchor aborts with status 2 instead of being reported as SURVIVED, and the
 runner never stops at the first non-kill: it records every KILLED / SURVIVED /
-SKIPPED / INVALID row and exits non-zero if any row is SURVIVED or INVALID.
-A row is SKIPPED (not a failure) when its bound test printed the `#1263 skip:`
-line — the 0444 write probe found a caller that writes through the mode
+SKIPPED row. The exit code reuses `negative_selection.verdict_exit`: rc=0
+only when at least one row ran and every row was actually KILLED, so any
+SURVIVED or SKIPPED row — and a selection that killed nothing — exits
+non-zero. A row is SKIPPED when its bound test printed the `#1263 skip:` line:
+the 0444 write probe found a caller that writes through the mode
 (root or CAP_DAC_OVERRIDE), so the re-arm contract is untestable on that host
-and the row says so instead of reporting an honest SURVIVED mutant.
+and the row says so in the summary instead of reporting an honest SURVIVED
+mutant — but the run still fails closed, it is never read as verified.
 
 Rows are `(name, path, before, after, test, anchor)` tuples for single edits,
 or `dict(name=..., changes=[(path, before, after), ...], test=...,
@@ -30,6 +33,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 indexer = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/indexer.rs'
@@ -770,12 +774,8 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
             (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
             if run.returncode == 0 and '#1263 skip:' in log:
                 # The bound test's native write probe (#1263) found a caller
-                # that writes through the 0444 mode — root or
-                # CAP_DAC_OVERRIDE — restored 0644, printed its recognizable
-                # skip line straight to the stderr handle and passed. The
-                # re-arm contract was never exercised on this host, so the
-                # row is SKIPPED (machine-readable in the summary line and
-                # in the log), never an honest-SURVIVED red.
+                # that writes through the 0444 mode; see the docstring. The
+                # row is SKIPPED, machine-readable, never a fake verdict.
                 reason = 'skipped'
             elif run.returncode == 0:
                 reason = 'bound test still passed'
@@ -816,5 +816,16 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
 print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
 print(f'SKIPPED  {len(skipped)}: ' + ', '.join(skipped))
 print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-if survived:
+# Shared exit contract (negative_selection.verdict_exit, fixtures/README.md
+# 退出码契约): rc=0 only when at least one row ran and every row was actually
+# KILLED. Any SKIPPED row — or a selection that killed nothing, e.g. the
+# skip-only #1263 sample on a root host — proved nothing and must stay
+# non-zero, never a green zero-verified run.
+verdicts = ([{'verdict': 'KILLED'}] * len(killed)
+            + [{'verdict': 'SKIPPED'}] * len(skipped)
+            + [{'verdict': 'SURVIVED'}] * len(survived))
+if verdict_exit(verdicts):
+    if not killed:
+        print('NOTHING VERIFIED: zero rows were killed; a run with no KILLED '
+              'row is never a pass (fixtures/README.md 退出码契约)', flush=True)
     sys.exit(1)
