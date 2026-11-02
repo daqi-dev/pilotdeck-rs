@@ -31,7 +31,13 @@ CARGO_TARGET_DIR=<目标目录> PDRS_BASELINE=<固定提交的 TS checkout> \
   既有平台差异，非本分支引入。
 - `snapshots-locale-pin` 不受影响：`edgeclaw-snapshots/oracle.json` 的
   `EPERM` 行是注入故障（faults），两平台一致；Linux 宿主实测父测试通过。
-- 修复归 M6 车道：在 `_shared/regeneration-masks.tsv` 为
-  `edgeclaw-entries/oracle.json` 的该 `error` / `message` 指针加行级归一
-  （不能整段掩掉），或给 `regenerates_identically` 加专用 normalizer。
+- 同源消费方（sibling 登记）：`_shared/regeneration-negative.py` 的
+  `edgeclaw-entries-partial-provenance` 行直接重生成
+  `edgeclaw-entries/oracle.json`，在同一 Linux 带基线宿主上会以同一根因红
+  （`#280 ... differs outside the exact masks`）；该共享执行器归 M6 车道，
+  与本登记一并处理。
+- 修复归 M6 车道（#1099，`_shared/*` 为 M6 独占共享件）：在
+  `_shared/regeneration-masks.tsv` 为 `edgeclaw-entries/oracle.json` 的该
+  `error` / `message` 指针加行级归一（不能整段掩掉），或给
+  `regenerates_identically` 加专用 normalizer；前置于 #1099 车道收尾。
   在那之前，Linux 带基线宿主跑本套见该行 INVALID 属已知、已登记。
