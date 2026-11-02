@@ -773,6 +773,7 @@
   },
   "node": "v22.22.0",
   "icu": "78.2",
+  "expectedCaseCount": 19,
   "cases": [
     {
       "name": "enable-disable-reload",
@@ -3064,6 +3065,408 @@
             "[adapters] channel a startup task completed"
           ]
         ],
+        "hostCloses": 1
+      }
+    },
+    {
+      "name": "close-after-replace-check",
+      "steps": [
+        {
+          "op": "create",
+          "id": "old",
+          "key": "a",
+          "stopGate": "stop"
+        },
+        {
+          "op": "hot",
+          "id": "old"
+        },
+        {
+          "op": "create",
+          "id": "new",
+          "key": "a"
+        },
+        {
+          "op": "arm-hook",
+          "kind": "replace-snapshot"
+        },
+        {
+          "op": "hot",
+          "id": "new",
+          "pending": "reload"
+        },
+        {
+          "op": "wait",
+          "id": "old",
+          "event": "stop-begin"
+        },
+        {
+          "op": "wait-host"
+        },
+        {
+          "op": "snapshot"
+        },
+        {
+          "op": "release",
+          "gate": "stop"
+        },
+        {
+          "op": "await",
+          "pending": "reload"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "expected": {
+        "traces": {
+          "old": [
+            {
+              "event": "start-begin"
+            },
+            {
+              "event": "start-end"
+            },
+            {
+              "event": "stop-begin",
+              "reason": "hot-reload"
+            },
+            {
+              "event": "stop-end",
+              "reason": "hot-reload"
+            }
+          ],
+          "new": []
+        },
+        "reports": {
+          "a": [
+            {
+              "state": "starting",
+              "message": "a: starting in background"
+            },
+            {
+              "state": "connected",
+              "message": "a: started"
+            },
+            {
+              "state": "stopped",
+              "message": "a: stopped (hot-reload)"
+            },
+            {
+              "state": "failed",
+              "message": "a: startup failed",
+              "error": "channel server is closing"
+            },
+            {
+              "state": "failed",
+              "message": "a: rollback failed",
+              "error": "channel server is closing"
+            }
+          ]
+        },
+        "results": [
+          null,
+          {
+            "error": "AggregateError: channel a replacement and rollback failed",
+            "errors": [
+              "Error: channel server is closing",
+              "Error: channel server is closing"
+            ]
+          },
+          null
+        ],
+        "snapshots": [
+          {
+            "traces": {
+              "old": [
+                {
+                  "event": "start-begin"
+                },
+                {
+                  "event": "start-end"
+                },
+                {
+                  "event": "stop-begin",
+                  "reason": "hot-reload"
+                }
+              ],
+              "new": []
+            },
+            "reports": {
+              "a": [
+                {
+                  "state": "starting",
+                  "message": "a: starting in background"
+                },
+                {
+                  "state": "connected",
+                  "message": "a: started"
+                }
+              ]
+            },
+            "hostCloses": 1
+          }
+        ],
+        "logs": [],
+        "hostCloses": 1,
+        "hookHits": [
+          "replace-snapshot"
+        ]
+      }
+    },
+    {
+      "name": "close-after-disable-claim",
+      "steps": [
+        {
+          "op": "create",
+          "id": "old",
+          "key": "a",
+          "stopGate": "stop"
+        },
+        {
+          "op": "hot",
+          "id": "old"
+        },
+        {
+          "op": "arm-hook",
+          "kind": "disable-prefix"
+        },
+        {
+          "op": "reconcile",
+          "ids": [],
+          "managed": [
+            "a"
+          ],
+          "pending": "disable"
+        },
+        {
+          "op": "wait",
+          "id": "old",
+          "event": "stop-begin"
+        },
+        {
+          "op": "wait-host"
+        },
+        {
+          "op": "receive",
+          "id": "old",
+          "message": "after-host-close",
+          "gate": "unused"
+        },
+        {
+          "op": "snapshot"
+        },
+        {
+          "op": "release",
+          "gate": "stop"
+        },
+        {
+          "op": "await",
+          "pending": "disable"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "expected": {
+        "traces": {
+          "old": [
+            {
+              "event": "start-begin"
+            },
+            {
+              "event": "start-end"
+            },
+            {
+              "event": "stop-begin",
+              "reason": "config-disabled"
+            },
+            {
+              "event": "rejected",
+              "message": "after-host-close"
+            },
+            {
+              "event": "stop-end",
+              "reason": "config-disabled"
+            }
+          ]
+        },
+        "reports": {
+          "a": [
+            {
+              "state": "starting",
+              "message": "a: starting in background"
+            },
+            {
+              "state": "connected",
+              "message": "a: started"
+            },
+            {
+              "state": "stopped",
+              "message": "a: stopped (config-disabled)"
+            }
+          ]
+        },
+        "results": [
+          null,
+          {
+            "started": [],
+            "stopped": [
+              "a"
+            ]
+          },
+          null
+        ],
+        "snapshots": [
+          {
+            "traces": {
+              "old": [
+                {
+                  "event": "start-begin"
+                },
+                {
+                  "event": "start-end"
+                },
+                {
+                  "event": "stop-begin",
+                  "reason": "config-disabled"
+                },
+                {
+                  "event": "rejected",
+                  "message": "after-host-close"
+                }
+              ]
+            },
+            "reports": {
+              "a": [
+                {
+                  "state": "starting",
+                  "message": "a: starting in background"
+                },
+                {
+                  "state": "connected",
+                  "message": "a: started"
+                }
+              ]
+            },
+            "hostCloses": 1
+          }
+        ],
+        "logs": [],
+        "hostCloses": 1,
+        "hookHits": [
+          "disable-prefix"
+        ]
+      }
+    },
+    {
+      "name": "late-start-stop-fails",
+      "steps": [
+        {
+          "op": "create",
+          "id": "slow",
+          "key": "a",
+          "startGate": "start",
+          "failStops": [
+            1
+          ]
+        },
+        {
+          "op": "hot",
+          "id": "slow",
+          "pending": "start-op"
+        },
+        {
+          "op": "wait",
+          "id": "slow",
+          "event": "start-begin"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "release",
+          "gate": "start"
+        },
+        {
+          "op": "await",
+          "pending": "start-op"
+        },
+        {
+          "op": "snapshot"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "expected": {
+        "traces": {
+          "slow": [
+            {
+              "event": "start-begin"
+            },
+            {
+              "event": "start-end"
+            },
+            {
+              "event": "stop-begin",
+              "reason": "server-shutdown"
+            }
+          ]
+        },
+        "reports": {
+          "a": [
+            {
+              "state": "starting",
+              "message": "a: starting in background"
+            },
+            {
+              "state": "failed",
+              "message": "a: startup failed",
+              "error": "slow stop failed"
+            }
+          ]
+        },
+        "results": [
+          null,
+          {
+            "error": "Error: slow stop failed"
+          },
+          null
+        ],
+        "snapshots": [
+          {
+            "traces": {
+              "slow": [
+                {
+                  "event": "start-begin"
+                },
+                {
+                  "event": "start-end"
+                },
+                {
+                  "event": "stop-begin",
+                  "reason": "server-shutdown"
+                }
+              ]
+            },
+            "reports": {
+              "a": [
+                {
+                  "state": "starting",
+                  "message": "a: starting in background"
+                },
+                {
+                  "state": "failed",
+                  "message": "a: startup failed",
+                  "error": "slow stop failed"
+                }
+              ]
+            },
+            "hostCloses": 1
+          }
+        ],
+        "logs": [],
         "hostCloses": 1
       }
     }

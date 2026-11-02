@@ -24,16 +24,15 @@ new Function('require', 'module', 'exports', compiled)((name) => {
   throw new Error(`unexercised import accessed: ${source} -> ${name}`);
 }, module, module.exports);
 
-const constructions = [];
+const events = [];
 globalThis.__pdrsChannelLoaderProbe = {
   importFails: key => (key === 'signal' ? 'connect ECONNREFUSED 127.0.0.1:8080' : null),
   constructorFails: () => undefined,
-  construct: (key, options) => constructions.push({ key, options }),
+  construct: (key, options) => events.push({kind:'construction',key,options:Object.entries(options).map(([field,value])=>[field,value===undefined?'<undefined>':value])}),
 };
-const errors = [];
 const realError = console.error;
 console.error = (...parts) => {
-  errors.push(parts.map(part => (part instanceof Error ? String(part) : String(part))).join(' '));
+  events.push({kind:'error',error:parts.map(String).join(' ')});
 };
 const adapters={
     slack: { enabled: true, token: 'slack-token' },
@@ -48,11 +47,6 @@ await writeFile(output, JSON.stringify({
   name: 'import-failure-continues', adapters, options:{}, importFailures:{signal:'connect ECONNREFUSED 127.0.0.1:8080'},
   expected:{
   result: result.map(channel => channel.channelKey),
-  constructions: constructions.map(({ key, options }) => ({
-    key,
-    options: Object.fromEntries(Object.entries(options).map(([field, value]) =>
-      [field, value === undefined ? '<undefined>' : value])),
-  })),
-  errors,
+  events,
   },
 }, null, 2) + '\n', {flag:'wx'});

@@ -16,6 +16,7 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const require = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
 const compiled = transformSync(await readFile(join(baseline, sources[0])), { loader: 'ts', format: 'cjs', target: 'es2022' }).code;
+const EXPECTED_CASE_COUNT = 19;
 const definitions: any[] = [];
 const create = (id: string, key = 'a', extra = {}) => ({ op: 'create', id, key, ...extra });
 const hot = (id: string, pending?: string) => ({ op: 'hot', id, ...(pending ? { pending } : {}) });
@@ -45,6 +46,12 @@ scenario('managed-keys-are-a-set', [create('old','a',{ stopGate:'stop' }), hot('
 scenario('duplicate-desired-rejected-before-stop', [create('old'), hot('old'), create('new'), reconcile(['old','new'],['a']), close()]);
 scenario('close-aggregates-and-memoizes', [create('old','a',{ failStops:[1] }), hot('old'), close(), close(), hot('old')], { closeError:'host failed' });
 scenario('background-startup', [create('old'), {op:'background',ids:['old']}, {op:'wait-log',text:'[adapters] channel a startup task completed'}, close()]);
+
+
+scenario('close-after-replace-check', [create('old','a',{stopGate:'stop'}), hot('old'), create('new'), {op:'arm-hook',kind:'replace-snapshot'}, hot('new','reload'), wait('old','stop-begin'), {op:'wait-host'}, snapshot(), release('stop'), finish('reload'), close()]);
+scenario('close-after-disable-claim', [create('old','a',{stopGate:'stop'}), hot('old'), {op:'arm-hook',kind:'disable-prefix'}, reconcile([],['a'],'disable'), wait('old','stop-begin'), {op:'wait-host'}, receive('old','after-host-close','unused'), snapshot(), release('stop'), finish('disable'), close()]);
+scenario('late-start-stop-fails', [create('slow','a',{startGate:'start',failStops:[1]}), hot('slow','start-op'), wait('slow','start-begin'), close(), release('start'), finish('start-op'), snapshot(), close()]);
+assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1327 lifecycle generator case count');
 
 async function run(definition: any) {
   const traces: Record<string, any[]> = {}, reports: Record<string, any[]> = {}, logs: any[] = [], results: any[] = [], snapshots: any[] = [];
@@ -80,10 +87,35 @@ async function run(definition: any) {
     throw new Error('#1327 lifecycle hook did not resolve');
   }
   const snap = () => JSON.parse(JSON.stringify({traces,reports,hostCloses}));
+  // Observe the real module's Map boundary without rewriting its source. A
+  // queued close cannot interrupt JS's synchronous snapshot/stop prefix.
+  const mapGet = Map.prototype.get, mapDelete = Map.prototype.delete;
+  let armed: string | undefined;
+  const hookHits: string[] = [];
+  function hit(kind: string, key: unknown, value: any) {
+    if (armed === kind && key === 'a' && typeof value?.stop === 'function') {
+      armed = undefined;
+      hookHits.push(kind);
+      queueMicrotask(() => { operations.set('hook-close',capture(server.close())); });
+    }
+  }
+  Map.prototype.get = function(key) {
+    const value = mapGet.call(this,key);
+    hit('replace-snapshot',key,value);
+    return value;
+  };
+  Map.prototype.delete = function(key) {
+    const value = mapGet.call(this,key);
+    const result = mapDelete.call(this,key);
+    hit('disable-prefix',key,value);
+    return result;
+  };
   try {
     for (const step of definition.steps) {
       let promise: Promise<any> | undefined;
-      if (step.op === 'create') {
+      if (step.op === 'arm-hook') armed=step.kind;
+      else if (step.op === 'wait-host') await until(()=>hostCloses===1);
+      else if (step.op === 'create') {
         const trace = traces[step.id] = [];
         let open=false, starts=0, stops=0;
         const flights = new Set<Promise<void>>();
@@ -136,8 +168,12 @@ async function run(definition: any) {
     }
     // A barrier after the final lifecycle completion flushes detached observers.
     await new Promise(done=>setImmediate(done));
-    return {traces,reports,results,snapshots,logs,hostCloses};
-  } finally { Object.assign(console,original); }
+    if (definition.steps.some((step:any)=>step.op==='arm-hook')) {
+      assert.deepEqual(hookHits,[definition.steps.find((step:any)=>step.op==='arm-hook').kind],'#1327 target hook hit exactly once');
+      await operations.get('hook-close');
+    }
+    return {traces,reports,results,snapshots,logs,hostCloses,...(hookHits.length?{hookHits}:{})};
+  } finally { Map.prototype.get=mapGet; Map.prototype.delete=mapDelete; Object.assign(console,original); }
 }
 const cases=[];
 for (const definition of definitions) {
@@ -148,5 +184,5 @@ for (const definition of definitions) {
   } finally {clearTimeout(timer);}
 }
 await mkdir(process.argv[2],{recursive:true});
-await writeFile(join(process.argv[2],'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,icu:process.versions.icu,cases},null,2)+'\n',{flag:'wx'});
+await writeFile(join(process.argv[2],'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,icu:process.versions.icu,expectedCaseCount:EXPECTED_CASE_COUNT,cases},null,2)+'\n',{flag:'wx'});
 console.log(`PASS #1327 lifecycle: ${cases.length} real TS scenarios`);

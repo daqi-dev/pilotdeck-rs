@@ -85,7 +85,9 @@ pub struct ChannelStartDeps {
 
 pub trait ChannelHandle: Send + Sync {
     /// Stop accepting messages when called, then resolve after in-flight work drains.
-    /// Returning an error leaves the handle available for a later stop attempt.
+    /// Returning an error leaves a tracked handle available for a later stop attempt.
+    /// A late start after shutdown was never tracked: its stop error becomes a
+    /// startup failure without retry or restoration, as in the TS lifecycle.
     fn stop(&self, reason: &str) -> BoxFuture<Result<(), ChannelError>>;
 }
 pub trait ChannelAdapter: Send + Sync {

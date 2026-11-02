@@ -2,7 +2,7 @@
 
 固定 `cc7c4e6`，Node **v22.22.0 / ICU 78.2**。生成器原样转译并运行基线 `loadEnabledChannels.ts`；15 个动态导入的本地 mock 类只录构造参数/注入错误，无外部服务。共享基线守卫记录完整源码闭包哈希。`import-failure.mjs` 在一个有 60 秒上限的子进程中证明动态加载失败后继续后续 key。
 
-8 个场景：未配置、truthiness 与空 token、null token fallback、未启用、全 15 key、可选字段、Error/字符串构造失败、导入失败继续。输入及原始 TS 输出同存 `oracle.json`，`adaptersUndefined` 区分 undefined/null；选项中的 undefined 用 `<undefined>` 显式记录；输入含 U+2028，不按非换行 Unicode 字符拆 JSON。Rust 按这些输入重放并逐格比较 result/constructions/errors。
+8 个场景：未配置、truthiness 与空 token、null token fallback、未启用、全 15 key、可选字段、Error/字符串构造失败、导入失败继续。输入及原始 TS 输出同存 `oracle.json`，`adaptersUndefined` 区分 undefined/null；选项中的 undefined 用 `<undefined>` 显式记录；输入含 U+2028，不按非换行 Unicode 字符拆 JSON。Rust 按这些输入重放并逐格比较 result/events；events 合并 construction/error 的发生顺序，construction.options 以有序 [key,value] pairs 保存最外层字段顺序。生成器 expectedCaseCount=8，Rust 检查非空、固定基数和声明值。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck

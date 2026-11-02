@@ -38,32 +38,22 @@ function loadEnabledChannelsModule() {
 // and scriptable failures. Node caches a module whose evaluation threw, so an
 // import failure can only ever be observed on a channel's first import; the
 // child process owns that scenario with a fresh module registry.
-type Recorder = { key: string; options: Record<string, unknown> };
-const state = { constructions: [] as Recorder[], importFailures: {}, constructorFailures: {} };
+const EXPECTED_CASE_COUNT = 8;
+const events: unknown[] = [];
+const state = { importFailures: {}, constructorFailures: {} };
 globalThis.__pdrsChannelLoaderProbe = {
   importFails: (key: string) => state.importFailures[key] ?? null,
   constructorFails: (key: string) => state.constructorFailures[key],
   construct: (key: string, options: Record<string, unknown>) => {
-    state.constructions.push({ key, options });
+    events.push({kind:'construction',key,options:Object.entries(options).map(([field,value])=>[field,value===undefined?'<undefined>':value])});
   },
 };
 
 // `console.error` is part of the observable error contract of the loader.
-const errors: string[] = [];
 const realError = console.error;
 console.error = (...parts: unknown[]) => {
-  errors.push(parts.map(part => (part instanceof Error ? String(part) : String(part))).join(' '));
+  events.push({kind:'error',error:parts.map(String).join(' ')});
 };
-
-function describeConstructions() {
-  return state.constructions.map(({ key, options }) => ({
-    key,
-    // undefined-valued properties exist in the option object TS builds; JSON
-    // would silently drop them, so they are recorded explicitly.
-    options: Object.fromEntries(Object.entries(options).map(([field, value]) =>
-      [field, value === undefined ? '<undefined>' : value])),
-  }));
-}
 
 async function scenario(
   name: string,
@@ -71,10 +61,9 @@ async function scenario(
   options: { pilotHome?: string } = {},
   constructorFailures: Record<string, unknown> = {},
 ) {
-  state.constructions = [];
+  events.length = 0;
   state.importFailures = {};
   state.constructorFailures = constructorFailures;
-  const before = errors.length;
   let result: unknown;
   try {
     result = await loadEnabledChannelsModule().loadEnabledChannels(adapters as any, options);
@@ -87,8 +76,7 @@ async function scenario(
     failures: Object.fromEntries(Object.entries(constructorFailures).map(([key,value]) => [key,value instanceof Error ? {error:value.message} : {plain:String(value)}])),
     expected: {
     result: (result as any[]).map(channel => channel.channelKey),
-    constructions: describeConstructions(),
-    errors: errors.slice(before),
+    events: [...events],
     },
   };
 }
@@ -154,7 +142,8 @@ execFileSync(process.execPath, [
 ], { stdio: 'inherit', env: { ...process.env }, timeout: 60000 });
 cases.push(JSON.parse(await readFile(join(output, childArtifact), 'utf8')));
 
+assert.equal(cases.length, EXPECTED_CASE_COUNT, '#1327 loader generator case count');
 await mkdir(output, { recursive: true });
 const command = 'PDRS_BASELINE=/absolute/path/to/PilotDeck node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/channel-loader/generate.mts src/pilotdeck-gateway/tests/fixtures/channel-loader';
-await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, command, node:process.version, icu:process.versions.icu, cases }, null, 2) + '\n', {flag:'wx'});
+await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, command, node:process.version, icu:process.versions.icu, expectedCaseCount:EXPECTED_CASE_COUNT, cases }, null, 2) + '\n', {flag:'wx'});
 console.log(`PASS #1327 loader: ${cases.length} real TS scenarios`);
