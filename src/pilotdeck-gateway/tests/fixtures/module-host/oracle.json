@@ -653,6 +653,7 @@
     "src/web/client/webMessage.ts": "ada604e1438867fc15907e2dcd45daf3339c09c31e07d0cf595cd30fa9eb54a4"
   },
   "node": "v22.22.0",
+  "icu": "78.2",
   "cells": [
     {
       "id": "auth-missing",
@@ -907,6 +908,15 @@
       "closed": false
     },
     {
+      "id": "principal-unicode-ws",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 131\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"  ﻿\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n29\r\n{\"code\":\"PUBLIC_HOST_PRINCIPAL_REQUIRED\"}\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
       "id": "principal-nbsp",
       "server": "main",
       "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 124\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\" \"},\"operation\":\"list_tools\",\"input\":{}}",
@@ -1132,6 +1142,33 @@
       "closed": false
     },
     {
+      "id": "empty-ct-string",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 137\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"empty_ct_string\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\netag: W/\"x\"\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 3\r\n\r\n\"x\"",
+      "closed": false
+    },
+    {
+      "id": "empty-ct-value",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 136\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"empty_ct_value\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 8\r\n\r\n{\"ok\":1}",
+      "closed": false
+    },
+    {
+      "id": "empty-ct-bytes",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 136\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"empty_ct_bytes\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: \r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\n\u0000\u0001\u0002ú",
+      "closed": false
+    },
+    {
       "id": "rawbody",
       "server": "main",
       "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 129\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"rawbody\"},\"operation\":\"list_tools\",\"input\":{}}",
@@ -1312,12 +1349,39 @@
       "closed": false
     },
     {
+      "id": "stream-plain-ct-headers",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 145\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"stream_plain_ct_headers\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 502 Bad Gateway\r\ncontent-type: application/json\r\netag: W/\"x\"\r\nx-request-id: r1\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5c\r\n{\"code\":\"PILOTDECK_HOST_RESPONSE_INVALID\",\"message\":\"Host stream content-type is required.\"}\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
       "id": "stream-missing",
       "server": "main",
       "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 136\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"stream_missing\"},\"operation\":\"list_tools\",\"input\":{}}",
       "pad": null,
       "halfClose": false,
       "response": "HTTP/1.1 502 Bad Gateway\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n47\r\n{\"code\":\"PUBLIC_HOST_TRANSPORT_FAILED\",\"message\":\"Missing host stream\"}\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
+      "id": "stream-missing-headers",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 144\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"stream_missing_headers\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 502 Bad Gateway\r\ncontent-type: application/json\r\netag: W/\"x\"\r\nretry-after: 3\r\nx-request-id: r1\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n47\r\n{\"code\":\"PUBLIC_HOST_TRANSPORT_FAILED\",\"message\":\"Missing host stream\"}\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
+      "id": "stream-noct-headers",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 141\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"stream_noct_headers\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 502 Bad Gateway\r\netag: W/\"x\"\r\nx-request-id: r1\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5c\r\n{\"code\":\"PILOTDECK_HOST_RESPONSE_INVALID\",\"message\":\"Host stream content-type is required.\"}\r\n0\r\n\r\n",
       "closed": false
     },
     {
@@ -1336,6 +1400,24 @@
       "pad": null,
       "halfClose": false,
       "response": "HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
+      "id": "ndjson-string-emoji",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 141\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"ndjson_string_emoji\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n4\r\nð\r\n1\r\nb\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
+      "id": "ndjson-string-surrogate",
+      "server": "main",
+      "request": "POST /api/module-host/call HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 145\r\n\r\n{\"principal\":{\"pilotDeckUserId\":\"u1\",\"tenantId\":\"t1\",\"actorUserId\":\"a1\",\"agentId\":\"ndjson_string_surrogate\"},\"operation\":\"list_tools\",\"input\":{}}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nï¿½\r\n1\r\na\r\n4\r\nð\r\n0\r\n\r\n",
       "closed": false
     },
     {

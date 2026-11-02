@@ -71,8 +71,8 @@ pub(crate) const WIRE_OPERATIONS: [&str; 22] = [
     "read_sop_authority",
 ];
 
-/// `PUBLIC_HOST_WIRE_HEADERS`: the only response headers the transport
-/// copies from a provider response.
+/// `PUBLIC_HOST_WIRE_HEADERS` (publicHostHttpTransport.ts): the only response
+/// headers the transport copies from a provider response.
 const WIRE_HEADERS: [&str; 6] = [
     "content-type",
     "etag",
@@ -87,7 +87,7 @@ const WIRE_HEADERS: [&str; 6] = [
 const INPUT_BUDGET: usize = 32 * 1024 * 1024;
 
 /// The top-level input keys a module may not smuggle through its call input:
-/// `PUBLIC_SCOPE_OVERRIDE`'s own-property list.
+/// `PUBLIC_SCOPE_OVERRIDE`'s own-property list (publicHostHttpTransport.ts).
 const SCOPE_OVERRIDE_KEYS: [&str; 7] = [
     "tenantId",
     "tenant_id",
@@ -339,9 +339,9 @@ pub(crate) async fn serve(
     }
     let operation = operation.unwrap_or_default();
     let call_input = parsed.get("input").cloned().unwrap_or(JsValue::Undefined);
-    let shape_ok = !crate::mutants::on("module-host-input-shape-off")
+    let shape_invalid = !crate::mutants::on("module-host-input-shape-off")
         && (!js_truthy(&call_input) || !matches!(&call_input, JsValue::Object(_)));
-    if shape_ok {
+    if shape_invalid {
         return Some(Ok(finalize(
             send_json(
                 hyper::StatusCode::BAD_REQUEST,
@@ -459,6 +459,35 @@ fn send_json(status: hyper::StatusCode, body: &str, keep_alive: bool) -> hyper::
         .expect("#1349 valid transport response")
 }
 
+/// A `send` the TS catch answers after the wire-header loop already ran
+/// (the two stream-path 502s): Node's `writeHead` merges with the earlier
+/// `setHeader` calls, so the response carries the provider's copied wire
+/// headers and its own `content-type: application/json` takes precedence
+/// over the provider's (measured on Node v22.22.0: with a provider
+/// content-type the json value replaces it in the provider's slot; without
+/// one it lands after the copied wire headers, both before `Date`).
+fn send_json_wire(
+    status: hyper::StatusCode,
+    body: &str,
+    keep_alive: bool,
+    provider_headers: &[(String, String)],
+) -> hyper::Response<Body> {
+    let mut builder = node_reason(hyper::Response::builder().status(status), status);
+    if crate::mutants::on("module-host-502-wire-headers-off") {
+        builder = builder.header(hyper::header::CONTENT_TYPE, "application/json");
+    } else {
+        builder = copy_wire_headers(builder, provider_headers, Some("application/json"));
+    }
+    builder = builder.header(
+        hyper::header::DATE,
+        httpdate::fmt_http_date(SystemTime::now()),
+    );
+    builder = connection_headers(builder, keep_alive);
+    builder
+        .body(streamed(Some(Bytes::from(body.to_owned()))))
+        .expect("#1349 valid transport response")
+}
+
 /// The provider-success response, one builder per TS `setHeader` + `end`
 /// cell: the wire-header allowlist copy, the JSON content-type default, and
 /// the body serialization branch. The response body of a known-length value
@@ -488,32 +517,53 @@ fn provider_response(response: HostResponse, keep_alive: bool) -> hyper::Respons
     let streaming = matches!(response.body, HostBody::Stream(_));
     let stream_content_type = is_stream_content_type(content_type.as_deref());
     if streaming && !crate::mutants::on("module-host-stream-ct-off") && !stream_content_type {
-        return send_json(
+        // TS throws after the wire-header loop already `setHeader`ed, so the
+        // catch's `writeHead` answer carries the copied wire headers (the
+        // explicit `content-type: application/json` wins over the provider's,
+        // measured on Node v22.22.0).
+        return send_json_wire(
             hyper::StatusCode::BAD_GATEWAY,
             "{\"code\":\"PILOTDECK_HOST_RESPONSE_INVALID\",\"message\":\"Host stream content-type is required.\"}",
             keep_alive,
+            &response.headers,
         );
     }
     if stream_content_type {
         return stream_content_type_response(response, keep_alive);
     }
-    let provider_had_content_type = content_type.is_some();
+    // TS falsiness: an empty content-type string is `!contentType`, so the
+    // default-JSON and raw-string branches both treat it as unset. The wire
+    // copy below keeps the final value in the provider's own slot, and the
+    // `rawBody`/Uint8Array branches keep the provider's empty header as-is
+    // (they never set a default, measured on Node v22.22.0).
+    let falsy_content_type = if crate::mutants::on("module-host-empty-ct-off") {
+        content_type.clone()
+    } else {
+        content_type.clone().filter(|value| !value.is_empty())
+    };
     let (body, content_type) = if let Some(raw) = &response.raw_body {
+        // A raw body keeps the provider's own content-type, empty included:
+        // the branch is `res.end(rawBody)` with no defaulting.
         (Bytes::from(raw.clone()), content_type)
     } else {
         match &response.body {
             HostBody::Bytes(bytes) => (bytes.clone(), content_type),
             HostBody::Value(JsValue::String(text)) => {
-                if content_type
+                if falsy_content_type
                     .as_deref()
                     .is_some_and(|value| !value.contains("json"))
                 {
-                    (utf8_bytes(text), content_type)
+                    (utf8_bytes(text), falsy_content_type)
                 } else {
                     let text = stringify_json(&JsValue::String(text.clone()))
                         .expect("#1349 a string value is serializable")
                         .unwrap_or_default();
-                    (Bytes::from(text), content_type)
+                    (
+                        Bytes::from(text),
+                        falsy_content_type
+                            .clone()
+                            .or_else(default_json_content_type),
+                    )
                 }
             }
             HostBody::Value(value) => (
@@ -522,29 +572,19 @@ fn provider_response(response: HostResponse, keep_alive: bool) -> hyper::Respons
                         .expect("#1349 a JSON value is serializable")
                         .unwrap_or_default(),
                 ),
-                content_type.or_else(|| {
-                    if crate::mutants::on("module-host-json-ct-off") {
-                        None
-                    } else {
-                        Some("application/json".to_owned())
-                    }
-                }),
+                falsy_content_type
+                    .clone()
+                    .or_else(default_json_content_type),
             ),
             // Unreachable: a stream body without a stream content type is
             // answered above.
-            HostBody::Stream(_) => (Bytes::new(), content_type),
+            HostBody::Stream(_) => (Bytes::new(), falsy_content_type),
         }
     };
     let status =
         hyper::StatusCode::from_u16(response.status).expect("#1349 validated provider status");
     let mut builder = node_reason(hyper::Response::builder().status(status), status);
-    builder = copy_wire_headers(builder, &response.headers);
-    // Node adds the default content-type only when the provider set none:
-    // `setHeader` replaces, never duplicates, so the wire copy already holds
-    // a provider content-type and the default lands after it.
-    if let (false, Some(content_type)) = (provider_had_content_type, content_type) {
-        builder = builder.header(hyper::header::CONTENT_TYPE, content_type);
-    }
+    builder = copy_wire_headers(builder, &response.headers, content_type.as_deref());
     builder = builder.header(
         hyper::header::DATE,
         httpdate::fmt_http_date(SystemTime::now()),
@@ -562,8 +602,8 @@ fn provider_response(response: HostResponse, keep_alive: bool) -> hyper::Respons
 /// The stream-content-type branch, TS's `flushHeaders` + `pipeline` over
 /// `encodeHostCapabilityStream`: headers go out first with chunked framing,
 /// then the encoded events. A falsy body is the `Missing host stream` 502; a
-/// truthy non-stream body iterates instead — a string one UTF-16 code unit
-/// at a time, an array element by element, an empty Uint8Array zero events —
+/// truthy non-stream body iterates instead — a string one code point at a
+/// time, an array element by element, an empty Uint8Array zero events —
 /// and anything else is not iterable and the response is destroyed after
 /// its headers, which the TS pipeline error and the hyper body error both
 /// render as the same header bytes with no terminator and a closed socket.
@@ -572,10 +612,14 @@ fn stream_content_type_response(response: HostResponse, keep_alive: bool) -> hyp
         && !crate::mutants::on("module-host-missing-stream-off")
         && !body_truthy(&response.body)
     {
-        return send_json(
+        // The throw is after the wire-header loop, so like the stream-CT
+        // gate above the 502 carries the copied provider wire headers
+        // (Node v22.22.0, measured).
+        return send_json_wire(
             hyper::StatusCode::BAD_GATEWAY,
             "{\"code\":\"PUBLIC_HOST_TRANSPORT_FAILED\",\"message\":\"Missing host stream\"}",
             keep_alive,
+            &response.headers,
         );
     }
     let ndjson = is_ndjson(&response.headers);
@@ -584,6 +628,7 @@ fn stream_content_type_response(response: HostResponse, keep_alive: bool) -> hyp
             receiver,
             ndjson,
             destroying: None,
+            closed: false,
         }
         .boxed(),
         other => match host_events(&other) {
@@ -591,6 +636,7 @@ fn stream_content_type_response(response: HostResponse, keep_alive: bool) -> hyp
                 events: events.into(),
                 ndjson,
                 destroying: None,
+                closed: false,
             }
             .boxed(),
             // A truthy body that does not iterate (an object, a number, a
@@ -605,7 +651,11 @@ fn stream_content_type_response(response: HostResponse, keep_alive: bool) -> hyp
     let status =
         hyper::StatusCode::from_u16(response.status).expect("#1349 validated provider status");
     let mut builder = node_reason(hyper::Response::builder().status(status), status);
-    builder = copy_wire_headers(builder, &response.headers);
+    builder = copy_wire_headers(
+        builder,
+        &response.headers,
+        header_value(&response.headers, "content-type").as_deref(),
+    );
     builder = builder.header(
         hyper::header::DATE,
         httpdate::fmt_http_date(SystemTime::now()),
@@ -638,19 +688,36 @@ fn node_reason(
 }
 
 /// The TS iteration of a truthy non-stream body under a stream content type:
-/// a string one UTF-16 code unit at a time, an array element by element
-/// (a string element passes through, every other element reaches the
-/// encoder), an empty Uint8Array zero events; anything else is not
-/// iterable and destroys the response after its headers.
+/// a string one code point at a time (`for await (const chunk of "a😀b")`
+/// yields `"a"`, `"😀"`, `"b"` — a surrogate pair is one event, a lone
+/// surrogate is its own single-unit event whose utf-8 write is the U+FFFD
+/// replacement, measured on the real `encodeHostCapabilityStream`, Node
+/// v22.22.0), an array element by element (a string element passes through,
+/// every other element reaches the encoder), an empty Uint8Array zero
+/// events; anything else is not iterable and destroys the response after
+/// its headers.
 fn host_events(body: &HostBody) -> Option<Vec<HostEvent>> {
     match body {
-        HostBody::Value(JsValue::String(text)) => Some(
-            text.units()
-                .to_vec()
-                .into_iter()
-                .map(|unit| HostEvent::Text(String::from_utf16_lossy(&[unit])))
-                .collect(),
-        ),
+        HostBody::Value(JsValue::String(text)) => {
+            let units = text.units();
+            let mut events = Vec::new();
+            let mut index = 0;
+            while index < units.len() {
+                // The JS string iterator: a well-formed surrogate pair is one
+                // code point (one event); everything else — a lone surrogate
+                // included — is its own single-unit event.
+                let pair = !crate::mutants::on("module-host-string-codepoint-off")
+                    && (0xD800..0xDC00).contains(&units[index])
+                    && index + 1 < units.len()
+                    && (0xDC00..0xE000).contains(&units[index + 1]);
+                let end = index + 1 + usize::from(pair);
+                events.push(HostEvent::Text(String::from_utf16_lossy(
+                    &units[index..end],
+                )));
+                index = end;
+            }
+            Some(events)
+        }
         HostBody::Value(JsValue::Array(items)) => Some(
             items
                 .iter()
@@ -677,6 +744,10 @@ struct QueuedBody {
     ndjson: bool,
     /// The armed destroy gate: the rejection message and its flush pause.
     destroying: Option<(String, Pin<Box<tokio::time::Sleep>>)>,
+    /// Set once the terminal destroy error was returned: the body contract
+    /// allows polls after an error, and they see the stream ended instead of
+    /// the error again or the events past the rejected one.
+    closed: bool,
 }
 impl hyper::body::Body for QueuedBody {
     type Data = Bytes;
@@ -686,11 +757,16 @@ impl hyper::body::Body for QueuedBody {
         context: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, crate::ProxyError>>> {
         let this = self.get_mut();
-        if let Some((message, pause)) = this.destroying.as_mut() {
+        if this.closed {
+            return std::task::Poll::Ready(None);
+        }
+        if let Some((message, mut pause)) = this.destroying.take() {
             if pause.as_mut().poll(context).is_pending() {
+                this.destroying = Some((message, pause));
                 return std::task::Poll::Pending;
             }
-            return std::task::Poll::Ready(Some(Err(rejected_event(message))));
+            this.closed = true;
+            return std::task::Poll::Ready(Some(Err(rejected_event(&message))));
         }
         while let Some(event) = this.events.pop_front() {
             match encode_event(event, this.ndjson) {
@@ -706,6 +782,7 @@ impl hyper::body::Body for QueuedBody {
                     if pending {
                         return std::task::Poll::Pending;
                     }
+                    this.closed = true;
                     return std::task::Poll::Ready(Some(Err(error)));
                 }
             }
@@ -760,9 +837,15 @@ fn body_truthy(body: &HostBody) -> bool {
 /// only the allowlisted headers, in table order (the case-insensitive
 /// `Headers` lookup over the provider's header list). A value Node's
 /// `setHeader` rejects is the TS ERR_INVALID_CHAR catch cell.
+///
+/// `content_type` is the final value of the content-type, which `setHeader`
+/// semantics replace in the provider's own wire slot; when the provider set
+/// none, a final value the transport adds lands after the copied wire
+/// headers, the order Node's key insertion produces (measured on v22.22.0).
 fn copy_wire_headers(
     builder: hyper::http::response::Builder,
     headers: &[(String, String)],
+    content_type: Option<&str>,
 ) -> hyper::http::response::Builder {
     let mut builder = builder;
     if crate::mutants::on("module-host-wire-headers-off") {
@@ -771,12 +854,37 @@ fn copy_wire_headers(
         }
         return builder;
     }
+    let provider_content_type = header_value(headers, "content-type");
     for header in WIRE_HEADERS {
+        if *header == *"content-type" {
+            if provider_content_type.is_some()
+                && let Some(value) = content_type
+            {
+                builder = builder.header(header, value);
+            }
+            continue;
+        }
         if let Some(value) = header_value(headers, header) {
             builder = builder.header(header, value);
         }
     }
+    if provider_content_type.is_none()
+        && let Some(value) = content_type
+    {
+        builder = builder.header(hyper::header::CONTENT_TYPE, value);
+    }
     builder
+}
+
+/// The transport's default JSON content type, `if (!contentType)
+/// res.setHeader('content-type', 'application/json')`: the switch is the
+/// mutant's own seam.
+fn default_json_content_type() -> Option<String> {
+    if crate::mutants::on("module-host-json-ct-off") {
+        None
+    } else {
+        Some("application/json".to_owned())
+    }
 }
 
 fn connection_headers(
@@ -871,6 +979,7 @@ fn js_truthy(value: &JsValue) -> bool {
 /// dot, fragments and queries split off. The same parse `native_http` uses
 /// for its static-layer traversal defense; kept here so the component does
 /// not depend on the #1209 routing module's private helper.
+/// Sibling: keep in sync with `whatwg_path` in `src/native_http.rs`.
 fn whatwg_path(target: &str) -> String {
     static BASE: std::sync::OnceLock<url::Url> = std::sync::OnceLock::new();
     let base = BASE.get_or_init(|| url::Url::parse("http://127.0.0.1").expect("valid base URL"));
@@ -883,6 +992,7 @@ fn whatwg_path(target: &str) -> String {
 /// Node's `Connection: close` request detection, copied from the #1209
 /// router: every `Connection` header value is split on commas and a `close`
 /// token (case-insensitive, trimmed) asks for a close.
+/// Sibling: keep in sync with `request_wants_close` in `src/native_http.rs`.
 fn request_wants_close(request: &hyper::Request<hyper::body::Incoming>) -> bool {
     request
         .headers()
@@ -952,6 +1062,9 @@ struct EncodedStreamBody {
     ndjson: bool,
     /// The armed destroy gate: the failure message and its flush pause.
     destroying: Option<(String, Pin<Box<tokio::time::Sleep>>)>,
+    /// Set once the terminal destroy error was returned: later polls see the
+    /// stream ended, never the error twice or the events past it.
+    closed: bool,
 }
 impl hyper::body::Body for EncodedStreamBody {
     type Data = Bytes;
@@ -960,10 +1073,15 @@ impl hyper::body::Body for EncodedStreamBody {
         mut self: std::pin::Pin<&mut Self>,
         context: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, crate::ProxyError>>> {
-        if let Some((message, pause)) = self.destroying.as_mut() {
+        if self.closed {
+            return std::task::Poll::Ready(None);
+        }
+        if let Some((message, mut pause)) = self.destroying.take() {
             if pause.as_mut().poll(context).is_pending() {
+                self.destroying = Some((message, pause));
                 return std::task::Poll::Pending;
             }
+            self.closed = true;
             return std::task::Poll::Ready(Some(Err(Box::new(io::Error::other(format!(
                 "module-host stream failed: {message}"
             ))))));
@@ -982,6 +1100,7 @@ impl hyper::body::Body for EncodedStreamBody {
                     if pending {
                         return std::task::Poll::Pending;
                     }
+                    self.closed = true;
                     return std::task::Poll::Ready(Some(Err(error)));
                 }
                 std::task::Poll::Ready(Some(Ok(event))) => match encode_event(event, self.ndjson) {
@@ -993,6 +1112,7 @@ impl hyper::body::Body for EncodedStreamBody {
                         if pending {
                             return std::task::Poll::Pending;
                         }
+                        self.closed = true;
                         return std::task::Poll::Ready(Some(Err(error)));
                     }
                     Ok(bytes) => {
@@ -1065,20 +1185,39 @@ pub(crate) struct ModuleHostResolver(pub(crate) Arc<ModuleHostPorts>);
 
 impl PublicHostResolver for ModuleHostResolver {
     fn resolve(&self, _principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider> {
-        let ports: Arc<ModuleHostPorts> = Arc::clone(&self.0);
-        ports
+        Arc::clone(&self.0) as Arc<dyn PublicHostProvider>
     }
 }
+
+/// Run one of the native provider's synchronous passes on the blocking pool
+/// so it never stalls the async workers, and report a join failure (a
+/// panicking pass) as the pass's own error message.
+async fn off_worker<T>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, String>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|join| format!("the host capability pass failed to join: {join}"))
+}
+
+/// The native operations the installed ports serve, the one list the
+/// `operations` advertisement and the `call` dispatch gate below share: the
+/// first two are the skills port's, the third the catalog port's.
+const PORT_OPERATIONS: [&str; 3] = [
+    "list_general_skills",
+    "import_general_skill",
+    "list_model_catalog",
+];
 
 impl PublicHostProvider for ModuleHostPorts {
     fn operations(&self) -> Vec<String> {
         let mut operations = Vec::new();
         if self.skills.is_some() {
-            operations.push("list_general_skills");
-            operations.push("import_general_skill");
+            operations.extend_from_slice(&PORT_OPERATIONS[..2]);
         }
         if self.catalog.is_some() {
-            operations.push("list_model_catalog");
+            operations.push(PORT_OPERATIONS[2]);
         }
         operations.into_iter().map(String::from).collect()
     }
@@ -1102,10 +1241,7 @@ impl PublicHostProvider for ModuleHostPorts {
                 ])),
                 raw_body: None,
             };
-            if !matches!(
-                operation.as_str(),
-                "list_general_skills" | "import_general_skill" | "list_model_catalog"
-            ) {
+            if !PORT_OPERATIONS.contains(&operation.as_str()) {
                 return Ok(unsupported(&operation));
             }
             let JsValue::Object(fields) = &input else {
@@ -1125,16 +1261,22 @@ impl PublicHostProvider for ModuleHostPorts {
                         return Ok(unsupported(&operation));
                     };
                     let list_input = public_skills_list_input(fields, &port.project_key);
-                    match port.manager.list(&list_input) {
-                        Ok(result) => Ok(HostResponse {
+                    let manager = Arc::clone(&port.manager);
+                    // The passes are synchronous file-system work
+                    // (SkillManager directory scans, `config::load` reads);
+                    // like the user-dialog store's dispatch, keep them off
+                    // the async workers.
+                    match off_worker(move || manager.list(&list_input)).await {
+                        Ok(Ok(result)) => Ok(HostResponse {
                             status: 200,
                             headers: Vec::new(),
                             body: HostBody::Value(public_skills_list_result(&result)),
                             raw_body: None,
                         }),
-                        Err(failure) => Ok(provider_error(String::from_utf16_lossy(
+                        Ok(Err(failure)) => Ok(provider_error(String::from_utf16_lossy(
                             failure.message.units(),
                         ))),
+                        Err(join) => Ok(provider_error(join)),
                     }
                 }
                 "import_general_skill" => {
@@ -1146,32 +1288,41 @@ impl PublicHostProvider for ModuleHostPorts {
                         _ => input.clone(),
                     };
                     let create_input = public_skills_create_input(&payload, &port.project_key);
-                    match port.manager.create(&create_input) {
-                        Ok(result) => Ok(HostResponse {
+                    let manager = Arc::clone(&port.manager);
+                    match off_worker(move || manager.create(&create_input)).await {
+                        Ok(Ok(result)) => Ok(HostResponse {
                             status: 200,
                             headers: Vec::new(),
                             body: HostBody::Value(result),
                             raw_body: None,
                         }),
-                        Err(failure) => Ok(provider_error(String::from_utf16_lossy(
+                        Ok(Err(failure)) => Ok(provider_error(String::from_utf16_lossy(
                             failure.message.units(),
                         ))),
+                        Err(join) => Ok(provider_error(join)),
                     }
                 }
                 _ => {
                     let Some(port) = &self.catalog else {
                         return Ok(unsupported(&operation));
                     };
-                    match crate::config::load(&port.metadata, &port.env) {
-                        Ok(config) => Ok(HostResponse {
+                    let metadata = crate::metadata::Metadata {
+                        home: port.metadata.home.clone(),
+                        cwd: port.metadata.cwd.clone(),
+                        files: crate::metadata::NativeFiles,
+                    };
+                    let env = port.env.clone();
+                    match off_worker(move || crate::config::load(&metadata, &env)).await {
+                        Ok(Ok(config)) => Ok(HostResponse {
                             status: 200,
                             headers: Vec::new(),
                             body: HostBody::Value(public_catalog_result(&config)),
                             raw_body: None,
                         }),
-                        Err(failure) => Ok(provider_error(String::from_utf16_lossy(
+                        Ok(Err(failure)) => Ok(provider_error(String::from_utf16_lossy(
                             failure.message.units(),
                         ))),
+                        Err(join) => Ok(provider_error(join)),
                     }
                 }
             }

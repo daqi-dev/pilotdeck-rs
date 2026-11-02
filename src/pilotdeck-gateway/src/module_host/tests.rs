@@ -139,7 +139,9 @@ fn host_failure(status: Option<u16>, code: Option<&str>, message: Option<&str>) 
 fn event_stream(events: Vec<HostEvent>) -> HostBody {
     let (sender, receiver) = mpsc::channel(events.len().max(1));
     for event in events {
-        let _ = sender.try_send(Ok(event));
+        sender
+            .try_send(Ok(event))
+            .expect("#1349 event_stream channel must hold every event");
     }
     HostBody::Stream(receiver)
 }
@@ -165,6 +167,21 @@ fn scenario(agent: &str) -> Result<HostResponse, HostFailure> {
         "bytes" => Ok(host_response(
             200,
             &[("content-type", "application/octet-stream")],
+            HostBody::Bytes(Bytes::from_static(&[0, 1, 2, 0xFA])),
+        )),
+        "empty_ct_string" => Ok(host_response(
+            200,
+            &[("content-type", ""), ("etag", "W/\"x\"")],
+            HostBody::Value(json("\"x\"")),
+        )),
+        "empty_ct_value" => Ok(host_response(
+            200,
+            &[("content-type", "")],
+            HostBody::Value(json("{\"ok\":1}")),
+        )),
+        "empty_ct_bytes" => Ok(host_response(
+            200,
+            &[("content-type", "")],
             HostBody::Bytes(Bytes::from_static(&[0, 1, 2, 0xFA])),
         )),
         "rawbody" => Ok(raw_response(201, &[("content-type", "text/xml")], "<raw/>")),
@@ -248,10 +265,34 @@ fn scenario(agent: &str) -> Result<HostResponse, HostFailure> {
             &[("content-type", "application/json")],
             event_stream(vec![HostEvent::Value(json("{\"a\":1}"))]),
         )),
+        "stream_plain_ct_headers" => Ok(host_response(
+            200,
+            &[
+                ("content-type", "application/json"),
+                ("etag", "W/\"x\""),
+                ("x-request-id", "r1"),
+            ],
+            event_stream(vec![HostEvent::Value(json("{\"a\":1}"))]),
+        )),
         "stream_missing" => Ok(host_response(
             200,
             &[("content-type", "application/x-ndjson")],
             HostBody::Value(json("null")),
+        )),
+        "stream_missing_headers" => Ok(host_response(
+            200,
+            &[
+                ("content-type", "application/x-ndjson"),
+                ("etag", "W/\"x\""),
+                ("x-request-id", "r1"),
+                ("retry-after", "3"),
+            ],
+            HostBody::Value(json("null")),
+        )),
+        "stream_noct_headers" => Ok(host_response(
+            200,
+            &[("etag", "W/\"x\""), ("x-request-id", "r1")],
+            event_stream(vec![HostEvent::Value(json("{\"a\":1}"))]),
         )),
         "ndjson_empty_string" => Ok(host_response(
             200,
@@ -262,6 +303,16 @@ fn scenario(agent: &str) -> Result<HostResponse, HostFailure> {
             200,
             &[("content-type", "application/x-ndjson")],
             HostBody::Value(json("\"abc\"")),
+        )),
+        "ndjson_string_emoji" => Ok(host_response(
+            200,
+            &[("content-type", "application/x-ndjson")],
+            HostBody::Value(json("\"a😀b\"")),
+        )),
+        "ndjson_string_surrogate" => Ok(host_response(
+            200,
+            &[("content-type", "application/x-ndjson")],
+            HostBody::Value(json("\"\\ud800a\\ud83d\\ude00\"")),
         )),
         "ndjson_array_body" => Ok(host_response(
             200,
@@ -510,6 +561,7 @@ replay_tests! {
     principal_empty => "principal-empty",
     principal_empty_string => "principal-empty-string",
     principal_whitespace => "principal-whitespace",
+    principal_unicode_ws => "principal-unicode-ws",
     principal_nbsp => "principal-nbsp",
     principal_number => "principal-number",
     principal_three => "principal-three",
@@ -535,6 +587,9 @@ replay_tests! {
     jsonstring => "jsonstring",
     emptystring_json => "emptystring-json",
     bytes => "bytes",
+    empty_ct_string => "empty-ct-string",
+    empty_ct_value => "empty-ct-value",
+    empty_ct_bytes => "empty-ct-bytes",
     rawbody => "rawbody",
     rawbody_noct => "rawbody-noct",
     nullbody => "nullbody",
@@ -555,9 +610,14 @@ replay_tests! {
     ndjson_array_event => "ndjson-array-event",
     sse_object_event => "sse-object-event",
     stream_plain_ct => "stream-plain-ct",
+    stream_plain_ct_headers => "stream-plain-ct-headers",
     stream_missing => "stream-missing",
+    stream_missing_headers => "stream-missing-headers",
+    stream_noct_headers => "stream-noct-headers",
     ndjson_empty_string => "ndjson-empty-string",
     ndjson_string_body => "ndjson-string-body",
+    ndjson_string_emoji => "ndjson-string-emoji",
+    ndjson_string_surrogate => "ndjson-string-surrogate",
     ndjson_array_body => "ndjson-array-body",
     ndjson_object_body => "ndjson-object-body",
     ndjson_bytes_body => "ndjson-bytes-body",
@@ -674,7 +734,8 @@ fn normalize(raw: &[u8]) -> Vec<u8> {
                 continue;
             };
             let name = trim_ascii(name).to_ascii_lowercase();
-            if name == b"transfer-encoding" && contains_sub(&value.to_ascii_lowercase(), b"chunked")
+            if name == b"transfer-encoding"
+                && find(&value.to_ascii_lowercase(), b"chunked").is_some()
             {
                 chunked = true;
             } else if name == b"content-length" {
@@ -720,13 +781,16 @@ fn normalize(raw: &[u8]) -> Vec<u8> {
                 out.extend_from_slice(size_text.to_ascii_lowercase().as_bytes());
                 out.extend_from_slice(b"\r\n");
                 rest = &rest[line_end + 2..];
-                if rest.len() < size + 2 {
+                let chunk_end = size
+                    .checked_add(2)
+                    .expect("#1349 chunk size plus CRLF overflows usize");
+                if rest.len() < chunk_end {
                     out.extend_from_slice(rest);
                     break 'responses;
                 }
                 out.extend_from_slice(&rest[..size]);
                 out.extend_from_slice(b"\r\n");
-                rest = &rest[size + 2..];
+                rest = &rest[chunk_end..];
                 if size == 0 {
                     continue 'responses;
                 }
@@ -752,10 +816,6 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
-}
-
-fn contains_sub(haystack: &[u8], needle: &[u8]) -> bool {
-    find(haystack, needle).is_some()
 }
 
 /// Split on every `separator`, the `str::split` shape (a trailing separator
@@ -1012,6 +1072,43 @@ async fn catalog_port_reads_the_real_config_store() {
     let _ = std::fs::remove_dir_all(&parent);
 }
 
+/// #1349: an empty configured bearer token must not admit a bare
+/// `Authorization: Bearer ` (or any whitespace-only token): the TS comparison
+/// is `authorization !== \`Bearer ${token}\`` against a Node header value,
+/// and both stacks strip the surrounding OWS before the comparison, so the
+/// formatted `Bearer ` can never match a received header (measured on
+/// hyper: every spacing is the 401).
+#[tokio::test]
+async fn empty_token_admits_no_bare_bearer() {
+    let module_config = Config {
+        token: String::new(),
+        capabilities: None,
+    };
+    let native_config = native_http::Config {
+        token: "fixture-token".into(),
+        loopback: true,
+        static_root: None,
+    };
+    for authorization in ["Bearer ", "Bearer", "Bearer  ", " Bearer "] {
+        let request = format!(
+            "POST /api/module-host/describe HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: {authorization}\r\nContent-Length: 2\r\n\r\n{{}}"
+        );
+        let (raw, _) = serve_and_capture(
+            module_config.clone(),
+            native_config.clone(),
+            request.as_bytes(),
+            "empty-token",
+            false,
+        )
+        .await;
+        let response = latin1_string(&raw);
+        assert!(
+            response.starts_with("HTTP/1.1 401"),
+            "#1349 an empty token must not admit `{authorization}`: {response}"
+        );
+    }
+}
+
 /// #1349: a gap operation (no process-level Rust owner yet) is the typed 501
 /// on a direct call and is never advertised, so through the transport it is
 /// the 409 the gate answers first.
@@ -1138,7 +1235,11 @@ async fn describe_and_call_spawn_no_children() {
     )
     .await;
     assert!(
-        contains_sub(&normalize(&raw), b"{\"operations\":[\"list_general_skills\",\"import_general_skill\",\"list_model_catalog\"]}"),
+        find(
+            &normalize(&raw),
+            b"{\"operations\":[\"list_general_skills\",\"import_general_skill\",\"list_model_catalog\"]}"
+        )
+        .is_some(),
         "#1349 the audit describe serves the native ports' operations: {}",
         latin1_string(&raw)
     );
@@ -1159,7 +1260,7 @@ async fn describe_and_call_spawn_no_children() {
     )
     .await;
     assert!(
-        contains_sub(&normalize(&raw), b"alpha/main"),
+        find(&normalize(&raw), b"alpha/main").is_some(),
         "#1349 the audit call serves the native catalog: {}",
         latin1_string(&raw)
     );
