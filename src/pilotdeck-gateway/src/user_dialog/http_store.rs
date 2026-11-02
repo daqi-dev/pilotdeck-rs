@@ -2878,6 +2878,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        #[cfg(test)]
+        http_store_park_tests::on_read(&this.timer, buffer.remaining());
         if this.read_eof {
             return Poll::Ready(Ok(()));
         }
@@ -2987,6 +2989,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
                     if delivered {
                         break;
                     }
+                    #[cfg(test)]
+                    http_store_park_tests::on_pending(&this.timer);
                     this.timer.store_waker(cx);
                     if deadline.is_some() && this.sleep.as_mut().poll(cx).is_ready() {
                         return this.expire(cx);
@@ -3006,6 +3010,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
         }
         // Only the read-ahead cap lands here with nothing to hand over: park
         // like the socket arm above.
+        #[cfg(test)]
+        http_store_park_tests::before_park(&this.timer);
         this.timer.store_waker(cx);
         if deadline.is_some() && this.sleep.as_mut().poll(cx).is_ready() {
             return this.expire(cx);
@@ -3744,3 +3750,7 @@ fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
 #[cfg(test)]
 #[path = "http_store_tests.rs"]
 mod http_store_tests;
+
+#[cfg(test)]
+#[path = "http_store_park_tests.rs"]
+mod http_store_park_tests;
