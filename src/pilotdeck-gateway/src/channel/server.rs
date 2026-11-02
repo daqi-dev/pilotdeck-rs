@@ -164,6 +164,8 @@ impl ChannelServer {
     /// close does not wait for a start that has not yet produced a live handle;
     /// that start stops its own late handle and rejects when it eventually resolves.
     pub fn close(&self) -> BoxFuture<Result<(), ChannelError>> {
+        #[cfg(test)]
+        self.0.transition("close-entered", &ChannelKey::new(""));
         let claimed = {
             let mut state = self.0.state.lock().expect("channel state");
             if state.closing {
@@ -429,11 +431,18 @@ async fn stop(inner: &Arc<Inner>, key: &ChannelKey, reason: &str) -> Result<bool
         state.stop_prefixes += 1;
         state.running.remove(index)
     };
+    stop_claimed(inner, entry, reason).await
+}
+async fn stop_claimed(
+    inner: &Arc<Inner>,
+    entry: Running,
+    reason: &str,
+) -> Result<bool, ChannelError> {
     // Claim and prefix reservation are atomic. Keep external stop callbacks out
     // of the state lock: a synchronous stop may itself reenter close().
     let prefix = StopPrefix(inner.clone());
     #[cfg(test)]
-    inner.transition("stop-claimed", key);
+    inner.transition("stop-claimed", &entry.key);
     let future = begin_stop(entry.handle.clone(), reason);
     drop(prefix);
     finish_stop(inner, entry, future, reason).await
@@ -478,21 +487,34 @@ async fn replace(
     key: &ChannelKey,
     channel: Arc<dyn ChannelAdapter>,
 ) -> Result<(), ChannelError> {
-    let previous = {
-        let state = inner.state.lock().expect("channel state");
+    let (previous, claimed) = {
+        let mut state = inner.state.lock().expect("channel state");
         if state.closing {
             return Err(closing_error());
         }
         #[cfg(test)]
         inner.transition("replace-checked", key);
-        state
+        let previous = state
             .running
             .iter()
             .find(|entry| entry.key == *key)
-            .map(|entry| entry.adapter.clone())
+            .map(|entry| entry.adapter.clone());
+        #[cfg(test)]
+        inner.transition("replace-snapshotted", key);
+        // TS snapshots the adapter and deletes the running handle before its
+        // first await. Close must not claim that handle between these steps.
+        let claimed = state
+            .running
+            .iter()
+            .position(|entry| entry.key == *key)
+            .map(|index| {
+                state.stop_prefixes += 1;
+                state.running.remove(index)
+            });
+        (previous, claimed)
     };
-    if previous.is_some() {
-        stop(inner, key, "hot-reload").await?;
+    if let Some(entry) = claimed {
+        stop_claimed(inner, entry, "hot-reload").await?;
     }
     match start(inner, key, channel).await {
         Ok(()) => Ok(()),

@@ -228,6 +228,9 @@ impl ChannelHandle for MockHandle {
 }
 
 async fn replay(case: &Value) -> Value {
+    replay_with_claim_race(case, false).await
+}
+async fn replay_with_claim_race(case: &Value, claim_race: bool) -> Value {
     let record = Arc::new(Mutex::new(Record::default()));
     let gates = Gates::default();
     let config =
@@ -272,6 +275,7 @@ async fn replay(case: &Value) -> Value {
             Box::pin(async move { error.map_or(Ok(()), |e| Err(ChannelError::error(e))) })
         }),
     );
+    let close_actors = Arc::new(Mutex::new(Vec::new()));
     let hook_hits = Arc::new(Mutex::new(Vec::<String>::new()));
     let atomic_snapshot = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let mut channels: HashMap<String, Arc<Mock>> = HashMap::new();
@@ -287,10 +291,60 @@ async fn replay(case: &Value) -> Value {
                 let hits = hook_hits.clone();
                 let atomic = atomic_snapshot.clone();
                 let gates = gates.clone();
+                let actors = close_actors.clone();
                 let fired = std::sync::atomic::AtomicBool::new(false);
+                let (close_entered, close_entry) = std::sync::mpsc::channel();
+                let close_entry = Mutex::new(close_entry);
                 server.set_hook(Some(Arc::new(move |point, key| {
                     use std::sync::atomic::Ordering::SeqCst;
+                    if claim_race && point == "close-entered" {
+                        close_entered
+                            .send(())
+                            .expect("#1327 claim race close entry");
+                        return;
+                    }
                     if *key != ChannelKey::new("a") {
+                        return;
+                    }
+                    if claim_race {
+                        if kind == "replace-snapshot" && point == "replace-snapshotted" {
+                            assert!(
+                                !fired.swap(true, SeqCst),
+                                "#1327 claim race target hook only once"
+                            );
+                            hits.lock().expect("#1327 target hooks").push(kind.clone());
+                            let (observed, observation) = std::sync::mpsc::channel();
+                            let locked = !target.state_available();
+                            let target = target.clone();
+                            let gates = gates.clone();
+                            let actor = tokio::task::spawn_blocking(move || {
+                                // The replacement is paused after its snapshot.
+                                // If its lock is held, close must wait for claim;
+                                // otherwise close completes its synchronous claim
+                                // before the replacement is allowed to continue.
+                                let close = target.close();
+                                if !locked {
+                                    // Clean up the broken path without using a
+                                    // wait-host timeout as mutation evidence.
+                                    gate(&gates, "stop").send_replace(true);
+                                    observed
+                                        .send(())
+                                        .expect("#1327 claim race close observation");
+                                }
+                                close
+                            });
+                            actors.lock().expect("#1327 claim race actors").push(actor);
+                            close_entry
+                                .lock()
+                                .expect("#1327 claim race close entry receiver")
+                                .recv_timeout(Duration::from_secs(5))
+                                .expect("#1327 claim race close entered snapshot window");
+                            if !locked {
+                                observation
+                                    .recv_timeout(Duration::from_secs(5))
+                                    .expect("#1327 claim race close claimed before replacement");
+                            }
+                        }
                         return;
                     }
                     if kind == "replace-snapshot" && point == "replace-checked" {
@@ -312,7 +366,23 @@ async fn replay(case: &Value) -> Value {
                 })));
             }
             "wait-host" => {
-                until(|| record.lock().expect("#1327 host record").host_closes == 1).await
+                until(|| record.lock().expect("#1327 host record").host_closes == 1).await;
+                // Complete close before the next snapshot/release step: the
+                // predecessor's asynchronous stop is still gated at this point.
+                let actors =
+                    std::mem::take(&mut *close_actors.lock().expect("#1327 claim race actors"));
+                for actor in actors {
+                    let close = bounded(actor)
+                        .await
+                        .expect("#1327 claim race close actor completed");
+                    assert_eq!(
+                        bounded(close)
+                            .await
+                            .map_or_else(error_value, |()| Value::Null),
+                        Value::Null,
+                        "#1327 claim race close result null"
+                    );
+                }
             }
             "create" => {
                 let id = text(step, "id");
@@ -845,6 +915,19 @@ async fn replace_close_keeps_previous_snapshot() {
         replay(case).await,
         case["expected"],
         "#1327 replace close aggregate"
+    );
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replace_close_claim_is_atomic() {
+    let oracle = oracle(LIFECYCLE);
+    let case = lifecycle_cases(&oracle)
+        .iter()
+        .find(|c| c["name"] == "close-after-replace-check")
+        .expect("#1327 claim race fixture present");
+    crate::negative_assert_eq!(
+        replay_with_claim_race(case, true).await,
+        case["expected"],
+        "#1327 replace claim atomic"
     );
 }
 #[tokio::test]
