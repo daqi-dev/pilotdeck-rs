@@ -11,6 +11,7 @@ mod js_value;
 mod metadata;
 mod model_catalog;
 pub mod model_cost;
+mod module_host;
 #[doc(hidden)]
 pub mod mutants;
 mod native_archive;
