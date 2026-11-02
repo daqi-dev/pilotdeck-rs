@@ -175,14 +175,87 @@ class PlanTests(unittest.TestCase):
         marker = '#1368 unchecked measurement boundaries cannot report PASS'
         with tempfile.TemporaryDirectory(prefix='stimulus-measurement-') as tmp:
             folder = Path(tmp)
-            measurement_fixture(folder, 5)
-            with mock.patch.object(v.s, 'plan', side_effect=unchecked_plan):
+            case_count = len(registration_rows({'cells': v.s.CELLS, 'phases': ['model', 'tool']}))
+            for repeats in (1, 2, 5):
+                measurement_fixture(folder, repeats)
+                with mock.patch.object(v.s, 'plan', side_effect=unchecked_plan):
+                    result = v.verify(folder)
+                self.assertTrue(result['status'] == 'NOT_RUN'
+                                and len(result['uncheckedBoundaries']) == case_count * repeats
+                                and all(row['boundary'] == 'registry' and '未执行' in row['reason']
+                                        for row in result['uncheckedBoundaries'])
+                                and result['missingEventControls'] == result['reversedOrderControls']
+                                == result['emptyBeforeControls'] == 0, marker)
+
+    def test_empty_order_not_witnessed(self):
+        marker = '#1368 every ordered boundary rejects empty before'
+        for plan in c.stimuli.plans():
+            for target in plan['boundaries']:
+                if target['name'] == 'registry':
+                    continue
+                with self.subTest(case=plan['case'], boundary=target['name']):
+                    with self.assertRaisesRegex(ValueError, '^#1368 missing required order edges: ', msg=marker):
+                        v.witnessed(dict(target, before=[]), target['events'])
+
+    def test_measurement_rejects_empty_order(self):
+        marker = '#1368 verifier independently rejects missing order before skipping events'
+        targets = {target['name']: target for plan in c.stimuli.plans()
+                   for target in plan['boundaries'] if target['name'] != 'registry'}
+        with tempfile.TemporaryDirectory(prefix='stimulus-empty-order-') as tmp:
+            folder = Path(tmp)
+            measurement_fixture(folder, 1)
+            for target in targets.values():
+                for events in (target['events'], []):
+                    def damaged_plan(case):
+                        plan = unchecked_plan(case)
+                        plan['boundaries'].append(dict(target, before=[], events=events))
+                        return plan
+                    # Bypass the witness function deliberately: verify itself
+                    # must reject invalid plans, including eventless targets.
+                    with mock.patch.object(v.s, 'plan', side_effect=damaged_plan), \
+                            mock.patch.object(v, 'witnessed', return_value=True):
+                        with self.assertRaisesRegex(ValueError, '^#1368 missing required order edges: ', msg=marker):
+                            v.verify(folder)
+
+    def test_measurement_empty_order_controls(self):
+        marker = '#1368 empty-before data controls cover every ordered measurement'
+        def phase_plan(case):
+            plan = c.stimuli.plan(case)
+            plan['boundaries'] = [plan['boundaries'][1]]
+            return plan
+        with tempfile.TemporaryDirectory(prefix='stimulus-order-controls-') as tmp:
+            folder = Path(tmp)
+            repeats = 2
+            measurement_fixture(folder, repeats)
+            for cell in v.s.CELLS:
+                path = folder / (cell['name'] + '.json')
+                document = json.loads(path.read_text())
+                for observation in document['observations']:
+                    target = phase_plan(observation['id'].rsplit('/', 1)[0])['boundaries'][0]
+                    # Producer, client frame, wait satisfy the declared edge;
+                    # this synthetic control makes no TS scheduling claim.
+                    observation['timeline'] = target['events']
+                path.write_text(json.dumps(document))
+            with mock.patch.object(v.s, 'plan', side_effect=phase_plan):
                 result = v.verify(folder)
-            self.assertTrue(result['status'] == 'NOT_RUN'
-                            and len(result['uncheckedBoundaries']) == 360
-                            and all(row['boundary'] == 'registry' and '未执行' in row['reason']
-                                    for row in result['uncheckedBoundaries'])
-                            and result['missingEventControls'] == result['reversedOrderControls'] == 0, marker)
+                expected = len(registration_rows({'cells': v.s.CELLS, 'phases': ['model', 'tool']})) * repeats
+                self.assertTrue(result['status'] == 'PASS'
+                                and result['emptyBeforeControls'] == expected, marker)
+                # Only empty declarations are incorrectly accepted; original,
+                # missing-event and reversed-order controls still run normally.
+                original = v.witnessed
+                def accepts_empty(target, timeline):
+                    return True if not target['before'] else original(target, timeline)
+                with mock.patch.object(v, 'witnessed', side_effect=accepts_empty):
+                    with self.assertRaisesRegex(ValueError, '^#1368 empty-before data control SURVIVED:', msg=marker):
+                        v.verify(folder)
+                def unrelated_error(target, timeline):
+                    if not target['before']:
+                        raise ValueError('#1368 unrelated witness failure')
+                    return original(target, timeline)
+                with mock.patch.object(v, 'witnessed', side_effect=unrelated_error):
+                    with self.assertRaisesRegex(ValueError, '^#1368 unrelated witness failure$', msg=marker):
+                        v.verify(folder)
 
     def test_phase_requires_prefix_before_wait(self):
         marker = '#1368 phase production must precede controlled loop wait'
@@ -216,11 +289,12 @@ class PlanTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory(prefix='stimulus-denominator-') as tmp:
                 folder = Path(tmp)
+                case_count = len(registration_rows({'cells': v.s.CELLS, 'phases': ['model', 'tool']}))
                 with mock.patch.object(v.s, 'plan', side_effect=unchecked_plan):
                     for repeats in (1, 2):
                         measurement_fixture(folder, repeats)
                         result = v.verify(folder)
-                        self.assertTrue(result['measurements'] == 72 * repeats, marker)
+                        self.assertTrue(result['measurements'] == case_count * repeats, marker)
                     path = folder / 'no-registry-fast.json'
                     document = json.loads(path.read_text())
                     rows = document['observations']
@@ -274,6 +348,37 @@ class PlanTests(unittest.TestCase):
         log = io.StringIO()
         result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
         self.assertTrue(result.wasSuccessful(), marker + ': ' + log.getvalue())
+
+    def test_memory_runners_do_not_compile_tree(self):
+        marker = '#1368 memory runners never launch cargo or claim a mutated build'
+        for folder in ('native-stimulus-plan', 'native-session-e2e'):
+            path = Path(__file__).parent.parent / folder / 'negative_controls.py'
+            spec = importlib.util.spec_from_file_location('memory_runner', path)
+            runner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runner)
+            name, _path, _before, _after, test = runner.cases[0]
+            passed = subprocess.CompletedProcess([], 0, 'Ran 1 test in 0.001s\nOK\n', '')
+            def run(command, **_kwargs):
+                self.assertTrue(command[0] != 'cargo', marker)
+                return passed
+            with tempfile.TemporaryDirectory(prefix='stimulus-memory-runner-') as tmp:
+                output = Path(tmp) / 'results'
+                with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory', '--case', name]), \
+                        mock.patch.object(runner, 'execution_environment', return_value={}), \
+                        mock.patch.object(runner, 'preflight'), \
+                        mock.patch.object(runner, 'run_owned', side_effect=run), \
+                        mock.patch.object(runner, 'wait_for_slot', side_effect=AssertionError(marker)), \
+                        mock.patch('sys.stdout', new_callable=io.StringIO):
+                    # The synthetic child passes even under mutation, so the
+                    # runner must finish as SURVIVED, never as a build failure.
+                    self.assertTrue(runner.main() == 1, marker)
+                summary = json.loads((output / 'summary.json').read_text())
+                rows = summary['controls'] if isinstance(summary, dict) else summary
+                self.assertTrue(len(rows) == 1 and rows[0]['status'] == 'SURVIVED'
+                                and rows[0]['compiled'] is False
+                                and rows[0]['test'].endswith('.' + test)
+                                and not list(output.glob('*-compile.log'))
+                                and not list(output.glob('*-slots.log')), marker)
 
 
 if __name__ == '__main__':

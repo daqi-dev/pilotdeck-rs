@@ -53,6 +53,17 @@ cases = [
     ('unsafe-plan-target', runner, '\n    return target_environment(root)\n', '\n    return os.environ.copy()\n', 'test_runner_target_environment'),
     ('unsafe-e2e-target', e2e_runner, 'return target_environment(root)', 'return os.environ.copy()', 'test_runner_target_environment'),
     ('registry-free-control-without-mock', r11, 'fixture._collect(output, real_settle=True, synthetic_stimuli=True)', 'fixture._collect(output, real_settle=True, synthetic_stimuli=False)', 'test_registry_free_settle_synthetic_control'),
+    ('empty-order-witnessed', measurement, "if target['name'] != 'registry' and not target['before']:", 'if False:', 'test_empty_order_not_witnessed'),
+    ('verify-order-guard-skipped', measurement, "                require_order(target)\n                if not target['events']:", "                if not target['events']:", 'test_measurement_rejects_empty_order'),
+    ('empty-before-control-skipped', measurement, '                        witnessed(damaged, timeline)\n                    except ValueError as error:', "                        raise ValueError('#1368 missing required order edges: ' + target['name'])\n                    except ValueError as error:", 'test_measurement_empty_order_controls'),
+    ('empty-before-count-omitted', measurement, 'empty_before_controls += 1', 'empty_before_controls += 0', 'test_measurement_empty_order_controls'),
+    ('hardcoded-unchecked-count', fixture, "len(result['uncheckedBoundaries']) == case_count * repeats", "len(result['uncheckedBoundaries']) == 360", 'test_measurement_unchecked_not_pass'),
+    ('registry-wait-control-without-mock', r11, 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=True)', 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=False)', 'test_registry_free_settle_synthetic_control'),
+    ('memory-plan-launches-cargo', runner, '            if not args.memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
+    ('memory-e2e-launches-cargo', e2e_runner, '            if not memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
+    ('memory-plan-claims-compiled', runner, "        status, reason, compiled = 'INVALID', '', False\n        try:", "        status, reason, compiled = 'INVALID', '', True\n        try:", 'test_memory_runners_do_not_compile_tree'),
+    ('memory-e2e-claims-compiled', e2e_runner, "        status, reason, compiled = 'INVALID', '', False\n        try:", "        status, reason, compiled = 'INVALID', '', True\n        try:", 'test_memory_runners_do_not_compile_tree'),
+    ('empty-before-wrong-error-counted', measurement, "if str(error) != '#1368 missing required order edges: ' + target['name']:", 'if False:', 'test_measurement_empty_order_controls'),
 ]
 messages = {
     'missing-cell': '#1368 all 72 inputs match TS preregistration',
@@ -80,6 +91,17 @@ messages = {
     'unsafe-plan-target': '#1368 both negative runners reject unsafe or missing cargo targets',
     'unsafe-e2e-target': '#1368 both negative runners reject unsafe or missing cargo targets',
     'registry-free-control-without-mock': '#1368 registry-free settle controls explicitly attest synthetic stimuli',
+    'empty-order-witnessed': '#1368 every ordered boundary rejects empty before',
+    'verify-order-guard-skipped': '#1368 verifier independently rejects missing order before skipping events',
+    'empty-before-control-skipped': '#1368 empty-before data controls cover every ordered measurement',
+    'empty-before-count-omitted': '#1368 empty-before data controls cover every ordered measurement',
+    'hardcoded-unchecked-count': '#1368 unchecked measurement boundaries cannot report PASS',
+    'registry-wait-control-without-mock': '#1368 registry-free settle controls explicitly attest synthetic stimuli',
+    'memory-plan-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',
+    'memory-e2e-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',
+    'memory-plan-claims-compiled': '#1368 memory runners never launch cargo or claim a mutated build',
+    'memory-e2e-claims-compiled': '#1368 memory runners never launch cargo or claim a mutated build',
+    'empty-before-wrong-error-counted': '#1368 empty-before data controls cover every ordered measurement',
 }
 
 
@@ -182,15 +204,16 @@ def main():
                 raise ValueError('positive bound test did not pass')
             if not args.memory:
                 path.write_text(changed)
-            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-            (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
-            build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-                               '-p', 'pilotdeck-gateway', '--test', 'native_stimulus_plan', '--no-run'],
-                              cwd=root, env=env, timeout=900)
-            (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
-            if build.returncode != 0:
-                raise ValueError('no-run failed')
-            compiled = True
+            if not args.memory:
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+                (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
+                build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                                   '-p', 'pilotdeck-gateway', '--test', 'native_stimulus_plan', '--no-run'],
+                                  cwd=root, env=env, timeout=900)
+                (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
+                if build.returncode != 0:
+                    raise ValueError('no-run failed')
+                compiled = True
             status = classify(run(name + '-negative', test, name if args.memory else None), test, messages[name])
             reason = {'KILLED': 'bound assertion matched', 'SURVIVED': 'bound test passed',
                       'INVALID': 'missing bound runtime assertion'}[status]
