@@ -2918,3 +2918,20 @@ updated: 2026-11-02 07:55 · by Claude Code 子代理（READY 重写）
 - 06:35 #1155 同一处第 4 次尺子 P1：不开第 4 轮，等 opus + cb8 宿主，全杀且无同类则 P2b 登记，印证则挂起并写决策卡。在审 19 超上限，_build+_tmp 约 186.5 GiB 需回收。
 - 06:35 **两小时交接** → `_tmp/20261102-handoff-0635.md`。
 - 07:57 READY 重写（按 #1301 B / #1302 B / #1303 A / #1304 A 落实：移出 21 条（已关 #1252 #1359、决策 #1301–#1304、not planned #1314 #1315、[A 之后] channel 13 张）；解锁 #1292 + #1366 同包、#1382 + #1260 同包；加入 #1386 #1383 #1157（PR #1387）；#1368 转 doing；共 96 条，队首 #1292）
+
+## 11-02 06:35–08:35
+
+- 06:4x #1252（PR #1259）入队（r4 opus 全 diff 四角色 PASS 无超时、cb8 75/75 KILLED、lib 3356）；「严格格只靠十次采样」最坏假 FAIL 且响亮 → 维持 P2（#1382，AI 代批待复核）。#1359（PR #1379）rebase 后入队。#1318 r1 两家 + cb8 宿主三方印证 P1（apply-close-skipped 绑定不存在的金样 case）→ fix-r1 GLM cb8；#1349 r1 DeepSeek P1（流字符串按 UTF-16 code unit 迭代，TS 按 code point）→ fix-r1 GLM macmini。本机磁盘 201 → 删 wt-1359 cargo-target → 188 GiB。
+- 07:0x A5 跟进（PR #1374）r1 宿主：新增两套负控（native-witness/negative_boundary、session-lease/negative）全 INVALID——guarded sources 缺 gateway-parity/common.py（M6 执行器从已验证字节加载对拍锁的前提）；GLM 0 P0/P1 → fix-r1 Codex mbp2（照 negative_authentication.py:26 补齐，不动 M6）。
+- 07:1x #1359（PR #1379）合入 4dc943604 → 收尾完；#1292 / #1366 解锁（同改 native_http，可合并为一单派），在审 19 > 16 暂不派。A5 跟进 r1 宿主两套新负控缺 guarded common.py → fix-r1 Codex mbp2；#1368 r1 opus P0×2 + P1、GLM P1×2（空声明真空真、phase 顺序边缺、零 / 多匹配不分、硬编码 360）→ fix-r1 Codex mbp2。
+- 07:2x #1252（PR #1259）合入 e48d3f60d → 收尾完；#1260 解锁（16 个 STABLE-DIFF 格），已评论。
+- 07:3x **人拍板四张决策单（11-02 07:16–07:30，GitHub 显示 UTC 23:16–23:30）**：#1301 B（只授权 E1 retirement suite；host / session 用 #590 四格账本 + deadline 代替，A6 / A7 完成口径随之调整）、#1302 B（channel 子集：协议核心 + weixin + feishu + 带监听器的 4 个；其余 13 个推到 A 之后，A8.6 报「channel 子集除外」）、#1303 A（A 内不切默认，#1354 只做开关）、#1304 A（#1222 的 002 差异继续接受，新增 -R1）。→ 落实（关单 / 推后 / 新 issue / 差异 -R1 + 决策卡 PR / #1157 汇总）交子代理。round-start 07:30 当轮即报出，处理及时（此前误读 UTC 时间写成「隔 8 h」，已更正）。
+- 07:4x 四张决策单落实（子代理）：#1301–#1304 关单；#1314 / #1315 not planned 关（host / session suite 由 #590 四格账本 / #1317 人工对账表替代，无回归闸门）；13 个 channel 单标「[A 之后]」+ Blocked 等前置；子集 7 单（#1327–#1329 #1333 #1334 #1336 #1339）留 A 内；新开 #1386（未迁 13 channel 登记差异 + Rust 明确拒绝启动，前置 A8.6）；差异 A8.4-NATIVE-HTTP-002-R1 + 决策卡 `state/decisions-20261102-a-stage-scope.md` → PR #1387 等绿入队；#1157 / #1357 已贴新口径。
+- 07:4x #1327（A8.3 channel 协议核心，约 3 人日）GLM 两次整轮超时（cb8 7200 s、本机 5400 s），但树上留有 7497 行未跟踪半成品（channel/ 模块 + 两套 fixture）；GLM 会话退出后遗留孤儿 cargo test 进程挡住派单 → 按 pid 停掉；改派 Codex 本机 dispatch-resume 接续半成品，本轮只做 pr1（注册 + 启用 + 生命周期状态机 + 金样 + 负控），pr2（接纳器端口 + 挂载点）下轮另派。
+- 07:5x #1324 fix-r1 cb8 时限 124 → 本机 dispatch-resume GLM 接续半成品
+- 07:5x 在途 10 单状态分诊交子代理（_tmp/20261102-inflight-triage-0752/）；READY 重写交子代理（state PR）。
+- 08:0x 分诊结果：#1368 r2 opus boundary P0（witnessed() before=[] 恒真，r1 GLM 独立撞上）→ 撤旧 macmini 链、fix-r2 派 Codex 本机；p2b2 opus P0（ci.yml --check 退出码）实测仲裁不成立（Actions 默认 bash -e，rc=1），P1 _shared/mutant_switch.py --nocapture 转 #1099；cb8 唯一 INVALID entries-locale-pin → fix-r1 派 GLM cb8 先比 main 基线；macmini 空闲 29G < 45G 卡四条链 → 清盘交子代理；#1318 r2 DeepSeek 0/0/0/0。
+- 08:0x #1324 fix-r1 本机接续交付 abb4a3765 → r2 opus + DeepSeek + macmini + cb8。macmini 空闲已回 95G（另一路清理删了 #360 / a5b cargo-target），四条卡准入的链放行。缺角色补跑（#1305 / #1220 opus 超时、#360 simplify PARTIAL、a5b GLM 模型名回显不符）交子代理。
+- 08:1x READY 重写 PR #1388 合入 da4c90086（96 条：doing 28 / ready 13 / human 1 / blocked 54）。A 链队首 #1292 + #1366（同改 native_http 一包）→ GLM cb8：在审 18 里 8 单是非 A 收尾，A 链队首不受在审上限（资源调度自决，记卡）。#1349 r1 macmini lib 2 failed：static_upper_lower（分支缺 4dc943604，收货后 rebase）+ token_trailing（cb8 同测通过、本 PR 未改 native_http → macmini 偶发，记一次，再现开单）。
+- 08:1x #1368 fix-r2（Codex）收货 da69654d1 → r3 opus + DeepSeek + macmini + cb8。#1324 r2 DeepSeek 0 P0/P1（P2 2），等 opus 与宿主。
+- 08:3x **两小时交接** → `_tmp/20261102-handoff-0835.md`。下一步：收 a5b（#1374）/ #1220 / #1253 关键路径，#1305 合入解锁 A7 / A8 接线；#1292 + #1366 GLM cb8 在做。
