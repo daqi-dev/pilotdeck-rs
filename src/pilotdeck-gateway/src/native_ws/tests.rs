@@ -365,6 +365,72 @@ async fn invalid_upgrade() {
     );
     finish(stop, task).await;
 }
+/// #1292: Node's TrackHeader span budget applies to upgrade heads exactly
+/// like non-upgrade heads (probe `b4-U1.out`: a 17 020-byte `/ws` upgrade
+/// head is the same 431 + close as `b4-U2.out`'s `/health` head), so the
+/// native listener checks the budget before the upgrade diversion. The
+/// boundary cell on the same head shape (tracked 16383) stays a 101, which
+/// is what the diversion alone would answer.
+#[tokio::test]
+async fn upgrade_head_respects_span_budget() {
+    let (address, stop, task) = start(Arc::default(), DEADLINE).await;
+    // tracked span = 3 ("/ws") + 13 (Host: localhost) + 17 (Connection:
+    // Upgrade) + 16 (Upgrade: websocket) + 41 (Sec-WebSocket-Key: nonce)
+    // + 3 + n (x-p) = 93 + n; the inclusive 16384 boundary (probe
+    // `probe-fixr3-c.out` C1) puts the 431 at exactly n = 16291.
+    for (n, upgraded) in [(16291, false), (16290, true)] {
+        let mut socket = TcpStream::connect(address)
+            .await
+            .expect("#1292 budget upgrade connect");
+        let head = format!(
+            "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\nx-p: {}\r\n\r\n",
+            "a".repeat(n)
+        );
+        socket
+            .write_all(head.as_bytes())
+            .await
+            .expect("#1292 budget upgrade send");
+        let mut header = vec![];
+        timeout(DEADLINE, async {
+            while !header.ends_with(b"\r\n\r\n") {
+                header.push(
+                    socket
+                        .read_u8()
+                        .await
+                        .expect("#1292 budget upgrade response byte"),
+                );
+            }
+        })
+        .await
+        .expect("#1292 budget upgrade response deadline");
+        let line = String::from_utf8_lossy(&header).to_string();
+        if upgraded {
+            negative_assert!(
+                line.starts_with("HTTP/1.1 101"),
+                "#1292 the boundary upgrade head (tracked 16383) stays a 101 like TS"
+            );
+        } else {
+            negative_assert!(
+                line.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+                "#1292 the over-budget upgrade head is the same 431 as the non-upgrade lane"
+            );
+            negative_assert!(
+                line.contains("Connection: close\r\n"),
+                "#1292 the over-budget upgrade head is told to close like the non-upgrade lane"
+            );
+            let mut rest = vec![];
+            let closed = crate::test_negative_receipt::expect_ok(
+                timeout(DEADLINE, socket.read_to_end(&mut rest)).await,
+                "#1292 the over-budget upgrade head closes the connection like the non-upgrade lane",
+            );
+            crate::test_negative_receipt::expect_ok(
+                closed,
+                "#1292 the over-budget upgrade head closes the connection like the non-upgrade lane",
+            );
+        }
+    }
+    finish(stop, task).await;
+}
 #[tokio::test]
 async fn concurrent_connections() {
     let requests = Arc::new(Requests::default());
@@ -1161,6 +1227,31 @@ async fn native_configuration() {
     host.shutdown(DEADLINE)
         .await
         .expect("#749 configuration host stop");
+}
+
+/// #1292: the token route's loopback derivation is the TS literal
+/// (`host === "127.0.0.1" || host === "localhost"`), not the wide
+/// `is_loopback()` class — probes `b4-L1.out` (127.0.0.2 with
+/// allowRemoteHost still gets a 404), `b4-L2.out`/`b4-L3.out` (localhost
+/// and 127.0.0.1 serve the token). The bind policy keeps 127.0.0.2 out of
+/// `bind` (the `native_configuration` refusal cases above), so the boundary
+/// is pinned on the derivation itself: widening the bind policy without the
+/// literal would leak `/auth/local-token` to the rest of 127.0.0.0/8 and
+/// ::1. Binds the negative control `native-ws-loopback-literal` (the
+/// relaxed `is_loopback()` derivation).
+#[test]
+fn loopback_literal_matches_ts() {
+    let address = |text: &str| {
+        text.parse::<std::net::IpAddr>()
+            .expect("#1292 literal address")
+    };
+    negative_assert!(
+        ts_loopback_literal(address("127.0.0.1"))
+            && !ts_loopback_literal(address("127.0.0.2"))
+            && !ts_loopback_literal(address("::1"))
+            && !ts_loopback_literal(address("192.0.2.1")),
+        "#1292 the loopback derivation is the TS 127.0.0.1/localhost literal, not the is_loopback() class"
+    );
 }
 
 #[tokio::test]

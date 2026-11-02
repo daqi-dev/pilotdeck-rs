@@ -165,6 +165,7 @@ async fn exchange(server: &str, request: &[u8], id: &str, fixture: &Fixture) -> 
                         async move { serve(&request, &config).await }
                     },
                     stop,
+                    None,
                 )
                 .await;
                 if let Err(error) = served {
@@ -1174,6 +1175,47 @@ async fn header_budget_431s_like_ts() {
         raw.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
         "#1209 the re-rendered absolute-form URL span reaches the budget (registered residual vs TS 404): {raw:?}"
     );
+    // The absolute-form target with a path and query exercises the
+    // no-reallocation span arithmetic in `tracked_header_bytes`
+    // (`scheme + "://" + authority + path-and-query`); for every accepted
+    // form the sum renders byte-identical to `to_string()` (uri-probe,
+    // #1292), so the change is allocation-only and unkillable by byte
+    // comparisons — these cells pin the budget boundary for the fragmented
+    // form under the existing `native-http-header-budget-boundary` mutant.
+    let (raw, _) = exchange(
+        "a",
+        format!(
+            "GET http://h/health?x={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "a".repeat(16352)
+        )
+        .as_bytes(),
+        "pin-budget-absolute-parts",
+        &fixture,
+    )
+    .await;
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1292 the fragmented absolute-form span (tracked 16383) stays served like the to_string() render: {raw:?}"
+    );
+    let (raw, closed) = exchange(
+        "a",
+        format!(
+            "GET http://h/health?x={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "a".repeat(16353)
+        )
+        .as_bytes(),
+        "pin-budget-absolute-parts-431",
+        &fixture,
+    )
+    .await;
+    assert!(
+        raw.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "#1292 the fragmented absolute-form span (tracked 16384) is the TS 431 like the to_string() render: {raw:?}"
+    );
+    assert!(
+        closed,
+        "#1292 the fragmented absolute-form span 431 closes the connection like TS"
+    );
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
@@ -1255,6 +1297,20 @@ async fn wait_flag(flag: &mut watch::Receiver<bool>, what: &str) {
         if flag.changed().await.is_err() {
             panic!("#1209 {what}");
         }
+    }
+}
+
+/// #1292: wait until the connection's serving loop has consumed the stop
+/// (the `stop_observed` hook `serve_connection_native_with_shutdown`
+/// offers), so the test's next step is deterministically after the stop —
+/// the replacement for the fixed 100/200 ms sleeps these tests used to race.
+/// A stop that never reaches the connection fails at the caller's own
+/// message rather than an unrelated later assertion.
+async fn wait_stop_observed(observed: &AtomicUsize, message: &str) {
+    let started = Instant::now();
+    while observed.load(Ordering::SeqCst) == 0 {
+        assert!(started.elapsed() < DEADLINE, "{message}");
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -1401,6 +1457,7 @@ async fn stop_serves_late_request_and_waits_like_ts_close() {
         .local_addr()
         .expect("#1209 native listener local address");
     let accepted = server.accepted_connections();
+    let stop_count = server.stop_observed();
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.run(
         async {
@@ -1417,7 +1474,14 @@ async fn stop_serves_late_request_and_waits_like_ts_close() {
     // drain is held by the connection task and not by the backlog.
     wait_accepted(&accepted, "late").await;
     stop.send(()).expect("#1209 stop native listener");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // #1292: the late request is written only once the connection's
+    // serving loop has consumed the stop (the `stop_observed` hook), not
+    // after a fixed sleep racing the loop.
+    wait_stop_observed(
+        &stop_count,
+        "#1292 the late-request connection's stop was never observed by its serving loop",
+    )
+    .await;
     late.write_all(&latin1_bytes(
         "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
     ))
@@ -1471,6 +1535,10 @@ async fn stop_serves_in_flight_request_and_waits_like_ts_close() {
         .expect("#1209 bind listener");
     let bound = listener.local_addr().expect("#1209 listener local address");
     let (stop_tx, stop_rx) = watch::channel(false);
+    // #1292: the test observes the connection's serving loop consuming the
+    // stop (the `stop_observed` hook) instead of racing a fixed sleep.
+    let stop_count = Arc::new(AtomicUsize::new(0));
+    let stop_count_in_serve = stop_count.clone();
     let (entered_tx, mut entered_rx) = watch::channel(false);
     let (release_tx, release_rx) = watch::channel(false);
     let handler_config = config.clone();
@@ -1499,6 +1567,7 @@ async fn stop_serves_in_flight_request_and_waits_like_ts_close() {
                 }
             },
             stop_rx,
+            Some(stop_count_in_serve),
         )
         .await
     });
@@ -1520,7 +1589,14 @@ async fn stop_serves_in_flight_request_and_waits_like_ts_close() {
     .await;
     stop_tx.send_replace(true);
     // The stop leaves the in-flight request alone: no EOF while it is held.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // #1292: the probe runs only after the serving loop has consumed the
+    // stop (the `stop_observed` hook), so the not-idle decision is the one
+    // being probed rather than a stop that has not landed yet.
+    wait_stop_observed(
+        &stop_count,
+        "#1292 the in-flight connection's stop was never observed by its serving loop",
+    )
+    .await;
     let mut probe = [0u8; 1];
     match timeout(Duration::from_millis(300), inflight.read(&mut probe)).await {
         Err(_still_open) => {}
@@ -1816,6 +1892,7 @@ async fn keep_alive_idle_close_lands_at_six_seconds() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -1871,6 +1948,7 @@ async fn idle_close_waits_for_streaming_body() {
                 }
             },
             stop_rx,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -1935,6 +2013,7 @@ async fn idle_close_refreshes_on_read_segments() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -2011,6 +2090,7 @@ async fn handler_execution_blocks_idle_close() {
                 }
             },
             stop_rx,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -2055,9 +2135,9 @@ async fn handler_execution_blocks_idle_close() {
 /// close at last quiet +~5.7 s). The yields after the partial write let the
 /// serve task actually read the segment before the 20 s advance, so this
 /// test kills a read-refresh that arms the timer before any request was
-/// served. The `headersTimeout` divergence is registered in the ledger and
-/// out of this issue's scope. Binds the negative control
-/// `native-http-unserved-read-arms-idle`.
+/// served. The first head's 60 s `headersTimeout` bound itself is #1292's
+/// `unserved_head_headers_timeout_408s_like_ts`; this cell stays inside it.
+/// Binds the negative control `native-http-unserved-read-arms-idle`.
 #[tokio::test(start_paused = true)]
 async fn idle_state_no_request_stays_open() {
     manual_clock(async {
@@ -2075,6 +2155,7 @@ async fn idle_state_no_request_stays_open() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
         ));
         tokio::time::advance(Duration::from_secs(30)).await;
         probe_still_open(
@@ -2162,6 +2243,7 @@ async fn pipelined_request_during_body() {
                 }
             },
             stop_rx,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -2244,6 +2326,7 @@ async fn client_close_ends_connection_without_timer() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
         ));
         client
             .write_all(&latin1_bytes(
@@ -2290,6 +2373,7 @@ async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
         ));
         client
             .write_all(&latin1_bytes(
@@ -2311,6 +2395,283 @@ async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
             served.is_ok(),
             "#1250 the same-instant deadline/client-close connection resolves Ok either way: {served:?}"
         );
+    })
+    .await;
+}
+
+/// #1292: read the 51-byte headersTimeout 408 and the EOF that follows it,
+/// inside the same windowed probe pattern as `probe_still_open`: a missing
+/// 408 (the `native-http-headers-timeout-off` mutant) fails at this cell's
+/// own message instead of hanging the harness.
+async fn headers_timeout_408_arrives(client: &mut tokio::io::DuplexStream, what: &str) {
+    let expected = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+    let mut buffer = Vec::new();
+    while buffer.len() < expected.len() {
+        let mut chunk = [0u8; 64];
+        let pending = timeout(Duration::from_millis(50), client.read(&mut chunk));
+        tokio::time::advance(Duration::from_millis(60)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        match pending.await {
+            Ok(Ok(0)) => panic!(
+                "#1292 {what}: EOF before the 408 arrived (buffer so far: {:?})",
+                latin1_string(&buffer)
+            ),
+            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Ok(Err(error)) => panic!("#1292 {what}: {error}"),
+            Err(_no_408) => {
+                panic!("#1292 {what}: the 51-byte 408 never arrived at the headersTimeout deadline")
+            }
+        }
+    }
+    let text = latin1_string(&buffer);
+    assert!(
+        text == expected,
+        "#1292 {what}: the bytes are exactly Node's canned 51-byte 408, got {text:?}"
+    );
+    let mut tail = [0u8; 1];
+    let pending = timeout(Duration::from_millis(50), client.read(&mut tail));
+    tokio::time::advance(Duration::from_millis(60)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    match pending.await {
+        Ok(Ok(0)) => {}
+        other => panic!(
+            "#1292 {what}: the connection closes after the 408 like Node's destroy(), got {other:?}"
+        ),
+    }
+}
+
+/// #1292: the connection future's own result once the 408 close (or a peer
+/// disconnect, the same event in production) ended the connection: a head
+/// that had started arriving is reported as `IncompleteMessage`, a connection
+/// that never sent a byte ends as a clean close. The wire bytes and the
+/// close are what the Node parity pins; this is only the local shape of the
+/// same end.
+fn ended_by_408_close(served: Result<(), hyper::Error>, what: &str) {
+    match served {
+        Ok(()) => {}
+        Err(error) if error.is_incomplete_message() => {}
+        other => panic!("#1292 {what}, got {other:?}"),
+    }
+}
+
+/// #1292 (matrix M-7 rows 1–2, probes `b1-T1a.out`/`b1-T1b.out`): Node's
+/// `headersTimeout` (60 s default) bounds the still-unserved first head — a
+/// partial head and even a zero-byte connection are answered with the
+/// 51-byte 408 `Connection: close` and closed; nothing is answered before
+/// the deadline. Binds the negative control
+/// `native-http-headers-timeout-off` (the timer disabled, so the 408 never
+/// arrives).
+#[tokio::test(start_paused = true)]
+async fn unserved_head_headers_timeout_408s_like_ts() {
+    manual_clock(async {
+        // T1a: a partial first head.
+        {
+            let (server, mut client) = tokio::io::duplex(4096);
+            let (_stop, stop_rx) = watch::channel(false);
+            let config = Config {
+                token: "fixture-token".into(),
+                loopback: true,
+                static_root: None,
+            };
+            let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+                server,
+                move |request, _lease| {
+                    let config = config.clone();
+                    async move { serve(&request, &config).await }
+                },
+                stop_rx,
+                None,
+            ));
+            client
+                .write_all(&latin1_bytes(
+                    "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+                ))
+                .await
+                .expect("#1292 write the partial first head");
+            // Let the serve task run once before the advance: the deadline is
+            // armed at the connection's first poll (Node counts the 60 s from
+            // the connection's start), so advancing first would push it out to
+            // advance + 60 s and the 408 would never land.
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::advance(Duration::from_millis(59_800)).await;
+            probe_still_open(
+                &mut client,
+                "#1292 the partial first head stays unanswered before the 60 s headersTimeout",
+            )
+            .await;
+            tokio::time::advance(Duration::from_millis(200)).await;
+            headers_timeout_408_arrives(&mut client, "partial first head").await;
+            let served = task.await.expect("#1292 partial-head task join");
+            ended_by_408_close(
+                served,
+                "the partial-head connection future ends at the 408 close",
+            );
+        }
+        // T1b: a connection that never sends a byte.
+        {
+            let (server, mut client) = tokio::io::duplex(4096);
+            let (_stop, stop_rx) = watch::channel(false);
+            let config = Config {
+                token: "fixture-token".into(),
+                loopback: true,
+                static_root: None,
+            };
+            let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+                server,
+                move |request, _lease| {
+                    let config = config.clone();
+                    async move { serve(&request, &config).await }
+                },
+                stop_rx,
+                None,
+            ));
+            // Let the serve task run once before the advance: the deadline is
+            // armed at the connection's first poll (Node counts the 60 s from
+            // the connection's start), so advancing first would push it out to
+            // advance + 60 s and the 408 would never land.
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::advance(Duration::from_millis(59_800)).await;
+            probe_still_open(
+                &mut client,
+                "#1292 the zero-byte connection stays unanswered before the 60 s headersTimeout",
+            )
+            .await;
+            tokio::time::advance(Duration::from_millis(200)).await;
+            headers_timeout_408_arrives(&mut client, "zero-byte connection").await;
+            let served = task.await.expect("#1292 zero-byte task join");
+            ended_by_408_close(
+                served,
+                "the zero-byte connection future ends at the 408 close",
+            );
+        }
+    })
+    .await;
+}
+
+/// #1292 (matrix M-7 row 2, probe `b1-T2.out`): once a head completed, no
+/// 408 exists anymore — a served connection with a partial follow-up head
+/// is ended by the 6 s keep-alive idle close, never by a 408: the deadline
+/// is not re-armed for follow-up heads.
+#[tokio::test(start_paused = true)]
+async fn served_follow_up_head_gets_no_headers_timeout() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+            None,
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the health request");
+        read_response(&mut client, "follow-up-head health").await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the partial follow-up head");
+        // Let the serve task read the segment before the advance: the read
+        // refreshes the idle deadline at this instant, and the close must land
+        // at last activity + 6 s with no 408 in front of it, never at the
+        // 60 s headersTimeout (which would land at connection + 60 s).
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_millis(5_930)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the partial follow-up head stays unanswered: no 408 exists once a head completed",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(200),
+            "#1292 the served connection ends at the 6 s idle close with no 408 first",
+        )
+        .await;
+        let served = task.await.expect("#1292 follow-up-head task join");
+        assert!(
+            served.is_ok(),
+            "#1292 the follow-up-head connection future resolves Ok once the idle close ended it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1292 (matrix M-7 row 4, probe `b3-T3d.out`): a stop disarms the
+/// headersTimeout — `server.close()` clears Node's connections checker, so
+/// the still-unserved partial head stays unanswered past the deadline
+/// instead of getting its 408.
+#[tokio::test(start_paused = true)]
+async fn stop_disarms_headers_timeout() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let stop_count = Arc::new(AtomicUsize::new(0));
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+            Some(stop_count.clone()),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the partial head before the stop");
+        stop_tx.send_replace(true);
+        // A stop needs scheduling, not time: yield until the serving loop has
+        // consumed it (the `stop_observed` hook), without drifting the
+        // paused clock toward the deadline.
+        let mut yields = 0;
+        while stop_count.load(Ordering::SeqCst) == 0 {
+            yields += 1;
+            assert!(
+                yields < 10_000,
+                "#1292 the partial-head connection's stop was never observed by its serving loop"
+            );
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_millis(60_500)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the stopped partial head stays unanswered past the headersTimeout: close() cleared Node's connections checker",
+        )
+        .await;
+        drop(client);
+        let served = task.await.expect("#1292 stop-disarm task join");
+        ended_by_408_close(served, "the stopped partial-head connection future ends at its peer EOF");
     })
     .await;
 }

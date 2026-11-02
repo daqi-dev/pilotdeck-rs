@@ -46,6 +46,18 @@ switches = [
     ('native-ws-bind-policy', SOURCE, PREFIX + 'native_configuration', '#749 native configuration refuses implicit authority'),
     ('native-ws-token-policy', SOURCE, PREFIX + 'native_configuration', '#749 native configuration refuses implicit authority'),
     ('native-ws-invalid-upgrade', SOURCE, PREFIX + 'invalid_upgrade', '#749 invalid upgrade rejected'),
+    # #1292: the token route's loopback derivation is the TS literal
+    # (host === "127.0.0.1" || host === "localhost"; probe b4-L1.out:
+    # 127.0.0.2 + allowRemoteHost is a 404, b4-L2/b4-L3 serve the token);
+    # the mutant relaxes the derivation back to the wide is_loopback()
+    # class, so 127.0.0.2 and ::1 count as loopback.
+    ('native-ws-loopback-literal', SOURCE, PREFIX + 'loopback_literal_matches_ts', '#1292 the loopback derivation is the TS 127.0.0.1/localhost literal, not the is_loopback() class'),
+    # #1292: Node's TrackHeader span budget applies to upgrade heads like the
+    # non-upgrade lane (probe b4-U1.out: the over-budget /ws upgrade is the
+    # same 431 + close as b4-U2.out's /health); the mutant skips the check on
+    # the diversion, so the over-budget upgrade head is upgraded to 101
+    # instead of the 431.
+    ('native-http-upgrade-budget-off', SOURCE, PREFIX + 'upgrade_head_respects_span_budget', '#1292 the over-budget upgrade head is the same 431 as the non-upgrade lane'),
     ('native-ws-retain-reader', SOURCE, PREFIX + 'socket_drops_before_business_drains', '#749 closed socket released before business drain'),
     ('native-ws-skip-host-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_precedes_runtime_exit', '#749 owned cleanup called'),
     ('native-ws-error-skips-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),

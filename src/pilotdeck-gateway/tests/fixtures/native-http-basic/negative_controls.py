@@ -93,6 +93,26 @@ switches = [
     # the mutant inverts the probe, so the replay compares the wrong
     # family's golden bytes and fails at its own assertion on every host.
     ('native-http-static-case-probe-inverted', SOURCE_TESTS, 'static_upper_lower', '#1209 cell static-upper-lower normalized response'),
+    # #1292: the stop tests sequence their post-stop steps through the
+    # `stop_observed` hook instead of the pre-#1292 fixed 100/200 ms sleeps;
+    # the mutant stops the hook counting, so both waits fail at their own
+    # messages (the stop genuinely reached the serving loop either way, so
+    # the pre-hook behavior is not what this control re-litigates).
+    ('native-http-stop-observed-off', SOURCE_PROXY,
+     ['stop_serves_late_request_and_waits_like_ts_close',
+      'stop_serves_in_flight_request_and_waits_like_ts_close'],
+     ["#1292 the late-request connection's stop was never observed by its serving loop",
+      "#1292 the in-flight connection's stop was never observed by its serving loop"]),
+    # #1292: Node's headersTimeout (60 s) bounds the still-unserved first
+    # head (probes b1-T1a.out/b1-T1b.out: the partial head and the
+    # zero-byte connection both get the 51-byte 408); the mutant disables
+    # the timer, so the 408 never arrives and the test fails at its own
+    # message inside the probe window.
+    # The anchor drops the `#1292 ` prefix: the helper interpolates the cell's
+    # name between it and the fixed tail, so only the tail is a substring of
+    # every cell's panic payload.
+    ('native-http-headers-timeout-off', SOURCE_PROXY, 'unserved_head_headers_timeout_408s_like_ts',
+     'the 51-byte 408 never arrived at the headersTimeout deadline'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
