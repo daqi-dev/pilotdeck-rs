@@ -186,6 +186,10 @@ pub(super) async fn start_observed(
     let prepare_recorders = recorders.clone();
     let prepare_interactions = interactions.clone();
     let prepare_permission_rule_sets = permission_rule_sets.clone();
+    // Forward reference so the prepare closure can call sync_permission_rules
+    // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
+    let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
+    let build_mcp_config = prepare_mcp_config.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
@@ -197,6 +201,7 @@ pub(super) async fn start_observed(
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
+            let mcp_config_handle = prepare_mcp_config.clone();
             Box::pin(async move {
                 let lease = project.acquire(None)?;
                 let resources = lease
@@ -280,6 +285,14 @@ pub(super) async fn start_observed(
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
+                // Sync MCP ask rules on acquire, mirroring
+                // ProjectRuntimeRegistry.ts:305-308 where the wiring layer
+                // calls `lease.rules().ask` via syncSdkMcpPermissionRules.
+                if let Some(mcp) = mcp_config_handle.get() {
+                    let ask_handle = permission_lease.rules().member("ask");
+                    ask_handle
+                        .update_array(|ask| mcp.sync_permission_rules(&context.session_key, ask));
+                }
                 retained.push(move || {
                     Box::pin(async move {
                         permission_lease.release();
@@ -446,6 +459,11 @@ pub(super) async fn start_observed(
                 environment: Arc::new(SystemEnvironment),
                 projects: SdkSessionProjects::shared(),
             }));
+            // Publish the config so the prepare closure's sync_permission_rules
+            // call (on each session lease acquire) can reach it.  The set
+            // succeeds once; subsequent calls from a second start_with_cleanup
+            // invocation are silently ignored because the reference is stable.
+            let _ = build_mcp_config.set(mcp_config.clone());
             let mcp_gateway = Arc::new(McpGateway::new(McpGatewayOptions {
                 owner: owner.clone(),
                 config: mcp_config,
