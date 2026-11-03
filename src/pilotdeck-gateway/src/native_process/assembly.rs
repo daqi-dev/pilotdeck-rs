@@ -41,11 +41,11 @@ use crate::{
             publish::FileRegistry,
             replay::TurnReplayOptions,
             runner::tail::TailConfig,
-            submit::{TurnSubmitter, WorkspaceAdmissions},
+            submit::{NativeSubmitSnapshots, TurnSubmitter, WorkspaceAdmissions},
             submit_host::{GatewaySubmitHost, NativeSubmitReplacement},
         },
     },
-    storage::{FileRunRegistry, recorder::Recorder},
+    storage::{ContentAddressedWorkspaceSnapshotRecorder, FileRunRegistry, recorder::Recorder},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -172,6 +172,40 @@ pub(super) async fn start_observed(
             let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
             return Err(error.into());
         }
+    };
+    // Extract the snapshot recorder once, so `Services` can hand the same
+    // provider to every submit turn without re-acquiring the project lease.
+    let snapshot_recorder = if snapshot_enabled {
+        match project.acquire(None).and_then(|lease| {
+            let resources = lease
+                .runtime()
+                .resources()
+                .get::<ProjectResources>()
+                .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
+            let persistence = resources
+                .context()
+                .resource(Resource::Persistence)
+                .ok_or_else(|| RuntimeError::new("Native persistence resource is missing."))?;
+            let persistence = persistence
+                .as_any()
+                .downcast_ref::<PersistenceResources>()
+                .ok_or_else(|| {
+                    RuntimeError::new("Native persistence resource has the wrong type.")
+                })?;
+            persistence
+                .snapshots
+                .as_ref()
+                .map(|snapshots| snapshots.recorder.clone())
+                .ok_or_else(|| RuntimeError::new("Native snapshot recorder is missing."))
+        }) {
+            Ok(recorder) => Some(recorder),
+            Err(error) => {
+                let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
+                return Err(error.into());
+            }
+        }
+    } else {
+        None
     };
     let recorders: Recorders = Arc::default();
     let permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry> = Arc::default();
@@ -428,6 +462,7 @@ pub(super) async fn start_observed(
                 env: env.clone(),
                 recorders: recorders.clone(),
                 owner: owner.clone(),
+                snapshot_recorder: snapshot_recorder.clone(),
             });
             // U6 MCP four-control gateway (#1319): wire the #1215 component
             // into the native request router. The SdkMcpConfig owns the

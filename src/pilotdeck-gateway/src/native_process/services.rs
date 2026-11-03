@@ -5,11 +5,11 @@ use crate::{
     runtime::{
         project::{ProjectResources, ProjectRuntimeRegistry},
         turn::{
-            submit::{SubmitError, SubmitFuture, SubmitSnapshots},
+            submit::{NativeSubmitSnapshots, SubmitError, SubmitFuture, SubmitSnapshots},
             submit_host::{SubmitAttachmentLease, SubmitCwdService, SubmitHostServices},
         },
     },
-    storage::RunRef,
+    storage::{ContentAddressedWorkspaceSnapshotRecorder, RunRef},
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::Arc;
@@ -20,6 +20,9 @@ pub struct Services {
     pub env: Env,
     pub recorders: Recorders,
     pub owner: crate::runtime::session::SessionOwner,
+    /// Extracted once at startup from `PersistenceResources`; `None` when
+    /// `--storage-root` was not supplied and snapshots are disabled.
+    pub snapshot_recorder: Option<Arc<ContentAddressedWorkspaceSnapshotRecorder>>,
 }
 fn failure(message: impl Into<String>) -> SubmitError {
     SubmitError::new("gateway_submit_failed", message)
@@ -67,7 +70,9 @@ impl SubmitHostServices for Services {
         Ok(None)
     }
     fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
-        None
+        self.snapshot_recorder.as_ref().map(|recorder| {
+            Arc::new(NativeSubmitSnapshots(recorder.clone())) as Arc<dyn SubmitSnapshots>
+        })
     }
     fn snapshots_required(&self) -> bool {
         false

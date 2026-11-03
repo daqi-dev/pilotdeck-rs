@@ -184,6 +184,7 @@ async fn observe(name: &str) -> (Value, Value) {
         )),
         recorders: Arc::default(),
         owner,
+        snapshot_recorder: None,
     };
     let cwd = row["cwd"].as_str().expect("#1154 TS cwd");
     std::env::set_current_dir(case.join(cwd)).expect("#1154 enter process cwd");

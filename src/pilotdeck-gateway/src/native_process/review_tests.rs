@@ -396,6 +396,7 @@ fn project_marker_ownership_matches_ts() {
             sidecar: scratch.0.join("unused-sidecar"),
             sidecar_args: vec![],
             drain_budget: Duration::from_secs(1),
+            storage_root: None,
         };
         let chats = crate::session_chat_dir(
             &options.home,
@@ -741,6 +742,7 @@ async fn project_path_boundaries_worker() {
         )),
         recorders: Arc::default(),
         owner,
+        snapshot_recorder: None,
     };
     std::env::set_current_dir(scratch.0.join("other")).expect("#1137 enter other cwd");
     let oracle = marker_oracle();

@@ -92,6 +92,8 @@ fn capture_environment(
 
 /// All authorities are explicit; native mode has no default home, project,
 /// token, upstream, or sidecar command. Port zero is supported for isolation.
+/// `storage_root` maps to `PILOTDECK_STORAGE_ROOT` in the child environment;
+/// absent means workspace snapshots are disabled for this process.
 #[derive(Clone, Debug)]
 pub struct Options {
     pub home: PathBuf,
@@ -101,6 +103,7 @@ pub struct Options {
     pub sidecar: PathBuf,
     pub sidecar_args: Vec<String>,
     pub drain_budget: Duration,
+    pub storage_root: Option<String>,
 }
 
 pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
@@ -131,6 +134,7 @@ impl Options {
                 "--sidecar",
                 "--sidecar-arg",
                 "--drain-ms",
+                "--storage-root",
             ]
             .contains(&key.as_str())
             {
@@ -192,6 +196,10 @@ impl Options {
             sidecar,
             sidecar_args,
             drain_budget: Duration::from_millis(drain_ms),
+            storage_root: values
+                .get("--storage-root")
+                .and_then(|v| v.to_str())
+                .map(|s| s.to_owned()),
         })
     }
 
@@ -202,6 +210,9 @@ impl Options {
 
     /// A captured environment for config/children. The isolated home wins over
     /// inherited HOME/PILOT_HOME and no TS gateway upstream is ever consulted.
+    /// When `--storage-root` was supplied it is injected as
+    /// `PILOTDECK_STORAGE_ROOT` so the project's persistence stage builds a
+    /// real snapshot provider; absent means snapshots remain disabled.
     pub fn environment(&self, mut inherited: Env) -> Env {
         inherited.insert("HOME".into(), self.home.to_string_lossy().into_owned());
         inherited.insert(
@@ -212,6 +223,15 @@ impl Options {
         inherited.remove("PILOTDECK_CONFIG_PATH");
         inherited.remove("PILOTDECK_AGENT_LOOP_TCP_HOST");
         inherited.remove("PILOTDECK_AGENT_LOOP_TCP_PORT");
+        match &self.storage_root {
+            Some(root) => {
+                inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());
+            }
+            None => {
+                inherited.remove("PILOTDECK_STORAGE_ROOT");
+                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");
+            }
+        }
         inherited
     }
 }
