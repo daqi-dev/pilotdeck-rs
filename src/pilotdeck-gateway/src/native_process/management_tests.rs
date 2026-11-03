@@ -1743,3 +1743,83 @@ impl crate::runtime::session::SessionFactory for SnapshotFactory {
         )))
     }
 }
+
+struct ParkedMemoryRegistry {
+    entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+    released: Arc<std::sync::atomic::AtomicBool>,
+}
+impl crate::runtime::memory::ProjectMemoryRegistry for ParkedMemoryRegistry {
+    fn resolve_project_key(
+        &self,
+        key: &JsString,
+    ) -> Result<JsString, crate::runtime::memory::MemoryProviderError> {
+        Ok(key.clone())
+    }
+    fn memory_management(
+        &self,
+        _: &JsString,
+    ) -> Result<
+        Option<Arc<dyn crate::runtime::memory::MemoryManagementService>>,
+        crate::runtime::memory::MemoryProviderError,
+    > {
+        if let Some(entered) = self.entered.lock().expect("#1322 entered").take() {
+            let _ = entered.send(());
+        }
+        let got = self
+            .release
+            .lock()
+            .expect("#1322 release")
+            .recv_timeout(Duration::from_secs(3))
+            .is_ok();
+        self.released
+            .store(got, std::sync::atomic::Ordering::SeqCst);
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn pending_memory_io_does_not_block_serial_host() {
+    let (scratch, mut requests) = setup();
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let (release, gate) = std::sync::mpsc::channel();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    requests.memory = Arc::new(crate::runtime::memory::gateway::MemoryGateway::new(
+        Arc::new(ParkedMemoryRegistry {
+            entered: Mutex::new(Some(entered)),
+            release: Mutex::new(gate),
+            released: released.clone(),
+        }),
+        requests.options.project.clone(),
+    ));
+    let params = json!({"projectKey":"<root>/project"});
+    let parked = tokio::spawn({
+        let requests = requests.clone();
+        let params = expand(&params, &scratch.0);
+        async move { requests.request("memory_list".into(), params).await }
+    });
+    ready.await.expect("#1322 memory IO entered");
+    let independent = tokio::time::timeout(
+        Duration::from_secs(2),
+        requests.request("snapshot_list".into(), expand(&params, &scratch.0)),
+    )
+    .await;
+    // Release before any assertion so the parked thread never outlives the test.
+    release.send(()).expect("#1322 release memory IO");
+    let _ = parked.await;
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1322 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1322 registry disposal");
+    negative_assert!(
+        independent.is_ok_and(|result| result.is_ok())
+            && released.load(std::sync::atomic::Ordering::SeqCst),
+        "#1322 pending memory IO must not block host"
+    );
+}
