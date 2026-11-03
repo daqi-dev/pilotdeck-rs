@@ -57,13 +57,7 @@ pub(super) fn js_string(v: &JsValue) -> String {
     }
 }
 pub(super) fn trim(s: &JsString) -> JsString {
-    fn white(c: u16) -> bool {
-        matches!(c,9..=13|32|160|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff)
-    }
-    let u = s.units();
-    let a = u.iter().position(|c| !white(*c)).unwrap_or(u.len());
-    let b = u.iter().rposition(|c| !white(*c)).map_or(a, |i| i + 1);
-    JsString::from_utf16(u[a..b].to_vec())
+    JsString::from_utf16(crate::runtime::memory::js_trim_units(s.units()).to_vec())
 }
 pub(super) fn nonempty(v: &JsValue) -> Option<String> {
     let s = text(v)?;

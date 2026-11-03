@@ -376,14 +376,8 @@ fn normalize(name: &[u16]) -> Vec<u16> {
         .collect()
 }
 pub(super) fn whitespace(c: u16) -> bool {
-    matches!(c, 9..=13 | 32 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+    crate::runtime::memory::js_is_space_unit(c)
 }
 fn trim(mut text: &[u16]) -> &[u16] {
-    while text.first().is_some_and(|c| whitespace(*c)) {
-        text = &text[1..];
-    }
-    while text.last().is_some_and(|c| whitespace(*c)) {
-        text = &text[..text.len() - 1];
-    }
-    text
+    crate::runtime::memory::js_trim_units(text)
 }

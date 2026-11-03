@@ -585,19 +585,10 @@ fn sentence(value: &JsString) -> JsString {
 }
 
 fn white(unit: u16) -> bool {
-    matches!(unit, 9..=13 | 32 | 160 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+    crate::runtime::memory::js_is_space_unit(unit)
 }
 fn trim(value: &JsString) -> JsString {
-    let units = value.units();
-    let start = units
-        .iter()
-        .position(|unit| !white(*unit))
-        .unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|unit| !white(*unit))
-        .map_or(start, |index| index + 1);
-    JsString::from_utf16(units[start..end].to_vec())
+    JsString::from_utf16(crate::runtime::memory::js_trim_units(value.units()).to_vec())
 }
 fn trim_end(value: &JsString) -> JsString {
     let units = value.units();

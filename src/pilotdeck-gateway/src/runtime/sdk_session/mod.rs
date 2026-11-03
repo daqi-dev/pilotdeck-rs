@@ -112,21 +112,7 @@ fn truthy(value: &JsValue) -> bool {
 /// `metadata::js_trim` uses for UTF-8; all members are BMP, so a per-unit test
 /// is exact and preserves lone surrogates.
 fn trim_units(value: &JsString) -> JsString {
-    let is_ws = |unit: u16| {
-        matches!(unit,
-            0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a
-            | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
-    };
-    let units = value.units();
-    let start = units
-        .iter()
-        .position(|unit| !is_ws(*unit))
-        .unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|unit| !is_ws(*unit))
-        .map_or(start, |index| index + 1);
-    JsString::from_utf16(units[start..end].to_vec())
+    JsString::from_utf16(crate::runtime::memory::js_trim_units(value.units()).to_vec())
 }
 
 fn number_text(value: &JsString) -> String {

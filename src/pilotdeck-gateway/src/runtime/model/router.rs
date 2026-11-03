@@ -1055,33 +1055,10 @@ pub(super) fn truthy(value: &JsValue) -> bool {
 
 /// JS `String.prototype.trim` over UTF-16 units (keeps lone surrogates).
 pub(super) fn trim_units(units: &[u16]) -> &[u16] {
-    let start = units
-        .iter()
-        .position(|unit| !is_js_whitespace(*unit))
-        .unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|unit| !is_js_whitespace(*unit))
-        .map_or(start, |index| index + 1);
-    &units[start..end]
+    crate::runtime::memory::js_trim_units(units)
 }
 fn is_js_whitespace(unit: u16) -> bool {
-    matches!(
-        unit,
-        9 | 10
-            | 11
-            | 12
-            | 13
-            | 32
-            | 0xa0
-            | 0x1680
-            | 0x2028
-            | 0x2029
-            | 0x202f
-            | 0x205f
-            | 0x3000
-            | 0xfeff
-    ) || (0x2000..=0x200a).contains(&unit)
+    crate::runtime::memory::js_is_space_unit(unit)
 }
 
 /// JS `trimEnd`: only the right edge is stripped.

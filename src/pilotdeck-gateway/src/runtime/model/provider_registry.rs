@@ -197,9 +197,12 @@ impl ModelInvocationProviderRegistry {
             ));
         }
         let id = provider.provider_id().clone();
-        if id.units().is_empty() || id.units().iter().all(|unit| matches!(*unit,
-                0x0009..=0x000D | 0x0020 | 0x00A0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 | 0xFEFF
-            )) {
+        if id.units().is_empty()
+            || id
+                .units()
+                .iter()
+                .all(|unit| crate::runtime::memory::js_is_space_unit(*unit))
+        {
             return Err(coded(
                 "invalid_provider",
                 "Model invocation provider requires a non-empty providerId.",

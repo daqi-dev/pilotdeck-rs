@@ -816,15 +816,7 @@ fn to_uint8(n: f64) -> u8 {
 }
 /// String#trim over UTF-16 units.
 fn trim_units(units: &[u16]) -> &[u16] {
-    fn space(c: u16) -> bool {
-        matches!(c, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
-    }
-    let start = units.iter().position(|&c| !space(c)).unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|&c| !space(c))
-        .map_or(start, |i| i + 1);
-    &units[start..end]
+    crate::runtime::memory::js_trim_units(units)
 }
 /// fs.readFile(path, "utf8"): invalid bytes become U+FFFD, a BOM is kept.
 fn decode_utf8(bytes: &[u8]) -> JsString {

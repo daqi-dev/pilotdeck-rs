@@ -1256,16 +1256,23 @@ impl Forwarding {
                     .and_then(JsValue::as_string)
                     .cloned()
             } else if pre || post {
-                event.get("sessionId").and_then(JsValue::as_string).and_then(|session| {
-                    let units = session.units();
-                    let marker = [58, 58, 115, 117, 98, 58, 58];
-                    let index = units.windows(marker.len()).rposition(|s| s == marker)?;
-                    let rest = &units[index + marker.len()..];
-                    let space = |u: &u16| matches!(*u, 9..=13 | 32 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff);
-                    let start = rest.iter().position(|u| !space(u))?;
-                    let end = rest.iter().rposition(|u| !space(u))? + 1;
-                    Some(JsString::from_utf16(rest[start..end].to_vec()))
-                })
+                event
+                    .get("sessionId")
+                    .and_then(JsValue::as_string)
+                    .and_then(|session| {
+                        let units = session.units();
+                        let marker = [58, 58, 115, 117, 98, 58, 58];
+                        let index = units.windows(marker.len()).rposition(|s| s == marker)?;
+                        let rest = &units[index + marker.len()..];
+                        let start = rest
+                            .iter()
+                            .position(|u| !crate::runtime::memory::js_is_space_unit(*u))?;
+                        let end = rest
+                            .iter()
+                            .rposition(|u| !crate::runtime::memory::js_is_space_unit(*u))?
+                            + 1;
+                        Some(JsString::from_utf16(rest[start..end].to_vec()))
+                    })
             } else {
                 None
             };
