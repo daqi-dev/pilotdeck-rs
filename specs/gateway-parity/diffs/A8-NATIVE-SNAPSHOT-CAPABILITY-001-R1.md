@@ -21,7 +21,13 @@ original: A8-NATIVE-SNAPSHOT-CAPABILITY-001
 
 ## 机器判据
 
-原条目判据在缺省（无 `--storage-root`）情形下仍有效：`production_entry_snapshot_capabilities_are_disabled` 走 `Options::parse` + `validate_environment`，两 key 缺省/空串四种组合精确比较 10 项；`missing_storage_environment_disables_snapshots`、`empty_storage_environment_disables_snapshots` 逐项比较三请求错误及 10 项能力。传入非空 `--storage-root` 时 `production_host_management_and_restart` 比较 13 项。负控 `missing-storage-defaulted`、`empty-storage-defaulted`、`missing-storage-advertised`、`empty-storage-advertised` 覆盖缺省/空串禁用路径；`snapshot-state-disabled/enabled` 绑定装配状态与 13/10 项断言；`production-*-authority-accepted` 绑定入口拒绝；三个 `snapshot-*-filter-omitted` 绑定生产 10 项。复算命令同原条目。
+原条目判据在缺省（无 `--storage-root`）情形下仍有效：`production_entry_snapshot_capabilities_are_disabled` 走 `Options::parse` + `validate_environment`，两 key 缺省/空串四种组合精确比较 10 项；`missing_storage_environment_disables_snapshots`、`empty_storage_environment_disables_snapshots` 逐项比较三请求错误及 10 项能力。
+
+`production_host_management_and_restart` 经 `setup()` 直接向 env 插入 `PILOTDECK_STORAGE_ROOT`（`management_tests.rs:182-185`），不经 `--storage-root` CLI 解析路径；该测试覆盖装配层 13 项断言，但 `Options::storage_root` 字段在其中始终为 `None`，`--storage-root → environment()` 接线不在其机器判据内。
+
+`--storage-root` CLI 解析路径由 `storage_root_cli_arg_wires_snapshot_capabilities` 正控覆盖（`management_tests.rs`）：经 `Options::parse(["--storage-root", path])` 解析后断言 `Options::storage_root` 为 `Some(path)`，再经 `environment(Env::new())` 断言 `PILOTDECK_STORAGE_ROOT` 注入正确，最终经 `assembly::start` 启动后 `describe_server` 精确比较 13 项能力。
+
+负控 `missing-storage-defaulted`、`empty-storage-defaulted`、`missing-storage-advertised`、`empty-storage-advertised` 覆盖缺省/空串禁用路径；`snapshot-state-disabled/enabled` 绑定装配状态与 13/10 项断言；`production-*-authority-accepted` 绑定入口拒绝；三个 `snapshot-*-filter-omitted` 绑定生产 10 项。复算命令同原条目。
 
 ## 批准记录
 
