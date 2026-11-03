@@ -28,7 +28,7 @@ with mutating_sources(ROOT, [PRODUCT, OWNER]) as snapshots:
         ('replace_write_reservation', PRODUCT,
          'state.reservations.insert(key.clone());\n            active',
          '// mutation: omit replace reservation\n            active', PREFIX + 'concurrent_replace_and_writer'),
-        ('unicode_whitespace', PRODUCT, ' | 0xfeff)', ')', PREFIX + 'invalid_replacement_ids'),
+        ('unicode_whitespace', ROOT / 'src/pilotdeck-gateway/src/runtime/memory/mod.rs', '| 0xFEFF', '', PREFIX + 'invalid_replacement_ids'),
         ('active_run_conflict', PRODUCT, '&& *active != string(&input, "expectedTurnId")',
          '&& false && *active != string(&input, "expectedTurnId")', PREFIX + 'active_conflict_and_empty'),
         ('abort_old_turn', PRODUCT,

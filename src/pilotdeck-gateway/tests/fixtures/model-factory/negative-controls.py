@@ -54,7 +54,7 @@ with mutating_sources(root, [registry, family]) as snapshots:
          '{ let _ = recorder; None },',
          'factory_reload_inflight_cancel_and_drain_match_ts'),
 
-        ('provider-validation-forgets-js-bom', registry, '| 0xFEFF', '',
+        ('provider-validation-forgets-js-bom', root / 'src/pilotdeck-gateway/src/runtime/memory/mod.rs', '| 0xFEFF', '',
          'registry_errors_ordered_disposal_and_complete_lease_match_ts'),
         ('native-family-registers-no-providers', family,
          'for provider in providers {', 'for provider in providers.into_iter().take(0) {',
