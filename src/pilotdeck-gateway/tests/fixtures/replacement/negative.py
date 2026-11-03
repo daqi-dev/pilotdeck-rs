@@ -17,8 +17,9 @@ EVIDENCE = Path(sys.argv[1]).resolve()
 EVIDENCE.mkdir(parents=True, exist_ok=True)
 PRODUCT = ROOT / 'src/pilotdeck-gateway/src/runtime/replacement.rs'
 OWNER = ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
-with mutating_sources(ROOT, [PRODUCT, OWNER]) as snapshots:
-    ORIGINAL = {path: snapshots[path].decode() for path in (PRODUCT, OWNER)}
+MEMORY_MOD = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/mod.rs'
+with mutating_sources(ROOT, [PRODUCT, OWNER, MEMORY_MOD]) as snapshots:
+    ORIGINAL = {path: snapshots[path].decode() for path in (PRODUCT, OWNER, MEMORY_MOD)}
     PREFIX = 'runtime::replacement::tests::'
     # Every mutation is independently compiled and run against one targeted test.
     MUTATIONS = [
