@@ -115,9 +115,42 @@ impl Run {
     }
 }
 
+/// External run ID and internal mailbox routing info for a session's active turn.
+/// Used by the native gateway's steer/cancel handlers and the async-hook registry.
+pub struct ActiveSteerInfo {
+    /// External run ID — matches the admission slot and the caller's `runId` param.
+    pub run_id: JsString,
+    /// Internal turn ID — the key the mailbox was started with; used in
+    /// `SteerMailbox::enqueue` / `cancel` and as `AsyncHookTurn::run_id`.
+    pub turn_id: JsString,
+    pub mailbox: SteerMailbox,
+}
+
 #[derive(Clone, Default)]
 pub struct InteractionSteer(Arc<Mutex<State>>);
 impl InteractionSteer {
+    /// Returns steer info for the session's current (non-closed) turn, if any.
+    ///
+    /// Callers are responsible for verifying that the returned `run_id` still
+    /// matches the admission slot before enqueueing or cancelling.
+    pub fn active_steer_info(&self, session_key: &JsString) -> Option<ActiveSteerInfo> {
+        let state = self.0.lock().unwrap();
+        if state.closed {
+            return None;
+        }
+        state.sessions.get(session_key).and_then(|session| {
+            session
+                .run
+                .as_ref()
+                .filter(|run| !run.closed.load(Ordering::SeqCst))
+                .map(|run| ActiveSteerInfo {
+                    run_id: run.id.clone(),
+                    turn_id: run.turn_id.clone(),
+                    mailbox: session.mailbox.clone(),
+                })
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn mailbox_for_test(&self, key: &JsString) -> Option<SteerMailbox> {
         self.0

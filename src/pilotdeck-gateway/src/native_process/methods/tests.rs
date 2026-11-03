@@ -30,6 +30,11 @@ fn registry_matches_current_methods() {
         "set_mcp_permission_mode_override",
         "sop_status",
         "sop_resume",
+        "steer_turn",
+        "cancel_steer",
+        "abort_turn",
+        "hook_async_result",
+>>>>>>> 29c0839c7 (feat(gateway) #1307 A7-W2 S2 steer / cancel / abort + U9 接线)
         "supported_agents",
         "list_projects",
         "describe_project",

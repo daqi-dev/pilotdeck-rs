@@ -2,6 +2,7 @@ use super::{Options, assembly::Recorders, methods};
 use crate::{
     metadata::object,
     runtime::{
+        async_hooks::AsyncHookRegistry,
         connection::{Call, RequestError},
         interaction::GatewayInteractionCoordinator,
         mcp::gateway::McpGateway,
@@ -32,6 +33,9 @@ pub struct Requests {
     /// control methods (`set_mcp_servers`, `mcp_server_reconnect`,
     /// `mcp_server_toggle`, `set_mcp_permission_mode_override`) route here.
     pub mcp: Arc<McpGateway>,
+    /// Gateway-level async hook registry for `hook_async_result`.
+    /// `None` when the project has no `InteractionSteer` resource (no steer wired).
+    pub async_hook_registry: Option<Arc<AsyncHookRegistry>>,
 }
 
 #[cfg(test)]

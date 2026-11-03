@@ -207,6 +207,9 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             mcp: requests::Requests::stub_mcp(&owner),
         }
     })
+            async_hook_registry: None,
+        },
+    )
 }
 
 type Trace = Arc<Mutex<Vec<Value>>>;

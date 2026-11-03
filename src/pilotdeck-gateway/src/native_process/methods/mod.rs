@@ -12,6 +12,7 @@ mod runs;
 mod session_dir;
 mod sop;
 mod tools;
+mod steer;
 
 type Response = Result<JsValue, RequestError>;
 type RequestHandler = for<'a> fn(&'a Requests, String, JsValue) -> Call<'a, Response>;
@@ -47,6 +48,7 @@ register_families! {
     metadata: metadata::METHODS,
     tools: tools::METHODS,
     session_dir: session_dir::METHODS,
+    steer: steer::METHODS,
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.
