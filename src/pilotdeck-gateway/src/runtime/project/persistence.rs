@@ -25,7 +25,9 @@ pub(super) fn stage(context: &StageContext, sink: &mut StageSink<'_>) -> Runtime
     let snapshots = resolve_workspace_snapshot_config(|key| env.get(key).cloned())
         .map_err(|error| RuntimeError::new(error.to_string()))?
         .map(|config| WorkspaceSnapshots {
-            recorder: ContentAddressedWorkspaceSnapshotRecorder::new(config.clone()),
+            recorder: Arc::new(ContentAddressedWorkspaceSnapshotRecorder::new(
+                config.clone(),
+            )),
             provider: create_workspace_snapshot_provider(config),
         });
     sink.register_resource(
@@ -40,8 +42,10 @@ pub(super) fn stage(context: &StageContext, sink: &mut StageSink<'_>) -> Runtime
 }
 
 /// Actual content-addressed capture and read/restore services, sharing one root.
+/// The recorder is behind an `Arc` so `assembly.rs` can clone the handle into
+/// `Services` without re-resolving the environment per turn.
 pub struct WorkspaceSnapshots {
-    pub recorder: ContentAddressedWorkspaceSnapshotRecorder,
+    pub recorder: Arc<ContentAddressedWorkspaceSnapshotRecorder>,
     pub provider: WorkspaceSnapshotProvider,
 }
 
