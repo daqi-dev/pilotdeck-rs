@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-04 04:10 · by Claude Code 协调者（A7/A8 批量评审修复进行中）
+updated: 2026-11-04 04:30 · by Claude Code 协调者（A7/A8 评审修复循环收口中）
 - #1305 | review | done | PR #1360 已合入 2026-11-04；主链首节点，解锁全部 A7/A8 接线单
 - #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：PR #1387 决策卡已合入；多机负载 CLI 已交付 fleet；当前无待人项
 - #1242 | coord | doing | 次链总单：s1 #1368 已合入（PR #1380），s2 #1369 实现中，其后 s3–s5 #1370–#1372（#1373 人答 A 已关）；跟进 #1402 前置于本单关单
