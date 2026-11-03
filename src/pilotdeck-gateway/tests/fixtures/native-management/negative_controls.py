@@ -81,10 +81,8 @@ mutations.append(('notification-before-dirty', REFRESH, '''        // `if (input
         match input.project_key.filter(|key| !key.is_empty()) {''', TEST, '#1231 invalidate dirty notification order'))
 
 # fix-r1: real unwired methods, contract, storage and successful disk effects.
-mutations.append(('wire-memory_list', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "memory_list"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-memory_list', REQUESTS, '"commands_list",', '"commands_list", "memory_list",', HOST, '#1231 exact wired capability set'))
-mutations.append(('wire-memory_wipe', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "memory_wipe"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
-mutations.append(('capability-memory_wipe', REQUESTS, '"commands_list",', '"commands_list", "memory_wipe",', HOST, '#1231 exact wired capability set'))
+# #1322 wires memory here (and #1319 wired MCP on main): no family stays
+# unwired, so the former `wire-*` / `capability-memory_*` mutants are gone.
 mutations.append(('capability-mcp_server_status', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_status",', HOST, '#1231 exact wired capability set'))
 mutations.append(('capability-set_mcp_servers', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_servers",', HOST, '#1231 exact wired capability set'))
 mutations.append(('capability-mcp_server_reconnect', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_reconnect",', HOST, '#1231 exact wired capability set'))

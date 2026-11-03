@@ -63,7 +63,15 @@ impl Requests {
             return Some(self.commands(params).await);
         }
         if matches!(method, "memory_list" | "memory_wipe") {
-            return Some(self.memory_dispatch(method, params));
+            let requests = self.clone();
+            let method = method.to_owned();
+            let params = params.clone();
+            return Some(
+                tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))
+                    .await
+                    .map_err(|e| RequestError::new(e.to_string()))
+                    .and_then(|result| result),
+            );
         }
         let requests = self.clone();
         let method = method.to_owned();
