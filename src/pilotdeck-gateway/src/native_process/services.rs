@@ -15,7 +15,8 @@ use crate::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsString, JsValue};
-use std::{path::PathBuf, sync::Arc};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 pub struct Services {
     pub options: Options,
@@ -30,6 +31,19 @@ pub struct Services {
 }
 fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
+}
+
+/// Returns true only if `path` is an absolute path strictly under
+/// `<project>/.tmp/chat-upload-leases/` with no `..` components.
+/// Guards P1-1: only hard-linked lease files may be inlined or added
+/// to allowedReadFiles; arbitrary client-supplied paths are rejected.
+fn is_safe_lease_path(path: &str, project: &Path) -> bool {
+    let p = Path::new(path);
+    if p.components().any(|c| c == Component::ParentDir) {
+        return false;
+    }
+    let lease_root = project.join(".tmp").join("chat-upload-leases");
+    p.starts_with(&lease_root)
 }
 
 fn failure(message: impl Into<String>) -> SubmitError {
@@ -171,50 +185,66 @@ impl SubmitHostServices for Services {
             let mut acquired: Vec<crate::upload::UploadArtifactLease> = Vec::new();
             let result: Result<Vec<crate::upload::UploadArtifactLease>, SubmitError> =
                 tokio::task::spawn_blocking(move || {
-                    for r in &refs {
-                        let upload_id = r
-                            .get("uploadId")
-                            .and_then(JsValue::as_string)
-                            .and_then(|s| s.to_utf8().ok())
-                            .ok_or_else(|| {
-                                SubmitError::new(
-                                    "CAPABILITY_UNAVAILABLE",
-                                    "uploadedAttachments[].uploadId must be a string.",
+                    // P1-2: On error mid-loop, release every lease acquired so far
+                    // (reverse order, best-effort) before propagating. Without this
+                    // the partially-acquired set is dropped without release.
+                    let outcome: Result<(), SubmitError> = (|| {
+                        for r in &refs {
+                            let upload_id = r
+                                .get("uploadId")
+                                .and_then(JsValue::as_string)
+                                .and_then(|s| s.to_utf8().ok())
+                                .ok_or_else(|| {
+                                    SubmitError::new(
+                                        "CAPABILITY_UNAVAILABLE",
+                                        "uploadedAttachments[].uploadId must be a string.",
+                                    )
+                                })?;
+                            // attachmentIds: optional string array
+                            let attachment_ids: Option<Vec<String>> = match r.get("attachmentIds") {
+                                Some(JsValue::Array(ids)) => Some(
+                                    ids.iter()
+                                        .map(|v| {
+                                            v.as_string().and_then(|s| s.to_utf8().ok()).ok_or_else(
+                                                || {
+                                                    SubmitError::new(
+                                                        "CAPABILITY_UNAVAILABLE",
+                                                        "attachmentIds must be strings.",
+                                                    )
+                                                },
+                                            )
+                                        })
+                                        .collect::<Result<Vec<_>, _>>()?,
+                                ),
+                                _ => None,
+                            };
+                            let lease = store
+                                .acquire_attachment_lease(
+                                    &upload_id,
+                                    &project_key,
+                                    attachment_ids.as_deref(),
                                 )
-                            })?;
-                        // attachmentIds: optional string array
-                        let attachment_ids: Option<Vec<String>> = match r.get("attachmentIds") {
-                            Some(JsValue::Array(ids)) => Some(
-                                ids.iter()
-                                    .map(|v| {
-                                        v.as_string().and_then(|s| s.to_utf8().ok()).ok_or_else(
-                                            || {
-                                                SubmitError::new(
-                                                    "CAPABILITY_UNAVAILABLE",
-                                                    "attachmentIds must be strings.",
-                                                )
-                                            },
-                                        )
-                                    })
-                                    .collect::<Result<Vec<_>, _>>()?,
-                            ),
-                            _ => None,
-                        };
-                        let lease = store
-                            .acquire_attachment_lease(
-                                &upload_id,
-                                &project_key,
-                                attachment_ids.as_deref(),
-                            )
-                            .map_err(|e| {
-                                SubmitError::new(
-                                    e.code.as_str(),
-                                    String::from_utf16_lossy(e.message.units()),
-                                )
-                            })?;
-                        acquired.push(lease);
+                                .map_err(|e| {
+                                    SubmitError::new(
+                                        e.code.as_str(),
+                                        String::from_utf16_lossy(e.message.units()),
+                                    )
+                                })?;
+                            acquired.push(lease);
+                        }
+                        Ok(())
+                    })();
+                    match outcome {
+                        Ok(()) => Ok(acquired),
+                        Err(e) => {
+                            for lease in acquired.iter().rev() {
+                                if let Err(rel) = lease.release() {
+                                    eprintln!("native upload lease release on error: {rel}");
+                                }
+                            }
+                            Err(e)
+                        }
                     }
-                    Ok(acquired)
                 })
                 .await
                 .map_err(|e| SubmitError::new("CAPABILITY_UNAVAILABLE", e.to_string()))?;
@@ -270,8 +300,20 @@ impl SubmitHostServices for Services {
                 }
             }
             // Build the attachment path note so the agent can use read_file.
+            // P1-1: Only paths under the project's lease directory are permitted.
+            // Bare absolute paths and any path with '..' are rejected here before
+            // they can reach allowedReadFiles or fs::read.
+            let project_dir = self.options.project.clone();
             let mut allowed_paths: Vec<JsValue> = Vec::new();
             let mut note_lines: Vec<String> = Vec::new();
+            // P1-3: Collect (path, mime, name) for lease-validated attachments,
+            // then read files in a blocking task so the async executor is not blocked.
+            struct AttachEntry {
+                path: String,
+                name: String,
+                mime: String,
+            }
+            let mut entries: Vec<AttachEntry> = Vec::new();
             for attachment in &attachments {
                 let path = attachment
                     .get("path")
@@ -294,19 +336,31 @@ impl SubmitHostServices for Services {
                     .and_then(|s| s.to_utf8().ok())
                     .unwrap_or_default();
                 if !path.is_empty() {
+                    // P1-1: Reject any path that is not under the lease directory.
+                    if !is_safe_lease_path(&path, &project_dir) {
+                        return Err(failure(
+                            "Attachment path is outside the permitted lease directory.",
+                        ));
+                    }
                     allowed_paths.push(JsValue::from(path.as_str()));
                     note_lines.push(format!("- {name}: {path}"));
-                    // Inline image blocks for common image mime types.
-                    if mime.starts_with("image/") {
-                        if let Ok(bytes) = std::fs::read(&path) {
+                    entries.push(AttachEntry { path, name, mime });
+                }
+            }
+            // P1-3: Read image bytes on a blocking thread (mirrors resolve_attachments).
+            let image_blocks: Vec<JsValue> = tokio::task::spawn_blocking(move || {
+                let mut out = Vec::new();
+                for entry in &entries {
+                    if entry.mime.starts_with("image/") {
+                        if let Ok(bytes) = std::fs::read(&entry.path) {
                             let encoded = base64_encode(&bytes);
-                            blocks.push(object([
+                            out.push(object([
                                 ("type", "image".into()),
                                 (
                                     "source",
                                     object([
                                         ("type", "base64".into()),
-                                        ("media_type", JsValue::from(mime.as_str())),
+                                        ("media_type", JsValue::from(entry.mime.as_str())),
                                         ("data", JsValue::from(encoded.as_str())),
                                     ]),
                                 ),
@@ -314,7 +368,11 @@ impl SubmitHostServices for Services {
                         }
                     }
                 }
-            }
+                out
+            })
+            .await
+            .map_err(|e| failure(e.to_string()))?;
+            blocks.extend(image_blocks);
             if !note_lines.is_empty() {
                 let header = "[Registered attachment files in this session:]";
                 let note = format!(
