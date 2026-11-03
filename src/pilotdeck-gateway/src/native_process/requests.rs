@@ -5,6 +5,7 @@ use crate::{
         connection::{Call, RequestError},
         interaction::GatewayInteractionCoordinator,
         mcp::gateway::McpGateway,
+        memory::gateway::MemoryGateway,
         refresh::RefreshRouter,
         replacement::ReplacementCoordinator,
         session::SessionOwner,
@@ -21,6 +22,7 @@ pub struct Requests {
     pub options: Options,
     pub env: crate::config::Env,
     pub snapshot_enabled: bool,
+    pub memory: Arc<MemoryGateway>,
     pub coordinator: Arc<TurnEventCoordinator>,
     pub runs: Arc<FileRegistry>,
     pub owner: SessionOwner,
@@ -105,6 +107,7 @@ impl Requests {
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
+            let memory_enabled = self.memory.is_enabled();
             Ok(object([
                 ("mode", "in_process".into()),
                 (
@@ -140,14 +143,18 @@ impl GatewayRequests for Requests {
                             "mcp_server_reconnect",
                             "mcp_server_toggle",
                             "set_mcp_permission_mode_override",
+                            "memory_list",
+                            "memory_wipe",
                         ]
                         .into_iter()
                         .filter(|capability| {
-                            self.snapshot_enabled
+                            (self.snapshot_enabled
                                 || !matches!(
                                     *capability,
                                     "snapshot_list" | "snapshot_get" | "snapshot_restore"
-                                )
+                                ))
+                                && (memory_enabled
+                                    || !matches!(*capability, "memory_list" | "memory_wipe"))
                         })
                         .map(JsValue::from)
                         .collect(),

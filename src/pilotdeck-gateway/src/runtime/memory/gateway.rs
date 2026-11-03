@@ -42,6 +42,7 @@ pub enum MemoryDispatch {
 /// `None` is the wrapper's absent `options.memoryList` / `options.memoryWipe`
 /// seam: after the parameter validation (and the wipe scope check) the method
 /// raises `CAPABILITY_UNAVAILABLE` instead of reaching the projection.
+#[derive(Clone)]
 pub struct MemoryGateway {
     projection: Option<MemoryProjection>,
 }
@@ -63,6 +64,11 @@ impl MemoryGateway {
         Self {
             projection: Some(projection),
         }
+    }
+
+    /// `this.options.memoryList` / `this.options.memoryWipe` configured.
+    pub fn is_enabled(&self) -> bool {
+        self.projection.is_some()
     }
 
     /// `memoryList`: projectKey, optional sessionKey, then the capability

@@ -10,6 +10,8 @@ pub(super) const METHODS: &[&str] = &[
     "manager_sessions",
     "manager_browsers",
     "commands_list",
+    "memory_list",
+    "memory_wipe",
     "skill_list",
     "skill_read",
     "skill_write",

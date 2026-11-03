@@ -4,6 +4,10 @@ use crate::{
     runtime::{
         connection::RequestError,
         manager::{ManagerGateway, ManagerProjects, TranscriptSessionCatalog},
+        memory::{
+            MemoryManagementService, MemoryProjectionError, MemoryProviderError,
+            ProjectMemoryRegistry, gateway::MemoryDispatch,
+        },
         plugins::{
             CommandsListInput, GatewayCommandCatalogBundle, catalog::NativeCommandCatalogProvider,
         },
@@ -49,12 +53,17 @@ impl Requests {
                 | "manager_sessions"
                 | "manager_browsers"
                 | "commands_list"
+                | "memory_list"
+                | "memory_wipe"
         ) && SkillMethod::from_wire(method).is_none()
         {
             return None;
         }
         if method == "commands_list" {
             return Some(self.commands(params).await);
+        }
+        if matches!(method, "memory_list" | "memory_wipe") {
+            return Some(self.memory_dispatch(method, params));
         }
         let requests = self.clone();
         let method = method.to_owned();
@@ -71,6 +80,17 @@ impl Requests {
             .map_err(|e| RequestError::new(e.to_string()))
             .and_then(|result| result),
         )
+    }
+
+    /// Dispatch `memory_list` / `memory_wipe` through the staged `MemoryGateway`.
+    /// Forward (`requires_host`) becomes `CAPABILITY_UNAVAILABLE` here: the
+    /// isolated native process has no Node host to forward to.
+    fn memory_dispatch(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
+        match self.memory.dispatch(method, params) {
+            Some(MemoryDispatch::Response(value)) => Ok(value),
+            Some(MemoryDispatch::Forward) => Err(unavailable()),
+            None => Err(unavailable()),
+        }
     }
 
     fn admit_management_project(&self, params: &JsValue) -> Result<(), RequestError> {
