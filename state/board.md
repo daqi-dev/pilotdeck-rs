@@ -3010,3 +3010,5 @@ updated: 2026-11-02 12:22 · by Claude Code 子代理（READY 重写）
 - 13:1x #1369 cb8 GLM 7200 s 时限（8 文件 + native-registry-switch fixture + TS 探针半成品）→ 本机 dispatch-resume GLM。
 - 13:1x **人令暂停 loop、收尾交接** → 删 15 min cron、停两路守望，不派新单；在途进程照跑 → `_tmp/20261102-handoff-1310.md`。
 - 13:1x **两小时交接（人令暂停 loop）** → `_tmp/20261102-handoff-1310.md`。下一步：接手者重挂 watch-deliveries / watch-queue，按交接在途表收口（a5b / #1220 / #1327 / #1305 优先）。
+
+- 2026-11-04 03:27 Claude 完成 #1308 A7-W3 S3 历史事务 + U10 接线，PR #1420（draft）。新增 `methods/history.rs`，将 7 个方法（export_session_transcript、restore_session_transcript、read_session_messages、fork_session、replace_last_turn、finalize_last_turn_replacement、read_subagent_messages）注册进原生路由；replace/finalize/fork 复用 ReplacementCoordinator；read_session_messages 经 epoch 重试；export/restore/read_subagent 返回 CAPABILITY_UNAVAILABLE。`cargo test -p pilotdeck-gateway --lib`：3459 passed, 0 failed。下一步：两家非作者评审。
