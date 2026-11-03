@@ -1084,9 +1084,9 @@ impl ClosingGuard {
 impl Drop for ClosingGuard {
     fn drop(&mut self) {
         if let Some(outcome) = self.outcome.take() {
+            self.settle.send_replace(Some(outcome));
             #[cfg(test)]
             settle_order::record("closing-settled");
-            self.settle.send_replace(Some(outcome));
         }
         // Released only after the settle write.
         self.exclusive = None;
