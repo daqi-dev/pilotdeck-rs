@@ -69,10 +69,12 @@ impl Requests {
                     details: None,
                     validation: None,
                 }),
-                "read_subagent_messages" => Err(unavailable(
-                    "readSubagentMessages",
-                    "read_subagent_messages",
-                )),
+                "read_subagent_messages" => Err(RequestError {
+                    code: "gateway_request_failed".into(),
+                    message: "read_subagent_messages is not configured. Wire `readSubagentMessages` via createLocalGateway.".into(),
+                    details: None,
+                    validation: None,
+                }),
                 "fork_session" => replacement
                     .fork_session(params)
                     .await
