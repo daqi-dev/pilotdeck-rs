@@ -596,6 +596,230 @@ fn tool_policy_and_turn_environment() {
     );
 }
 
+// #1369: the controlled registry switch. Unset keeps the production default
+// (registry on, no explicit state), on/off state the switch explicitly, and
+// every other value — including the empty string — fails closed.
+#[test]
+fn run_registry_switch_matrix() {
+    negative_assert!(
+        matches!(assembly::run_registry_switch(&Env::new()), Ok(None)),
+        "#1369 unset registry switch keeps the production default"
+    );
+    for (value, on) in [("on", true), ("off", false)] {
+        let mut env = Env::new();
+        env.insert("PILOTDECK_NATIVE_RUN_REGISTRY".into(), value.into());
+        let switch = assembly::run_registry_switch(&env)
+            .unwrap_or_else(|error| panic!("#1369 registry switch {value:?} parses: {error}"));
+        let stated = match switch {
+            Some(assembly::RunRegistrySwitch::On) => "on",
+            Some(assembly::RunRegistrySwitch::Off) => "off",
+            None => panic!("#1369 registry switch {value:?} states its value"),
+        };
+        negative_assert_eq!(stated, value, "#1369 explicit registry switch state");
+        negative_assert_eq!(stated == "on", on, "#1369 explicit registry switch target");
+    }
+    for value in ["", "true", "ON", "1", " "] {
+        let mut env = Env::new();
+        env.insert("PILOTDECK_NATIVE_RUN_REGISTRY".into(), value.into());
+        negative_assert!(
+            assembly::run_registry_switch(&env).is_err(),
+            "#1369 invalid registry switch value rejected"
+        );
+    }
+}
+
+// A runs.json directory makes opening the persistent registry fail, so only
+// the off switch can complete startup: unset and "on" pin the production
+// default, and an invalid value is rejected before the file is touched.
+#[tokio::test]
+async fn run_registry_switch_controls_startup() {
+    for (value, starts, gate) in [
+        (Some("off"), true, None),
+        (None, false, None),
+        (Some("on"), false, None),
+        (Some("invalid"), false, Some("must be exactly on or off")),
+    ] {
+        let scratch = Scratch::new();
+        let options = Options::parse(scratch.args()).expect("#1369 registry switch options");
+        std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG)
+            .expect("#1369 registry switch config");
+        std::fs::create_dir(options.home.join("runs.json")).expect("#1369 runs directory fixture");
+        let mut inherited = Env::new();
+        if let Some(value) = value {
+            inherited.insert("PILOTDECK_NATIVE_RUN_REGISTRY".into(), value.into());
+        }
+        let outcome = assembly::start_observed(
+            options.clone(),
+            options.environment(inherited),
+            Arc::new(|_, result| Box::pin(async move { result })),
+            Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        )
+        .await;
+        if !starts {
+            let error = match outcome {
+                Ok(_) => panic!("#1369 registry switch {value:?} startup refused"),
+                Err(error) => error,
+            };
+            if let Some(gate) = gate {
+                negative_assert!(
+                    error.to_string().contains(gate),
+                    "#1369 invalid registry switch reports the explicit gate: {error}"
+                );
+            }
+            continue;
+        }
+        let host = crate::test_negative_receipt::expect_ok(
+            outcome,
+            "#1369 off registry switch starts without the run file",
+        );
+        negative_assert!(
+            options.home.join("runs.json").is_dir(),
+            "#1369 off registry switch leaves the run path untouched"
+        );
+        host.request_shutdown(options.drain_budget);
+        tokio::time::timeout(std::time::Duration::from_secs(10), host.stopped())
+            .await
+            .expect("#1369 off registry switch host stop deadline")
+            .expect("#1369 off registry switch host stopped clean");
+    }
+}
+
+// TS InProcessGateway.ts:2093-2095 and :2525-2544: without a configured
+// registry, describeServer drops the run capabilities and every run read
+// fails with CAPABILITY_UNAVAILABLE; with one, they are listed and served.
+struct NoSessions;
+impl crate::runtime::project::ProjectRuntimeFactory for NoSessions {
+    fn stage(
+        &self,
+        _: &std::path::Path,
+        _: &mut crate::runtime::project::ResourceBundle,
+    ) -> crate::runtime::project::RuntimeResult {
+        panic!("#1369 registry switch requests must not stage resources")
+    }
+}
+impl crate::runtime::session::SessionFactory for NoSessions {
+    fn create(
+        &self,
+        _: crate::runtime::session::SessionContext,
+        _: Option<crate::runtime::session::LiveSessionHandle>,
+    ) -> crate::runtime::refresh::BoxFuture<
+        Result<crate::runtime::session::LiveSessionHandle, crate::runtime::project::RuntimeError>,
+    > {
+        panic!("#1369 registry switch requests must not create sessions")
+    }
+}
+
+#[tokio::test]
+async fn requests_registry_switch_gates_run_reads() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+    let scratch = Scratch::new();
+    let options = Options::parse(scratch.args()).expect("#1369 requests options");
+    let project = Arc::new(crate::runtime::project::ProjectRuntimeRegistry::new(
+        options.project.clone(),
+        Arc::new(NoSessions),
+    ));
+    let mut owner_options = crate::runtime::session::SessionOwnerOptions::new(Arc::new(NoSessions));
+    owner_options.idle_sweep_interval_ms = 0;
+    let owner = crate::runtime::session::SessionOwner::new(owner_options);
+    let reference = js(&json!({"sessionKey":"session","runId":"run"}));
+    let runs = Arc::new(
+        crate::runtime::turn::publish::FileRegistry::new(
+            crate::storage::FileRunRegistry::open(scratch.0.join("runs-on.json"))
+                .expect("#1369 requests run file"),
+        )
+        .expect("#1369 requests run registry"),
+    );
+    for (runs, on) in [(Some(runs), true), (None, false)] {
+        let requests = requests::Requests {
+            options: options.clone(),
+            env: options.environment(Env::new()),
+            snapshot_enabled: false,
+            memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
+            coordinator: Arc::default(),
+            runs,
+            owner: owner.clone(),
+            project: project.clone(),
+            replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+                Default::default(),
+                Arc::new(crate::runtime::session::SessionOwner::new({
+                    let mut o =
+                        crate::runtime::session::SessionOwnerOptions::new(Arc::new(NoSessions));
+                    o.idle_sweep_interval_ms = 0;
+                    o
+                })),
+                5000,
+                None,
+            )),
+            recorders: Arc::default(),
+            interactions: Arc::default(),
+            mcp: requests::Requests::stub_mcp(&owner),
+            async_hook_registry: None,
+            user_dialog_bus: Arc::new(std::sync::Mutex::new(
+                crate::user_dialog::GatewayUserDialogBus::new(
+                    crate::user_dialog::DialogRuntime::default(),
+                    None,
+                ),
+            )),
+        };
+        let described = requests
+            .describe_server()
+            .await
+            .expect("#1369 registry switch describe_server");
+        let described = json_value(&described);
+        let capabilities = described["capabilities"]
+            .as_array()
+            .expect("#1369 registry switch capabilities");
+        for capability in ["run_get", "run_events", "run_reattach"] {
+            negative_assert_eq!(
+                capabilities
+                    .iter()
+                    .any(|listed| listed.as_str() == Some(capability)),
+                on,
+                "#1369 describe_server gates run capabilities"
+            );
+        }
+        if on {
+            let result = crate::test_negative_receipt::expect_ok(
+                requests.request("run_get".into(), reference.clone()).await,
+                "#1369 run_get with a registry resolves",
+            );
+            negative_assert!(
+                matches!(result, JsValue::Null),
+                "#1369 run_get for an unregistered run is null"
+            );
+            let error = crate::test_negative_receipt::expect_err(
+                requests
+                    .request("run_events".into(), reference.clone())
+                    .await,
+                "#1369 run_events reads the configured registry",
+            );
+            negative_assert_eq!(
+                error.code,
+                "RUN_NOT_FOUND",
+                "#1369 run_events with a registry reports the run"
+            );
+        } else {
+            for method in ["run_get", "run_events", "run_reattach"] {
+                let error = crate::test_negative_receipt::expect_err(
+                    requests.request(method.into(), reference.clone()).await,
+                    "#1369 run read without a registry is unavailable",
+                );
+                negative_assert_eq!(
+                    error.code,
+                    "CAPABILITY_UNAVAILABLE",
+                    "#1369 {method} without a registry is unavailable"
+                );
+                negative_assert!(
+                    error
+                        .message
+                        .equals_str("Persistent run registry is unavailable."),
+                    "#1369 {method} unavailable message matches TS"
+                );
+            }
+        }
+    }
+}
+
 #[path = "review_tests.rs"]
 mod review;
 

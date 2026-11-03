@@ -26,7 +26,7 @@ pub struct Requests {
     pub snapshot_enabled: bool,
     pub memory: Arc<MemoryGateway>,
     pub coordinator: Arc<TurnEventCoordinator>,
-    pub runs: Arc<FileRegistry>,
+    pub runs: Option<Arc<FileRegistry>>,
     pub owner: SessionOwner,
     pub project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     pub replacement: Arc<ReplacementCoordinator>,
@@ -162,6 +162,10 @@ impl GatewayRequests for Requests {
                             "permission_list",
                         ]
                         .into_iter()
+                        .filter(|capability| {
+                            self.runs.is_some()
+                                || !matches!(*capability, "run_get" | "run_events" | "run_reattach")
+                        })
                         .filter(|capability| {
                             (self.snapshot_enabled
                                 || !matches!(

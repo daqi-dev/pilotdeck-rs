@@ -158,13 +158,13 @@ async fn observe(name: &str) -> (Value, Value) {
         snapshot_enabled: false,
         memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
         coordinator: Arc::default(),
-        runs: Arc::new(
+        runs: Some(Arc::new(
             crate::runtime::turn::publish::FileRegistry::new(
                 crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
                     .expect("#1154 run file"),
             )
             .expect("#1154 run registry"),
-        ),
+        )),
         owner: owner.clone(),
         replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
             Default::default(),
@@ -505,13 +505,13 @@ async fn observe_archive(name: &str) {
         snapshot_enabled: false,
         memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
         coordinator: Arc::default(),
-        runs: Arc::new(
+        runs: Some(Arc::new(
             crate::runtime::turn::publish::FileRegistry::new(
                 crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
                     .expect("#1154 archive run file"),
             )
             .expect("#1154 archive run registry"),
-        ),
+        )),
         owner: SessionOwner::new(owner_options_2),
         replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
             Default::default(),
