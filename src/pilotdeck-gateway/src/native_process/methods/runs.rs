@@ -48,6 +48,11 @@ impl Requests {
                 )
                 .await
                 .map_err(read_error)
+            } else if method == "run_reattach" {
+                read::run_reattach(Some(self.runs.as_ref()), &run)
+                    .await
+                    .map(|v| v.unwrap_or(JsValue::Null))
+                    .map_err(read_error)
             } else {
                 read::run_get(Some(self.runs.as_ref()), &run)
                     .await
