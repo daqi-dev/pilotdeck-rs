@@ -195,7 +195,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             project,
             owner: owner.clone(),
             coordinator: Arc::default(),
-            runs,
+            runs: Some(runs),
             replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
                 Default::default(),
                 Arc::new(replacement_owner),

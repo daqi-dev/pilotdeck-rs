@@ -44,7 +44,7 @@ use crate::{
                 GatewayAgentEventProjector, GatewayAgentEventProjectorOptions,
                 GatewayToolResultArtifactStore,
             },
-            publish::FileRegistry,
+            publish::{FileRegistry, TurnRunRegistry},
             replay::TurnReplayOptions,
             runner::tail::TailConfig,
             submit::{TurnSubmitter, WorkspaceAdmissions},
@@ -209,6 +209,29 @@ fn build_memory_gateway(
     }
 }
 
+/// The controlled registry switch for collection and testing (#1369).
+/// Unset keeps the production default (registry on, no receipt); "on"/"off"
+/// state the switch explicitly and publish a construction receipt; every
+/// other value, including the empty string, fails closed at startup.
+pub(super) enum RunRegistrySwitch {
+    On,
+    Off,
+}
+
+pub(super) fn run_registry_switch(env: &Env) -> Result<Option<RunRegistrySwitch>, ProxyError> {
+    let Some(value) = env.get("PILOTDECK_NATIVE_RUN_REGISTRY") else {
+        return Ok(None);
+    };
+    match value.as_str() {
+        "on" => Ok(Some(RunRegistrySwitch::On)),
+        "off" => Ok(Some(RunRegistrySwitch::Off)),
+        _ => Err(
+            "native run registry switch (PILOTDECK_NATIVE_RUN_REGISTRY) must be exactly on or off."
+                .into(),
+        ),
+    }
+}
+
 pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
     start_observed(
         options,
@@ -232,6 +255,16 @@ pub(super) async fn start_observed(
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> Result<TurnGateway, ProxyError> {
+    let registry_switch = run_registry_switch(&env)?;
+    if let Some(switch) = &registry_switch {
+        // The #1368 registry boundary witness: the switch itself states its
+        // resolved state at construction, before any turn is driven.
+        let state = match switch {
+            RunRegistrySwitch::On => "on",
+            RunRegistrySwitch::Off => "off",
+        };
+        eprintln!("native run registry {state}");
+    }
     // Management can inspect existing skills; turn admission still checks that
     // unsupported skill prompt/tool composition is not silently omitted.
     validate_profile_inner(&options, &env, true).await?;
@@ -525,9 +558,14 @@ pub(super) async fn start_observed(
         diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
     }));
     let built = (|| -> Result<_, ProxyError> {
-        let runs = Arc::new(FileRegistry::new(FileRunRegistry::open(
-            options.home.join("runs.json"),
-        )?)?);
+        // TS parity: an unconfigured runRegistry is simply absent, so the file
+        // registry is never opened and no run persistence happens at all.
+        let runs = match registry_switch {
+            Some(RunRegistrySwitch::Off) => None,
+            Some(RunRegistrySwitch::On) | None => Some(Arc::new(FileRegistry::new(
+                FileRunRegistry::open(options.home.join("runs.json"))?,
+            )?)),
+        };
         let artifacts = Arc::new(GatewayToolResultArtifactStore::new(
             options.home.join("tool-results"),
             4096,
@@ -677,7 +715,7 @@ pub(super) async fn start_observed(
                 submitter: Arc::new(TurnSubmitter {
                     owner,
                     coordinator,
-                    registry: Some(runs),
+                    registry: runs.map(|runs| runs as Arc<dyn TurnRunRegistry>),
                     workspace_admissions: WorkspaceAdmissions::default(),
                     host: Arc::new(GatewaySubmitHost::new(
                         services,

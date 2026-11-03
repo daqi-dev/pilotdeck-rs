@@ -37,9 +37,15 @@ impl Requests {
                 session_key: string(&params, "sessionKey")?,
                 run_id: string(&params, "runId")?,
             };
+            // TS parity: an unconfigured runRegistry makes every run read
+            // fail with CAPABILITY_UNAVAILABLE before touching a file.
+            let registry: Option<&dyn read::TurnRunReader> = self
+                .runs
+                .as_deref()
+                .map(|runs| runs as &dyn read::TurnRunReader);
             if method == "run_events" {
                 read::run_events(
-                    Some(self.runs.as_ref()),
+                    registry,
                     &RunEventsInput {
                         run,
                         after_seq: params.get("afterSeq").cloned(),
@@ -49,12 +55,12 @@ impl Requests {
                 .await
                 .map_err(read_error)
             } else if method == "run_reattach" {
-                read::run_reattach(Some(self.runs.as_ref()), &run)
+                read::run_reattach(registry, &run)
                     .await
                     .map(|v| v.unwrap_or(JsValue::Null))
                     .map_err(read_error)
             } else {
-                read::run_get(Some(self.runs.as_ref()), &run)
+                read::run_get(registry, &run)
                     .await
                     .map(|v| v.unwrap_or(JsValue::Null))
                     .map_err(read_error)

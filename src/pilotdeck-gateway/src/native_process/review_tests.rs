@@ -716,13 +716,13 @@ async fn project_path_boundaries_worker() {
         snapshot_enabled: false,
         memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
         coordinator: Arc::default(),
-        runs: Arc::new(
+        runs: Some(Arc::new(
             crate::runtime::turn::publish::FileRegistry::new(
                 crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
                     .expect("#1137 path run file"),
             )
             .expect("#1137 path run registry"),
-        ),
+        )),
         owner: owner.clone(),
         replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
             Default::default(),
