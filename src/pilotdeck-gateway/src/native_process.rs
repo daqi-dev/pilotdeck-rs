@@ -198,7 +198,8 @@ impl Options {
             drain_budget: Duration::from_millis(drain_ms),
             storage_root: values
                 .get("--storage-root")
-                .and_then(|v| v.to_str())
+                .map(|v| v.to_str().ok_or("storage root is not UTF-8"))
+                .transpose()?
                 .map(|s| s.to_owned()),
         })
     }
