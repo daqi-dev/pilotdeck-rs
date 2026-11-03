@@ -1779,6 +1779,40 @@ impl crate::runtime::memory::ProjectMemoryRegistry for ParkedMemoryRegistry {
 }
 
 #[tokio::test]
+async fn memory_management_request_disabled_gateway_returns_unavailable() {
+    // Exercises the spawn_blocking branch in management_request for memory
+    // methods: setup() uses MemoryGateway::disabled(), so memory_dispatch
+    // returns None → CAPABILITY_UNAVAILABLE. Without this test the branch
+    // had zero coverage in the #1231 suite (#1322 fix-r2 P1).
+    let (scratch, requests) = setup();
+    let params = expand(&json!({"projectKey": "<root>/project"}), &scratch.0);
+    let result = requests.management_request("memory_list", &params).await;
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1322 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1322 registry disposal");
+    // MemoryGateway::disabled() returns a response-level DialogGatewayError
+    // rather than a Rust-level RequestError, so the inner Result is Ok(body)
+    // with a JSON body whose "code" field is "CAPABILITY_UNAVAILABLE".
+    let body = json_value(
+        &result
+            .expect("#1322 memory_list must be a management method")
+            .expect("#1322 disabled gateway returns response body"),
+    );
+    negative_assert_eq!(
+        body["code"].as_str().unwrap_or(""),
+        "CAPABILITY_UNAVAILABLE",
+        "#1322 memory_list via management_request with disabled gateway"
+    );
+}
+
+#[tokio::test]
 async fn pending_memory_io_does_not_block_serial_host() {
     let (scratch, mut requests) = setup();
     let (entered, ready) = tokio::sync::oneshot::channel();
