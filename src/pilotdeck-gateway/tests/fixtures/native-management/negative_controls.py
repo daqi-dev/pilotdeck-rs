@@ -120,6 +120,9 @@ mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",',
 
 # fix-r2 (#1322): memory IO must stay off the serial host.
 mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'std::future::ready(requests.memory_dispatch(&method, &params))\n                    .await,', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
+# fix-r3 (#1322): inline-sync variant — calls memory_dispatch directly on the
+# calling thread (no spawn_blocking), which blocks the serial host.
+mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'requests.memory_dispatch(&method, &params),', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 memory dispatch must not run inline on the serial host'))
 
 
 def mutate(case, text):
