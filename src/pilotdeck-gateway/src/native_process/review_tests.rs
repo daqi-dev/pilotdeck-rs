@@ -740,6 +740,7 @@ async fn project_path_boundaries_worker() {
                 None,
             ),
         )),
+        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
     };
     let services = services::Services {
         options: options.clone(),
@@ -751,6 +752,17 @@ async fn project_path_boundaries_worker() {
         recorders: Arc::default(),
         owner,
         snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &pilotdeck_protocol::JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unavailable in test",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
     };
     std::env::set_current_dir(scratch.0.join("other")).expect("#1137 enter other cwd");
     let oracle = marker_oracle();
