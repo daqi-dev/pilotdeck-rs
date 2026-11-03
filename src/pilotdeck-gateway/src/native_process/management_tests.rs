@@ -1224,6 +1224,111 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
 }
 
 #[tokio::test]
+async fn storage_root_cli_arg_wires_snapshot_capabilities() {
+    // Pins the CLI parse path: Options::parse(["--storage-root", path]) stores
+    // storage_root as Some(string); environment() injects PILOTDECK_STORAGE_ROOT
+    // via the Some branch. No manual env.insert is used; the test solely exercises
+    // the --storage-root → Options::storage_root → environment() chain and asserts
+    // that describe_server advertises all 13 snapshot-enabled capabilities.
+    let (scratch, requests) = setup();
+    let storage_path = scratch.0.join("home/storage");
+    std::fs::create_dir_all(&storage_path).expect("#1323 storage root directory");
+    let options = Options::parse([
+        "--home".into(),
+        requests.options.home.clone().into_os_string(),
+        "--project".into(),
+        requests.options.project.clone().into_os_string(),
+        "--listen".into(),
+        "127.0.0.1:0".into(),
+        "--token-file".into(),
+        requests.options.token_file.clone().into_os_string(),
+        "--sidecar".into(),
+        requests.options.sidecar.clone().into_os_string(),
+        "--storage-root".into(),
+        storage_path.clone().into_os_string(),
+    ])
+    .expect("#1323 Options::parse with --storage-root");
+    negative_assert_eq!(
+        options.storage_root.as_deref(),
+        Some(storage_path.to_str().expect("#1323 storage path UTF-8")),
+        "#1323 --storage-root sets Options::storage_root"
+    );
+    let env = options.environment(crate::config::Env::new());
+    negative_assert_eq!(
+        env.get("PILOTDECK_STORAGE_ROOT").map(String::as_str),
+        Some(storage_path.to_str().expect("#1323 storage path UTF-8 env")),
+        "#1323 environment() injects PILOTDECK_STORAGE_ROOT from --storage-root"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1323 dispose unused owner");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1323 dispose unused registry");
+    let host = assembly::start(options.clone(), env)
+        .await
+        .expect("#1323 assembly::start with --storage-root");
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection
+        .receive(
+            json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"})
+                .to_string(),
+        )
+        .await
+        .expect("#1323 hello frame");
+    connection
+        .receive(json!({"type":"request","id":"describe","method":"describe_server"}).to_string())
+        .await
+        .expect("#1323 describe_server request");
+    let description = {
+        let frames = text.0.lock().expect("#1323 frames lock");
+        let response = frames
+            .iter()
+            .find(|frame| frame["id"] == "describe")
+            .expect("#1323 describe_server response");
+        negative_assert_eq!(response["ok"], true, "#1323 describe_server success");
+        response["result"].clone()
+    };
+    let mut capabilities: Vec<&str> = description["capabilities"]
+        .as_array()
+        .expect("#1323 capabilities array")
+        .iter()
+        .map(|v| v.as_str().expect("#1323 capability string"))
+        .collect();
+    capabilities.sort_unstable();
+    let mut expected = [
+        "run_get",
+        "run_events",
+        "run_reattach",
+        "project_files_list",
+        "project_file_read",
+        "model_catalog_list",
+        "session_model_get",
+        "supported_agents",
+        "snapshot_list",
+        "snapshot_get",
+        "snapshot_restore",
+        "manager_sessions",
+        "commands_list",
+    ];
+    expected.sort_unstable();
+    negative_assert_eq!(
+        capabilities,
+        expected,
+        "#1323 --storage-root CLI path advertises 13 snapshot-enabled capabilities"
+    );
+    assert_ts_capability_subset(&expected);
+    host.shutdown(options.drain_budget)
+        .await
+        .expect("#1323 host shutdown");
+}
+
+#[tokio::test]
 async fn snapshot_success_matches_ts() {
     let (scratch, requests) = setup();
     let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 snapshot oracle");
