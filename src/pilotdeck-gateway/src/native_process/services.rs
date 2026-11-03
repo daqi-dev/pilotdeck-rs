@@ -11,7 +11,9 @@ use crate::{
         },
     },
     storage::{ContentAddressedWorkspaceSnapshotRecorder, RunRef},
+    upload::UploadStore,
 };
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsString, JsValue};
 use std::{path::PathBuf, sync::Arc};
 
@@ -24,7 +26,12 @@ pub struct Services {
     /// Extracted once at startup from `PersistenceResources`; `None` when
     /// `--storage-root` was not supplied and snapshots are disabled.
     pub snapshot_recorder: Option<Arc<ContentAddressedWorkspaceSnapshotRecorder>>,
+    pub upload_store: Arc<UploadStore>,
 }
+fn base64_encode(bytes: &[u8]) -> String {
+    BASE64_STANDARD.encode(bytes)
+}
+
 fn failure(message: impl Into<String>) -> SubmitError {
     SubmitError::new("gateway_submit_failed", message)
 }
@@ -142,34 +149,193 @@ impl SubmitHostServices for Services {
     }
     fn resolve_attachments<'a>(
         &'a self,
-        _: &'a JsValue,
+        input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<SubmitAttachmentLease, SubmitError>> {
-        Box::pin(async {
-            Err(unavailable(
-                "Upload attachment composition is not installed in this isolated process.",
-            ))
+        let store = self.upload_store.clone();
+        let project = self.options.project.clone();
+        Box::pin(async move {
+            // `uploadedAttachments` is a non-empty array at this call site
+            // (GatewaySubmitHost::prepare checks that before calling).
+            let refs = match input.get("uploadedAttachments") {
+                Some(JsValue::Array(refs)) => refs.clone(),
+                _ => {
+                    return Err(SubmitError::new(
+                        "CAPABILITY_UNAVAILABLE",
+                        "uploadedAttachments must be a non-empty array.",
+                    ));
+                }
+            };
+            let project_key = project.to_string_lossy().into_owned();
+            // Acquire leases sequentially, mirroring TS GatewayUploadedAttachmentBundle.
+            // Disk I/O runs on a blocking thread so the async executor is not blocked.
+            let mut acquired: Vec<crate::upload::UploadArtifactLease> = Vec::new();
+            let result: Result<Vec<crate::upload::UploadArtifactLease>, SubmitError> =
+                tokio::task::spawn_blocking(move || {
+                    for r in &refs {
+                        let upload_id = r
+                            .get("uploadId")
+                            .and_then(JsValue::as_string)
+                            .and_then(|s| s.to_utf8().ok())
+                            .ok_or_else(|| {
+                                SubmitError::new(
+                                    "CAPABILITY_UNAVAILABLE",
+                                    "uploadedAttachments[].uploadId must be a string.",
+                                )
+                            })?;
+                        // attachmentIds: optional string array
+                        let attachment_ids: Option<Vec<String>> = match r.get("attachmentIds") {
+                            Some(JsValue::Array(ids)) => Some(
+                                ids.iter()
+                                    .map(|v| {
+                                        v.as_string().and_then(|s| s.to_utf8().ok()).ok_or_else(
+                                            || {
+                                                SubmitError::new(
+                                                    "CAPABILITY_UNAVAILABLE",
+                                                    "attachmentIds must be strings.",
+                                                )
+                                            },
+                                        )
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            ),
+                            _ => None,
+                        };
+                        let lease = store
+                            .acquire_attachment_lease(
+                                &upload_id,
+                                &project_key,
+                                attachment_ids.as_deref(),
+                            )
+                            .map_err(|e| {
+                                SubmitError::new(
+                                    e.code.as_str(),
+                                    String::from_utf16_lossy(e.message.units()),
+                                )
+                            })?;
+                        acquired.push(lease);
+                    }
+                    Ok(acquired)
+                })
+                .await
+                .map_err(|e| SubmitError::new("CAPABILITY_UNAVAILABLE", e.to_string()))?;
+            let leases = result?;
+            // Merge attachments from all leases (TS: flatMap over acquired).
+            let attachments: Vec<JsValue> = leases
+                .iter()
+                .flat_map(|lease| lease.attachments.iter().cloned())
+                .collect();
+            // Release is idempotent on all acquired leases (reverse order like TS).
+            let release: crate::runtime::turn::submit_host::SubmitLeaseRelease =
+                Box::new(move || {
+                    Box::pin(async move {
+                        for lease in leases.iter().rev() {
+                            // Best-effort: log failures but continue.
+                            if let Err(e) = lease.release() {
+                                eprintln!("native upload lease release: {e}");
+                            }
+                        }
+                        Ok(())
+                    })
+                });
+            Ok(SubmitAttachmentLease {
+                attachments,
+                release,
+            })
         })
     }
     fn prepare_attachment_turn<'a>(
         &'a self,
         message: &'a JsValue,
         attachments: Vec<JsValue>,
-        _: Option<&JsString>,
-        _: Option<&JsString>,
+        _project: Option<&JsString>,
+        _session: Option<&JsString>,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
         Box::pin(async move {
             super::assembly::validate_profile(&self.options, &self.env)
                 .await
                 .map_err(|error| unavailable(&error.to_string()))?;
-            if !attachments.is_empty() {
-                return Err(unavailable(
-                    "Attachment composition is not installed in this isolated process.",
-                ));
-            }
             if !matches!(message, JsValue::String(_)) {
                 return Err(failure("message must be a string."));
             }
-            Ok(object([("type", "text".into()), ("text", message.clone())]))
+            if attachments.is_empty() {
+                return Ok(object([("type", "text".into()), ("text", message.clone())]));
+            }
+            // Build a blocks-type agent input mirroring TS GatewayAttachmentTurnComposer.
+            // For each lease attachment we emit a `file` or `image` block using the
+            // leased path (hard-linked, stable for the duration of the turn).
+            let mut blocks: Vec<JsValue> = Vec::new();
+            if let JsValue::String(text) = message {
+                if !text.is_empty() {
+                    blocks.push(object([("type", "text".into()), ("text", message.clone())]));
+                }
+            }
+            // Build the attachment path note so the agent can use read_file.
+            let mut allowed_paths: Vec<JsValue> = Vec::new();
+            let mut note_lines: Vec<String> = Vec::new();
+            for attachment in &attachments {
+                let path = attachment
+                    .get("path")
+                    .and_then(JsValue::as_string)
+                    .and_then(|s| s.to_utf8().ok())
+                    .unwrap_or_default();
+                let name = attachment
+                    .get("name")
+                    .and_then(JsValue::as_string)
+                    .and_then(|s| s.to_utf8().ok())
+                    .unwrap_or_else(|| {
+                        std::path::Path::new(&path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "attachment".into())
+                    });
+                let mime = attachment
+                    .get("mimeType")
+                    .and_then(JsValue::as_string)
+                    .and_then(|s| s.to_utf8().ok())
+                    .unwrap_or_default();
+                if !path.is_empty() {
+                    allowed_paths.push(JsValue::from(path.as_str()));
+                    note_lines.push(format!("- {name}: {path}"));
+                    // Inline image blocks for common image mime types.
+                    if mime.starts_with("image/") {
+                        if let Ok(bytes) = std::fs::read(&path) {
+                            let encoded = base64_encode(&bytes);
+                            blocks.push(object([
+                                ("type", "image".into()),
+                                (
+                                    "source",
+                                    object([
+                                        ("type", "base64".into()),
+                                        ("media_type", JsValue::from(mime.as_str())),
+                                        ("data", JsValue::from(encoded.as_str())),
+                                    ]),
+                                ),
+                            ]));
+                        }
+                    }
+                }
+            }
+            if !note_lines.is_empty() {
+                let header = "[Registered attachment files in this session:]";
+                let note = format!(
+                    "{header}\n{lines}\nThese are path references for reuse.",
+                    lines = note_lines.join("\n")
+                );
+                blocks.push(object([
+                    ("type", "text".into()),
+                    ("text", JsValue::from(note.as_str())),
+                ]));
+            }
+            let mut result = object([
+                ("type", "blocks".into()),
+                ("content", JsValue::Array(blocks)),
+            ]);
+            if !allowed_paths.is_empty() {
+                if let JsValue::Object(ref mut o) = result {
+                    o.insert("allowedReadFiles".into(), JsValue::Array(allowed_paths));
+                }
+            }
+            Ok(result)
         })
     }
     fn resolve_model_selection<'a>(

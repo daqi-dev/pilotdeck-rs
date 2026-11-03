@@ -212,6 +212,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
                     None,
                 ),
             )),
+            upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         }
     })
 }
@@ -661,6 +662,11 @@ async fn production_host_management_and_restart() {
             // still gated on the bus being connected (#1445 on_change staging).
             "user_dialog_list",
             "permission_list",
+            "upload_create",
+            "upload_get",
+            "upload_part",
+            "upload_complete",
+            "upload_cancel",
         ];
         expected.sort_unstable();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
@@ -1069,6 +1075,11 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             // still gated on the bus being connected (#1445 on_change staging).
             "user_dialog_list",
             "permission_list",
+            "upload_create",
+            "upload_get",
+            "upload_part",
+            "upload_complete",
+            "upload_cancel",
         ];
         expected.sort_unstable();
         negative_assert_eq!(
@@ -1226,6 +1237,11 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     // connected (#1445 on_change staging).
                     "user_dialog_list",
                     "permission_list",
+                    "upload_create",
+                    "upload_get",
+                    "upload_part",
+                    "upload_complete",
+                    "upload_cancel",
                 ];
                 expected.sort_unstable();
                 negative_assert_eq!(
@@ -1604,6 +1620,17 @@ async fn snapshot_wiring_workspace_id_routes_to_recorder() {
         recorders: std::sync::Arc::default(),
         owner: crate::runtime::session::SessionOwner::new(owner_options),
         snapshot_recorder: Some(recorder.clone()),
+        upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &pilotdeck_protocol::JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unavailable in test",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
     };
 
     // workspace_id() MUST return Some when snapshot_recorder is Some.
@@ -1700,6 +1727,17 @@ async fn snapshot_workspace_id_prefers_registered_marker() {
             crate::runtime::session::SessionOwnerOptions::new(std::sync::Arc::new(SnapshotFactory)),
         ),
         snapshot_recorder: Some(recorder),
+        upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &pilotdeck_protocol::JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unavailable in test",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
     };
     let project = requests.options.project.to_string_lossy().into_owned();
     let input = pilotdeck_protocol::parse_json("{}").expect("#1323 marker input");

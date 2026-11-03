@@ -182,6 +182,7 @@ async fn observe(name: &str) -> (Value, Value) {
                 None,
             ),
         )),
+        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
     };
     let services = services::Services {
         options: options.clone(),
@@ -193,6 +194,17 @@ async fn observe(name: &str) -> (Value, Value) {
         recorders: Arc::default(),
         owner,
         snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &pilotdeck_protocol::JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unavailable in test",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
     };
     let cwd = row["cwd"].as_str().expect("#1154 TS cwd");
     std::env::set_current_dir(case.join(cwd)).expect("#1154 enter process cwd");
@@ -534,6 +546,7 @@ async fn observe_archive(name: &str) {
                 None,
             ),
         )),
+        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

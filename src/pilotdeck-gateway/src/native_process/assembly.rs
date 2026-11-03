@@ -576,9 +576,41 @@ pub(super) async fn start_observed(
                 ..Default::default()
             },
         )?);
-        Ok((runs, projector))
+        // U1 upload store: resolves the configured project only.
+        let upload_project = options.project.clone();
+        let upload_store = Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                move |key: &pilotdeck_protocol::JsString| {
+                    let path = std::path::PathBuf::from(key.to_utf8().map_err(|_| {
+                        crate::upload::UploadError::dialog(
+                            "PROJECT_NOT_FOUND",
+                            "projectKey is not valid UTF-8.",
+                        )
+                    })?);
+                    // Accept both the canonical path and the logical path.
+                    let canonical = std::fs::canonicalize(&upload_project)
+                        .unwrap_or_else(|_| upload_project.clone());
+                    let requested = std::fs::canonicalize(&path).unwrap_or(path.clone());
+                    if requested != canonical && path != upload_project {
+                        return Err(crate::upload::UploadError::dialog(
+                            "PROJECT_NOT_FOUND",
+                            format!("Unknown projectKey: {}", path.display()),
+                        ));
+                    }
+                    Ok(upload_project.clone())
+                },
+                {
+                    let p = options.project.clone();
+                    move || Ok(vec![p.clone()])
+                },
+            ),
+        ));
+        let upload_gateway = Arc::new(crate::upload::gateway::UploadGateway::new(
+            upload_store.clone(),
+        ));
+        Ok((runs, projector, upload_store, upload_gateway))
     })();
-    let (runs, projector) = match built {
+    let (runs, projector, upload_store, upload_gateway) = match built {
         Ok(value) => value,
         Err(error) => {
             let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
@@ -611,6 +643,7 @@ pub(super) async fn start_observed(
                 recorders: recorders.clone(),
                 owner: owner.clone(),
                 snapshot_recorder: snapshot_recorder.clone(),
+                upload_store: upload_store.clone(),
             });
             // U6 MCP four-control gateway (#1319): wire the #1215 component
             // into the native request router. The SdkMcpConfig owns the
@@ -708,6 +741,7 @@ pub(super) async fn start_observed(
                 mcp: mcp_gateway,
                 async_hook_registry,
                 user_dialog_bus: user_dialog_bus.clone(),
+                upload_gateway: upload_gateway.clone(),
             });
             Ok(GatewayServices {
                 interactions,

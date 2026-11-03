@@ -116,6 +116,11 @@ fn registry_matches_current_methods() {
         "output_styles_list",
         "set_output_style",
         "seed_read_state",
+        "upload_create",
+        "upload_get",
+        "upload_part",
+        "upload_complete",
+        "upload_cancel",
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();

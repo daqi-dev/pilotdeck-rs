@@ -15,6 +15,7 @@ use crate::{
         },
     },
     user_dialog::GatewayUserDialogBus,
+    upload::gateway::UploadGateway,
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
@@ -41,6 +42,8 @@ pub struct Requests {
     pub async_hook_registry: Option<Arc<AsyncHookRegistry>>,
     /// Gateway user-dialog bus backing the `user_dialog` / `respond` methods.
     pub user_dialog_bus: Arc<Mutex<GatewayUserDialogBus>>,
+    /// A8 U1 upload + attachment lease gateway (#1321).
+    pub upload_gateway: Arc<UploadGateway>,
 }
 
 #[cfg(test)]
@@ -162,6 +165,13 @@ impl GatewayRequests for Requests {
                             "permission_list",
                         ]
                         .into_iter()
+                        .chain([
+                            "upload_create",
+                            "upload_get",
+                            "upload_part",
+                            "upload_complete",
+                            "upload_cancel",
+                        ])
                         .filter(|capability| {
                             self.runs.is_some()
                                 || !matches!(*capability, "run_get" | "run_events" | "run_reattach")

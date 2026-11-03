@@ -15,6 +15,7 @@ mod session_dir;
 mod sop;
 mod steer;
 mod tools;
+mod upload;
 mod user_dialog;
 
 type Response = Result<JsValue, RequestError>;
@@ -54,6 +55,7 @@ register_families! {
     steer: steer::METHODS,
     permission: permission::METHODS,
     user_dialog: user_dialog::METHODS,
+    upload: upload::METHODS,
     // A new family: one declaration above and one registration here.
     config: config::METHODS,
 }
