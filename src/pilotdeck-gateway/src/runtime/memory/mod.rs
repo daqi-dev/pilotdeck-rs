@@ -785,6 +785,7 @@ impl From<MemoryBundleError> for MemoryProjectionError {
 }
 
 /// The two management methods from `createLocalGateway.ts:1238-1259`.
+#[derive(Clone)]
 pub struct MemoryProjection {
     registry: Arc<dyn ProjectMemoryRegistry>,
     fallback_project_root: PathBuf,

@@ -13,6 +13,8 @@ fn registry_matches_current_methods() {
         "manager_sessions",
         "manager_browsers",
         "commands_list",
+        "memory_list",
+        "memory_wipe",
         "active_turn_snapshot",
         "run_get",
         "run_events",

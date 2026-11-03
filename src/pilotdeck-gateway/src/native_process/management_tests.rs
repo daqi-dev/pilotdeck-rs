@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/native-management/oracle.json");
-const UNWIRED_METHODS: [&str; 2] = ["memory_list", "memory_wipe"];
 fn json_value(value: &JsValue) -> Value {
     serde_json::from_str(
         &pilotdeck_protocol::stringify_json(value)
@@ -192,6 +191,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             options,
             env,
             snapshot_enabled: true,
+            memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
             project,
             owner: owner.clone(),
             coordinator: Arc::default(),
@@ -670,21 +670,17 @@ async fn production_host_management_and_restart() {
 #[tokio::test]
 async fn admission_and_unwired_families_stay_closed() {
     let (scratch, requests) = setup();
-    for method in UNWIRED_METHODS {
+    // #1319 wired the MCP four-control family and #1322 wired memory here, so
+    // no family stays unwired. The MCP methods live in their own registered
+    // family; the memory pair enters `management_request` and is rejected by
+    // the fixture's disabled gateway after parameter validation.
+    for method in ["memory_list", "memory_wipe"] {
         negative_assert!(
             requests
                 .management_request(method, &crate::metadata::object([]))
                 .await
-                .is_none(),
-            "#1231 unwired family bypasses management"
-        );
-        let result = requests
-            .request(method.into(), crate::metadata::object([]))
-            .await;
-        negative_assert_eq!(
-            result.expect_err("#1231 unwired method must fail").code,
-            "CAPABILITY_UNAVAILABLE",
-            "#1231 unwired family rejected"
+                .is_some(),
+            "#1322 wired memory family routes through management"
         );
     }
     let target = scratch.0.join("outside");
