@@ -7,7 +7,7 @@ use crate::{
     config::{Env, permission::GatewaySessionPermissionRuleSetRegistry},
     metadata::object,
     runtime::{
-        interaction::GatewayInteractionCoordinator,
+        interaction::{GatewayInteractionCoordinator, InteractionOptions},
         mcp::{
             gateway::{McpGateway, McpGatewayOptions},
             sdk::{
@@ -175,7 +175,11 @@ pub(super) async fn start_observed(
         }
     };
     let recorders: Recorders = Arc::default();
-    let interactions = Arc::new(GatewayInteractionCoordinator::default());
+    let permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry> = Arc::default();
+    let interactions = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
+        permission_grants: Some(permission_rule_sets.clone()),
+        ..InteractionOptions::default()
+    }));
     let prepare_project = project.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
@@ -429,7 +433,7 @@ pub(super) async fn start_observed(
                 }),
                 close_session,
                 session_plugins: Arc::new(NoSessionPlugins),
-                permission_rule_sets: Arc::new(GatewaySessionPermissionRuleSetRegistry::new()),
+                permission_rule_sets: permission_rule_sets.clone(),
                 environment: Arc::new(SystemEnvironment),
                 projects: SdkSessionProjects::shared(),
             }));
