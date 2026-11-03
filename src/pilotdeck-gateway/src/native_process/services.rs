@@ -15,6 +15,7 @@ use crate::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsString, JsValue};
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -42,7 +43,8 @@ fn is_safe_lease_path(path: &str, project: &Path) -> bool {
     if p.components().any(|c| c == Component::ParentDir) {
         return false;
     }
-    let lease_root = project.join(".tmp").join("chat-upload-leases");
+    let project_canon = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    let lease_root = project_canon.join(".tmp").join("chat-upload-leases");
     p.starts_with(&lease_root)
 }
 
