@@ -15,8 +15,9 @@ output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 registry = root / 'src/pilotdeck-gateway/src/runtime/model/provider_registry.rs'
 family = root / 'src/pilotdeck-gateway/src/runtime/project/model.rs'
-with mutating_sources(root, [registry, family]) as snapshots:
-    sources = {path: snapshots[path] for path in (registry, family)}
+memory_mod = root / 'src/pilotdeck-gateway/src/runtime/memory/mod.rs'
+with mutating_sources(root, [registry, family, memory_mod]) as snapshots:
+    sources = {path: snapshots[path] for path in (registry, family, memory_mod)}
 
     controls = [
         ('new-invocation-gets-old-generation', registry,
