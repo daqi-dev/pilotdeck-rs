@@ -28,6 +28,8 @@ fn registry_matches_current_methods() {
         "mcp_server_reconnect",
         "mcp_server_toggle",
         "set_mcp_permission_mode_override",
+        "sop_status",
+        "sop_resume",
         "supported_agents",
         "list_projects",
         "describe_project",

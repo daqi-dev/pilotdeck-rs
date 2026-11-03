@@ -10,6 +10,7 @@ mod mcp;
 mod metadata;
 mod runs;
 mod session_dir;
+mod sop;
 mod tools;
 
 type Response = Result<JsValue, RequestError>;
@@ -42,6 +43,7 @@ register_families! {
     runs: runs::METHODS,
     history: history::METHODS,
     mcp: mcp::METHODS,
+    sop: sop::METHODS,
     metadata: metadata::METHODS,
     tools: tools::METHODS,
     session_dir: session_dir::METHODS,
