@@ -341,7 +341,9 @@ impl Requests {
             // Seed the writer's sequence from the existing transcript so the
             // metadata entry continues the chain rather than restarting at 1.
             if matches!(storage.transcript_exists(), Some(Ok(true))) {
-                let _ = storage.restore();
+                storage
+                    .restore()
+                    .map_err(|e| RequestError::new(e.to_string()))?;
             }
             let updated_at = pilotdeck_transport::system_clock::format_epoch_iso(
                 std::time::SystemTime::now()
@@ -471,7 +473,9 @@ impl Requests {
                     // the status entry continues the chain rather than restarting
                     // at 1.
                     if matches!(storage.transcript_exists(), Some(Ok(true))) {
-                        let _ = storage.restore();
+                        if storage.restore().is_err() {
+                            return false;
+                        }
                     }
                     storage
                         .transcript
