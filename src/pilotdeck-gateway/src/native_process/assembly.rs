@@ -185,6 +185,7 @@ pub(super) async fn start_observed(
     let prepare_env = env.clone();
     let prepare_recorders = recorders.clone();
     let prepare_interactions = interactions.clone();
+    let prepare_permission_rule_sets = permission_rule_sets.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
@@ -195,6 +196,7 @@ pub(super) async fn start_observed(
             let env = prepare_env.clone();
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
+            let permission_rule_sets = prepare_permission_rule_sets.clone();
             Box::pin(async move {
                 let lease = project.acquire(None)?;
                 let resources = lease
@@ -277,6 +279,13 @@ pub(super) async fn start_observed(
                 config.insert("permissionMode".into(), "default".into());
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
+                let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
+                retained.push(move || {
+                    Box::pin(async move {
+                        permission_lease.release();
+                        Ok(())
+                    })
+                });
                 let tail = TailConfig {
                     cwd: Some(options.project.clone()),
                     auto_generate_title: true,
