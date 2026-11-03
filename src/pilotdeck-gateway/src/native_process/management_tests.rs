@@ -967,7 +967,13 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
         env.insert("PILOTDECK_STORAGE_ROOT".into(), storage.into());
     }
     validate_environment(&env).expect("#1231 disabled storage inherited admission");
-    let host = assembly::start(options.clone(), options.environment(env))
+    let mut assembled_env = options.environment(env);
+    // options.environment() removes PILOTDECK_STORAGE_ROOT when storage_root is None.
+    // Re-inject so assembly.rs can observe the original inherited value at its seams.
+    if let Some(storage_value) = storage {
+        assembled_env.insert("PILOTDECK_STORAGE_ROOT".into(), storage_value.into());
+    }
+    let host = assembly::start(options.clone(), assembled_env)
         .await
         .expect("#1231 disabled storage host startup");
     let text = Arc::new(Text::default());
