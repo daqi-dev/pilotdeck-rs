@@ -378,6 +378,6 @@ fn normalize(name: &[u16]) -> Vec<u16> {
 pub(super) fn whitespace(c: u16) -> bool {
     crate::runtime::memory::js_is_space_unit(c)
 }
-fn trim(mut text: &[u16]) -> &[u16] {
+fn trim(text: &[u16]) -> &[u16] {
     crate::runtime::memory::js_trim_units(text)
 }

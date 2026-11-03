@@ -963,10 +963,6 @@ fn utf8_len(units: &[u16]) -> usize {
     bytes
 }
 
-fn is_js_space(unit: u16) -> bool {
-    crate::runtime::memory::js_is_space_unit(unit)
-}
-
 fn js_trim(units: &[u16]) -> &[u16] {
     crate::runtime::memory::js_trim_units(units)
 }
