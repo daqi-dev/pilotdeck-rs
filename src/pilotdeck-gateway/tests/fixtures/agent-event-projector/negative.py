@@ -723,6 +723,22 @@ with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as tem
         '#[path="js_value.rs"] pub mod js_value;\n'
         '#[path="node_io_shim.rs"] pub mod node_io;\n'
         '#[path="project_files_shim.rs"] pub mod project_files;\n'
+        # `projector.rs` calls `crate::runtime::memory::{js_is_space_unit,
+        # js_trim_units}`.  Provide a minimal inline shim that mirrors the
+        # production implementations in `runtime/memory/mod.rs` (lines 901-930).
+        'pub mod runtime { pub mod memory {\n'
+        '    pub(crate) fn js_is_space_unit(unit: u16) -> bool {\n'
+        '        matches!(unit, 0x0009..=0x000D | 0x0020 | 0x00A0 | 0x1680\n'
+        '            | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F\n'
+        '            | 0x3000 | 0xFEFF)\n'
+        '    }\n'
+        '    pub(crate) fn js_trim_units(units: &[u16]) -> &[u16] {\n'
+        '        let start = units.iter().position(|&u| !js_is_space_unit(u));\n'
+        '        let Some(start) = start else { return &[]; };\n'
+        '        let end = units.iter().rposition(|&u| !js_is_space_unit(u)).unwrap();\n'
+        '        &units[start..=end]\n'
+        '    }\n'
+        '} }\n'
         '#[path="runtime/turn/projector.rs"] pub mod projector;\n'
         f'#[cfg(test)] #[path={json.dumps(str(rust / "pilotdeck-gateway/tests/common/scratch.rs"))}] '
         "mod test_scratch;\n"
