@@ -49,6 +49,14 @@ impl GatewayRequests for Requests {
                             "snapshot_restore",
                             "manager_sessions",
                             "commands_list",
+                            "usage_snapshot",
+                            "model_usage_snapshot",
+                            "mcp_server_status",
+                            "rewind_files",
+                            #[cfg(unix)]
+                            "background_task_stop",
+                            #[cfg(unix)]
+                            "background_tasks",
                         ]
                         .into_iter()
                         .filter(|capability| {

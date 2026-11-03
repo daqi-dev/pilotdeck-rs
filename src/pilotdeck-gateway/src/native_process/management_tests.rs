@@ -13,10 +13,9 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/native-management/oracle.json");
-const UNWIRED_METHODS: [&str; 7] = [
+const UNWIRED_METHODS: [&str; 6] = [
     "memory_list",
     "memory_wipe",
-    "mcp_server_status",
     "set_mcp_servers",
     "mcp_server_reconnect",
     "mcp_server_toggle",
@@ -636,6 +635,14 @@ async fn production_host_management_and_restart() {
             "snapshot_restore",
             "manager_sessions",
             "commands_list",
+            "usage_snapshot",
+            "model_usage_snapshot",
+            "mcp_server_status",
+            "rewind_files",
+            #[cfg(unix)]
+            "background_task_stop",
+            #[cfg(unix)]
+            "background_tasks",
         ];
         expected.sort_unstable();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
@@ -1025,6 +1032,14 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             "supported_agents",
             "manager_sessions",
             "commands_list",
+            "usage_snapshot",
+            "model_usage_snapshot",
+            "mcp_server_status",
+            "rewind_files",
+            #[cfg(unix)]
+            "background_task_stop",
+            #[cfg(unix)]
+            "background_tasks",
         ];
         expected.sort_unstable();
         negative_assert_eq!(
@@ -1164,6 +1179,14 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     "supported_agents",
                     "manager_sessions",
                     "commands_list",
+                    "usage_snapshot",
+                    "model_usage_snapshot",
+                    "mcp_server_status",
+                    "rewind_files",
+                    #[cfg(unix)]
+                    "background_task_stop",
+                    #[cfg(unix)]
+                    "background_tasks",
                 ];
                 expected.sort_unstable();
                 negative_assert_eq!(

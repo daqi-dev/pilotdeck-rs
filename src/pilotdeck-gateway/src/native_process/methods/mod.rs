@@ -7,6 +7,7 @@ mod active_turn;
 mod management;
 mod metadata;
 mod runs;
+mod tools;
 
 type Response = Result<JsValue, RequestError>;
 type RequestHandler = for<'a> fn(&'a Requests, String, JsValue) -> Call<'a, Response>;
@@ -37,6 +38,7 @@ register_families! {
     active_turn: active_turn::METHODS,
     runs: runs::METHODS,
     metadata: metadata::METHODS,
+    tools: tools::METHODS,
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.
