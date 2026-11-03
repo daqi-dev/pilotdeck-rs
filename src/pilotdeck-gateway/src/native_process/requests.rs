@@ -1,8 +1,9 @@
-use super::{Options, methods};
+use super::{Options, assembly::Recorders, methods};
 use crate::{
     metadata::object,
     runtime::{
         connection::{Call, RequestError},
+        interaction::GatewayInteractionCoordinator,
         refresh::RefreshRouter,
         replacement::ReplacementCoordinator,
         session::SessionOwner,
@@ -24,6 +25,8 @@ pub struct Requests {
     pub owner: SessionOwner,
     pub project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     pub replacement: Arc<ReplacementCoordinator>,
+    pub recorders: Recorders,
+    pub interactions: Arc<GatewayInteractionCoordinator>,
 }
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
