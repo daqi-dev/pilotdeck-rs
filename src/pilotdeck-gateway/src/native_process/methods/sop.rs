@@ -37,21 +37,6 @@ impl Requests {
             // sessionKey is required for both methods (GatewaySopStatusInput).
             let session_key = string(&params, "sessionKey")?;
 
-            // projectKey, if supplied, must be the configured project.
-            // Mirrors the per-method project guard in management_request and
-            // the submit-path check in services.rs::workspace_id.
-            if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined()) {
-                if !project
-                    .as_string()
-                    .and_then(|s| s.to_utf8().ok())
-                    .is_some_and(|p| self.options.serves_project(&p))
-                {
-                    return Err(unavailable(
-                        "The isolated native process serves only its configured project.",
-                    ));
-                }
-            }
-
             if method == "sop_resume" {
                 // Clients must not override the approval authority or subject
                 // field. createLocalGateway.ts:1079 applies the same guard
@@ -110,7 +95,10 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_status: valid sessionKey + wrong projectKey → CAPABILITY_UNAVAILABLE (project gate).
+    // sop_status: valid sessionKey + wrong projectKey → shared entry gate in
+    // Requests::request rejects before sop_request runs, code is gateway_request_failed.
+    // The per-method guard that used to live in sop_request was dead code because
+    // requests.rs:88-97 always intercepts first with a different error code.
     #[tokio::test]
     async fn sop_status_rejects_wrong_project() {
         let (_scratch, requests) =
@@ -119,11 +107,16 @@ mod tests {
             ("sessionKey", "s1".into()),
             ("projectKey", "/wrong/project".into()),
         ]);
-        let result = requests.sop_request("sop_status".into(), params).await;
+        let result = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            pilotdeck_protocol::JsString::from("sop_status"),
+            params,
+        )
+        .await;
         negative_assert_eq!(
             result.unwrap_err().code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
-            "#1312 sop_status wrong project"
+            "gateway_request_failed",
+            "#1312 sop_status wrong project rejected by shared entry gate"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
