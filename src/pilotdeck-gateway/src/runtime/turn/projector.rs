@@ -964,23 +964,11 @@ fn utf8_len(units: &[u16]) -> usize {
 }
 
 fn is_js_space(unit: u16) -> bool {
-    matches!(
-        unit,
-        0x0009 | 0x000a | 0x000b | 0x000c | 0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000
-            ..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff
-    )
+    crate::runtime::memory::js_is_space_unit(unit)
 }
 
 fn js_trim(units: &[u16]) -> &[u16] {
-    let mut start = 0usize;
-    let mut end = units.len();
-    while start < end && is_js_space(units[start]) {
-        start += 1;
-    }
-    while end > start && is_js_space(units[end - 1]) {
-        end -= 1;
-    }
-    &units[start..end]
+    crate::runtime::memory::js_trim_units(units)
 }
 
 /// `safeGatewayPathPart` (`GatewayAgentEventProjector.ts:579`, identical to

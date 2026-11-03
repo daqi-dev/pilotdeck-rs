@@ -1043,16 +1043,9 @@ fn safe_relative(s: &pilotdeck_protocol::JsString) -> bool {
             .all(|p| !matches!(p, [] | [0x2e] | [0x2e, 0x2e]))
 }
 fn trim_js(s: &pilotdeck_protocol::JsString) -> pilotdeck_protocol::JsString {
-    fn space(c: u16) -> bool {
-        matches!(c, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
-    }
-    let units = s.units();
-    let start = units.iter().position(|&c| !space(c)).unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|&c| !space(c))
-        .map_or(start, |i| i + 1);
-    pilotdeck_protocol::JsString::from_utf16(units[start..end].to_vec())
+    pilotdeck_protocol::JsString::from_utf16(
+        crate::runtime::memory::js_trim_units(s.units()).to_vec(),
+    )
 }
 fn truthy(v: &JsValue) -> bool {
     match v {

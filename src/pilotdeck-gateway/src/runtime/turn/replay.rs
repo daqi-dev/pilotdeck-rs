@@ -680,20 +680,7 @@ fn index_key(index: usize) -> JsString {
 
 /// ECMAScript `String.prototype.trim` WhiteSpace + LineTerminator set.
 fn js_whitespace(unit: u16) -> bool {
-    matches!(
-        unit,
-        9..=13
-            | 32
-            | 160
-            | 0x1680
-            | 0x2000..=0x200a
-            | 0x2028
-            | 0x2029
-            | 0x202f
-            | 0x205f
-            | 0x3000
-            | 0xfeff
-    )
+    crate::runtime::memory::js_is_space_unit(unit)
 }
 
 #[cfg(test)]
