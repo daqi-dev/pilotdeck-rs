@@ -25,7 +25,9 @@ id: A7-W6-REWIND-MAINTENANCE-LOCK-001
 
 ## 机器判据
 
-`native_process` 中覆盖 rewind_files 并发排斥的测试：第一个 begin_maintenance 成功、第二个同 session key 的 begin_maintenance 被拒（返回 None）；IO 期间 begin_turn 被拒。SESSION_BUSY 路径通过情形 1 的 maintenance 守卫精确断言（文案 "A rewind is already in progress."）。
+互斥逻辑的底层测试位于 `runtime/session/tests.rs:242-254`（`keys_preserve_utf16_and_maintenance_shares_turn_admission`）：第一个 `begin_maintenance` 成功、第二个同 session key 的 `begin_maintenance` 被拒、`begin_turn` 在 maintenance 期间被阻。该测试覆盖 admission 层语义，不在 native_process 路由层。
+
+native_process 路由层的 SESSION_BUSY 路径（情形 1）和文案 "A rewind is already in progress."（来源：`methods/tools.rs:185`）目前无独立断言；前置于 P2-跟进待补。
 
 覆盖账本：`specs/gateway-coverage/ledger.json` 中 `a51.rewind_files` 的 proposed_scenarios（success / error / unconfigured）不含 SESSION_BUSY；因情形 2（turn 被 rewind 阻断）在 TS 无对等行为，对拍不计入该组。情形 1 的 SESSION_BUSY 由本条目覆盖，不视为假 FAIL。
 
