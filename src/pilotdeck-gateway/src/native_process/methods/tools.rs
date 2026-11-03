@@ -157,53 +157,63 @@ impl Requests {
 
     /// `rewindFilesForSdk` — `InProcessGateway.ts:2402-2408` contract.
     async fn tools_rewind_files(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let session_key = required_trimmed(
-            params,
-            "sessionKey",
-            "INVALID_SESSION_KEY",
-            "sessionKey is required.",
-        )?;
-        let user_message_id = required_trimmed(
-            params,
-            "userMessageId",
-            "INVALID_MESSAGE_ID",
-            "userMessageId is required.",
-        )?;
-        if self.owner.has_active_turn(&session_key) {
-            return Err(session_error(
-                "SESSION_BUSY",
-                "Cannot rewind files while a turn is active.",
-            ));
-        }
-        let dry_run = params
-            .get("dryRun")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let user_message_id = user_message_id
-            .to_utf8()
-            .map_err(|_| RequestError::new("userMessageId must be valid UTF-8."))?;
-        let adapter = AsyncTranscriptAdapter::new(
-            Arc::new(JsonlTranscriptStore::new()),
-            Arc::new(|key: &crate::storage::ProjectKey| {
-                crate::session_chat_dir(
-                    &key.pilot_home,
-                    &key.project_root,
-                    &key.project_root.to_string_lossy(),
-                )
-            }),
-        );
-        let home = self.options.home.clone();
-        let project = self.options.project.clone();
-        let result = rewind::rewind_files(RewindFilesInput {
-            adapter: &adapter,
-            project_root: &project,
-            pilot_home: &home,
-            session_key: &session_key,
-            user_message_id: &user_message_id,
-            dry_run,
-            now: None,
-        });
-        Ok(result)
+        let requests = self.clone();
+        let params = params.clone();
+        // Synchronous disk IO must not block the serial host thread.  The
+        // has_active_turn check is intentionally inside the blocking closure so
+        // the check-act pair is atomic with respect to the IO work that follows.
+        tokio::task::spawn_blocking(move || {
+            let session_key = required_trimmed(
+                &params,
+                "sessionKey",
+                "INVALID_SESSION_KEY",
+                "sessionKey is required.",
+            )?;
+            let user_message_id = required_trimmed(
+                &params,
+                "userMessageId",
+                "INVALID_MESSAGE_ID",
+                "userMessageId is required.",
+            )?;
+            if requests.owner.has_active_turn(&session_key) {
+                return Err(session_error(
+                    "SESSION_BUSY",
+                    "Cannot rewind files while a turn is active.",
+                ));
+            }
+            let dry_run = params
+                .get("dryRun")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let user_message_id = user_message_id
+                .to_utf8()
+                .map_err(|_| RequestError::new("userMessageId must be valid UTF-8."))?;
+            let adapter = AsyncTranscriptAdapter::new(
+                Arc::new(JsonlTranscriptStore::new()),
+                Arc::new(|key: &crate::storage::ProjectKey| {
+                    crate::session_chat_dir(
+                        &key.pilot_home,
+                        &key.project_root,
+                        &key.project_root.to_string_lossy(),
+                    )
+                }),
+            );
+            let home = requests.options.home.clone();
+            let project = requests.options.project.clone();
+            let result = rewind::rewind_files(RewindFilesInput {
+                adapter: &adapter,
+                project_root: &project,
+                pilot_home: &home,
+                session_key: &session_key,
+                user_message_id: &user_message_id,
+                dry_run,
+                now: None,
+            });
+            Ok(result)
+        })
+        .await
+        .map_err(|e| RequestError::new(e.to_string()))
+        .and_then(|result| result)
     }
 
     /// `stopBackgroundTaskForSdk` via `stop_background_task_in_registry`.
