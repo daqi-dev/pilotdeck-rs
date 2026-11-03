@@ -4,16 +4,25 @@ use super::{
 };
 use crate::{
     ProxyError,
-    config::Env,
+    config::{Env, permission::GatewaySessionPermissionRuleSetRegistry},
     metadata::object,
     runtime::{
         interaction::GatewayInteractionCoordinator,
+        mcp::{
+            gateway::{McpGateway, McpGatewayOptions},
+            sdk::{
+                PluginProjectRuntime, SdkMcpCloseFuture, SdkMcpCloseSession, SdkMcpConfig,
+                SdkMcpConfigOptions, SdkMcpEnvironment, SdkMcpError, SdkMcpFuture, SdkMcpProject,
+                SdkMcpProjectResolver, SdkMcpSessionPlugins, SystemEnvironment,
+            },
+        },
         project::{
             Families, Family, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
             ProjectRuntimeRegistry, Resource, RuntimeError, RuntimeProfileOverrides,
-            persistence::PersistenceResources,
+            persistence::PersistenceResources, plugins::PluginResources,
         },
         replacement::ReplacementCoordinator,
+        sdk_session::SdkSessionProjects,
         session::{
             SessionOwner, SessionOwnerOptions,
             factory::{
@@ -41,11 +50,75 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex, Weak},
     time::SystemTime,
 };
 
 pub type Recorders = Arc<Mutex<HashMap<JsString, Weak<Recorder>>>>;
+
+// ── U6 MCP resolver / session-plugins for the native process (#1319) ────────
+
+/// The native process serves exactly one project. The SDK MCP resolver resolves
+/// any `projectKey` (or no key) to that project's plugin runtime. This mirrors
+/// `ProjectRuntimeRegistry.resolve` without exposing the full SDK session layer.
+struct NativeMcpResolver {
+    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+}
+impl SdkMcpProjectResolver for NativeMcpResolver {
+    fn resolve<'a>(
+        &'a self,
+        _project_key: Option<&'a JsString>,
+    ) -> SdkMcpFuture<'a, Result<Arc<dyn SdkMcpProject>, SdkMcpError>> {
+        let project = self.project.clone();
+        Box::pin(async move {
+            let lease = project
+                .acquire(None)
+                .map_err(|e| SdkMcpError::plain("Error", JsString::from(e.to_string())))?;
+            let resources = lease
+                .runtime()
+                .resources()
+                .get::<ProjectResources>()
+                .ok_or_else(|| {
+                    SdkMcpError::plain("Error", "Native project resources are missing.")
+                })?;
+            let plugin_res = resources
+                .context()
+                .resource(Resource::PluginRuntime)
+                .ok_or_else(|| {
+                    SdkMcpError::plain("Error", "Native plugin runtime resource is missing.")
+                })?;
+            let plugin_runtime = plugin_res
+                .as_any()
+                .downcast_ref::<PluginResources>()
+                .ok_or_else(|| {
+                    SdkMcpError::plain("Error", "Native plugin runtime has the wrong type.")
+                })?
+                .runtime
+                .clone();
+            let project_root = JsString::from(
+                lease
+                    .runtime()
+                    .project_root()
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            let resolved: Arc<dyn SdkMcpProject> =
+                Arc::new(PluginProjectRuntime::new(project_root, plugin_runtime));
+            Ok(resolved)
+        })
+    }
+}
+
+/// The native process has no SDK session plugin sources (only project-level
+/// plugins apply). This satisfies the `SdkMcpSessionPlugins` contract with an
+/// empty list, matching the TS path where `sdkSessionPlugins` is never set.
+struct NoSessionPlugins;
+impl SdkMcpSessionPlugins for NoSessionPlugins {
+    fn plugins(&self, _session_key: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
+        Vec::new()
+    }
+}
 
 pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
     start_observed(
@@ -331,6 +404,39 @@ pub(super) async fn start_observed(
                 recorders: recorders.clone(),
                 owner: owner.clone(),
             });
+            // U6 MCP four-control gateway (#1319): wire the #1215 component
+            // into the native request router. The SdkMcpConfig owns the
+            // registry state; the McpGateway owns validation, the busy gate,
+            // and the post-success close. The close_session callback mirrors
+            // the TS `closeSession` that the registry calls after its commit.
+            let close_owner = owner.clone();
+            let close_session: SdkMcpCloseSession = Arc::new(move |session_key, _reason| {
+                let key = match &session_key {
+                    JsValue::String(key) => key.clone(),
+                    _ => JsString::from(""),
+                };
+                let owner = close_owner.clone();
+                Box::pin(async move {
+                    owner
+                        .close(&key)
+                        .await
+                        .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))
+                })
+            });
+            let mcp_config = Arc::new(SdkMcpConfig::new(SdkMcpConfigOptions {
+                resolver: Arc::new(NativeMcpResolver {
+                    project: build_project.clone(),
+                }),
+                close_session,
+                session_plugins: Arc::new(NoSessionPlugins),
+                permission_rule_sets: Arc::new(GatewaySessionPermissionRuleSetRegistry::new()),
+                environment: Arc::new(SystemEnvironment),
+                projects: SdkSessionProjects::shared(),
+            }));
+            let mcp_gateway = Arc::new(McpGateway::new(McpGatewayOptions {
+                owner: owner.clone(),
+                config: mcp_config,
+            }));
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
                 snapshot_enabled,
@@ -342,6 +448,7 @@ pub(super) async fn start_observed(
                 replacement: replacement.clone(),
                 recorders,
                 interactions: interactions.clone(),
+                mcp: mcp_gateway,
             });
             Ok(GatewayServices {
                 interactions,

@@ -4,6 +4,7 @@ use crate::{
     runtime::{
         connection::{Call, RequestError},
         interaction::GatewayInteractionCoordinator,
+        mcp::gateway::McpGateway,
         refresh::RefreshRouter,
         replacement::ReplacementCoordinator,
         session::SessionOwner,
@@ -27,6 +28,79 @@ pub struct Requests {
     pub replacement: Arc<ReplacementCoordinator>,
     pub recorders: Recorders,
     pub interactions: Arc<GatewayInteractionCoordinator>,
+    /// U6 MCP four-control gateway adapter (#1215/#1319). The four SDK MCP
+    /// control methods (`set_mcp_servers`, `mcp_server_reconnect`,
+    /// `mcp_server_toggle`, `set_mcp_permission_mode_override`) route here.
+    pub mcp: Arc<McpGateway>,
+}
+
+#[cfg(test)]
+impl Requests {
+    /// A stub `McpGateway` for test helpers that do not exercise MCP methods.
+    /// The stub's `SdkMcpConfig` is wired with the supplied `owner` so it
+    /// shares the same session close port as the surrounding test.
+    pub fn stub_mcp(owner: &SessionOwner) -> Arc<McpGateway> {
+        use crate::{
+            config::permission::GatewaySessionPermissionRuleSetRegistry,
+            runtime::{
+                mcp::{
+                    gateway::McpGatewayOptions,
+                    sdk::{
+                        SdkMcpCloseFuture, SdkMcpCloseSession, SdkMcpConfig, SdkMcpConfigOptions,
+                        SdkMcpError, SdkMcpFuture, SdkMcpProject, SdkMcpProjectResolver,
+                        SdkMcpSessionPlugins, SystemEnvironment,
+                    },
+                },
+                sdk_session::SdkSessionProjects,
+            },
+        };
+        struct NullResolver;
+        impl SdkMcpProjectResolver for NullResolver {
+            fn resolve<'a>(
+                &'a self,
+                _: Option<&'a pilotdeck_protocol::JsString>,
+            ) -> SdkMcpFuture<'a, Result<Arc<dyn SdkMcpProject>, SdkMcpError>> {
+                Box::pin(async {
+                    Err(SdkMcpError::plain(
+                        "Error",
+                        "Stub resolver: no project configured.",
+                    ))
+                })
+            }
+        }
+        struct NullPlugins;
+        impl SdkMcpSessionPlugins for NullPlugins {
+            fn plugins(&self, _: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
+                Vec::new()
+            }
+        }
+        let close_owner = owner.clone();
+        let close_session: SdkMcpCloseSession = Arc::new(move |session_key, _reason| {
+            let key = match &session_key {
+                JsValue::String(key) => key.clone(),
+                _ => pilotdeck_protocol::JsString::from(""),
+            };
+            let owner = close_owner.clone();
+            Box::pin(async move {
+                owner
+                    .close(&key)
+                    .await
+                    .map_err(|e| SdkMcpError::plain("Error", JsString::from(e.message)))
+            })
+        });
+        let config = Arc::new(SdkMcpConfig::new(SdkMcpConfigOptions {
+            resolver: Arc::new(NullResolver),
+            close_session,
+            session_plugins: Arc::new(NullPlugins),
+            permission_rule_sets: Arc::new(GatewaySessionPermissionRuleSetRegistry::new()),
+            environment: Arc::new(SystemEnvironment),
+            projects: SdkSessionProjects::shared(),
+        }));
+        Arc::new(McpGateway::new(McpGatewayOptions {
+            owner: owner.clone(),
+            config,
+        }))
+    }
 }
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
@@ -62,6 +136,10 @@ impl GatewayRequests for Requests {
                             "background_task_stop",
                             #[cfg(unix)]
                             "background_tasks",
+                            "set_mcp_servers",
+                            "mcp_server_reconnect",
+                            "mcp_server_toggle",
+                            "set_mcp_permission_mode_override",
                         ]
                         .into_iter()
                         .filter(|capability| {

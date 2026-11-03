@@ -173,6 +173,7 @@ async fn observe(name: &str) -> (Value, Value) {
         )),
         recorders: Arc::default(),
         interactions: Arc::default(),
+        mcp: requests::Requests::stub_mcp(&owner),
     };
     let services = services::Services {
         options: options.clone(),
@@ -482,6 +483,7 @@ async fn observe_archive(name: &str) {
         .expect("#1154 archive artifact");
     let mut owner_options = SessionOwnerOptions::new(Arc::new(NoResources));
     owner_options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(owner_options);
     let requests = requests::Requests {
         project: Arc::new(ProjectRuntimeRegistry::new(
             options.project.clone(),
@@ -512,6 +514,7 @@ async fn observe_archive(name: &str) {
         )),
         recorders: Arc::default(),
         interactions: Arc::default(),
+        mcp: requests::Requests::stub_mcp(&owner),
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

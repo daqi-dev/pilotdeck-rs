@@ -730,6 +730,7 @@ async fn project_path_boundaries_worker() {
         )),
         recorders: Arc::default(),
         interactions: Arc::default(),
+        mcp: requests::Requests::stub_mcp(&owner),
     };
     let services = services::Services {
         options: options.clone(),

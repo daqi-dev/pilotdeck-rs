@@ -6,6 +6,7 @@ use pilotdeck_protocol::{JsString, JsValue};
 mod active_turn;
 mod history;
 mod management;
+mod mcp;
 mod metadata;
 mod runs;
 mod session_dir;
@@ -40,6 +41,7 @@ register_families! {
     active_turn: active_turn::METHODS,
     runs: runs::METHODS,
     history: history::METHODS,
+    mcp: mcp::METHODS,
     metadata: metadata::METHODS,
     tools: tools::METHODS,
     session_dir: session_dir::METHODS,

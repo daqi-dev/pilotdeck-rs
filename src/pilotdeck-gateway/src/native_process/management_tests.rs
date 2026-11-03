@@ -13,14 +13,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/native-management/oracle.json");
-const UNWIRED_METHODS: [&str; 6] = [
-    "memory_list",
-    "memory_wipe",
-    "set_mcp_servers",
-    "mcp_server_reconnect",
-    "mcp_server_toggle",
-    "set_mcp_permission_mode_override",
-];
+const UNWIRED_METHODS: [&str; 3] = ["memory_list", "memory_wipe", "mcp_server_status"];
 fn json_value(value: &JsValue) -> Value {
     serde_json::from_str(
         &pilotdeck_protocol::stringify_json(value)
@@ -200,7 +193,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             env,
             snapshot_enabled: true,
             project,
-            owner,
+            owner: owner.clone(),
             coordinator: Arc::default(),
             runs,
             replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
@@ -209,10 +202,16 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
                 5000,
                 None,
             )),
+<<<<<<< HEAD
             recorders: Arc::default(),
             interactions: Arc::default(),
         }
     })
+=======
+            mcp: requests::Requests::stub_mcp(&owner),
+        },
+    )
+>>>>>>> c61eca76f (feat(gateway) #1319 A8 接线 U6 MCP)
 }
 
 type Trace = Arc<Mutex<Vec<Value>>>;
@@ -643,6 +642,7 @@ async fn production_host_management_and_restart() {
             "snapshot_restore",
             "manager_sessions",
             "commands_list",
+<<<<<<< HEAD
             "usage_snapshot",
             "model_usage_snapshot",
             "mcp_server_status",
@@ -651,6 +651,12 @@ async fn production_host_management_and_restart() {
             "background_task_stop",
             #[cfg(unix)]
             "background_tasks",
+=======
+            "set_mcp_servers",
+            "mcp_server_reconnect",
+            "mcp_server_toggle",
+            "set_mcp_permission_mode_override",
+>>>>>>> c61eca76f (feat(gateway) #1319 A8 接线 U6 MCP)
         ];
         expected.sort_unstable();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
@@ -1040,6 +1046,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             "supported_agents",
             "manager_sessions",
             "commands_list",
+<<<<<<< HEAD
             "usage_snapshot",
             "model_usage_snapshot",
             "mcp_server_status",
@@ -1048,6 +1055,12 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             "background_task_stop",
             #[cfg(unix)]
             "background_tasks",
+=======
+            "set_mcp_servers",
+            "mcp_server_reconnect",
+            "mcp_server_toggle",
+            "set_mcp_permission_mode_override",
+>>>>>>> c61eca76f (feat(gateway) #1319 A8 接线 U6 MCP)
         ];
         expected.sort_unstable();
         negative_assert_eq!(
@@ -1187,6 +1200,7 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     "supported_agents",
                     "manager_sessions",
                     "commands_list",
+<<<<<<< HEAD
                     "usage_snapshot",
                     "model_usage_snapshot",
                     "mcp_server_status",
@@ -1195,6 +1209,12 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     "background_task_stop",
                     #[cfg(unix)]
                     "background_tasks",
+=======
+                    "set_mcp_servers",
+                    "mcp_server_reconnect",
+                    "mcp_server_toggle",
+                    "set_mcp_permission_mode_override",
+>>>>>>> c61eca76f (feat(gateway) #1319 A8 接线 U6 MCP)
                 ];
                 expected.sort_unstable();
                 negative_assert_eq!(

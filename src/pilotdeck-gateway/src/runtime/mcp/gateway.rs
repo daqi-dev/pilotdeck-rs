@@ -42,6 +42,13 @@ impl McpGateway {
         Self { options }
     }
 
+    /// The shared SDK MCP configuration state. Callers that need the status
+    /// read (`mcp_server_status`, #1311) access the same registry that the
+    /// four control methods write, so writes and reads see each other.
+    pub fn config(&self) -> &Arc<SdkMcpConfig> {
+        &self.options.config
+    }
+
     /// `InProcessGateway.setMcpServers` (client/InProcessGateway.ts:2284).
     pub async fn set_mcp_servers(&self, input: &JsValue) -> Result<JsValue, SdkMcpError> {
         let input = require_input(input, "sessionKey")?;
