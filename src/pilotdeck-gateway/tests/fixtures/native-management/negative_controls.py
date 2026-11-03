@@ -118,6 +118,9 @@ mutations.append(('snapshot-get-filter-omitted', REQUESTS, '"snapshot_list" | "s
 mutations.append(('snapshot-restore-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "snapshot_get" | "unwired_snapshot_restore"', PRODUCTION, '#1231 production entry exact 10 capabilities'))
 mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",', '\n      "unwired_run_get",', HOST, '#1231 wired capabilities are TS subset'))
 
+# fix-r2 (#1322): memory IO must stay off the serial host.
+mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'std::future::ready(requests.memory_dispatch(&method, &params))\n                    .await,', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
+
 
 def mutate(case, text):
     if text.count(case.old) != 1 or case.old == case.new:
