@@ -339,6 +339,7 @@ pub(super) async fn start_observed(
                 coordinator: coordinator.clone(),
                 runs: runs.clone(),
                 owner: owner.clone(),
+                replacement: replacement.clone(),
             });
             Ok(GatewayServices {
                 interactions,

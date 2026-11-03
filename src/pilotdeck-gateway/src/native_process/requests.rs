@@ -4,6 +4,7 @@ use crate::{
     runtime::{
         connection::{Call, RequestError},
         refresh::RefreshRouter,
+        replacement::ReplacementCoordinator,
         session::SessionOwner,
         turn::{
             coordinator::TurnEventCoordinator, gateway::GatewayRequests, publish::FileRegistry,
@@ -22,6 +23,7 @@ pub struct Requests {
     pub runs: Arc<FileRegistry>,
     pub owner: SessionOwner,
     pub project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    pub replacement: Arc<ReplacementCoordinator>,
 }
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
