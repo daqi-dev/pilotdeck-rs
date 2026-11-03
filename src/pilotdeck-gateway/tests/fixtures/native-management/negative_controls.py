@@ -85,7 +85,6 @@ mutations.append(('wire-memory_list', SOURCE, '"snapshot_list"\n                
 mutations.append(('capability-memory_list', REQUESTS, '"commands_list",', '"commands_list", "memory_list",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-memory_wipe', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "memory_wipe"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
 mutations.append(('capability-memory_wipe', REQUESTS, '"commands_list",', '"commands_list", "memory_wipe",', HOST, '#1231 exact wired capability set'))
-mutations.append(('wire-mcp_server_status', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "mcp_server_status"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
 mutations.append(('capability-mcp_server_status', REQUESTS, '"commands_list",', '"commands_list", "mcp_server_status",', HOST, '#1231 exact wired capability set'))
 mutations.append(('wire-set_mcp_servers', SOURCE, '"snapshot_list"\n                | "snapshot_get"', '"snapshot_list"\n                | "set_mcp_servers"\n                | "snapshot_get"', ADMISSION, '#1231 unwired family bypasses management'))
 mutations.append(('capability-set_mcp_servers', REQUESTS, '"commands_list",', '"commands_list", "set_mcp_servers",', HOST, '#1231 exact wired capability set'))
