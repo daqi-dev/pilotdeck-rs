@@ -29,11 +29,16 @@ The mutated files must match the baseline tree byte-for-byte
 (``mutating_sources`` proves it); on the host that baseline is ``HEAD``.
 ``PDRS_NEGATIVE_BASELINE`` may name another commit object (the sandbox
 verification pass pins a ``git stash create`` commit of the reviewed tree,
-because the sandbox cannot commit); unset it everywhere else. The resolved
-baseline commit and its source are recorded in every summary row and in
-``baseline-replay.log``; a non-``HEAD`` baseline is flagged as ``NON-HEAD
-BASELINE`` on stdout and in the log, because the host gate only trusts
-``HEAD`` evidence.
+because the sandbox cannot commit); unset it everywhere else. The ref is
+resolved to a full SHA once, up front, and that same immutable SHA is both
+recorded (every summary row, ``baseline.json``, the ``.log`` first lines)
+and passed to ``mutating_sources`` — the bytes validated are the bytes the
+evidence names, even if a movable ref moves mid-run. A non-``HEAD``
+baseline is flagged as ``NON-HEAD BASELINE`` / ``NON-HOST EVIDENCE`` on
+stdout and in ``baseline.json``, and the script then exits with the
+dedicated code ``NON_HEAD_EXIT`` (42) *even when every mutant is killed*:
+the host gate only trusts ``HEAD`` evidence, so a non-HEAD run can never
+look like a green host run.
 ``CARGO_TARGET_DIR`` must be supplied by the caller.
 """
 import difflib
@@ -83,6 +88,11 @@ mutations = [
      'Some(value) if truthy(value) => Some(JsString::from_utf16(',
      'Some(value) => Some(JsString::from_utf16(', EXTENSIONS_TRUTHINESS),
 ]
+# A dedicated exit code for "everything was killed, but the baseline was not
+# HEAD, so this run is not host evidence" — distinct from 1 (a mutant not
+# killed / INVALID) so automation and humans cannot mistake a green non-HEAD
+# sandbox run for a host-accepted run.
+NON_HEAD_EXIT = 42
 MARKERS = {
     'apply-busy-gate-removed': 'case apply-busy',
     'update-capture-ignored': 'case update-merges-store-paths',
@@ -103,7 +113,9 @@ if not env.get('CARGO_TARGET_DIR'):
 # The actual baseline must be resolved and recorded (fix-r2 P1): every
 # summary row and the replay log carry the full commit SHA and where it came
 # from, so sandbox stash-commit evidence cannot be mistaken for host HEAD
-# evidence — the host gate only trusts HEAD.
+# evidence — the host gate only trusts HEAD. The resolved SHA (not the
+# movable ref) is also what `mutating_sources` validates against (fix-r3):
+# one resolution, one object for both the evidence and the byte checks.
 baseline_ref = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
 baseline_source = ('PDRS_NEGATIVE_BASELINE'
                    if os.environ.get('PDRS_NEGATIVE_BASELINE') else 'HEAD')
@@ -132,7 +144,7 @@ slot_script = root / 'scripts/cargo-slots.sh'
 
 
 with mutating_sources(root, sorted({source / filename for _, filename, *_ in mutations}),
-                      baseline=baseline_ref) as snapshots:
+                      baseline=baseline_sha) as snapshots:
     def run(tests):
         # libtest takes several full-name filters after `--` (one positional
         # TESTNAME per cargo invocation); `--exact` keeps them literal.
@@ -183,7 +195,8 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
                                 returncode=code, failure=failure,
                                 marker=marker, sourceSha256=before,
                                 baseline=baseline_sha,
-                                baselineSource=baseline_source))
+                                baselineSource=baseline_source,
+                                hostEvidence=baseline_source == 'HEAD'))
             print(f'{name}: {status} rc={code} {failure}', flush=True)
             if status != 'KILLED':
                 failures.append(name)
@@ -192,7 +205,8 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
                                 reason=f'{type(error).__name__}: {error}',
                                 sourceSha256=before,
                                 baseline=baseline_sha,
-                                baselineSource=baseline_source))
+                                baselineSource=baseline_source,
+                                hostEvidence=baseline_source == 'HEAD'))
             failures.append(name)
         finally:
             path.write_bytes(original)
@@ -202,6 +216,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
             (out / 'baseline.json').write_text(json.dumps(
                 {'baseline': baseline_sha, 'baselineSource': baseline_source,
                  'nonHeadBaseline': baseline_source != 'HEAD',
+                 'hostEvidence': baseline_source == 'HEAD',
                  'mutations': [row['name'] for row in summary]},
                 ensure_ascii=False, indent=2) + '\n')
 counts = {state: sum(row['status'] == state for row in summary)
@@ -212,3 +227,12 @@ if failures:
     sys.exit(1)
 print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte '
       f'against baseline {baseline_sha} ({baseline_source})', flush=True)
+if baseline_source != 'HEAD':
+    # Even a fully-killed run against a non-HEAD baseline is not host
+    # evidence (review fix-r3): fail closed with the dedicated code and say
+    # so on stdout, so a sandbox stash-commit run can never exit like a
+    # green host run.
+    print(f'NON-HOST EVIDENCE (非宿主证据): baseline {baseline_sha} came from '
+          f'{baseline_source}, not HEAD; the host gate only trusts HEAD '
+          f'evidence; exit {NON_HEAD_EXIT}', flush=True)
+    sys.exit(NON_HEAD_EXIT)

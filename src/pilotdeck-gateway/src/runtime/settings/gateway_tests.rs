@@ -1477,12 +1477,14 @@ async fn update_settings_detaches_the_capture_listener_when_dropped_mid_reload()
 /// `reload_extensions` branches on the *original* JS truthiness of
 /// `projectKey` (`if (input?.projectKey)`), measured on the real TS bundle in
 /// `_tmp/20261026-issue-1318/fix-r2/probe-extensions-truthiness.out` (Node
-/// v22.22.0): `0` / `false` / `NaN` / `""` / `null` / omitted take the
-/// all-runtimes branch exactly like the nullish values, while a truthy
-/// non-string key enters the project branch coerced by `String()` — the
-/// registered divergence `U7-EXTENSIONS-RELOAD-STRING-COERCION-001`. `[]` is
-/// truthy in TS but coerces to `""`, so it still lands on the all-runtimes
-/// branch (that cell cannot converge before `ExtensionsReload` carries
+/// v22.22.0; fix-r3 added the `[""]` / `[null]` cells in
+/// `probe-extensions-truthiness-r3.out`): `0` / `false` / `NaN` / `""` /
+/// `null` / omitted take the all-runtimes branch exactly like the nullish
+/// values, while a truthy non-string key enters the project branch coerced by
+/// `String()` — the registered divergence
+/// `U7-EXTENSIONS-RELOAD-STRING-COERCION-001`. `[]` / `[""]` / `[null]` are
+/// truthy in TS but coerce to `""`, so they still land on the all-runtimes
+/// branch (those cells cannot converge before `ExtensionsReload` carries
 /// `JsValue`, registered in the same ledger entry, #1320).
 #[tokio::test]
 async fn extensions_reload_branches_on_the_original_project_key_truthiness() {
@@ -1531,6 +1533,21 @@ async fn extensions_reload_branches_on_the_original_project_key_truthiness() {
         (
             "empty-array",
             key_params(JsValue::Array(Vec::new())),
+            all_runtimes(),
+        ),
+        // Same family, measured on the real bundle in fix-r3
+        // (`probe-extensions-truthiness-r3.out`): `[""]` and `[null]` are
+        // truthy and their `String()` coercion is `""`, so TS takes the
+        // project no-op branch while the empty-key filter routes the Rust
+        // side back to the all-runtimes branch.
+        (
+            "empty-string-array",
+            key_params(JsValue::Array(vec![JsValue::String(JsString::from(""))])),
+            all_runtimes(),
+        ),
+        (
+            "null-array",
+            key_params(JsValue::Array(vec![JsValue::Null])),
             all_runtimes(),
         ),
         (

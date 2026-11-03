@@ -52,10 +52,13 @@ Rust 重放（`runtime/settings/gateway_tests.rs`）逐行执行同一 setup 词
 重生成守卫（`PDRS_BASELINE` 下实跑）。
 
 负控（独占本 worktree，不与任何编译或写入并发；七个变异的目标文件在本分支
-新增，宿主提交后由 `mutating_sources` 在 HEAD 字节上执行；沙箱验证轮用
+新增，宿主提交后由 `mutating_sources` 在 HEAD 字节上执行；基线 ref 先解析成
+完整 SHA，记录与字节校验用同一对象；沙箱验证轮用
 `PDRS_NEGATIVE_BASELINE=<git stash create 的悬空提交>` 钉住评审树，实际基线
 SHA 与来源写进每条 summary 记录、`baseline.json` 与 `baseline-replay.log`
-首行，非 HEAD 基线显式打 `NON-HEAD BASELINE`，宿主口径只认 HEAD）：
+首行，非 HEAD 基线显式打 `NON-HEAD BASELINE` 且即使全杀也以专属码 `42`
+退出、stdout 与 `baseline.json` 标 `NON-HOST EVIDENCE` / `hostEvidence:
+false`（宿主口径只认 HEAD，杀失败仍优先 `1`））：
 
 ```sh
 CARGO_TARGET_DIR=… python3 \
@@ -83,10 +86,12 @@ all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle
 allowlist / YAML 编辑语义），随接线单评估替换。已知未收敛差异：
 `reload_extensions` 的 `projectKey` 分支按原值 JS 真值选择（fix-r2，
 `0` / `false` / `NaN` / `""` 与 TS 同走全量分支；实测
-`_tmp/20261026-issue-1318/fix-r2/probe-extensions-truthiness.out`）；真值
+`_tmp/20261026-issue-1318/fix-r2/probe-extensions-truthiness.out`，fix-r3
+又补测 `[""]` / `[null]` 两格：
+`_tmp/20261026-issue-1318/fix-r3/probe-extensions-truthiness-r3.out`）；真值
 非字符串 `projectKey` / `changedPaths` 元素仍被 `String(value)` 强转而 TS
-原值透传，`[]`（真值但强转为空）仍走全量分支而 TS 走项目 no-op（金样 54
-行均为字符串，不触发；`changedPaths:[1]` / `projectKey:5` 两格随 #1320
-接线补入），登记于
+原值透传，`[]` / `[""]` / `[null]`（真值但 `String()` 为空串的数组格族）
+仍走全量分支而 TS 走项目 no-op（金样 54 行均为字符串，不触发；
+`changedPaths:[1]` / `projectKey:5` 两格随 #1320 接线补入），登记于
 `specs/gateway-parity/diffs/U7-EXTENSIONS-RELOAD-STRING-COERCION-001.md`，
 前置于 #1320。
