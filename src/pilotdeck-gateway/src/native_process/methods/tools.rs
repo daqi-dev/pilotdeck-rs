@@ -159,9 +159,12 @@ impl Requests {
     async fn tools_rewind_files(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let requests = self.clone();
         let params = params.clone();
-        // Synchronous disk IO must not block the serial host thread.  The
-        // has_active_turn check is intentionally inside the blocking closure so
-        // the check-act pair is atomic with respect to the IO work that follows.
+        // Synchronous disk IO must not block the serial host thread.
+        // begin_maintenance is acquired before has_active_turn so that no new
+        // turn can start between the check and the IO: begin_turn checks the
+        // maintenance flag under the same admission lock.  A concurrent rewind
+        // (maintenance already set for this session) or an active turn both
+        // return SESSION_BUSY; the guard is dropped when the closure exits.
         tokio::task::spawn_blocking(move || {
             let session_key = required_trimmed(
                 &params,
@@ -175,6 +178,11 @@ impl Requests {
                 "INVALID_MESSAGE_ID",
                 "userMessageId is required.",
             )?;
+            let _rewind_guard = requests
+                .owner
+                .begin_maintenance(&session_key)
+                .map_err(|e| RequestError::new(e.to_string()))?
+                .ok_or_else(|| session_error("SESSION_BUSY", "A rewind is already in progress."))?;
             if requests.owner.has_active_turn(&session_key) {
                 return Err(session_error(
                     "SESSION_BUSY",
