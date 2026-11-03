@@ -59,7 +59,7 @@ updated: 2026-11-04 03:10 · by Claude Code 协调者（#1305 合入，A7/A8 接
 - #1309 | review | doing | A7-W4 S4 权限 + user_dialog：PR #1419（3459 pass），CI 待跑
 - #1310 | review | doing | A7-W5 S5 会话配置 7 方法：PR #1417（+19 tests），CI 待跑
 - #1307 | impl | ready | A7-W2 S2 steer / cancel / abort + U9 接线：#1305 已合入，#589 宜先关；并发包先矩阵
-- #1311 | impl | doing | A7-W6 S6 运行时工具与统计接线：实现单已派（等 #1233 合入更稳）
+- #1311 | review | doing | A7-W6 S6 运行时工具与统计：PR #1422（3459 pass），CI 待跑
 - #1322 | impl | doing | A8 接线 U2 memory：实现单已派
 - #1319 | impl | ready | A8 接线 U6 MCP：#1305 已合入，宜在 #1311 后
 - #1323 | impl | ready | U3 snapshot 生产接线：#1305 已合入（等 #1401 合入更稳）
