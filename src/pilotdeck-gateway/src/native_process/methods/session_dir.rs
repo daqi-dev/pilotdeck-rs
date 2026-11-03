@@ -338,6 +338,11 @@ impl Requests {
                     now: None,
                 })
                 .map_err(|e| RequestError::new(e.to_string()))?;
+            // Seed the writer's sequence from the existing transcript so the
+            // metadata entry continues the chain rather than restarting at 1.
+            if matches!(storage.transcript_exists(), Some(Ok(true))) {
+                let _ = storage.restore();
+            }
             let updated_at = pilotdeck_transport::system_clock::format_epoch_iso(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -461,11 +466,19 @@ impl Requests {
                 session_id: session_key.clone(),
                 now: None,
             }) {
-                Ok(storage) => storage
-                    .transcript
-                    .record_agent_status_message(&session_key, &turn_id, &status)
-                    .map(|()| true)
-                    .unwrap_or(false),
+                Ok(storage) => {
+                    // Seed the writer's sequence from the existing transcript so
+                    // the status entry continues the chain rather than restarting
+                    // at 1.
+                    if matches!(storage.transcript_exists(), Some(Ok(true))) {
+                        let _ = storage.restore();
+                    }
+                    storage
+                        .transcript
+                        .record_agent_status_message(&session_key, &turn_id, &status)
+                        .map(|()| true)
+                        .unwrap_or(false)
+                }
                 Err(_) => false,
             }
         })
