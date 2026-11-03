@@ -11,9 +11,9 @@ use crate::{
         mcp::{
             gateway::{McpGateway, McpGatewayOptions},
             sdk::{
-                PluginProjectRuntime, SdkMcpCloseFuture, SdkMcpCloseSession, SdkMcpConfig,
-                SdkMcpConfigOptions, SdkMcpEnvironment, SdkMcpError, SdkMcpFuture, SdkMcpProject,
-                SdkMcpProjectResolver, SdkMcpSessionPlugins, SystemEnvironment,
+                PluginProjectRuntime, SdkMcpCloseSession, SdkMcpConfig, SdkMcpConfigOptions,
+                SdkMcpError, SdkMcpFuture, SdkMcpProject, SdkMcpProjectResolver,
+                SdkMcpSessionPlugins, SystemEnvironment,
             },
         },
         project::{
@@ -50,7 +50,6 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{Arc, Mutex, Weak},
     time::SystemTime,
 };
