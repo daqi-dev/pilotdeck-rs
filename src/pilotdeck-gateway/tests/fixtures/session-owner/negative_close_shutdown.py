@@ -288,6 +288,26 @@ MUTATIONS = {
             "releasing the serial ticket",
         ],
     ),
+    # #1365: the settle write is deleted; the closing-settled probe still fires
+    # (it now sits after send_replace in production code) but the watch channel
+    # is never sent a value.  close() gets Err when the sender drops, so the
+    # bounded().expect() in the test turns red — the probe-before-release order
+    # alone cannot witness the write.  IDLE_SETTLES is NOT bound: that test
+    # never awaits the settle result, so deleting send_replace leaves its event
+    # sequence unchanged and it would SURVIVE (correct — order is still correct,
+    # the settle itself is a separate invariant covered by CLOSE_SETTLES here).
+    "closing-settle-write-removed": (
+        owner,
+        """            self.settle.send_replace(Some(outcome));
+            #[cfg(test)]
+            settle_order::record("closing-settled");""",
+        """            #[cfg(test)]
+            settle_order::record("closing-settled");""",
+        [CLOSE_SETTLES],
+        [
+            "#1245 the close must fulfill with a succeeding disposal",
+        ],
+    ),
 }
 
 
