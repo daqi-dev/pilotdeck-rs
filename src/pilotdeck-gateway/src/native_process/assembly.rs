@@ -7,6 +7,7 @@ use crate::{
     config::{Env, permission::GatewaySessionPermissionRuleSetRegistry},
     metadata::object,
     runtime::{
+        async_hooks::{AsyncHookRegistry, AsyncHookTurn, TokioHookClock},
         interaction::{GatewayInteractionCoordinator, InteractionOptions},
         mcp::{
             gateway::{McpGateway, McpGatewayOptions},
@@ -598,6 +599,59 @@ pub(super) async fn start_observed(
                 owner: owner.clone(),
                 config: mcp_config,
             }));
+            // Build the async-hook registry only when the project stages an
+            // InteractionSteer resource (i.e. the steer pathway is wired).
+            // Check via ProjectResources→StageContext since InteractionSteer does
+            // not implement RuntimeResources directly.
+            let async_hook_registry = build_project
+                .acquire(None)
+                .ok()
+                .and_then(|lease| {
+                    lease
+                        .runtime()
+                        .resources()
+                        .get::<ProjectResources>()?
+                        .context()
+                        .resource(Resource::InteractionSteer)
+                        .map(|_| ())
+                })
+                .map(|_| {
+                    let reg_project = build_project.clone();
+                    let reg_owner = owner.clone();
+                    let reg_coordinator = coordinator.clone();
+                    let registry = AsyncHookRegistry::new(
+                        Arc::new(TokioHookClock),
+                        move |session_key| {
+                            // Turn is live only when the admission slot holds a run ID.
+                            let run_id = reg_owner.active_turn_run_id(session_key)?;
+                            // Fetch the InteractionSteer resource for the project.
+                            let lease = reg_project.acquire(None).ok()?;
+                            let context = lease
+                                .runtime()
+                                .resources()
+                                .get::<ProjectResources>()?
+                                .context();
+                            let steer = context
+                                .resource(Resource::InteractionSteer)?
+                                .as_any()
+                                .downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>()?
+                                .clone();
+                            let info = steer.active_steer_info(session_key)?;
+                            // Guard: the external run ID must still match admission.
+                            if info.run_id != run_id {
+                                return None;
+                            }
+                            Some(AsyncHookTurn {
+                                run_id: info.turn_id,
+                                mailbox: info.mailbox,
+                            })
+                        },
+                        move |session_key, event| {
+                            reg_coordinator.emit(session_key, &JsValue::Object(event));
+                        },
+                    );
+                    Arc::new(registry)
+                });
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
                 snapshot_enabled,
@@ -611,6 +665,7 @@ pub(super) async fn start_observed(
                 recorders,
                 interactions: interactions.clone(),
                 mcp: mcp_gateway,
+                async_hook_registry,
             });
             Ok(GatewayServices {
                 interactions,
