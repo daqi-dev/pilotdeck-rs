@@ -183,12 +183,6 @@ impl Requests {
                 .begin_maintenance(&session_key)
                 .map_err(|e| RequestError::new(e.to_string()))?
                 .ok_or_else(|| session_error("SESSION_BUSY", "A rewind is already in progress."))?;
-            if requests.owner.has_active_turn(&session_key) {
-                return Err(session_error(
-                    "SESSION_BUSY",
-                    "Cannot rewind files while a turn is active.",
-                ));
-            }
             let dry_run = params
                 .get("dryRun")
                 .and_then(|v| v.as_bool())
