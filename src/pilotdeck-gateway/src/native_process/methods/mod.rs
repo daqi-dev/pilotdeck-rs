@@ -4,6 +4,7 @@ use crate::runtime::connection::{Call, RequestError};
 use pilotdeck_protocol::{JsString, JsValue};
 
 mod active_turn;
+mod history;
 mod management;
 mod metadata;
 mod runs;
@@ -36,6 +37,7 @@ register_families! {
     management: management::METHODS,
     active_turn: active_turn::METHODS,
     runs: runs::METHODS,
+    history: history::METHODS,
     metadata: metadata::METHODS,
 }
 

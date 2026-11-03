@@ -165,6 +165,12 @@ async fn observe(name: &str) -> (Value, Value) {
             .expect("#1154 run registry"),
         ),
         owner: owner.clone(),
+        replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+            Default::default(),
+            Arc::new(owner.clone()),
+            5000,
+            None,
+        )),
     };
     let services = services::Services {
         options: options.clone(),
@@ -491,6 +497,17 @@ async fn observe_archive(name: &str) {
             .expect("#1154 archive run registry"),
         ),
         owner: SessionOwner::new(owner_options),
+        replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+            Default::default(),
+            Arc::new(SessionOwner::new({
+                let mut o =
+                    crate::runtime::session::SessionOwnerOptions::new(Arc::new(NoResources));
+                o.idle_sweep_interval_ms = 0;
+                o
+            })),
+            5000,
+            None,
+        )),
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

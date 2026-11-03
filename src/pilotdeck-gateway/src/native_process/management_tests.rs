@@ -194,8 +194,8 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
         )
         .expect("#1231 run registry"),
     );
-    (
-        Scratch(root),
+    (Scratch(root), {
+        let replacement_owner = owner.clone();
         requests::Requests {
             options,
             env,
@@ -204,8 +204,14 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             owner,
             coordinator: Arc::default(),
             runs,
-        },
-    )
+            replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+                Default::default(),
+                Arc::new(replacement_owner),
+                5000,
+                None,
+            )),
+        }
+    })
 }
 
 type Trace = Arc<Mutex<Vec<Value>>>;

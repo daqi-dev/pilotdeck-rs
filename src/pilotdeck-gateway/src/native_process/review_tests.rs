@@ -722,6 +722,12 @@ async fn project_path_boundaries_worker() {
             .expect("#1137 path run registry"),
         ),
         owner: owner.clone(),
+        replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+            Default::default(),
+            Arc::new(owner.clone()),
+            5000,
+            None,
+        )),
     };
     let services = services::Services {
         options: options.clone(),
