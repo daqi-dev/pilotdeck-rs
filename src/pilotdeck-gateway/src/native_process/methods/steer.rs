@@ -24,15 +24,6 @@ pub(super) const METHODS: &[&str] = &[
 ];
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::steer_request);
 
-fn gateway_error(code: &'static str, message: impl Into<String>) -> RequestError {
-    RequestError {
-        code: code.into(),
-        message: message.into().into(),
-        details: None,
-        validation: None,
-    }
-}
-
 fn steer_reason_str(reason: &SteerReason) -> &'static str {
     reason.as_str()
 }
@@ -243,7 +234,20 @@ impl Requests {
         let result = registry
             .submit(session_key, invocation_id, output)
             .await
-            .map_err(|e| gateway_error("ASYNC_HOOK_ERROR", e.message.to_string()))?;
+            .map_err(|e| {
+                let code = e
+                    .module_error
+                    .as_deref()
+                    .and_then(|m| m.code.as_ref())
+                    .and_then(|c| c.to_utf8().ok())
+                    .unwrap_or_else(|| "gateway_request_failed".to_owned());
+                RequestError {
+                    code,
+                    message: e.message.into(),
+                    details: None,
+                    validation: None,
+                }
+            })?;
 
         Ok(object([
             ("invocationId", JsValue::String(result.invocation_id)),
