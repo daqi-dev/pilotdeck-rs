@@ -289,18 +289,19 @@ impl Files for NativeFiles {
         let mut entries = fs::read_dir(path)?
             .map(|entry| {
                 let entry = entry?;
-                Ok((
-                    entry.file_name().to_string_lossy().into_owned(),
-                    entry.file_type()?.is_dir(),
-                ))
+                Ok((entry.file_name(), entry.file_type()?.is_dir()))
             })
             .collect::<io::Result<Vec<_>>>()?;
         // 对齐 Node readdir（libuv uv_fs_scandir 的 strcmp 排序）。
         // 协调者实测（Node v22，APFS），同一目录：
         // ls -f: Beta ä middle zebra 10 _x alpha 2
         // readdirSync / fs/promises.readdir(withFileTypes): 10 2 Beta _x alpha middle zebra ä
-        entries.sort_by(|l, r| l.0.as_bytes().cmp(r.0.as_bytes()));
-        Ok(entries)
+        // 先按原始 OsStr 字节排序，再做 to_string_lossy，避免非 UTF-8 文件名排序错位。
+        entries.sort_by(|l, r| l.0.as_encoded_bytes().cmp(r.0.as_encoded_bytes()));
+        Ok(entries
+            .into_iter()
+            .map(|(name, is_dir)| (name.to_string_lossy().into_owned(), is_dir))
+            .collect())
     }
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         let mut file = fs::File::open(path)?;
