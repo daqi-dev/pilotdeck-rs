@@ -15,19 +15,23 @@ use pilotdeck_protocol::{JsString, JsValue};
 use std::{path::Path, sync::Arc};
 
 /// Create a legacy project ID from a project root path.
-/// Matches TS's createLegacyProjectId: normalize to forward slashes, strip
-/// Windows drive letters, replace non-alphanumeric runs with single dash,
-/// trim leading/trailing dashes, default to "project" if empty.
+/// Matches TS `createLegacyProjectId` exactly (pilot/paths.ts:110-116):
+///   1. Normalize backslashes to forward slashes.
+///   2. Strip exactly one leading `[A-Za-z]:` (Windows drive letter + colon).
+///   3. Replace every run of `[^A-Za-z0-9._-]` chars with a single `-`.
+///   4. Strip leading and trailing `-`; default to `"project"` if the result is empty.
 fn create_project_id(project_root: &Path) -> JsString {
-    let normalized = project_root
-        .to_string_lossy()
-        .replace('\\', "/")
-        .trim_start_matches(|c: char| c.is_ascii_alphabetic())
-        .trim_start_matches(':')
-        .to_string();
+    let s = project_root.to_string_lossy().replace('\\', "/");
+    // TS: `.replace(/^[A-Za-z]:/, "")` — strip exactly one alpha + one colon.
+    let normalized =
+        if s.len() >= 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.as_bytes()[1] == b':' {
+            s[2..].to_string()
+        } else {
+            s.to_owned()
+        };
 
     let mut result = String::new();
-    let mut prev_was_sep = true; // Start true to trim leading dashes
+    let mut prev_was_sep = true; // true ⇒ trim leading dashes
 
     for c in normalized.chars() {
         if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
@@ -39,11 +43,86 @@ fn create_project_id(project_root: &Path) -> JsString {
         }
     }
 
-    // Trim trailing dashes
+    // Trim trailing dashes (TS: `.replace(/^-+|-+$/g, "")`)
     let result = result.trim_end_matches('-');
     let result = if result.is_empty() { "project" } else { result };
 
     JsString::from(result)
+}
+
+#[cfg(test)]
+mod create_project_id_tests {
+    use super::*;
+
+    fn id(path: &str) -> String {
+        create_project_id(std::path::Path::new(path))
+            .to_utf8()
+            .expect("UTF-8 project id")
+    }
+
+    #[test]
+    fn ascii_path_becomes_slug() {
+        assert_eq!(id("/Users/foo/bar"), "Users-foo-bar", "#1323 ascii path");
+    }
+
+    #[test]
+    fn dots_underscores_dashes_preserved() {
+        // TS: [^A-Za-z0-9._-]+ → only non-allowed runs collapse
+        assert_eq!(
+            id("/Users/foo.bar_baz-qux"),
+            "Users-foo.bar_baz-qux",
+            "#1323 dots, underscores and dashes pass through"
+        );
+    }
+
+    #[test]
+    fn chinese_path_collapses_to_dash() {
+        // Non-ASCII runs → single dash; leading/trailing stripped
+        let result = id("/Users/张三/project");
+        assert_eq!(result, "Users-project", "#1323 Chinese path");
+    }
+
+    #[test]
+    fn spaces_in_path_become_dashes() {
+        assert_eq!(
+            id("/Users/my project/foo bar"),
+            "Users-my-project-foo-bar",
+            "#1323 spaces become dashes"
+        );
+    }
+
+    #[test]
+    fn all_symbols_path_defaults_to_project() {
+        // After stripping every non-allowed char, nothing remains → "project"
+        assert_eq!(id("/!@#$%"), "project", "#1323 all-symbols path");
+    }
+
+    #[test]
+    fn windows_drive_letter_stripped() {
+        // TS: `.replace(/^[A-Za-z]:/, "")` — exactly one letter + colon
+        assert_eq!(
+            id("C:/Users/foo"),
+            "Users-foo",
+            "#1323 Windows drive letter stripped"
+        );
+    }
+
+    #[test]
+    fn two_letter_prefix_before_colon_not_stripped() {
+        // TS regex /^[A-Za-z]:/ requires exactly one letter; "AB:" is not a drive letter
+        let result = id("AB:/foo");
+        assert_eq!(result, "AB-foo", "#1323 two-letter prefix is NOT stripped");
+    }
+
+    #[test]
+    fn unicode_path_collapses_correctly() {
+        // Non-ASCII runs collapse; adjacent separators still produce one dash
+        let result = id("/home/user/café résumé");
+        assert_eq!(
+            result, "home-user-caf-r-sum",
+            "#1323 unicode path collapses non-ASCII runs"
+        );
+    }
 }
 
 pub struct Services {
