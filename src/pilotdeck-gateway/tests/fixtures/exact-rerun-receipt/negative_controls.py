@@ -117,7 +117,15 @@ DARWIN_ONLY = {'rss-probe-exact-rename'}
 # the positive control can never pass (the regenerate child panics at its
 # #280 expect), so hosts without it record the rows SKIPPED — neither KILLED
 # nor INVALID — and a default full run does not fail on them.
-BASELINE_ONLY = {'entries-locale-pin', 'snapshots-locale-pin'}
+# #1396: even with PDRS_BASELINE present, the regenerate compares oracle.json
+# bytes against the committed file — on Linux the directory traversal order
+# differs from macOS so the regenerated oracle.json diverges outside the exact
+# masks (baseline.rs:350 panics). The positive control is structurally INVALID
+# on Linux; record SKIPPED there same as DARWIN_ONLY (neither KILLED nor
+# INVALID), macOS with PDRS_BASELINE still runs them for real coverage.
+BASELINE_MACOS_ONLY = {'entries-locale-pin', 'snapshots-locale-pin'}
+# kept as empty set so existing references compile; all members moved above
+BASELINE_ONLY: set[str] = set()
 
 
 def main():
@@ -555,23 +563,37 @@ def main():
         # on this platform): record SKIPPED — neither KILLED nor INVALID, so a
         # default full run on Linux does not fail on a structurally absent
         # control. Default runs record the drop for the evidence directory.
-        requested = set(args.mutations) if args.mutations else DARWIN_ONLY
+        # #1396: BASELINE_MACOS_ONLY rows also require macOS — their positive
+        # control regenerates oracle.json and compares bytes, but Linux
+        # directory traversal order differs from macOS so the comparison fails
+        # outside the exact masks regardless of PDRS_BASELINE presence.
+        non_darwin = DARWIN_ONLY | BASELINE_MACOS_ONLY
+        requested = set(args.mutations) if args.mutations else non_darwin
         for name in sorted(requested & DARWIN_ONLY):
             summary.append({'name': name, 'status': 'SKIPPED',
                            'reason': 'bound parent compiles only on macOS '
                                      '(#[cfg(target_os = "macos")])'})
             print(f'{name}: SKIPPED: macOS-only bound parent', flush=True)
-        mutations = [row for row in mutations if row[0] not in DARWIN_ONLY]
+        for name in sorted(requested & BASELINE_MACOS_ONLY):
+            summary.append({'name': name, 'status': 'SKIPPED',
+                           'reason': 'positive control regenerates oracle.json '
+                                     'whose byte order is macOS-specific '
+                                     '(#1396: Linux dir traversal differs)'})
+            print(f'{name}: SKIPPED: oracle.json byte order is macOS-specific', flush=True)
+        mutations = [row for row in mutations if row[0] not in non_darwin]
     if not os.environ.get('PDRS_BASELINE'):
         # BASELINE_ONLY rows cannot run here (the bound parent re-runs a real
         # TS regenerate): record SKIPPED, same accounting as the platform rows.
-        requested = set(args.mutations) if args.mutations else BASELINE_ONLY
-        for name in sorted(requested & BASELINE_ONLY):
+        # (BASELINE_MACOS_ONLY members are already dropped above on non-macOS;
+        # on macOS they still need PDRS_BASELINE and are handled here.)
+        needs_baseline = BASELINE_ONLY | (BASELINE_MACOS_ONLY if sys.platform == 'darwin' else set())
+        requested = set(args.mutations) if args.mutations else needs_baseline
+        for name in sorted(requested & needs_baseline):
             summary.append({'name': name, 'status': 'SKIPPED',
                             'reason': 'bound parent needs the real TS baseline '
                                       '(PDRS_BASELINE) for its positive control'})
             print(f'{name}: SKIPPED: needs PDRS_BASELINE', flush=True)
-        mutations = [row for row in mutations if row[0] not in BASELINE_ONLY]
+        mutations = [row for row in mutations if row[0] not in needs_baseline]
     args.output.mkdir(parents=True, exist_ok=False)
 
     def save(name, text):
