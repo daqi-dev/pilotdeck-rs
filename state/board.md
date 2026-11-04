@@ -20,7 +20,7 @@ updated: 2026-11-04 04:30 · by Claude Code 协调者（A7/A8 评审修复循环
 - #1310 | review | doing | A7-W5 S5 会话配置 7 方法：PR #1417（+19 tests），CI 待跑
 - #1312 | review | doing | A7-W7-pr1 S7 SOP 接线：PR #1415（3465 pass），CI 待跑
 - #1321 | review | doing | A8 接线 U1 upload + 附件 lease：PR #1418（3459 pass），CI 待跑
-- #1313 | impl | blocked | A7-W7-pr2 always-on 接线：等 #1312（PR #1415 CI 待绿）
+- #1313 | impl | blocked | A7-W7-pr2 always-on 接线：等 #1312（PR #1415 CI 待绿）；**BLOCKED by CLAUDE.md change requirement** - requires CLAUDE.md § resource limits update per issue comments
 - #1220 | review | doing | PR #1237 r5 macmini 全绿（lib 3091 passed）→ 收口子代理（补本轮 head cb8 + 合格 opus 块，_tmp/20261102-closeout-1220/）；前置于 #589，合入解锁 #1219 #1274 #1406
 - #1253 | review | doing | PR #1275 cb8 失败判非 PR（平台行 + cargo 名额超时）→ mbp2 整套重跑，过即收口；前置于 #589，合入解锁 #1281 #897
 - #1395 | impl | doing | P0 候选（挂起类）http_store 零容量 park 丢唤醒：Codex 本机（wt-1395，_tmp/20261102-issue-1395-in/）先确定性用例实测可达性，可达则修 + 负控，不可达则钉前提降级；前置于 #1353；同改 http_store.rs 的 #1394 排其后
@@ -3020,3 +3020,11 @@ updated: 2026-11-04 04:30 · by Claude Code 协调者（A7/A8 评审修复循环
 - 13:1x **两小时交接（人令暂停 loop）** → `_tmp/20261102-handoff-1310.md`。下一步：接手者重挂 watch-deliveries / watch-queue，按交接在途表收口（a5b / #1220 / #1327 / #1305 优先）。
 
 - 2026-11-04 03:27 Claude 完成 #1308 A7-W3 S3 历史事务 + U10 接线，PR #1420（draft）。新增 `methods/history.rs`，将 7 个方法（export_session_transcript、restore_session_transcript、read_session_messages、fork_session、replace_last_turn、finalize_last_turn_replacement、read_subagent_messages）注册进原生路由；replace/finalize/fork 复用 ReplacementCoordinator；read_session_messages 经 epoch 重试；export/restore/read_subagent 返回 CAPABILITY_UNAVAILABLE。`cargo test -p pilotdeck-gateway --lib`：3459 passed, 0 failed。下一步：两家非作者评审。
+
+- 2026-11-04 06:2x A7/A8 各 PR fix-r3 GLM 评审完成，入队状态：
+  - PR #1420（#1308）已合入 e979da4f5（邮箱 noreply）
+  - PR #1423（#1322）已入队 BLOCKED：fix-r3 GLM P1（断言串错误）第 3 轮按规则开跟进 #1428
+  - PR #1426（#1323）已入队 BLOCKED：fix-r3+r4 clean；clippy unused import 已修；P2 跟进 #1427
+  - PR #1424（#1319）rebase onto main 后（conflicts merged）重跑 GLM review，等待完成后更新 gate block 再入队
+  - PR #1425（#1307）、#1422（#1311）、#1421/#1416-#1419（各 fix 轮）仍在队列中
+  - 新开跟进：#1427（#1323 P2 非 UTF-8 负控）、#1428（#1322 P1 断言串）、#1429（#1319 P2 OnceLock 同步测试）
