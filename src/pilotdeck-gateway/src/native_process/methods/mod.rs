@@ -8,11 +8,8 @@ mod history;
 mod management;
 mod metadata;
 mod runs;
-<<<<<<< HEAD
-mod tools;
-=======
 mod session_dir;
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
+mod tools;
 
 type Response = Result<JsValue, RequestError>;
 type RequestHandler = for<'a> fn(&'a Requests, String, JsValue) -> Call<'a, Response>;
@@ -44,11 +41,8 @@ register_families! {
     runs: runs::METHODS,
     history: history::METHODS,
     metadata: metadata::METHODS,
-<<<<<<< HEAD
     tools: tools::METHODS,
-=======
     session_dir: session_dir::METHODS,
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.

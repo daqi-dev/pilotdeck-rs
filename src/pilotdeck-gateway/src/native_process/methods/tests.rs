@@ -34,7 +34,6 @@ fn registry_matches_current_methods() {
         "native_archive_manifest",
         "native_archive_entries",
         "native_archive_artifact",
-<<<<<<< HEAD
         "usage_snapshot",
         "model_usage_snapshot",
         "mcp_server_status",
@@ -43,7 +42,6 @@ fn registry_matches_current_methods() {
         "background_task_stop",
         #[cfg(unix)]
         "background_tasks",
-=======
         // #1306 S1 session directory
         "list_sessions",
         "resume_session",
@@ -54,7 +52,6 @@ fn registry_matches_current_methods() {
         "tag_session",
         "close_project_sessions",
         "record_agent_status_message",
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();

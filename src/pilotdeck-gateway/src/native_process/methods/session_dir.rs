@@ -472,10 +472,10 @@ impl Requests {
                     // Seed the writer's sequence from the existing transcript so
                     // the status entry continues the chain rather than restarting
                     // at 1.
-                    if matches!(storage.transcript_exists(), Some(Ok(true))) {
-                        if storage.restore().is_err() {
-                            return false;
-                        }
+                    if matches!(storage.transcript_exists(), Some(Ok(true)))
+                        && storage.restore().is_err()
+                    {
+                        return false;
                     }
                     storage
                         .transcript

@@ -339,12 +339,9 @@ pub(super) async fn start_observed(
                 coordinator: coordinator.clone(),
                 runs: runs.clone(),
                 owner: owner.clone(),
-<<<<<<< HEAD
                 replacement: replacement.clone(),
-=======
                 recorders,
                 interactions: interactions.clone(),
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
             });
             Ok(GatewayServices {
                 interactions,
