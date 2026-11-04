@@ -123,8 +123,18 @@ DARWIN_ONLY = {'rss-probe-exact-rename'}
 # masks (baseline.rs:350 panics). The positive control is structurally INVALID
 # on Linux; record SKIPPED there same as DARWIN_ONLY (neither KILLED nor
 # INVALID), macOS with PDRS_BASELINE still runs them for real coverage.
+# Evidence: issue #1396 quotes cb8 (spark-ca13) output — merge-base 43f0db194947
+# and HEAD d7e0bc4ac both INVALID with identical sourceSha256, panic at
+# baseline.rs:350 "#280 edgeclaw-entries/oracle.json differs from the
+# regenerated .../oracle.json: differs from committed bytes outside the exact
+# masks". macOS (macmini) same row KILLED — the divergence is platform-specific.
 BASELINE_MACOS_ONLY = {'entries-locale-pin', 'snapshots-locale-pin'}
-# kept as empty set so existing references compile; all members moved above
+# kept as empty set so existing references compile; all members moved above.
+# If a future "needs PDRS_BASELINE" row is added here, first check whether its
+# fixture oracle.json contains a directory listing (readdir order) — if it does,
+# put it in BASELINE_MACOS_ONLY instead, because Linux traversal order differs
+# from macOS and the positive control will be structurally INVALID on Linux
+# (see #1396 for the forensics).
 BASELINE_ONLY: set[str] = set()
 
 
