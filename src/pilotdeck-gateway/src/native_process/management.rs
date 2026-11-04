@@ -4,10 +4,7 @@ use crate::{
     runtime::{
         connection::RequestError,
         manager::{ManagerGateway, ManagerProjects, TranscriptSessionCatalog},
-        memory::{
-            MemoryManagementService, MemoryProjectionError, MemoryProviderError,
-            ProjectMemoryRegistry, gateway::MemoryDispatch,
-        },
+        memory::gateway::MemoryDispatch,
         plugins::{
             CommandsListInput, GatewayCommandCatalogBundle, catalog::NativeCommandCatalogProvider,
         },
