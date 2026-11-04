@@ -12,7 +12,39 @@ use crate::{
     storage::{ContentAddressedWorkspaceSnapshotRecorder, RunRef},
 };
 use pilotdeck_protocol::{JsString, JsValue};
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
+
+/// Create a legacy project ID from a project root path.
+/// Matches TS's createLegacyProjectId: normalize to forward slashes, strip
+/// Windows drive letters, replace non-alphanumeric runs with single dash,
+/// trim leading/trailing dashes, default to "project" if empty.
+fn create_project_id(project_root: &Path) -> JsString {
+    let normalized = project_root
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+        .trim_start_matches(':')
+        .to_string();
+
+    let mut result = String::new();
+    let mut prev_was_sep = true; // Start true to trim leading dashes
+
+    for c in normalized.chars() {
+        if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
+            result.push(c);
+            prev_was_sep = false;
+        } else if !prev_was_sep {
+            result.push('-');
+            prev_was_sep = true;
+        }
+    }
+
+    // Trim trailing dashes
+    let result = result.trim_end_matches('-');
+    let result = if result.is_empty() { "project" } else { result };
+
+    JsString::from(result)
+}
 
 pub struct Services {
     pub options: Options,
@@ -67,7 +99,14 @@ impl SubmitHostServices for Services {
                 ));
             }
         }
-        Ok(None)
+        // When snapshots are enabled (--storage-root was supplied), return a
+        // workspace ID derived from the configured project path. This matches
+        // TS's resolveProjectStorageId behavior: createLegacyProjectId(project).
+        if self.snapshot_recorder.is_some() {
+            Ok(Some(create_project_id(&self.options.project)))
+        } else {
+            Ok(None)
+        }
     }
     fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
         self.snapshot_recorder.as_ref().map(|recorder| {
