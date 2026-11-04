@@ -24,11 +24,11 @@ U4 在 TS 注入真实 listProjectSessions 作为 sessionCatalog（与 Rust 已�
 
 queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+FFFD。固定命令 replacement�.md 用于区分有损替换；typed callers 继续沿已有字符串接口，wire caller 使用同一 catalog 的 UTF-16 入口。限额线程池测试覆盖四族，describe 在测试显式非空 storage 下排序后精确比较 13 项，重复、多报和漏报均失败，同时验证 expected 是 oracle.contract.capabilities 的子集；5 项管理能力分别配漏报变异，另含 upload_create 多报与 run_get 重复变异。8 个 skill_* 仅作为 RPC 方法，不属于 TS capability 契约，逐项配错误广告变异。
 
-## 生产入口边界（fix-r3）
+## 生产入口边界（fix-r3、#1323）
 
-native isolated 模式拒绝继承非空 `PILOTDECK_STORAGE_ROOT` / `PILOTDECK_SNAPSHOT_ROOT`，包括纯空白；`Options::parse` 没有 storage/snapshot 配置参数。本包生产入口 U3 snapshot 恒禁用：describe 精确 10 项，snapshot_* 返回 CAPABILITY_UNAVAILABLE。13 项与 snapshot 成功路径只在测试经 `assembly::start` 显式配置出现；生产接线另由跟进单处理，前置于 A8 U3 生产入口验收。
+native isolated 模式拒绝继承非空 `PILOTDECK_STORAGE_ROOT` / `PILOTDECK_SNAPSHOT_ROOT`，包括纯空白。`Options::parse` 新增可选 `--storage-root` CLI 参数（#1323）；非 UTF-8 值报硬错误。缺省时生产入口 U3 snapshot 禁用：describe 精确 10 项，snapshot_* 返回 CAPABILITY_UNAVAILABLE。提供 `--storage-root` 时启用 snapshot：describe 精确 13 项，workspace_id 由 `create_project_id` 从配置项目路径推导（匹配 TS `createLegacyProjectId` 语义），提交 turn 时捕获快照至指定存储根。继承环境变量的拒绝规则不变（非空值必须不继承）。
 
-`production_entry_snapshot_capabilities_are_disabled` 走 Options::parse + validate_environment，覆盖两个 key 缺省/空串的四种组合，及非空/纯空白的继承拒绝；成功启动后精确比较 10 项并验证 TS 子集。配置只在 persistence stage 构造 provider 时解析；装配将实际 provider 存在性缓存到 Requests.snapshot_enabled，describe 使用该值和显式能力名单。TS 接受纯空白 storage 并禁用 provider，而 native 启动拒绝是既有隔离边界，已在同一差异账本明确登记，不声称两者一致。
+`production_entry_snapshot_capabilities_are_disabled` 走 Options::parse + validate_environment，覆盖两个 key 缺省/空串的四种组合，及非空/纯空白的继承拒绝；成功启动后精确比较 10 项并验证 TS 子集。`storage_root_cli_arg_wires_snapshot_capabilities` 测试 `--storage-root` CLI 解析路径、environment() 注入、assembly 启动及 describe 13 项广告。配置只在 persistence stage 构造 provider 时解析；装配将实际 provider 存在性缓存到 Requests.snapshot_enabled，describe 使用该值和显式能力名单；turn 提交路径使用 `workspace_id` 组装快照输入。TS 接受纯空白 storage 并禁用 provider，而 native 启动拒绝是既有隔离边界，已在同一差异账本明确登记，不声称两者一致。
 
 ## #1231 fix-r1 契约与成功磁盘路径
 
