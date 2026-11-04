@@ -46,9 +46,9 @@ impl Requests {
                 mcp::{
                     gateway::McpGatewayOptions,
                     sdk::{
-                        SdkMcpCloseFuture, SdkMcpCloseSession, SdkMcpConfig, SdkMcpConfigOptions,
-                        SdkMcpError, SdkMcpFuture, SdkMcpProject, SdkMcpProjectResolver,
-                        SdkMcpSessionPlugins, SystemEnvironment,
+                        SdkMcpCloseSession, SdkMcpConfig, SdkMcpConfigOptions, SdkMcpError,
+                        SdkMcpFuture, SdkMcpProject, SdkMcpProjectResolver, SdkMcpSessionPlugins,
+                        SystemEnvironment,
                     },
                 },
                 sdk_session::SdkSessionProjects,
