@@ -165,17 +165,14 @@ async fn observe(name: &str) -> (Value, Value) {
             .expect("#1154 run registry"),
         ),
         owner: owner.clone(),
-<<<<<<< HEAD
         replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
             Default::default(),
             Arc::new(owner.clone()),
             5000,
             None,
         )),
-=======
         recorders: Arc::default(),
         interactions: Arc::default(),
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
     };
     let services = services::Services {
         options: options.clone(),
@@ -502,7 +499,6 @@ async fn observe_archive(name: &str) {
             .expect("#1154 archive run registry"),
         ),
         owner: SessionOwner::new(owner_options),
-<<<<<<< HEAD
         replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
             Default::default(),
             Arc::new(SessionOwner::new({
@@ -514,10 +510,8 @@ async fn observe_archive(name: &str) {
             5000,
             None,
         )),
-=======
         recorders: Arc::default(),
         interactions: Arc::default(),
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

@@ -722,17 +722,14 @@ async fn project_path_boundaries_worker() {
             .expect("#1137 path run registry"),
         ),
         owner: owner.clone(),
-<<<<<<< HEAD
         replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
             Default::default(),
             Arc::new(owner.clone()),
             5000,
             None,
         )),
-=======
         recorders: Arc::default(),
         interactions: Arc::default(),
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
     };
     let services = services::Services {
         options: options.clone(),

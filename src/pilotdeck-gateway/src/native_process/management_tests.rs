@@ -203,21 +203,16 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             owner,
             coordinator: Arc::default(),
             runs,
-<<<<<<< HEAD
             replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
                 Default::default(),
                 Arc::new(replacement_owner),
                 5000,
                 None,
             )),
-        }
-    })
-=======
             recorders: Arc::default(),
             interactions: Arc::default(),
-        },
-    )
->>>>>>> 6acd3c1d4 (feat(gateway) #1306 A7-W1 S1 会话目录 9 方法接线)
+        }
+    })
 }
 
 type Trace = Arc<Mutex<Vec<Value>>>;
