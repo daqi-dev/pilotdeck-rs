@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/native-management/oracle.json");
-const UNWIRED_METHODS: [&str; 3] = ["memory_list", "memory_wipe", "mcp_server_status"];
+const UNWIRED_METHODS: [&str; 2] = ["memory_list", "memory_wipe"];
 fn json_value(value: &JsValue) -> Value {
     serde_json::from_str(
         &pilotdeck_protocol::stringify_json(value)
@@ -649,7 +649,6 @@ async fn production_host_management_and_restart() {
             "mcp_server_reconnect",
             "mcp_server_toggle",
             "set_mcp_permission_mode_override",
-
         ];
         expected.sort_unstable();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
@@ -1051,7 +1050,6 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             "mcp_server_reconnect",
             "mcp_server_toggle",
             "set_mcp_permission_mode_override",
-
         ];
         expected.sort_unstable();
         negative_assert_eq!(
@@ -1203,7 +1201,6 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     "mcp_server_reconnect",
                     "mcp_server_toggle",
                     "set_mcp_permission_mode_override",
-
                 ];
                 expected.sort_unstable();
                 negative_assert_eq!(
