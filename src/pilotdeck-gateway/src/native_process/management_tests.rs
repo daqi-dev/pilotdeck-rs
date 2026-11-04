@@ -1223,6 +1223,96 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
     }
 }
 
+/// #1323 boundary P2: `--storage-root` edge inputs. A non-UTF-8 value is a hard
+/// parse error (never silently dropped); empty or whitespace-only values reach
+/// `PILOTDECK_STORAGE_ROOT` but must still resolve to snapshots disabled.
+fn storage_root_args(
+    requests: &requests::Requests,
+    root: std::ffi::OsString,
+) -> Vec<std::ffi::OsString> {
+    vec![
+        "--home".into(),
+        requests.options.home.clone().into_os_string(),
+        "--project".into(),
+        requests.options.project.clone().into_os_string(),
+        "--listen".into(),
+        "127.0.0.1:0".into(),
+        "--token-file".into(),
+        requests.options.token_file.clone().into_os_string(),
+        "--sidecar".into(),
+        requests.options.sidecar.clone().into_os_string(),
+        "--storage-root".into(),
+        root,
+    ]
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn storage_root_non_utf8_is_hard_parse_error() {
+    use std::os::unix::ffi::OsStringExt;
+    let (_scratch, requests) = setup();
+    Options::parse(storage_root_args(&requests, "/ok/storage".into()))
+        .expect("#1323 control: UTF-8 --storage-root parses");
+    let error = Options::parse(storage_root_args(
+        &requests,
+        std::ffi::OsString::from_vec(vec![0xff, 0xfe]),
+    ))
+    .expect_err("#1323 non-UTF-8 --storage-root must be rejected");
+    negative_assert_eq!(
+        error.to_string(),
+        "storage root is not UTF-8",
+        "#1323 non-UTF-8 --storage-root is a hard parse error"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1323 non-utf8 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1323 non-utf8 registry dispose");
+}
+
+#[tokio::test]
+async fn storage_root_blank_values_keep_snapshots_disabled() {
+    let (scratch, requests) = setup();
+    let real = scratch.0.join("home/storage");
+    std::fs::create_dir_all(&real).expect("#1323 blank control storage root");
+    let real = real
+        .to_str()
+        .expect("#1323 blank control path UTF-8")
+        .to_owned();
+    for (value, enabled) in [("", false), ("   ", false), (real.as_str(), true)] {
+        let options = Options::parse(storage_root_args(&requests, value.into()))
+            .expect("#1323 blank --storage-root parses");
+        negative_assert_eq!(
+            options.storage_root.as_deref(),
+            Some(value),
+            "#1323 --storage-root value is stored verbatim"
+        );
+        let env = options.environment(crate::config::Env::new());
+        let config = crate::storage::resolve_workspace_snapshot_config(|key| env.get(key).cloned())
+            .expect("#1323 blank --storage-root resolves");
+        negative_assert_eq!(
+            config.is_some(),
+            enabled,
+            "#1323 --storage-root {value:?}: snapshot config enabled only for a real root"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1323 blank owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1323 blank registry dispose");
+}
+
 #[tokio::test]
 async fn storage_root_cli_arg_wires_snapshot_capabilities() {
     // Pins the CLI parse path: Options::parse(["--storage-root", path]) stores
@@ -1447,7 +1537,7 @@ async fn skill_import_success_conflict_and_overwrite_match_ts() {
 /// `workspace_id()` regardless of `snapshot_recorder`.
 ///
 /// To prove the test catches the bug, temporarily replace line
-///   `Ok(Some(create_project_id(&self.options.project)))`
+///   `Ok(Some(JsString::from(projects.workspace_id(&project).as_str())))`
 /// with
 ///   `Ok(None)`
 /// in `services.rs`; this test must then FAIL.  Restore the original and the
@@ -1545,6 +1635,89 @@ async fn snapshot_wiring_workspace_id_routes_to_recorder() {
         manifest_path.contains(&format!("/workspaces/{id_str}/")),
         "#1323 manifest path must contain workspaces/<id>/: {manifest_path}"
     );
+}
+
+/// #1323 boundary P1: the turn-side workspace id must follow TS
+/// `resolveProjectStorageId` (registered `.cwd` marker first, legacy slug
+/// otherwise) and agree with the management snapshot route, so a turn-captured
+/// snapshot is listed under the same id. Mutation caught: computing the legacy
+/// slug unconditionally (the id would be `<slug>`, not `a8-main`).
+#[tokio::test]
+async fn snapshot_workspace_id_prefers_registered_marker() {
+    use crate::runtime::snapshot::{SnapshotProjectResolver as _, SnapshotProjects};
+    use crate::runtime::turn::submit_host::SubmitHostServices as _;
+    let (scratch, requests) = setup();
+    let storage_root = scratch.0.join("snapshot-storage");
+    let recorder = std::sync::Arc::new(
+        crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+            crate::storage::WorkspaceSnapshotConfig {
+                root: storage_root.to_string_lossy().into_owned(),
+                snapshot_root: storage_root.to_string_lossy().into_owned(),
+            },
+        ),
+    );
+    let services = super::services::Services {
+        options: requests.options.clone(),
+        project: requests.project.clone(),
+        env: requests.env.clone(),
+        recorders: std::sync::Arc::default(),
+        owner: crate::runtime::session::SessionOwner::new(
+            crate::runtime::session::SessionOwnerOptions::new(std::sync::Arc::new(SnapshotFactory)),
+        ),
+        snapshot_recorder: Some(recorder),
+    };
+    let project = requests.options.project.to_string_lossy().into_owned();
+    let input = pilotdeck_protocol::parse_json("{}").expect("#1323 marker input");
+    let id = |services: &super::services::Services| {
+        services
+            .workspace_id(&input)
+            .expect("#1323 marker workspace_id")
+            .expect("#1323 marker workspace_id is Some")
+            .to_utf8()
+            .expect("#1323 marker workspace_id UTF-8")
+    };
+
+    // `setup` registers this project as `a8-main` (home/projects/a8-main/.cwd).
+    let resolver = SnapshotProjects::new(requests.options.home.clone(), std::path::PathBuf::new());
+    let registered = id(&services);
+    assert_eq!(registered, "a8-main", "#1323 registered marker wins");
+    assert_eq!(
+        registered,
+        resolver.workspace_id(&project),
+        "#1323 turn and management snapshot routes agree (registered)"
+    );
+
+    // Without the marker the id falls back to the legacy slug.
+    std::fs::remove_file(requests.options.home.join("projects/a8-main/.cwd"))
+        .expect("#1323 remove marker");
+    let legacy = id(&services);
+    assert_eq!(
+        legacy,
+        crate::metadata::project_id(&requests.options.project),
+        "#1323 unregistered project uses the legacy slug"
+    );
+    assert_eq!(
+        legacy,
+        resolver.workspace_id(&project),
+        "#1323 turn and management snapshot routes agree (legacy)"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1323 marker shutdown");
+}
+
+/// #1323 boundary P1: TS `/^-+|-+$/g` trims both ends of the legacy slug.
+#[test]
+fn legacy_project_id_trims_leading_dashes() {
+    for (path, expected) in [("/-foo", "foo"), ("-foo-", "foo"), ("C:-foo", "foo")] {
+        assert_eq!(
+            crate::metadata::project_id(std::path::Path::new(path)),
+            expected,
+            "#1323 legacy slug of {path:?}"
+        );
+    }
 }
 
 /// Minimal SessionFactory stub used only by the regression test above.

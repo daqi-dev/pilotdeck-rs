@@ -26,7 +26,7 @@ queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+F
 
 ## 生产入口边界（fix-r3、#1323）
 
-native isolated 模式拒绝继承非空 `PILOTDECK_STORAGE_ROOT` / `PILOTDECK_SNAPSHOT_ROOT`，包括纯空白。`Options::parse` 新增可选 `--storage-root` CLI 参数（#1323）；非 UTF-8 值报硬错误。缺省时生产入口 U3 snapshot 禁用：describe 精确 10 项，snapshot_* 返回 CAPABILITY_UNAVAILABLE。提供 `--storage-root` 时启用 snapshot：describe 精确 13 项，workspace_id 由 `create_project_id` 从配置项目路径推导（匹配 TS `createLegacyProjectId` 语义），提交 turn 时捕获快照至指定存储根。继承环境变量的拒绝规则不变（非空值必须不继承）。
+native isolated 模式拒绝继承非空 `PILOTDECK_STORAGE_ROOT` / `PILOTDECK_SNAPSHOT_ROOT`，包括纯空白。`Options::parse` 新增可选 `--storage-root` CLI 参数（#1323）；非 UTF-8 值报硬错误。缺省时生产入口 U3 snapshot 禁用：describe 精确 10 项，snapshot_* 返回 CAPABILITY_UNAVAILABLE。提供 `--storage-root` 时启用 snapshot：describe 精确 13 项，workspace_id 与 management 快照路由同用 `SnapshotProjects::workspace_id`（匹配 TS `resolveProjectStorageId`：`.cwd` 注册表优先，否则 legacy slug），提交 turn 时捕获快照至指定存储根。继承环境变量的拒绝规则不变（非空值必须不继承）。
 
 `production_entry_snapshot_capabilities_are_disabled` 走 Options::parse + validate_environment，覆盖两个 key 缺省/空串的四种组合，及非空/纯空白的继承拒绝；成功启动后精确比较 10 项并验证 TS 子集。`storage_root_cli_arg_wires_snapshot_capabilities` 测试 `--storage-root` CLI 解析路径、environment() 注入、assembly 启动及 describe 13 项广告。配置只在 persistence stage 构造 provider 时解析；装配将实际 provider 存在性缓存到 Requests.snapshot_enabled，describe 使用该值和显式能力名单；turn 提交路径使用 `workspace_id` 组装快照输入。TS 接受纯空白 storage 并禁用 provider，而 native 启动拒绝是既有隔离边界，已在同一差异账本明确登记，不声称两者一致。
 
