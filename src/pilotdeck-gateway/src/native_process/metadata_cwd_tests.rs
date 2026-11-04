@@ -484,6 +484,8 @@ async fn observe_archive(name: &str) {
     let mut owner_options = SessionOwnerOptions::new(Arc::new(NoResources));
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
+    let mut owner_options_2 = SessionOwnerOptions::new(Arc::new(NoResources));
+    owner_options_2.idle_sweep_interval_ms = 0;
     let requests = requests::Requests {
         project: Arc::new(ProjectRuntimeRegistry::new(
             options.project.clone(),
@@ -500,7 +502,7 @@ async fn observe_archive(name: &str) {
             )
             .expect("#1154 archive run registry"),
         ),
-        owner: SessionOwner::new(owner_options),
+        owner: SessionOwner::new(owner_options_2),
         replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
             Default::default(),
             Arc::new(SessionOwner::new({
