@@ -1439,3 +1439,126 @@ async fn skill_import_success_conflict_and_overwrite_match_ts() {
         .await
         .expect("#1231 import registry disposal");
 }
+
+/// #1323 regression: `Services::workspace_id` must return `Some(id)` when
+/// `snapshot_recorder` is wired (i.e. `--storage-root` was supplied), and
+/// calling the recorder with that id must produce a committed `manifest.json`
+/// on disk.  The mutation that broke this: returning `Ok(None)` from
+/// `workspace_id()` regardless of `snapshot_recorder`.
+///
+/// To prove the test catches the bug, temporarily replace line
+///   `Ok(Some(create_project_id(&self.options.project)))`
+/// with
+///   `Ok(None)`
+/// in `services.rs`; this test must then FAIL.  Restore the original and the
+/// test passes.
+#[tokio::test]
+async fn snapshot_wiring_workspace_id_routes_to_recorder() {
+    let (scratch, requests) = setup();
+    let storage_root = scratch.0.join("snapshot-storage");
+    std::fs::create_dir_all(&storage_root).expect("#1323 regression snapshot storage root");
+
+    // Build a recorder backed by the temp directory.
+    let recorder = std::sync::Arc::new(
+        crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+            crate::storage::WorkspaceSnapshotConfig {
+                root: storage_root.to_string_lossy().into_owned(),
+                snapshot_root: storage_root.to_string_lossy().into_owned(),
+            },
+        ),
+    );
+
+    // Build a Services with snapshot_recorder wired.
+    let owner_options = crate::runtime::session::SessionOwnerOptions::new(std::sync::Arc::new(
+        crate::native_process::management_tests::SnapshotFactory,
+    ));
+    let services = super::services::Services {
+        options: requests.options.clone(),
+        project: requests.project.clone(),
+        env: requests.env.clone(),
+        recorders: std::sync::Arc::default(),
+        owner: crate::runtime::session::SessionOwner::new(owner_options),
+        snapshot_recorder: Some(recorder.clone()),
+    };
+
+    // workspace_id() MUST return Some when snapshot_recorder is Some.
+    use crate::runtime::turn::submit_host::SubmitHostServices as _;
+    let dummy_input = pilotdeck_protocol::parse_json("{}").expect("#1323 dummy input");
+    let workspace_id = services
+        .workspace_id(&dummy_input)
+        .expect("#1323 workspace_id must succeed")
+        .expect("#1323 workspace_id must be Some when snapshot_recorder is wired");
+
+    // The returned id must be non-empty and must not be empty or all dashes.
+    let id_str = workspace_id
+        .to_utf8()
+        .expect("#1323 workspace_id must be valid UTF-8");
+    assert!(
+        !id_str.is_empty(),
+        "#1323 workspace_id string must not be empty"
+    );
+    assert_ne!(
+        id_str.trim_matches('-'),
+        "",
+        "#1323 workspace_id must not be all dashes"
+    );
+
+    // Capture a pre-user snapshot using the id returned above.  The workspace
+    // dir is the project directory which already exists.
+    let workspace_dir = requests.options.project.to_string_lossy().into_owned();
+    let input = crate::storage::WorkspaceSnapshotInput {
+        workspace_id: id_str.clone(),
+        session_id: "regression-session".into(),
+        turn_id: "regression-turn".into(),
+        run_id: "regression-run".into(),
+        workspace_dir,
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let result = recorder
+        .capture_pre_user(&input)
+        .expect("#1323 capture_pre_user must succeed");
+    assert_eq!(
+        result.state,
+        crate::storage::SnapshotState::Committed,
+        "#1323 snapshot must be committed"
+    );
+
+    // The manifest file must exist on disk.
+    let manifest_path = result
+        .manifest_path
+        .expect("#1323 committed snapshot must have a manifest_path");
+    assert!(
+        std::path::Path::new(&manifest_path).is_file(),
+        "#1323 manifest.json must exist on disk: {manifest_path}"
+    );
+
+    // The partition directory must be under the storage root.
+    assert!(
+        manifest_path.starts_with(storage_root.to_str().expect("#1323 storage root UTF-8")),
+        "#1323 manifest must be inside --storage-root: {manifest_path}"
+    );
+
+    // The workspace subtree must be keyed by the workspace_id we computed.
+    assert!(
+        manifest_path.contains(&format!("/workspaces/{id_str}/")),
+        "#1323 manifest path must contain workspaces/<id>/: {manifest_path}"
+    );
+}
+
+/// Minimal SessionFactory stub used only by the regression test above.
+pub(super) struct SnapshotFactory;
+impl crate::runtime::session::SessionFactory for SnapshotFactory {
+    fn create(
+        &self,
+        _: crate::runtime::session::SessionContext,
+        _: Option<crate::runtime::session::LiveSessionHandle>,
+    ) -> crate::runtime::refresh::BoxFuture<
+        Result<crate::runtime::session::LiveSessionHandle, crate::runtime::project::RuntimeError>,
+    > {
+        Box::pin(std::future::ready(Err(
+            crate::runtime::project::RuntimeError::new("snapshot factory stub"),
+        )))
+    }
+}
