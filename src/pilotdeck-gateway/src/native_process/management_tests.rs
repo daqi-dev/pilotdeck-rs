@@ -1405,12 +1405,24 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         "snapshot_restore",
         "manager_sessions",
         "commands_list",
+        "usage_snapshot",
+        "model_usage_snapshot",
+        "mcp_server_status",
+        "rewind_files",
+        #[cfg(unix)]
+        "background_task_stop",
+        #[cfg(unix)]
+        "background_tasks",
+        "set_mcp_servers",
+        "mcp_server_reconnect",
+        "mcp_server_toggle",
+        "set_mcp_permission_mode_override",
     ];
     expected.sort_unstable();
     negative_assert_eq!(
         capabilities,
         expected,
-        "#1323 --storage-root CLI path advertises 13 snapshot-enabled capabilities"
+        "#1323 --storage-root CLI path advertises snapshot-enabled capabilities"
     );
     assert_ts_capability_subset(&expected);
     host.shutdown(options.drain_budget)
