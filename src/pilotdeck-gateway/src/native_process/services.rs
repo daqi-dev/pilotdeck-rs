@@ -50,81 +50,6 @@ fn create_project_id(project_root: &Path) -> JsString {
     JsString::from(result)
 }
 
-#[cfg(test)]
-mod create_project_id_tests {
-    use super::*;
-
-    fn id(path: &str) -> String {
-        create_project_id(std::path::Path::new(path))
-            .to_utf8()
-            .expect("UTF-8 project id")
-    }
-
-    #[test]
-    fn ascii_path_becomes_slug() {
-        assert_eq!(id("/Users/foo/bar"), "Users-foo-bar", "#1323 ascii path");
-    }
-
-    #[test]
-    fn dots_underscores_dashes_preserved() {
-        // TS: [^A-Za-z0-9._-]+ → only non-allowed runs collapse
-        assert_eq!(
-            id("/Users/foo.bar_baz-qux"),
-            "Users-foo.bar_baz-qux",
-            "#1323 dots, underscores and dashes pass through"
-        );
-    }
-
-    #[test]
-    fn chinese_path_collapses_to_dash() {
-        // Non-ASCII runs → single dash; leading/trailing stripped
-        let result = id("/Users/张三/project");
-        assert_eq!(result, "Users-project", "#1323 Chinese path");
-    }
-
-    #[test]
-    fn spaces_in_path_become_dashes() {
-        assert_eq!(
-            id("/Users/my project/foo bar"),
-            "Users-my-project-foo-bar",
-            "#1323 spaces become dashes"
-        );
-    }
-
-    #[test]
-    fn all_symbols_path_defaults_to_project() {
-        // After stripping every non-allowed char, nothing remains → "project"
-        assert_eq!(id("/!@#$%"), "project", "#1323 all-symbols path");
-    }
-
-    #[test]
-    fn windows_drive_letter_stripped() {
-        // TS: `.replace(/^[A-Za-z]:/, "")` — exactly one letter + colon
-        assert_eq!(
-            id("C:/Users/foo"),
-            "Users-foo",
-            "#1323 Windows drive letter stripped"
-        );
-    }
-
-    #[test]
-    fn two_letter_prefix_before_colon_not_stripped() {
-        // TS regex /^[A-Za-z]:/ requires exactly one letter; "AB:" is not a drive letter
-        let result = id("AB:/foo");
-        assert_eq!(result, "AB-foo", "#1323 two-letter prefix is NOT stripped");
-    }
-
-    #[test]
-    fn unicode_path_collapses_correctly() {
-        // Non-ASCII runs collapse; adjacent separators still produce one dash
-        let result = id("/home/user/café résumé");
-        assert_eq!(
-            result, "home-user-caf-r-sum",
-            "#1323 unicode path collapses non-ASCII runs"
-        );
-    }
-}
-
 pub struct Services {
     pub options: Options,
     pub project: Arc<ProjectRuntimeRegistry>,
@@ -362,5 +287,80 @@ impl SubmitHostServices for Services {
     }
     fn abort_turn_timeout_ms(&self) -> u64 {
         self.options.drain_budget.as_millis() as u64
+    }
+}
+
+#[cfg(test)]
+mod create_project_id_tests {
+    use super::*;
+
+    fn id(path: &str) -> String {
+        create_project_id(std::path::Path::new(path))
+            .to_utf8()
+            .expect("UTF-8 project id")
+    }
+
+    #[test]
+    fn ascii_path_becomes_slug() {
+        assert_eq!(id("/Users/foo/bar"), "Users-foo-bar", "#1323 ascii path");
+    }
+
+    #[test]
+    fn dots_underscores_dashes_preserved() {
+        // TS: [^A-Za-z0-9._-]+ → only non-allowed runs collapse
+        assert_eq!(
+            id("/Users/foo.bar_baz-qux"),
+            "Users-foo.bar_baz-qux",
+            "#1323 dots, underscores and dashes pass through"
+        );
+    }
+
+    #[test]
+    fn chinese_path_collapses_to_dash() {
+        // Non-ASCII runs → single dash; leading/trailing stripped
+        let result = id("/Users/张三/project");
+        assert_eq!(result, "Users-project", "#1323 Chinese path");
+    }
+
+    #[test]
+    fn spaces_in_path_become_dashes() {
+        assert_eq!(
+            id("/Users/my project/foo bar"),
+            "Users-my-project-foo-bar",
+            "#1323 spaces become dashes"
+        );
+    }
+
+    #[test]
+    fn all_symbols_path_defaults_to_project() {
+        // After stripping every non-allowed char, nothing remains → "project"
+        assert_eq!(id("/!@#$%"), "project", "#1323 all-symbols path");
+    }
+
+    #[test]
+    fn windows_drive_letter_stripped() {
+        // TS: `.replace(/^[A-Za-z]:/, "")` — exactly one letter + colon
+        assert_eq!(
+            id("C:/Users/foo"),
+            "Users-foo",
+            "#1323 Windows drive letter stripped"
+        );
+    }
+
+    #[test]
+    fn two_letter_prefix_before_colon_not_stripped() {
+        // TS regex /^[A-Za-z]:/ requires exactly one letter; "AB:" is not a drive letter
+        let result = id("AB:/foo");
+        assert_eq!(result, "AB-foo", "#1323 two-letter prefix is NOT stripped");
+    }
+
+    #[test]
+    fn unicode_path_collapses_correctly() {
+        // Non-ASCII runs collapse; adjacent separators still produce one dash
+        let result = id("/home/user/café résumé");
+        assert_eq!(
+            result, "home-user-caf-r-sum",
+            "#1323 unicode path collapses non-ASCII runs"
+        );
     }
 }
