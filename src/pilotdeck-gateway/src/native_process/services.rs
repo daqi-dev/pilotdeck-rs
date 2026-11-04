@@ -4,6 +4,7 @@ use crate::{
     metadata::object,
     runtime::{
         project::{ProjectResources, ProjectRuntimeRegistry},
+        snapshot::{SnapshotProjectResolver, SnapshotProjects},
         turn::{
             submit::{NativeSubmitSnapshots, SubmitError, SubmitFuture, SubmitSnapshots},
             submit_host::{SubmitAttachmentLease, SubmitCwdService, SubmitHostServices},
@@ -12,43 +13,7 @@ use crate::{
     storage::{ContentAddressedWorkspaceSnapshotRecorder, RunRef},
 };
 use pilotdeck_protocol::{JsString, JsValue};
-use std::{path::Path, sync::Arc};
-
-/// Create a legacy project ID from a project root path.
-/// Matches TS `createLegacyProjectId` exactly (pilot/paths.ts:110-116):
-///   1. Normalize backslashes to forward slashes.
-///   2. Strip exactly one leading `[A-Za-z]:` (Windows drive letter + colon).
-///   3. Replace every run of `[^A-Za-z0-9._-]` chars with a single `-`.
-///   4. Strip leading and trailing `-`; default to `"project"` if the result is empty.
-fn create_project_id(project_root: &Path) -> JsString {
-    let s = project_root.to_string_lossy().replace('\\', "/");
-    // TS: `.replace(/^[A-Za-z]:/, "")` — strip exactly one alpha + one colon.
-    let normalized =
-        if s.len() >= 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.as_bytes()[1] == b':' {
-            s[2..].to_string()
-        } else {
-            s.to_owned()
-        };
-
-    let mut result = String::new();
-    let mut prev_was_sep = true; // true ⇒ trim leading dashes
-
-    for c in normalized.chars() {
-        if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
-            result.push(c);
-            prev_was_sep = false;
-        } else if !prev_was_sep {
-            result.push('-');
-            prev_was_sep = true;
-        }
-    }
-
-    // Trim trailing dashes (TS: `.replace(/^-+|-+$/g, "")`)
-    let result = result.trim_end_matches('-');
-    let result = if result.is_empty() { "project" } else { result };
-
-    JsString::from(result)
-}
+use std::{path::PathBuf, sync::Arc};
 
 pub struct Services {
     pub options: Options,
@@ -103,11 +68,17 @@ impl SubmitHostServices for Services {
                 ));
             }
         }
-        // When snapshots are enabled (--storage-root was supplied), return a
-        // workspace ID derived from the configured project path. This matches
-        // TS's resolveProjectStorageId behavior: createLegacyProjectId(project).
+        // When snapshots are enabled (--storage-root was supplied), resolve the
+        // id exactly as the management snapshot route does
+        // (`PersistenceResources::snapshot_gateway`): TS `resolveProjectStorageId`
+        // prefers a registered `.cwd` marker, else the legacy path slug. One
+        // resolver keeps turn-captured snapshots visible to `snapshot_list`.
         if self.snapshot_recorder.is_some() {
-            Ok(Some(create_project_id(&self.options.project)))
+            let projects = SnapshotProjects::new(self.options.home.clone(), PathBuf::new());
+            let project = self.options.project.to_string_lossy();
+            Ok(Some(JsString::from(
+                projects.workspace_id(&project).as_str(),
+            )))
         } else {
             Ok(None)
         }
@@ -287,80 +258,5 @@ impl SubmitHostServices for Services {
     }
     fn abort_turn_timeout_ms(&self) -> u64 {
         self.options.drain_budget.as_millis() as u64
-    }
-}
-
-#[cfg(test)]
-mod create_project_id_tests {
-    use super::*;
-
-    fn id(path: &str) -> String {
-        create_project_id(std::path::Path::new(path))
-            .to_utf8()
-            .expect("UTF-8 project id")
-    }
-
-    #[test]
-    fn ascii_path_becomes_slug() {
-        assert_eq!(id("/Users/foo/bar"), "Users-foo-bar", "#1323 ascii path");
-    }
-
-    #[test]
-    fn dots_underscores_dashes_preserved() {
-        // TS: [^A-Za-z0-9._-]+ → only non-allowed runs collapse
-        assert_eq!(
-            id("/Users/foo.bar_baz-qux"),
-            "Users-foo.bar_baz-qux",
-            "#1323 dots, underscores and dashes pass through"
-        );
-    }
-
-    #[test]
-    fn chinese_path_collapses_to_dash() {
-        // Non-ASCII runs → single dash; leading/trailing stripped
-        let result = id("/Users/张三/project");
-        assert_eq!(result, "Users-project", "#1323 Chinese path");
-    }
-
-    #[test]
-    fn spaces_in_path_become_dashes() {
-        assert_eq!(
-            id("/Users/my project/foo bar"),
-            "Users-my-project-foo-bar",
-            "#1323 spaces become dashes"
-        );
-    }
-
-    #[test]
-    fn all_symbols_path_defaults_to_project() {
-        // After stripping every non-allowed char, nothing remains → "project"
-        assert_eq!(id("/!@#$%"), "project", "#1323 all-symbols path");
-    }
-
-    #[test]
-    fn windows_drive_letter_stripped() {
-        // TS: `.replace(/^[A-Za-z]:/, "")` — exactly one letter + colon
-        assert_eq!(
-            id("C:/Users/foo"),
-            "Users-foo",
-            "#1323 Windows drive letter stripped"
-        );
-    }
-
-    #[test]
-    fn two_letter_prefix_before_colon_not_stripped() {
-        // TS regex /^[A-Za-z]:/ requires exactly one letter; "AB:" is not a drive letter
-        let result = id("AB:/foo");
-        assert_eq!(result, "AB-foo", "#1323 two-letter prefix is NOT stripped");
-    }
-
-    #[test]
-    fn unicode_path_collapses_correctly() {
-        // Non-ASCII runs collapse; adjacent separators still produce one dash
-        let result = id("/home/user/café résumé");
-        assert_eq!(
-            result, "home-user-caf-r-sum",
-            "#1323 unicode path collapses non-ASCII runs"
-        );
     }
 }
