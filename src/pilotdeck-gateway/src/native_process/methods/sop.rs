@@ -71,7 +71,6 @@ impl Requests {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::native_process::management_tests::setup;
     use crate::negative_assert_eq;
 
