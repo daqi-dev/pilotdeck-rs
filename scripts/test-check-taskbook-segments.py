@@ -521,6 +521,24 @@ case("大写 PROGRESS.md 也算进度文件（P3 假 FAIL）", 0,
      BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
                                      "_tmp/20261105-issue-100/PROGRESS.md"))
 
+# ---- fix-r14：gate15（DeepSeek boundary P0×1 P1×1 + GLM sibling P2×1）------------------------------
+# 长正文（≥4096 字符）后面缩进的 scope：回看窗口里没有换行，旧代码把文档开头当「上一个非空行」
+LONG_PROSE = "目标：" + "很长的正文" * 900
+case("超长正文行后面的缩进 scope 也不许静默忽略（P0 假 PASS）", 2,
+     "- 目标：x\n" + LONG_PROSE + "\n    <!-- pdrs-scope: files=6 est_min=300 -->\n\n## 要做\n1. 改 src/a.rs\n",
+     must=["缩进在正文下面"])
+case("括注「不包含」是排除：90 + 30 = 120（P1 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 min（不包含 30 min 联调） |"),
+     must=["120 min > 90 min"])
+case("括注「不包括」同样计入（P1）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 min（不包括 30 min 测试） |"),
+     must=["120 min > 90 min"])
+case("括注「不计入」是明确排除，仍不计入（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 min（不计入 30 min 缓冲） |"))
+case("全角花括号占位符（P2 假 PASS，两家同报）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "｛请填写本段涉及的文件｝"),
+     must=["占位符"])
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -537,6 +555,10 @@ PARSE_EST = [
     ("90 min（不含 30 min 测试）", "", 120.0),
     ("60 min（未含 40 min 联调）", "", 100.0),
     ("90 min（含 30 min 测试）", "", 90.0),
+    ("90 min（不包含 30 min 联调）", "", 120.0),
+    ("90 min（不包括 30 min 测试）", "", 120.0),
+    ("90 min（未包含 20 min）", "", 110.0),
+    ("90 min（不计入 30 min 缓冲）", "", 90.0),
     ("1h30m–1h45m", "", 105.0),
     ("1.5h–1h45m", "", 105.0),
     ("80–120 min", "", 120.0),
