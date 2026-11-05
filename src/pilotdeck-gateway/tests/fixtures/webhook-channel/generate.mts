@@ -162,7 +162,7 @@ function rawExchange(
   bytes: string,
   mode: string,
   count: number,
-): Promise<{ error?: string; noResponse?: boolean; raws: string[] }> {
+): Promise<{ error?: string; noResponse?: boolean; closed?: boolean; raws: string[] }> {
   return new Promise((done) => {
     if (port === null) {
       done({ error: 'no-listener' });
@@ -204,7 +204,10 @@ function rawExchange(
     });
     socket.on('close', () => {
       if (buffer !== '' || raws.length !== 0) finish({ raws: raws.concat(buffer ? [buffer] : []) });
-      else finish({ noResponse: true, raws: [] });
+      // The peer closed without sending a byte. Distinct from the deadline
+      // arm above (`noResponse`): the oversize cell closes, the null-body
+      // probe stays silent, and the oracle has to be able to tell them apart.
+      else finish({ closed: true, raws: [] });
     });
     socket.on('error', (error: any) => finish({ error: String(error.code ?? error.message) }));
   });
@@ -219,6 +222,10 @@ async function runRequests(port: number | null, step: any, responses: any[]) {
   }
   if (result.noResponse) {
     responses.push({ label: step.label, noResponse: true });
+    return;
+  }
+  if (result.closed) {
+    responses.push({ label: step.label, closed: true });
     return;
   }
   if (count === 1) {

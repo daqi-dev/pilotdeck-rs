@@ -98,9 +98,14 @@ const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 pub type Now = Arc<dyn Fn() -> f64 + Send + Sync>;
 
 fn default_now() -> f64 {
+    // `Date.now()` is integer milliseconds, so `Date.now() / 1000` carries
+    // millisecond precision and nothing finer: two deliveries that arrive
+    // inside the same millisecond share a fallback id and therefore a dedup
+    // key. `as_secs_f64()` would keep sub-millisecond bits and let those two
+    // requests produce different keys, so quantize to the TS resolution.
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_secs_f64())
+        .map(|since| since.as_millis() as f64 / 1000.0)
         .unwrap_or_default()
 }
 
@@ -677,7 +682,19 @@ async fn handle_webhook(
         // The catch arm's 413 never reaches the wire: TS destroyed the socket
         // before the rejection continuation runs, so the response is the
         // zero-byte close this service error produces.
-        Err(_) => return Err(io::Error::other("webhook payload too large")),
+        Err(_) => {
+            if crate::mutants::on("webhook-oversize-answers") {
+                // Negative control: #1334 the oversize request closes without
+                // a response. Answering instead of closing must turn the
+                // `too-large` cell red.
+                return Ok(json_response(
+                    hyper::StatusCode::PAYLOAD_TOO_LARGE,
+                    &JsValue::String("payload too large".to_owned().into()),
+                    keep_alive,
+                ));
+            }
+            return Err(io::Error::other("webhook payload too large"));
+        }
     };
 
     let secret = route

@@ -1050,7 +1050,7 @@
     "responses": [
      {
       "label": "oversize",
-      "noResponse": true
+      "closed": true
      },
      {
       "label": "exactly-max",
