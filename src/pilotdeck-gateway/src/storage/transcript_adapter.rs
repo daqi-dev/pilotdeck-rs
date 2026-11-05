@@ -635,11 +635,11 @@ impl TranscriptWriter {
         });
         Self::new(base, key.transcript_path, SubagentLayout::Default)
     }
-    /// #297: `true` when the snapshot was installed, `false` when the writer
-    /// kept a further-committed position (or the same sequence) because the
-    /// caller's snapshot is stale. The caller must not re-seed its own
-    /// projection on `false`, or the two halves disagree about which turns are
-    /// live (review: `Recorder::restore` used to clear its turns anyway).
+    /// #297: `true` when the caller may re-seed its own projection — the
+    /// snapshot is not stale. `false` only when the snapshot is strictly older
+    /// than what this writer already committed, in which case the caller must
+    /// keep its live projection or the two halves disagree about which turns
+    /// are live (review: `Recorder::restore` used to clear its turns anyway).
     pub(super) fn restore_recorder_entries(&self, entries: &[JsValue]) -> RecorderResult<bool> {
         let mut inner = self.lock();
         let entries = entries
@@ -661,13 +661,21 @@ impl TranscriptWriter {
         // sequence is a foreign chain and must not fork the parent link). The
         // entry ids merge either way, so a stale id stays a duplicate.
         let installed = state.sequence > inner.sequence;
+        // #297 fix-r4: only a *stale* snapshot is refused. An equal one installs
+        // nothing, but the caller must still re-seed its projection: a reopen is
+        // a fresh TS recorder, so pending compactions and the active turn set are
+        // dropped (`restore_recorder_entries` returning `installed` alone made
+        // that a silent no-op and left `commitDeferred` closing a bracket the
+        // fresh recorder never opened — the frozen `restore` parity scenario in
+        // `tests/compaction.rs` went red).
+        let accepted = installed || state.sequence == inner.sequence;
         if installed {
             inner.sequence = state.sequence;
             inner.last_entry_id = state.last_entry_id;
             inner.recorder_domain = domain;
         }
         inner.entry_ids.extend(ids);
-        Ok(installed)
+        Ok(accepted)
     }
     pub(super) fn append_recorder_event(
         &self,

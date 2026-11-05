@@ -763,8 +763,12 @@ async fn persistence_dangling_symlink_cannot_acquire_a_separate_writer_lock() {
 // sequence the persisted log already contains. Nothing reports an error, and
 // the resulting chain can never be loaded again.
 //
-// Implementation-agnostic: the assertion is on the persisted chain, so both a
-// "reject the stale snapshot" fix and a "keep the live state" fix pass it.
+// #297 fix-r4: the assertion also pins the *live* half — `t2` has to stay
+// recordable after the refused restore — so this test binds the "keep the live
+// projection" fix; a "clear the recorder anyway" variant fails on
+// `record_model_request` below. The equal-sequence reopen case (which must keep
+// clearing, like a fresh TS recorder) is pinned by the frozen `restore` parity
+// scenario in `tests/compaction.rs`, not here.
 #[tokio::test]
 async fn stale_snapshot_restore_must_not_corrupt_the_transcript_chain() {
     let scratch = Scratch::new();
