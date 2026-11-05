@@ -48,6 +48,19 @@ impl GatewayUserDialogBus {
         }
     }
 
+    /// Returns `true` when the bus is wired to a live dialog runtime (i.e.
+    /// `on_change` was supplied at construction time).  Native-process builds
+    /// always pass `None`, so this returns `false` there.
+    ///
+    /// Unconnected semantics differ by method:
+    /// - `list`, `claim`, `release`: surface `CAPABILITY_UNAVAILABLE`.
+    /// - `respond`: return `{delivered: false}` silently — matches TS
+    ///   `GatewayWsConnection.ts:490` (no guard) and
+    ///   `InProcessGateway.ts:2672` (`delivered: false`).
+    pub fn is_connected(&self) -> bool {
+        self.on_change.is_some()
+    }
+
     pub fn register(&mut self, session: &JsString, entry: PendingDialog) {
         let change = object([
             ("type", "requested".into()),

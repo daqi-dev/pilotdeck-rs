@@ -206,6 +206,12 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             interactions: Arc::default(),
             mcp: requests::Requests::stub_mcp(&owner),
             async_hook_registry: None,
+            user_dialog_bus: Arc::new(std::sync::Mutex::new(
+                crate::user_dialog::GatewayUserDialogBus::new(
+                    crate::user_dialog::DialogRuntime::default(),
+                    None,
+                ),
+            )),
         }
     })
 }
@@ -650,6 +656,11 @@ async fn production_host_management_and_restart() {
             "mcp_server_reconnect",
             "mcp_server_toggle",
             "set_mcp_permission_mode_override",
+            // TS advertises both in every config state (oracle.json:2801-2802,
+            // 2855-2856, 2956-2957); user_dialog_list runtime availability is
+            // still gated on the bus being connected (#1445 on_change staging).
+            "user_dialog_list",
+            "permission_list",
         ];
         expected.sort_unstable();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
@@ -1053,6 +1064,11 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             "mcp_server_reconnect",
             "mcp_server_toggle",
             "set_mcp_permission_mode_override",
+            // TS advertises both in every config state (oracle.json:2801-2802,
+            // 2855-2856, 2956-2957); user_dialog_list runtime availability is
+            // still gated on the bus being connected (#1445 on_change staging).
+            "user_dialog_list",
+            "permission_list",
         ];
         expected.sort_unstable();
         negative_assert_eq!(
@@ -1204,12 +1220,18 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     "mcp_server_reconnect",
                     "mcp_server_toggle",
                     "set_mcp_permission_mode_override",
+                    // TS advertises both in every config state (oracle.json:
+                    // 2801-2802, 2855-2856, 2956-2957); user_dialog_list
+                    // runtime availability is still gated on the bus being
+                    // connected (#1445 on_change staging).
+                    "user_dialog_list",
+                    "permission_list",
                 ];
                 expected.sort_unstable();
                 negative_assert_eq!(
                     capabilities,
                     expected,
-                    "#1231 production entry exact 10 capabilities"
+                    "#1231 production entry exact capability set"
                 );
                 assert_ts_capability_subset(&expected);
             }
@@ -1316,7 +1338,7 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
     // storage_root as Some(string); environment() injects PILOTDECK_STORAGE_ROOT
     // via the Some branch. No manual env.insert is used; the test solely exercises
     // the --storage-root → Options::storage_root → environment() chain and asserts
-    // that describe_server advertises all 13 snapshot-enabled capabilities.
+    // that describe_server advertises the full snapshot-enabled capability set.
     let (scratch, requests) = setup();
     let storage_path = scratch.0.join("home/storage");
     std::fs::create_dir_all(&storage_path).expect("#1323 storage root directory");
@@ -1414,6 +1436,10 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         "mcp_server_reconnect",
         "mcp_server_toggle",
         "set_mcp_permission_mode_override",
+        // TS advertises both in every config state (oracle.json: 2801-2802,
+        // 2855-2856, 2956-2957); same union as the production-entry list above.
+        "user_dialog_list",
+        "permission_list",
     ];
     expected.sort_unstable();
     negative_assert_eq!(

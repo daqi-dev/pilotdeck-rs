@@ -1,5 +1,5 @@
 use super::*;
-use crate::negative_assert_eq;
+use crate::{negative_assert, negative_assert_eq};
 use std::collections::BTreeSet;
 
 /// The project's staged `InteractionSteer` resource for the registry fixture.
@@ -102,6 +102,12 @@ fn registry_matches_current_methods() {
         "tag_session",
         "close_project_sessions",
         "record_agent_status_message",
+        "permission_list",
+        "grant_session_permission",
+        "user_dialog_list",
+        "user_dialog_claim",
+        "user_dialog_release",
+        "user_dialog_respond",
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();
@@ -728,4 +734,852 @@ async fn hook_async_result_blank_id_error_shape_is_pinned_across_registry_states
         .dispose()
         .await
         .expect("#1307 registry fixture project shutdown");
+}
+
+// #1309 fix-r4 (gate P2a): permission family domain error codes and the
+// user_dialog ttlMs null → default-lease TS semantics (InProcessGateway.ts:2741).
+fn message(error: &crate::runtime::connection::RequestError) -> String {
+    error.message.to_utf8().expect("#1309 error message UTF-8")
+}
+
+#[tokio::test]
+async fn permission_errors_carry_domain_codes() {
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1309 permission fixture setup");
+    // permission_list — TS: DialogGatewayError("INVALID_PERMISSION_LIST",
+    // "sessionKey is required.") (InProcessGateway.ts:2782); the code must
+    // travel in RequestError::code, not be embedded in the message.
+    let error = requests
+        .permission_request("permission_list".into(), crate::metadata::object([]))
+        .await
+        .expect_err("#1309 permission_list rejects missing sessionKey");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_PERMISSION_LIST",
+        "#1309 permission_list error code is the domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "sessionKey is required.",
+        "#1309 permission_list message has no code prefix"
+    );
+
+    // grant_session_permission — schema-required sessionKey/entry; TS has no
+    // input validation (GatewayInteractionCoordinator.ts:128), so these are the
+    // Rust-side contract rejects and keep their own domain code.
+    let error = requests
+        .permission_request(
+            "grant_session_permission".into(),
+            crate::metadata::object([("entry", "Bash".into())]),
+        )
+        .await
+        .expect_err("#1309 grant rejects missing sessionKey");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_PERMISSION_GRANT",
+        "#1309 grant error code is the domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "sessionKey is required.",
+        "#1309 grant sessionKey message has no code prefix"
+    );
+
+    let error = requests
+        .permission_request(
+            "grant_session_permission".into(),
+            crate::metadata::object([
+                ("sessionKey", "p2a-session".into()),
+                ("entry", JsValue::Number(1.0)),
+            ]),
+        )
+        .await
+        .expect_err("#1309 grant rejects non-string entry");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_PERMISSION_GRANT",
+        "#1309 grant non-string entry code is the domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "entry must be a string.",
+        "#1309 grant entry message has no code prefix"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1309 permission fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1309 permission fixture project shutdown");
+}
+
+#[tokio::test]
+async fn user_dialog_capability_gate_precedes_parameter_validation() {
+    // The setup bus is unwired (no on_change observer), so the capability
+    // error must win over the missing-sessionKey domain error — the shared
+    // require_user_dialog_bus gate runs before any parameter validation.
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1309 gate-order fixture setup");
+    for method in [
+        "user_dialog_list",
+        "user_dialog_claim",
+        "user_dialog_release",
+    ] {
+        let error = requests
+            .user_dialog_request(method.into(), crate::metadata::object([]))
+            .await
+            .expect_err("#1309 unwired bus is a capability error");
+        negative_assert_eq!(
+            error.code,
+            "CAPABILITY_UNAVAILABLE",
+            "#1309 {method} capability gate precedes parameter validation"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1309 gate-order fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1309 gate-order fixture project shutdown");
+}
+
+#[tokio::test]
+async fn user_dialog_claim_null_ttlms_claims_default_lease() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1309 ttlMs fixture setup");
+    let session: JsString = "p2a-session".into();
+    let request: JsString = "p2a-dialog".into();
+    // Wire a connected bus (on_change supplied → is_connected) and register a
+    // pending dialog so the claim can succeed.
+    requests.user_dialog_bus = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::user_dialog::GatewayUserDialogBus::new(
+            crate::user_dialog::DialogRuntime::default(),
+            Some(Box::new(|_event| Ok(()))),
+        ),
+    ));
+    requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .register(
+            &session,
+            crate::user_dialog::PendingDialog {
+                request_id: request.clone(),
+                dialog_kind: "question".into(),
+                tool_call_id: "call-1".into(),
+                tool_name: "ask".into(),
+                event: crate::metadata::object([("requestId", JsValue::String(request.clone()))]),
+                accepts: Box::new(|_value| true),
+                resolve: Box::new(|_answer| {}),
+                reject: Box::new(|_error| {}),
+                on_settled: None,
+            },
+        );
+    // TS `input.ttlMs ?? DEFAULT_USER_DIALOG_LEASE_MS`: an explicit null
+    // claims with the default 30s lease instead of failing validation.
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", JsValue::String(request.clone())),
+                ("ttlMs", JsValue::Null),
+            ]),
+        )
+        .await
+        .expect("#1309 ttlMs null claims with the default lease");
+    negative_assert_eq!(
+        result.get("claimed"),
+        Some(&JsValue::Bool(true)),
+        "#1309 ttlMs null claim succeeds"
+    );
+    negative_assert!(
+        result
+            .get("leaseId")
+            .and_then(JsValue::as_string)
+            .is_some_and(|lease| !lease.to_utf8().unwrap_or_default().is_empty()),
+        "#1309 ttlMs null claim returns a lease"
+    );
+    // A non-number ttlMs is still a domain validation error; only null and
+    // missing fall back to the default lease.
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", JsValue::String(request)),
+                ("ttlMs", "30000".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1309 non-number ttlMs is rejected");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_CLAIM",
+        "#1309 string ttlMs keeps the domain rejection"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1309 ttlMs fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1309 ttlMs fixture project shutdown");
+}
+
+// #1309 fix-r5 (gate P2a x2): explicit-null tri-state for the user_dialog
+// optional fields, pinned to the TS guards in InProcessGateway.ts (claim
+// leaseId :2738, respond leaseId :2655, cancelled reason :2652, answered
+// value :2649 judged by accepts :2674). Raw TS probe output:
+// main-repo _tmp/20261105-issue-1309-fix-r5/ts-probe-output.txt.
+fn register_null_tri_state_dialog(
+    requests: &super::super::requests::Requests,
+    session: &JsString,
+    request_id: &str,
+    accepts_null: bool,
+    resolved: &std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>>,
+) {
+    let sink = resolved.clone();
+    requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .register(
+            session,
+            crate::user_dialog::PendingDialog {
+                request_id: request_id.into(),
+                dialog_kind: "question".into(),
+                tool_call_id: "call-1".into(),
+                tool_name: "ask".into(),
+                event: crate::metadata::object([("requestId", JsValue::String(request_id.into()))]),
+                accepts: Box::new(move |value| std::matches!(value, JsValue::Null) == accepts_null),
+                resolve: Box::new(move |answer| sink.lock().unwrap().push(answer)),
+                reject: Box::new(|_error| {}),
+                on_settled: None,
+            },
+        );
+}
+
+#[tokio::test]
+async fn user_dialog_optional_nulls_match_typescript_tri_state() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1309 fix-r5 fixture setup");
+    let session: JsString = "p2a-r5-session".into();
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    requests.user_dialog_bus = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::user_dialog::GatewayUserDialogBus::new(
+            crate::user_dialog::DialogRuntime::default(),
+            Some(Box::new(|_event| Ok(()))),
+        ),
+    ));
+
+    // claim leaseId: null -> rejected, same as TS
+    // `input.leaseId !== undefined && (typeof input.leaseId !== "string" || ...)`
+    // (InProcessGateway.ts:2738). Unlike ttlMs (`??`, :2741), null does NOT
+    // fold into the missing-key default.
+    register_null_tri_state_dialog(&requests, &session, "r5-claim-null-lease", true, &resolved);
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r5-claim-null-lease".into()),
+                ("leaseId", JsValue::Null),
+            ]),
+        )
+        .await
+        .expect_err("#1309 r5 claim leaseId null is rejected");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_CLAIM",
+        "#1309 r5 claim leaseId null error code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "leaseId must be a non-empty string when provided.",
+        "#1309 r5 claim leaseId null error message"
+    );
+
+    // respond leaseId: null -> rejected (InProcessGateway.ts:2655).
+    register_null_tri_state_dialog(
+        &requests,
+        &session,
+        "r5-respond-null-lease",
+        true,
+        &resolved,
+    );
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r5-respond-null-lease".into()),
+                ("leaseId", JsValue::Null),
+                (
+                    "result",
+                    crate::metadata::object([("behavior", "cancelled".into())]),
+                ),
+            ]),
+        )
+        .await
+        .expect_err("#1309 r5 respond leaseId null is rejected");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_RESPONSE",
+        "#1309 r5 respond leaseId null error code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "leaseId must be a non-empty string when provided.",
+        "#1309 r5 respond leaseId null error message"
+    );
+
+    // cancelled reason: null -> rejected (InProcessGateway.ts:2652); only a
+    // missing/undefined reason is omitted.
+    register_null_tri_state_dialog(&requests, &session, "r5-null-reason", true, &resolved);
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r5-null-reason".into()),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "cancelled".into()),
+                        ("reason", JsValue::Null),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect_err("#1309 r5 cancelled reason null is rejected");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_RESPONSE",
+        "#1309 r5 cancelled reason null error code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "cancelled user dialog reason must be a string.",
+        "#1309 r5 cancelled reason null error message"
+    );
+
+    // answered value missing -> still the "requires a value" guard
+    // (InProcessGateway.ts:2649) — the null cases below must NOT hit it.
+    register_null_tri_state_dialog(&requests, &session, "r5-missing-value", true, &resolved);
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r5-missing-value".into()),
+                (
+                    "result",
+                    crate::metadata::object([("behavior", "answered".into())]),
+                ),
+            ]),
+        )
+        .await
+        .expect_err("#1309 r5 answered missing value is rejected");
+    negative_assert_eq!(
+        message(&error),
+        "answered user dialog results require a value.",
+        "#1309 r5 answered missing value error message"
+    );
+
+    // answered value: null + accepts(null) -> delivered, and the resolved
+    // answer carries the null value (TS passes it to entry.accepts,
+    // InProcessGateway.ts:2674).
+    register_null_tri_state_dialog(
+        &requests,
+        &session,
+        "r5-null-value-accepts",
+        true,
+        &resolved,
+    );
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r5-null-value-accepts".into()),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", JsValue::Null),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1309 r5 answered null value is delivered when accepted");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1309 r5 answered null value delivered"
+    );
+    negative_assert_eq!(
+        resolved.lock().unwrap().as_slice(),
+        [crate::user_dialog::DialogAnswer::Answered(JsValue::Null)],
+        "#1309 r5 answered null value reaches the resolver as null"
+    );
+
+    // answered value: null + rejects(null) -> the dialog contract error, not
+    // the missing-value guard.
+    register_null_tri_state_dialog(
+        &requests,
+        &session,
+        "r5-null-value-rejects",
+        false,
+        &resolved,
+    );
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r5-null-value-rejects".into()),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", JsValue::Null),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect_err("#1309 r5 answered null value against a rejecting contract");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_RESPONSE",
+        "#1309 r5 answered null value contract error code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "answered question dialog result does not match the pending dialog contract.",
+        "#1309 r5 answered null value contract error message"
+    );
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1309 r5 fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1309 r5 fixture project shutdown");
+}
+
+// #1309 fix-r6 (gate r5 P1): the bus sees the TRIMMED leaseId, matching TS
+// `input.leaseId?.trim()` / `.trim()` at the three call sites (claim
+// InProcessGateway.ts:2754, respond :2683, release :2769). A padded
+// " <uuid> " must renew the same lease, deliver a response and release,
+// not collide with itself (the untrimmed old behavior returned Busy /
+// lease_required / released:false).
+#[tokio::test]
+async fn user_dialog_padded_lease_id_matches_trimmed() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1309 fix-r6 fixture setup");
+    let session: JsString = "p2a-r6-session".into();
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    requests.user_dialog_bus = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::user_dialog::GatewayUserDialogBus::new(
+            crate::user_dialog::DialogRuntime::default(),
+            Some(Box::new(|_event| Ok(()))),
+        ),
+    ));
+    register_null_tri_state_dialog(&requests, &session, "r6-lease", true, &resolved);
+
+    // Initial claim without a leaseId -> a fresh lease.
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r6-lease".into()),
+            ]),
+        )
+        .await
+        .expect("#1309 r6 initial claim succeeds");
+    negative_assert_eq!(
+        result.get("claimed"),
+        Some(&JsValue::Bool(true)),
+        "#1309 r6 initial claim"
+    );
+    let lease = result
+        .get("leaseId")
+        .and_then(JsValue::as_string)
+        .expect("#1309 r6 lease id present");
+    let lease_text = lease
+        .to_utf8()
+        .expect("#1309 r6 lease id UTF-8")
+        .to_string();
+
+    // Renew with a padded leaseId -> renews the SAME lease (TS passes the
+    // trimmed id into the bus, InProcessGateway.ts:2754).
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r6-lease".into()),
+                (
+                    "leaseId",
+                    JsValue::String(format!("  {lease_text}  ").into()),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1309 r6 padded lease renew succeeds");
+    negative_assert_eq!(
+        result.get("claimed"),
+        Some(&JsValue::Bool(true)),
+        "#1309 r6 padded renew claims"
+    );
+    negative_assert_eq!(
+        result.get("leaseId"),
+        Some(&JsValue::String(lease.clone())),
+        "#1309 r6 padded renew keeps the lease id"
+    );
+
+    // Release with a padded leaseId -> released (TS :2769 passes trimmed).
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_release".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r6-lease".into()),
+                (
+                    "leaseId",
+                    JsValue::String(format!("\t{lease_text}\n").into()),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1309 r6 release succeeds");
+    negative_assert_eq!(
+        result.get("released"),
+        Some(&JsValue::Bool(true)),
+        "#1309 r6 padded release releases"
+    );
+
+    // Respond with a padded leaseId against a live claim -> delivered (TS
+    // :2683 passes the trimmed id; untrimmed would hit lease_required).
+    register_null_tri_state_dialog(&requests, &session, "r6-respond-lease", true, &resolved);
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r6-respond-lease".into()),
+            ]),
+        )
+        .await
+        .expect("#1309 r6 respond-path claim succeeds");
+    let lease = result
+        .get("leaseId")
+        .and_then(JsValue::as_string)
+        .expect("#1309 r6 respond-path lease id present");
+    let lease_text = lease
+        .to_utf8()
+        .expect("#1309 r6 lease id UTF-8")
+        .to_string();
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r6-respond-lease".into()),
+                ("leaseId", JsValue::String(format!(" {lease_text} ").into())),
+                (
+                    "result",
+                    crate::metadata::object([("behavior", "cancelled".into())]),
+                ),
+            ]),
+        )
+        .await;
+    // #1309 fix-r7: a de-trim mutation on the respond call site surfaces as
+    // USER_DIALOG_LEASE_REQUIRED from consume_for_response. Routing the
+    // failure through the receipt-aware expect — labeled like the bound target
+    // assertion below — keeps the mutation attributable to this test's target
+    // assertion instead of an unattributable setup panic (nonce-receipt
+    // contract, tests/common/negative_receipt.rs).
+    let result =
+        crate::test_negative_receipt::expect_ok(result, "#1309 r6 padded respond delivered");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1309 r6 padded respond delivered"
+    );
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1309 r6 fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1309 r6 fixture project shutdown");
+}
+
+// #1309 fix-r7 (codex P1): release has NO typeof short-circuit on leaseId
+// (InProcessGateway.ts:2766-2769, unlike claim :2738 / respond :2655), so a
+// non-string leaseId surfaces on the wire as the generic transport failure,
+// not the domain code. Raw TS wire probe:
+// main-repo _tmp/20261105-issue-1309-fix-r7/ts-probe/ts-probe-output.txt.
+#[tokio::test]
+async fn user_dialog_release_nonstring_lease_id_matches_typescript_wire() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1309 fix-r7 fixture setup");
+    let session: JsString = "p2a-r7-session".into();
+    requests.user_dialog_bus = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::user_dialog::GatewayUserDialogBus::new(
+            crate::user_dialog::DialogRuntime::default(),
+            Some(Box::new(|_event| Ok(()))),
+        ),
+    ));
+    for (label, lease_id) in [
+        ("number", JsValue::Number(5.0)),
+        (
+            "object",
+            crate::metadata::object([("uuid", "lease".into())]),
+        ),
+        ("array", JsValue::Array(vec![JsValue::Number(1.0)])),
+        ("boolean", JsValue::Bool(true)),
+    ] {
+        let error = requests
+            .user_dialog_request(
+                "user_dialog_release".into(),
+                crate::metadata::object([
+                    ("sessionKey", JsValue::String(session.clone())),
+                    ("requestId", "r7-release".into()),
+                    ("leaseId", lease_id),
+                ]),
+            )
+            .await
+            .expect_err("#1309 r7 non-string leaseId is a transport failure");
+        negative_assert_eq!(
+            error.code,
+            "gateway_request_failed",
+            "#1309 r7 release {label} leaseId wire code"
+        );
+        negative_assert_eq!(
+            message(&error),
+            "input.leaseId?.trim is not a function",
+            "#1309 r7 release {label} leaseId wire message"
+        );
+    }
+    // Probe baselines: null, empty, and missing leaseIds keep the domain code.
+    for (label, params) in [
+        (
+            "null",
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r7-release".into()),
+                ("leaseId", JsValue::Null),
+            ]),
+        ),
+        (
+            "empty",
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r7-release".into()),
+                ("leaseId", "".into()),
+            ]),
+        ),
+        (
+            "missing",
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "r7-release".into()),
+            ]),
+        ),
+    ] {
+        let error = requests
+            .user_dialog_request("user_dialog_release".into(), params)
+            .await
+            .expect_err("#1309 r7 nullish or empty leaseId keeps the domain rejection");
+        negative_assert_eq!(
+            error.code,
+            "INVALID_USER_DIALOG_RELEASE",
+            "#1309 r7 release {label} leaseId keeps the domain code"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1309 fix-r7 fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1309 fix-r7 fixture project shutdown");
+}
+
+// #1309 fix-r7 (gate sibling#2): the permission family had only negative
+// controls. Positive control for the listPermissions snapshot projection
+// (InProcessGateway.ts:2784-2789) and the grantSessionPermission success
+// result.
+#[tokio::test]
+async fn permission_list_projection_and_grant_succeed() {
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1309 permission positive fixture setup");
+    let session: JsString = "p2a-r7-perm".into();
+
+    // Two pending permission requests: one with a payload, one without.
+    for (request_id, payload) in [
+        (
+            "perm-with-payload",
+            Some(crate::metadata::object([("command", "echo hi".into())])),
+        ),
+        ("perm-no-payload", None),
+    ] {
+        requests
+            .interactions
+            .permission_bus()
+            .register(
+                &session,
+                crate::runtime::interaction::PendingEntry {
+                    request_id: request_id.into(),
+                    tool_call_id: "call-9".into(),
+                    tool_name: "Bash".into(),
+                    resolve: std::sync::Arc::new(|_decision: JsValue| {}),
+                    reject: std::sync::Arc::new(|_reason: JsString| {}),
+                },
+                payload,
+            )
+            .expect("#1309 permission positive registration");
+    }
+
+    let result = requests
+        .permission_request(
+            "permission_list".into(),
+            crate::metadata::object([("sessionKey", JsValue::String(session.clone()))]),
+        )
+        .await
+        .expect("#1309 permission_list succeeds");
+    let entries = result.get("requests").and_then(|value| match value {
+        JsValue::Array(entries) => Some(entries),
+        _ => None,
+    });
+    negative_assert!(entries.is_some(), "#1309 permission_list projects an array");
+    let entries = entries.expect("#1309 permission_list requests array");
+    negative_assert_eq!(
+        entries.len(),
+        2,
+        "#1309 permission_list projects both entries"
+    );
+    negative_assert_eq!(
+        entries[0].get("requestId"),
+        Some(&JsValue::String("perm-with-payload".into())),
+        "#1309 permission_list requestId"
+    );
+    negative_assert_eq!(
+        entries[0].get("toolCallId"),
+        Some(&JsValue::String("call-9".into())),
+        "#1309 permission_list toolCallId"
+    );
+    negative_assert_eq!(
+        entries[0].get("toolName"),
+        Some(&JsValue::String("Bash".into())),
+        "#1309 permission_list toolName"
+    );
+    negative_assert_eq!(
+        entries[0]
+            .get("payload")
+            .and_then(|payload| payload.get("command")),
+        Some(&JsValue::String("echo hi".into())),
+        "#1309 permission_list forwards the payload"
+    );
+    negative_assert!(
+        entries[1].get("payload").is_none(),
+        "#1309 permission_list omits an absent payload"
+    );
+
+    // Snapshot rows always carry the three ids; the `?? ""` fallback must hold
+    // for a row that lacks them, and a present null payload is forwarded
+    // (TS `request.payload !== undefined`, InProcessGateway.ts:2789).
+    let raw = pilotdeck_protocol::parse_json(r#"{"requestId":"r","payload":null}"#)
+        .expect("#1309 projection fixture JSON");
+    let projected = super::permission::project_permission_entry(&raw);
+    negative_assert_eq!(
+        projected.get("requestId"),
+        Some(&JsValue::String("r".into())),
+        "#1309 projection keeps a present requestId"
+    );
+    negative_assert_eq!(
+        projected.get("toolCallId"),
+        Some(&JsValue::String("".into())),
+        "#1309 projection falls back to empty toolCallId"
+    );
+    negative_assert_eq!(
+        projected.get("toolName"),
+        Some(&JsValue::String("".into())),
+        "#1309 projection falls back to empty toolName"
+    );
+    negative_assert_eq!(
+        projected.get("payload"),
+        Some(&JsValue::Null),
+        "#1309 projection forwards a null payload"
+    );
+    let raw = pilotdeck_protocol::parse_json(r#"{"requestId":"r"}"#)
+        .expect("#1309 projection fixture JSON");
+    let projected = super::permission::project_permission_entry(&raw);
+    negative_assert!(
+        projected.get("payload").is_none(),
+        "#1309 projection omits an undefined payload"
+    );
+
+    // grant_session_permission success: the granted rule echoes its entry.
+    let result = requests
+        .permission_request(
+            "grant_session_permission".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("entry", "Bash(echo hi)".into()),
+            ]),
+        )
+        .await
+        .expect("#1309 grant succeeds");
+    negative_assert_eq!(
+        result.get("granted"),
+        Some(&JsValue::Bool(true)),
+        "#1309 grant reports granted"
+    );
+    negative_assert_eq!(
+        result.get("entry"),
+        Some(&JsValue::String("Bash(echo hi)".into())),
+        "#1309 grant echoes the entry"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1309 permission positive fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1309 permission positive fixture project shutdown");
 }
