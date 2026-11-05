@@ -130,9 +130,9 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         slot_deadline = time.monotonic() + 1800
         while True:
             slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=10)
-            if slots.returncode != 1:
-                assert slots.returncode == 0
+            if slots.returncode in (0, 2):
                 break
+            assert slots.returncode == 1, slots.stdout + slots.stderr
             assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
             time.sleep(5)
         code, log = run(full)
@@ -162,9 +162,9 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
             while True:
                 slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=10)
                 (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-                if slots.returncode != 1:
-                    assert slots.returncode == 0
+                if slots.returncode in (0, 2):
                     break
+                assert slots.returncode == 1, slots.stdout + slots.stderr
                 assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(5)
             path.write_text(changed)

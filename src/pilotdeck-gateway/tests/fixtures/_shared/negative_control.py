@@ -68,7 +68,9 @@ def run(name, command, env, cwd=SRC, diagnostic=None):
             slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')],
                                   capture_output=True, text=True, timeout=10)
             print(slot.stdout + slot.stderr, end='', flush=True)
-            if slot.returncode == 0:
+            if slot.returncode in (0, 2):
+                # 2 = unified gate unavailable (a CI runner has none): there is
+                # no shared quota to wait for, so reserve nothing and proceed.
                 break
             assert slot.returncode == 1 and time.monotonic() < deadline, 'cargo slots full'
             time.sleep(10)
