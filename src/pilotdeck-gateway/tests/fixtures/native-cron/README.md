@@ -34,7 +34,8 @@ pinned 时钟 `Date.UTC(2026, 0, 1)`（#1216 金样同款）、计数 taskId `ta
   扫描 not_found 与跨项目歧义、run-now 形状、全局 list 合并、禁用配置、
   running 删除 + 6 方法未配置错误）、`manager_tests.rs`
   `six_methods_replay_the_ts_gold` 字节级重放、`negative_controls.py`
-  （6 变异，绑该重放测试，全 KILLED）。
+  （8 变异：6 行绑该重放测试，1 行绑全局 list 的 nullish 上限单测，1 行绑
+  接纳栅栏 panic 用例，全 KILLED）。
 - runTaskNow 成功格：结果不含时间戳，即便 TS 侧 runAt 由真实时钟折叠
   （重放仍字节级相等）。这是夹具自身观测不到的点，**不是** Rust/TS 差异，
   不进 `specs/gateway-parity/diffs/`。

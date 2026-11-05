@@ -9,7 +9,8 @@ Every selected row is reported, including anchor/build/source-guard failures.
 Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
 is that test's own panic payload carrying its `#1325` message. Six rows bind
 `runtime::cron::manager_tests::six_methods_replay_the_ts_gold`, the seventh
-binds `...::global_list_caps_the_merged_run_page_at_the_nullish_default`. The
+binds `...::global_list_caps_the_merged_run_page_at_the_nullish_default`, the
+eighth binds `...::submit_turn_releases_the_admission_fence_when_the_body_panics`. The
 replay needs no Node: it reads the committed oracle bytes, so every row runs on
 both platforms. The gold rows pin: the unconfigured gate's error code,
 requireProjectKey's missing-key message, updateTask's revision increment, the
@@ -39,6 +40,10 @@ REPLAY = 'runtime::cron::manager_tests::six_methods_replay_the_ts_gold'
 NULLISH_REPLAY = (
     'runtime::cron::manager_tests::'
     'global_list_caps_the_merged_run_page_at_the_nullish_default'
+)
+FENCE_REPLAY = (
+    'runtime::cron::manager_tests::'
+    'submit_turn_releases_the_admission_fence_when_the_body_panics'
 )
 mutations = [
     # The unconfigured gate reports the wrong DialogGatewayError code, so the
@@ -111,6 +116,18 @@ mutations = [
      '                JsValue::Undefined | JsValue::Null => runs.len(),',
      NULLISH_REPLAY,
      '#1325 global list nullish limit default is not capped at 50'),
+    # The fence carries no reservation, so `Drop` never calls `end_turn`: a
+    # panicking body leaves the session at `session_busy` until restart.
+    ('admission-fence-drop-skipped', manager,
+     '            reservation: Some(reservation),\n'
+     '        };\n'
+     '        self.body.run_turn(input)',
+     '            reservation: None,\n'
+     '        };\n'
+     '        let _ = reservation;\n'
+     '        self.body.run_turn(input)',
+     FENCE_REPLAY,
+     "#1325 admission fence: an unwinding turn must still release the session's admission"),
 ]
 
 

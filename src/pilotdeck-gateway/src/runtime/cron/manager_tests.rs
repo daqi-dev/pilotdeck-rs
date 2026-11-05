@@ -720,22 +720,22 @@ fn global_list_caps_the_merged_run_page_at_the_nullish_default() {
     assert_eq!(
         merged_runs(json(r#"{"includeHistory": true}"#)),
         50,
-        "absent limit takes the same `?? 50` default as the per-runtime path"
+        "#1325 global list nullish limit: absent limit takes the same `?? 50` default as the per-runtime path"
     );
     assert_eq!(
         merged_runs(json(r#"{"includeHistory": true, "limit": null}"#)),
         50,
-        "`??` only falls through on nullish, so an explicit null also defaults"
+        "#1325 global list nullish limit: `??` only falls through on nullish, so an explicit null also defaults"
     );
     assert_eq!(
         merged_runs(json(r#"{"includeHistory": true, "limit": 60}"#)),
         60,
-        "an explicit limit above the merged size keeps every run"
+        "#1325 global list nullish limit: an explicit limit above the merged size keeps every run"
     );
     assert_eq!(
         merged_runs(json(r#"{"includeHistory": true, "limit": 0}"#)),
         0,
-        "an explicit 0 still yields the empty page"
+        "#1325 global list nullish limit: an explicit 0 still yields the empty page"
     );
 }
 
