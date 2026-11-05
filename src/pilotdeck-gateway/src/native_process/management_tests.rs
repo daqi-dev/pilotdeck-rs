@@ -1456,6 +1456,11 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         // 2855-2856, 2956-2957); same union as the production-entry list above.
         "user_dialog_list",
         "permission_list",
+        "upload_create",
+        "upload_get",
+        "upload_part",
+        "upload_complete",
+        "upload_cancel",
     ];
     expected.sort_unstable();
     negative_assert_eq!(
