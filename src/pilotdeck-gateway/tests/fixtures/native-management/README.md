@@ -22,7 +22,7 @@ manager_sessions 金样读取固定时间戳的真实非空 JSONL transcript（s
 
 U4 在 TS 注入真实 listProjectSessions 作为 sessionCatalog（与 Rust 已合入的 TranscriptSessionCatalog 提供同一 JSONL provider）；未注入固定返回值。TS 默认 sessionDataPlane 的底层存储选择与原生 JSONL provider 不同，不把两者混为同一部署。
 
-queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+FFFD。固定命令 replacement�.md 用于区分有损替换；typed callers 继续沿已有字符串接口，wire caller 使用同一 catalog 的 UTF-16 入口。限额线程池测试覆盖四族，describe 在测试显式非空 storage 下排序后精确比较 13 项，重复、多报和漏报均失败，同时验证 expected 是 oracle.contract.capabilities 的子集；5 项管理能力分别配漏报变异，另含 upload_create 多报与 run_get 重复变异。8 个 skill_* 仅作为 RPC 方法，不属于 TS capability 契约，逐项配错误广告变异。
+queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+FFFD。固定命令 replacement�.md 用于区分有损替换；typed callers 继续沿已有字符串接口，wire caller 使用同一 catalog 的 UTF-16 入口。限额线程池测试覆盖四族，describe 在测试显式非空 storage 下排序后精确比较 13 项，重复、多报和漏报均失败，同时验证 expected 是 oracle.contract.capabilities 的子集；5 项管理能力分别配漏报变异，upload_* 五项另配改名致缺变异，另含 upload_create 多报与 run_get 重复变异。8 个 skill_* 仅作为 RPC 方法，不属于 TS capability 契约，逐项配错误广告变异。
 
 ## 生产入口边界（fix-r3、#1323）
 
@@ -38,4 +38,4 @@ native isolated 模式拒绝继承非空 `PILOTDECK_STORAGE_ROOT` / `PILOTDECK_S
 
 `skillImport` 重放真实外部目录的 import → read/list/scan → 修改源内容后重复 import 冲突 → force 覆盖 → read/list/scan；每步验证全部目标文件，包括 assets/note.txt，冲突必须保留旧内容。生成器输出目录 recursive:true，oracle 使用 flag:'wx'；既有 ignored regenerates_identically 守卫覆盖整份金样。
 
-负控共 69 项，覆盖真实 U2/U6 的分发与广告边界、能力精确集合和 TS 子集、生产入口继承拒绝、装配状态与显式过滤、禁用 storage 的调用与广告、snapshot 成功/过滤/目标/字节、skill 附属文件/冲突/覆盖。`capability-added-skill_scan` 名称明确表示追加错误能力；既有能力增删变异绑定 `#1231 exact wired capability set`，新增禁用过滤变异绑定生产 10 项，TS 子集变异绑定专属 subset 消息。`snapshot-storage-omitted` 只绑定 `#1231 snapshot route with explicit storage`。每个变异的完整测试名和专属失败消息在 negative_controls.py；所有产品源码变异仍受 mutating_sources 的 HEAD/恢复守卫保护，逐项先编译并汇总，不能在未提交修复树上绕过运行。
+负控共 67 项，覆盖真实 U2/U6 的分发与广告边界、能力精确集合和 TS 子集、生产入口继承拒绝、装配状态与显式过滤、禁用 storage 的调用与广告、snapshot 成功/过滤/目标/字节、skill 附属文件/冲突/覆盖。`capability-added-skill_scan` 名称明确表示追加错误能力；既有能力增删变异绑定 `#1231 exact wired capability set`，新增禁用过滤变异绑定生产 10 项，TS 子集变异绑定专属 subset 消息。`snapshot-storage-omitted` 只绑定 `#1231 snapshot route with explicit storage`。每个变异的完整测试名和专属失败消息在 negative_controls.py；所有产品源码变异仍受 mutating_sources 的 HEAD/恢复守卫保护，逐项先编译并汇总，不能在未提交修复树上绕过运行。
