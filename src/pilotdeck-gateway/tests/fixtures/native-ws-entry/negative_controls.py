@@ -58,6 +58,10 @@ switches = [
     # the diversion, so the over-budget upgrade head is upgraded to 101
     # instead of the 431.
     ('native-http-upgrade-budget-off', SOURCE, PREFIX + 'upgrade_head_respects_span_budget', '#1292 the over-budget upgrade head is the same 431 as the non-upgrade lane'),
+    # #1351: the boundary golden replay — the mutant corrupts a recorded 431
+    # cell in memory (the native-ws-large-oracle-content style), so the
+    # per-cell byte comparison must fail on its own assertion.
+    ('native-ws-upgrade-oracle-431', TESTS, PREFIX + 'upgrade_budget_boundary_matches_ts', "#1351 every boundary cell's response matches the recorded TS bytes"),
     ('native-ws-retain-reader', SOURCE, PREFIX + 'socket_drops_before_business_drains', '#749 closed socket released before business drain'),
     ('native-ws-skip-host-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_precedes_runtime_exit', '#749 owned cleanup called'),
     ('native-ws-error-skips-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),
