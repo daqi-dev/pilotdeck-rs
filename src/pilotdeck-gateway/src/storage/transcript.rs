@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     metadata::js_trim,
+    node_io::{descriptor_error, path_error},
     project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -79,48 +80,55 @@ pub(super) fn read_transcript_limited_at(
 ) -> Result<TranscriptRead> {
     Ok(load(path, diagnostic_path, max_bytes.unwrap_or(MAX_BYTES))?.1)
 }
+/// `readTranscript` on a missing path: an empty projection plus the warning,
+/// never an IO error (TS `readFile` ENOENT is caught there).
+fn missing_transcript(diagnostic_path: &Path) -> (Vec<u8>, TranscriptRead) {
+    (
+        vec![],
+        TranscriptRead {
+            entries: vec![],
+            diagnostics: vec![Diagnostic {
+                code: "transcript_missing",
+                severity: "warning",
+                line: None,
+                message: format!("Transcript {} does not exist.", diagnostic_path.display()),
+            }],
+        },
+    )
+}
 fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
-    let bytes = match fs::metadata(path) {
-        Ok(meta) if meta.len() > max_bytes => {
-            return Ok((
-                vec![],
-                TranscriptRead {
-                    entries: vec![],
-                    diagnostics: vec![Diagnostic {
-                        code: Diagnostic::TRANSCRIPT_TOO_LARGE,
-                        severity: "error",
-                        line: None,
-                        message: format!(
-                            "Transcript {} is larger than {max_bytes} bytes.",
-                            diagnostic_path.display()
-                        ),
-                    }],
-                },
-            ));
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        // The old arm folded this into the read below, which also turned a
+        // missing path into the `transcript_missing` warning. Keep that.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(missing_transcript(diagnostic_path));
         }
-        Ok(_) => fs::read(path),
-        Err(error) => Err(error),
+        Err(error) => return Err(path_error(error, "stat", path).into()),
     };
-    let bytes = match bytes {
+    if metadata.len() > max_bytes {
+        return Ok((
+            vec![],
+            TranscriptRead {
+                entries: vec![],
+                diagnostics: vec![Diagnostic {
+                    code: Diagnostic::TRANSCRIPT_TOO_LARGE,
+                    severity: "error",
+                    line: None,
+                    message: format!(
+                        "Transcript {} is larger than {max_bytes} bytes.",
+                        diagnostic_path.display()
+                    ),
+                }],
+            },
+        ));
+    }
+    let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok((
-                vec![],
-                TranscriptRead {
-                    entries: vec![],
-                    diagnostics: vec![Diagnostic {
-                        code: "transcript_missing",
-                        severity: "warning",
-                        line: None,
-                        message: format!(
-                            "Transcript {} does not exist.",
-                            diagnostic_path.display()
-                        ),
-                    }],
-                },
-            ));
+            return Ok(missing_transcript(diagnostic_path));
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(path_error(error, "open", path).into()),
     };
     let mut read = TranscriptRead {
         entries: vec![],
@@ -288,7 +296,7 @@ impl JsonlLedgerStore {
         let current = match fs::read(&self.path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(path_error(e, "open", &self.path).into()),
         };
         if current != self.bytes {
             return Err(invalid(
@@ -299,15 +307,17 @@ impl JsonlLedgerStore {
         let (mut file, cleanup) = create_temporary(&self.path)?;
         #[cfg(test)]
         if std::mem::take(&mut self.fail_write) {
-            file.write_all(&next[..next.len() / 2])?;
+            file.write_all(&next[..next.len() / 2])
+                .map_err(|e| descriptor_error(e, "write"))?;
             return Err(io::Error::new(
                 io::ErrorKind::StorageFull,
                 "injected partial temporary write",
             )
             .into());
         }
-        file.write_all(&next)?;
-        file.sync_all()?;
+        file.write_all(&next)
+            .map_err(|e| descriptor_error(e, "write"))?;
+        file.sync_all().map_err(|e| descriptor_error(e, "fsync"))?;
         #[cfg(test)]
         if std::mem::take(&mut self.fail_rename) {
             return Err(io::Error::other("injected rename failure").into());
@@ -315,7 +325,9 @@ impl JsonlLedgerStore {
         // Rename is the visibility commit point; subsequent production memory
         // updates are infallible. No directory fsync/power-loss guarantee (TS
         // JsonlSessionPersistence.ts:24-30 does not sync ordinary ledger writes).
-        fs::rename(&cleanup.0, &self.path)?;
+        // The sibling temp name is a Rust atomicity detail; the diagnostic
+        // names the transcript the caller asked to replace (TS writeFile).
+        fs::rename(&cleanup.0, &self.path).map_err(|e| path_error(e, "rename", &self.path))?;
         #[cfg(test)]
         if std::mem::take(&mut self.fail_after_rename) {
             return Err(io::Error::other("injected uncertain outcome after rename").into());
@@ -393,7 +405,8 @@ pub(super) fn create_temporary(path: &Path) -> Result<(File, Temporary)> {
     let file = private_open()
         .write(true)
         .create_new(true)
-        .open(&temporary)?;
+        .open(&temporary)
+        .map_err(|e| path_error(e, "open", &temporary))?;
     Ok((file, Temporary(temporary)))
 }
 pub(super) fn private_open() -> OpenOptions {
@@ -407,7 +420,7 @@ pub(super) fn private_dirs(dir: &Path) -> io::Result<()> {
     dirs.recursive(true);
     #[cfg(unix)]
     dirs.mode(0o700);
-    dirs.create(dir)
+    dirs.create(dir).map_err(|e| path_error(e, "mkdir", dir))
 }
 pub(super) struct Temporary(pub(super) PathBuf);
 impl Drop for Temporary {
@@ -424,13 +437,18 @@ pub(crate) fn canonical_transcript_path(supplied: &Path) -> Result<PathBuf> {
     let path = match fs::symlink_metadata(supplied) {
         // A dangling leaf symlink must fail canonicalization, not acquire
         // an alias lock while later appends follow its different target.
-        Ok(_) => supplied.canonicalize()?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => parent.canonicalize()?.join(
-            supplied
-                .file_name()
-                .ok_or_else(|| invalid("Transcript path requires a filename."))?,
-        ),
-        Err(error) => return Err(error.into()),
+        Ok(_) => supplied
+            .canonicalize()
+            .map_err(|e| path_error(e, "realpath", supplied))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => parent
+            .canonicalize()
+            .map_err(|e| path_error(e, "realpath", parent))?
+            .join(
+                supplied
+                    .file_name()
+                    .ok_or_else(|| invalid("Transcript path requires a filename."))?,
+            ),
+        Err(error) => return Err(path_error(error, "lstat", supplied).into()),
     };
     Ok(path)
 }
@@ -448,11 +466,16 @@ impl LedgerLock {
         let path = canonical_transcript_path(supplied)?;
         let mut lock_path = path.as_os_str().to_os_string();
         lock_path.push(".lock");
+        let lock_path = PathBuf::from(lock_path);
         let lock = private_open()
             .read(true)
             .write(true)
             .create(true)
-            .open(PathBuf::from(lock_path))?;
+            .open(&lock_path)
+            .map_err(|e| path_error(e, "open", &lock_path))?;
+        // Rust-only single-writer fence: TS has no lock syscall, and the
+        // WouldBlock rejection is synthetic, so neither is rendered as a
+        // Node fs error.
         lock.try_lock().map_err(|error| match error {
             fs::TryLockError::WouldBlock => LedgerError::Io(io::Error::new(
                 io::ErrorKind::WouldBlock,

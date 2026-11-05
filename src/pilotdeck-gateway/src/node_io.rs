@@ -102,6 +102,12 @@ pub(crate) fn unmeasured_errnos(method: &str) -> Vec<i32> {
         .collect()
 }
 
+/// The OS errno behind an fs error, looking through a [`Stage`] wrapper (the
+/// outer error of a staged failure is a custom error with no raw errno).
+pub(crate) fn os_errno(error: &io::Error) -> Option<i32> {
+    stage(error).map_or_else(|| error.raw_os_error(), |e| e.source.raw_os_error())
+}
+
 pub(crate) fn lookup(error: &io::Error) -> Option<(&'static str, &'static str)> {
     let errno = if let Some(mkdir) = error
         .get_ref()
@@ -109,7 +115,7 @@ pub(crate) fn lookup(error: &io::Error) -> Option<(&'static str, &'static str)> 
     {
         mkdir.source.raw_os_error()
     } else {
-        stage(error).map_or_else(|| error.raw_os_error(), |e| e.source.raw_os_error())
+        os_errno(error)
     }?;
     generated::ERRORS
         .iter()
@@ -158,6 +164,22 @@ pub(crate) fn diagnostic_or_unknown(
     }
     let (code, description) = lookup(error).unwrap_or(("UNKNOWN", "unknown error"));
     uv_exception(code, description, error, syscall, path)
+}
+
+/// The syscall and path recorded at the fs boundary, looking through a [`Stage`]
+/// wrapper; `None` when no call site labelled the failure. Node attaches the
+/// same two fields to its `fs` error objects.
+pub(crate) fn staged_fields(error: &io::Error) -> Option<(&'static str, Option<&str>)> {
+    let staged = stage(error)?;
+    Some((staged.syscall, staged.path.as_deref()))
+}
+
+/// Node's diagnostic message for an error that already carries its fs-boundary
+/// stage ([`path_error`] / [`descriptor_error`]); `None` when nobody labelled
+/// the syscall, because rendering one then would be a guess.
+pub(crate) fn staged_diagnostic(error: &io::Error) -> Option<(&'static str, String)> {
+    let (syscall, _) = staged_fields(error)?;
+    Some(diagnostic_or_unknown(error, syscall, None))
 }
 
 /// One message body for both entry points above: `${code}: ${description},

@@ -56,10 +56,21 @@ pub enum LedgerError {
     /// reopen the transcript before retrying, including after an uncertain commit.
     ReopenRequired(String),
 }
+
 impl fmt::Display for LedgerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(e) => e.fmt(f),
+            // #1554: the fs call site labels its syscall and path with
+            // `node_io::path_error` / `descriptor_error`, and this renders
+            // Node's `code: description, syscall 'path'` shape from the measured
+            // libuv table. An error nobody labelled keeps Rust's own text: the
+            // syscall cannot be recovered from a bare `io::Error`, and Display
+            // must not guess one. `errno` is the negative OS errno Node reports
+            // (`EEXIST` is -17), which `node_io::os_errno` exposes.
+            Self::Io(e) => match crate::node_io::staged_diagnostic(e) {
+                Some((_, message)) => f.write_str(&message),
+                None => e.fmt(f),
+            },
             Self::Invalid(s) => f.write_str(s),
             Self::ReopenRequired(reason) => {
                 write!(
