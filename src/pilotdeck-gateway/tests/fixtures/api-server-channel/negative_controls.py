@@ -27,9 +27,9 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 _SHARED_RUNNER = (mutating_sources, run_owned, wait_for_slot)
 
 ROOT = Path(__file__).resolve().parents[5]
-SERVER = "src/pilotdeck-gateway/src/channel/api_server/server.rs"
-MOD = "src/pilotdeck-gateway/src/channel/api_server/mod.rs"
-RENDER = "src/pilotdeck-gateway/src/channel/api_server/render.rs"
+SERVER = ROOT / "src/pilotdeck-gateway/src/channel/api_server/server.rs"
+MOD = ROOT / "src/pilotdeck-gateway/src/channel/api_server/mod.rs"
+RENDER = ROOT / "src/pilotdeck-gateway/src/channel/api_server/render.rs"
 REPLAY = "channel::api_server::tests::replays_real_ts_api_server_cells"
 DUPLICATE = "channel::api_server::tests::duplicate_chat_is_busy_then_free"
 OVERSIZED = "channel::api_server::tests::oversized_body_closes_without_response"
