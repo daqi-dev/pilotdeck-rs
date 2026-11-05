@@ -182,7 +182,7 @@ b8c6ac2f4c6de47274091184cadc3dbbd559db22587bb74328b18f0ea122c5f4  ../../scripts/
 9c0760f76aaa287f18e2fefa795230e920820b9a8ed7f98af4f71504a1a4319c  ../../scripts/gateway-parity/build_proxy.py
 ac0a6e13ac2437fcfff61621f1a5cf0fe15c192e48a9f4c31badb1a1fced8e24  ../../scripts/gateway-parity/check_frozen.py
 f398e0ba7e30d83faa9fd3ac8f3a32bf757224b153768d628d8fba010cb19538  ../../scripts/gateway-parity/check_ruler.py
-5e556da9637e0ce00961dab97dd549a72f1837bfc7abd190c79fbb6fcba578e1  ../../scripts/gateway-parity/common.py
+1aaf50b2a34429d738bc50fe9f4b2d3bab4e938de71c4c156f355aa90dca1b26  ../../scripts/gateway-parity/common.py
 5aa2f14fb2890f795f7638b6ccb4005f64cadc21d3ce3cff38797982b51e7e12  ../../scripts/gateway-parity/compare.py
 7549635a5f2131e610548c2d92a32f0afd9fcfddc21cd0a386b36e79e11dd5f4  ../../scripts/gateway-parity/controls/prerequisites.py
 aed0bb648789e449a75a7a5f7ecee1fbb97bd036420c6fdbbdd310b863c6d907  ../../scripts/gateway-parity/controls/run_all.py
@@ -193,8 +193,9 @@ aed0bb648789e449a75a7a5f7ecee1fbb97bd036420c6fdbbdd310b863c6d907  ../../scripts/
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 4564e09b6934b944a561326607e11f7235190d58831d7c5a9045264e4ad86b10  ../../scripts/gateway-parity/native_evidence.py
 9752548d9c3a26783e13d449ad7f52f4a84f7b5526076cdc544f43b522dbede8  ../../scripts/gateway-parity/observer.py
+d584f99e466daa3e3cf3ec063af891adc4f1633c621540f41d5ea21c7b572f07  ../../scripts/gateway-parity/retirement_driver.mts
 0ea4fb1ff42bf4a72e6e69ad788bfdfd2f4771d57059817f12f58cd550fc7b49  ../../scripts/gateway-parity/run_round.py
-a0fc5191479e08e7068b06f2c7b02ac4332b02d7761d0d334601d5e1fff13238  ../../scripts/gateway-parity/session_domain.py
+3b695c22c290af6f7e96ccb0f836e99804039bae2f55371b4ab2aa7f9cc60b94  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
 376ee8f9d84272ab00280c3b1f455168d6c4fc159a7be26ea5ad78d08ae12d0f  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
