@@ -68,7 +68,7 @@ Limits (constants in `real_provider.py`, echoed by the probe in
   terminal SIGINT on their own. SIGINT is blocked across `Popen` itself so the
   fork/exec-to-handle-assignment window cannot lose the child: the pending
   signal is delivered after the handle exists, inside the cleanup `try`.
-- `cargo build` 600 s and `cargo-slots.sh` 30 s caps; both kill the process
+- `cargo build` 600 s and `cargo-slots.sh` 180 s caps; both kill the process
   group and produce a BLOCKED row plus a report instead of a traceback.
 - The probe disables retries with the keys the product actually reads
   (`requestMaxRetries`/`streamMaxRetries` = 0), and sets the model to
@@ -132,7 +132,7 @@ Probe unit tests (the crate is a separate workspace, so the product
 `cargo test --all` / clippy / fmt jobs do not see it):
 
 ```sh
-sh scripts/cargo-slots.sh
+bash scripts/cargo-slots.sh   # 必须 bash：脚本用了 pipefail，dash 会直接 exit 2
 cargo test --offline --locked --manifest-path scripts/smoke/probe/Cargo.toml
 ```
 

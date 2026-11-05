@@ -63,10 +63,13 @@ def environment(root):
 
 def run(name, command, env, cwd=SRC, diagnostic=None):
     if command[0] == 'cargo':
-        deadline = time.monotonic() + 120
+        # 等待预算 300 s：单次调用上限 180 s（覆盖闸的冷启动 120 s + 收尾），
+        # 若预算仍按 120 s，冷缓存 + 名额已满时第一次调用就会把预算吃光并
+        # 直接 assert 失败（#1556 r2）。改前单次 10 s、预算 120 s，够轮 12 次。
+        deadline = time.monotonic() + 300
         while True:
             # timeout 放宽到 180 s：cargo-slots.sh 首次在本机碰统一闸时要等冷
-            # du（实测 38.6 s），之后走名额缓存是毫秒级。见 scripts/cargo-slots.sh 头注释。
+            # du（实测 31.8–42.2 s），之后走名额缓存是毫秒级。见 scripts/cargo-slots.sh 头注释。
             slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')],
                                   capture_output=True, text=True, timeout=180)
             print(slot.stdout + slot.stderr, end='', flush=True)

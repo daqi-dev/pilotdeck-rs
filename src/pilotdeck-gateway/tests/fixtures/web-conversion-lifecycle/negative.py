@@ -72,7 +72,7 @@ def main():
                '-p', 'pilotdeck-gateway', '--test', 'web_tools']
 
     def run(label, arguments):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=120)
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
         try:
             result = run_owned(command + arguments, cwd=root, env=env, timeout=180)

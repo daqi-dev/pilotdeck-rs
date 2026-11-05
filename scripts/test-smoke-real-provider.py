@@ -1166,7 +1166,9 @@ def test_probe_rust_tests() -> None:
         ["bash", str(repo / "scripts" / "cargo-slots.sh")],
         repo,
         os.environ.copy(),
-        60,
+        # 与 real_provider.run_cargo_slots 同一个常数：脚本自身冷启动预算 120 s，
+        # 这里给 60 s 会在冷 du 慢时先杀脚本 → 假 FAIL（#1556 r2 boundary P1）。
+        rp.CARGO_SLOTS_TIMEOUT_SECONDS,
     )
     if slots["exit"] == 69 and not slots["timedOut"]:
         # 本机没有统一闸（EX_UNAVAILABLE）：没有共享名额可等，跑就是了。
