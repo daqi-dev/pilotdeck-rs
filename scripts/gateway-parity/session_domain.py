@@ -1534,8 +1534,11 @@ RETIREMENT_DRIVER = SCRIPT / 'retirement_driver.mts'
 RETIREMENT_PORT_SETS = ((28761, 28762, 28763), (28771, 28772, 28773))
 RETIREMENT_ROUND_TIMEOUT = 300
 # The audit's question is whether a TS gateway/helper runs outside the declared
-# owned set; this pattern names the TS CLI entry and nothing else.
-RETIREMENT_CENSUS_PATTERN = 'dist/src/cli/pilotdeck.js'
+# owned set.  The census pattern is the round's own baseline path plus the TS CLI
+# entry: `ps` lines of unrelated installs (the operator's own running PilotDeck,
+# other checkouts) must not be counted, and are never touched — only processes
+# running this round's exact baseline CLI entry are in scope.
+RETIREMENT_CENSUS_SUFFIX = 'dist/src/cli/pilotdeck.js'
 RETIREMENT_OUTCOME_STATUSES = ('ok', 'error', 'timeout')
 
 
@@ -1583,21 +1586,24 @@ def _retirement_expected(baseline):
     return ordered, sources
 
 
-def _retirement_census(gateway_pid):
-    """Snapshot of processes running the TS gateway CLI entry.
+def _retirement_census(gateway_pid, baseline):
+    """Snapshot of processes running this round's TS gateway CLI entry.
 
     The declared set is exactly the round's owned gateway pid; anything else
-    matching the entry pattern is an undeclared TS host.
+    matching the entry pattern is an undeclared TS host.  The pattern pins the
+    round's own baseline path, so unrelated installs on the host are neither
+    counted nor touched.
     """
+    pattern = f'{baseline}/{RETIREMENT_CENSUS_SUFFIX}'
     result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True, text=True, timeout=5)
     require(result.returncode == 0, 'HOST_CENSUS', f'ps failed: {result.stderr.strip()}')
     rows = []
     for line in result.stdout.splitlines():
-        if RETIREMENT_CENSUS_PATTERN in line:
+        if pattern in line:
             fields = line.strip().split(None, 1)
             if len(fields) == 2:
                 rows.append({'pid': int(fields[0]), 'argvText': fields[1][:300]})
-    return {'rows': rows, 'declared': [gateway_pid]}
+    return {'rows': rows, 'declared': [gateway_pid], 'pattern': pattern}
 
 
 def _retirement_census_verdict(census):
@@ -2031,7 +2037,7 @@ webui:
                                               '--out', folder / 'driver'], None)
         row['driverExitCode'] = run_round_module.wait_owned(
             driver, max(.1, deadline - time.monotonic()))
-        row['census'] = _retirement_census(gateway.pid)
+        row['census'] = _retirement_census(gateway.pid, baseline)
         row['connections'] = _retirement_connections(gateway.pid)
         require((folder / 'driver' / 'methods.json').is_file(), 'ROUND_EVIDENCE', 'driver methods.json missing')
         require((folder / 'driver' / 'frames.jsonl').is_file(), 'ROUND_EVIDENCE', 'driver frames.jsonl missing')
