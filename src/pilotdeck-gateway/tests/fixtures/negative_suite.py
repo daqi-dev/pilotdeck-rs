@@ -343,10 +343,18 @@ def _publish_json(path, payload, *, overwrite=False):
       output directory, so it opts into `overwrite=True` and gets the same
       temp-file write with a `replace` (#166 r8).
 
-    The temp name carries the pid and a per-process serial, so two runs that
+    The temp name carries the pid and a module-level serial, so two runs that
     publish into one directory can never install each other's bytes or unlink
     each other's temp file (#1579 r5: a fixed `<name>.tmp` let the writer of
-    one run `replace()` the half-written temp of another).
+    one run `replace()` the half-written temp of another). The serial is a
+    module counter, not process-global state: two *instances* of this module
+    inside one process would both start at 0, so run each publish from one
+    import (#1694).
+
+    `os.link` needs a filesystem that supports hard links; where it does not
+    (exFAT, some FUSE/SMB mounts, some container volumes) the publish fails
+    loudly with the path and the reason instead of a bare `OSError`, and it
+    still never falls back to a non-atomic install (#1694).
     """
     temporary = path.with_name(f'.{path.name}.{os.getpid()}.{next(_PUBLISH_SERIAL)}.tmp')
     try:
@@ -354,7 +362,15 @@ def _publish_json(path, payload, *, overwrite=False):
         if overwrite:
             temporary.replace(path)
         else:
-            os.link(temporary, path)
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                raise
+            except OSError as error:
+                raise OSError(
+                    f'cannot publish {path}: the evidence directory does not support '
+                    f'hard links ({error.strerror or error}); use a filesystem that does, '
+                    'or pass overwrite=True into a directory you own') from error
     finally:
         try:
             temporary.unlink()

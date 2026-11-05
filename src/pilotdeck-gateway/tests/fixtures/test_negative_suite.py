@@ -1,6 +1,7 @@
 # anchor-selfcheck: unsupported unit tests of the shared mutation suite runner
 """Harness fault injection only; no cargo or product source mutation here."""
 import contextlib
+import errno
 import io
 import json
 from pathlib import Path
@@ -1206,6 +1207,24 @@ class PublishJsonTests(unittest.TestCase):
                              'another run\'s temp file must survive our publish')
             self.assertEqual(sorted(p.name for p in out.iterdir()),
                              ['summary.json', 'summary.json.tmp'])
+
+    def test_publish_names_the_reason_when_hard_links_are_unsupported(self):
+        # #1579 r6 P2-a (minimax concurrency): the refusing path installs with
+        # `os.link`, which raises ENOTSUP/EPERM on exFAT/SMB/container volumes
+        # instead of `FileExistsError`; that used to abort the matrix with a
+        # bare OSError. It must stay fail-closed but say what happened.
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            target = out / 'summary.json'
+            unsupported = OSError(errno.EOPNOTSUPP, 'Operation not supported')
+            with patch.object(suite.os, 'link', side_effect=unsupported):
+                with self.assertRaises(OSError) as caught:
+                    suite._publish_json(target, {'controls': []})
+            self.assertIn('hard link', str(caught.exception))
+            self.assertIn(str(target), str(caught.exception))
+            self.assertFalse(target.exists(), 'a refused publish leaves no evidence file')
+            self.assertEqual(sorted(p.name for p in out.iterdir()), [],
+                             'the temporary file must not linger')
 
 
 class ResultRowSchemaTests(unittest.TestCase):
