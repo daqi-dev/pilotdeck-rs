@@ -279,6 +279,14 @@ fn symlinked_project_spelling_keeps_lease_attachments() {
         &[attachment(&logical, "image/png")],
     )
     .expect("#1618 a symlinked project spelling must still compose");
+    // Canonicalize the lease file while the alias still resolves: unlinking the
+    // alias first makes `canonicalize` fail with ENOENT and the test dies on
+    // its own expectation (#1618 r3, MiniMax/DeepSeek).
+    let physical = std::fs::canonicalize(&path)
+        .expect("#1618 alias lease file canonicalization")
+        .to_str()
+        .expect("#1618 canonical lease UTF-8")
+        .to_owned();
     std::fs::remove_file(&alias).ok();
     let blocks = content_blocks(&result);
     negative_assert!(
@@ -295,12 +303,7 @@ fn symlinked_project_spelling_keeps_lease_attachments() {
     // registered allowedReadFiles carry the post-open canonical spelling, not
     // the client's (services.rs: `RegisteredAttachment.resolved`); under a
     // symlinked project the two spellings differ, so the expectation is the
-    // physical one.
-    let physical = std::fs::canonicalize(&path)
-        .expect("#1618 alias lease file canonicalization")
-        .to_str()
-        .expect("#1618 canonical lease UTF-8")
-        .to_owned();
+    // physical one computed above.
     negative_assert!(
         allowed == vec![JsValue::from(physical.as_str())],
         "#1618 a lease attachment under a symlinked project must be registered under its canonical spelling, got: {allowed:?}"
