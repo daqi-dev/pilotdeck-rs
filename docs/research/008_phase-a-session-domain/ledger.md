@@ -288,6 +288,12 @@ python3 scripts/gateway-coverage/check_coverage_manifest.py
 | `set_mcp_permission_mode_override` | 15 | 15, 16 |
 | `set_session_thinking` | 15 | 15, 16 |
 
+### 第 9 跳缺口的构成：`normalizeModelError` 的 13 个 helper（2026-11-06 #91 实测）
+
+`normalizeModelError`（`B/src/model/errors/normalizeModelError.ts:26`–`:89`）在 `memory_list`、`memory_wipe`、`reload_extensions` 三项恰好落在第 **8** 跳，它的 13 个 helper 因此在第 **9** 跳：`classifyNetworkError`、`classifySemanticError`、`isRetryable`、`statusCodeToCode`、`resolveUserHint`、`parseTokenLimitError`、`parseRetryAfterFromMessage`、`firstErrorRecord`、`sanitizeErrorMessage`、`readString`、`readBoolean`、`readNumber`、`isRecord`。用同一扫描器把 `DEPTH` 临时改为 10 复算（产物 `_tmp/20261106-issue-91/source-graph-d10.json`），这三项第 9 跳新增（8 跳内没有）的码依次为 64、64、63 个，全部未登记；其中 **20** 个由上述 helper 带入（18 个只经由 helper，`overloaded_error`、`rate_limit_error` 也出现在别的第 9 跳函数）：`auth_error`、`connection_refused`、`connection_reset`、`dns_error`、`eai_again`、`invalid_request`、`max_output_reached`、`network_connection_refused`、`network_connection_reset`、`network_dns_error`、`network_proxy_error`、`network_rate_limited`、`network_server_error`、`network_tls_error`、`overloaded_error`、`payload_too_large`、`proxy_error`、`rate_limit_error`、`request_too_large`、`tls_error`。
+
+按本节规则这些码**不补登**：第 9 跳只进复核名单，不加范围、不改必需集合、不进 PASS 判据。它们也不以动态占位出现在账本里——这三项账本对上述码完全没有记录，`<dyn_*>` 占位只覆盖第 8 跳内真实出现的动态产码表达式。下游 A6.4 / A7 触及这三项时按本表复核回写。
+
 本轮账本仍为 101 项、46 READY / 55 BLOCKED，method–范围关联仍 16,816；仅必要的默认 metadata、optional 标记、消息误记及失去引用的 source_files 改动。完整逐项差异、对第3轮的严格展开对照与验证命令见 `_tmp/RESULT.md`「第5轮」及其 JSON 附件。GLM 第3轮已给出「无 P0/P1」，其三项 P2 留作下游复核。
 
 ## 第 6 轮：按回源形参定位错误码（2026-10-14）
