@@ -150,6 +150,11 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/cargo-nextest" --version
       - name: 测试
+        env:
+          # #1525 / #1263：权限故障探针在特权宿主（root / CAP_DAC_OVERRIDE）上必然成功，
+          # 用例只能跳过、却被记成 PASS。CI 与正式宿主开这个开关，把「跳过」变成硬失败；
+          # 需要保留跳过的 root 宿主在配方里显式不要导出它。回归：tests/common/permission_faults.rs。
+          PDRS_REQUIRE_PERMISSION_FAULTS: "1"
         run: cargo nextest run --workspace --no-fail-fast --profile ci --config-file ../.config/nextest.toml
       # nextest 不运行 doctest；单列一步保留原 cargo test --all 的检查范围。
       - name: 文档测试
