@@ -512,9 +512,15 @@ pub(crate) type PendingReceipt =
 /// inside the returned future, which a publication only first polls after its
 /// predecessor settles. `None` means no receipt is owed, and awaiting the
 /// returned future surfaces write failures to the append.
+///
+/// `settled` is sent by the receipt write itself (`true` on success), never by
+/// the caller's poll. A witnessed job queued behind this entry can therefore
+/// run as soon as the receipt exists, even when its caller withholds the
+/// returned future; the receipt outcome alone decides the durable write.
 pub(crate) fn registry_stimulus_queued_pending(
     stimulus: Option<&Arc<StorageStimulus>>,
     event: &JsValue,
+    settled: std::sync::mpsc::Sender<bool>,
 ) -> Option<PendingReceipt> {
     let stimulus = Arc::clone(stimulus?);
     let seq = stimulus.reserve_queued(Site::Registry)?;
@@ -522,7 +528,11 @@ pub(crate) fn registry_stimulus_queued_pending(
     let write = move || stimulus.write_queued(seq, Site::Registry, &key);
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
-            let write = handle.spawn_blocking(write);
+            let write = handle.spawn_blocking(move || {
+                let outcome = write();
+                let _ = settled.send(outcome.is_ok());
+                outcome
+            });
             Some(Box::pin(async move {
                 write
                     .await
@@ -535,8 +545,12 @@ pub(crate) fn registry_stimulus_queued_pending(
             }))
         }
         // No executor to protect: the caller's own thread writes the receipt.
-        Err(_) => Some(Box::pin(std::future::ready(
-            write().map_err(super::RunRegistryError::Io),
-        ))),
+        Err(_) => {
+            let outcome = write();
+            let _ = settled.send(outcome.is_ok());
+            Some(Box::pin(std::future::ready(
+                outcome.map_err(super::RunRegistryError::Io),
+            )))
+        }
     }
 }

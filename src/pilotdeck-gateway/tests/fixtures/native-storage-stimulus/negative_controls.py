@@ -121,11 +121,36 @@ mutations = [
     # predecessor settles, so a lazy dispatch writes the receipt after the
     # barrier already released — the collector's wait then never sees it.
     ('registry-witness-lazily-dispatched', STIMULUS,
-     '''            let write = handle.spawn_blocking(write);
+     '''            let write = handle.spawn_blocking(move || {
+                let outcome = write();
+                let _ = settled.send(outcome.is_ok());
+                outcome
+            });
             Some(Box::pin(async move {''',
      '''            Some(Box::pin(async move {
-                let write = handle.spawn_blocking(write);''',
+                let write = handle.spawn_blocking(move || {
+                    let outcome = write();
+                    let _ = settled.send(outcome.is_ok());
+                    outcome
+                });''',
      'storage::stimulus_tests::publication_queued_receipt_survives_predecessor_serialization', '#1370 publication publishes the queued receipt while the barrier is held'),
+    # #1648: the same entry-tick dispatch is also the FIFO case's entry-tick
+    # proof. Its future is deliberately withheld, so a lazy receipt write never
+    # appears while the barrier is held and the `queued` wait times out.
+    ('registry-witness-lazily-dispatched-fifo', STIMULUS,
+     '''            let write = handle.spawn_blocking(move || {
+                let outcome = write();
+                let _ = settled.send(outcome.is_ok());
+                outcome
+            });
+            Some(Box::pin(async move {''',
+     '''            Some(Box::pin(async move {
+                let write = handle.spawn_blocking(move || {
+                    let outcome = write();
+                    let _ = settled.send(outcome.is_ok());
+                    outcome
+                });''',
+     'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append', '#1370 fifo fixture owes the second append a receipt'),
     # fix-r2: a barrier that fails while held must release the hold, or every
     # later entry at the site is stamped with a queued receipt it does not owe.
     ('registry-hold-not-cleared-on-error', STIMULUS,
@@ -141,20 +166,14 @@ mutations = [
     # execution waits for the receipt; queueing the job from inside the returned
     # future lets a later plain append overtake it.
     ('registry-witness-deferred-past-entry', PUBLISH,
-     '''        let (settled, gate) = mpsc::channel::<bool>();
-        let append = Self::witnessed(self.jobs.clone(), gate, run, event);
+     '''        let append = Self::witnessed(self.jobs.clone(), gate, run, event);
         Box::pin(async move {
-            let outcome = witness.await;
-            let _ = settled.send(outcome.is_ok());
-            outcome?;
+            witness.await?;
             append.await
         })''',
-     '''        let (settled, gate) = mpsc::channel::<bool>();
-        let parts = (self.jobs.clone(), gate, run, event);
+     '''        let parts = (self.jobs.clone(), gate, run, event);
         Box::pin(async move {
-            let outcome = witness.await;
-            let _ = settled.send(outcome.is_ok());
-            outcome?;
+            witness.await?;
             Self::witnessed(parts.0, parts.1, parts.2, parts.3).await
         })''',
      'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append',
@@ -162,14 +181,8 @@ mutations = [
     # fix-r2: the job runs only once the receipt it is stamped with settled, so
     # a witness failure fails the append before the durable write can happen.
     ('registry-witness-gate-ignored', PUBLISH,
-     '''            match gate.recv_timeout(WITNESS_SETTLE) {
-                Ok(true) => registry.append(&run, &event),
-                _ => Err(RunRegistryError::Invalid(
-                    "Storage stimulus queued witness failed.".into(),
-                )),
-            }''',
-     '''            let _ = gate.recv_timeout(WITNESS_SETTLE);
-            registry.append(&run, &event)''',
+     'match gate.recv_timeout(settle) {',
+     'match { let _ = gate.recv_timeout(settle); Ok::<bool, ()>(true) } {',
      'storage::stimulus_tests::failed_queued_witness_fails_the_append_before_the_worker', '#1370 a failed queued witness never dispatches the durable append'),
     # Production default: an unset entry must stay unarmed.
     ('stimulus-unset-activates', STIMULUS,

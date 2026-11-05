@@ -126,6 +126,89 @@ fn count_receipts(dir: &Path, site: &str, phase: &str, key: &str) -> usize {
         .filter(|receipt| matches(receipt, site, phase, key))
         .count()
 }
+/// Whether a `release` receipt for `key` already exists. Deliberately
+/// non-panicking: `BarrierRelease::drop` calls this while a failed assertion is
+/// unwinding, where a second panic would abort the process instead of cleaning up.
+fn released(dir: &Path, key: &str) -> bool {
+    let Ok(entries) = fs::read_dir(dir.join("witness")) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let Ok(text) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(receipt) = parse_json(&text) else {
+            continue;
+        };
+        if matches(&receipt, "registry", "release", key) {
+            return true;
+        }
+    }
+    false
+}
+/// The `block` receipt's sequence number, once the barrier has actually held.
+/// Non-panicking for the same reason as [`released`]: a panic while unwinding
+/// aborts the process instead of cleaning up.
+fn blocking_seq(dir: &Path, key: &str) -> Option<u64> {
+    let entries = fs::read_dir(dir.join("witness")).ok()?;
+    for entry in entries.flatten() {
+        let Ok(text) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(receipt) = parse_json(&text) else {
+            continue;
+        };
+        if matches(&receipt, "registry", "block", key) {
+            return Some(field(&receipt, "seq").as_number()? as u64);
+        }
+    }
+    None
+}
+/// Releases a still-held barrier before `Scratch` deletes its control directory.
+/// Without it a failing assertion leaves the worker polling a removed directory
+/// until its bound re-creates the control files, so `/tmp/pdrs-stimulus-*` is
+/// never removed. Declared after `Scratch`, this drops first (reverse order),
+/// and it resolves the sequence number itself so it can be armed right after
+/// `control` exists — covering the `arm` and `wait_receipt` windows too, not
+/// only the assertions after the first block receipt.
+struct BarrierRelease {
+    control: PathBuf,
+    key: &'static str,
+}
+impl BarrierRelease {
+    fn new(control: &Path, key: &'static str) -> Self {
+        Self {
+            control: control.to_path_buf(),
+            key,
+        }
+    }
+}
+impl Drop for BarrierRelease {
+    fn drop(&mut self) {
+        // The success path already released by hand and saw the receipt; a
+        // fixture that never armed leaves no `block` receipt, so there is
+        // nothing to release.
+        if released(&self.control, self.key) {
+            return;
+        }
+        let Some(seq) = blocking_seq(&self.control, self.key) else {
+            return;
+        };
+        // Non-panicking release: a `.unwrap()` here could abort during unwind.
+        let temporary = self.control.join("release.json.tmp");
+        if fs::write(&temporary, format!("{{\"seq\":{seq}}}")).is_ok() {
+            let _ = fs::rename(&temporary, self.control.join("release.json"));
+        }
+        // Wait (bounded) for the barrier to observe its release, then give the
+        // worker a short window to finish its durable write so the removal does
+        // not race a re-created control directory.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && !released(&self.control, self.key) {
+            thread::sleep(POLL);
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+}
 
 /// The real session writer over the real JsonlTranscriptStore, keyed like the
 /// adapter tests (the store creates its own parent directories). The stimulus
@@ -628,6 +711,11 @@ async fn registry_port_appends_queue_with_witness_receipts() {
     );
     use crate::runtime::turn::publish::TurnRunRegistry;
     port.accept(&accept_input()).await.unwrap();
+    // `HELD_BOUND_MS` is deliberate here, not the `OUTLIVED_BOUND_MS` rule
+    // above: this case waits for the `queued` receipt *while held*. A bound
+    // expiry would release the barrier, make the second append owe no receipt
+    // and fail the very `wait_receipt` that proves the entry tick — a false
+    // FAIL, never the lazy-dispatch false PASS the long bound guards against.
     arm(
         &control,
         &config_text(&[barrier_fragment(
@@ -715,6 +803,7 @@ async fn publication_queued_receipt_survives_predecessor_serialization() {
     use crate::runtime::turn::publish::{FileRegistry, TurnPublisher, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
+    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
     let registry = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -911,6 +1000,7 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
+    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
     let port = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -983,6 +1073,11 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
         .await
         .expect("#1370 fifo plain append finishes within the observation cap")
         .expect("#1370 fifo plain append persists");
+    // The third append entered after the release cleared the hold, so it owes
+    // no queued receipt. Without this reverse assertion a regression that
+    // published `release` before clearing the hold would stamp `cancelled` with
+    // a receipt and still keep the FIFO order below, passing unnoticed.
+    assert_no_receipt(&control, "registry", "queued", "agent_status:cancelled");
     let events = port.events(&run()).await.unwrap();
     let names: Vec<String> = events
         .iter()
@@ -1003,6 +1098,61 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
         ],
         "#1370 a witnessed append keeps its FIFO slot before a later plain append"
     );
+}
+
+// Matrix 12f: a caller may invoke `append` and withhold the returned future
+// (legal Rust). The witnessed job must not park the single registry worker on
+// that withheld future: the receipt write settles it, so the append behind it
+// still completes. When the settle came from the caller's first poll instead, a
+// withheld future starved every later append for up to `WITNESS_SETTLE`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
+    use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
+    let scratch = Scratch::new();
+    let control = scratch.control();
+    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
+    let port = Arc::new(
+        FileRegistry::new(
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    port.accept(&accept_input()).await.unwrap();
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            "registry",
+            "h1",
+            "agent_status:turn_timeout",
+            OUTLIVED_BOUND_MS,
+        )]),
+    );
+    // Invoke the witnessed append, then deliberately never poll its future.
+    let withheld = port.append(&run(), &agent_status_event("turn_timeout"));
+    let block = wait_receipt(
+        &control,
+        "registry",
+        "block",
+        "agent_status:turn_timeout",
+        "#1370 withheld fixture blocks the witnessed append",
+    );
+    release(&control, seq_of(&block));
+    wait_receipt(
+        &control,
+        "registry",
+        "release",
+        "agent_status:turn_timeout",
+        "#1370 withheld fixture releases the barrier",
+    );
+    // The witnessed job holds the FIFO slot ahead of this append. If it were
+    // still waiting for its caller to poll, this one would starve.
+    let later = port.append(&run(), &agent_status_event("input_accepted"));
+    tokio::time::timeout(OBSERVE, later)
+        .await
+        .expect("#1370 a withheld witnessed future does not park the registry worker")
+        .expect("#1370 the append behind a withheld witnessed future persists");
+    drop(withheld);
 }
 
 // Matrix 13: two site barriers held at once release by their own block receipt

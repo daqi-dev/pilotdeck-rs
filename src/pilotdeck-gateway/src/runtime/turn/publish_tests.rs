@@ -1288,3 +1288,48 @@ fn durable_executor_drop_with_payload_destructor_panic() {
 fn durable_executor_drop_payload_behind_pending_predecessor() {
     executor_drop_case(true, false, true);
 }
+
+/// #1648: the witnessed job's failure branch is reached when the receipt
+/// sender is dropped without sending (a stopped blocking task / runtime
+/// shutdown), and it must refuse the durable write with `Invalid`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn witnessed_job_fails_when_the_receipt_sender_drops() {
+    let root = std::env::temp_dir().join(format!("pdrs-turn-witness-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let registry =
+        FileRegistry::new(FileRunRegistry::open(root.join("registry.json")).unwrap()).unwrap();
+    let (settled, gate) = mpsc::channel::<bool>();
+    drop(settled);
+    let error = FileRegistry::witnessed(
+        registry.jobs.clone(),
+        gate,
+        run_ref(),
+        js(&json!({"type":"agent_status","runId":"r","event":"turn_timeout"})),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, RunRegistryError::Invalid(_)));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// #1648: the timeout branch, exercised with a short bound so the test does
+/// not occupy the worker for the production `WITNESS_SETTLE`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn witnessed_job_fails_when_the_receipt_times_out() {
+    let root = std::env::temp_dir().join(format!("pdrs-turn-witness-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let registry =
+        FileRegistry::new(FileRunRegistry::open(root.join("registry.json")).unwrap()).unwrap();
+    let (_settled, gate) = mpsc::channel::<bool>();
+    let error = FileRegistry::witnessed_within(
+        registry.jobs.clone(),
+        gate,
+        run_ref(),
+        js(&json!({"type":"agent_status","runId":"r","event":"turn_timeout"})),
+        Duration::from_millis(50),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, RunRegistryError::Invalid(_)));
+    let _ = std::fs::remove_dir_all(root);
+}
