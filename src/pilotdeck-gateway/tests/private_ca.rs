@@ -44,13 +44,14 @@ async fn hook(url: &str) -> bool {
 }
 
 async fn child() {
-    let url = std::env::var("PDRS_TLS_URL").unwrap();
+    let url = std::env::var("PDRS_TLS_URL").expect("#1552 child test server URL");
     if std::env::var("PDRS_TLS_MODE").as_deref() == Ok("early-file") {
         std::fs::write(
-            std::env::var_os("NODE_EXTRA_CA_CERTS").unwrap(),
-            std::fs::read(std::env::var_os("PDRS_TLS_RESTORE").unwrap()).unwrap(),
+            std::env::var_os("NODE_EXTRA_CA_CERTS").expect("#1552 child extra CA path"),
+            std::fs::read(std::env::var_os("PDRS_TLS_RESTORE").expect("#1552 child restore path"))
+                .expect("#1552 child restore bytes"),
         )
-        .unwrap();
+        .expect("#1552 child restores the empty extra CA file");
     }
     let client = McpClient::new(
         McpServerSpec {
@@ -71,7 +72,7 @@ async fn child() {
     let hook_ok = hook(&url).await;
     let config = parse_json(&json!({"providers":{"tls":{"id":"tls", "protocol":"anthropic",
         "url":url, "apiKey":"fixture-only", "models":{"probe":{"id":"probe", "capabilities":{"maxOutputTokens":32}, "multimodal":{"input":["text"]}}},
-        "retry":{"requestMaxRetries":0}, "ca":std::fs::read_to_string(std::env::var_os("PDRS_TLS_CA").unwrap()).unwrap()}}}).to_string()).unwrap();
+        "retry":{"requestMaxRetries":0}, "ca":std::fs::read_to_string(std::env::var_os("PDRS_TLS_CA").expect("#1552 child CA path")).expect("#1552 child CA bytes")}}}).to_string()).expect("#1552 child parses the provider config");
     let request = parse_json(r#"{"provider":"tls","model":"probe","messages":[{"role":"user","content":[{"type":"text","text":"local TLS test"}]}]}"#).unwrap();
     let model = complete_model(
         &HyperModelTransport::new(),
@@ -91,14 +92,20 @@ async fn child() {
         .is_ok_and(|value| value.get("input_tokens").and_then(|n| n.as_number()) == Some(7.0));
     let mut result = json!({"mcp":mcp,"hook":hook_ok,"model":model,"count":count});
     if std::env::var("PDRS_TLS_MODE").as_deref() == Ok("cached-file") {
-        std::fs::write(std::env::var_os("NODE_EXTRA_CA_CERTS").unwrap(), "").unwrap();
-        result["cached"] = hook(&std::env::var("PDRS_TLS_FRESH").unwrap()).await.into();
+        std::fs::write(
+            std::env::var_os("NODE_EXTRA_CA_CERTS").expect("#1552 child cached extra path"),
+            "",
+        )
+        .expect("#1552 child empties the cached extra CA file");
+        result["cached"] = hook(&std::env::var("PDRS_TLS_FRESH").expect("#1552 child fresh URL"))
+            .await
+            .into();
     }
     std::fs::write(
-        std::env::var_os("PDRS_TLS_RESULT").unwrap(),
+        std::env::var_os("PDRS_TLS_RESULT").expect("#1552 child result path"),
         result.to_string(),
     )
-    .unwrap();
+    .expect("#1552 child writes the result cell");
 }
 
 #[tokio::test]
@@ -106,11 +113,11 @@ async fn private_ca_matrix() {
     if std::env::var_os("PDRS_TLS_URL").is_some() {
         tokio::time::timeout(Duration::from_secs(20), child())
             .await
-            .expect("bounded client calls");
+            .expect("#1552 bounded client calls");
         return;
     }
     baseline::oracle(ORACLE);
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1552 oracle JSON");
     let scratch = scratch::Scratch::new("private-ca");
     let mut server = tokio::process::Command::new("node")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/private-ca/server.mjs"))
@@ -120,26 +127,58 @@ async fn private_ca_matrix() {
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .unwrap();
-    let mut lines = tokio::io::BufReader::new(server.stdout.take().unwrap()).lines();
+        .expect("#1552 node fixture server spawns");
+    let mut lines =
+        tokio::io::BufReader::new(server.stdout.take().expect("#1552 server stdout")).lines();
     let line = tokio::time::timeout(Duration::from_secs(30), lines.next_line())
         .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    let addresses: Value = serde_json::from_str(&line).unwrap();
+        .expect("#1552 bounded server handshake")
+        .expect("#1552 server stdout open")
+        .expect("#1552 server prints its addresses");
+    let addresses: Value = serde_json::from_str(&line).expect("#1552 server addresses JSON");
     let ca = scratch.path().join("ca.pem");
-    let ca_bytes = std::fs::read(&ca).unwrap();
+    let ca_bytes = std::fs::read(&ca).expect("#1552 generated CA bytes");
     let mut failures = Vec::new();
-    for case in oracle["cases"].as_array().unwrap() {
-        let mode = case["mode"].as_str().unwrap();
+    // A6.4-TLS-CA-SOURCES-001 r1: `--use-openssl-ca` has no cells in the
+    // frozen Homebrew oracle. Expected values come from #1552's recorded
+    // evidence (`tls-flags.log`: openssl-dir success, openssl-plain
+    // non_blocking_error) and scenario 4, which re-verified the hook client
+    // only; mcp / model / count are inferred from the shared default CA
+    // sources, not measured.
+    const OPENSSL_CASES: [(&str, bool); 3] = [
+        ("openssl-dir", true),
+        ("openssl-file", true),
+        ("openssl-plain", false),
+    ];
+    let mut cases: Vec<(String, bool, Value)> = oracle["cases"]
+        .as_array()
+        .expect("#1552 oracle cases array")
+        .iter()
+        .map(|case| {
+            (
+                case["mode"].as_str().expect("#1552 case mode").to_owned(),
+                case["mismatch"].as_bool().expect("#1552 case mismatch"),
+                case["expected"].clone(),
+            )
+        })
+        .collect();
+    for (mode, good_hostname) in OPENSSL_CASES {
+        for mismatch in [false, true] {
+            cases.push((
+                mode.to_owned(),
+                mismatch,
+                json!({"mcp": good_hostname && !mismatch, "hook": good_hostname && !mismatch,
+                    "model": good_hostname && !mismatch, "count": good_hostname && !mismatch}),
+            ));
+        }
+    }
+    for (mode, mismatch, mut expected) in cases {
         // Node-only in-process environment mutation cannot be performed safely
         // in Rust 2024. Startup timing difference is recorded in the ledger.
         if mode == "late-env" {
             continue;
         }
-        std::fs::write(&ca, &ca_bytes).unwrap();
-        let mismatch = case["mismatch"].as_bool().unwrap();
+        std::fs::write(&ca, &ca_bytes).expect("#1552 reset generated CA");
         let result_path = scratch.path().join(format!("{mode}-{mismatch}.json"));
         let mut command = tokio::process::Command::new(
             std::env::current_exe().expect("#942 private-ca test binary path"),
@@ -161,7 +200,7 @@ async fn private_ca_matrix() {
                     "good"
                 }]
                 .as_str()
-                .unwrap(),
+                .expect("#1552 target address"),
             )
             .env("PDRS_TLS_RESTORE", scratch.path().join("initial-ca.pem"))
             .env("PDRS_TLS_CA", &ca)
@@ -169,9 +208,9 @@ async fn private_ca_matrix() {
                 "PDRS_TLS_FRESH",
                 addresses[if mismatch { "freshBad" } else { "freshGood" }]
                     .as_str()
-                    .unwrap(),
+                    .expect("#1552 fresh address"),
             )
-            .env("PDRS_TLS_MODE", mode)
+            .env("PDRS_TLS_MODE", &mode)
             .env("PDRS_TLS_RESULT", &result_path)
             .kill_on_drop(true)
             .stdout(Stdio::piped())
@@ -193,7 +232,7 @@ async fn private_ca_matrix() {
             "system-extra",
             "proxy-extra",
         ]
-        .contains(&mode)
+        .contains(&mode.as_str())
         {
             command.env("NODE_EXTRA_CA_CERTS", &ca);
         }
@@ -207,7 +246,7 @@ async fn private_ca_matrix() {
             "bad-first",
             "bad-der",
         ]
-        .contains(&mode)
+        .contains(&mode.as_str())
         {
             command.env(
                 "NODE_EXTRA_CA_CERTS",
@@ -215,41 +254,54 @@ async fn private_ca_matrix() {
             );
         }
         if mode.starts_with("system-")
-            || ["ssl-unflagged", "forced-bundled", "bundled-system"].contains(&mode)
+            || ["ssl-unflagged", "forced-bundled", "bundled-system"].contains(&mode.as_str())
         {
             command
                 .env("SSL_CERT_FILE", &ca)
                 .env("SSL_CERT_DIR", scratch.path().join("empty-dir"));
         }
-        if ["system-empty", "system-dir", "dir-unflagged", "dir-plain"].contains(&mode) {
+        if [
+            "system-empty",
+            "system-dir",
+            "dir-unflagged",
+            "dir-plain",
+            "openssl-dir",
+            "openssl-plain",
+        ]
+        .contains(&mode.as_str())
+        {
             command.env("SSL_CERT_FILE", scratch.path().join("empty.pem"));
         }
-        if ["system-dir", "dir-unflagged", "dir-plain"].contains(&mode) {
-            command.env(
-                "SSL_CERT_DIR",
-                scratch.path().join(if mode == "dir-plain" {
-                    "plain-dir"
-                } else {
-                    "cert-dir"
-                }),
-            );
+        if ["system-dir", "dir-unflagged", "openssl-dir"].contains(&mode.as_str()) {
+            command.env("SSL_CERT_DIR", scratch.path().join("cert-dir"));
+        }
+        if mode == "dir-plain" || mode == "openssl-plain" {
+            command.env("SSL_CERT_DIR", scratch.path().join("plain-dir"));
         }
         if mode.starts_with("system-") && mode != "system-off" {
             command.env("NODE_USE_SYSTEM_CA", "1");
         }
-        if ["forced-bundled", "bundled-system"].contains(&mode) {
+        if ["forced-bundled", "bundled-system"].contains(&mode.as_str()) {
             command.env("NODE_OPTIONS", "--use-bundled-ca");
+        }
+        if mode == "openssl-file" {
+            command
+                .env("SSL_CERT_FILE", &ca)
+                .env("SSL_CERT_DIR", scratch.path().join("empty-dir"));
+        }
+        if mode.starts_with("openssl-") {
+            command.env("NODE_OPTIONS", "--use-openssl-ca");
         }
         if mode.starts_with("proxy-") {
             command.env(
                 "PILOTDECK_PROXY",
                 addresses[if mismatch { "badProxy" } else { "proxy" }]
                     .as_str()
-                    .unwrap(),
+                    .expect("#1552 proxy address"),
             );
         }
         if mode == "early-file" {
-            std::fs::write(&ca, "").unwrap();
+            std::fs::write(&ca, "").expect("#1552 empties the extra CA file before the child");
         }
         let output = tokio::time::timeout(Duration::from_secs(30), command.output())
             .await
@@ -266,26 +318,28 @@ async fn private_ca_matrix() {
             "#942 private-ca rerun matched no test: {mode}:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let actual: Value =
-            serde_json::from_str(&std::fs::read_to_string(result_path).unwrap()).unwrap();
-        let mut expected = case["expected"].clone();
-        // A6.4-TLS-CA-SOURCES-001, unapproved; never hide these as TS parity.
-        let difference = [
-            "system-dir",
-            "dir-unflagged",
-            "forced-bundled",
-            "bundled-system",
-            "early-file",
-        ]
-        .contains(&mode);
+        let actual: Value = serde_json::from_str(
+            &std::fs::read_to_string(result_path).expect("#1552 result cell readable"),
+        )
+        .expect("#1552 result cell JSON");
+        // A6.4-TLS-CA-SOURCES-001 r1 closed the source and mode differences
+        // (system-dir / dir-unflagged / forced-bundled / bundled-system now
+        // match the frozen oracle). Only the snapshot-timing difference
+        // remains: the Homebrew Node reads NODE_EXTRA_CA_CERTS at process
+        // startup, Rust at the first default connector.
+        let difference = mode == "early-file";
+        let ts = expected.clone();
         if difference && !mismatch {
-            for value in expected.as_object_mut().unwrap().values_mut() {
-                *value = json!(["forced-bundled", "bundled-system", "early-file"].contains(&mode));
+            for value in expected
+                .as_object_mut()
+                .expect("#1552 expected object")
+                .values_mut()
+            {
+                *value = json!(true);
             }
         }
         println!(
-            "{mode} mismatch={mismatch} actual={actual} TS={} registered_difference={difference}",
-            case["expected"]
+            "{mode} mismatch={mismatch} actual={actual} TS={ts} registered_difference={difference}"
         );
         if actual != expected {
             failures.push(format!(
@@ -296,7 +350,11 @@ async fn private_ca_matrix() {
     server.stdin.take();
     tokio::time::timeout(Duration::from_secs(5), server.wait())
         .await
-        .unwrap()
-        .unwrap();
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
+        .expect("#1552 bounded server shutdown")
+        .expect("#1552 node fixture server exits");
+    assert!(
+        failures.is_empty(),
+        "#1552 private CA source matrix diverges:\n{}",
+        failures.join("\n")
+    );
 }

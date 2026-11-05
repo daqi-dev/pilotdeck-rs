@@ -17,6 +17,6 @@ node --import /absolute/path/to/PilotDeck/node_modules/tsx/dist/loader.mjs \
 实测要点：extra / bundle / partial 可连通；bad-first / bad-der 保证遇错停止；cached-file 再建客户端访问全新端口证明不重载（不复用旧连接/会话）；四类 HTTPS 都拒绝错误 hostname。count 仅 `source=provider` 计成功，model 返回实际规范化应答。`config` 将 ca 加入实际配置/入口，证实不是有效来源。
 
 本机默认 SSL_CERT_FILE 可用，不依赖 system 开关；强制 bundled 后不读取此文件。OpenSSL hash 目录可用，普通 ca.pem 命名无效。未查看/修改宿主信任库，不把这些结果解释成已验证系统钥匙串。
-Rust 尚未对齐的来源与启动时机见 `specs/gateway-parity/diffs/A6.4-TLS-CA-SOURCES-001.md`，未批准。
+Rust 来源与 `--use-*-ca` 启动模式已按 #1552 对齐（hash 目录为来源、plain 目录不是、bundled 模式停读显式来源）；openssl-* 三例是本机实测矩阵，不在冻结 oracle 内。仍余 early-file 快照时机差异，见 `specs/gateway-parity/diffs/A6.4-TLS-CA-SOURCES-001.md`（该文件冻结，新增差异走 RESULT 审批）。`negative_controls.py` 是 tls.rs 来源选择的负控（先提交再跑，`--check` 只读校验锚点）。
 
 新增直接依赖 `webpki-roots =1.0.9` 已由 hyper-rustls 锁定，许可证 CDLA-Permissive-2.0；目的为在原 Mozilla roots 上追加显式 CA。未引入新版本、新二进制或原生信任库依赖；产品/probe 锁文件同步。
