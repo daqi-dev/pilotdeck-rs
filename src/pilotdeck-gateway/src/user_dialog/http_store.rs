@@ -111,18 +111,21 @@ const READ_AHEAD_BYTES: usize = 128 * 1024;
 
 /// hyper's `max_buf_size` while [`HeaderGuard`] owns the 431. A Node-legal head
 /// can use four raw bytes per counted byte (`a:` = one counted name byte plus
-/// `:` and CRLF), so `4 * max` covers every head without uncounted leading
-/// whitespace; two more read chunks give that whitespace some room and one
-/// chunk keeps the guard's raw cap (below) ahead of hyper's parser cap.
+/// `:` and CRLF), so `4 * max` covers every head; after-colon leading OWS is
+/// dropped before hyper ever sees it (#1555), so only the read chunks of slack
+/// below remain for the whitespace the guard still forwards (folding
+/// continuations, separators Node does not count but hyper must parse).
 fn hyper_buffer_bytes(max_header_bytes: usize) -> usize {
     max_header_bytes
         .saturating_mul(4)
         .saturating_add(HEADER_GUARD_BUFFER_BYTES.saturating_mul(3))
 }
 
-/// Raw ceiling enforced by [`HeaderGuard`]. It is a resource bound, not Node's
-/// accounting: Node has no raw buffer cap, so a head padded with uncounted
-/// leading whitespace beyond this gets the 67-byte Node 431 earlier than Node
+/// Raw ceiling enforced by [`HeaderGuard`] on the bytes it *forwards* (the
+/// after-colon leading OWS Node never counts is dropped first, #1555). It is a
+/// resource bound, not Node's accounting: Node has no raw buffer cap, so a
+/// head padded with whitespace the guard still forwards — obsolete line
+/// folding beyond this — gets the 67-byte Node 431 earlier than Node
 /// (registered in the A7.4 R3 entry). It is two read chunks below
 /// [`hyper_buffer_bytes`], so the guard always answers first.
 fn header_guard_raw_limit(max_header_bytes: usize) -> usize {
@@ -2207,9 +2210,14 @@ impl KeepAliveTimer {
 /// would answer with its own 431 shape. The guard therefore also caps the raw
 /// bytes it hands to hyper: [`header_guard_raw_limit`] sits above the densest
 /// Node-legal head (an `a:` field is four raw bytes per counted byte) plus two
-/// read chunks of leading whitespace, and below hyper's `max_buf_size` by one
-/// read chunk. The guard's 67-byte 431 always wins on the normal read path;
-/// hyper's cap is only a backstop.
+/// read chunks, and below hyper's `max_buf_size` by one read chunk, so the
+/// guard's 67-byte 431 always wins on the normal read path. The leading
+/// after-colon OWS Node never counts is not merely excluded from that cap —
+/// it is dropped from the byte stream itself (#1555): Node's parser skips
+/// those bytes without buffering them, so a 90 KB value pad reaches the
+/// handler like any Node-legal head, and neither `ahead` nor hyper's read
+/// buffer ever grows by a dropped byte. Whitespace the guard still forwards
+/// (obsolete line folding) keeps counting toward the raw bound.
 ///
 /// The guard scans the whole connection, not only the request head
 /// (`InitialHeaders` / `Idle` / `NextHeaders`). Node's parser processes a
@@ -2248,6 +2256,22 @@ struct HeaderGuard {
     request_line_section: u8,
     /// Leading SP/HTAB after the colon is not part of Node's value count.
     discarding_leading_whitespace: bool,
+    /// The value whitespace being discarded opened directly after the colon
+    /// (not an obsolete-line-folding continuation): Node's parser skips and
+    /// never buffers those bytes, so the guard drops them from the byte stream
+    /// hyper sees instead of forwarding and counting them (#1555).
+    droppable_ows: bool,
+    /// Dropped after-colon OWS ranges (relative to the chunk passed to the
+    /// last [`HeaderGuard::push`]); consumed by [`HeaderGuard::kept_prefix`]
+    /// before the next `push`.
+    dropped: Vec<(usize, usize)>,
+    /// Byte index inside the chunk passed to [`HeaderGuard::push`] (reset at
+    /// every `push`), so a drop can be recorded as a range of the chunk the
+    /// caller holds.
+    scanned: usize,
+    /// Start of the not-yet-closed dropped run, if the chunk ended in the
+    /// middle of one.
+    drop_start: Option<usize>,
     /// The current message's head is complete. Only meaningful while the
     /// guard is scanning one (`body == None`).
     completed: bool,
@@ -2359,6 +2383,10 @@ impl HeaderGuard {
             line_has_content: false,
             request_line_section: 0,
             discarding_leading_whitespace: false,
+            droppable_ows: false,
+            dropped: Vec::new(),
+            scanned: 0,
+            drop_start: None,
             completed: false,
             trailer: false,
             framing_name: NameMatch::None,
@@ -2378,6 +2406,7 @@ impl HeaderGuard {
         self.line_has_content = false;
         self.request_line_section = 0;
         self.discarding_leading_whitespace = false;
+        self.droppable_ows = false;
         self.completed = false;
         self.trailer = false;
         self.framing_name = NameMatch::None;
@@ -2409,6 +2438,8 @@ impl HeaderGuard {
     /// later messages are left to `serve`'s `header_bytes` backstop (and,
     /// past hyper's buffer cap, to hyper's own registered 431 shape).
     fn push(&mut self, bytes: &[u8]) -> bool {
+        self.dropped.clear();
+        self.scanned = 0;
         for &byte in bytes {
             if !self.active {
                 return false;
@@ -2424,8 +2455,47 @@ impl HeaderGuard {
         false
     }
 
+    /// Compacts `bytes` — the chunk just scanned by [`HeaderGuard::push`] — by
+    /// removing the after-colon leading OWS the guard dropped, and returns the
+    /// length of the kept prefix for hyper. Must follow a non-tripping `push`
+    /// of exactly this chunk, before the next one.
+    fn kept_prefix(&mut self, bytes: &mut [u8]) -> usize {
+        if let Some(start) = self.drop_start.take() {
+            // The chunk ended in the middle of a dropped run; it extends to
+            // every byte the guard scanned (`scanned` == the chunk length on
+            // the normal path).
+            self.dropped.push((start, self.scanned));
+        }
+        let dropped = std::mem::take(&mut self.dropped);
+        let mut kept = 0;
+        let mut source = 0;
+        for (start, end) in dropped {
+            bytes.copy_within(source..start, kept);
+            kept += start - source;
+            source = end;
+        }
+        bytes.copy_within(source..bytes.len(), kept);
+        kept + bytes.len() - source
+    }
+
     /// One request-head or trailer-section byte; returns `true` on a trip.
     fn push_head(&mut self, byte: u8) -> bool {
+        let index = self.scanned;
+        self.scanned += 1;
+        if self.droppable_ows
+            && self.discarding_leading_whitespace
+            && (byte == b' ' || byte == b'\t')
+        {
+            // #1555: leading OWS opened by a colon. Node neither counts nor
+            // buffers these bytes, so they count against no bound here and are
+            // dropped from the stream handed to hyper (which skips the same
+            // bytes itself when parsing a value).
+            self.drop_start.get_or_insert(index);
+            return false;
+        }
+        if let Some(start) = self.drop_start.take() {
+            self.dropped.push((start, index));
+        }
         self.raw_bytes = self.raw_bytes.saturating_add(1);
         if self.raw_bytes >= self.raw_limit {
             self.active = false;
@@ -2478,11 +2548,16 @@ impl HeaderGuard {
             GuardLine::FieldName => {
                 if at_line_start && (byte == b' ' || byte == b'\t') {
                     // Obsolete line folding: the continuation is value text.
+                    // The fold whitespace stays in the byte stream (hyper has
+                    // to see the line it will reject), so it is kept and still
+                    // counts toward the raw bound.
                     self.line = GuardLine::FieldValue;
                     self.discarding_leading_whitespace = true;
+                    self.droppable_ows = false;
                 } else if byte == b':' {
                     self.line = GuardLine::FieldValue;
                     self.discarding_leading_whitespace = true;
+                    self.droppable_ows = true;
                     self.start_framing_value();
                 } else {
                     self.push_field_name_byte(byte, at_line_start);
@@ -2493,8 +2568,9 @@ impl HeaderGuard {
             }
             GuardLine::FieldValue => {
                 if self.discarding_leading_whitespace && (byte == b' ' || byte == b'\t') {
-                    // Leading value whitespace is not counted; all-OW
-                    // values count nothing.
+                    // Continuation whitespace the guard still forwards (see
+                    // the folding arm above): it is not counted, because
+                    // Node's value callback starts at the first non-OWS byte.
                 } else {
                     self.discarding_leading_whitespace = false;
                     self.push_framing_value_byte(byte);
@@ -2512,6 +2588,7 @@ impl HeaderGuard {
     /// trips; it only walks the framing so the guard can find the next request
     /// head behind the body.
     fn push_body(&mut self, byte: u8) {
+        self.scanned += 1;
         match self.body {
             BodyFraming::None => unreachable!("push_body only runs inside a body"),
             BodyFraming::Length(remaining) => {
@@ -2981,7 +3058,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
                         response = Some(NODE_431_RESPONSE);
                         break;
                     }
-                    this.ahead.extend_from_slice(filled);
+                    // #1555: the guard drops the after-colon leading OWS Node
+                    // never counts (and never buffers) before the bytes reach
+                    // hyper, so they neither fill `ahead` nor hyper's read
+                    // buffer.
+                    let kept = this.header_guard.kept_prefix(scratch.filled_mut());
+                    this.ahead.extend_from_slice(&scratch.filled()[..kept]);
                     if this.ahead.len() >= READ_AHEAD_BYTES {
                         break;
                     }
@@ -3344,11 +3426,17 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             // hyper's own default caps at 100 fields; Node
                             // v22.22.0's runtime `maxHeadersCount` default is
                             // `null` (unlimited; the 2000 in the docs is not
-                            // applied). hyper sizes its parser arrays up front,
-                            // so 4096 is a resource backstop, not Node's count:
-                            // a Node-legal head with more than 4096 tiny fields
-                            // gets hyper's 123-byte 431 (registered in R3).
-                            .max_headers(4096)
+                            // applied), so no head the guard passes may be
+                            // rejected on a field count: every field name
+                            // counts at least one byte, so a Node-legal head
+                            // has at most `max_header_bytes - 1` fields.
+                            // Capping at `max_header_bytes` (#1555) admits
+                            // every such head (4,097 tiny fields reach the
+                            // handler like Node) while keeping the parse arrays
+                            // bounded: hyper allocates two `cap`-entry vectors
+                            // per head parse, ~1 MiB transient at the 16 KiB
+                            // default.
+                            .max_headers(max_header_bytes)
                             .max_buf_size(hyper_buffer_bytes);
                         let mut connection = Box::pin(builder.serve_connection(
                             TokioIo::new(TimeoutStream::new(

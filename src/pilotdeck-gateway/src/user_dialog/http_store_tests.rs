@@ -715,6 +715,188 @@ async fn many_small_headers_are_not_capped_at_the_documented_two_thousand() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// #1555 grid cell 1: leading after-colon OWS ahead of a normal request.
+/// Node v22.22.0's parser skips that whitespace (it counts and buffers
+/// nothing), so the request reaches the app and answers 405 — 236 bytes and
+/// an EOF-ended connection on the TS probe (`ows-90000`). The guard drops
+/// those bytes instead of counting them against its raw bound, so Rust
+/// reaches the same handler response instead of the early 431 the R3 entry
+/// used to register. The 200,000-byte pad (reading llhttp's value state, not
+/// TS-probed) additionally sits past hyper's 122,880-byte cumulative bound of
+/// the doubling reads — the same threshold
+/// [`oversized_head_over_hyper_buffer_after_step_aside_writes_hyper_431`]
+/// documents — so it only passes because the bytes are actually dropped from
+/// the stream, not merely excused from the count.
+#[tokio::test]
+async fn leading_value_ows_beyond_the_raw_cap_reaches_the_handler() {
+    let (store, directory) = file_store("ows-raw-cap");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    for (pad, note) in [(90_000usize, "90,000"), (200_000, "200,000")] {
+        let request = format!(
+            "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\nX: {}a\r\nConnection: close\r\n\r\n",
+            " ".repeat(pad)
+        );
+        let (response, closed) =
+            exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
+        assert_eq!(
+            status(&response),
+            405,
+            "#1555 leading value OWS must reach the handler like Node ({note} bytes): {}",
+            String::from_utf8_lossy(&response)
+        );
+        assert!(
+            !response.starts_with(NODE_431),
+            "#1555 uncounted leading OWS must not be answered with Node's 431"
+        );
+        assert!(
+            closed,
+            "#1555 the OWS request closes with its `Connection: close` response"
+        );
+    }
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1555 grid cell 2: 4,097 one-byte empty-value fields. Node v22.22.0's
+/// runtime `maxHeadersCount` default is `null`, so the head parses and the
+/// app answers 405 (236 bytes, EOF-ended, TS probe `fields-4097`). The field
+/// count stays bounded by Node's counted budget (see
+/// [`small_field_count_is_bounded_by_the_node_budget_not_a_field_cap`]), not
+/// by a parser-side cap: `max_headers` is sized from `max_header_bytes`, and
+/// every field name counts at least one byte of that budget.
+#[tokio::test]
+async fn four_thousand_ninety_seven_small_fields_reach_the_handler() {
+    let (store, directory) = file_store("fields-4097");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n{}Connection: close\r\n\r\n",
+        "a:\r\n".repeat(4097)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
+    assert_eq!(
+        status(&response),
+        405,
+        "#1555 4,097 one-byte fields must reach the handler like Node: {}",
+        String::from_utf8_lossy(&response)
+    );
+    assert!(
+        !response.starts_with(NODE_431),
+        "#1555 a Node-legal field count must not be answered with 431"
+    );
+    assert!(
+        closed,
+        "#1555 the many-field request closes with its `Connection: close` response"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1555 boundary for the field count: the bound is Node's counted 16 KiB
+/// budget, not a parser cap. `Host: h` (5 counted bytes), `Connection: close`
+/// (15) and the 34-byte target fix 54 counted bytes, so 16,329 `a:` fields
+/// sit exactly at the passing edge (16,383) and 16,330 push the running
+/// total to Node's `>=` limit (16,384). Both sides must keep Node's bytes:
+/// the passing edge reaches the handler, the tripping edge is the exact
+/// 67-byte 431.
+#[tokio::test]
+async fn small_field_count_is_bounded_by_the_node_budget_not_a_field_cap() {
+    let (store, directory) = file_store("field-count-budget");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let fixed = STORE_PATH_PREFIX.len()
+        + "list".len()
+        + "Host".len()
+        + "h".len()
+        + "Connection".len()
+        + "close".len();
+    let pass = DEFAULT_MAX_HEADER_BYTES - 1 - fixed;
+    let head = |fields: usize| {
+        format!(
+            "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n{}Connection: close\r\n\r\n",
+            "a:\r\n".repeat(fields)
+        )
+    };
+    let response = exchange(port, head(pass).as_bytes())
+        .await
+        .expect("#1555 the budget-edge passing request must be answered");
+    assert_eq!(
+        status(&response),
+        405,
+        "#1555 the passing edge of Node's counted budget must reach the handler: {}",
+        String::from_utf8_lossy(&response)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, head(pass + 1).as_bytes(), Duration::from_secs(5)).await;
+    assert_eq!(
+        response, NODE_431,
+        "#1555 one more field reaches Node's `>=` budget and must be the exact 67-byte 431"
+    );
+    assert!(closed, "#1555 the budget 431 must end the connection");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1555 boundary for the OWS drop: the padding is dropped from the byte
+/// stream, but the value bytes behind it still count; a head whose counted
+/// bytes exceed Node's budget is answered with the exact 67-byte 431 even
+/// when padded with 90 KB of leading OWS first.
+#[tokio::test]
+async fn leading_ows_does_not_exempt_the_counted_budget() {
+    let (store, directory) = file_store("ows-counted-budget");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\nX: {}{}\r\nConnection: close\r\n\r\n",
+        " ".repeat(90_000),
+        "a".repeat(16_400)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
+    assert_eq!(
+        response, NODE_431,
+        "#1555 dropped OWS padding must not exempt the counted value bytes"
+    );
+    assert!(
+        closed,
+        "#1555 the counted-budget 431 must end the connection"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1555: the compaction that removes leading OWS must not corrupt the rest
+/// of the stream — a POST whose authorization value carries extra after-colon
+/// whitespace and a 40 KB OWS pad elsewhere still parses, authenticates and
+/// is served like any other request.
+#[tokio::test]
+async fn leading_ows_head_still_parses_a_valid_request() {
+    let (store, directory) = file_store("ows-valid-post");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let body = list_body();
+    let mut request = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization:  Bearer {TOKEN}\r\nContent-Type: application/json\r\nX: {}pad\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+        " ".repeat(40_000),
+        body.len()
+    )
+    .into_bytes();
+    request.extend_from_slice(&body);
+    let response = exchange(port, &request)
+        .await
+        .expect("#1555 the padded POST must be answered");
+    assert_eq!(
+        status(&response),
+        200,
+        "#1555 a valid POST with leading value OWS must be served normally: {}",
+        String::from_utf8_lossy(&response)
+    );
+    let payload = String::from_utf8_lossy(&response);
+    assert!(
+        payload.contains("\"version\":1"),
+        "#1555 the list response body must be intact behind the OWS-dropped head"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// Node's `maxHeaderSize` counts the request target plus field name and value
 /// bytes, not the raw `name: value\r\n` line. 2,000 fields of `aaaaa: x`
 /// (20,000 raw bytes but only 12,000 counted bytes) are inside the 16 KiB
@@ -757,9 +939,9 @@ async fn header_guard_counts_name_and_value_like_node() {
 /// The fixed target/Host/Connection bytes are 34 + 13 + 15 = 62; 2,719
 /// `aaaaa: x` fields count 16,314 and one `X-Pad: aa` counts 7, so the pass
 /// case is exactly 16,383. One more value byte makes 16,384 and must get the
-/// 67-byte 431. `aaaaa: x` is used instead of `a:` so the field count stays
-/// under hyper's 4,096-slot `max_headers` backstop (a separate, registered
-/// difference).
+/// 67-byte 431. `aaaaa: x` keeps the counted budget math in whole fields;
+/// with `max_headers` sized from `max_header_bytes` (#1555) the 2,722 fields
+/// sit far below hyper's slot cap either way.
 #[tokio::test]
 async fn header_guard_boundary_matches_node_16384() {
     let (store, directory) = file_store("header-boundary");
@@ -853,22 +1035,28 @@ async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
-/// Registered resource bound (R3): Node does not count leading whitespace
-/// after the colon and accepts a 90 KB `X: <spaces>a` header, but hyper has to
-/// buffer every raw byte before parsing. The guard's raw cap rejects before
-/// hyper's parser can write its own 431 shape; the early 431 is the registered
-/// unapproved difference, the 67 bytes are Node's.
+/// Registered resource bound (R3): Node does not count an obsolete fold's
+/// continuation whitespace, but the guard forwards those bytes (hyper has to
+/// see the fold) and its raw cap rejects before hyper's parser can write its
+/// own 431 shape. #1555 moved the after-colon leading OWS out of this bound —
+/// that shape now reaches the handler (see
+/// [`leading_value_ows_beyond_the_raw_cap_reaches_the_handler`]) — so the raw
+/// cap is pinned on the whitespace that is still forwarded. The early 431
+/// remains the registered unapproved difference; the 67 bytes are Node's.
 #[tokio::test]
 async fn header_guard_raw_cap_uses_node_431_bytes() {
     let (store, directory) = file_store("header-raw-cap");
     let (server, port) = start_limited(store, ServeLimits::default()).await;
     let request = format!(
-        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\nX: {}a\r\nConnection: close\r\n\r\n",
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\nX: a\r\n{}b\r\nConnection: close\r\n\r\n",
         " ".repeat(90_000)
     );
     let (response, closed) =
         exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
-    assert_eq!(response, NODE_431, "the guard must own the 431 bytes");
+    assert_eq!(
+        response, NODE_431,
+        "#1555 the guard must own the 431 bytes for whitespace it still forwards"
+    );
     assert!(closed, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
@@ -1885,9 +2073,11 @@ fn header_guard_replays_node_field_budget() {
         "the 16th counted byte rejects before the line ends"
     );
 
-    // The raw cap is a separate bound above the densest Node-legal head; a
-    // head padded with uncounted leading whitespace still cannot grow hyper's
-    // buffer without bound.
+    // #1555: after-colon leading OWS is excluded from Node's count *and*
+    // dropped from the byte stream hyper sees, so it no longer trips any
+    // bound of the guard's. Whitespace the guard still forwards (the request
+    // line's separators, an obsolete fold's continuation bytes) keeps the raw
+    // bound, because hyper has to buffer those bytes before parsing.
     let max = DEFAULT_MAX_HEADER_BYTES;
     assert_eq!(header_guard_raw_limit(max), 4 * max + 2 * 8 * 1024);
     assert!(header_guard_raw_limit(max) < hyper_buffer_bytes(max));
@@ -1896,8 +2086,30 @@ fn header_guard_replays_node_field_budget() {
     assert!(!guard.push(b"X:"), "colon starts the value");
     let padding = vec![b' '; 4 * max + 2 * 8 * 1024];
     assert!(
-        guard.push(&padding),
-        "uncounted leading whitespace is still bounded"
+        !guard.push(&padding),
+        "after-colon leading whitespace counts toward no bound (#1555)"
+    );
+    let mut chunk = padding;
+    assert_eq!(
+        guard.kept_prefix(&mut chunk),
+        0,
+        "every padding byte is dropped from the stream hyper sees"
+    );
+    let mut guard = HeaderGuard::new(16);
+    assert!(!guard.push(b"GET / HTTP/1.1\r\n"));
+    let mut chunk = b"X:      ab   \r\n".to_vec();
+    assert!(!guard.push(&chunk));
+    let kept = guard.kept_prefix(&mut chunk);
+    assert_eq!(
+        &chunk[..kept],
+        b"X:ab   \r\n",
+        "the whole leading OWS run is dropped; trailing value whitespace stays"
+    );
+    let mut guard = HeaderGuard::new(max);
+    let request_line = format!("GET {} HTTP/1.1\r\n", " ".repeat(4 * max + 2 * 8 * 1024));
+    assert!(
+        guard.push(request_line.as_bytes()),
+        "uncounted but forwarded separators are still bounded by the raw cap"
     );
 }
 
