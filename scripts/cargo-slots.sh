@@ -40,9 +40,13 @@
 #   · lastok 超过 24 h → 退出 4（名额缓存陈旧到不可信，fail-closed，跑 --refresh-cap 恢复）；
 #   · 本机没有缓存（首次）→ 给足冷启动预算（默认 120 s）问一次闸（消费方 deadline 更短时
 #     会先超时，那属于「环境未取得判定」；预热用 `--refresh-cap`）。
-# 判定口径（#1556 r3）：ps 数出的进程树 `n` 与闸的 flock 占用 `used` **都要**有余量才放行。
-# 只看 n 会假放行：shim 先取槽位、后做磁盘 du，冷 du 那几十秒里 ps 只看到 python，n=0 而 used 已满；
-# 只看 used 会漏掉不经 shim 直接起的 cargo。两个口径取更保守的那个。
+# 判定口径（#1556 r3，r4 修正）：ps 数出的进程树 `n` 与闸的 flock 占用 `used` 都要有余量才放行。
+# 只看 n 会假放行：shim 先取槽位、后做磁盘 du，冷 du 那几十秒里 ps 只看到 python，n=0 而 used 已满。
+# 但 `used` 是**快变量**（秒级变化），只能信「刚从闸拿到的」那一份：缓存里的 used 是写缓存那一刻的
+# 快照，最长可到上一轮成功刷新（稳态下 refresh 常常答不进预算，见下），拿它判会两个方向都错——
+# 旧的 used=0 假放行、旧的 used=cap 让整段 TTL 恒判「满」（车道空转，#1556 r4 两家评审）。
+# 所以 used 只在「闸最近一次真的答复距今 ≤ USED_TTL（默认 60 s）」时参与判定，否则只按 n 判并
+# 在输出里标注「快照不计入判定」。两个口径都只是观测：本脚本不预留名额（租约见 #1581）。
 # 慢路径回写前重读缓存做 CAS：读到的那一行变了（别的进程刚刷新过）就不再回写，本次直接用它的新值。
 # 缓存键含闸路径 / 主机名 / 名额相关环境变量，负控用桩闸时不会互相污染。
 set -uo pipefail
@@ -57,6 +61,8 @@ REFRESH_CAP_TIMEOUT=${PDRS_CARGO_SLOTS_REFRESH_CAP_TIMEOUT:-240}
 # 靠这条把「永久冻结在首次 bootstrap 值」变成「15 min 后会有一次真的刷新」）。
 FAT_REFRESH_AFTER=${PDRS_CARGO_SLOTS_FAT_REFRESH_AFTER:-900}
 MAX_STALE=${PDRS_CARGO_SLOTS_MAX_STALE:-86400}
+# 闸的 used 只有这么新才参与判定（见头注释「判定口径」）：更旧的一律当未知，只按 ps 判。
+USED_TTL=${PDRS_CARGO_SLOTS_USED_TTL:-60}
 REFRESH_ONLY=0
 if [ "${1:-}" = "--refresh-cap" ]; then
   REFRESH_ONLY=1
@@ -71,7 +77,7 @@ fi
 # `$(( ))` 里按八进制解析（09 非法 → 算术错误、非交互 shell 退 1）；0 则让 MAX_STALE / FAT_REFRESH_AFTER
 # 变成恒真。一律 fail-closed 到 4，别伪装成「已满」。
 for knob in "$CAP_TTL" "$REFRESH_TIMEOUT" "$BOOTSTRAP_TIMEOUT" "$REFRESH_CAP_TIMEOUT" \
-            "$FAT_REFRESH_AFTER" "$MAX_STALE"; do
+            "$FAT_REFRESH_AFTER" "$MAX_STALE" "$USED_TTL"; do
   case "$knob" in
     ''|*[!0-9]*|0*)
       echo "cargo-slots: 时间参数必须是正整数（收到「${knob}」；0 与前导零都不接受）→ fail-closed" >&2
@@ -237,6 +243,8 @@ if [ "$REFRESH_ONLY" = 1 ]; then
 fi
 
 CAP_SOURCE=
+# 这份 USED 是「什么时候从闸拿到的」（cache 里记的 lastok / 本次现问的 now）；判定时按它算旧。
+USED_TS=
 if read_cap_cache; then
   now=$(date +%s)
   age=$((now - CAP_CACHE_TS))
@@ -254,6 +262,7 @@ if read_cap_cache; then
     CAP=$CAP_CACHE_CAP
     USED=$CAP_CACHE_USED
     CAP_SOURCE="缓存 ${age}s（闸内 ${stale}s 前刷新）"
+    USED_TS=$CAP_CACHE_LASTOK
   else
     # lastok 太久没推进说明闸每次都答不进 5 s（典型：每次都在跑冷 du），改用冷启动预算问一次。
     budget=$REFRESH_TIMEOUT
@@ -271,6 +280,7 @@ if read_cap_cache; then
       fi
       write_cap_cache "$CAP" "$USED" "$now"
       CAP_SOURCE="闸刷新"
+      USED_TS=$now
     else
       # 闸只是慢（典型是冷 du）：沿用旧名额继续本次判定，但 lastok 不推进，并且回写前做 CAS——
       # 别的进程若刚刷新过，就直接用它的新值，绝不把旧 cap 盖回去（#1556 r2 concurrency P2）。
@@ -279,6 +289,7 @@ if read_cap_cache; then
       if cache_unchanged "$old_cap" "$old_used" "$old_ts" "$old_lastok"; then
         write_cap_cache "$old_cap" "$old_used" "$old_lastok"
         CAP_SOURCE="闸 ${budget}s 内无答复，沿用 ${age}s 前的缓存名额（闸内 ${stale}s 前刷新）"
+        USED_TS=$old_lastok
       else
         CAP=$CAP_CACHE_CAP
         USED=$CAP_CACHE_USED
@@ -289,8 +300,10 @@ if read_cap_cache; then
           CAP=$old_cap
           USED=$old_used
           CAP_SOURCE="闸 ${budget}s 内无答复，沿用 ${age}s 前的缓存名额（缓存文件已被并发方删除）"
+          USED_TS=$old_lastok
         else
           CAP_SOURCE="闸 ${budget}s 内无答复，改用并发方刚刷新的名额（闸内 $(( $(date +%s) - CAP_CACHE_LASTOK ))s 前刷新）"
+          USED_TS=$CAP_CACHE_LASTOK
         fi
       fi
     fi
@@ -299,6 +312,7 @@ else
   query_cap_or_die "$BOOTSTRAP_TIMEOUT" "本机还没有名额缓存（可先跑 scripts/cargo-slots.sh --refresh-cap 预热）"
   write_cap_cache "$CAP" "$USED" "$(date +%s)"
   CAP_SOURCE="闸冷启动"
+  USED_TS=$(date +%s)
 fi
 
 # 一次 ps 取全 pid/ppid/args，再从叶子往上归并：沿父指针上溯，祖先链里已经有 cargo 的不再另计，
@@ -322,7 +336,16 @@ n=$(printf '%s\n' "$snap" | awk '
           if (!(q in isc)) c++
         }
         print c+0 }')
-echo "cargo-slots: 在跑 ${n} / 上限 ${CAP}（名额来自统一闸 cargo-slot，${CAP_SOURCE}，闸内已占 ${USED}）"
-# 两个口径都要有余量（见头注释「判定口径」）：n 抓得到不走闸的直接 cargo，USED 抓得到
-# 「shim 已取槽、还没 exec 出 cargo」的冷 du 窗口。只看 n 会在闸已满时假放行。
-[ "$n" -lt "$CAP" ] && [ "$USED" -lt "$CAP" ]
+# 判定（见头注释「判定口径」）：n 抓得到不走闸的直接 cargo，USED 抓得到「shim 已取槽、还没 exec
+# 出 cargo」的冷 du 窗口。但 USED 只在它确实是最近从闸拿到的时候才算数——缓存里的快照既可能把
+# 「已满」看成空（旧 used=0），也可能把「空」看成满（旧 used=cap 卡住整段 TTL），两个方向都会错。
+now_end=$(date +%s)
+used_age=$((now_end - USED_TS))
+[ "$used_age" -ge 0 ] 2>/dev/null || used_age=$((USED_TTL + 1))
+if [ "$used_age" -le "$USED_TTL" ]; then
+  echo "cargo-slots: 在跑 ${n} / 上限 ${CAP}（名额来自统一闸 cargo-slot，${CAP_SOURCE}，闸内已占 ${USED}，${used_age}s 前取自闸）"
+  [ "$n" -lt "$CAP" ] && [ "$USED" -lt "$CAP" ]
+else
+  echo "cargo-slots: 在跑 ${n} / 上限 ${CAP}（名额来自统一闸 cargo-slot，${CAP_SOURCE}，闸内占用快照 ${USED} 已 ${used_age}s 未从闸刷新，不计入判定）"
+  [ "$n" -lt "$CAP" ]
+fi
