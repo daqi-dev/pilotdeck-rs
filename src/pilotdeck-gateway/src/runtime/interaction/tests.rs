@@ -295,7 +295,7 @@ impl Harness {
                         &session,
                         PermissionDecision {
                             request_id: field(step, "id"),
-                            decision: field(step, "decision"),
+                            decision: JsValue::String(field(step, "decision")),
                             remember: step.get("remember").cloned(),
                             reason: step.get("reason").cloned(),
                         },

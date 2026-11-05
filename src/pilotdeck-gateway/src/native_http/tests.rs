@@ -659,6 +659,40 @@ async fn not_found_body_matches_ts() {
     assert_eq!(body_of(response).await, "not found", "#1209 404 body bytes");
 }
 
+/// #1316: the A7.4 user-dialog HTTP store entry is not yet open on the
+/// native listener. TS never mounts HttpGatewayUserDialogStore on the gateway
+/// port either (it would be the generic 404 there), but the same-domain entry
+/// must answer explicitly, not with the unknown-path 404.
+#[tokio::test]
+async fn user_dialog_store_entry_is_explicitly_not_yet_open() {
+    let mut config = config_for("e", &roots());
+    config.static_root = None;
+    let response = route("GET", "/v1/gateway-user-dialog-store/dialogs", &config).await;
+    assert_eq!(
+        u16::from(response.status()),
+        503,
+        "#1316 user-dialog store entry is a 503"
+    );
+    assert_eq!(
+        content_type_of(&response),
+        "application/json",
+        "#1316 not-yet-open content type"
+    );
+    assert_eq!(
+        body_of(response).await,
+        "{\"error\":\"not_yet_open\",\"store\":\"gateway-user-dialog-store\"}",
+        "#1316 not-yet-open body"
+    );
+    // The prefix boundary: a path that merely contains the marker does not
+    // match; only the whole store prefix opens the explicit entry.
+    let response = route("GET", "/v1/gateway-user-dialog-storex", &config).await;
+    assert_eq!(
+        u16::from(response.status()),
+        404,
+        "#1316 a sibling path keeps the ordinary 404"
+    );
+}
+
 /// #1209: an authority-form target without CONNECT is llhttp's bare 400;
 /// http::Uri accepts it and httparse would dispatch it, so the router's own
 /// target-form rule is the only rejection on this path (unlike `%2Fhealth`,

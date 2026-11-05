@@ -121,6 +121,17 @@ fn registry_matches_current_methods() {
         "upload_part",
         "upload_complete",
         "upload_cancel",
+        // #1316 A7.8-pr1: the C4 interaction round-trips route to the
+        // injected GatewayInteractionCoordinator instead of the metadata
+        // fallback (submit_turn/abort_turn stay connection-owned).
+        "reconnect_interaction",
+        "elicitation_respond",
+        "permission_decide",
+        // #1316: always-on is deferred (2026-11-05 rescope); the three
+        // methods answer honestly CAPABILITY_UNAVAILABLE.
+        "always_on_apply",
+        "always_on_abort",
+        "always_on_rerun_plan",
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();
@@ -141,6 +152,57 @@ fn registry_matches_current_methods() {
         actual.len(),
         "#1305 registry contains no duplicate method"
     );
+}
+
+// #1316 A7.8-pr1: reconcile the assembled session domain with the delivery
+// manifest. Every A7 delivery-package method must be dispatched — by a
+// registered family, or by the connection-owned submit/abort paths — with no
+// duplicates and no silent omissions. The three deferred always-on methods
+// stay in the manifest and in the registry for their honest
+// CAPABILITY_UNAVAILABLE rejection (2026-11-05 rescope).
+#[test]
+fn session_domain_reconciles_with_coverage_manifest() {
+    // A plain string literal keeps the #1166 build-input scanner working.
+    let manifest: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../specs/gateway-coverage/coverage-manifest.json"
+    ))
+    .expect("#1316 coverage manifest JSON");
+    let entries = manifest["methods"]
+        .as_array()
+        .expect("#1316 manifest method entries");
+    let mut a7: Vec<&str> = entries
+        .iter()
+        .filter(|entry| {
+            entry["delivery_package"]
+                .as_str()
+                .expect("#1316 delivery package")
+                .starts_with("A7")
+        })
+        .map(|entry| entry["method"].as_str().expect("#1316 method name"))
+        .collect();
+    a7.sort_unstable();
+    negative_assert_eq!(a7.len(), 52, "#1316 A7 delivery package method count");
+    negative_assert_eq!(
+        a7.iter().collect::<BTreeSet<_>>().len(),
+        52,
+        "#1316 A7 methods contain no duplicate"
+    );
+    // submit_turn (submit path) and abort_turn are dispatched by the
+    // connection layer (runtime/turn/gateway.rs), not the method registry.
+    let connection_owned = ["submit_turn", "abort_turn"];
+    let registered: BTreeSet<_> = registered_methods().collect();
+    for method in &a7 {
+        negative_assert!(
+            registered.contains(method) || connection_owned.contains(method),
+            "#1316 A7 method {method} is dispatched"
+        );
+    }
+    for method in ["always_on_apply", "always_on_abort", "always_on_rerun_plan"] {
+        negative_assert!(
+            a7.contains(&method),
+            "#1316 deferred always-on method {method} stays in the manifest"
+        );
+    }
 }
 
 #[tokio::test]

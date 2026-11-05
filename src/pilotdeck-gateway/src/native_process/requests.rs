@@ -163,6 +163,14 @@ impl GatewayRequests for Requests {
                             // the #1445 staging).
                             "user_dialog_list",
                             "permission_list",
+                            // TS advertises these three unconditionally
+                            // (oracle.json capabilities); the native process
+                            // now serves them for real: the interaction
+                            // round-trip family (#1316), the steer family's
+                            // hook_async_result, and session deletion.
+                            "permission_decide",
+                            "async_hook_result",
+                            "delete_session",
                         ]
                         .into_iter()
                         .chain([

@@ -4,8 +4,10 @@ use crate::runtime::connection::{Call, RequestError};
 use pilotdeck_protocol::{JsString, JsValue};
 
 mod active_turn;
+mod always_on;
 mod config;
 mod history;
+mod interaction;
 mod management;
 mod mcp;
 mod metadata;
@@ -58,6 +60,8 @@ register_families! {
     upload: upload::METHODS,
     // A new family: one declaration above and one registration here.
     config: config::METHODS,
+    interaction: interaction::METHODS,
+    always_on: always_on::METHODS,
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.

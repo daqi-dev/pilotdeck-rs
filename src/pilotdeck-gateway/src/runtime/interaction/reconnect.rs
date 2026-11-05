@@ -176,7 +176,7 @@ fn assign(
         bindings.push((owner.clone(), binding));
     }
 }
-pub(super) fn result(
+pub fn result(
     outcome: &str,
     binding: Option<&InteractionBinding>,
     requests: Vec<JsValue>,

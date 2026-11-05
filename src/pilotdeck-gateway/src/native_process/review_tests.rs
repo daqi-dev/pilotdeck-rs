@@ -806,3 +806,213 @@ async fn project_path_boundaries_worker() {
         .expect("#1137 unused path project disposed");
     crate::test_process::receipt("1137-project-paths");
 }
+
+// #1316: the native data dir has no TS session writers. Durable session
+// writes (a status entry plus rename/tag metadata records) served by the
+// production assembly happen inside this process: the child-process set is
+// the same before and after, no node executable appears among the
+// children, and no other process holds an fd into the scratch data dir.
+// Like the #1349 audit, the check runs in an owned rerun of this test
+// binary because this lib shares one process with sibling tests that do
+// spawn children, which would make the before/after comparison race on
+// their activity instead of on this audit's writes.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn session_writes_have_no_ts_writers() {
+    if std::env::var_os("PDRS_NATIVE_SESSION_AUDIT_CHILD").is_none() {
+        let output = std::process::Command::new(
+            std::env::current_exe().expect("#1316 the audit rerun binary"),
+        )
+        .args([
+            "--exact",
+            "native_process::tests::review::session_writes_have_no_ts_writers",
+            "--nocapture",
+            "--test-threads=2",
+        ])
+        .env("PDRS_NATIVE_SESSION_AUDIT_CHILD", "1")
+        .output()
+        .expect("#1316 run the audit in an owned process");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            crate::test_exact_receipt::single_pass(
+                &output.status,
+                "native_process::tests::review::session_writes_have_no_ts_writers",
+                &stdout
+            ),
+            "#1316 the audit rerun matched no test:\n{stdout}\n{stderr}"
+        );
+        return;
+    }
+    let (_scratch, requests) =
+        std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1316 the audit fixture");
+    let root = requests
+        .options
+        .home
+        .parent()
+        .expect("#1316 the audit scratch root")
+        .to_owned();
+    let transcript = crate::session_chat_dir(
+        &requests.options.home,
+        &requests.options.project,
+        &requests.options.project.to_string_lossy(),
+    )
+    .join("a8-session.jsonl");
+    let before = std::fs::read_to_string(&transcript).expect("#1316 seeded transcript");
+    let children_before = child_processes();
+    let status = crate::runtime::turn::gateway::GatewayRequests::request(
+        &requests,
+        "record_agent_status_message".into(),
+        crate::metadata::object([
+            ("sessionKey", "a8-session".into()),
+            ("turnId", "audit-status".into()),
+            (
+                "status",
+                crate::metadata::object([("subtype", "audit".into())]),
+            ),
+        ]),
+    )
+    .await
+    .expect("#1316 the status write resolves");
+    negative_assert_eq!(
+        status
+            .get("recorded")
+            .and_then(pilotdeck_protocol::JsValue::as_bool),
+        Some(true),
+        "#1316 the cold-path status write is recorded"
+    );
+    for (method, value) in [
+        ("rename_session", "audit-rename"),
+        ("tag_session", "audit-tag"),
+    ] {
+        let updated = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            method.into(),
+            crate::metadata::object([("sessionKey", "a8-session".into()), ("value", value.into())]),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("#1316 {method} resolves"));
+        negative_assert_eq!(
+            updated
+                .get("updated")
+                .and_then(pilotdeck_protocol::JsValue::as_bool),
+            Some(true),
+            "#1316 {method} writes metadata"
+        );
+    }
+    let after = std::fs::read_to_string(&transcript).expect("#1316 audited transcript");
+    negative_assert!(
+        after.len() > before.len(),
+        "#1316 the audited writes reached the native data dir"
+    );
+    for marker in ["audit-status", "sdk-rename", "sdk-tag"] {
+        negative_assert!(
+            after.contains(marker),
+            "#1316 the transcript carries {marker}"
+        );
+    }
+    let children_after = child_processes();
+    negative_assert_eq!(
+        children_after,
+        children_before,
+        "#1316 session writes spawn no child processes"
+    );
+    for (pid, exe) in &children_after {
+        let exe = exe
+            .as_ref()
+            .map(|exe| exe.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        negative_assert!(
+            !exe.contains("node"),
+            "#1316 no node executable among the children (pid {pid}: {exe})"
+        );
+    }
+    negative_assert!(
+        foreign_data_dir_holders(&root).is_empty(),
+        "#1316 no other process holds the native data dir open"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1316 the audit owner shuts down");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1316 the audit project disposes");
+}
+
+/// #1316: the `/proc` audit is Linux-only; elsewhere it is skipped with this
+/// note, like the other parity audits of this crate.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn session_writer_audit_is_linux_only() {
+    eprintln!("SKIP: #1316 the session-writer audit reads Linux /proc");
+}
+
+#[cfg(target_os = "linux")]
+fn child_processes() -> Vec<(i32, Option<std::path::PathBuf>)> {
+    let me = std::process::id() as i32;
+    let mut children = Vec::new();
+    let entries = std::fs::read_dir("/proc").expect("#1316 the audit reads /proc");
+    for entry in entries {
+        let entry = entry.expect("#1316 the audit reads a /proc entry");
+        let Some(pid) = entry.file_name().to_string_lossy().parse::<i32>().ok() else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        let Some((_, rest)) = stat.rsplit_once(')') else {
+            continue;
+        };
+        // After `comm)` come state and ppid.
+        let Some(ppid) = rest
+            .split_whitespace()
+            .nth(1)
+            .and_then(|value| value.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if ppid == me {
+            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+            children.push((pid, exe));
+        }
+    }
+    children.sort();
+    children
+}
+
+#[cfg(target_os = "linux")]
+fn foreign_data_dir_holders(root: &std::path::Path) -> Vec<i32> {
+    let me = std::process::id() as i32;
+    let mut holders = Vec::new();
+    let entries = std::fs::read_dir("/proc").expect("#1316 the audit reads /proc");
+    for entry in entries {
+        let entry = entry.expect("#1316 the audit reads a /proc entry");
+        let Some(pid) = entry.file_name().to_string_lossy().parse::<i32>().ok() else {
+            continue;
+        };
+        if pid == me {
+            continue;
+        }
+        let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+            continue;
+        };
+        for fd in fds {
+            let Ok(fd) = fd else {
+                continue;
+            };
+            if let Ok(target) = std::fs::read_link(fd.path())
+                && target.starts_with(root)
+            {
+                holders.push(pid);
+                break;
+            }
+        }
+    }
+    holders.sort();
+    holders
+}
