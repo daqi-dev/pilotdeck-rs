@@ -1146,3 +1146,103 @@ async fn utf16_command_parsing() {
 fn real_ts_submit_admission_regenerates_identically() {
     crate::test_baseline::regenerates_identically("turn-submit-admission");
 }
+
+/// #1632 r8 sibling P1: `normalize` used to fold a non-string `sessionKey`
+/// into the empty-string owner and bind it there.
+///
+/// TS keys the interaction map by the raw value (SameValueZero), so a
+/// non-string key is a key of its own and never collides with `""`. The
+/// recorded `session-key-null` scenario shows what that costs: `submit_turn
+/// {"sessionKey":null}` stores under `null`, and the following
+/// `reconnect_interaction {"sessionKey":null}` — folded to `""` by the
+/// connection layer — answers `no_pending`. Folding the submit side made Rust
+/// answer `reconnected`/`stale_binding` there, a divergence in the opposite
+/// direction of the one registered in A7.8-INTERACTION-NONSTRING-OWNER-001.
+///
+/// The empty-string half is the control: `""` is a real owner in both
+/// implementations, so the same submit still binds it. Without the control the
+/// test would pass vacuously if `normalize` stopped reaching the binding code.
+#[tokio::test]
+async fn a_non_string_session_key_does_not_bind_the_empty_owner() {
+    let interactions = Arc::new(GatewayInteractionCoordinator::default());
+    let mut options =
+        SubmitAdmissionOptions::new(replacement_coordinator(&RecordingStorage::default()));
+    options.interactions = interactions.clone();
+    let admission = GatewaySubmitAdmission::new(options);
+    let submit = |session: Value| {
+        js(&json!({
+            "sessionKey": session,
+            "projectKey": "p",
+            "runId": "r",
+            "message": "hello",
+            "channelKey": "test",
+            "interactionBinding": {"connectionId": "c0", "generation": 1},
+        }))
+    };
+    let empty = || JsString::from("");
+
+    let mut unkeyed = submit(json!(5));
+    let events = admission
+        .normalize(&mut unkeyed)
+        .await
+        .expect("#1632 normalize a non-string session key");
+    assert!(
+        events.is_empty(),
+        "#1632 a fresh non-string owner is not a reconnect gate"
+    );
+    assert!(
+        interactions.get_binding(&empty()).is_none(),
+        "#1632 submit_turn under `5` must not bind the empty owner"
+    );
+
+    let mut keyed = submit(json!(""));
+    let events = admission
+        .normalize(&mut keyed)
+        .await
+        .expect("#1632 normalize the empty session key");
+    assert!(events.is_empty(), "#1632 the empty owner is fresh");
+    assert!(
+        interactions
+            .get_binding(&empty())
+            .is_some_and(|binding| binding.connection_id.equals_str("c0")),
+        "#1632 the empty string is a real owner and still binds"
+    );
+}
+
+/// The other half of the same decision, pinned so it cannot drift in prose:
+/// not binding a non-string key also means the `interaction_reconnect_required`
+/// gate never fires for it. TS stores the binding under the raw key, so a
+/// *second* connection submitting under `5` with a different binding is
+/// rejected there while Rust lets it through. That is a registered,
+/// unrecorded divergence (A7.8-…-R1 范围; #1723), not an accident — giving the
+/// port a raw-value key domain is the structural fix and does not belong to
+/// #1632.
+#[tokio::test]
+async fn a_non_string_owner_does_not_gate_a_second_connection() {
+    let interactions = Arc::new(GatewayInteractionCoordinator::default());
+    let mut options =
+        SubmitAdmissionOptions::new(replacement_coordinator(&RecordingStorage::default()));
+    options.interactions = interactions.clone();
+    let admission = GatewaySubmitAdmission::new(options);
+    let submit = |connection: &str| {
+        js(&json!({
+            "sessionKey": 5,
+            "projectKey": "p",
+            "runId": "r",
+            "message": "hello",
+            "channelKey": "test",
+            "interactionBinding": {"connectionId": connection, "generation": 1},
+        }))
+    };
+    for connection in ["conn-a", "conn-b"] {
+        let mut input = submit(connection);
+        let events = admission
+            .normalize(&mut input)
+            .await
+            .expect("#1632 normalize a non-string session key");
+        assert!(
+            events.is_empty(),
+            "#1632 a non-string owner is never gated (TS would reject {connection})"
+        );
+    }
+}

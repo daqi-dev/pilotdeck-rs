@@ -1139,48 +1139,13 @@ async fn gap_operation_is_typed_and_never_advertised() {
     let _ = std::fs::remove_dir_all(&parent);
 }
 
-// ------------------------------------------------------------ process audit
-
-/// The child processes of this test process: one `/proc/<pid>/stat` ppid scan
-/// with the `/proc/<pid>/exe` of every child.
-#[cfg(target_os = "linux")]
-fn child_processes() -> Vec<(i32, Option<PathBuf>)> {
-    let me = std::process::id() as i32;
-    let mut children = Vec::new();
-    let entries = std::fs::read_dir("/proc").expect("#1349 the audit reads /proc");
-    for entry in entries {
-        let entry = entry.expect("#1349 the audit reads a /proc entry");
-        let Some(pid) = entry.file_name().to_string_lossy().parse::<i32>().ok() else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-            continue;
-        };
-        let Some((_, rest)) = stat.rsplit_once(')') else {
-            continue;
-        };
-        // After `comm)` come state and ppid.
-        let Some(ppid) = rest
-            .split_whitespace()
-            .nth(1)
-            .and_then(|value| value.parse::<i32>().ok())
-        else {
-            continue;
-        };
-        if ppid == me {
-            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
-            children.push((pid, exe));
-        }
-    }
-    children.sort();
-    children
-}
-
 /// #1349: the module-host surface serves describe and call from the Rust
 /// host alone. The audited requests go through a real TCP listener with the
 /// native provider (the real SkillManager and the real `config::load`), and
-/// the child-process set is the same before and after, with no node
-/// executable among them — no TS process participates. The audit runs in an
+/// the window adds no child process and observes no node executable — no TS
+/// process participates. (The end snapshot is judged as a subset of the
+/// before set, not by equality: a child that merely *exits* during the window
+/// was not spawned by this exchange.) The audit runs in an
 /// owned rerun of this test binary (the #335 deleted-cwd audit's pattern):
 /// this lib shares one process with sibling tests that do spawn children,
 /// which would make the before/after comparison race on their activity
@@ -1189,27 +1154,13 @@ fn child_processes() -> Vec<(i32, Option<PathBuf>)> {
 #[tokio::test]
 async fn describe_and_call_spawn_no_children() {
     if std::env::var_os("PDRS_MODULE_HOST_AUDIT_CHILD").is_none() {
-        let output = std::process::Command::new(
-            std::env::current_exe().expect("#1349 the audit rerun binary"),
-        )
-        .args([
-            "--exact",
+        // #1632: same bounded/file-backed/group-owned rerun as the #1316
+        // session-writer audit; `Command::output()` blocked on any descendant
+        // that inherited the pipe write ends.
+        crate::test_process::rerun_audit_case(
             "module_host::tests::describe_and_call_spawn_no_children",
-            "--nocapture",
-            "--test-threads=2",
-        ])
-        .env("PDRS_MODULE_HOST_AUDIT_CHILD", "1")
-        .output()
-        .expect("#1349 run the audit in an owned process");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            crate::test_exact_receipt::single_pass(
-                &output.status,
-                "module_host::tests::describe_and_call_spawn_no_children",
-                &stdout
-            ),
-            "#1349 the audit rerun matched no test:\n{stdout}\n{stderr}"
+            &[("PDRS_MODULE_HOST_AUDIT_CHILD", "1")],
+            "#1349",
         );
         return;
     }
@@ -1223,7 +1174,11 @@ async fn describe_and_call_spawn_no_children() {
         loopback: true,
         static_root: None,
     };
-    let before = child_processes();
+    // The window opens with the sampler's first sweep: the "before" set and the
+    // start of sampling are one observation, and the sampler keeps every pid it
+    // ever sees, so a child that lives and dies inside the exchange cannot slip
+    // between two snapshots (#1632, same toolkit as the #1316 audit).
+    let (audit, children_before) = crate::test_process::TransientAudit::start(parent.clone());
     let principal = r#"{"principal":{"pilotDeckUserId":"u1","tenantId":"t1","actorUserId":"a1","agentId":"audit"}}"#;
     let describe = format!(
         "POST /api/module-host/describe HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: {}\r\n\r\n{}",
@@ -1268,19 +1223,16 @@ async fn describe_and_call_spawn_no_children() {
         "#1349 the audit call serves the native catalog: {}",
         latin1_string(&raw)
     );
-    let after = child_processes();
-    assert_eq!(
-        before, after,
-        "#1349 the module-host describe and call spawn no child processes"
+    let (children_seen, _holders) = audit.finish();
+    // Same verdict as the #1316 audit, from the same place: end snapshot adds
+    // nothing, nothing appeared even transiently, and no child runs node.
+    let failure = crate::test_process::child_spawn_failure(
+        "#1349",
+        "the module-host describe and call",
+        &children_seen,
+        &children_before,
     );
-    for (pid, exe) in after {
-        let exe = exe.map(|path| path.to_string_lossy().into_owned());
-        assert!(
-            !exe.as_deref()
-                .is_some_and(|path| path.to_lowercase().contains("node")),
-            "#1349 no child process runs a node executable (pid {pid}: {exe:?})"
-        );
-    }
+    assert!(failure.is_none(), "{}", failure.unwrap_or_default());
     let _ = std::fs::remove_dir_all(&parent);
 }
 
