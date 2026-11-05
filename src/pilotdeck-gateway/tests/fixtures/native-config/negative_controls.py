@@ -32,23 +32,28 @@ mutations = [
      CFG + 'set_permission_mode_rejects_invalid_mode',
      '#1310 set_permission_mode invalid mode'),
     ('mode-whitelist-narrowed', CONFIG,
-     '                        m.equals_str("default")\n                            || m.equals_str("plan")',
-     '                        m.equals_str("plan")',
+     '                                .any(|allowed| mode.equals_str(allowed))',
+     '                                .any(|allowed| *allowed != "default" && mode.equals_str(allowed))',
      CFG + 'set_permission_mode_accepts_every_ts_mode',
      '#1455 set_permission_mode accepts every TS mode'),
+    ('permission-nonstring-mode-rendered-empty', CONFIG,
+     'params.get("mode").unwrap_or(&JsValue::Undefined),',
+     'params.get("mode").filter(|v| v.as_string().is_some()).unwrap_or(&JsValue::Undefined),',
+     CFG + 'set_permission_mode_nonstring_mode_message_matches_ts',
+     '#1455 set_permission_mode non-string mode renders its JS ToString form'),
     ('permission-missing-mode-rendered-empty', CONFIG,
      'params.get("mode").unwrap_or(&JsValue::Undefined),',
      'params.get("mode").unwrap_or(&JsValue::Null),',
      CFG + 'set_permission_mode_missing_mode_message_matches_ts',
      '#1455 set_permission_mode missing mode renders undefined'),
     ('permission-session-key-gate-inserted', CONFIG,
-     '                    let mode = params.get("mode").and_then(JsValue::as_string);',
-     '                    if !is_trimmed_non_empty(params.get("sessionKey")) {\n                        return Err(error("INVALID_SESSION_KEY", "sessionKey is required."));\n                    }\n                    let mode = params.get("mode").and_then(JsValue::as_string);',
+     '                    if !mode_ok {',
+     '                    if !is_trimmed_non_empty(params.get("sessionKey")) {\n                        return Err(error("INVALID_SESSION_KEY", "sessionKey is required."));\n                    }\n                    if !mode_ok {',
      CFG + 'set_permission_mode_missing_session_key_hits_unavailable',
      '#1455 set_permission_mode missing sessionKey is unavailable, not INVALID_SESSION_KEY'),
     ('permission-busy-before-mode', CONFIG,
-     '                    let mode = params.get("mode").and_then(JsValue::as_string);',
-     '                    if params.get("sessionKey").and_then(JsValue::as_string).is_some_and(|k| self.owner.has_active_turn(k)) {\n                        return Err(error("SESSION_BUSY", "Cannot change permission mode during an active turn."));\n                    }\n                    let mode = params.get("mode").and_then(JsValue::as_string);',
+     '                    if !mode_ok {',
+     '                    if params.get("sessionKey").and_then(JsValue::as_string).is_some_and(|k| self.owner.has_active_turn(k)) {\n                        return Err(error("SESSION_BUSY", "Cannot change permission mode during an active turn."));\n                    }\n                    if !mode_ok {',
      CFG + 'set_permission_mode_invalid_mode_wins_over_busy',
      '#1455 set_permission_mode mode gate precedes the busy gate'),
     ('permission-busy-gate-removed', CONFIG,
@@ -70,6 +75,11 @@ mutations = [
      '                        .filter(|_| true)\n',
      CFG + 'seed_read_state_rejects_blank_session_key',
      '#1455 seed_read_state rejects the blank key'),
+    ('seed-key-presence-gate-removed', CONFIG,
+     '                        .cloned()\n                        .ok_or_else(|| error("INVALID_SESSION_KEY", "sessionKey is required."))?;',
+     '                        .cloned()\n                        .unwrap_or_default();',
+     CFG + 'seed_read_state_requires_session_key',
+     '#1310 seed_read_state missing sessionKey'),
     ('seed-path-gate-removed', CONFIG, '                    if !is_trimmed_non_empty(params.get("path")) {', '                    if false {',
      CFG + 'seed_read_state_requires_path',
      '#1310 seed_read_state missing path'),
@@ -134,6 +144,14 @@ def mutate(case, original):
     return original.replace(case.old, case.new, 1)
 
 
+def write_atomic(path, data):
+    """Replace the source in one rename so a concurrent reader never sees a
+    half-written file (only the old or the mutated bytes) -- #1455 r2 review."""
+    tmp = path.with_name(path.name + '.negctl.tmp')
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
 def main():
     args = sys.argv[1:]
     compile_only = '--compile-only' in args
@@ -194,7 +212,7 @@ def main():
                         changed = mutate(case, originals[case.path].decode())
                         if not compile_only and not passed(run(case.mutation + '-positive', args), case.test):
                             raise RuntimeError('#1455 positive control failed')
-                        case.path.write_text(changed)
+                        write_atomic(case.path, changed.encode())
                         compiled = run(case.mutation + '-compile', ['--no-run'])
                         row['compiled'] = compiled.returncode == 0
                         if not row['compiled']:
@@ -207,7 +225,7 @@ def main():
                         row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                     finally:
                         phase = 'restore'
-                        case.path.write_bytes(originals[case.path])
+                        write_atomic(case.path, originals[case.path])
                         if case.path.read_bytes() != originals[case.path]:
                             raise RuntimeError('#1455 source restoration failed')
                         phase = 'body'

@@ -4,7 +4,7 @@
 
 ## 跑法
 
-先提交（`mutating_sources` 要求被保护源码逐字节等于 `HEAD`，未提交的树会被拒）。运行期间这棵树必须独占：变异体写在源码位置，同树的并发 `cargo build` / `cargo test` 会读到变异字节，把环境竞争报成假 FAIL。再：
+先提交（`mutating_sources` 要求被保护源码逐字节等于 `HEAD`，未提交的树会被拒）。运行期间这棵树必须独占：变异体写在源码位置，同树的并发 `cargo build` / `cargo test` 会读到变异字节，把环境竞争报成假 FAIL。写入与回滚都走「同目录临时文件 + `os.replace`」，并发读者只会看到旧字节或变异字节，不会读到半截文件；但「读到变异字节」这一半仍只能靠独占树排除，不是本装置能自己保证的。再：
 
 ```
 CARGO_TARGET_DIR=<本树独立 target> \
@@ -29,4 +29,4 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.
 
 脚本复用 `negative_process`（`mutating_sources` / `run_owned` / `wait_for_slot`）与 `negative_suite`（`Case` / `classify` / `invalidate_completed` / `passed` / `publish_summary`），但自管逐案流程：每个变异前要插一次 `cargo test --no-run` 编译门，`negative_suite.run_cases` 当前没有该钩子。
 
-三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。当前 24 条变异。
+三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。当前 26 条变异。
