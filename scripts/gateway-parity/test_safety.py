@@ -2776,6 +2776,158 @@ class RetirementScoring(unittest.TestCase):
             self.assertIn('absent from the census rows', class2['reason'])
             self._assert_full_faces(self._report_for(row, expected), f'#38 {tag}')
 
+    def test_host_control_survives_null_listeners_and_attributes_the_pid(self):
+        # P1 (#1355 fix-r4d, anthropic boundary #1) + P2 (#1355 fix-r4d,
+        # minimax boundary #3).  Three shapes:
+        #  - `listeners: null` (the probe recorded nothing): pre-fix
+        #    `round_row.get('listeners', {}).get('pid')` raised AttributeError
+        #    and the report collapsed to the 5-key stub.
+        #  - a census whose declared set never held the gateway pid: the
+        #    injection removes nothing, so the class is unestablished.
+        #  - a census holding a leftover undeclared row *besides* the gateway
+        #    pid: emptying the declared set would fail on that row alone
+        #    (false PASS); the class must be attributed to the gateway pid.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['listeners'] = None
+        controls = self.session._retirement_controls(row, expected)
+        class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+        self.assertEqual(class2['status'], 'NOT_APPLICABLE', f'#39 null listeners: {class2}')
+        self.assertIn('absent from the census rows', class2['reason'])
+        self._assert_full_faces(self._report_for(row, expected), '#39 null listeners')
+
+        row = self._stream_ok_round_row()
+        row['census'] = {'rows': [{'pid': 7}], 'declared': [], 'declaredAlive': True}
+        controls = self.session._retirement_controls(row, expected)
+        class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+        self.assertEqual(class2['status'], 'NOT_APPLICABLE', f'#39 pid never declared: {class2}')
+        self.assertIn("not in the round's declared owned set", class2['reason'])
+
+        row = self._stream_ok_round_row()
+        row['census'] = {'rows': [{'pid': 7}, {'pid': 59999}], 'declared': [7],
+                         'declaredAlive': True}
+        # The round's own census already fails on the leftover row; the class
+        # is still establishable because exactly the gateway pid becomes
+        # undeclared.  A blanket "census must be clean" rule would instead
+        # report a false NOT_APPLICABLE here.
+        self.assertEqual(
+            self.session._retirement_census_verdict(row['census'])['status'], 'FAIL')
+        controls = self.session._retirement_controls(row, expected)
+        class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+        self.assertEqual(class2['status'], 'PASS', f'#39 leftover row: {class2}')
+        report = self._report_for(row, expected)
+        for face in self.REPORT_FACES:
+            self.assertIn(face, report, f'#39 leftover row lacks face {face}')
+        # All six classes are established on this round, so the controls face
+        # is a PASS even though the round's own census (correctly) fails.
+        self.assertEqual(report['controls']['status'], 'PASS', report['controls'])
+
+    def test_uniform_unavailable_control_judges_the_outcome_dimension(self):
+        # P1 (#1355 fix-r4d, minimax boundary #1/#2): the "did the injection
+        # land" test used to be a whole-round diff, so a frame flip made a
+        # round with untouched outcomes look mutated.  Both sides were wrong:
+        # outcomes already uniform + an ok:true frame scored the round's own
+        # UNIFORM_UNAVAILABLE as a control PASS, and zero outcomes + an ok:true
+        # frame scored an unestablishable class FAIL.
+        expected = ['run_get']
+        send = {'seq': 1, 'connection': 1, 'direction': 'send',
+                'frame': {'type': 'request', 'id': 'id-get', 'method': 'run_get'}}
+        ok_response = {'seq': 2, 'connection': 1, 'direction': 'receive',
+                       'frame': {'type': 'response', 'id': 'id-get', 'ok': True, 'result': {}}}
+        contradictory = [{'method': 'run_get', 'outcome': 'error',
+                          'errorCode': 'CAPABILITY_UNAVAILABLE', 'shape': 'request'}]
+        row = self._with_round_faces(self._round_row(contradictory, [send, ok_response]), 'round-01')
+        original = self.session.score_retirement_round(row, expected)
+        self.assertIn('UNIFORM_UNAVAILABLE', [p['rule'] for p in original['rules']],
+                      f'#40 the violation must be the round\'s own: {original["rules"]}')
+        controls = self.session._retirement_controls(row, expected)
+        class3 = next(c for c in controls['classes'] if c['class'] == 'UNIFORM_UNAVAILABLE')
+        self.assertEqual(class3['status'], 'NOT_APPLICABLE', f'#40 contradictory: {class3}')
+        self.assertIn('changes no outcome', class3['reason'])
+        self._assert_full_faces(self._report_for(row, expected), '#40 contradictory')
+
+        for tag, frames in (('ok:true frame', [send, ok_response]),
+                            ('no ok:true frame', [send])):
+            row = self._with_round_faces(self._round_row([], frames), 'round-01')
+            controls = self.session._retirement_controls(row, expected)
+            class3 = next(c for c in controls['classes'] if c['class'] == 'UNIFORM_UNAVAILABLE')
+            self.assertEqual(class3['status'], 'NOT_APPLICABLE', f'#40 zero outcomes {tag}: {class3}')
+            self.assertIn('recorded no method outcome', class3['reason'])
+            self._assert_full_faces(self._report_for(row, expected), f'#40 zero outcomes {tag}')
+
+    def test_forwarding_control_unavailable_on_an_unobservable_sample(self):
+        # P1 (#1355 fix-r4d, same family as minimax boundary #3): class 4 used
+        # to rebuild the observation from `rows` only, dropping the round's
+        # commandStatus — a failed lsof then scored a fabricated sample side.
+        # The whole observation is kept, and an unobservable one leaves the
+        # class unestablished instead of PASS.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['connections'] = {'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'}
+        controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 failed lsof: {class4}')
+        self.assertIn('unobservable', class4['reason'])
+        self._assert_full_faces(self._report_for(row, expected), '#41 failed lsof')
+        # Positive side: the same round with a usable sample still passes.
+        controls = self.session._retirement_controls(self._stream_ok_round_row(), expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'PASS', f'#41 usable sample: {class4}')
+
+    def test_control_attribution_requires_the_injected_object(self):
+        # P1 (#1355 fix-r4d): a control PASS must be attributed to the object
+        # the injection touched, not to a rule name.  Both directions are
+        # exercised with a drifted scorer (a stand-in for the strip helpers
+        # and the scorer disagreeing about what they report):
+        #  - the rule reports the same problem for a *different* method: the
+        #    injection was not caught, so the class is FAIL, never PASS;
+        #  - the original round already reports the injected pair: the FAIL
+        #    belongs to the round, so the class is NOT_APPLICABLE.
+        expected = ['submit_turn', 'run_get']
+        real = self.session.score_retirement_round
+
+        def drifted_by_method(round_row, exp):
+            verdict = real(round_row, exp)
+            for problem in verdict['rules']:
+                if problem['rule'] == 'EVIDENCE_BACKING':
+                    problem['detail'] = [{'method': 'run_get', 'problem': 'send frame missing'}]
+            return verdict
+
+        row = self._stream_ok_round_row()
+        with patch.object(self.session, 'score_retirement_round', side_effect=drifted_by_method):
+            controls = self.session._retirement_controls(row, expected)
+        classes = {c['class']: c['status'] for c in controls['classes']}
+        for name in ('TS_FALLBACK', 'STREAM_ERROR_NO_FRAME', 'STREAM_OK_NON_FINAL'):
+            self.assertEqual(classes[name], 'FAIL', f'#42a {name}: {controls}')
+
+        def drifted_preexisting(round_row, exp):
+            base = real(round_row, exp)
+            rules = list(base['rules']) + [
+                {'rule': 'EVIDENCE_BACKING',
+                 'detail': [{'method': 'submit_turn', 'problem': 'send frame missing'}]}]
+            return {'round': base['round'], 'status': 'FAIL', 'rules': rules,
+                    'executed': base['executed'], 'methodVerdicts': base['methodVerdicts'],
+                    'driverExitCode': base['driverExitCode']}
+
+        with patch.object(self.session, 'score_retirement_round', side_effect=drifted_preexisting):
+            controls = self.session._retirement_controls(row, expected)
+        class1 = next(c for c in controls['classes'] if c['class'] == 'TS_FALLBACK')
+        self.assertEqual(class1['status'], 'NOT_APPLICABLE', f'#42b: {class1}')
+        self.assertIn('already reports', class1['reason'])
+
+        #  - the census verdict stops naming the injected row: a FAIL whose
+        #    reported object is not the gateway pid must not be credited to
+        #    the declared-set injection.
+        real_census = self.session._retirement_census_verdict
+
+        def drifted_census(census):
+            return {**real_census(census), 'undeclared': []}
+
+        with patch.object(self.session, '_retirement_census_verdict', side_effect=drifted_census):
+            controls = self.session._retirement_controls(self._stream_ok_round_row(), expected)
+        class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+        self.assertEqual(class2['status'], 'FAIL', f'#42c: {class2}')
+
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for
         # COVERAGE and is itself an EVIDENCE_BACKING violation.
