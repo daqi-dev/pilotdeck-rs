@@ -90,15 +90,26 @@ all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle
 | `2` | 从未真正开跑，**本轮没有写过任何证据**：变异名非法、输出目录已存在、缺 `CARGO_TARGET_DIR`、基线无法解析、marker 不指向真实 oracle 行、表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7` 与冻结名册 `EXPECTED_NAMES`）、`MARKERS` 与变异表不互相覆盖 |
 | `42` | 全杀但基线不是 HEAD，非宿主证据 |
 
-「输出目录已存在」是唯一会带着**上一轮**文件的 `2`：`runId` 是「基线前缀 + 随机 nonce」，
-本轮没有 nonce 可对，所以目录里任何文件都不是本轮的，别拿它当结论。其余 `2` 都在第一
-次写盘之前返回，目录是空的。
+「输出目录已存在」是唯一会带着**别的运行**留下的文件的 `2`：`runId` 是「基线前缀 + 随机
+nonce」，本轮没有 nonce 可对，所以目录里任何文件都不是本轮的，别拿它当结论。那些文件
+可能属于更早的一轮，也可能是**并发**另一轮正在写（路径撞车）；本轮一个字都没写。反过来，
+一次 `2` 拒绝会留下空目录，用同一路径重跑仍会撞「目录已存在」——那时目录里没有文件，
+换新目录即可。其余 `2` 都在第一次写盘之前返回，目录是空的。
+
+被信号直接杀死（SIGKILL，退出码 137）不在本表：`summary.json` 停在最后一次原子发布的
+状态，`complete` 是 `false` 就说明这一轮没跑完。
 
 `summary.json` 是对象：`runId`（与 `baseline.json` 同代）、`registeredTotal`、
 `selectedTotal`、`complete`、`counts`、`results`；跑动中每轮都会原子重写一次且
-`complete: false`，轮询读者必须看到 `complete: true` 才算一份完整结论。收尾的恢复校验
-失败时本脚本会把已发布的 `complete: true` 降回 `false` 再抛出，所以「目录里是
-`complete: true`」与「树已按字节还原」是同一件事。
+`complete: false`，轮询读者必须看到 `complete: true` 才算一份完整结论。
+
+发布 `complete: true` 之前，本脚本会把每个被变异的源文件再读一遍、与快照逐字节比对；
+退出 with 块时 `mutating_sources` 还会做一次权威的恢复 + 校验。**进程退出之后**，
+「目录里是 `complete: true`」与「树已按字节还原」是同一件事：收尾校验失败、或收尾期间
+收到 `KeyboardInterrupt`，脚本都会把已发布的 `complete: true` 改回 `false` 再抛；连这次
+改写本身都失败（例如磁盘满）时，它会删掉 `summary.json` 并在 stderr 说明，绝不把绿结论
+留在脏树上。运行**期间**仍有极短窗口（发布到退出 with 块之间），所以按目录轮询的读者应
+以「进程已退出」为前提——退出码是本脚本的第一判据。
 `baseline.json` 记同一 `runId`、基线 SHA 与来源、`registeredTotal` /
 `selectedTotal` / `selected`（子集运行不再与全量同形）。
 所有证据文件（`summary.json` / `baseline.json` / `baseline-replay.log` / 逐变异 `.patch` / `.log`）

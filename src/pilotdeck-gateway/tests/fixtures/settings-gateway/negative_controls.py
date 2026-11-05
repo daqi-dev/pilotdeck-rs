@@ -192,18 +192,24 @@ if set(MARKERS) != set(REGISTERED_NAMES):
            f' missing={sorted(set(REGISTERED_NAMES) - set(MARKERS))}'
            f' extra={sorted(set(MARKERS) - set(REGISTERED_NAMES))}')
 selected = sys.argv[2:]
-if selected:
-    # #1538: `select` raises on an unknown name instead of `assert`-ing: under
-    # `python3 -O` an assert is stripped, a misspelt name silently selected
-    # nothing, and the loop below ran zero mutants, printed `0/0 killed` and
-    # exited 0. It also reports the names that are actually unknown rather than
-    # echoing the whole selection, and folds a repeated name instead of calling
-    # it unknown. Exit code 2 keeps "never ran" distinguishable from "ran and
-    # did not kill" (1) for the host gate.
-    try:
-        mutations = select(mutations, selected, always=())
-    except ValueError as error:
-        refuse(f'#1538 {error}')
+# #1538 fix-r5 (MiniMax sibling P1): the runtime selection lives in `rows`,
+# never back in `mutations`. `anchor_selfcheck.py` only accepts a mutation
+# table whose every assignment is a literal list / name / comprehension, so
+# `mutations = select(...)` was an `unsupported mutation table` error and the
+# anchor check (and with it CI) has been red since fix-r1 introduced it. The
+# table itself stays the literal declaration the checker audits; the subset the
+# run actually executes is a separate name.
+# `select` raises on an unknown name instead of `assert`-ing: under
+# `python3 -O` an assert is stripped, a misspelt name silently selected
+# nothing, and the loop below ran zero mutants, printed `0/0 killed` and
+# exited 0. It also reports the names that are actually unknown rather than
+# echoing the whole selection, and folds a repeated name instead of calling
+# it unknown. Exit code 2 keeps "never ran" distinguishable from "ran and
+# did not kill" (1) for the host gate.
+try:
+    rows = select(mutations, selected, always=())
+except ValueError as error:
+    refuse(f'#1538 {error}')
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     refuse('#1538 CARGO_TARGET_DIR must be supplied by the caller')
@@ -261,7 +267,7 @@ def publish_summary(complete):
     atomic_write(out / 'summary.json', json.dumps({
         'runId': run_id,
         'registeredTotal': REGISTERED_TOTAL,
-        'selectedTotal': len(mutations),
+        'selectedTotal': len(rows),
         'complete': complete,
         'counts': counts,
         'results': summary,
@@ -279,13 +285,13 @@ def publish_baseline():
         'nonHeadBaseline': baseline_source != 'HEAD',
         'hostEvidence': baseline_source == 'HEAD',
         'registeredTotal': REGISTERED_TOTAL,
-        'selectedTotal': len(mutations),
-        'selected': [row[0] for row in mutations],
+        'selectedTotal': len(rows),
+        'selected': [row[0] for row in rows],
     }, ensure_ascii=False, indent=2) + '\n')
 
 
-class demote_on_restore_failure:
-    """#1538 fix-r4 (boundary P1): never leave a green verdict on a dirty tree.
+def withdraw_green_verdict(raised):
+    """#1538 fix-r4/r5: never leave a green verdict on a dirty tree.
 
     fix-r3 moved the final `publish_summary(complete=True)` inside the
     `mutating_sources` block so it lands while the tree lock is still held —
@@ -296,171 +302,194 @@ class demote_on_restore_failure:
     polls the directory reads a clean verdict for a run that never restored the
     source. Demote the flag on the way out and let the original error through.
 
-    `SystemExit` from a completed-but-failed run is not caught here: that run
-    really did finish, and its `complete: true` is the truth.
+    #1538 fix-r5 (MiniMax boundary P1): this is a plain function called from an
+    `except BaseException` around the `with mutating_sources(...)` block, not a
+    wrapper context manager. Two reasons. (a) `anchor_selfcheck.py` only
+    accepts a with-item whose expression is `mutating_sources(...)` itself, so
+    a wrapper made the anchor checker report `unsupported snapshot binding` and
+    turned CI red. (b) A `KeyboardInterrupt` landing inside the restore is not
+    an `Exception`, and it is exactly the case where the source file may be
+    left truncated while `summary.json` still says `complete: true`.
+
+    `SystemExit` is the one thing not withdrawn: a run that reached its verdict
+    (`verdict_exit` -> 1, non-HEAD baseline -> 42) really did finish, and its
+    `complete: true` is the truth.
     """
-
-    def __init__(self, manager):
-        self.manager = manager
-
-    def __enter__(self):
-        return self.manager.__enter__()
-
-    def __exit__(self, exc_type, exc, traceback):
+    if not summary or isinstance(raised, SystemExit):
+        # Only a run that actually produced rows can have published a
+        # `complete: true` to withdraw; a failure before the first mutant
+        # leaves no `summary.json` at all, which the README promises.
+        return
+    try:
+        publish_summary(complete=False)
+    except OSError as error:
+        # #1538 fix-r5 (three roles): swallowing this left the stale
+        # `complete: true` in place — the exact state this function exists to
+        # prevent. Say so, and remove the file: `unlink` needs no space, so it
+        # still works on the full disk that caused the failure.
+        print(f'#1538 could not rewrite summary.json ({error}); removing it so no '
+              f'reader can take the withdrawn verdict as final', file=sys.stderr)
         try:
-            return self.manager.__exit__(exc_type, exc, traceback)
-        except Exception:
-            # Only a run that actually produced rows can have published a
-            # `complete: true` to demote; a failure before the first mutant
-            # leaves no `summary.json` at all, which the README promises.
-            if summary:
-                try:
-                    publish_summary(complete=False)
-                except OSError:
-                    pass
-            raise
+            (out / 'summary.json').unlink()
+        except OSError:
+            pass
 
 
-with demote_on_restore_failure(
-        mutating_sources(root, sorted({source / filename for _, filename, *_ in mutations}),
-                         baseline=baseline_sha)) as snapshots:
-    def run(tests):
-        # libtest takes several full-name filters after `--` (one positional
-        # TESTNAME per cargo invocation); `--exact` keeps them literal.
-        result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
-                            '-p', 'pilotdeck-gateway', '--lib', '--', *tests,
-                            '--exact'], cwd=root, env=env, timeout=240)
-        return result.returncode, result.stdout + result.stderr
+try:
+    with mutating_sources(root, sorted({source / filename for _, filename, *_ in rows}),
+                          baseline=baseline_sha) as snapshots:
+        def run(tests):
+            # libtest takes several full-name filters after `--` (one positional
+            # TESTNAME per cargo invocation); `--exact` keeps them literal.
+            result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                                '-p', 'pilotdeck-gateway', '--lib', '--', *tests,
+                                '--exact'], cwd=root, env=env, timeout=240)
+            return result.returncode, result.stdout + result.stderr
 
-    # An unmutated baseline must be green first, or every verdict is INVALID.
-    wait_for_slot(slot_script)
-    code, log = run([REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS])
-    atomic_write(out / 'baseline-replay.log', baseline_line + '\n\n' + log)
-    if code == 0 and all(baseline_passed(log, test)
-                         for test in {REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS}):
-        print('baseline replay: PASS', flush=True)
-    else:
-        print('baseline replay: INVALID', flush=True)
-        # A broken baseline is "ran, no verdict": publish the run's identity
-        # next to the log so the exit-1 evidence directory is not empty.
-        publish_baseline()
-        sys.exit(1)
-
-    for name, filename, old, new, test in mutations:
-        path = source / filename
-        original = snapshots[path]
-        before = hashlib.sha256(original).hexdigest()
-        try:
-            # The coverage gate above already proved every row has a marker, so
-            # this is a plain lookup: `MARKERS.get(name, '')` used to hand the
-            # kill test an empty anchor, and `'' in evidence` is true for every
-            # string — the marker check silently disappeared exactly when it
-            # mattered (#1538 fix-r3, both families).
-            marker = MARKERS[name]
-            content = original.decode()
-            # An expired anchor is an error exit, never a SURVIVED verdict.
-            # #1538: explicit, so `-O` cannot strip the check.
-            if content.count(old) != 1:
-                raise RuntimeError(
-                    f'#1318 {name}: expected one anchor, found {content.count(old)}')
-            changed = content.replace(old, new, 1)
-            atomic_write(out / f'{name}.patch', ''.join(difflib.unified_diff(
-                content.splitlines(True), changed.splitlines(True),
-                fromfile=filename, tofile=filename)))
-            wait_for_slot(slot_script)
-            path.write_text(changed)
-            code, log = run([test])
-            atomic_write(out / f'{name}.log', baseline_line + '\n\n' + log)
-            evidence = panic_evidence(log, test)
-            killed = (code == 101
-                      and named_test_failed(log, test)
-                      and marker in evidence
-                      and '#1318' in evidence
-                      and 'could not compile' not in log)
-            failure = next((line.strip() for line in log.splitlines()
-                            if 'panicked at' in line or 'assertion' in line), '')
-            status = 'KILLED' if killed else (
-                'SURVIVED' if code == 0 else 'INVALID')
-            summary.append(dict(name=name, test=test, status=status,
-                                returncode=code, failure=failure,
-                                marker=marker, sourceSha256=before,
-                                baseline=baseline_sha,
-                                baselineSource=baseline_source,
-                                hostEvidence=baseline_source == 'HEAD'))
-            print(f'{name}: {status} rc={code} {failure}', flush=True)
-            if status != 'KILLED':
-                failures.append(name)
-        except Exception as error:
-            summary.append(dict(name=name, test=test, status='INVALID',
-                                reason=f'{type(error).__name__}: {error}',
-                                sourceSha256=before,
-                                baseline=baseline_sha,
-                                baselineSource=baseline_source,
-                                hostEvidence=baseline_source == 'HEAD'))
-            failures.append(name)
-        finally:
-            # #1538 fix-r2 (concurrency P2): the restore write and the re-read
-            # are bare calls in a `finally`; if either raised (ENOSPC, EIO,
-            # the file replaced by a directory), control left the block and
-            # both evidence writes below were skipped, leaving the previous
-            # all-KILLED prefix on disk as the last word. Capture the failure
-            # instead, record it, publish, then raise.
-            restore_error = None
-            try:
-                path.write_bytes(original)
-                restored = hashlib.sha256(path.read_bytes()).hexdigest() == before
-            except OSError as error:
-                restored = False
-                restore_error = error
-            if not restored:
-                # #1538 fix-r1 (boundary P1): record the broken round *before*
-                # raising. Raising first skipped both evidence writes, so the
-                # files ended with the previous mutant and read as all-green.
-                detail = (f'restore failed: {restore_error}'
-                          if restore_error is not None
-                          else 'restore failed: source bytes differ')
-                row = dict(name=name, test=test, status='INVALID',
-                           reason=detail,
-                           sourceSha256=before,
-                           baseline=baseline_sha,
-                           baselineSource=baseline_source,
-                           hostEvidence=baseline_source == 'HEAD')
-                if summary and summary[-1]['name'] == name:
-                    previous = summary[-1].get('reason')
-                    if previous:
-                        row['reason'] = f'{previous}; {detail}'
-                    summary[-1] = row
-                else:
-                    summary.append(row)
-                failures.append(name)
-            publish_summary(complete=False)
+        # An unmutated baseline must be green first, or every verdict is INVALID.
+        wait_for_slot(slot_script)
+        code, log = run([REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS])
+        atomic_write(out / 'baseline-replay.log', baseline_line + '\n\n' + log)
+        if code == 0 and all(baseline_passed(log, test)
+                             for test in {REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS}):
+            print('baseline replay: PASS', flush=True)
+        else:
+            print('baseline replay: INVALID', flush=True)
+            # A broken baseline is "ran, no verdict": publish the run's identity
+            # next to the log so the exit-1 evidence directory is not empty.
             publish_baseline()
-            if not restored:
-                raise RuntimeError(f'#1318 restore failed: {filename}')
-    # #1538 fix-r3 (concurrency P2): the final verdict is published *inside*
-    # the `mutating_sources` block on purpose. Outside it the tree lock is
-    # already released, so another run may start mutating (and rewriting its
-    # own evidence) while this one is still writing `complete: true` — the
-    # reader would see a finished-looking summary whose tree is no longer the
-    # one that produced it.
-    publish_summary(complete=True)
-    counts = {state: sum(row['status'] == state for row in summary)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
-    # `verdict_exit` is the shared rule (a zero-row run is a zero denominator,
-    # never a pass), so this script cannot drift back to `if failures:` alone.
-    if verdict_exit(summary, key='status') != 0:
-        print(f'not killed: {", ".join(failures)}', file=sys.stderr)
-        sys.exit(1)
-    print(f'{len(summary)}/{len(mutations)} selected ({REGISTERED_TOTAL} registered) killed; '
-          f'every source restored byte-for-byte '
-          f'against baseline {baseline_sha} ({baseline_source})', flush=True)
-    if baseline_source != 'HEAD':
-        # Even a fully-killed run against a non-HEAD baseline is not host
-        # evidence (review fix-r3): fail closed with the dedicated code and say
-        # so on stdout, so a sandbox stash-commit run can never exit like a
-        # green host run.
-        print(f'NON-HOST EVIDENCE (非宿主证据): baseline {baseline_sha} came from '
-              f'{baseline_source}, not HEAD; the host gate only trusts HEAD '
-              f'evidence; exit {NON_HEAD_EXIT}', flush=True)
-        sys.exit(NON_HEAD_EXIT)
+            sys.exit(1)
+
+        for name, filename, old, new, test in rows:
+            path = source / filename
+            original = snapshots[path]
+            before = hashlib.sha256(original).hexdigest()
+            try:
+                # The coverage gate above already proved every row has a marker, so
+                # this is a plain lookup: `MARKERS.get(name, '')` used to hand the
+                # kill test an empty anchor, and `'' in evidence` is true for every
+                # string — the marker check silently disappeared exactly when it
+                # mattered (#1538 fix-r3, both families).
+                marker = MARKERS[name]
+                content = original.decode()
+                # An expired anchor is an error exit, never a SURVIVED verdict.
+                # #1538: explicit, so `-O` cannot strip the check.
+                if content.count(old) != 1:
+                    raise RuntimeError(
+                        f'#1318 {name}: expected one anchor, found {content.count(old)}')
+                changed = content.replace(old, new, 1)
+                atomic_write(out / f'{name}.patch', ''.join(difflib.unified_diff(
+                    content.splitlines(True), changed.splitlines(True),
+                    fromfile=filename, tofile=filename)))
+                wait_for_slot(slot_script)
+                path.write_text(changed)
+                code, log = run([test])
+                atomic_write(out / f'{name}.log', baseline_line + '\n\n' + log)
+                evidence = panic_evidence(log, test)
+                killed = (code == 101
+                          and named_test_failed(log, test)
+                          and marker in evidence
+                          and '#1318' in evidence
+                          and 'could not compile' not in log)
+                failure = next((line.strip() for line in log.splitlines()
+                                if 'panicked at' in line or 'assertion' in line), '')
+                status = 'KILLED' if killed else (
+                    'SURVIVED' if code == 0 else 'INVALID')
+                summary.append(dict(name=name, test=test, status=status,
+                                    returncode=code, failure=failure,
+                                    marker=marker, sourceSha256=before,
+                                    baseline=baseline_sha,
+                                    baselineSource=baseline_source,
+                                    hostEvidence=baseline_source == 'HEAD'))
+                print(f'{name}: {status} rc={code} {failure}', flush=True)
+                if status != 'KILLED':
+                    failures.append(name)
+            except Exception as error:
+                summary.append(dict(name=name, test=test, status='INVALID',
+                                    reason=f'{type(error).__name__}: {error}',
+                                    sourceSha256=before,
+                                    baseline=baseline_sha,
+                                    baselineSource=baseline_source,
+                                    hostEvidence=baseline_source == 'HEAD'))
+                failures.append(name)
+            finally:
+                # #1538 fix-r2 (concurrency P2): the restore write and the re-read
+                # are bare calls in a `finally`; if either raised (ENOSPC, EIO,
+                # the file replaced by a directory), control left the block and
+                # both evidence writes below were skipped, leaving the previous
+                # all-KILLED prefix on disk as the last word. Capture the failure
+                # instead, record it, publish, then raise.
+                restore_error = None
+                try:
+                    path.write_bytes(original)
+                    restored = hashlib.sha256(path.read_bytes()).hexdigest() == before
+                except OSError as error:
+                    restored = False
+                    restore_error = error
+                if not restored:
+                    # #1538 fix-r1 (boundary P1): record the broken round *before*
+                    # raising. Raising first skipped both evidence writes, so the
+                    # files ended with the previous mutant and read as all-green.
+                    detail = (f'restore failed: {restore_error}'
+                              if restore_error is not None
+                              else 'restore failed: source bytes differ')
+                    row = dict(name=name, test=test, status='INVALID',
+                               reason=detail,
+                               sourceSha256=before,
+                               baseline=baseline_sha,
+                               baselineSource=baseline_source,
+                               hostEvidence=baseline_source == 'HEAD')
+                    if summary and summary[-1]['name'] == name:
+                        previous = summary[-1].get('reason')
+                        if previous:
+                            row['reason'] = f'{previous}; {detail}'
+                        summary[-1] = row
+                    else:
+                        summary.append(row)
+                    failures.append(name)
+                publish_summary(complete=False)
+                publish_baseline()
+                if not restored:
+                    raise RuntimeError(f'#1318 restore failed: {filename}')
+        # #1538 fix-r3 (concurrency P2): the final verdict is published *inside*
+        # the `mutating_sources` block on purpose. Outside it the tree lock is
+        # already released, so another run may start mutating (and rewriting its
+        # own evidence) while this one is still writing `complete: true` — the
+        # reader would see a finished-looking summary whose tree is no longer the
+        # one that produced it.
+        # #1538 fix-r5 (concurrency P2): re-read every mutated path before saying
+        # the run finished. `mutating_sources` does the authoritative restore +
+        # verify in its own `finally`, and that runs *after* this point, so without
+        # this check a polling reader has a whole block's worth of window in which
+        # `complete: true` describes a tree that is not restored yet. This does not
+        # replace that check (a non-cooperating writer can still race us after it);
+        # it shrinks the window to a handful of syscalls.
+        for path, original in snapshots.items():
+            if path.read_bytes() != original:
+                raise RuntimeError(
+                    f'#1318 source changed before the verdict was published: {path}')
+        publish_summary(complete=True)
+        counts = {state: sum(row['status'] == state for row in summary)
+                  for state in ('KILLED', 'SURVIVED', 'INVALID')}
+        print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
+        # `verdict_exit` is the shared rule (a zero-row run is a zero denominator,
+        # never a pass), so this script cannot drift back to `if failures:` alone.
+        if verdict_exit(summary, key='status') != 0:
+            print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+            sys.exit(1)
+        print(f'{len(summary)}/{len(rows)} selected ({REGISTERED_TOTAL} registered) killed; '
+              f'every source restored byte-for-byte '
+              f'against baseline {baseline_sha} ({baseline_source})', flush=True)
+        if baseline_source != 'HEAD':
+            # Even a fully-killed run against a non-HEAD baseline is not host
+            # evidence (review fix-r3): fail closed with the dedicated code and say
+            # so on stdout, so a sandbox stash-commit run can never exit like a
+            # green host run.
+            print(f'NON-HOST EVIDENCE (非宿主证据): baseline {baseline_sha} came from '
+                  f'{baseline_source}, not HEAD; the host gate only trusts HEAD '
+                  f'evidence; exit {NON_HEAD_EXIT}', flush=True)
+            sys.exit(NON_HEAD_EXIT)
+
+except BaseException as raised:
+    withdraw_green_verdict(raised)
+    raise
