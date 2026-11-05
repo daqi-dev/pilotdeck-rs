@@ -34,10 +34,11 @@
 派单前拿不到真实改动量，所以任务书写 `<!-- pdrs-scope: files=N lines=M est_min=K -->` 声明；没写才退回「约 N 人日」与点名 `*.rs` 路径数。
 
 ```bash
-python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过 / 1 大包缺分段表 / 2 读不了或 scope 写坏
+python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过（含小包）/ 1 大包缺分段表 / 2 读不了、为空或 scope 写坏 / 3 用法错误
 python3 -I scripts/check-taskbook-segments.py --print-skeleton
-python3 -I scripts/test-check-taskbook-segments.py        # 26 条正控 / 负控（负控钉死具体报错文案）
+python3 -I scripts/test-check-taskbook-segments.py        # 52 条正控 / 负控（负控钉死具体报错文案）
 ```
 
-命中大包的任务书必须含 `## 分段交付`（段名 / 涉及文件 / 交付物 / 预估时长 ≤90 min / 段间依赖，≥2 段）与 `## 续跑`（进度文件 + 第 N 段失败从哪继续）。
+命中大包的任务书必须含 `## 分段交付`（段名 / 涉及文件 / 交付物 / 预估时长 ≤90 min / 段间依赖，≥2 段；列序不限，按表头定位）与 `## 续跑`（带目录的实例进度文件路径 + 第 N 段失败从哪继续）。
+占位符按「像占位符」判：尖括号/花括号里含中文或是 `N` / `日期` / `待填` 这类词，外加裸 `...` / `…` / `？？？` / TBD / TODO；`Vec<u8>`、`Result<(), E>`、`<https://…>` 这类仓库常态不误伤。估时区间取最大值、并列求和（`60 min + 40 min` = 100 min，不许当 60 放行），单位只认 min/分钟/m/h/小时。
 `~/ws/pdrs-ops` 的 `dispatch-issue` / `dispatch-fix` / `fix-assemble` 已强制：不合规不启动 worker；`dispatch-resume` 只告警；`round-start` 9d 段每轮兜底。模板见 `~/ws/pdrs-ops/templates/taskbook-segments.md`。
