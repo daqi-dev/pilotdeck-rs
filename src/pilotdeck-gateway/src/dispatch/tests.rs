@@ -798,8 +798,17 @@ fn list_projects_preserves_real_node_scandir_error_suppression() {
         } else if unavailable {
             // Root or a permissive filesystem may ignore chmod denial. Keep
             // recorded error replay below mandatory and report this boundary.
-            eprintln!(
-                "PDRS_UNAVAILABLE real-EACCES: privilege/filesystem permits access; recorded replay required"
+            // #1525: the marker must survive libtest's output capture and must
+            // turn into a hard failure when PDRS_REQUIRE_PERMISSION_FAULTS says
+            // a real EACCES is mandatory on this host.
+            crate::test_skip_line::stderr_skip_line(
+                "PDRS_UNAVAILABLE real-EACCES: privilege/filesystem permits access; recorded replay required\n",
+            );
+            assert!(
+                !crate::test_permission_faults::require_permission_faults(),
+                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the denied list-projects \
+                 probe still succeeds (root or CAP_DAC_OVERRIDE); the real-EACCES branch \
+                 needs an unprivileged host (需要非特权宿主)"
             );
         } else {
             let error = scan.unwrap_err();
