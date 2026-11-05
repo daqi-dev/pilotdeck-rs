@@ -11,6 +11,7 @@ Rust 泛型与 autolink 误伤、--recent 与显式参数的退出码。
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -469,6 +470,30 @@ case("分段文件 + 段 的表头按整格绑列（P2 假 FAIL）", 0,
 - 第 N 段失败：读 progress.md 最后一个 done 段，从 N+1 继续。
 """)
 
+# ---- fix-r12（gate12：GLM boundary P1×2 P2×1 + DeepSeek boundary P0×1 P1×1 P2×1，全部先复现原始 rc）----
+case("小数小时连写 1.5h30m = 120 min（P0 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1.5h30m |"), must=["120 min > 90 min"])
+case("小数小时连写 1.5h40m = 130 min（P0）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1.5h40m |"), must=["130 min > 90 min"])
+case("小数小时连写 1.5h100min = 190 min（P0）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1.5h100min |"), must=["190 min > 90 min"])
+case("万位分组 1,0000 min 不许读成 1 min（P1 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1,0000 min |"), must=["10000 min > 90 min"])
+case("全角万位分组 1，0000 min 同样（P1）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1，0000 min |"), must=["10000 min > 90 min"])
+case("引号裹占位词 \"{name}\" 仍是占位符（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "按 \"{name}\" 填"), must=["占位符"])
+case("引号裹占位词 \"{file}\" 仍是占位符（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "按 \"{file}\" 填"), must=["占位符"])
+case("引号裹占位词 \"{N}\" 仍是占位符（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "按 \"{N}\" 填"), must=["占位符"])
+case("表达式上下文里的命名参数 format!(\"{idx}\") 仍放行（别矫枉过正）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1",
+                                     "`S1-RESULT.md`，改 `format!(\"{idx}\")`"))
+case("Cargo.lock 两段共写也要报（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`Cargo.lock`")
+     .replace("`src/native_http.rs`", "`Cargo.lock`"), must=["共写同一文件"])
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -479,6 +504,11 @@ PARSE_EST = [
     ("60 min + 40 min（最多再补 20 min）", "", 120.0),
     ("1h100min", "", 160.0),
     ("1h130m", "", 190.0),
+    ("1.5h30m", "", 120.0),
+    ("1.5h40m", "", 130.0),
+    ("1.5h100min", "", 190.0),
+    ("1,0000 min", "", 10000.0),
+    ("1，0000 min", "", 10000.0),
     ("1 h 100 min", "", 160.0),
     ("60 至 80 分钟", "", 80.0),
     ("60 到 80 分钟", "", 80.0),
@@ -785,14 +815,22 @@ def run():
         fails += 0 if ok else 1
 
         # 6) scope / 注释扫描必须是线性：修前 2 MiB 病态输入 O(n²)，派单闸门挂死（实测 >120 s）
-        t0 = time.monotonic()
         sc1, err1 = ctbs.parse_scopes("<!--" * 500000)                      # 2 MiB 全未闭合注释
-        sc2, err2 = ctbs.parse_scopes("<!--pdrs-scope files=2 -->" * 60000)  # 6 万条合法 scope
-        dt = time.monotonic() - t0
-        ok = (dt < 10.0 and len(sc2) == 60000 and not err2
+        # 下面两条都**没有换行**：整份文档是一行。修前每条 scope 都切一遍 text[行首:pos]（行首恒 0），
+        # 1.56 MB 实测 1.54 s、2.03 MB 2.6 s（O(n²)）。绝对秒数在满载机器上会飘（load 29 实测同一条 0.72–1.51 s），
+        # 所以判「输入翻倍、耗时 < 3 倍」：修前是 4 倍（平方），修后 ~2 倍（线性），与机器负载无关。
+        one = "<!--pdrs-scope files=2 -->" * 78000      # 2.03 MB / 7.8 万条
+        t0 = time.monotonic()
+        sc2, err2 = ctbs.parse_scopes(one)
+        d1 = time.monotonic() - t0
+        t0 = time.monotonic()
+        sc2b, err2b = ctbs.parse_scopes(one * 2)        # 4.06 MB / 15.6 万条
+        d2 = time.monotonic() - t0
+        ratio = d2 / max(d1, 0.02)
+        ok = (ratio < 3.0 and len(sc2) == 78000 and not err2 and len(sc2b) == 156000 and not err2b
               and ctbs.parse_scopes("<!-- pdrs-scope: files=2")[1])   # 未闭合注释里的 scope 仍要报错
-        print(f"{'PASS' if ok else 'FAIL'}  scope 扫描线性（2 MiB 病态输入 {dt:.2f}s，60k 条={len(sc2)}）："
-              f"err1={len(err1)}")
+        print(f"{'PASS' if ok else 'FAIL'}  scope 扫描线性（2.03 MB {d1:.2f}s → 4.06 MB {d2:.2f}s，"
+              f"比值 {ratio:.1f} <3；60k 条={len(sc2)}）：err1={len(err1)}")
         fails += 0 if ok else 1
 
         # 7) scandir entry 的 is_dir() 抛 OSError 也要 ScanError，不许 traceback 成 rc 1（GLM P3）
@@ -824,6 +862,26 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  scandir entry.is_dir() 抛 OSError → ScanError（不 traceback）")
         fails += 0 if ok else 1
 
+        # 8) `_tmp` 之下的符号链接子目录：`os.walk` 默认不跟随，修前静默漏掉里面的任务书（rc 0 假「没扫到」）
+        symroot = Path(td) / "_build" / "wt-sym" / "_tmp" / "issue-sym"
+        (symroot / "real").mkdir(parents=True, exist_ok=True)
+        (symroot / "real" / "task.md").write_text("# t\n", encoding="utf-8")
+        try:
+            os.symlink(symroot / "real", symroot / "link")
+            made_link = True
+        except (OSError, NotImplementedError):   # 平台不支持符号链接：跳过，不算失败
+            made_link = False
+        ok = True
+        if made_link:
+            try:
+                ctbs._iter_taskbooks(Path(td) / "_build")
+                ok = False                        # 静默漏 = 假 PASS
+            except ctbs.ScanError:
+                ok = True
+        shutil.rmtree(Path(td) / "_build" / "wt-sym", ignore_errors=True)   # 别影响后面扫同一 root 的用例
+        print(f"{'PASS' if ok else 'FAIL'}  _tmp 下符号链接目录 → ScanError（不静默漏）：建链={made_link}")
+        fails += 0 if ok else 1
+
 
     # 命令行契约
     for name, argv, expect in (
@@ -843,7 +901,7 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 36 + len(PARSE_EST)   # 26 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
+    total = len(CASES) + 36 + len(PARSE_EST)   # 26 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 符号链接目录 / 真实 chmod 000 …）+ 10 条命令行契约；两份清单都要与实际 print 行数同源（修前写「26 + 9」，加一条独立检查又不改常数，SUMMARY 就多报一条）
     # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
     for cell, unit, want in PARSE_EST:
         got = ctbs.parse_est(cell, unit)
