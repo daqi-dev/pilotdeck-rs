@@ -748,3 +748,75 @@ async fn persistence_dangling_symlink_cannot_acquire_a_separate_writer_lock() {
     drop((reopened, handle, lease));
     bounded(registry.dispose()).await.unwrap();
 }
+
+// #297 reproduction (A6-recorder P2 row 1). `Recorder::restore`
+// (`TranscriptWriter::restore_recorder_entries`) installs a caller-supplied
+// snapshot over the shared writer without comparing it with the state that
+// writer has already committed. `SessionRuntime.restore` feeds exactly such a
+// snapshot: the entries its `load()` read earlier. A producer that appends
+// through the same writer in between leaves that snapshot stale; restoring it
+// rewinds `sequence`/`last_entry_id`/`entry_ids`, and the next append writes a
+// sequence the persisted log already contains. Nothing reports an error, and
+// the resulting chain can never be loaded again.
+//
+// Implementation-agnostic: the assertion is on the persisted chain, so both a
+// "reject the stale snapshot" fix and a "keep the live state" fix pass it.
+#[tokio::test]
+async fn stale_snapshot_restore_must_not_corrupt_the_transcript_chain() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("stale-restore.jsonl");
+    let first = registry(&scratch, false);
+    let lease = first.acquire(None).unwrap();
+    let handle = resource(&lease);
+    let session = native(&handle)
+        .create_session("s".into(), Some(path.clone()))
+        .expect("#297 seed session");
+    session
+        .recorder
+        .start_turn(&"s".into(), &"t1".into())
+        .expect("#297 seed turn");
+    // `SessionRuntime.restore` runs `load()` here and keeps the entries it read.
+    let stale = session.read().expect("#297 snapshot read").entries;
+    assert_eq!(
+        stale.len(),
+        1,
+        "#297 the snapshot must hold exactly the seed entry"
+    );
+    // A producer appends through the same shared writer before the restore
+    // installs that snapshot.
+    session
+        .recorder
+        .start_turn(&"s".into(), &"t2".into())
+        .expect("#297 append t2");
+    session
+        .recorder
+        .start_turn(&"s".into(), &"t3".into())
+        .expect("#297 append t3");
+    // `SessionRuntime.restore` now installs the stale snapshot and the session
+    // keeps recording. Neither step may damage the chain.
+    let _ = session.recorder.restore(&stale);
+    let _ = session.recorder.start_turn(&"s".into(), &"t4".into());
+    drop(session);
+    drop(handle);
+    drop(lease);
+    bounded(first.dispose()).await.unwrap();
+    drop(first);
+    // Reload: the persisted transcript must still be a valid event log.
+    let second = registry(&scratch, false);
+    let lease = second.acquire(None).unwrap();
+    let handle = resource(&lease);
+    let reopened = native(&handle).create_session("s".into(), Some(path.clone()));
+    let reopened = match reopened {
+        Ok(reopened) => reopened,
+        Err(error) => panic!(
+            "#297 a stale snapshot restore wrote a transcript the reader can no longer load: {error:?}"
+        ),
+    };
+    assert_eq!(
+        reopened.restored.entries.len(),
+        4,
+        "#297 every appended turn must survive a stale restore"
+    );
+    drop((reopened, handle, lease));
+    bounded(second.dispose()).await.unwrap();
+}
