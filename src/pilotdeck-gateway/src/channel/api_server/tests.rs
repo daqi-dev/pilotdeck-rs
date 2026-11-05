@@ -810,6 +810,116 @@ async fn duplicate_chat_is_busy_then_free() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_new_while_busy_never_reroutes_the_chat() {
+    // TS has no await between `activeChats.has` and `mapper.resolve`, so a
+    // rejected duplicate can never touch the routing table. Here the admission
+    // must be authoritative before `mapper.resolve` runs (#1333 concurrency).
+    let latch = Latch::new();
+    let gateway = ScriptedGateway::with_latch(
+        vec![
+            ScriptedTurn {
+                events: vec![json!({"type":"assistant_text_delta","text":"first"})],
+                error: None,
+            },
+            ScriptedTurn {
+                events: vec![json!({"type":"assistant_text_delta","text":"second"})],
+                error: None,
+            },
+        ],
+        Some(latch.clone()),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let started = start(options(&json!({"options":{}}), None), Some(gateway.clone())).await;
+    let addr = started.addr;
+    let first = tokio::spawn(async move {
+        exchange(
+            addr,
+            &ReqSpec::post(
+                "/v1/chat/completions",
+                "chat-new",
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"/new first\"}]}",
+            ),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), latch.wait_started())
+        .await
+        .expect("#1333 first turn started");
+    let busy = exchange(
+        started.addr,
+        &ReqSpec::post(
+            "/v1/chat/completions",
+            "chat-new",
+            "{\"messages\":[{\"role\":\"user\",\"content\":\"/new hijack\"}]}",
+        ),
+    )
+    .await;
+    assert_eq!(
+        busy.status,
+        Some(429),
+        "#1333 a duplicate /new while busy is rejected"
+    );
+    latch.release();
+    let first = first.await.expect("#1333 first request task");
+    assert_eq!(first.status, Some(200), "#1333 first turn completes");
+    let follow = exchange(
+        started.addr,
+        &ReqSpec::post(
+            "/v1/chat/completions",
+            "chat-new",
+            "{\"messages\":[{\"role\":\"user\",\"content\":\"again\"}]}",
+        ),
+    )
+    .await;
+    assert_eq!(follow.status, Some(200), "#1333 follow-up completes");
+    let calls = gateway.calls.lock().expect("#1333 calls");
+    assert_eq!(calls.len(), 2, "#1333 the rejected /new is never submitted");
+    assert_eq!(
+        calls[0]["sessionKey"], calls[1]["sessionKey"],
+        "#1333 a rejected /new must not reroute the chat"
+    );
+}
+
+#[tokio::test]
+async fn falsy_text_parts_match_the_ts_empty_message() {
+    // TS returns `item.text` verbatim and `.filter(Boolean)` drops it, so a
+    // numeric/bool `text` is an empty part -> 400 empty_message, while a
+    // truthy non-string `text` is kept and stringified by `join`.
+    let started = start(options(&json!({"options":{}}), None), None).await;
+    for (index, literal) in ["0", "false"].into_iter().enumerate() {
+        let body = format!(
+            "{{\"messages\":[{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":{literal}}}]}}]}}"
+        );
+        let chat = format!("chat-falsy-{index}");
+        let reply = exchange(
+            started.addr,
+            &ReqSpec::post("/v1/chat/completions", &chat, &body),
+        )
+        .await;
+        assert_eq!(
+            reply.status,
+            Some(400),
+            "#1333 a {literal} text part is an empty message"
+        );
+        assert!(
+            String::from_utf8_lossy(&reply.body).contains("\"code\":\"empty_message\""),
+            "#1333 falsy text part error body"
+        );
+    }
+    let body = "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":5}]}]}";
+    let reply = exchange(
+        started.addr,
+        &ReqSpec::post("/v1/chat/completions", "chat-truthy-5", body),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        Some(503),
+        "#1333 a truthy non-string text part still becomes user text"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restart_rebinds_listener_and_stop_is_idempotent() {
     let started = start(options(&json!({"options":{}}), None), None).await;
     let health = exchange(started.addr, &ReqSpec::get("/health")).await;
