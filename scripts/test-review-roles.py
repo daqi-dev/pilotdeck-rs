@@ -58,7 +58,8 @@ if hang_first and not os.path.exists(hang_first):
 if mode == "hang":
     time.sleep(30)
 if mode != "no_assistant":
-    resp = "wrong-model-x" if mode == "wrong_resp" else {"glm-5.3-mb": "GLM-5.3"}.get(model, model)  # 真网关回显展示名
+    resp = "wrong-model-x" if mode == "wrong_resp" else {"glm-5.3-mb": "GLM-5.3",  # 真网关回显展示名
+                                                          "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}.get(model, model)
     print(json.dumps({"type": "assistant", "message": {"model": resp, "content": []}}), flush=True)
 final = "只有半截" if mode == "noverdict" else conf["final"]
 usage = {("wrong-model-x" if mode == "wrong_usage" else model): {}}
@@ -107,18 +108,25 @@ def _run(gate, rrr, out_base: Path) -> int:
         log = tmp / "log.jsonl"
         secret = "zai-test-secret-123"
         anth_secret = "anth-test-secret-456"
+        mmx_secret = "mmx-test-secret-789"
+        ds_secret = "ds-test-secret-012"
         envfile = tmp / "fixture.env"  # 隔离 fixture：测试永不读真实 .env.local
-        envfile.write_text(f"ZAI_API_KEY={secret}\nexport ANTHROPIC_API_KEY='{anth_secret}'\n")
+        envfile.write_text(f"ZAI_API_KEY={secret}\nexport ANTHROPIC_API_KEY='{anth_secret}'\n"
+                           f"MINIMAX_API_KEY={mmx_secret}\nexport DEEPSEEK_API_KEY=\"{ds_secret}\"\n")
         polluted = {"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_BEDROCK",
-                    "CLAUDE_CODE_USE_VERTEX", "GITHUB_TOKEN", "ZAI_API_KEY", "FAKE_MODE"}
+                    "CLAUDE_CODE_USE_VERTEX", "GITHUB_TOKEN", "ZAI_API_KEY", "MINIMAX_API_KEY",
+                    "DEEPSEEK_API_KEY", "FAKE_MODE"}
 
         def run(name: str, mode: str, runner: str = "zai", timeout: int = 20) -> tuple[int, str]:
             # 污染的父环境：旧网关头、provider 选择器、他家令牌都不得传进评审进程
             (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL, "keys": {
-                "zai_file": secret, "anth_file": anth_secret, "zai_parent": "zai-parent-x", "anth_parent": "anth-parent-x"}}))
+                "zai_file": secret, "anth_file": anth_secret, "mmx_file": mmx_secret, "ds_file": ds_secret,
+                "zai_parent": "zai-parent-x", "anth_parent": "anth-parent-x", "mmx_parent": "mmx-parent-x",
+                "ds_parent": "ds-parent-x"}}))
             # 父环境放另一组键：运行器只认 --env-file，父环境的键不得被用
             env = dict(os.environ, FAKE_MODE=mode, ZAI_API_KEY="zai-parent-x",
-                       ANTHROPIC_API_KEY="anth-parent-x", ANTHROPIC_BASE_URL="http://parent-shell-leak.invalid",
+                       ANTHROPIC_API_KEY="anth-parent-x", MINIMAX_API_KEY="mmx-parent-x", DEEPSEEK_API_KEY="ds-parent-x",
+                       ANTHROPIC_BASE_URL="http://parent-shell-leak.invalid",
                        ANTHROPIC_AUTH_TOKEN="leak-auth", ANTHROPIC_CUSTOM_HEADERS="x-gw-key: leak",
                        CLAUDE_CODE_USE_BEDROCK="1", CLAUDE_CODE_USE_VERTEX="1", GITHUB_TOKEN="ghp_leak")
             out = out_base / name
@@ -153,8 +161,9 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("zai-ok：密钥不得落盘")
 
         log.write_text("")
-        # 不传 --timeout 时按通道取默认（anthropic 1200 s / zai 600 s）；显式值优先。dry-run 只写 command.txt，不起进程
+        # 不传 --timeout 时按通道取默认（anthropic 1200 s / zai、minimax、deepseek 600 s）；显式值优先。dry-run 只写 command.txt，不起进程
         for runner_, extra, want in (("anthropic", [], "timeout=1200s"), ("zai", [], "timeout=600s"),
+                                     ("minimax", [], "timeout=600s"), ("deepseek", [], "timeout=600s"),
                                      ("anthropic", ["--timeout", "77"], "timeout=77s")):
             dout = out_base / f"dry-{runner_}-{len(extra)}"
             subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner_, "--claude-bin", str(fake),
@@ -175,12 +184,47 @@ def _run(gate, rrr, out_base: Path) -> int:
         if rc != 0 or "runner=anthropic model=claude-opus-5-5" not in s or gate_errs(s):
             fails.append(f"anthropic-ok：应全 PASS 且过闸（rc={rc}）")
 
+        # minimax 通道：直连官方接口（不经 llm-center）、只认文件里的 MINIMAX_API_KEY、默认模型与超时落进结果块。
+        # 不做 gate_errs 断言：check-pr-gate.py 的 runner→model 组合表尚未登记 minimax（另一改动范围，负控见下）
+        log.write_text("")
+        rc, s = run("minimax-ok", "ok", runner="minimax")
+        calls = [json.loads(x) for x in log.read_text().splitlines()]
+        if not calls or any(c["base"] != "https://api.minimaxi.com/anthropic" or c["key_is"] != "mmx_file" for c in calls):
+            fails.append("minimax-ok：BASE_URL 应直连 MiniMax 官方接口（非 llm-center、非父环境值），且只用文件里的 MINIMAX_API_KEY")
+        if any(polluted & set(c["env"]) for c in calls):
+            fails.append("minimax-ok：父环境的令牌/网关头/provider 选择器不得进子进程")
+        if any(not c["cfg_empty"] for c in calls) or len({c["cfg"] for c in calls}) != len(calls):
+            fails.append("minimax-ok：每个角色应有各自的一次性空 CLAUDE_CONFIG_DIR")
+        if rc != 0 or "simplify:PASS" not in s or "runner=minimax model=MiniMax-M3.1-Flash" not in s:
+            fails.append(f"minimax-ok：应全 PASS 且标 runner=minimax model=MiniMax-M3.1-Flash（rc={rc}）")
+        if secret in log.read_text() or anth_secret in log.read_text() or mmx_secret in log.read_text():
+            fails.append("测试日志里出现了密钥原值")
+        if any(mmx_secret in p.read_text(errors="replace") for p in (out_base / "minimax-ok").rglob("*") if p.is_file()):
+            fails.append("minimax-ok：密钥不得落盘")
+
+        # deepseek 通道：与 zai/anthropic 同走 llm-center，但只认文件里的 DEEPSEEK_API_KEY、默认模型 deepseek-v4.1-flash-mb
+        log.write_text("")
+        rc, s = run("deepseek-ok", "ok", runner="deepseek")
+        calls = [json.loads(x) for x in log.read_text().splitlines()]
+        if not calls or any(c["base"] != "https://llm-center.modelbest.co" or c["key_is"] != "ds_file" for c in calls):
+            fails.append("deepseek-ok：BASE_URL 应为 llm-center 而非父环境值，且只用文件里的 DEEPSEEK_API_KEY")
+        if any(polluted & set(c["env"]) for c in calls):
+            fails.append("deepseek-ok：父环境的令牌/网关头/provider 选择器不得进子进程")
+        if rc != 0 or "simplify:PASS" not in s or "runner=deepseek model=deepseek-v4.1-flash-mb" not in s:
+            fails.append(f"deepseek-ok：应全 PASS 且标 runner=deepseek model=deepseek-v4.1-flash-mb（rc={rc}）")
+        if any(ds_secret in p.read_text(errors="replace") for p in (out_base / "deepseek-ok").rglob("*") if p.is_file()):
+            fails.append("deepseek-ok：密钥不得落盘")
+
         # 两通道回显行为已分叉（GLM 回显展示名、Claude 原样回显），模型守卫负控两通道各跑一遍
         for name, mode, want, runner in [("extra-tool", "extra_tool", "TOOLS_VIOLATION", "zai"), ("wrong-init", "wrong_init", "ERROR", "zai"),
                                          ("wrong-resp", "wrong_resp", "ERROR", "zai"), ("wrong-usage", "wrong_usage", "ERROR", "zai"),
                                          ("wrong-init-anth", "wrong_init", "ERROR", "anthropic"),
                                          ("wrong-resp-anth", "wrong_resp", "ERROR", "anthropic"),
                                          ("wrong-usage-anth", "wrong_usage", "ERROR", "anthropic"),
+                                         ("wrong-init-mmx", "wrong_init", "ERROR", "minimax"),
+                                         ("wrong-resp-mmx", "wrong_resp", "ERROR", "minimax"),
+                                         ("wrong-init-ds", "wrong_init", "ERROR", "deepseek"),
+                                         ("wrong-usage-ds", "wrong_usage", "ERROR", "deepseek"),
                                          ("no-assistant", "no_assistant", "ERROR", "zai"), ("noverdict", "noverdict", "PARTIAL", "zai")]:
             rc, s = run(name, mode, runner=runner)
             if rc == 0 or want not in s or not gate_errs(s):
@@ -193,11 +237,12 @@ def _run(gate, rrr, out_base: Path) -> int:
         empty = tmp / "empty.env"
         empty.write_text("OTHER=1\n")
         log.write_text("")
-        for runner in ("zai", "anthropic"):
+        for runner in ("zai", "anthropic", "minimax", "deepseek"):
             cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner, "--claude-bin", str(fake),
                                  "--env-file", str(empty), "--worktree", str(wt), "--base", "HEAD~1",
                                  "--out", str(out_base / f"nokey-{runner}")], capture_output=True, text=True,
-                                env=dict(os.environ, ZAI_API_KEY="zai-parent-x", ANTHROPIC_API_KEY="anth-parent-x"))
+                                env=dict(os.environ, ZAI_API_KEY="zai-parent-x", ANTHROPIC_API_KEY="anth-parent-x",
+                                         MINIMAX_API_KEY="mmx-parent-x", DEEPSEEK_API_KEY="ds-parent-x"))
             if cp.returncode != 2 or "API_KEY" not in cp.stderr or "不存在" in cp.stderr:
                 fails.append(f"nokey-{runner}：文件缺钥应拒绝运行，不得回退父环境（rc={cp.returncode}）")
         cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(tmp / "typo.env"),
