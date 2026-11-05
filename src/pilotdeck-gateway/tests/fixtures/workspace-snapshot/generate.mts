@@ -336,7 +336,9 @@ try {
   const sentinels = ['pdrs-r9-linkout', 'pdrs-r9-path', 'pdrs-r9-target', 'ws-snapshot-scenario'];
   for (const name of sentinels) await writeFile(join(scratch, name), 'keep\n');
   // Non-UTF-8 file names need a byte-transparent filesystem (Linux ext4 and
-  // friends); APFS/HFS+ reject the bytes with EINVAL, so the scenario probes
+  // friends); APFS/HFS+ reject the bytes with EILSEQ (os error 92, measured
+  // on darwin 25.6 for open/mkdir/create_dir_all alike — earlier notes here
+  // said EINVAL and were wrong), so the scenario probes
   // first and both this generator and the Rust replay drop it where the name
   // cannot exist. Since #283 the committed oracle is generated on Linux
   // (cb8, ext4; the README in this directory registers the pinned host and

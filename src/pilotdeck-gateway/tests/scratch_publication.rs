@@ -110,8 +110,9 @@ const STRANGER_STARTED_DELAY: Duration = Duration::from_secs(8);
 ///
 /// What decides when `started` appears is this delay plus the interpreter
 /// boot: the test publishes the `release` signal before the probe can even
-/// boot (it is a precondition the test owns — without it `started` never
-/// appears at all — but it never actually waits), so the sleep below is not
+/// boot (it gates the healthy path — the probe's own wait is capped at 60 s
+/// and it publishes `started` even then, a fallback this side's 14 s wait
+/// never reaches — but it never actually waits), so the sleep below is not
 /// a redundant decoration to be tidied away. The `expiry-hoisted-before-spawn`
 /// mutant kills only while the hook provably outlasts
 /// [`DEADLINE_FLOOR_SLACK`]: hoisting the expiry above the spawn moves
@@ -235,11 +236,15 @@ const DELIBERATE_PANIC: &str = "#1141 deliberate panic while the stranger is run
 /// `/dev/null` stdin as a 0-byte `eof`, silently misclassifying the very
 /// broken shape it was there to observe. The `started` signal carries the
 /// stranger's own pid (#1155 r3 review P2-2), published atomically (#166
-/// r8) behind the `started.release` signal (#1297): the release is the
-/// precondition the test owns — a stranger that never sees it never
-/// publishes `started` — while the moment itself is the pacing sleep plus
-/// the interpreter boot, since the test publishes the signal before the
-/// probe has booted. That is deliberate: the old 8-second sleep used to
+/// r8) behind the `started.release` signal (#1297): the release gates the
+/// healthy path — the test owns it and publishes it before the probe boots —
+/// while the moment itself is the pacing sleep plus the interpreter boot,
+/// since the test publishes the signal before the probe has booted. (The
+/// probe's wait is bounded at 60 s and still publishes `started` after that:
+/// a fallback that keeps a broken test from hanging, unreachable today
+/// because this side's 14 s [`STRANGER_STARTED_TIMEOUT`] fails first —
+/// #1297 third-round review, DeepSeek concurrency P3 + MiniMax boundary P3.)
+/// That is deliberate: the old 8-second sleep used to
 /// race a 10-second cap with only the python startup as headroom, so the
 /// pacing is now a number this fixture owns and sizes for the mutants that
 /// read it (`DEAD_HELPER_STRANGER_DELAY` for the dead-helper test's kill
@@ -394,9 +399,10 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
 /// grace (#1155 r4 review P2: the deadline starts after the handshake, so
 /// the handshake below no longer eats the write budget — and a deadline
 /// that starts too early gives up on it and lands under the floor).
-/// #1297: the release signal is the handshake's precondition — the hook
-/// publishes it, the stranger (after confirming its stdin is the pipe and
-/// its pacing sleep) publishes `started` only once that file exists, and the
+/// #1297: the release signal gates the healthy path — the hook publishes it,
+/// the stranger (after confirming its stdin is the pipe and its pacing sleep)
+/// publishes `started` once that file appears (or after its own 60 s
+/// fallback, which this side's 14 s wait never reaches), and the
 /// helper's saw write follows the hook's resume. The pacing sleep is what
 /// sets the moment (`DEAD_HELPER_STRANGER_DELAY` here), and it exists for
 /// the mutants: the old 8-second sleep left only the python startup as
@@ -470,10 +476,11 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         // knows the handshake is done — releases it, so the saw write always
         // happens with the `started` signal provably present, never on the
         // far side of a scheduling pause that skipped the helper's poll
-        // round outright. #1297: the release signal below is the
-        // handshake's precondition — a stranger that never sees that file
-        // never publishes `started` — but it is published before the probe
-        // can boot, so the wait here is bounded polling over an event this
+        // round outright. #1297: the release signal below gates the healthy
+        // path — the test owns that file and publishes it before the probe
+        // can boot (a probe that never sees it still publishes `started`
+        // after its own 60 s fallback, which this side's 14 s wait never
+        // reaches) — so the wait here is bounded polling over an event this
         // test owns. What sets the moment of `started` is the stranger's
         // interpreter boot (~15 ms measured on this host, load only grows
         // it) plus the deliberate [`DEAD_HELPER_STRANGER_DELAY`] pacing the
@@ -647,8 +654,9 @@ fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
 /// a `started` that appears *within* the helper's cap must still be recorded
 /// as seen, and it is the derived cap that makes it so. The helper parks at
 /// the same event barrier; this test waits for the stranger's
-/// [`STRANGER_STARTED_DELAY`]ed `started` (8 s, four fifths of the unified
-/// cap, comfortably past the 5 s a re-hardcoded helper cap would allow) and
+/// [`STRANGER_STARTED_DELAY`]ed `started` (8 s today — about 57 % of the
+/// 14 s [`STRANGER_STARTED_TIMEOUT`], and comfortably past the 5 s a
+/// re-hardcoded helper cap would allow) and
 /// resumes it immediately, so the saw write runs while the derived cap —
 /// [`stranger_started_wait_secs`], the one constant both sides of the
 /// handshake derive from — still has budget. A helper whose cap has drifted
