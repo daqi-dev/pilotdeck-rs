@@ -1035,6 +1035,15 @@ fn foreign_data_dir_holders(root: &std::path::Path) -> Vec<i32> {
     holders
 }
 
+/// Everything the sampler observed inside the write window. A named alias keeps
+/// the `JoinHandle` field and the `finish` return type under
+/// `clippy::type_complexity` (CI runs clippy with `-D warnings`).
+#[cfg(target_os = "linux")]
+type TransientObservations = (
+    std::collections::BTreeMap<i32, Option<std::path::PathBuf>>,
+    std::collections::BTreeSet<i32>,
+);
+
 /// Poll `/proc` for the whole audited write window.
 ///
 /// Two snapshots (before/after) say nothing about a child or fd holder whose
@@ -1047,12 +1056,7 @@ fn foreign_data_dir_holders(root: &std::path::Path) -> Vec<i32> {
 #[cfg(target_os = "linux")]
 struct TransientAudit {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    worker: Option<
-        std::thread::JoinHandle<(
-            std::collections::BTreeMap<i32, Option<std::path::PathBuf>>,
-            std::collections::BTreeSet<i32>,
-        )>,
-    >,
+    worker: Option<std::thread::JoinHandle<TransientObservations>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -1080,12 +1084,7 @@ impl TransientAudit {
         }
     }
 
-    fn finish(
-        mut self,
-    ) -> (
-        std::collections::BTreeMap<i32, Option<std::path::PathBuf>>,
-        std::collections::BTreeSet<i32>,
-    ) {
+    fn finish(mut self) -> TransientObservations {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
         self.worker
             .take()
