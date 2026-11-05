@@ -1132,6 +1132,29 @@ where
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Body reads entered on this thread, one bump per [`read_events`] call
+    /// (the response headers are consumed; the next poll reads this body).
+    /// An abort before the response and an abort inside the body settle
+    /// `start()` identically (`Connection closed`, because either way the
+    /// `EventSource` task returns and drops the `oneshot`), so a test that
+    /// only reads the settled error cannot tell them apart. This counter is
+    /// the distinguishable observation: seeing a bump means the transport
+    /// reached the body, and — since a bump is only observable from another
+    /// task once that poll returned `Pending` — that it is suspended inside
+    /// the body read.
+    static BODY_READS_STARTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Test-only probe for [`BODY_READS_STARTED`]. Taken as a baseline before the
+/// transport is driven and compared afterwards, so counters left by an
+/// earlier test on the same thread never count.
+#[cfg(test)]
+fn body_reads_started() -> usize {
+    BODY_READS_STARTED.with(|count| count.get())
+}
+
 /// Reads an event stream to its end (or until the transport aborts).
 /// Returns `Ok(false)` when it ended because of an abort, the body idle
 /// timeout or an over-limit line, and the frame error when the body itself
@@ -1142,6 +1165,8 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
     mut continuation: bool,
     mut on_item: impl FnMut(SseItem),
 ) -> Result<bool, B::Error> {
+    #[cfg(test)]
+    BODY_READS_STARTED.with(|count| count.set(count.get() + 1));
     let mut body = std::pin::pin!(body);
     let mut decoder = Utf8Stream::default();
     let mut parser = SseParser::default();
