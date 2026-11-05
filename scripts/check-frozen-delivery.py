@@ -606,11 +606,19 @@ def _function_node(tree, name):
 
     A second definition means the interpreter runs the later body while a walk
     that takes the first would model the wrong inventory -- so a redefinition is
-    "cannot tell", not "use the first one".
+    "cannot tell", not "use the first one".  The same holds for a body in a
+    nested scope or a class: it does not shadow the module-level function, but
+    it can be the one the entry calls (``App().required_files()``), and two
+    bodies behind one name is a shape this model cannot tell apart.
     """
     found = [node for node in _module_scope_nodes(tree)
              if isinstance(node, ast.FunctionDef) and node.name == name]
-    return found[0] if len(found) == 1 else None
+    if len(found) != 1:
+        return None
+    bodies = [node for node in ast.walk(tree)
+              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+              and node.name == name]
+    return found[0] if len(bodies) == 1 else None
 
 
 def _parse(source):
@@ -692,8 +700,9 @@ def _header_nodes(node):
     """
     # ``Lambda.body`` is one expression, not a statement list.
     body = node.body if isinstance(node.body, list) else [node.body]
+    body_ids = {id(item) for item in body}
     for child in ast.iter_child_nodes(node):
-        if any(child is item for item in body):
+        if id(child) in body_ids:
             continue
         yield child
 
@@ -927,6 +936,8 @@ def _import_origin(tree, name, module):
                     return False
                 seen += 1
         elif isinstance(node, ast.ImportFrom):
+            if any(alias.name == '*' for alias in node.names):
+                return False  # ``from evil import *``: what ``name`` means is unknown
             for alias in node.names:
                 if (alias.asname or alias.name) != name:
                     continue
@@ -1050,13 +1061,26 @@ _REFLECTIVE_CALLS = frozenset({'globals', 'locals', 'vars', 'setattr', 'delattr'
 # /``sys.path``) as.
 _MODULE_TABLE_ROOTS = frozenset({'sys', '_boot_sys'})
 # Attributes that reach the namespace behind a name.  ``common.__dict__.update()``
-# or ``vars(common).update()`` rebind what the block bound while every
-# ``Name(Store)`` count stays put, so the spellings are matched by attribute
-# name rather than by the root they hang from (``object.__setattr__`` has no
-# watched root at all).
+# or ``_d = common.__dict__; _d['A2_SCRIPTS'] = ...`` rebind what the block bound
+# while every ``Name(Store)`` count stays put.  Counted only when the attribute
+# hangs from a name that still refers to a binding the block made -- a plain
+# ``x.__class__`` read two hundred lines down is not a write.
 _NAMESPACE_ATTRS = frozenset({'__dict__', '__class__', '__globals__', '__builtins__'})
+# ``object.__setattr__(common, ...)`` has no watched root at all, so these are
+# matched by attribute name alone; ``operator.setitem(d, k, v)`` is the same
+# write as ``d[k] = v`` under another spelling.
 _DUNDER_MUTATORS = frozenset({'__setattr__', '__delattr__', '__setitem__',
-                              '__delitem__', '__getattribute__'})
+                              '__delitem__', '__getattribute__',
+                              'setitem', 'delitem'})
+# ``sys.modules`` / ``sys.path`` are the process-global tables a later
+# ``from apparatus import ...`` reads; mutating them is the injection this
+# check exists for.  ``sys.argv.append(...)`` is not.
+_SYS_TABLES = frozenset({'modules', 'path'})
+# ``getattr(obj, '<attr>')`` is the same write with the attribute name in a
+# string.  Only the name-independent write paths are listed: ``'__dict__'``,
+# ``'__setattr__'``, ``'modules'`` -- not every mutator method name, which is
+# what ``_MUTATOR_ATTRS`` is for and which would block harmless lookups.
+_REFLECTIVE_ATTRS = _NAMESPACE_ATTRS | _DUNDER_MUTATORS | _SYS_TABLES
 # Calls that mutate the object they hang from.  Only counted when the receiver
 # is a watched name -- ``failures.append(...)`` two hundred lines down is the
 # apparatus doing its job, not a write to the bootstrap.
@@ -1072,23 +1096,89 @@ def _root_name(node):
 
 
 def _sys_roots(tree):
-    """Names at module scope that still refer to ``sys`` or one of its tables.
+    """Names anywhere in the entry that still refer to ``sys`` or its tables.
 
     ``import sys as _s; _s.modules['apparatus'] = ...`` and
     ``from sys import modules as _m; _m['apparatus'] = ...`` put another module
     behind a later ``from apparatus import ...`` without touching ``sys``.
+    ``sys.modules`` and ``sys.path`` live for the whole process, so an alias
+    bound inside a function body reaches them exactly like one bound at module
+    scope; ``from sys import *`` puts both tables in reach by their bare names.
     """
     roots = set(_MODULE_TABLE_ROOTS)
-    for node in _module_scope_nodes(tree):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == 'sys':
                     roots.add(alias.asname or 'sys')
         elif isinstance(node, ast.ImportFrom) and node.module == 'sys' and not node.level:
             for alias in node.names:
-                if alias.name in ('modules', 'path'):
+                if alias.name == '*':
+                    roots.update(_SYS_TABLES)
+                elif alias.name in _SYS_TABLES:
                     roots.add(alias.asname or alias.name)
     return roots
+
+
+def _alias_roots(tree, seeds, span=None):
+    """Names that still refer to one of ``seeds``, followed to a fixed point.
+
+    ``_c = common`` then ``_c.A2_SCRIPTS = (...)`` reaches the block's module
+    object without ever naming it, and ``_m = sys.modules`` does the same for
+    the table a later ``from apparatus import ...`` reads.  Every module-scope
+    ``name = <expression rooted at a seed>`` is added in turn, so
+    ``_d = common.__dict__`` and ``_p = _m`` resolve too.  Assignment forms this
+    cannot read (unpacking, ``for`` targets, ``with ... as``) are left alone:
+    the caller still fails closed on the spellings it does recognise.
+    """
+    roots = set(seeds)
+    while True:
+        added = set()
+        for node in _module_scope_nodes(tree):
+            if span is not None:
+                line = getattr(node, 'lineno', None)
+                if line is not None and span[0] + 1 <= line <= span[1] + 1:
+                    continue
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target, value = node.targets[0], node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                target, value = node.target, node.value
+            else:
+                continue
+            if isinstance(target, ast.Name) and target.id not in roots \
+                    and _root_name(value) in roots:
+                added.add(target.id)
+        if not added:
+            return roots
+        roots |= added
+
+
+def _parameters(tree, span):
+    """Parameter names of every function defined outside the reviewed block.
+
+    ``def _swap(x): x.A2_SCRIPTS = (...)`` writes through whatever object the
+    caller hands it; ``_swap(common)`` needs no name the checks above look for.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        line = getattr(node, 'lineno', None)
+        if line is not None and span[0] + 1 <= line <= span[1] + 1:
+            continue
+        args = node.args
+        for group in (args.posonlyargs, args.args, args.kwonlyargs):
+            names.update(arg.arg for arg in group)
+        for star in (args.vararg, args.kwarg):
+            if star is not None:
+                names.add(star.arg)
+    return names
+
+
+def _sys_table(node, table_roots):
+    """True when ``node`` is ``X.modules`` / ``X.path`` for a ``sys`` alias ``X``."""
+    return (isinstance(node, ast.Attribute) and node.attr in _SYS_TABLES
+            and _root_name(node) in table_roots)
 
 
 def _foreign_writes(tree, watched, span):
@@ -1100,10 +1190,15 @@ def _foreign_writes(tree, watched, span):
     ``sys.modules['apparatus'] = evil`` all leave the block byte-identical while
     the interpreter ends up running something else.  The spellings that reach a
     binding without naming it are matched by attribute name (``__dict__``,
-    ``modules``, ``__setattr__``) and by receiver, so ``import sys as _s`` or
-    ``builtins.setattr(...)`` do not walk around the check.
+    ``__setattr__``) and by receiver, so ``import sys as _s``,
+    ``builtins.setattr(...)`` or ``_c = common; _c.A2_SCRIPTS = ...`` do not
+    walk around the check.
     """
-    roots = watched | _sys_roots(tree)
+    sys_roots = _sys_roots(tree)
+    watched_roots = _alias_roots(tree, watched, span)
+    table_roots = _alias_roots(tree, sys_roots, span)
+    roots = watched_roots | table_roots
+    parameters = _parameters(tree, span)
     for node in ast.walk(tree):
         line = getattr(node, 'lineno', None)
         if line is not None and span[0] + 1 <= line <= span[1] + 1:
@@ -1116,27 +1211,38 @@ def _foreign_writes(tree, watched, span):
             return True
         if isinstance(node, ast.MatchMapping) and node.rest in watched:
             return True
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) \
+                and node.id in _REFLECTIVE_CALLS:
+            return True  # _f = setattr; _f(common, 'A2_SCRIPTS', ...)
         if isinstance(node, ast.Delete) and any(
                 _root_name(target) in roots for target in node.targets):
             return True
-        if isinstance(node, ast.Attribute) and node.attr in _NAMESPACE_ATTRS:
-            return True
+        if isinstance(node, ast.Attribute) and node.attr in _NAMESPACE_ATTRS \
+                and _root_name(node) in roots:
+            return True  # common.__dict__, taken apart and written through
         if isinstance(node, (ast.Attribute, ast.Subscript)) \
                 and isinstance(node.ctx, ast.Store) \
-                and _root_name(node) in roots:
-            return True
+                and (_root_name(node) in roots or _root_name(node) in parameters):
+            return True  # sys.modules[...] = ..., def _swap(x): x.A = ...
         if isinstance(node, ast.Call):
             func = node.func
+            if not isinstance(func, (ast.Name, ast.Attribute)):
+                return True  # getattr(...)(...) -- a callee this model cannot name
             if _call_name(func) in _REFLECTIVE_CALLS:
                 return True  # setattr(...) and builtins.setattr(...)
             if isinstance(func, ast.Attribute) and func.attr in _DUNDER_MUTATORS:
-                return True  # object.__setattr__(common, ...)
-            if isinstance(func, ast.Attribute) and func.attr in _MUTATOR_ATTRS \
-                    and _root_name(func) in roots:
-                return True  # sys.modules.update(...), common.__dict__ ...
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
-                and node.value in _NAMESPACE_ATTRS:
-            return True
+                return True  # object.__setattr__(common, ...), operator.setitem(...)
+            if isinstance(func, ast.Attribute) and func.attr in _MUTATOR_ATTRS:
+                if _sys_table(func.value, table_roots):
+                    return True  # sys.modules.update(...), sys.path.append(...)
+                root = _root_name(func)
+                if root in watched_roots and root not in sys_roots:
+                    return True  # common.__dict__.update(...), _c.clear()
+            if _call_name(func) == 'getattr' and len(node.args) >= 2:
+                attr = node.args[1]
+                if isinstance(attr, ast.Constant) and isinstance(attr.value, str) \
+                        and attr.value in _REFLECTIVE_ATTRS:
+                    return True  # getattr(common, '__dict__'), getattr(sys, 'modules')
     return False
 
 
@@ -1375,7 +1481,7 @@ def _gateway_manifest(tree, external=()):
     parents = _parents(function)
     inventory, consumed, specs = set(), set(), set()
     template_parts = set()
-    for node in ast.walk(function):
+    for node in _scope_nodes(function.body):
         if not isinstance(node, ast.JoinedStr):
             continue
         template = _template(node)
@@ -1389,7 +1495,7 @@ def _gateway_manifest(tree, external=()):
             inventory.add(prefix + member + suffix)
             consumed.add(member)
         template_parts.update(id(part) for part in node.values)
-    for node in ast.walk(function):
+    for node in _scope_nodes(function.body):
         if not isinstance(node, ast.Constant) or id(node) in template_parts:
             continue
         if isinstance(parents.get(id(node)), ast.Expr):
@@ -1422,7 +1528,7 @@ def _ui_exp008_dir(tree):
     if function is None:
         return None
     found = set()
-    for node in ast.walk(function):
+    for node in _scope_nodes(function.body):
         if not isinstance(node, (ast.SetComp, ast.ListComp, ast.GeneratorExp)):
             continue
         for generator in node.generators:
@@ -1464,11 +1570,24 @@ def _ui_required_names(tree):
     if _imported_from(tree, 'SPEC_FILES') != 'apparatus':
         return None
     # ``REQUIRED.discard(...)`` / ``.update(...)`` edit the set in place, so the
-    # binding still looks derived while the registered names are not.
+    # binding still looks derived while the registered names are not.  Same for
+    # the spellings that do not repeat the name: ``_r = REQUIRED; _r.update(...)``
+    # and ``getattr(REQUIRED, 'update')(...)``.
+    aliases = _alias_roots(tree, {'REQUIRED'})
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == 'REQUIRED'):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in _MUTATOR_ATTRS \
+                and _root_name(func) in aliases:
+            return None
+        if _call_name(func) in ('setattr', 'delattr') and node.args \
+                and _root_name(node.args[0]) in aliases:
+            return None
+        if _call_name(func) == 'getattr' and len(node.args) >= 2 \
+                and _root_name(node.args[0]) in aliases \
+                and isinstance(node.args[1], ast.Constant) \
+                and node.args[1].value in _MUTATOR_ATTRS:
             return None
     for node in tree.body:
         targets, value = [], None
@@ -1497,7 +1616,7 @@ def _ui_scan_dirs(tree):
     if function is None:
         return None
     found = set()
-    for node in ast.walk(function):
+    for node in _scope_nodes(function.body):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == 'scan' and len(node.args) == 1):
             if isinstance(node, ast.Call) and _call_name(node.func) == 'scan':

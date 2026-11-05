@@ -678,6 +678,9 @@ def run():
     case("gateway 块外先取出 common.__dict__ 再改 → 不可判定",
          gw_inventory(GW_BOOTSTRAP + "_d = common.__dict__\n"
                       "_d['A2_SCRIPTS'] = ('evil.py',)\n" + _gw_tail) is None)
+    case("gateway 块外把 common.__dict__ 交给不认识的函数 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "evil_mod(common.__dict__)\n"
+                      + _gw_tail) is None)
     case("gateway 块外 getattr(common, '__dict__') → 不可判定",
          gw_inventory(GW_BOOTSTRAP
                       + "getattr(common, '__dict__')['A2_SCRIPTS'] = ('evil.py',)\n"
@@ -723,6 +726,87 @@ def run():
                       + _gw_tail.replace('\n', '\r')) is not None)
     case("块外模块级 lambda 不误判、不崩溃 → 仍可判定",
          gw_inventory(GW_BOOTSTRAP + "_f = lambda: common\n" + _gw_tail) is not None)
+
+    # ---------------------------------------------------------------- r22 负控
+    # 名字匹配只管「按名字写」的那一半：把对象先取到别名里（`_c = common`）、
+    # 交给一个形参（`def _swap(x): x.A = ...`）、把 sys 别名绑在函数体里、或者
+    # 用 `from sys import *` / `operator.setitem` / `getattr(sys, 'modules')`
+    # 换一种拼写，都能让 `Name(Store)` 计数与根名匹配同时落空。
+    case("gateway 块外 _c = common 后按别名写属性 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_c = common\n_c.A2_SCRIPTS = ('evil.py',)\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 _d = common.__dict__ 后按别名写下标 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_d = common.__dict__\n_d['A2_SCRIPTS'] = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 _m = sys.modules 后按别名注入 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_m = sys.modules\n_m['_guard'] = None\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 _m = sys.modules；_p = _m 二级别名 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_m = sys.modules\n_p = _m\n_p['_guard'] = None\n"
+                      + _gw_tail) is None)
+    case("gateway 函数体内 import sys as _s 后注入 → 不可判定（表是进程级）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap():\n    import sys as _s\n"
+                        "    _s.modules['_guard'] = None\n_swap()\n" + _gw_tail) is None)
+    case("gateway 块外 from sys import * 后按裸名注入 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "from sys import *\nmodules['_guard'] = None\n"
+                      + _gw_tail) is None)
+    case("from sys import * 让两张表按裸名可达（导入表模型本身）",
+         {'modules', 'path'}
+         <= cfd._sys_roots(cfd._parse("from sys import *\n")))
+    case("gateway 块外 def _swap(x): x.A2_SCRIPTS = ... 后 _swap(common) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.A2_SCRIPTS = ('evil.py',)\n"
+                        "_swap(common)\n" + _gw_tail) is None)
+    case("gateway 块外 _f = setattr 后反射写 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_f = setattr\n_f(common, 'A2_SCRIPTS', ('evil.py',))\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 getattr(builtins, 'setattr')(...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import builtins\n"
+                        "getattr(builtins, 'setattr')(common, 'A2_SCRIPTS', ())\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 getattr(sys, 'modules') 后下标注入 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "getattr(sys, 'modules')['_guard'] = None\n" + _gw_tail) is None)
+    case("gateway 块外 operator.setitem(sys.modules, ...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import operator\n"
+                        "operator.setitem(sys.modules, '_guard', None)\n"
+                      + _gw_tail) is None)
+    # 另一端：放宽只放到「不是块绑定的对象、也不是 sys 的两张表」为止。
+    case("块外 sys.argv.append(...) 不是在改导入表 → 仍可判定",
+         gw_inventory(GW_BOOTSTRAP + "sys.argv.append('--x')\n" + _gw_tail) is not None)
+    case("块外普通对象的 __class__ 读与 '__dict__' 字符串 → 仍可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    pass\n"
+                        "if _C().__class__ is _C:\n    _NOTE = 'use __dict__ here'\n"
+                      + _gw_tail) is not None)
+    case("块外 _s = sys.path 后 append 仍在改导入路径 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_p = sys.path\n_p.append('/tmp/shared')\n"
+                      + _gw_tail) is None)
+    case("helper 来源：from evil import * 使名字来源不可判定",
+         cfd._import_origin(cfd._parse("from pathlib import Path\n"
+                                       "from evil import *\n"),
+                            'Path', 'pathlib') is False)
+    case("块外取回的函数直接调用（factory()(common, ...)）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "factory()(common, 'A2_SCRIPTS', ('evil.py',))\n"
+                      + _gw_tail) is None)
+    case("清单函数里嵌套 def 的模板不算清单成员（同一套作用域口径）",
+         gw_inventory(gw_source().replace(
+             "    return {name: name for name in names}",
+             "    def _helper():\n"
+             "        extra = ('evil.md',)\n"
+             "        return [f'scripts/a5-19/{name}' for name in extra]\n"
+             "    return {name: name for name in names}"))
+         == gw_inventory(gw_source()))
+    case("同名 def 只在嵌套作用域里出现也算二次定义 → 不可判定",
+         cfd._function_node(cfd._parse(
+             "def required_files(root):\n    pass\n"
+             "class _A:\n    def required_files(self):\n        pass\n"),
+             'required_files') is None)
 
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
@@ -1428,6 +1512,37 @@ def run():
              "SPEC_FILES = ('acceptance.md',)\n"
              "def _local():\n    SPEC_FILES = ()\n    return SPEC_FILES\n"),
              UI_FROZEN) is not None)
+
+    # ---------------------------------------------------------------- r22 ui 负控
+    # gateway 侧 r22 补的「换名/换壳」形态要在 ui 侧同样钉住：块外别名、函数体里
+    # 绑的 sys 别名、`from sys import *`、把模块对象交给形参，以及 `REQUIRED`
+    # 的别名就地改。
+    case("ui 块外 _b = _boot_sys 后按别名注入 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_b = _boot_sys\n_b.modules['apparatus'] = None\n") is None)
+    case("ui 函数体内 import sys as _b 后注入 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\ndef _swap():\n    import sys as _b\n"
+                          "    _b.modules['apparatus'] = None\n_swap()\n") is None)
+    case("ui 块外 from sys import * 后按裸名注入 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\nfrom sys import *\nmodules['apparatus'] = None\n") is None)
+    case("ui 块外 def _swap(m): m.preflight = ... 后 _swap(_boot_module) → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\ndef _swap(m):\n    m.preflight = None\n"
+                          "_swap(_boot_module)\n") is None)
+    case("ui 块外 _r = REQUIRED 后就地改 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\n_r = REQUIRED\n_r.update({'evil.md'})\n") is None)
+    case("ui 块外 getattr(REQUIRED, 'update') 就地改 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\ngetattr(REQUIRED, 'update')({'evil.md'})\n") is None)
+    case("REQUIRED 的 getattr 就地改 → 清单来源不可判定（直接问读取器）",
+         cfd._ui_required_names(cfd._parse(
+             UI_FROZEN + "\ngetattr(REQUIRED, 'update')({'evil.md'})\n")) is None)
+    case("ui 块外只读 REQUIRED（推导式里遍历）→ 仍可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\nNAMES = [name for name in REQUIRED]\n") is not None)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
