@@ -666,6 +666,64 @@ def run():
                            cfd._UI_BOOTSTRAP) is True
          and cfd._file_parents(cfd._sole_binding(cfd._parse(_real_ui), 'ROOT')))
 
+    # ---------------------------------------------------------------- r21 负控
+    # r20 的 `_foreign_writes` 仍按「拼写」认写：写的是 `common` 这个名字才算。
+    # 换个没被点名的入口（`common.__dict__`、`object.__setattr__`、把 sys 起个别名
+    # 或从 sys 里单独取 modules）就绕过去了；默认参数里的 walrus 在模块作用域绑定，
+    # 而 `_module_scope_nodes` 跳过了整个 def。每条只改一处，正控在上面。
+    case("gateway 块外 common.__dict__.update(...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "common.__dict__.update({'A2_SCRIPTS': ('evil.py',)})\n"
+                      + _gw_tail) is None)
+    case("gateway 块外先取出 common.__dict__ 再改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_d = common.__dict__\n"
+                      "_d['A2_SCRIPTS'] = ('evil.py',)\n" + _gw_tail) is None)
+    case("gateway 块外 getattr(common, '__dict__') → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "getattr(common, '__dict__')['A2_SCRIPTS'] = ('evil.py',)\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 object.__setattr__(common, ...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "object.__setattr__(common, 'A2_SCRIPTS', ('evil.py',))\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 builtins.setattr(common, ...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import builtins\nbuiltins.setattr(common, 'A2_SCRIPTS', ())\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 import sys as _s 后注入 _s.modules → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "import sys as _s\n_s.modules['_guard'] = None\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 from sys import modules as _m 后下标注入 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "from sys import modules as _m\n_m['_guard'] = None\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 sys.modules.update(...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "sys.modules.update({'_guard': None})\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 sys.path.insert(...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "sys.path.insert(0, '/tmp/shared')\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 del common.A2_SCRIPTS（属性目标）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "del common.A2_SCRIPTS\n" + _gw_tail) is None)
+    case("gateway 默认参数里的 walrus 在模块作用域绑定 common → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "def _f(_x=(common := None)):\n    pass\n"
+                      + _gw_tail) is None)
+    # 换页符：`str.splitlines` 把它当换行，`ast` 不当。块里多一个 `\f` 行会让
+    # 行索引整体错位，块后第一行的写就被当成「块内」跳过（假 READY）。
+    case("gateway 块内含换页符 + 块后第一行注入 sys.modules → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace("import tempfile", "\f\nimport tempfile")
+                      + "sys.modules['_guard'] = None\n" + _gw_tail) is None)
+    case("bootstrap 整块被塞进三引号字符串 → 不可判定（文字不是行为）",
+         gw_inventory('_QUOTED = """\n' + GW_BOOTSTRAP + '"""\n' + _gw_tail) is None)
+    # 行索引要跟 `ast` 的 lineno 同一套口径：tokenizer 把 `\f` 当空白、把单独的
+    # `\r` 当换行，`str.splitlines` / `split('\n')` 两头都各错一半。
+    case("块内换页符不产生额外行（不是 tokenizer 的换行）",
+         cfd._source_lines("a = 1\n\f\nb = 2\n") == ["a = 1", "\f", "b = 2", ""])
+    case("bootstrap 用 CR 行尾（tokenizer 当换行）→ 仍可判定",
+         gw_inventory(GW_BOOTSTRAP.replace('\n', '\r')
+                      + _gw_tail.replace('\n', '\r')) is not None)
+    case("块外模块级 lambda 不误判、不崩溃 → 仍可判定",
+         gw_inventory(GW_BOOTSTRAP + "_f = lambda: common\n" + _gw_tail) is not None)
+
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
         payload = dict(parity_payload, unregistered_skipped=["scripts/parity/scratch.txt"])
@@ -1346,6 +1404,24 @@ def run():
     case("ui 第二个 preflight 结束锚点 → 不可判定",
          ui_registrable(UI_APPARATUS, UI_FROZEN
                         + "\n_boot_namespace['preflight'](_boot_dir)\n") is None)
+    # ---------------------------------------------------------------- r21 ui 负控
+    # gateway 侧的助手来源由 `_BOOTSTRAP_HELPERS` 钉住，ui 侧的五个别名导入此前
+    # 没有对应名单：块后 `import other as _boot_types` 换掉 `_boot_module` 的来源
+    # 也照样可判定。以下每条只改一处。
+    case("ui 块外 import other as _boot_types → 不可判定（助手来源）",
+         ui_registrable(UI_APPARATUS, UI_FROZEN + "\nimport other as _boot_types\n") is None)
+    case("ui 块外 getattr(_boot_os, '__dict__') → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\ngetattr(_boot_os, '__dict__')['curdir'] = '/evil'\n") is None)
+    case("ui 块外 object.__setattr__(_boot_sys, ...) → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\nobject.__setattr__(_boot_sys, 'modules', {})\n") is None)
+    case("ui 块外 from sys import modules as _m 后下标注入 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\nfrom sys import modules as _m\n_m['apparatus'] = None\n") is None)
+    case("ui 助手来源名单覆盖模型块的每个导入（增删都要红）",
+         {name for name, _ in cfd._UI_BOOTSTRAP_HELPERS}
+         == cfd._import_names(cfd._parse('\n'.join(cfd._UI_BOOTSTRAP))))
     case("函数体内同名局部变量不影响模块级清单（不误判二次绑定）",
          ui_registrable(UI_APPARATUS.replace(
              "SPEC_FILES = ('acceptance.md',)",
