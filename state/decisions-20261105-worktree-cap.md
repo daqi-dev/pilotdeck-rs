@@ -39,6 +39,8 @@
 - `new-tree.sh` 用绝对路径 source 主仓的 lib。主仓检出切到不含该文件的旧提交时，开树以 exit 2 拒绝并打印缺失路径（fail-closed，不静默退回旧口径）；合并到 main 后即恢复。
 - 计数与 `git worktree add` 之间无锁（check-then-act）：两个会话同时读到 39 会各建一棵。这是原有的行为，口径改真后才有实际意义；上限本是人为软闸，磁盘 185/200 GiB 那条是独立硬闸。
 - 上限可由环境变量 `PDRS_WORKTREE_CAP` 调低（自测用）；lib 只允许调低、>40 或非数字一律夹回 40，且生效值不是 40 时向 stderr 报警，不会静默收紧。
+- `wt-status.sh` 的集成层没有回归测试（2026-11-05 评审 sibling P2）：同批改的三处——`pwd -P` 修 symlink、`linked >= cap` 满额提示、汇总行格式——只靠人工实跑。补测试要临时仓 + 假 `gh`，且 `wt-status.sh` 属协作工具（CLAUDE.md 二·只做产品代码：工具类不开 P2-跟进），故先记在这里；口径若再改，务必同时人工复核 `wt-status.sh`。
+- `git -C "$root"` 的仓库发现可被环境残留的 `GIT_DIR` / `GIT_WORK_TREE` 劫持（评审 boundary P3），此时会数到别的仓、linked 数假低。hook、git 包装器、`git rebase` 子进程里可能出现这种环境；真要收紧，计数处改 `env -u GIT_DIR -u GIT_WORK_TREE git -C ...`。当前判定为低风险，不在本次改。
 
 ## 原则（一次拍板 → 一条原则）
 
