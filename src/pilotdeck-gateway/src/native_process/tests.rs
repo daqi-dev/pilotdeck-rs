@@ -760,6 +760,7 @@ async fn requests_registry_switch_gates_run_reads() {
                     None,
                 ),
             )),
+            upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         };
         let described = requests
             .describe_server()
