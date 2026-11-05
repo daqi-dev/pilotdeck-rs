@@ -232,7 +232,7 @@ pub fn resolve_cron_timezone(
 /// `new Date(x)`: an Invalid Date exactly when `x` is NaN or beyond TimeClip;
 /// inside the range TimeClip is `ToIntegerOrInfinity`, so fractional
 /// milliseconds truncate toward zero (verified on Node v22.22.0).
-fn js_new_date(epoch_ms: f64) -> ComputedRunAt {
+pub(super) fn js_new_date(epoch_ms: f64) -> ComputedRunAt {
     if epoch_ms.is_nan() || epoch_ms.abs() > TIME_CLIP {
         ComputedRunAt::Invalid
     } else {
