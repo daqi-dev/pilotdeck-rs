@@ -134,7 +134,12 @@ def _audit_row(rows):
 
 def summary_dict_bypass(rows):
     """#892: a directly returned summary dict must fail the audit as an
-    unregistered point with a flagged inline status slot, not pass silently."""
+    unregistered point, not pass silently.
+
+    r1: the mutant relays ``report['status']`` into the real summary, which is a
+    legal relay now that status slots are checked — so this judge binds only the
+    enumeration layer; the slot layer has its own ``summary-name-bypass``.
+    """
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
     if not ok:
         return ok, detail
@@ -147,16 +152,8 @@ def summary_dict_bypass(rows):
             'scripts/gateway-parity/controls/session_domain.py:inline_batch_summary')
             for failure in failures):
         return False, f'failures={failures!r}, want the unregistered inline_batch_summary point'
-    if not any(failure.startswith(
-            '#892 aggregation-audit: '
-            'scripts/gateway-parity/controls/session_domain.py:run_all ')
-            for failure in failures):
-        return False, f'failures={failures!r}, want the #892 run_all status-slot failure'
-    slots = (row.get('points', {}).get('controls-run-all', {}) or {}).get('unsharedSlots')
-    if not slots:
-        return False, 'points.controls-run-all.unsharedSlots is empty, want the inline status slot'
-    return True, ('aggregation-audit: inline_batch_summary unregistered and the run_all '
-                  'status slot flagged, passed=False')
+    return True, ('aggregation-audit: inline_batch_summary unregistered, '
+                  'passed=False')
 
 
 def branch_exit_inline(rows):
