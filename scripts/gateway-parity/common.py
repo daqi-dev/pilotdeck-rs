@@ -106,7 +106,7 @@ SITE_SUFFIXES = ('.pth',)
 A2_SCRIPTS = (
     '_guard.py', 'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
     'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
-    'observer.py', 'run_round.py', 'test_safety.py', 'watcher.mjs',
+    'observer.py', 'retirement_driver.mts', 'run_round.py', 'test_safety.py', 'watcher.mjs',
     'session_domain.py', 'native_evidence.py', 'session_observations.mjs', 'controls/session_domain.py',
 )
 A3_SCRIPTS = ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs')
@@ -120,6 +120,7 @@ DATA_FILES = (
     'fixtures/gateway-protocol.fixtures.json',  # A3/A4 protocol fixtures
     'fixtures/session-calibration.json',        # A5.3 E1 fixture; FROZEN hash row
     'fixtures/session-expectations.json',       # A5.4 A19-HOST expectations; FROZEN hash row
+    'fixtures/retirement-methods.json',        # E1 retirement 101-method fixture (#1355)
     'package.json',                             # npm manifest for A3 tooling
     'package-lock.json',                        # pinned A3 dependency graph
 )

@@ -85,10 +85,13 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 
 
 ROOT = common.ROOT
@@ -1517,9 +1520,605 @@ def _deadline_report(native):
     return result
 
 
+# ---------------------------------------------------------------------------
+# E1 retirement suite (#1355, TS calibration slice).  The executed method set
+# is collected from real TS-side gateway rounds driven through the official
+# client; pass-through or uniform-unavailable padding must FAIL.  Thresholds
+# (k rounds, the rule classes below) are registered here from the TS reference
+# only: Rust retirement results are not consulted when setting them
+# (frozen-procedure iron rule).  cold-restart/rollback stays an explicit
+# BLOCKED placeholder until #1354.
+RETIREMENT_ROUNDS = 5
+RETIREMENT_METHODS_FIXTURE = SCRIPT / 'fixtures/retirement-methods.json'
+RETIREMENT_DRIVER = SCRIPT / 'retirement_driver.mts'
+RETIREMENT_PORT_SETS = ((28761, 28762, 28763), (28771, 28772, 28773))
+RETIREMENT_ROUND_TIMEOUT = 300
+# The audit's question is whether a TS gateway/helper runs outside the declared
+# owned set; this pattern names the TS CLI entry and nothing else.
+RETIREMENT_CENSUS_PATTERN = 'dist/src/cli/pilotdeck.js'
+RETIREMENT_OUTCOME_STATUSES = ('ok', 'error', 'timeout')
+
+
+def _retirement_expected(baseline):
+    """The 101-method expected set with per-source provenance (no invented rows).
+
+    Sources: the baseline wire union, the gateway coverage manifest, the frozen
+    method inventory table, and the retirement fixture.  A missing or
+    disagreeing source is a provenance gap and refuses to score.
+    """
+    sources = []
+    frames_path = baseline / 'src/gateway/protocol/frames.ts'
+    require(frames_path.is_file(), 'EXPECTED_PROVENANCE', f'baseline frames.ts missing: {frames_path}')
+    union = re.search(r'type WsGatewayMethod =([^;]*);', frames_path.read_text())
+    require(union is not None, 'EXPECTED_PROVENANCE', 'WsGatewayMethod union not found in baseline frames.ts')
+    wire = re.findall(r'"([a-z0-9_]+)"', union.group(1))
+    sources.append({'source': 'baseline frames.ts WsGatewayMethod union',
+                    'path': frames_path.as_posix(), 'count': len(wire)})
+    manifest_path = ROOT / 'specs/gateway-coverage/coverage-manifest.json'
+    require(manifest_path.is_file(), 'EXPECTED_PROVENANCE', f'gateway coverage manifest missing: {manifest_path}')
+    manifest = read(manifest_path)
+    require(isinstance(manifest.get('methods'), list), 'EXPECTED_PROVENANCE',
+            'coverage manifest has no methods list')
+    covered = [row.get('method') for row in manifest['methods'] if isinstance(row, dict)]
+    sources.append({'source': 'gateway coverage manifest (MAP.md §1.1 canonical)',
+                    'path': manifest_path.as_posix(), 'count': len(covered)})
+    inventory_path = ROOT / 'docs/research/005_phase-a-gateway/method-inventory.md'
+    require(inventory_path.is_file(), 'EXPECTED_PROVENANCE', f'method inventory missing: {inventory_path}')
+    inventoried = re.findall(r'^\|\s*\d+\s*\|\s*`([a-z0-9_]+)`', inventory_path.read_text(), re.M)
+    sources.append({'source': 'frozen method inventory table (plan 005 A-phase denominator)',
+                    'path': inventory_path.as_posix(), 'count': len(inventoried)})
+    fixture = read(RETIREMENT_METHODS_FIXTURE)
+    require(isinstance(fixture.get('methods'), list), 'EXPECTED_PROVENANCE',
+            'retirement fixture has no methods list')
+    fixtured = [row.get('method') for row in fixture['methods'] if isinstance(row, dict)]
+    sources.append({'source': 'retirement driver fixture', 'path': RETIREMENT_METHODS_FIXTURE.as_posix(),
+                    'count': len(fixtured)})
+    sets = [wire, covered, inventoried, fixtured]
+    require(all(len(rows) == 101 for rows in sets), 'EXPECTED_PROVENANCE',
+            f'expected-method source counts disagree with 101: {[len(rows) for rows in sets]}')
+    ordered = sorted(sets[0])
+    for source, rows in zip(sources, sets):
+        require(sorted(rows) == ordered, 'EXPECTED_PROVENANCE',
+                f"source disagrees with the baseline union: {source['source']}")
+    return ordered, sources
+
+
+def _retirement_census(gateway_pid):
+    """Snapshot of processes running the TS gateway CLI entry.
+
+    The declared set is exactly the round's owned gateway pid; anything else
+    matching the entry pattern is an undeclared TS host.
+    """
+    result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True, text=True, timeout=5)
+    require(result.returncode == 0, 'HOST_CENSUS', f'ps failed: {result.stderr.strip()}')
+    rows = []
+    for line in result.stdout.splitlines():
+        if RETIREMENT_CENSUS_PATTERN in line:
+            fields = line.strip().split(None, 1)
+            if len(fields) == 2:
+                rows.append({'pid': int(fields[0]), 'argvText': fields[1][:300]})
+    return {'rows': rows, 'declared': [gateway_pid]}
+
+
+def _retirement_census_verdict(census):
+    undeclared = [row for row in census['rows'] if row['pid'] not in census['declared']]
+    return {'status': 'FAIL' if undeclared else 'PASS', 'rule': 'HOST_CENSUS', 'undeclared': undeclared}
+
+
+def _retirement_connections(pid):
+    """Established TCP peers of the gateway while it is still running."""
+    result = subprocess.run(['lsof', '-nP', '-a', '-p', str(pid), '-iTCP'],
+                            capture_output=True, text=True, timeout=10)
+    rows = []
+    for line in result.stdout.splitlines()[1:]:
+        if 'ESTABLISHED' not in line:
+            continue
+        peer = None
+        match = re.search(r'(\S+)->(\S+)', line)
+        if match:
+            peer = match.group(2)
+        rows.append({'peer': peer, 'raw': line[:300]})
+    return {'rows': rows}
+
+
+def _retirement_network_verdict(connection_rows):
+    """Every established peer must be loopback; anything else is a fallback."""
+    undeclared = []
+    for row in connection_rows:
+        peer = row.get('peer')
+        if peer is None:
+            continue
+        if not (peer.startswith('127.0.0.1:') or peer.startswith('localhost:')
+                or peer.startswith('::1:') or peer.startswith('[::1]:')):
+            undeclared.append(peer)
+    return {'status': 'FAIL' if undeclared else 'PASS', 'rule': 'NETWORK_FALLBACK', 'undeclared': undeclared}
+
+
+def _retirement_wire_backing(frames):
+    """Map methods to their request ids and the responses/events that answered."""
+    sends, responses, events = {}, {}, {}
+    for row in frames:
+        frame = row.get('frame')
+        if not isinstance(frame, dict):
+            continue
+        identifier = frame.get('id')
+        if row.get('direction') == 'send':
+            if frame.get('type') == 'request':
+                sends[frame.get('method')] = identifier
+            continue
+        kind = frame.get('type')
+        if kind == 'response':
+            responses[identifier] = frame
+        elif kind == 'event':
+            events[identifier] = events.get(identifier, 0) + 1
+    return sends, responses, events
+
+
+def score_retirement_round(row, expected):
+    """Score one TS round against the anti-faking rules; never raises.
+
+    Rules: COVERAGE (executed must equal expected), UNIFORM_UNAVAILABLE (all
+    answers CAPABILITY_UNAVAILABLE cannot pad coverage), EVIDENCE_BACKING
+    (every outcome needs its wire frame), MISSING_GROUP / MISSING_FIELD /
+    ZERO_TESTS / UNKNOWN_SKIP (structure), ROUND_EXECUTION (driver exit).
+    """
+    verdict = {'round': row['label'], 'status': 'FAIL', 'rules': [], 'executed': [],
+               'methodVerdicts': {}, 'driverExitCode': row['driverExitCode']}
+    problems = []
+    for group in ('outcomes', 'frames', 'http', 'processes'):
+        if not row.get(group):
+            problems.append({'rule': 'MISSING_GROUP', 'detail': group})
+    if problems:
+        verdict['rules'] = problems
+        return verdict
+    if row['driverExitCode'] != 0:
+        problems.append({'rule': 'ROUND_EXECUTION', 'detail': f"driver exited {row['driverExitCode']}"})
+    outcomes = row['outcomes']
+    if not outcomes:
+        problems.append({'rule': 'ZERO_TESTS', 'detail': 'no method outcome rows'})
+        verdict['rules'] = problems
+        return verdict
+    executed, unknown, missing_fields = [], [], []
+    for outcome_row in outcomes:
+        for field in ('method', 'outcome', 'shape'):
+            if field not in outcome_row:
+                missing_fields.append({'field': field, 'row': outcome_row})
+        method, status = outcome_row.get('method'), outcome_row.get('outcome')
+        if status not in RETIREMENT_OUTCOME_STATUSES:
+            unknown.append(method)
+            continue
+        executed.append(method)
+        verdict['methodVerdicts'][method] = status
+    if missing_fields:
+        problems.append({'rule': 'MISSING_FIELD', 'detail': missing_fields})
+    if unknown:
+        problems.append({'rule': 'UNKNOWN_SKIP', 'detail': unknown})
+    expected_set, executed_set = set(expected), set(executed)
+    missing = [method for method in expected if method not in executed_set]
+    extra = [method for method in executed if method not in expected_set]
+    if missing:
+        problems.append({'rule': 'COVERAGE', 'detail': {'missing': missing}})
+    if extra:
+        problems.append({'rule': 'COVERAGE', 'detail': {'unexpected': extra}})
+    if outcomes and all(outcome_row.get('outcome') == 'error'
+                        and outcome_row.get('errorCode') == 'CAPABILITY_UNAVAILABLE'
+                        for outcome_row in outcomes):
+        problems.append({'rule': 'UNIFORM_UNAVAILABLE',
+                         'detail': 'every executed method answered CAPABILITY_UNAVAILABLE'})
+    sends, responses, events = _retirement_wire_backing(row['frames'])
+    violations = []
+    for outcome_row in outcomes:
+        method = outcome_row.get('method')
+        if method not in sends:
+            violations.append({'method': method, 'problem': 'send frame missing'})
+            continue
+        identifier = sends[method]
+        status = outcome_row.get('outcome')
+        if outcome_row.get('shape') == 'stream':
+            if status == 'ok' and events.get(identifier, 0) < 1:
+                violations.append({'method': method, 'problem': 'stream ok without any event frame'})
+        elif status == 'ok':
+            response = responses.get(identifier)
+            if response is None or response.get('ok') is not True:
+                violations.append({'method': method, 'problem': 'outcome ok without an ok response frame'})
+        elif status == 'error':
+            response = responses.get(identifier)
+            if response is None or response.get('ok') is not False:
+                violations.append({'method': method, 'problem': 'outcome error without an error response frame'})
+    if violations:
+        problems.append({'rule': 'EVIDENCE_BACKING', 'detail': violations})
+    verdict['executed'] = sorted(executed_set)
+    verdict['rules'] = problems
+    verdict['status'] = 'FAIL' if problems else 'PASS'
+    return verdict
+
+
+def _retirement_strip_wire(mutated, method):
+    """Remove every wire frame of *method* while keeping its outcome row."""
+    identifiers = set()
+    for row in mutated['frames']:
+        frame = row.get('frame')
+        if row.get('direction') == 'send' and isinstance(frame, dict) and frame.get('method') == method:
+            identifiers.add(frame.get('id'))
+    mutated['frames'] = [row for row in mutated['frames']
+                         if not (isinstance(row.get('frame'), dict) and row['frame'].get('id') in identifiers)]
+    return mutated
+
+
+def _retirement_controls(round_row, expected):
+    """Four mutation classes over the real round evidence; each must FAIL.
+
+    The controls only prove the scorer catches injected fakes; they are never
+    evidence of retirement (memory ruler-real-data).
+    """
+    controls = []
+
+    def record(name, injection, expected_rule, fired_status, detail):
+        controls.append({'class': name, 'injection': injection, 'expected': 'FAIL',
+                         'rule': expected_rule, 'status': 'PASS' if fired_status == 'FAIL' else 'FAIL',
+                         'detail': detail})
+
+    # 1. 故意偷偷回退 TS / 假 local 实透传: an executed method with no wire frame.
+    mutated = json.loads(json.dumps(round_row))
+    victim = next((row['method'] for row in mutated['outcomes'] if row.get('outcome') == 'ok'), None)
+    require(victim is not None, 'CONTROL_SETUP', 'no ok outcome to mutate')
+    mutated = _retirement_strip_wire(mutated, victim)
+    verdict = score_retirement_round(mutated, expected)
+    fired = [problem['rule'] for problem in verdict['rules']]
+    record('TS_FALLBACK', f"strip all wire frames of executed method '{victim}' while keeping its ok outcome",
+           'EVIDENCE_BACKING', verdict['status'],
+           {'firedRules': fired, 'detail': next((p['detail'] for p in verdict['rules']
+                                                if p['rule'] == 'EVIDENCE_BACKING'), None)})
+    # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
+    census_verdict = _retirement_census_verdict({'rows': round_row['census']['rows'], 'declared': []})
+    record('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
+           'HOST_CENSUS', census_verdict['status'], census_verdict)
+    # 3. 全走 unavailable: every outcome becomes CAPABILITY_UNAVAILABLE, wire kept consistent.
+    mutated = json.loads(json.dumps(round_row))
+    for outcome_row in mutated['outcomes']:
+        outcome_row['outcome'] = 'error'
+        outcome_row['errorCode'] = 'CAPABILITY_UNAVAILABLE'
+    for row in mutated['frames']:
+        frame = row.get('frame')
+        if isinstance(frame, dict) and frame.get('type') == 'response' and frame.get('ok') is True:
+            frame['ok'] = False
+            frame.pop('result', None)
+            frame['error'] = {'code': 'CAPABILITY_UNAVAILABLE', 'message': 'controlled mutation'}
+    verdict = score_retirement_round(mutated, expected)
+    fired = [problem['rule'] for problem in verdict['rules']]
+    record('UNIFORM_UNAVAILABLE', 'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
+           'UNIFORM_UNAVAILABLE', verdict['status'], {'firedRules': fired})
+    # 4. 假 local 实透传: an undeclared non-loopback established peer appears.
+    network_verdict = _retirement_network_verdict(
+        round_row['connections']['rows'] + [{'peer': '203.0.113.7:443', 'raw': 'controlled mutation'}])
+    record('FORWARDING_MISLABELED', 'undeclared non-loopback established peer added to the gateway connections',
+           'NETWORK_FALLBACK', network_verdict['status'], network_verdict)
+    return {'status': 'PASS' if all(row['status'] == 'PASS' for row in controls) else 'FAIL',
+            'classes': controls}
+
+
+def _retirement_http_routes(baseline):
+    """Parse the production HTTP route set from the baseline sources.
+
+    Every row carries file:line provenance from the parsed source; the route
+    set is never hand-listed.
+    """
+    routes = []
+
+    def scan(relative, patterns):
+        path = baseline / relative
+        require(path.is_file(), 'ENTRY_SOURCE', f'baseline source missing: {path}')
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            for pattern, kind in patterns:
+                match = re.search(pattern, line)
+                if match:
+                    routes.append({'route': match.group(1), 'kind': kind, 'source': f'{relative}:{lineno}',
+                                   'line': line.strip()[:200]})
+
+    scan('src/gateway/server/GatewayServer.ts',
+         [(r'url\.pathname === "(/[^"]*)"', 'absolute'), (r'url\.pathname\.startsWith\("(/[^"]*)"', 'prefix'),
+          (r'url\.pathname !== "(/[^"]*)"', 'absolute')])
+    scan('src/adapters/web/httpRouter.ts',
+         [(r'url\.pathname === "(/[^"]*)"', 'absolute'), (r'subPath === "(/[^"]*)"', 'subpath'),
+          (r'^const PROJECT_RE = .*?(/api/web/projects)', 'prefix')])
+    scan('src/composition/publicHostHttpTransport.ts', [(r"path !== '(/[^']*)'", 'absolute')])
+    scan('src/composition/publicApprovalHttpTransport.ts', [(r"path !== '(/[^']*)'", 'absolute')])
+    return routes
+
+
+def _retirement_channel_listeners(baseline):
+    """Channel adapters that own a listener socket, parsed from the baseline."""
+    channel_dir = baseline / 'src/adapters/channel'
+    require(channel_dir.is_dir(), 'ENTRY_SOURCE', f'baseline channel dir missing: {channel_dir}')
+    entries = []
+    for path in sorted(channel_dir.glob('*.ts')):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if 'createServer(' in line:
+                entries.append({'file': f'src/adapters/channel/{path.name}:{lineno}', 'line': line.strip()[:200]})
+    return entries
+
+
+def _retirement_entry_inventory(baseline, round_row):
+    """Per-entry hit list; any unhit entry BLOCKS instead of silently passing."""
+    http_probes = round_row['http']
+    executed = {row['method'] for row in round_row['outcomes']}
+
+    def route_probes(route):
+        """Live probes that exercised this parsed route, by parsed route kind."""
+        name, kind = route['route'], route['kind']
+        if name == '/ws':
+            return []
+        if kind == 'prefix':
+            return [p for p in http_probes if p['path'] == name or p['path'].startswith(name.rstrip('/') + '/')]
+        if kind == 'subpath':
+            # subPath routes parsed from httpRouter.ts ('/files/tree', ...) live
+            # under /api/web/projects/<key>; match by tail.
+            return [p for p in http_probes if p['path'].split('?')[0].endswith(name)]
+        return [p for p in http_probes if p['path'].split('?')[0] == name]
+
+    entries = []
+    for route in _retirement_http_routes(baseline):
+        name = route['route']
+        matched = route_probes(route)
+        if name == '/ws':
+            # The whole driver session is one live upgrade; wire frames prove it.
+            hit, reason = bool(round_row['frames']), (None if round_row['frames'] else 'no websocket frames recorded')
+        else:
+            hit = any(p['status'] not in (None, 404) for p in matched)
+            reason = None if hit else 'route answered 404 or was unreachable'
+        entries.append({'entry': name, 'kind': 'http', 'source': route['source'],
+                        'probes': [{'path': p['path'], 'status': p['status']} for p in matched],
+                        'status': 'HIT' if hit else 'NO_HIT', 'reason': reason})
+    for listener in _retirement_channel_listeners(baseline):
+        entries.append({'entry': listener['file'], 'kind': 'channel-listener', 'source': listener['file'],
+                        'probes': [], 'status': 'STATIC_VERIFIED',
+                        'reason': 'createServer call verified in the baseline channel adapter'})
+    cron_executed = any(method.startswith('cron_') for method in executed)
+    entries.append({'entry': 'cron', 'kind': 'background', 'source': 'home/pilotdeck.yaml cron.enabled + cron_* methods',
+                    'probes': sorted(method for method in executed if method.startswith('cron_')),
+                    'status': 'HIT' if cron_executed else 'NO_HIT',
+                    'reason': None if cron_executed else 'no cron method executed'})
+    background_executed = any(method in ('background_tasks', 'background_task_stop') for method in executed)
+    entries.append({'entry': 'background', 'kind': 'background', 'source': 'background_tasks/background_task_stop methods',
+                    'probes': sorted(method for method in executed if method.startswith('background')),
+                    'status': 'HIT' if background_executed else 'NO_HIT',
+                    'reason': None if background_executed else 'no background method executed'})
+    unhit = [row['entry'] for row in entries if row['status'] == 'NO_HIT']
+    return {'status': 'BLOCKED' if unhit else 'PASS', 'unhit': unhit, 'entries': entries}
+
+
+def _retirement_js_host_census():
+    """Read-only census of JS host boundary call sites in the Rust tree.
+
+    #132 (isolated UTF-16 surrogate sorting) and #1265 (outputSchema regex):
+    the census lists every JS_HOST_REQUIRED site under src/pilotdeck-gateway/src
+    so the Rust-side retirement round scores wiring against a recorded list
+    instead of a fresh grep.
+    """
+    root = ROOT / 'src/pilotdeck-gateway/src'
+    rows = []
+    if root.is_dir():
+        for path in sorted(root.rglob('*.rs')):
+            for lineno, line in enumerate(path.read_text(errors='replace').splitlines(), 1):
+                if 'JS_HOST_REQUIRED' in line:
+                    rows.append({'file': path.relative_to(ROOT).as_posix(), 'line': lineno,
+                                 'text': line.strip()[:200]})
+    return {'status': 'CENSUS_RECORDED', 'count': len(rows), 'entries': rows,
+            'note': 'static census; the wired-to-production verdict (#132/#1265) belongs to the '
+                    'Rust-side retirement round'}
+
+
+def _retirement_ports_available(ports):
+    try:
+        for port in ports:
+            with socket.socket() as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(('127.0.0.1', port))
+        return True
+    except OSError:
+        return False
+
+
+def _retirement_round(index, output, baseline, ports, timeout):
+    """One real TS-side gateway round: mock model + baseline CLI + driver."""
+    run_round_module = _load('run_round', common.SCRIPT / 'run_round.py')
+    mock_port, gateway_port, webui_port = ports
+    folder = output / f'round-{index:02d}'
+    if folder.exists():
+        raise EvidenceError('ROUND_OVERWRITE', f'{folder} already exists')
+    folder.mkdir(parents=True)
+    home, project = folder / 'home', folder / 'project'
+    for path in (home, project, folder / 'tmp'):
+        path.mkdir()
+    registration = home / 'projects/gateway-parity-fixture'
+    registration.mkdir(parents=True)
+    (registration / '.cwd').write_text(str(project) + '\n')
+    (project / 'note.txt').write_text('gateway parity fixture\n')
+    save(home / 'permissions.json', {'version': 1, 'allowedTools': [], 'askTools': ['bash'],
+                                      'disallowedTools': [], 'skipPermissions': False})
+    token_path = home / 'server-token'
+    token_path.write_text(run_round_module.TOKEN + '\n')
+    token_path.chmod(0o600)
+    (home / 'pilotdeck.yaml').write_text(f'''schemaVersion: 1
+agent:
+  model: parity/deterministic
+  maxContextTokens: 65536
+  maxOutputTokens: 8192
+model:
+  providers:
+    parity:
+      protocol: openai
+      url: http://127.0.0.1:{mock_port}/v1
+      apiKey: gateway-parity-mock-only
+      models:
+        deterministic:
+          capabilities:
+            supportsToolUse: true
+            maxContextTokens: 65536
+            maxOutputTokens: 8192
+telemetry:
+  enabled: false
+cron:
+  enabled: true
+  timezone: UTC
+webui:
+  runtime:
+    host: 127.0.0.1
+    serverPort: {webui_port}
+    databasePath: {json.dumps(str(home / 'auth.db'))}
+    workspacesRoot: {json.dumps(str(folder / 'workspaces'))}
+''')
+    (folder / 'workspaces').mkdir()
+    env = {key: val for key, val in os.environ.items() if not key.startswith(('PILOTDECK_', 'EXP003_', 'GP_'))
+           and key not in ('PILOT_HOME', 'DATABASE_PATH', 'NODE_OPTIONS', 'WORKSPACES_ROOT')}
+    env.update(PDRS_BASELINE=str(baseline), PILOT_HOME=str(home), GP_PROJECT=str(project),
+               DATABASE_PATH=str(home / 'auth.db'), TMPDIR=str(folder / 'tmp'), WORKSPACES_ROOT=str(folder / 'workspaces'),
+               PILOTDECK_GATEWAY_PORT=str(gateway_port), PILOTDECK_GATEWAY_HOST='127.0.0.1',
+               PILOTDECK_GATEWAY_TOKEN=run_round_module.TOKEN,
+               PILOTDECK_GATEWAY_TOKEN_PATH=str(token_path),
+               GP_POLL_WATCH='1', PILOTDECK_SKIP_BROWSER_OPEN='1', GP_MOCK_PORT=str(mock_port),
+               GP_MOCK_URL=f'http://127.0.0.1:{mock_port}', GP_MODEL_LOG=str(folder / 'model.jsonl'))
+    processes = []
+    row = {'label': f'round-{index:02d}', 'status': 'RUNNING',
+           'ports': {'mock': mock_port, 'gateway': gateway_port},
+           'runtime': {'pilotHome': str(home), 'cwd': str(project)}, 'driverExitCode': None}
+    start_time = time.monotonic()
+
+    def launch(name, argv, port):
+        log = (folder / f'{name}.log').open('w')
+        entry = {'name': name, 'port': port, 'argv': [str(item) for item in argv]}
+        proc = run_round_module.start_owned(processes, log, entry, entry['argv'], cwd=project,
+                                            env=env, stdout=log, stderr=subprocess.STDOUT)
+        save(folder / 'processes.json', [item[2] for item in processes])
+        return proc
+
+    def ready(port, proc, deadline):
+        while time.monotonic() < deadline:
+            try:
+                code = run_round_module.wait_owned(proc, 0)
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                raise RuntimeError(f'owned process exited {code}')
+            try:
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=.5) as response:
+                    if response.status == 200:
+                        return
+            except (OSError, urllib.error.URLError):
+                time.sleep(.1)
+        raise TimeoutError(f'port {port} readiness timeout')
+
+    try:
+        deadline = start_time + timeout
+        mock = launch('mock', ['node', SCRIPT / 'mock.mjs'], mock_port)
+        ready(mock_port, mock, min(deadline, time.monotonic() + 45))
+        gateway = launch('gateway', ['node', '--import', SCRIPT / 'watcher.mjs',
+                                     baseline / 'dist/src/cli/pilotdeck.js', 'server'], gateway_port)
+        ready(gateway_port, gateway, min(deadline, time.monotonic() + 45))
+        listener_probe = subprocess.run(['lsof', '-nP', '-a', '-p', str(gateway.pid), '-iTCP', '-sTCP:LISTEN', '-Fn'],
+                                         capture_output=True, text=True, timeout=5)
+        addresses = [line[1:] for line in listener_probe.stdout.splitlines() if line.startswith('n')]
+        row['listeners'] = {'pid': gateway.pid, 'addresses': addresses,
+                            'loopbackOnly': addresses == [f'127.0.0.1:{gateway_port}']}
+        driver = launch('driver-retirement', ['node', '--import', baseline / 'node_modules/tsx/dist/loader.mts',
+                                              RETIREMENT_DRIVER, '--url', f'ws://127.0.0.1:{gateway_port}/ws',
+                                              '--token', run_round_module.TOKEN, '--methods', RETIREMENT_METHODS_FIXTURE,
+                                              '--out', folder / 'driver'], None)
+        row['driverExitCode'] = run_round_module.wait_owned(
+            driver, max(.1, deadline - time.monotonic()))
+        row['census'] = _retirement_census(gateway.pid)
+        row['connections'] = _retirement_connections(gateway.pid)
+        require((folder / 'driver' / 'methods.json').is_file(), 'ROUND_EVIDENCE', 'driver methods.json missing')
+        require((folder / 'driver' / 'frames.jsonl').is_file(), 'ROUND_EVIDENCE', 'driver frames.jsonl missing')
+        require((folder / 'driver' / 'http.json').is_file(), 'ROUND_EVIDENCE', 'driver http.json missing')
+        row['outcomes'] = read(folder / 'driver' / 'methods.json')['methods']
+        row['frames'] = [json.loads(line) for line in
+                         (folder / 'driver' / 'frames.jsonl').read_text().splitlines() if line.strip()]
+        row['http'] = read(folder / 'driver' / 'http.json')['probes']
+        row['status'] = 'DONE'
+    finally:
+        with deferred_signals():
+            row['audit'] = run_round_module.cleanup_owned(processes)
+            row['elapsedSeconds'] = time.monotonic() - start_time
+            save(folder / 'processes.json', [item[2] for item in processes])
+            save(folder / 'round.json', {key: row[key] for key in
+                                         ('label', 'status', 'ports', 'runtime', 'driverExitCode',
+                                          'listeners', 'census', 'connections', 'audit', 'elapsedSeconds')
+                                         if key in row})
+    require(row['audit']['allStopped'], 'CLEANUP', f"round {index}: owned process-group cleanup unverified: "
+                                                  f"{row['audit']}")
+    return row
+
+
+def _retirement_report(output, baseline):
+    """TS calibration slice: k real TS rounds, scoring, four controls, audits."""
+    expected, provenance = _retirement_expected(baseline)
+    rounds, port_attempts = [], []
+    for index in range(1, RETIREMENT_ROUNDS + 1):
+        for ports in RETIREMENT_PORT_SETS:
+            if not _retirement_ports_available(ports):
+                port_attempts.append({'round': index, 'ports': list(ports),
+                                      'outcome': 'AddrInUse: retried on the alternate port set'})
+                continue
+            rounds.append(_retirement_round(index, output, baseline, ports, RETIREMENT_ROUND_TIMEOUT))
+            break
+        else:
+            raise EvidenceError('PORT_CONFLICT', f'round {index}: every port set was in use')
+    verdicts = [score_retirement_round(row, expected) for row in rounds]
+    coverage_status = common.aggregate_status(*(verdict['status'] for verdict in verdicts))[0]
+    controls = _retirement_controls(rounds[0], expected)
+    inventory = _retirement_entry_inventory(baseline, rounds[0])
+    census_verdicts = [_retirement_census_verdict(row['census']) for row in rounds]
+    network_verdicts = [_retirement_network_verdict(row['connections']['rows']) for row in rounds]
+    host_status = common.aggregate_status(*(item['status'] for verdict in census_verdicts + network_verdicts))[0]
+    cold_restart = {'status': 'BLOCKED', 'rule': 'COLD_RESTART_PENDING',
+                    'reason': 'pending #1354; explicit placeholder, never a silent skip'}
+    overall = common.aggregate_status(coverage_status, inventory['status'], host_status,
+                                      controls['status'], cold_restart['status'])[0]
+    return {
+        'status': overall,
+        'reason': 'E1 retirement TS calibration slice (#1355): expected/executed collected from real '
+                  'TS gateway rounds; cold-restart/rollback stays BLOCKED pending #1354 and the frozen '
+                  'hash re-registration is the coordinator receive step',
+        'expected': {'methods': expected, 'count': len(expected), 'provenance': provenance},
+        'executed': {verdict['round']: {'count': len(verdict['executed']), 'methods': verdict['executed']}
+                     for verdict in verdicts},
+        'rounds': [{'round': verdict['round'], 'status': verdict['status'], 'rules': verdict['rules'],
+                    'driverExitCode': verdict['driverExitCode'], 'executedCount': len(verdict['executed']),
+                    'audit': row['audit'], 'listeners': row['listeners'],
+                    'folder': (output / row['label']).as_posix()} for verdict, row in zip(verdicts, rounds)],
+        'methodCoverage': {'status': coverage_status, 'k': RETIREMENT_ROUNDS, 'rounds': verdicts},
+        'entryInventory': inventory,
+        'hostAudit': {'status': host_status, 'processCensus': census_verdicts, 'network': network_verdicts,
+                      'jsHostRequired': _retirement_js_host_census(),
+                      'nativeBinConfig': {'status': 'NOT_RUN',
+                                          'reason': 'native bin TS-upstream config audit belongs to the '
+                                                    'Rust-side retirement round'}},
+        'controls': controls,
+        'coldRestartRollback': cold_restart,
+        'topology': {'host': 'ts-reference', 'sidecar': 'ts-mock-model', 'entry': 'official GatewayWsClient driver',
+                     'ports': {'mock': rounds[0]['ports']['mock'], 'gateway': rounds[0]['ports']['gateway']}},
+        'portAudit': port_attempts,
+        'processAudit': [row['audit'] for row in rounds],
+        'cleanupAudit': {'status': 'PASS' if all(row['audit']['allStopped'] for row in rounds) else 'FAIL'},
+        'executionStatus': coverage_status if coverage_status in ('PASS', 'FAIL') else 'NOT_RUN',
+        'acceptanceStatus': 'NOT_RUN',
+    }
+
+
+def retirement_report(output, baseline):
+    """BLOCKED wrapper: a structural refusal is never a scored FAIL."""
+    try:
+        return _retirement_report(output, baseline)
+    except EvidenceError as error:
+        return {'status': 'BLOCKED', 'failure': {'rule': error.rule, 'detail': str(error)},
+                'executionStatus': 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN',
+                'reason': 'retirement TS calibration could not produce a certifiable result'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--suite', choices=('calibrate', 'deadline'), required=True)
+    parser.add_argument('--suite', choices=('calibrate', 'deadline', 'retirement'), required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path, default=BASELINE)
     parser.add_argument('--native-capture', type=Path,
@@ -1546,6 +2145,17 @@ def main():
     install_shutdown()
     try:
         with parity_lock(timeout=30, takeovers=takeovers):
+            if args.suite == 'retirement':
+                # Preconditions before any output directory exists (#187).
+                missing = [str(path) for path in (RETIREMENT_METHODS_FIXTURE, RETIREMENT_DRIVER)
+                           if not path.is_file()]
+                if not (args.baseline / 'dist/src/cli/pilotdeck.js').is_file():
+                    missing.append(f'{args.baseline.resolve()}/dist/src/cli/pilotdeck.js')
+                if missing:
+                    print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
+                                      'error': 'retirement preconditions missing: ' + '; '.join(missing[:4])
+                                               + '; pass --baseline'}, ensure_ascii=False))
+                    return 2
             missing = [name for name in E1_SOURCES if not (args.baseline / name).is_file()] if args.suite == 'calibrate' else []
             if missing:
                 # 缺 baseline 是前置条件不满足：BLOCKED 且不建输出目录（#187）。按 E1 实际导入的源码入口核对，不要求 dist
@@ -1558,7 +2168,7 @@ def main():
             # bytes of tsx/ws (and their declared dependencies) so a swapped loader or
             # ws cannot certify a calibration (#85 85.1).
             dependencies = None
-            if args.suite == 'calibrate':
+            if args.suite in ('calibrate', 'retirement'):
                 try:
                     dependencies = baseline_dependency_hashes(args.baseline.resolve())
                 except ValueError as error:
@@ -1578,6 +2188,14 @@ def main():
                         raise ApparatusVerificationError('FROZEN: deadline requires successful frozen check')
                     report.update(deadline_report(args.native_capture))
                     _, code = common.aggregate_status(report['status'])
+                elif args.suite == 'retirement':
+                    # TS calibration slice (#1355): the frozen re-registration is the
+                    # coordinator receive step, so measurements are recorded and the
+                    # overall status stays BLOCKED while frozen exitCode != 0.
+                    report['lockTakeovers'] = takeovers
+                    report.update(retirement_report(output, args.baseline.resolve()))
+                    _, code = common.aggregate_status(
+                        report['status'] if report['status'] in common.BATCH_STATUS_ORDER else 'BLOCKED')
                 else:
                     report['lockTakeovers'] = takeovers
                     audit = run_fixture(output, args.baseline.resolve())

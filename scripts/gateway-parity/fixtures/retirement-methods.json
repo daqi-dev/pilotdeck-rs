@@ -1,0 +1,893 @@
+{
+  "schemaVersion": 1,
+  "comment": "E1 retirement suite (#1355): the 101 WsGatewayMethod entries with per-method params for the TS calibration driver. Expected set provenance is verified at run time against frames.ts / coverage-manifest.json / method-inventory.md; this fixture must equal that union exactly. __PROJECT__/__SESSION__ are substituted by retirement_driver.mts.",
+  "placeholder": {
+    "projectKey": "__PROJECT__",
+    "sessionKey": "__SESSION__",
+    "runId": "run-retirement-calib"
+  },
+  "methods": [
+    {
+      "method": "submit_turn",
+      "shape": "stream",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "channelKey": "web",
+        "projectKey": "__PROJECT__",
+        "message": "RETIREMENT_CALIB",
+        "runId": "run-retirement-calib"
+      }
+    },
+    {
+      "method": "run_get",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "runId": "run-retirement-calib",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "run_events",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "runId": "run-retirement-calib",
+        "projectKey": "__PROJECT__",
+        "afterSeq": 0,
+        "limit": 10
+      }
+    },
+    {
+      "method": "run_reattach",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "runId": "run-retirement-calib",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "active_turn_snapshot",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "includeEvents": false
+      }
+    },
+    {
+      "method": "permission_list",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "list_sessions",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "limit": 10
+      }
+    },
+    {
+      "method": "memory_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "sessionKey": "__SESSION__"
+      }
+    },
+    {
+      "method": "snapshot_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "sessionKey": "__SESSION__",
+        "limit": 10
+      }
+    },
+    {
+      "method": "snapshot_get",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "snapshotId": "retirement-none"
+      }
+    },
+    {
+      "method": "snapshot_restore",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "snapshotId": "retirement-none"
+      }
+    },
+    {
+      "method": "manager_sessions",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "manager_browsers",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "native_archive_manifest",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "native_archive_entries",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "limit": 10
+      }
+    },
+    {
+      "method": "native_archive_artifact",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "artifactName": "fixture.txt"
+      }
+    },
+    {
+      "method": "describe_server",
+      "shape": "request",
+      "params": {}
+    },
+    {
+      "method": "list_projects",
+      "shape": "request",
+      "params": {}
+    },
+    {
+      "method": "describe_project",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "project_files_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "limit": 10
+      }
+    },
+    {
+      "method": "project_file_read",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "path": "note.txt",
+        "maxBytes": 1024
+      }
+    },
+    {
+      "method": "commands_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "limit": 10
+      }
+    },
+    {
+      "method": "model_catalog_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "includeAuto": true
+      }
+    },
+    {
+      "method": "session_model_get",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "session_model_set",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "selection": {
+          "mode": "auto"
+        }
+      }
+    },
+    {
+      "method": "session_model_clear",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "supported_agents",
+      "shape": "request",
+      "params": {}
+    },
+    {
+      "method": "usage_snapshot",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "model_usage_snapshot",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "output_styles_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "sessionKey": "__SESSION__"
+      }
+    },
+    {
+      "method": "reload_output_styles",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "resolve_settings",
+      "shape": "request",
+      "params": {}
+    },
+    {
+      "method": "read_session_messages",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "limit": 5
+      }
+    },
+    {
+      "method": "background_tasks",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "background_task_stop",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "taskId": "retirement-none"
+      }
+    },
+    {
+      "method": "cron_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "limit": 10
+      }
+    },
+    {
+      "method": "user_dialog_list",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "mcp_server_status",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "sop_status",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "memory_wipe",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "sessionKey": "__SESSION__",
+        "scope": "session"
+      }
+    },
+    {
+      "method": "seed_read_state",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "path": "note.txt",
+        "mtime": 0,
+        "projectKey": "__PROJECT__",
+        "channelKey": "web"
+      }
+    },
+    {
+      "method": "record_agent_status_message",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "turnId": "retirement-turn",
+        "projectKey": "__PROJECT__",
+        "status": {
+          "event": "retirement-calib",
+          "kind": "status",
+          "text": "retirement calibration"
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "invocationId": "retirement-none",
+        "output": {}
+      }
+    },
+    {
+      "method": "new_session",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "channelKey": "web"
+      }
+    },
+    {
+      "method": "resume_session",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__"
+      }
+    },
+    {
+      "method": "export_session_transcript",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "restore_session_transcript",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "archive": {
+          "schemaVersion": 1,
+          "format": "portable_text_messages",
+          "messages": [
+            {
+              "role": "user",
+              "text": "retirement calibration"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "fork_session",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "fromEntryId": "retirement-none"
+      }
+    },
+    {
+      "method": "replace_last_turn",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "expectedTurnId": "retirement-none",
+        "replacementTurnId": "retirement-turn-2"
+      }
+    },
+    {
+      "method": "finalize_last_turn_replacement",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "transactionId": "retirement-none",
+        "action": "rollback"
+      }
+    },
+    {
+      "method": "rewind_files",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "userMessageId": "retirement-none",
+        "dryRun": true
+      }
+    },
+    {
+      "method": "rename_session",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "value": "web:retirement-renamed"
+      }
+    },
+    {
+      "method": "tag_session",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "value": "retirement-calib"
+      }
+    },
+    {
+      "method": "set_permission_mode",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "mode": "default"
+      }
+    },
+    {
+      "method": "apply_flag_settings",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "settings": {}
+      }
+    },
+    {
+      "method": "update_settings",
+      "shape": "request",
+      "params": {
+        "source": "localSettings",
+        "settings": {}
+      }
+    },
+    {
+      "method": "set_session_thinking",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "thinking": null
+      }
+    },
+    {
+      "method": "set_output_style",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "name": null
+      }
+    },
+    {
+      "method": "set_mcp_servers",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "servers": {}
+      }
+    },
+    {
+      "method": "mcp_server_reconnect",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "serverName": "retirement-none"
+      }
+    },
+    {
+      "method": "mcp_server_toggle",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "serverName": "retirement-none",
+        "enabled": false
+      }
+    },
+    {
+      "method": "set_mcp_permission_mode_override",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "serverName": "retirement-none",
+        "mode": "default"
+      }
+    },
+    {
+      "method": "grant_session_permission",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "entry": "allow Bash(retirement-calib)"
+      }
+    },
+    {
+      "method": "steer_turn",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "runId": "run-retirement-calib",
+        "itemId": "retirement-none",
+        "message": "RETIREMENT_STEER",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "cancel_steer",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "runId": "run-retirement-calib",
+        "itemId": "retirement-none"
+      }
+    },
+    {
+      "method": "abort_turn",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__"
+      }
+    },
+    {
+      "method": "reconnect_interaction",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "previousBinding": null
+      }
+    },
+    {
+      "method": "elicitation_respond",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "requestId": "retirement-none",
+        "answer": {
+          "behavior": "cancelled"
+        }
+      }
+    },
+    {
+      "method": "permission_decide",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "requestId": "retirement-none",
+        "decision": "deny"
+      }
+    },
+    {
+      "method": "user_dialog_claim",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "requestId": "retirement-none",
+        "ttlMs": 1000
+      }
+    },
+    {
+      "method": "user_dialog_release",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "requestId": "retirement-none"
+      }
+    },
+    {
+      "method": "user_dialog_respond",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "requestId": "retirement-none",
+        "result": {
+          "behavior": "cancelled"
+        }
+      }
+    },
+    {
+      "method": "read_subagent_messages",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "subagentId": "retirement-none"
+      }
+    },
+    {
+      "method": "sop_resume",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__",
+        "requestId": "retirement-none",
+        "waitId": "retirement-none",
+        "source": "human",
+        "message": "RETIREMENT_CALIB"
+      }
+    },
+    {
+      "method": "upload_create",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "files": [
+          {
+            "clientFileId": "calib-1",
+            "name": "calib.txt",
+            "relativePath": "calib.txt",
+            "size": 17,
+            "mimeType": "text/plain"
+          }
+        ],
+        "idempotencyKey": "retirement-calib-1"
+      }
+    },
+    {
+      "method": "upload_get",
+      "shape": "request",
+      "params": {
+        "uploadId": "retirement-none"
+      }
+    },
+    {
+      "method": "upload_part",
+      "shape": "request",
+      "params": {
+        "uploadId": "retirement-none",
+        "clientFileId": "calib-1",
+        "contentBase64": "Y2FsaWI="
+      }
+    },
+    {
+      "method": "upload_complete",
+      "shape": "request",
+      "params": {
+        "uploadId": "retirement-none"
+      }
+    },
+    {
+      "method": "upload_cancel",
+      "shape": "request",
+      "params": {
+        "uploadId": "retirement-none"
+      }
+    },
+    {
+      "method": "cron_create",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "sessionKey": "__SESSION__",
+        "channelKey": "web",
+        "message": "RETIREMENT_CRON",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "method": "cron_update",
+      "shape": "request",
+      "params": {
+        "taskId": "retirement-none",
+        "projectKey": "__PROJECT__",
+        "expectedRevision": 0,
+        "message": "RETIREMENT_CRON",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "method": "cron_run_now",
+      "shape": "request",
+      "params": {
+        "taskId": "retirement-none",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "cron_stop",
+      "shape": "request",
+      "params": {
+        "taskId": "retirement-none",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "cron_delete",
+      "shape": "request",
+      "params": {
+        "taskId": "retirement-none",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "reload_config",
+      "shape": "request",
+      "params": {}
+    },
+    {
+      "method": "reload_extensions",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "prepare_weixin_login",
+      "shape": "request",
+      "params": {}
+    },
+    {
+      "method": "skill_list",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "skill_read",
+      "shape": "request",
+      "params": {
+        "scope": "project",
+        "slug": "retirement-calib",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "skill_create",
+      "shape": "request",
+      "params": {
+        "scope": "project",
+        "slug": "retirement-calib",
+        "projectKey": "__PROJECT__",
+        "content": "---\nname: retirement-calib\ndescription: retirement calibration fixture\n---\ncalibration body\n"
+      }
+    },
+    {
+      "method": "skill_write",
+      "shape": "request",
+      "params": {
+        "scope": "project",
+        "slug": "retirement-calib",
+        "projectKey": "__PROJECT__",
+        "content": "---\nname: retirement-calib\ndescription: retirement calibration fixture\n---\ncalibration body\n"
+      }
+    },
+    {
+      "method": "skill_validate",
+      "shape": "request",
+      "params": {
+        "sourcePath": "/retirement-none"
+      }
+    },
+    {
+      "method": "skill_scan",
+      "shape": "request",
+      "params": {
+        "parentPath": "/"
+      }
+    },
+    {
+      "method": "skill_import",
+      "shape": "request",
+      "params": {
+        "sourcePath": "/retirement-none",
+        "slug": "retirement-calib",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "skill_delete",
+      "shape": "request",
+      "params": {
+        "scope": "project",
+        "slug": "retirement-calib",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "always_on_apply",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "workCycleId": "retirement-none",
+        "projectName": "retirement-calib"
+      }
+    },
+    {
+      "method": "always_on_abort",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "sessionKey": "__SESSION__"
+      }
+    },
+    {
+      "method": "always_on_rerun_plan",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__",
+        "planId": "retirement-none",
+        "projectName": "retirement-calib"
+      }
+    },
+    {
+      "method": "close_session",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "reason": "retirement calibration"
+      }
+    },
+    {
+      "method": "delete_session",
+      "shape": "request",
+      "params": {
+        "sessionKey": "__SESSION__",
+        "projectKey": "__PROJECT__"
+      }
+    },
+    {
+      "method": "close_project_sessions",
+      "shape": "request",
+      "params": {
+        "projectKey": "__PROJECT__"
+      }
+    }
+  ]
+}
