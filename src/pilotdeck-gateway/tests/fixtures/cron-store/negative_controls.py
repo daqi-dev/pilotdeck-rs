@@ -231,15 +231,28 @@ mutations = [
     # non-UTF-8 names — so the fixture creation runs where the bytes are
     # EILSEQ-rejected and dies at the #1400 create panic instead of skipping.
     # The mirror of entry-lossy-home: killable only off Linux (see
-    # NOT_ON_LINUX above).
+    # NOT_ON_LINUX above). #1400 review (sibling/boundary P1): the probe now
+    # sorts by errno — EILSEQ alone skips, anything else panics with the
+    # "#1400 ... failed for a reason other than the file name" message — so
+    # forcing it to `true` still reaches the fixture's create panic, while a
+    # Linux-side EACCES/ENOSPC in the probe is a hard failure rather than a
+    # silent skip.
     ('skip-probe-forced-writable', tests,
      'fn non_utf8_names_writable(dir: &Path) -> bool {\n'
      '    use std::os::unix::ffi::OsStrExt;\n'
-     '    let probe_dir = dir.join(std::ffi::OsStr::from_bytes(b"probe-\\xff"));\n'
-     '    let writable = fs::create_dir(&probe_dir)\n'
-     '        .and_then(|()| fs::write(probe_dir.join("probe"), b""))\n'
-     '        .is_ok();\n'
-     '    let _ = fs::remove_dir_all(&probe_dir);\n'
+     '    let probe_home = dir.join(std::ffi::OsStr::from_bytes(b"probe-\\xff"));\n'
+     '    let probe_project = probe_home.join("cron/projects/w-same");\n'
+     '    let outcome = fs::create_dir_all(&probe_project)\n'
+     '        .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\\"probe\\": true}"));\n'
+     '    let writable = match outcome {\n'
+     '        Ok(()) => true,\n'
+     '        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => false,\n'
+     '        Err(error) => panic!(\n'
+     '            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",\n'
+     '            probe_project.display()\n'
+     '        ),\n'
+     '    };\n'
+     '    let _ = fs::remove_dir_all(&probe_home);\n'
      '    writable\n'
      '}',
      'fn non_utf8_names_writable(dir: &Path) -> bool {\n'
