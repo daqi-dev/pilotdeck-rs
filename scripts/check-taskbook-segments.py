@@ -17,7 +17,8 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
   大包 = 任一条成立
     1) 任务书声明 `<!-- pdrs-scope: files=N lines=M est_min=K -->`（可多条，任一条达阈值即大包）
        且 files ≥ 8 或 lines ≥ 1500 或 est_min > 90；
-    2) 没有可解析的 scope 行时，出现「约/估/预计/大约/工作量/共计/合计/总计/共 … 人日」→ 人日 × 480 min > 90
+    2) 没有可解析的 scope 行时，出现「约/大约/估计/预计/估算/估/工作量/共计/合计/总计/共 [标点] N 人日」
+       → 人日 × 480 min > 90
        （历史任务书的回退信号，多条取最大值）；
     3) 仍判不出时，点名的 `*.rs` 路径 ≥ 8 个（回退启发式）。
   scope 行只认**围栏外的正文**；人日与 .rs 回退看原文（围栏里出现的证据也算，宁可判大）——
@@ -36,8 +37,9 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
   不许写成「无需 / 不用 / 不会 …」这类否定句，也不许写 URL 片段）+「第 N 段失败从哪继续」的最小学样
   （失败 / 继续 / 接续 / 恢复 / resume；同样不许写在否定句里）。
 
-退出码：0 通过（含「小包，无需分段」，`--recent` 没扫到也算 0）· 1 命中大包但分段表缺失/不全 ·
-2 任务书读不了、为空、读取期间被改写或 scope 行写坏 · 3 用法错误
+退出码：0 通过（含「小包，无需分段」，`--recent` 扫过但没扫到也算 0）· 1 命中大包但分段表缺失/不全 ·
+2 任务书读不了、为空、读取期间被改写、scope 行写坏，或 `--recent` 的递归扫描中断（「扫不了」不许
+冒充「没扫到」）· 3 用法错误（`--root` 只与 `--recent` 同用）
 （多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
 """
 
@@ -103,7 +105,8 @@ DASHES = r"[\s_\-－—‐‑]"
 SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
 COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
 SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
-PERSON_DAY = re.compile(r"(?:约|估|预计|预计约|大约|工作量|共计|合计|总计|共)\s*"
+# 关键字与数字之间允许标点（`工作量：3 人日` / `预计,2 人日`）；「估计」要单列（裸「估」后跟「计」不匹配）。
+PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|估算|估|工作量|共计|合计|总计|共)\s*[:：,，]?\s*"
                         r"([0-9]+(?:\.[0-9]+)?)\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
 # URL 只吃 ASCII URL 字符：中文顿号/逗号/分号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
@@ -112,12 +115,14 @@ RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
 FENCE = re.compile(r"(?ms)^[ \t]*(?P<f>```+|~~~+)[^\n]*\n.*?(?:^[ \t]*(?P=f)[^\n]*$|\Z)")
 
 SECTION = re.compile(r"^(#{2,3})\s+(.*)$")
+# 顺序有讲究：`段间依赖` 里也有「段」，dep 必须先认领，seg 才不会绑到依赖列。
+# 每个 key 先按别名优先级找（`段名` 精确 > `段`），且同一列不许被两个 key 认领。
 WANT_COLS = {
-    "seg": ("段",),
+    "dep": ("依赖",),
+    "seg": ("段名", "段"),
     "files": ("文件",),
     "deliver": ("交付物", "交付"),
     "est": ("预估", "预计", "时长"),
-    "dep": ("依赖",),
 }
 COL_NAMES = {"seg": "段名", "files": "涉及文件", "deliver": "交付物", "est": "预估时长", "dep": "段间依赖"}
 
@@ -354,6 +359,7 @@ def parse_est(cell, default_unit=""):
             after = next((t[1] for t in toks[i + 1:] if t[1]), "")
             before = next((t[1] for t in reversed(toks[:i]) if t[1]), "")
             u = after or before or default_unit
+        u = re.sub(r"(?:以内|之内|以下|左右|上下)$", "", u)   # `分钟以内` 的限定词不是单位的一部分
         mins = _unit_minutes(v, u)
         if mins is None:
             return None
@@ -440,11 +446,12 @@ def check_segments(text):
                     problems.append(f"分段表第 {len(data) + 1} 行整行为空（不许用空行占位）")
                     continue
                 data.append(r)
-            col = {}
+            col, used = {}, set()
             for key, alts in WANT_COLS.items():
-                for i, h in enumerate(header):
-                    if any(a in h for a in alts):
-                        col[key] = i
+                for alt in alts:   # 别名按优先级试；`段名` 命中前不会退回 `段`
+                    hit = next((i for i, h in enumerate(header) if alt in h and i not in used), None)
+                    if hit is not None:
+                        col[key], _ = hit, used.add(hit)
                         break
             missing_cols = [COL_NAMES[k] for k in COL_NAMES if k not in col]
             if missing_cols:
@@ -572,11 +579,15 @@ def _is_dispatch_copy(p):
     """
     parts = p.parts
     try:
-        i = parts.index("_tmp")
+        i = len(parts) - 1 - parts[::-1].index("_tmp")   # 取**最后**一个：--root 前缀里也可能叫 _tmp
     except ValueError:
         return False
     return any(part == "remote-run" or part.startswith("remote-run.") or part.startswith(".prev")
                for part in parts[i + 1:-1])
+
+
+class ScanError(Exception):
+    """扫描根下的递归 glob 抛 OSError：区分「扫描失败」（rc 2）与「扫到 0 个」（rc 0）。"""
 
 
 def find_recent(root, hours):
@@ -587,7 +598,8 @@ def find_recent(root, hours):
     check_file 里的「读后复核」只挡 stat→read→stat 这个毫秒级窗口内的写入；
     **写方停顿超过 FRESH_SEC 再续写**时窗口内没有新写，半截内容仍会被判成「小包」——
     这条边界没堵（要堵得靠写方原子落盘或任务书完成标记），别把它当成已解决。
-    mtime 在未来的（时钟偏移）不跳过，否则它在墙钟追上之前永远扫不到。
+    为了堵「扫描开始后才创建」，mtime 比 `now - FRESH_SEC` 新的一律跳过（含**未来**的）：
+    时钟偏移的文件会晚几轮才扫到，宁可漏一轮也不假 PASS。
     """
     import time
     now = time.time()
@@ -597,8 +609,10 @@ def find_recent(root, hours):
     # 只认一层会把它们整类漏掉（round-start 9d 兜底轮对这批假 PASS）。
     try:
         candidates = sorted(Path(root).glob("_build/wt-*/_tmp/**/task.md"))
-    except OSError:
-        return out      # 目录在迭代中被并发回收：按空处理，别抛 traceback（rc 1 会冒充「大包不合格」）
+    except OSError as e:
+        # 「扫不了」不能与「扫过且没扫到」同观感：后者是合法空扫描 rc 0，前者要 rc 2（否则兜底轮
+        # 静默变 no-op，等于「未检查」被当成「通过」）。并发回收也走这条——宁可误报一次也不假 PASS。
+        raise ScanError(f"递归扫 {root}/_build/wt-*/_tmp/** 中断：{e}") from e
     for p in candidates:
         if _is_dispatch_copy(p):
             continue
@@ -606,7 +620,10 @@ def find_recent(root, hours):
             st = p.stat()
         except OSError:
             continue
-        if st.st_mtime < cutoff or 0 <= now - st.st_mtime < FRESH_SEC:
+        # 单边判：只要 mtime 比 `now - FRESH_SEC` 新就跳过（含**未来**的）。旧写法 `0 <= now - mtime`
+        # 对扫描开始后才创建的文件（mtime > now）恒为假，半截内容照样被读成「小包」——正是 FRESH_SEC
+        # 要挡的窗口。代价：时钟偏移到未来的文件会晚几轮才扫到；宁可漏一轮也不假 PASS。
+        if st.st_mtime < cutoff or st.st_mtime > now - FRESH_SEC:
             continue
         out.append(p)
     return out
@@ -635,7 +652,7 @@ def main(argv):
         print(SKELETON, end="")
         return 0
     hours = None
-    root = "."
+    root, root_given = ".", False
     rest, i = [], 0
     while i < len(args):
         a = args[i]
@@ -653,15 +670,23 @@ def main(argv):
         if a == "--root":
             if i + 1 >= len(args):
                 return usage("--root 需要目录")
-            root = args[i + 1]
+            root, root_given = args[i + 1], True
             i += 2
             continue
         if not a.startswith("--"):
             rest.append(a)
         i += 1
+    if root_given and hours is None:
+        return usage("--root 只与 --recent 同用（显式任务书按给定路径检查，不按 root 解析）")
     if hours is not None and not Path(root).is_dir():
         return usage(f"--root 不是目录：{root}")
-    scanned = [str(p) for p in find_recent(root, hours)] if hours is not None else []
+    scanned = []
+    if hours is not None:
+        try:
+            scanned = [str(p) for p in find_recent(root, hours)]
+        except ScanError as e:
+            print(f"扫描中断：{e}（不是「没扫到」；本轮兜底没生效）", file=sys.stderr)
+            return 2
     files = list(dict.fromkeys(scanned + rest))   # 同一个文件既被扫到又被点名时不检查两遍
     if not files:
         if hours is not None:      # 合法空扫描：没有新任务书不算用法错误

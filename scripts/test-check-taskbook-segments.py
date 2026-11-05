@@ -259,6 +259,26 @@ case("续跑写无 scheme 的 URL 不算本地进度文件", 1,
 case("人日回退认「工作量 N 人日」", 1, "# t\n\n工作量 3 人日\n", must=["分段交付"])
 case("人日回退认「共计 N 人日」", 1, "# t\n\n共计 2 人日\n", must=["分段交付"])
 
+case("人日回退容标点：「工作量：3 人日」", 1, "# t\n\n工作量：3 人日\n", must=["分段交付"])
+case("人日回退认「估计 2 人日」", 1, "# t\n\n估计 2 人日\n", must=["分段交付"])
+case("估时「90 分钟以内」= 90（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 分钟以内 |"))
+case("估时「120 min以内」按 120 判", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 120 min以内 |"), must=["120 min > 90 min"])
+case("列序换了（依赖在前）时空段名照样报", 1,
+     BIG_SCOPE + """## 分段交付
+
+| 段间依赖 | 段名 | 涉及文件 | 交付物 | 预估时长 |
+|---------|------|---------|--------|---------|
+| — |  | `src/a.rs` | `S1-RESULT.md` | 80 min |
+| S1 | S2 b | `src/b.rs` | `S2-RESULT.md` | 60 min |
+
+## 续跑
+
+- 进度文件：`_tmp/20261105-issue-100/progress.md`
+- 第 N 段失败：从 N+1 继续。
+""", must=["为空"])
+
 
 def run():
     fails = 0
@@ -337,7 +357,8 @@ def run():
         # _is_dispatch_copy 只看 _tmp 之后：--root 前缀里叫 remote-run 也不能把全部任务书跳掉
         ok = (ctbs._is_dispatch_copy(Path("/srv/remote-run/repo/_build/wt-1/_tmp/x/task.md")) is False
               and ctbs._is_dispatch_copy(Path("/srv/_build/wt-1/_tmp/x/remote-run/stage/task.md")) is True
-              and ctbs._is_dispatch_copy(Path("/srv/_build/wt-1/_tmp/x/.prev-1/task.md")) is True)
+              and ctbs._is_dispatch_copy(Path("/srv/_build/wt-1/_tmp/x/.prev-1/task.md")) is True
+              and ctbs._is_dispatch_copy(Path("/srv/_tmp/remote-run/repo/_build/wt-1/_tmp/x/task.md")) is False)
         print(f"{'PASS' if ok else 'FAIL'}  _is_dispatch_copy 只看 _tmp 之后的路径段")
         fails += 0 if ok else 1
 
@@ -361,6 +382,52 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  --explain 不打 SUMMARY：rc={rc} 输出={buf.getvalue()[:60]!r}")
         fails += 0 if ok else 1
 
+        # mtime 在未来的文件也要跳过（扫描开始后才创建的任务书 mtime > now）
+        fut = Path(td) / "_build" / "wt-9997" / "_tmp" / "issue-9997" / "task.md"
+        fut.parent.mkdir(parents=True)
+        fut.write_text("# t\n", encoding="utf-8")
+        os.utime(fut, (time.time() + 60, time.time() + 60))
+        got = [str(x) for x in ctbs.find_recent(td, 24)]
+        ok = not any(x.endswith("issue-9997/task.md") for x in got)
+        print(f"{'PASS' if ok else 'FAIL'}  未来 mtime 的文件被 FRESH_SEC 跳过：{got}")
+        fails += 0 if ok else 1
+
+        # find_recent 自己的 OSError → ScanError（不是 return 空列表）
+        class _BoomPath:
+            def __init__(self, root):
+                self.root = root
+
+            def glob(self, pat):
+                raise OSError("模拟：权限拒绝")
+
+        real_path = ctbs.Path
+        ctbs.Path = _BoomPath
+        try:
+            try:
+                ctbs.find_recent(td, 24)
+                ok = False
+            except ctbs.ScanError:
+                ok = True
+        finally:
+            ctbs.Path = real_path
+        print(f"{'PASS' if ok else 'FAIL'}  find_recent 遇 OSError 抛 ScanError")
+        fails += 0 if ok else 1
+
+        # 扫描中断（glob 抛 OSError）必须 rc=2，不许与「没扫到」同观感
+        real_find = ctbs.find_recent
+        def boom(root, hours):
+            raise ctbs.ScanError("模拟：权限拒绝")
+        ctbs.find_recent = boom
+        err = io.StringIO()
+        try:
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                rc = ctbs.main(["x", "--recent", "24", "--root", td])
+        finally:
+            ctbs.find_recent = real_find
+        ok = rc == 2 and "扫描中断" in err.getvalue()
+        print(f"{'PASS' if ok else 'FAIL'}  扫描中断 → rc=2：rc={rc} stderr={err.getvalue().strip()[:40]!r}")
+        fails += 0 if ok else 1
+
     # 命令行契约
     for name, argv, expect in (
             ("--print-skeleton 带文件参数", ["x", "--print-skeleton", "task.md"], 3),
@@ -371,13 +438,14 @@ def run():
             ("--recent 0 是用法错误", ["x", "--recent", "0", "task.md"], 3),
             ("--recent 负数 是用法错误", ["x", "--recent", "-1", "task.md"], 3),
             ("--recent --root 不是目录是用法错误", ["x", "--recent", "24", "--root", "/nonexistent-pdrs-xyz"], 3),
+            ("--root 不带 --recent 是用法错误", ["x", "--root", ".", "task.md"], 3),
     ):
         rc = ctbs.main(argv)
         ok = rc == expect
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 18   # 10 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain）+ 8 条命令行契约
+    total = len(CASES) + 22   # 13 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc）+ 9 条命令行契约
     print(f"SUMMARY cases={total} failed={fails}")
     return 1 if fails else 0
 
