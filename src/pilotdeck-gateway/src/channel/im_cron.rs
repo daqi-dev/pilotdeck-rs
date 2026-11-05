@@ -55,6 +55,9 @@ pub fn parse_chat_id_from_session_key(
 /// `s_` + exactly 36 units of `[0-9a-fA-F-]` (the TS `{36}` counts the
 /// charset class, so the whole suffix is `s_` plus 36 characters).
 fn is_session_suffix(tail: &[u16]) -> bool {
+    if crate::mutants::on("webhook-cron-suffix") {
+        return false;
+    }
     tail.len() == 38
         && tail.starts_with(&[u16::from(b's'), u16::from(b'_')])
         && tail[2..].iter().all(|&unit| {

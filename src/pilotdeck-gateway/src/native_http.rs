@@ -11,7 +11,7 @@
 //! is replicated here rather than registered.
 use crate::{Body, ProxyError, http_proxy};
 use bytes::Bytes;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Full};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -431,10 +431,47 @@ pub(crate) fn handler_response(
         .expect("valid response")
 }
 
+/// A whole-reply body Node sizes up front (`end(string)`): hyper frames it
+/// with `content-length`, never chunked.
+fn sized_body(body: Option<String>) -> Body {
+    Full::new(body.map(Bytes::from).unwrap_or_default())
+        .map_err(|never: std::convert::Infallible| match never {})
+        .boxed()
+}
+
+/// A TS `writeHead(status, headers)` followed by `end(body)` with the whole
+/// body in one call: Node sizes the reply, so unlike the streaming
+/// [`handler_response`] this is `content-length` framed. The webhook
+/// channel's `sendJson` reply (`Content-Type: application/json`).
+pub(crate) fn handler_response_with_length(
+    status: hyper::StatusCode,
+    content_type: &str,
+    body: String,
+    keep_alive: bool,
+) -> hyper::Response<Body> {
+    let mut builder = hyper::Response::builder()
+        .status(status)
+        .header(hyper::header::CONTENT_TYPE, content_type)
+        .header(
+            hyper::header::DATE,
+            httpdate::fmt_http_date(SystemTime::now()),
+        );
+    if keep_alive {
+        builder = builder
+            .header(hyper::header::CONNECTION, "keep-alive")
+            .header("keep-alive", "timeout=5");
+    } else {
+        builder = builder.header(hyper::header::CONNECTION, "close");
+    }
+    builder
+        .body(sized_body(Some(body)))
+        .expect("valid response")
+}
+
 /// A TS `statusCode = <status>; end(body)` response with no explicit header:
-/// like [`handler_response`] minus the `content-type` line, so Node's implicit
-/// `Date` comes first. Used by the webhook channel's plain 404
-/// (`res.statusCode = 404; res.end("Not Found")`).
+/// like [`handler_response_with_length`] minus the `content-type` line, so
+/// Node's implicit `Date` comes first. Used by the webhook channel's plain
+/// 404 (`res.statusCode = 404; res.end("Not Found")`).
 pub(crate) fn node_plain_response(
     status: hyper::StatusCode,
     body: Option<String>,
@@ -451,9 +488,7 @@ pub(crate) fn node_plain_response(
     } else {
         builder = builder.header(hyper::header::CONNECTION, "close");
     }
-    builder
-        .body(streamed(body.map(Bytes::from)))
-        .expect("valid response")
+    builder.body(sized_body(body)).expect("valid response")
 }
 
 /// A streaming file response with the same framing as
