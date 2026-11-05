@@ -115,11 +115,13 @@ def runner_env(runner: str, key: str) -> dict[str, str]:
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
 
 # —— 通道并发闸（P4 池）——
-# 上限与 ops scripts/fleet/fleet.py 的 P4_CAP 同源；数值按 11-05 通道台阶压测（_tmp/20261105-channel-ramp/RAMP.md）：
-# deepseek/minimax 96 并发 96/96 无 429（原 4 是自设过低值）→ 16；zai 并发不是瓶颈、单 key 50 RPM 才是（429 code 102503，
-# 被拒请求仍计入配额，且与 GLM 实现 worker 共用一把 key）→ 由 8 压到 6；anthropic 未压测，保持 2。
+# 上限与 ops scripts/fleet/fleet.py 的 P4_CAP 同源；数值按 11-05 通道台阶压测：
+# deepseek/minimax 96 并发 96/96 无 429（原 4 是自设过低值）→ 16；
+# zai 新 key（指纹 sha256[:8]=3bdac318）复测 96 并发 5459 RPM、滚动 600 RPM 连续 60 s 全程 0 次 429，
+# 旧「单 key 50 RPM / 102503」结论作废（_tmp/20261105-zai-ramp2/20261105-2152.md）→ 6 升到 24
+# （该 key 与约 10 个 GLM 实现 worker 共用，24 槽约 240 RPM 留余量，不取实测 48）；anthropic 未压测，保持 2。
 # 可用 PDRS_REVIEW_SLOTS_<RUNNER> 覆盖，PDRS_REVIEW_SLOT_DIR 换锁目录（测试隔离用）。
-RUNNER_SLOTS = {"zai": 6, "minimax": 16, "deepseek": 16, "anthropic": 2}
+RUNNER_SLOTS = {"zai": 24, "minimax": 16, "deepseek": 16, "anthropic": 2}
 SLOT_WAIT_TIMEOUT = 3600  # 等名额上限（s），超时该角色记 ERROR（不静默死等）
 
 
