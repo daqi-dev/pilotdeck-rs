@@ -1800,6 +1800,35 @@ def _retirement_listener_verdict(listeners, gateway_port):
     return {'status': 'PASS', 'rule': 'LISTENER_EXPOSURE', 'addresses': addresses, 'expected': expected}
 
 
+def _retirement_gateway_pid(round_row):
+    """The gateway pid a round recorded, or None when the probe recorded nothing.
+
+    P1 (#1355 fix-r4d, anthropic boundary #1): ``row.get('listeners', {})``
+    only defaults a *missing* key; a round that recorded ``listeners: null``
+    (JSON null) still yields None and ``None.get('pid')`` raised
+    AttributeError, collapsing the whole 16-face report into the 5-key stub
+    this PR exists to remove.  Same isinstance guard as
+    _retirement_listener_verdict.
+    """
+    listeners = round_row.get('listeners')
+    return listeners.get('pid') if isinstance(listeners, dict) else None
+
+
+def _retirement_evidence_pairs(verdict):
+    """The (method, problem) pairs a scoring verdict reports as EVIDENCE_BACKING."""
+    pairs = set()
+    for problem in verdict.get('rules') or []:
+        if problem.get('rule') != 'EVIDENCE_BACKING':
+            continue
+        detail = problem.get('detail')
+        if isinstance(detail, dict):
+            detail = [detail]
+        for item in detail or []:
+            if isinstance(item, dict):
+                pairs.add((item.get('method'), item.get('problem')))
+    return pairs
+
+
 def _retirement_wire_backing(frames):
     """Map methods to their request ids and the responses/events that answered."""
     sends, responses, events, final_events = {}, {}, {}, set()
@@ -1980,13 +2009,40 @@ def _retirement_controls(round_row, expected):
     to the control as a PASS.  Every round-mutating class therefore requires
     its mutation to land (``mutated != round_row``); otherwise the class is
     NOT_APPLICABLE.  The census class needs its gateway pid in the census.
+    P1 (#1355 fix-r4d): landing is judged on the *injected dimension*, and
+    attribution on the *injected object*, not on a rule name or a whole-round
+    diff.  A round can change on one dimension (a frame's ok flag) while the
+    injected property (every outcome CAPABILITY_UNAVAILABLE) is untouched, and
+    a rule can fire for a violation the round already had on another method or
+    another row; either way a PASS would report the round's own violation as a
+    control success.  Frame classes attribute to their (method, problem) pair,
+    the census class to the gateway pid inside the mutated declared set, the
+    network class to the injected peer.
     """
     controls = []
+    original_evidence = _retirement_evidence_pairs(
+        score_retirement_round(json.loads(json.dumps(round_row)), expected))
 
-    def record(name, injection, expected_rule, verdict, detail):
+    def record(name, injection, expected_rule, verdict, detail, require_pair=None, caused=None):
+        if require_pair is not None and require_pair in original_evidence:
+            # P1 (#1355 fix-r4d, minimax boundary): the control round already
+            # reports this exact violation, so a FAIL here belongs to the
+            # round, not to the injection.  Never PASS.
+            unavailable(name, injection, expected_rule,
+                        f'the control round already reports {require_pair[1]!r} for '
+                        f'{require_pair[0]!r}, so the injected violation cannot be told apart '
+                        'from the pre-existing one')
+            return
         fired = ([problem['rule'] for problem in verdict['rules']] if 'rules' in verdict
                  else [verdict.get('rule')])
         attributed = expected_rule in fired
+        if attributed and require_pair is not None:
+            # A rule name is not attribution: another method may be the one
+            # missing its frame.  The injected (method, problem) must be the
+            # pair the scorer reports.
+            attributed = require_pair in _retirement_evidence_pairs(verdict)
+        if attributed and caused is not None:
+            attributed = bool(caused(verdict))
         controls.append({'class': name, 'injection': injection, 'expected': 'FAIL',
                          'rule': expected_rule,
                          'status': 'PASS' if verdict.get('status') == 'FAIL' and attributed else 'FAIL',
@@ -2028,10 +2084,12 @@ def _retirement_controls(round_row, expected):
             record('TS_FALLBACK', f"strip all wire frames of executed method '{victim}' while keeping its ok outcome",
                    'EVIDENCE_BACKING', verdict,
                    {'detail': next((p['detail'] for p in verdict['rules']
-                                    if p['rule'] == 'EVIDENCE_BACKING'), None)})
+                                    if p['rule'] == 'EVIDENCE_BACKING'), None)},
+                   require_pair=(victim, 'send frame missing'))
     # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
-    census_rows = round_row['census']['rows']
-    gateway_pid = round_row.get('listeners', {}).get('pid')
+    census = round_row.get('census') or {}
+    census_rows = census.get('rows') or []
+    gateway_pid = _retirement_gateway_pid(round_row)
     if gateway_pid is None or not any(row.get('pid') == gateway_pid for row in census_rows):
         # P2a (#1355 fix-r4c, anthropic sibling #2): the injection is "the
         # gateway pid stays in the census but leaves the declared set".  With
@@ -2044,9 +2102,35 @@ def _retirement_controls(round_row, expected):
                     f'({len(census_rows)} sampled), so the undeclared-host mutation cannot be '
                     'established')
     else:
-        census_verdict = _retirement_census_verdict({'rows': census_rows, 'declared': []})
-        record('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
-               'HOST_CENSUS', census_verdict, {})
+        # P1 (#1355 fix-r4d, minimax boundary #3): emptying the declared set
+        # makes every row undeclared, so a leftover undeclared row the round
+        # already had (a failed launch attempt's process) would fail the class
+        # on its own.  Remove only the gateway pid from the declared set and
+        # attribute the verdict to that pid.
+        declared_original = census.get('declared') or []
+        if gateway_pid not in declared_original:
+            unavailable('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
+                        'HOST_CENSUS',
+                        f'gateway pid {gateway_pid} is not in the round\'s declared owned set '
+                        f'{declared_original}, so removing it changes nothing and the undeclared-host '
+                        'mutation cannot be established')
+        else:
+            declared = [pid for pid in declared_original if pid != gateway_pid]
+            original_census = _retirement_census_verdict(
+                {'rows': census_rows, 'declared': declared_original,
+                 'declaredAlive': census.get('declaredAlive')})
+            undeclared_before = {row.get('pid') for row in original_census['undeclared']}
+            census_verdict = _retirement_census_verdict(
+                {'rows': census_rows, 'declared': declared,
+                 'declaredAlive': census.get('declaredAlive')})
+            record('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
+                   'HOST_CENSUS', census_verdict, {},
+                   # Attribution is the declared-set delta: exactly the gateway
+                   # pid becomes undeclared.  A leftover row the round already
+                   # had is in undeclared_before and cannot carry the class.
+                   caused=lambda verdict: (
+                       {row.get('pid') for row in verdict.get('undeclared') or []}
+                       == undeclared_before | {gateway_pid}))
     # 3. 全走 unavailable: every outcome becomes CAPABILITY_UNAVAILABLE, wire kept consistent.
     mutated = json.loads(json.dumps(round_row))
     for outcome_row in mutated['outcomes']:
@@ -2058,24 +2142,55 @@ def _retirement_controls(round_row, expected):
             frame['ok'] = False
             frame.pop('result', None)
             frame['error'] = {'code': 'CAPABILITY_UNAVAILABLE', 'message': 'controlled mutation'}
-    if mutated == round_row:
-        # P1 (#1355 fix-r4c, anthropic sibling #1): a round that is already
-        # uniformly CAPABILITY_UNAVAILABLE with matching wire is not mutated at
-        # all, so a PASS here would only re-report the round's own violation.
+    if not round_row['outcomes']:
+        # P1 (#1355 fix-r4d, minimax boundary #2): a legal degraded round may
+        # record zero method outcomes.  The scorer then stops at ZERO_TESTS and
+        # UNIFORM_UNAVAILABLE can never fire, so scoring the mutation reported
+        # the class FAIL — the earlier whole-round diff only masked this when
+        # the round happened to carry no ok:true frame.
         unavailable('UNIFORM_UNAVAILABLE',
                     'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
                     'UNIFORM_UNAVAILABLE',
-                    'every outcome already answered error CAPABILITY_UNAVAILABLE with matching '
-                    'wire, so the rewrite changes nothing and the injection cannot be established')
+                    'the control round recorded no method outcome, so the uniform-unavailable '
+                    'rewrite changes nothing and the injection cannot be established')
+    elif mutated['outcomes'] == round_row['outcomes']:
+        # P1 (#1355 fix-r4c, anthropic sibling #1; narrowed in fix-r4d by
+        # minimax boundary #1/#2): landing is judged on the injected dimension
+        # — the outcomes — not on the whole round.  A contradictory round
+        # (outcomes already uniform while the wire still carries an ok:true
+        # frame) changes only on the frames, and crediting the round's own
+        # UNIFORM_UNAVAILABLE violation to this control is a false PASS.
+        unavailable('UNIFORM_UNAVAILABLE',
+                    'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
+                    'UNIFORM_UNAVAILABLE',
+                    'every outcome already answered error CAPABILITY_UNAVAILABLE, so the rewrite '
+                    'changes no outcome and the injection cannot be established')
     else:
         verdict = score_retirement_round(mutated, expected)
         record('UNIFORM_UNAVAILABLE', 'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
                'UNIFORM_UNAVAILABLE', verdict, {})
     # 4. 假 local 实透传: an undeclared non-loopback established peer appears.
-    network_verdict = _retirement_network_verdict(
-        {'rows': round_row['connections']['rows'] + [{'peer': '203.0.113.7:443', 'raw': 'controlled mutation'}]})
-    record('FORWARDING_MISLABELED', 'undeclared non-loopback established peer added to the gateway connections',
-           'NETWORK_FALLBACK', network_verdict, {})
+    connections = round_row.get('connections') or {}
+    mutated_connections = json.loads(json.dumps(connections))
+    mutated_connections['rows'] = (mutated_connections.get('rows') or []) + [
+        {'peer': '203.0.113.7:443', 'raw': 'controlled mutation'}]
+    network_verdict = _retirement_network_verdict(mutated_connections)
+    if network_verdict.get('status') == 'BLOCKED':
+        # P1 (#1355 fix-r4d, same family as minimax boundary #3): dropping the
+        # round's commandStatus/unparsed fields made the mutation score a
+        # fabricated sample.  With the whole observation kept, an unobservable
+        # sample cannot establish the class.
+        unavailable('FORWARDING_MISLABELED',
+                    'undeclared non-loopback established peer added to the gateway connections',
+                    'NETWORK_FALLBACK',
+                    f"the control round's network observation is unobservable "
+                    f"({network_verdict.get('reason')}), so adding a non-loopback peer cannot be "
+                    'established')
+    else:
+        record('FORWARDING_MISLABELED',
+               'undeclared non-loopback established peer added to the gateway connections',
+               'NETWORK_FALLBACK', network_verdict, {},
+               caused=lambda verdict: '203.0.113.7:443' in (verdict.get('undeclared') or []))
     # 5. R1 (#1355 fix-r2): a stream method recorded as an error outcome with
     # every receive frame stripped (send kept) must still fail EVIDENCE_BACKING
     # — the pre-fix scorer passed exactly this shape.
@@ -2108,7 +2223,8 @@ def _retirement_controls(round_row, expected):
             verdict = score_retirement_round(mutated, expected)
             record('STREAM_ERROR_NO_FRAME', f"stream method '{stream_method}' rewritten to error with every "
                                            'receive frame stripped while keeping its send frame',
-                   'EVIDENCE_BACKING', verdict, {})
+                   'EVIDENCE_BACKING', verdict, {},
+                   require_pair=(stream_method, 'stream error without any receive frame'))
     # 6. ① (#1355 fix-r3): a stream ok outcome whose terminal event frame was
     # downgraded to final:false (the stream merely ended) must still fail
     # EVIDENCE_BACKING — the pre-fix scorer passed exactly this shape.
@@ -2160,7 +2276,8 @@ def _retirement_controls(round_row, expected):
                 verdict = score_retirement_round(mutated, expected)
                 record('STREAM_OK_NON_FINAL', f"stream method '{stream_method}' keeps its ok outcome while "
                                               'its terminal event frame is downgraded to final:false',
-                       'EVIDENCE_BACKING', verdict, {})
+                       'EVIDENCE_BACKING', verdict, {},
+                       require_pair=(stream_method, 'stream ok without a final event frame'))
     # The face status is a batch summary; it is computed by the registered
     # caller (_retirement_report) with the shared aggregator, never here.
     return {'classes': controls}
@@ -2631,7 +2748,7 @@ def _retirement_report(output, baseline):
     for row in rounds:
         verdict = _retirement_network_verdict(row['connections'])
         verdict.update({'samplingScope': 'gateway-pid-only',
-                        'gatewayPid': row['listeners']['pid'],
+                        'gatewayPid': _retirement_gateway_pid(row),
                         'peerOwnership': "every sampled peer belongs to this round's own gateway pid "
                                          '(provider egress included); other TS hosts are not covered '
                                          'by this sample'})
