@@ -1427,6 +1427,162 @@ impl SubmitHostServices for Services {
     }
 }
 
+// ------------------------------------------------ U7 native settings (#1320)
+use crate::config::store::{ConfigStore, StoreOptions};
+use crate::runtime::refresh::{
+    ConsoleLog, MemoryMaintenance, RefreshBundle, RefreshLog, RefreshOptions, RefreshRegistry,
+    RefreshRouter, RegistryRefresh,
+};
+use crate::runtime::session::SessionOwner;
+use crate::runtime::settings::{
+    ResolveSettings, SettingsError, SettingsGateway, SettingsGatewayOptions,
+};
+
+/// `memoryMaintenance` for the native settings bundle. Only
+/// `afterTurnCompleted` schedules through it, and the native turn lifecycle
+/// does not drive the settings bundle, so the composition binds a no-op like
+/// the TS golden's contained assembly; the real
+/// `ProjectMemoryMaintenanceController` is a memory-ticket concern.
+struct NoSettingsMaintenance;
+impl MemoryMaintenance for NoSettingsMaintenance {
+    fn schedule(&self, _project_key: &JsString) -> crate::runtime::project::RuntimeResult {
+        Ok(())
+    }
+}
+
+/// `options.resolveSettings` (createLocalGateway.ts:1402): the current
+/// snapshot projected through `toGatewayResolvedSettings`, which is
+/// [`ConfigStore::resolved_settings`].
+struct NativeResolvedSettings {
+    store: ConfigStore,
+}
+impl ResolveSettings for NativeResolvedSettings {
+    fn resolve(&self) -> Result<JsValue, SettingsError> {
+        Ok(self.store.resolved_settings())
+    }
+}
+
+/// The native U7 settings composition inputs. `router` and `registry` are the
+/// bundle's collaborators as ports: production binds the session owner and
+/// `RegistryRefresh` over the project runtime registry, tests substitute
+/// recording collaborators to observe the dirty/broadcast order.
+pub struct NativeSettingsOptions {
+    /// The gateway's admission/close port: `hasActiveTurn` drives the
+    /// SESSION_BUSY gate and `close` is the post-success session close.
+    pub owner: SessionOwner,
+    /// `getRouter`: the bundle's dirty router.
+    pub router: Arc<dyn RefreshRouter>,
+    /// The bundle's runtime registry.
+    pub registry: Arc<dyn RefreshRegistry>,
+    /// `createPilotConfigStoreSync({ projectRoot, env })`: the caller loads
+    /// the store (a load failure is a boot failure, like the TS
+    /// constructor's throw).
+    pub store: ConfigStore,
+    /// `projectRoot` for the bundle's log lines and diagnostics.
+    pub project_root: JsString,
+    /// The bundle's `log` (createLocalGateway.ts:806: `getConsoleLog()`).
+    /// Production passes [`ConsoleLog`]; the #1320 replay passes a recorder
+    /// because the golden pins the bundle's exact log lines.
+    pub log: Arc<dyn RefreshLog>,
+}
+
+/// The composed U7 settings stack: the #1318 [`SettingsGateway`] over the
+/// real refresh bundle and config store.
+pub struct NativeSettings {
+    pub gateway: Arc<SettingsGateway>,
+    // Nothing in production reads the handle yet: the delegates inside the
+    // gateway keep the bundle alive, and the native process has no
+    // server-push channel to bind (see RESULT). The #1320 S4 tests bind a
+    // recording notification server here to observe the dirty/broadcast
+    // order, the `bind_server` seam createLocalGateway.ts:835 wires in TS.
+    #[allow(dead_code)]
+    pub bundle: Arc<RefreshBundle>,
+}
+
+/// Compose the native U7 settings stack (createLocalGateway.ts:795-831 and
+/// 1383-1410): the real refresh bundle over the supplied registry, router
+/// and store (attached exactly like `runtimeRefresh.attach()`), and the
+/// settings gateway with the delegates the isolated native process owns —
+/// `resolve_settings` over the store snapshot and the two reloads over the
+/// bundle. `apply_flag_settings` / `update_settings` /
+/// `reload_output_styles` stay unconfigured (their delegates are the SDK
+/// session registry and the production local-settings writer, neither
+/// assembled into the isolated native process) and answer the TS
+/// unconfigured shapes through the component's own option handling.
+pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
+    let NativeSettingsOptions {
+        owner,
+        router,
+        registry,
+        store,
+        project_root,
+        log,
+    } = options;
+    let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
+        config_store: Arc::new(store.clone()),
+        registry,
+        memory_maintenance: Arc::new(NoSettingsMaintenance),
+        router: Arc::new(move || Some(router.clone())),
+        project_root,
+        memory_diagnostics: None,
+        sdk: None,
+        log,
+    }));
+    // `runtimeRefresh.attach()` (createLocalGateway.ts:831): without the
+    // subscription, an explicit `reload_config` still answers, but its
+    // config change would never refresh runtimes or mark sessions dirty.
+    bundle.attach();
+    let gateway = Arc::new(SettingsGateway::new(SettingsGatewayOptions {
+        owner,
+        apply_flag_settings: None,
+        update_settings: None,
+        resolve_settings: Some(Arc::new(NativeResolvedSettings {
+            store: store.clone(),
+        })),
+        reload_output_styles: None,
+        reload_config: Some(bundle.clone()),
+        reload_extensions: Some(bundle.clone()),
+    }));
+    NativeSettings { gateway, bundle }
+}
+
+/// The production composition for the native process
+/// (createLocalGateway.ts:795-835): [`native_settings`] with the
+/// collaborators the isolated process owns — `createPilotConfigStoreSync`
+/// over the served home/project (a load failure is the TS boot failure),
+/// `RegistryRefresh` over the project runtime registry and the session
+/// owner as the dirty router. The store anchors exactly like the process's
+/// other config reads (`NativeConfigSource`: PILOT_HOME from the
+/// environment, the served project as cwd and `projectRoot`).
+pub fn native_settings_for_process(
+    owner: SessionOwner,
+    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    home: &std::path::Path,
+    served_project: &std::path::Path,
+    env: &crate::config::Env,
+) -> std::io::Result<NativeSettings> {
+    let mut store_options = StoreOptions::new(home.to_path_buf(), served_project, env.clone());
+    store_options.project = Some(served_project.to_string_lossy().into_owned());
+    let store = ConfigStore::new(store_options).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "pilot config store failed to load: {} {}",
+                error.code,
+                String::from_utf16_lossy(error.message.units())
+            ),
+        )
+    })?;
+    Ok(native_settings(NativeSettingsOptions {
+        owner: owner.clone(),
+        router: Arc::new(owner),
+        registry: Arc::new(RegistryRefresh::new(project)),
+        store,
+        project_root: JsString::from(served_project.to_string_lossy().into_owned()),
+        log: Arc::new(ConsoleLog),
+    }))
+}
+
 /// fix-r4 window-injection seam (tests only): the open-first sequence in
 /// `compose_attachment_turn` notifies [`swap_test_hook::notify`] at each
 /// window; a test installs a callback that swaps a leaf or an ancestor

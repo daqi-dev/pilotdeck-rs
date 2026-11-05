@@ -21,6 +21,8 @@ mod channels_tests;
 mod management_tests;
 mod requests;
 mod services;
+#[cfg(test)]
+mod settings_tests;
 mod tools;
 
 /// Start the real serial host, bind WS, then drain on either supported signal.

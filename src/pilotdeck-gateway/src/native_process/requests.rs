@@ -10,6 +10,7 @@ use crate::{
         refresh::RefreshRouter,
         replacement::ReplacementCoordinator,
         session::SessionOwner,
+        settings::SettingsGateway,
         turn::{
             coordinator::TurnEventCoordinator, gateway::GatewayRequests, publish::FileRegistry,
         },
@@ -49,6 +50,10 @@ pub struct Requests {
     /// "callback not configured" shape: `{requested: false, reason:
     /// "unsupported"}` with a fresh `requestedAt`.
     pub prepare_weixin_login: Option<methods::PrepareWeixinLogin>,
+    /// U7 global settings gateway (#1320): the six settings methods route
+    /// here through the #1305 registry. Production binds
+    /// [`crate::native_process::services::native_settings`].
+    pub settings: Arc<SettingsGateway>,
 }
 
 #[cfg(test)]
@@ -116,6 +121,24 @@ impl Requests {
         Arc::new(McpGateway::new(McpGatewayOptions {
             owner: owner.clone(),
             config,
+        }))
+    }
+
+    /// A `SettingsGateway` for test fixtures that do not exercise the U7
+    /// settings family: the real #1318 component with no delegate bound, so
+    /// the four capability-gated methods reject `CAPABILITY_UNAVAILABLE` and
+    /// the two reloads answer `{reloaded:false, reason:"unsupported"}` — the
+    /// TS unconfigured projections, produced by the component itself.
+    pub fn stub_settings(owner: &SessionOwner) -> Arc<SettingsGateway> {
+        use crate::runtime::settings::SettingsGatewayOptions;
+        Arc::new(SettingsGateway::new(SettingsGatewayOptions {
+            owner: owner.clone(),
+            apply_flag_settings: None,
+            update_settings: None,
+            resolve_settings: None,
+            reload_output_styles: None,
+            reload_config: None,
+            reload_extensions: None,
         }))
     }
 }

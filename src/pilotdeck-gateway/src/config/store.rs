@@ -250,7 +250,9 @@ impl ConfigStore {
     /// `reload(reason)`. The in-flight slot is claimed when this is called,
     /// not when the future is first polled, so calls made back to back share
     /// one reload exactly like the baseline's synchronous promise check. The
-    /// load itself runs on the first poll of any sharing future.
+    /// load itself runs after one scheduler yield (the baseline defers it to
+    /// a microtask, `Promise.resolve().then`), still within the first two
+    /// polls of the sharing futures.
     pub fn reload(&self, _reason: &str) -> impl Future<Output = ReloadResult> + Send + 'static {
         let mut slot = lock(&self.inner.reloading);
         let flight = match slot.as_ref() {
@@ -425,21 +427,39 @@ impl Flight {
             // A running flight always settles (see `Settle`).
             previous.wait_done().await;
         }
+        // The baseline claims the in-flight slot synchronously but starts the
+        // load on a microtask (`Promise.resolve().then`). A same-tick peer
+        // that lands after the claim therefore joins this flight instead of
+        // starting a second load, and a same-tick snapshot read still sees the
+        // previous generation. One scheduler yield before any poller can load
+        // reproduces that window; the state is re-checked under the lock after
+        // the hop so exactly one poller still executes.
+        let mut first = true;
         loop {
             let notified = self.done.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
+            let mut hop = false;
+            let mut execute = false;
             {
                 let mut state = lock(&self.state);
                 match &*state {
                     FlightState::Done(result) => return result.clone(),
                     FlightState::Running(_) => {}
+                    FlightState::Pending if first => hop = true,
                     FlightState::Pending => {
                         *state = FlightState::Running(std::thread::current().id());
-                        drop(state);
-                        return self.execute(inner);
+                        execute = true;
                     }
                 }
+            }
+            if execute {
+                return self.execute(inner);
+            }
+            if hop {
+                first = false;
+                tokio::task::yield_now().await;
+                continue;
             }
             notified.await;
         }

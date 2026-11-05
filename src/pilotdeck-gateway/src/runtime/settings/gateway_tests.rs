@@ -14,7 +14,7 @@
 //! layer this component deliberately does not touch, so the capability half
 //! is replayed through a bare component (the contract is the component's own
 //! option handling) while the unknown-method row is recorded only; the
-//! dispatch contract (`Some` for exactly the five methods, `None`
+//! dispatch contract (`Some` for exactly the six methods, `None`
 //! otherwise) has its own dedicated test below.
 //!
 //! The registry's `applyFlagSettingsForSdk` / `reloadOutputStylesForSdk` are
@@ -27,7 +27,8 @@
 //! like the createLocalGateway closure.
 use super::gateway::{
     ApplyFlagSettings, FlagSettings, LocalSettingsUpdate, LocalSettingsWriter, OutputStylesReload,
-    ReloadOutputStyles, SettingsError, SettingsGateway, SettingsGatewayOptions, UpdateSettings,
+    ReloadOutputStyles, ResolveSettings, SettingsError, SettingsGateway, SettingsGatewayOptions,
+    UpdateSettings,
 };
 use crate::config::Env;
 use crate::config::store::{
@@ -674,6 +675,16 @@ impl ReloadOutputStyles for FakeStyles {
     }
 }
 
+/// `options.resolveSettings` (createLocalGateway.ts:1402) over the current
+/// tree's real store: `toGatewayResolvedSettings(getSnapshot())` is
+/// `ConfigStore::resolved_settings`, so the port is the projection itself.
+struct TreeResolved(ConfigStore);
+impl ResolveSettings for TreeResolved {
+    fn resolve(&self) -> Result<JsValue, SettingsError> {
+        Ok(self.0.resolved_settings())
+    }
+}
+
 /// The `updatePilotLocalSettings` mirror: the allowlist walk, the document
 /// edit and the write, with the same changedPaths contract (the requested
 /// sets and deletes; the store's event diff replaces them in the closure
@@ -972,6 +983,12 @@ impl Harness {
             apply_flag_settings: Some(Arc::new(FakeApply {
                 probe: probe.clone(),
             })),
+            // createLocalGateway.ts:1402: the current tree's snapshot
+            // projected at call time (#1320 added the method to this
+            // component; the 54-row oracle predates it).
+            resolve_settings: current
+                .as_ref()
+                .map(|tree| Arc::new(TreeResolved(tree.store.clone())) as Arc<dyn ResolveSettings>),
             update_settings: current.map(|tree| UpdateSettings {
                 organization_denied: *lock(&probe.0.org_denied),
                 writer: Arc::new(MirrorWriter {
@@ -1328,6 +1345,7 @@ async fn settings_gateway_replays_the_real_ts_oracle() {
         owner: harness.probe.owner(),
         apply_flag_settings: None,
         update_settings: None,
+        resolve_settings: None,
         reload_output_styles: None,
         reload_config: None,
         reload_extensions: None,
@@ -1356,7 +1374,7 @@ async fn settings_gateway_replays_the_real_ts_oracle() {
     );
 }
 
-/// The dispatch entry owns exactly the five U7 methods; everything else is
+/// The dispatch entry owns exactly the six U7 methods; everything else is
 /// the caller's business (the WS layer's unknown-method error and the
 /// CAPABILITY_UNAVAILABLE answers live in the wiring layer, recorded in the
 /// golden's `assemblyCases`).
