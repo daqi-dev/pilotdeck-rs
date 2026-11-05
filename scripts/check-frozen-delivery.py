@@ -13,17 +13,17 @@ failure:
   acceptable   ``hash list differs from generated inventory``  (--write fixes it)
   acceptable   a stale pin for an existing file (bare manifest path for
                gateway-parity, ``<name>: hash mismatch`` for parity,
-               ``invalid path/hash: <name>`` for ui-server-parity)
+               ``invalid path/hash: <name>`` for ui-server-parity; the
+               ``../../`` prefix ui-server reports is normalised away)
   acceptable   a first-registration case that --write settles and an added
-               event row already backs: ``A2 apparatus missing FROZEN hash``,
-               and ``hash change lacks exact new event chain`` for a file that
-               is absent at the merge-base (the current, stale manifest cannot
-               list it yet).  Both are only accepted when an event row
-               ``Change: - <sha256> <path>`` matches the current bytes.
-  acceptable   the same ``lacks exact new event chain`` for an event file that
-               still carries a ``Pending:`` review placeholder: check_frozen
-               skips such an event before reading its Change rows, so the
-               chain is verified here directly from those rows.
+               event chain already backs: ``A2 apparatus missing FROZEN hash``,
+               ``unregistered/missing file: <path>`` (ui-server-parity) and
+               ``hash change lacks exact new event chain``.  These are accepted
+               only when the added ``Change:`` rows form the *exact* chain from
+               the merge-base bytes to the current bytes (each step exactly one
+               matching edge, no leftover edge), the same uniqueness rule
+               ``check_frozen`` itself enforces.  A merely-present-but-duplicated
+               edge is therefore a blocker, not a silent pass.
   blocking     everything else, in particular a hash change with no matching
                event row, unregistered files, unreadable input
   blocking     anything not recognised (fail-closed: an unknown message is a
@@ -66,6 +66,7 @@ ACCEPT_HASH_LIST = 'hash list differs from generated inventory'
 BLOCK_MARKERS = ('lacks exact new event chain', 'missing', 'unregistered', 'cannot')
 LACKS_CHAIN = re.compile(r'(.+?): hash change lacks exact new event chain')
 A2_MISSING = re.compile(r'A2 apparatus missing FROZEN hash: (.+)')
+UNREGISTERED = re.compile(r'unregistered/missing file: (.+)')
 PENDING_PREFIX = 'Pending:'
 PENDING_FAMILY_MSG = ('Independent-Reviews requires two distinct families '
                       'and references separated by ;')
@@ -197,13 +198,14 @@ def event_evidence(root, kind, mb):
     return edges, pending, issues
 
 
-def chain_backed(root, edges, path, mb, pending=frozenset(), *, pending_only=False):
-    """True when an added event row bridges the base bytes to the current bytes.
+def chain_backed(root, edges, path, mb):
+    """True when the added event rows form the *exact* chain check_frozen demands.
 
-    ``pending_only`` restricts the evidence to event files that still carry a
-    ``Pending:`` placeholder.  A valid event is already chain-checked by
-    check_frozen itself; only a placeholder (which makes check_frozen skip the
-    event before reading its Change rows) needs this independent verification.
+    Mirrors ``check_frozen.check_registration``: from the merge-base bytes, each
+    step needs exactly one matching edge (``old == current``), every edge is used
+    at most once, no edge may remain unused, and the path must actually differ
+    from the merge-base.  A bare "one matching edge exists" test would accept
+    duplicate/extra edges that ``--write`` cannot clear (a false PASS).
     """
     target = root / path
     if not target.is_file() or target.is_symlink():
@@ -212,24 +214,50 @@ def chain_backed(root, edges, path, mb, pending=frozenset(), *, pending_only=Fal
         actual = digest(target)
     except OSError:
         return False
-    base = base_digest(root, mb, path) if mb else '-'
-    if base is None:
+    if not mb:
         return False
-    for event, name, old, new in edges:
-        if name == path and old == base and new == actual and not (
-                pending_only and event not in pending):
-            return True
-    return False
+    base = base_digest(root, mb, path)
+    if base is None or base == actual:
+        return False
+    remaining = [(old, new) for _, name, old, new in edges if name == path]
+    current = base
+    visited = set()
+    while current != actual and current not in visited:
+        visited.add(current)
+        matches = [edge for edge in remaining if edge[0] == current]
+        if len(matches) != 1:
+            return False
+        edge = matches[0]
+        remaining.remove(edge)
+        current = edge[1]
+    return current == actual and not remaining
 
 
 # ------------------------------------------------------------ classification
-def spec_path(root, kind, name):
-    """Resolve a manifest name the way the apparatus reports it, or None."""
+def strip_reported(name):
+    """Canonicalise a reported path, dropping ui-server's ``../../`` prefix.
+
+    ui-server-parity names every manifest row relative to ``specs/<kind>/`` and
+    reports failures as ``../../scripts/...``; gateway-parity reports the same
+    repo-relative shape with the prefix already stripped.  Both normalise here so
+    the three apparatuses share one resolution rule.
+    """
+    name = name.strip()
+    if name.startswith('../../'):
+        name = name[6:]
     if not name or Path(name).is_absolute() or '..' in Path(name).parts:
         return None
-    if name.startswith(('scripts/', 'specs/')):
-        return root / name
-    return root / 'specs' / kind / name
+    return name
+
+
+def spec_path(root, kind, name):
+    """Resolve a manifest name the way the apparatus reports it, or None."""
+    relative = strip_reported(name)
+    if relative is None:
+        return None
+    if relative.startswith(('scripts/', 'specs/')):
+        return root / relative
+    return root / 'specs' / kind / relative
 
 
 def existing_file(root, kind, name):
@@ -251,8 +279,6 @@ def bare_manifest_file(root, kind, name):
 def classify(ctx, item):
     """'ok' | 'pending' | ('block', why, detail_or_None)."""
     root, kind, mb, edges = ctx['root'], ctx['kind'], ctx['mb'], ctx['edges']
-    if ACCEPT_HASH_LIST in item:
-        return 'ok', None, None
     # parity: "<name>: hash mismatch"; ui-server-parity: "invalid path/hash: <name>".
     for pattern in (r'(.+): hash mismatch', r'invalid path/hash: (.+)'):
         match = re.fullmatch(pattern, item)
@@ -264,31 +290,41 @@ def classify(ctx, item):
     # First registration: --write adds the row; the added event row must back it.
     match = A2_MISSING.fullmatch(item)
     if match:
-        paths = [name.strip()[6:] if name.strip().startswith('../../') else name.strip()
-                 for name in match.group(1).split(',') if name.strip()]
-        unbacked = [name for name in paths
-                    if not chain_backed(root, edges, name, mb, ctx['pending'])]
+        unbacked = []
+        for name in match.group(1).split(','):
+            if not name.strip():
+                continue
+            relative = strip_reported(name)
+            if not relative or not chain_backed(root, edges, relative, mb):
+                unbacked.append(relative or name.strip())
         if not unbacked:
             return 'ok', None, None
         return 'block', 'blocking (no matching Change: - <hash> row)', ', '.join(unbacked)
+    # ui-server-parity reports a required-but-unregistered file the same way; a
+    # first registration is acceptable only when the file exists and is backed.
+    match = UNREGISTERED.fullmatch(item)
+    if match:
+        relative = strip_reported(match.group(1))
+        if relative and chain_backed(root, edges, relative, mb):
+            return 'ok', None, None
+        return 'block', 'blocking', None
     match = LACKS_CHAIN.match(item)
     if match:
         name = match.group(1)
-        if mb and not exists_at(root, mb, name) \
-                and chain_backed(root, edges, name, mb, ctx['pending']):
-            return 'ok', None, None  # new file, correctly backed; --write closes it
-        # A Pending: placeholder makes check_frozen skip the event before its
-        # Change rows are read, so verify that chain here instead.
-        if chain_backed(root, edges, name, mb, ctx['pending'], pending_only=True):
+        if chain_backed(root, edges, name, mb):
             return 'ok', None, None
         return 'block', 'blocking', None
     # A Pending: placeholder can fail the two-family rule; that is expected.
     match = re.fullmatch(r'frozen/([^/:]+): ' + re.escape(PENDING_FAMILY_MSG), item)
     if match and match.group(1) in ctx['pending']:
         return 'pending', None, None
+    # Recognised block markers win over a bare "hash list differs" substring so a
+    # composite message can never be silently accepted.
     for marker in BLOCK_MARKERS:
         if marker in item:
             return 'block', 'blocking', None
+    if ACCEPT_HASH_LIST in item:
+        return 'ok', None, None
     if 'merge-base == HEAD' in item:
         return 'block', 'blocking (branch has no commits of its own vs base)', None
     return 'block', 'blocking (unclassified, fail-closed)', None
@@ -329,6 +365,10 @@ def run_apparatus(root, kind, entry, base, mb):
     if status not in ('PASS', 'FAIL'):
         result['blocking'].append(('blocking', f'unrecognised apparatus status {status!r}', None))
         return result
+    if status == 'FAIL' and not failures:
+        # A FAIL with no detail would otherwise fall through as READY (fail-open).
+        result['blocking'].append(('blocking', 'apparatus reported FAIL with an empty '
+                                               'failures/errors list (fail-closed)', None))
     for item in failures:
         verdict, why, detail = classify(ctx, item)
         if verdict == 'ok':
@@ -340,13 +380,14 @@ def run_apparatus(root, kind, entry, base, mb):
     return result
 
 
-def event_chain_issues(root, base, kinds):
+def event_chain_issues(root, base, kinds, mb=None):
     """Validate event files added between merge-base(HEAD, base) and HEAD."""
     issues = []          # (kind_or_None, message)
     added = []
-    mb, error = merge_base(root, base)
-    if error:
-        return [('event-chain', error)], added, None
+    if mb is None:
+        mb, error = merge_base(root, base)
+        if error:
+            return [('event-chain', error)], added, None
     code, out, err = git(root, 'diff', '--name-status', '--no-renames', mb, 'HEAD', '--', 'specs')
     if code:
         return [('event-chain', f'cannot diff specs/: {err.strip()}')], added, mb
@@ -411,10 +452,20 @@ def main(argv=None):
     mb, mb_error = merge_base(root, args.base)
     print(f'check-frozen-delivery: root={root}')
     print(f'  base={args.base} merge-base={mb or "<unresolved>"}')
+    if mb_error:
+        # Never fall back to mb=None: chain_backed would degrade the base to '-'
+        # and widen acceptance to existing files.
+        print('=== base === BLOCKED')
+        print(f'  BLOCK[blocking] {mb_error}')
+        print('BLOCKED 1 / READY 0')
+        return 1
 
-    results = [run_apparatus(root, kind, entry, args.base, mb)
+    # Pin the resolved SHA: pass it (not the symbolic ref) to every apparatus so
+    # a concurrent ``git fetch`` cannot move the base between classification and
+    # the child check_frozen runs.  event_chain_issues reuses the same SHA.
+    results = [run_apparatus(root, kind, entry, mb, mb)
                for kind, entry in apparatuses]
-    issues, added, _ = event_chain_issues(root, args.base, kinds)
+    issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
 
     by_kind = {result['kind']: result for result in results}
     for kind, message in issues:
