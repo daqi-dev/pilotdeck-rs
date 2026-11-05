@@ -1,0 +1,24 @@
+$ grep -n 'new_current_thread\|new_multi_thread' tokio-macros-2.6.1/src/entry.rs
+452:                Builder::new_current_thread()
+456:            Builder::new_multi_thread()
+
+$ sed -n '84,90p' src/entry.rs   # default_flavor for is_test
+    fn new(is_test: bool, rt_multi_thread: bool) -> Self {
+        Configuration {
+            rt_multi_thread_available: rt_multi_thread,
+            default_flavor: match is_test {
+                true => RuntimeFlavor::CurrentThread,
+                false => RuntimeFlavor::Threaded,
+            },
+
+$ sed -n '448,457p' src/entry.rs
+
+    let mut rt = match config.flavor {
+        RuntimeFlavor::CurrentThread | RuntimeFlavor::Local => {
+            quote_spanned! {last_stmt_start_span=>
+                Builder::new_current_thread()
+            }
+        }
+        RuntimeFlavor::Threaded => quote_spanned! {last_stmt_start_span=>
+            Builder::new_multi_thread()
+        },

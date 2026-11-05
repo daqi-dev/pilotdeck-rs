@@ -4,7 +4,8 @@
 Run after committing the candidate (the mutating_sources guard refuses a dirty
 tree). Each mutant reverts one #1555 behaviour — the guard's after-colon
 leading-OWS drop (not applied, still raw-counted, not removed from the stream,
-the chunk-end run left un-finalized, folding whitespace wrongly dropped too)
+the chunk-end run left un-finalized, folding whitespace wrongly dropped too,
+the after-colon window left open across a CR)
 and hyper's field-count cap sized from `max_header_bytes` — and the bound
 libtest must fail at its own `#1555` assertion. Mutants are applied to the
 original one at a time, never cumulatively, and every mutation is restored and
@@ -111,6 +112,15 @@ cases = [
      '        self.raw_bytes = self.raw_bytes.saturating_add(1);\n',
      'cr_in_value_is_rejected_like_node',
      '#1555 a CR inside a field value must be rejected like Node'),
+    # #1555 fix-r3: the raw bound never trips, so the CR + 90 KB pad shape falls
+    # through to hyper (400) instead of the guard's registered 431 bytes. This
+    # is the paired control for the residual the R7 §范围 4 registers: the shape
+    # is not silently repaired, and the test that pins it can go red.
+    ('raw-cap-never-tripped', source,
+     '            raw_limit: header_guard_raw_limit(max_header_bytes),\n',
+     '            raw_limit: usize::MAX,\n',
+     'cr_in_value_past_the_raw_bound_keeps_the_registered_431',
+     "#1555 past the raw bound the CR-in-value shape is the guard's 431"),
 ]
 
 
@@ -145,7 +155,10 @@ def main():
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
-        with mutating_sources(root, [source]) as snapshots:
+        # 3600 s: the peak-RSS driver holds this same lock for its whole
+        # build+measure window and waits up to 3600 s itself; a shorter
+        # waiter here would report "lock busy" as an INVALID control.
+        with mutating_sources(root, [source], lock_timeout=3600) as snapshots:
             for name, path, old, new, test, assertion in selected:
                 full = TEST_PREFIX + test
                 status, reason = 'INVALID', 'not run'

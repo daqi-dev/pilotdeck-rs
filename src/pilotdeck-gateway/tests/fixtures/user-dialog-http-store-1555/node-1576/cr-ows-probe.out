@@ -1,0 +1,4 @@
+X: \r  \n	bytes=47	"HTTP/1.1 400 Bad Request\r\nConnection: cl"
+X:\r \r\n	bytes=47	"HTTP/1.1 400 Bad Request\r\nConnection: cl"
+X: ok (control)	bytes=96	"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nDate"
+X: <sp>ok	bytes=96	"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nDate"

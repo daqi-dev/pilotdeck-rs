@@ -1,0 +1,30 @@
+# 证据：fields-max-16x 不是并发（current-thread runtime 串行化）
+#
+# 下面的 receipt 行是 fix-r1 的原始转录，receipt 当时还没有 `flavor=` 字段；
+# fix-r3 起 receipt 由 `Handle::current().runtime_flavor()` 打印真实 flavor 并有断言。
+# 引用本文件时按「原始输出」读，不要按「本 PR 当前 receipt 形状」读。
+
+## 1) 测试体：16 个 tokio::spawn，属性 #[tokio::test]（无 flavor）
+$ git -C _build/wt-1555 show 37889557e:src/pilotdeck-gateway/src/user_dialog/http_store_tests.rs | sed -n "4622,4623p;4664,4669p"
+#[tokio::test]
+#[ignore = "manual peak-RSS probe; drive through tests/fixtures/user-dialog-http-store-1555/rss_probe_1555.py"]
+    let mut codes = Vec::new();
+    let mut response_bytes = 0usize;
+    for task in tasks {
+        let (code, len) = task.await.expect("probe request task");
+        codes.push(code);
+        response_bytes += len;
+
+## 2) tokio-macros 2.6.1（Cargo.lock:1582）：测试默认 CurrentThread
+452:                Builder::new_current_thread()
+456:            Builder::new_multi_thread()
+
+## 3) 实测耗时：211.2 / 14.1 = 14.98，约 15 连的墙钟（低于 16×，不是 16× 下界）
+$ grep -h "elapsed_ms" _tmp/20261106-pr1576/fixr1/rss-probe-final/fields-max-r1.log  (单连接)
+mode=fields-max width=1 statuses=[405] response_bytes=236 elapsed_ms=14.1
+$ grep -h "elapsed_ms" _tmp/20261106-pr1576/fixr1/rss-probe-final/fields-max-16x-r1.log  (16 连接)
+mode=fields-max-16x width=16 statuses=[405, 405, 405, 405, 405, 405, 405, 405, 405, 405, 405, 405, 405, 405, 405, 405] response_bytes=3776 elapsed_ms=211.2
+
+ratio = 14.98x  (同一线程上 16 次串行解析；真并发应 ≈1x；**不是** 16x 的串行下界)
+若 16 路真并发，墙钟应 ≈ 14.1 ms 量级；实测 211.2 ms
+response_bytes 236 -> 3776 = 16x（16 个独立响应，非共享）

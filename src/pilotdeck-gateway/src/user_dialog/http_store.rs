@@ -2217,7 +2217,11 @@ impl KeepAliveTimer {
 /// those bytes without buffering them, so a 90 KB value pad reaches the
 /// handler like any Node-legal head, and neither `ahead` nor hyper's read
 /// buffer ever grows by a dropped byte. Whitespace the guard still forwards
-/// (obsolete line folding) keeps counting toward the raw bound.
+/// (obsolete line folding) keeps counting toward the raw bound. That
+/// after-colon window closes at the first byte that is not droppable OWS —
+/// including a CR inside the value (#1555 fix-r2), so the guard stops
+/// stripping spaces behind a CR and hands hyper the bytes Node rejects
+/// instead of a repaired `X:\r\n`.
 ///
 /// The guard scans the whole connection, not only the request head
 /// (`InitialHeaders` / `Idle` / `NextHeaders`). Node's parser processes a
