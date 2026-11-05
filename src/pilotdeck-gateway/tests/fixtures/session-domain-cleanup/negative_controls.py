@@ -125,6 +125,62 @@ def wiring_relaxed(rows):
     })
 
 
+def _audit_row(rows):
+    matched = [row for row in rows if row.get('mode') == 'aggregation-audit']
+    if len(matched) != 1:
+        return None, f'aggregation-audit: expected 1 result row, saw {len(matched)}'
+    return matched[0], None
+
+
+def summary_dict_bypass(rows):
+    """#892: a directly returned summary dict must fail the audit as an
+    unregistered point with a flagged inline status slot, not pass silently."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#164-fix-r7 aggregation-audit: unregistered aggregation point '
+            'scripts/gateway-parity/controls/session_domain.py:inline_batch_summary')
+            for failure in failures):
+        return False, f'failures={failures!r}, want the unregistered inline_batch_summary point'
+    if not any(failure.startswith(
+            '#892 aggregation-audit: '
+            'scripts/gateway-parity/controls/session_domain.py:run_all ')
+            for failure in failures):
+        return False, f'failures={failures!r}, want the #892 run_all status-slot failure'
+    slots = (row.get('points', {}).get('controls-run-all', {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, 'points.controls-run-all.unsharedSlots is empty, want the inline status slot'
+    return True, ('aggregation-audit: inline_batch_summary unregistered and the run_all '
+                  'status slot flagged, passed=False')
+
+
+def branch_exit_inline(rows):
+    """#892: a branch computing its own exit code must fail the audit even
+    while another branch still calls the shared function."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: '
+            'scripts/gateway-parity/controls/session_domain.py:main ')
+            and 'inline status/exit' in failure
+            for failure in failures):
+        return False, f'failures={failures!r}, want the #892 main inline status/exit failure'
+    slots = (row.get('points', {}).get('controls-main', {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, 'points.controls-main.unsharedSlots is empty, want the inline exit branch'
+    return True, 'aggregation-audit: main inline exit branch flagged, passed=False'
+
+
 # (name, source, old, new).  Every old block must occur once.  Per-mutant
 # judge metadata (mode, judge, uses_launcher, allowed_probe_errors) lives in
 # JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
@@ -237,6 +293,25 @@ MUTATIONS = [
     ('aggregation-exit-bypassed', CONTROLS_SOURCE,
      "        return common.aggregate_status(report['status'])[1]",
      "        return int(report['status'] != 'PASS')"),
+    ('summary-dict-bypass', CONTROLS_SOURCE,
+     "    cleanup = cleanup_controls(output)\n"
+     "    status, _ = common.aggregate_status(\n"
+     "        'PASS' if all(r['passed'] for r in results) else 'FAIL',\n"
+     "        'PASS_WITH_SKIPS' if not_run else None,\n"
+     "        cleanup['status'])\n"
+     "    report = {'status': status,\n",
+     "    cleanup = cleanup_controls(output)\n"
+     "    status, _ = common.aggregate_status('PASS', cleanup['status'])\n"
+     "    def inline_batch_summary(results, not_run, cleanup):\n"
+     "        # mutant #892: a new summary point bypassing the shared function\n"
+     "        return {'status': 'PASS' if all(r['passed'] for r in results) else 'FAIL'}\n"
+     "    report = inline_batch_summary(results, not_run, cleanup)\n"
+     "    report = {'status': report['status'],\n"),
+    ('aggregation-branch-exit-inline', CONTROLS_SOURCE,
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return common.aggregate_status(report['status'])[1]\n",
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return 0 if report['status'] == 'PASS' else 1\n"),
     ('restored-skip-accepted', NEGATIVE,
      "            top_status, exit_code = common.aggregate_status(\n"
      "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
@@ -386,6 +461,8 @@ JUDGES = {
         }),
         False,
         ()),
+    'summary-dict-bypass': ('aggregation-audit', summary_dict_bypass, False, ()),
+    'aggregation-branch-exit-inline': ('aggregation-audit', branch_exit_inline, False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {

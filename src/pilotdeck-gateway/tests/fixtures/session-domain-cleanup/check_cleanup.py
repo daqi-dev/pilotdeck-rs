@@ -839,7 +839,10 @@ def status_controls(md):
 # point that does not is unregistered and fails closed.  Functions that look
 # like status/exit code but are not a batch summary carry an explicit reason;
 # the enumeration test fails on any new key, so a new summary cannot be added
-# without updating this table.
+# without updating this table.  #892: the enumeration also covers summary
+# functions that directly return a status dict (``return-report-status``), and
+# each registered point's every return path must route its status/exit
+# computation through the shared function (``unshared_status_slots``).
 AGGREGATION_POINTS = {
     ('scripts/gateway-parity/_guard.py', '_failure'): 'guard-failure',
     ('scripts/gateway-parity/controls/session_domain.py', 'cleanup_controls'): 'controls-cleanup',
@@ -866,6 +869,8 @@ NON_AGGREGATION_POINTS = {
         'A2 ruler gate; PENDING_REVIEW/exit 2 contract is outside the E1 batch order',
     ('scripts/gateway-parity/compare.py', 'main'):
         'single comparison result; no skip/tri-state children',
+    ('scripts/gateway-parity/compare.py', 'compare'):
+        'builds the single comparison result main returns; scenarios are not tri-state children',
     ('scripts/gateway-parity/controls/prerequisites.py', 'run_prerequisites'):
         'boolean prerequisite suite; per-comparison status labels are not a top-level batch',
     ('scripts/gateway-parity/session_domain.py', 'cleanup_status'):
@@ -874,12 +879,47 @@ NON_AGGREGATION_POINTS = {
         'launcher audit status DONE/FAIL for one run, not a batch',
     ('scripts/gateway-parity/session_domain.py', 'score_retirement_round'):
         'per-round rule verdict from a problem list, not a batch summary',
+    ('scripts/gateway-parity/session_domain.py', 'process_tree'):
+        'one ps census face; its BLOCKED is a single read, not a batch summary',
+    ('scripts/gateway-parity/session_domain.py', 'validate_expectations'):
+        'A19-HOST registration verdict face; consumed by _deadline_report shared calls, not a batch',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_census_verdict'):
+        'per-face HOST_CENSUS rule verdict; child of _retirement_report shared calls',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_report_census'):
+        'error-shape HOST_CENSUS face for an unreadable round record, not a batch',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_network_verdict'):
+        'per-face NETWORK_FALLBACK rule verdict; child of _retirement_report shared calls',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_listener_verdict'):
+        'per-face LISTENER_EXPOSURE rule verdict; child of _retirement_report shared calls',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_entry_inventory'):
+        'per-round entry inventory face; own NO_HIT/GATED/HIT vocabulary, not batch statuses',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_entry_inventory_aggregate'):
+        'merges per-round inventories into one face with own precedence words; child of the shared aggregation',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_js_host_census'):
+        'static census note (CENSUS_RECORDED); no children, not a batch summary',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_budget_blocked'):
+        'error-shape face for an exceeded round budget, not a batch summary',
+    ('scripts/gateway-parity/session_domain.py', 'retirement_report'):
+        'error-shape face wrapping _retirement_budget_blocked, not a batch summary',
+    ('scripts/gateway-parity/test_safety.py', 'test_control_attribution_requires_the_injected_object'):
+        'test-only mutated fixture copy, not a batch summary',
+    ('scripts/gateway-parity/test_safety.py', 'drifted_preexisting'):
+        'test-only drifted fixture copy, not a batch summary',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'batch_aggregation_control'):
         'test-only; calls the shared function to assert the order',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'aggregation_audit'):
         'the audit itself; test-only',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'runtime_negative'):
+        'test-only control; the bypass stub below carries the probe verdict, not a batch',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'bypass_probe'):
+        'test-only runtime replacement stub returning one probe verdict, not a batch',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'replay'):
+        'test-only batch replay returning observed fields, not a batch summary',
 }
 
 
@@ -917,6 +957,89 @@ def _is_report_status(target, value):
                     for key in value.keys))
 
 
+def _returned_summary_dicts(value):
+    """Directly returned summary dicts, including tuple elements (#892).
+
+    A constant ``status`` key is enough; the value may be a computed relay, so
+    unlike the assignment shapes this does not require status-word literals.
+    """
+    if isinstance(value, ast.Dict):
+        dicts = [value]
+    elif isinstance(value, ast.Tuple):
+        dicts = [element for element in value.elts if isinstance(element, ast.Dict)]
+    else:
+        return []
+    return [item for item in dicts
+            if any(isinstance(key, ast.Constant) and key.value == 'status'
+                   for key in item.keys)]
+
+
+def _status_slot(summary):
+    for key, value in zip(summary.keys, summary.values):
+        if isinstance(key, ast.Constant) and key.value == 'status':
+            return value
+    return None
+
+
+def _calls_aggregate(node):
+    return any(isinstance(n, ast.Call) and 'aggregate_status' in ast.unparse(n.func)
+               for n in ast.walk(node))
+
+
+def _relays_status(node):
+    return isinstance(node, (ast.Constant, ast.Name, ast.Attribute, ast.Subscript))
+
+
+def _exit_code_shaped(node):
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, int) and not isinstance(node.value, bool)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        return node.func.id == 'int'
+    if isinstance(node, ast.IfExp):
+        return _exit_code_shaped(node.body) and _exit_code_shaped(node.orelse)
+    return False
+
+
+def unshared_status_slots(function):
+    """Status/exit computations a registered point must route through the
+    shared function, per return path (#892).
+
+    ``calls_shared`` only proves the function mentions ``aggregate_status``
+    somewhere; one branch could still build a summary dict or an exit code on
+    its own.  Every returned summary dict's ``status`` slot must relay an
+    already-aggregated value (constant/name/subscript) or contain the shared
+    call itself; any other returned expression that mentions a batch status
+    word or aggregates ``passed`` rows must be the shared call's own result;
+    and once a return path is an aggregation pair (a summary dict or a status
+    word), its int-shaped exit-code element must come from the shared call.
+    Returns a list of one-line violation descriptions.
+    """
+    violations = []
+    for node in ast.walk(function):
+        if not (isinstance(node, ast.Return) and node.value is not None):
+            continue
+        value = node.value
+        dicts = _returned_summary_dicts(value)
+        is_pair = bool(dicts) or _status_literals(value) or _has_passed_aggregate(value)
+        for summary in dicts:
+            slot = _status_slot(summary)
+            if slot is not None and not (_relays_status(slot) or _calls_aggregate(slot)):
+                violations.append(f'status slot {ast.unparse(slot)[:60]} at line {node.lineno}')
+        elements = value.elts if isinstance(value, ast.Tuple) else [value]
+        for element in elements:
+            if any(element is summary for summary in dicts):
+                continue
+            if (_status_literals(element) or _has_passed_aggregate(element)):
+                if not (_calls_aggregate(element) or isinstance(element, ast.Dict)):
+                    violations.append(f'inline status/exit {ast.unparse(element)[:60]} '
+                                      f'at line {node.lineno}')
+            elif (is_pair and _exit_code_shaped(element)
+                    and not _calls_aggregate(element)):
+                violations.append(f'inline exit code {ast.unparse(element)[:60]} '
+                                  f'at line {node.lineno}')
+    return violations
+
+
 def aggregation_markers(function):
     """Markers that make *function* a top-level status/exit computation."""
     markers = set()
@@ -932,6 +1055,8 @@ def aggregation_markers(function):
                     markers.add('assign-report-status')
         elif isinstance(node, ast.Return) and node.value is not None:
             value = node.value
+            if _returned_summary_dicts(value):
+                markers.add('return-report-status')
             if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
                     and value.func.id == 'int' and _status_literals(value)):
                 markers.add('return-int-status')
@@ -973,6 +1098,10 @@ def aggregation_audit():
 
     The detector is self-tested with an inline summary (must be flagged) and a
     shared call (must be recognized), so deleting a call cannot pass silently.
+    #892 adds a directly returned summary dict, a branch that computes an exit
+    code around the shared call, and a clean shared pair to the self-tests, and
+    requires every registered point's return paths to compute batch status and
+    exit codes only through the shared function.
     """
     files = [path for path in (
         sorted((ROOT / 'scripts/gateway-parity').rglob('*.py'))
@@ -1001,14 +1130,19 @@ def aggregation_audit():
             continue
         markers, function = found[key]
         shared = calls_shared(function) and 'return-int-status' not in markers
+        slots = unshared_status_slots(function)
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
-                            'markers': sorted(markers)}
+                            'markers': sorted(markers), 'unsharedSlots': slots}
         if not shared:
             failures.append(f'#164-fix-r7 aggregation-audit: {rel}:{name} must call '
                             'common.aggregate_status')
         if 'return-int-status' in markers:
             failures.append(f'#164-fix-r7 aggregation-audit: {rel}:{name} must call '
                             'common.aggregate_status (found int(...) exit computation)')
+        for slot in slots:
+            failures.append(f'#892 aggregation-audit: {rel}:{name} must route every '
+                            f'batch status/exit computation through '
+                            f'common.aggregate_status (found {slot})')
 
     unclassified = []
     for key, (markers, _function) in sorted(found.items()):
@@ -1035,6 +1169,36 @@ def aggregation_audit():
     if not shared or not calls_shared(shared[1]):
         failures.append('#164-fix-r7 aggregation-audit: detector self-test did not '
                         'recognize a shared call')
+    # #892: the enumeration must see a summary function that directly returns
+    # the status dict, and the per-branch constraint must reject a branch that
+    # computes a status/exit code around the shared call while another branch
+    # still uses it.  A shared pair (status relay + shared exit code) must stay
+    # clean, so deleting either detector cannot pass silently.
+    probe892 = ast.parse(
+        "def _direct_summary(rows):\n"
+        "    return {'status': 'PASS' if all(row['passed'] for row in rows) else 'FAIL'}\n"
+        "def _inline_branch(report):\n"
+        "    if report.get('special'):\n"
+        "        return 0 if report['status'] == 'PASS' else 1\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _shared_pair(report):\n"
+        "    if report.get('special'):\n"
+        "        return {'status': 'BLOCKED'}, common.aggregate_status('BLOCKED')[1]\n"
+        "    status, code = common.aggregate_status(report['status'])\n"
+        "    return {'status': status}, code\n")
+    probe892_found = scan_aggregation_tree(probe892, '<self-test-892>')
+    direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
+    if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'directly returned summary dict')
+    inline = probe892_found.get(('<self-test-892>', '_inline_branch'))
+    if not inline or not unshared_status_slots(inline[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'branch exit computed around the shared call')
+    pair = probe892_found.get(('<self-test-892>', '_shared_pair'))
+    if not pair or unshared_status_slots(pair[1]) or not calls_shared(pair[1]):
+        failures.append('#892 aggregation-audit: detector self-test rejected a '
+                        'shared status/exit pair')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,
