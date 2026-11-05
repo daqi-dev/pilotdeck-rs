@@ -70,8 +70,16 @@ impl FileRegistry {
         &self,
         operation: impl FnOnce(&FileRunRegistry) -> RegistryResult<T> + Send + 'static,
     ) -> RegistryFuture<T> {
+        Self::dispatch(self.jobs.clone(), operation)
+    }
+    /// Same worker handoff without borrowing the adapter, so a port that owes a
+    /// receipt can queue its job only after that receipt settled.
+    fn dispatch<T: Send + 'static>(
+        jobs: mpsc::Sender<RegistryJob>,
+        operation: impl FnOnce(&FileRunRegistry) -> RegistryResult<T> + Send + 'static,
+    ) -> RegistryFuture<T> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.jobs.send(Box::new(move |registry| {
+        let _ = jobs.send(Box::new(move |registry| {
             let _ = tx.send(operation(registry));
         }));
         Box::pin(async move {
@@ -97,28 +105,28 @@ impl TurnRunRegistry for FileRegistry {
         })
     }
     fn append(&self, run: &RunRef, event: &JsValue) -> RegistryFuture<()> {
-        // #1370 FIFO witness at the `runRegistry.append` port: the queued
-        // receipt is decided and dispatched here, on the caller's tick and
-        // before the job enters the single worker, so the collector sees what
-        // queued behind a held registry barrier. The receipt itself is written
-        // on the blocking pool — this adapter never performs disk I/O on a
-        // Tokio executor thread — and its failure still fails the append.
+        // #1370 FIFO witness at the `runRegistry.append` port. The queued
+        // receipt is decided, sequenced and handed to the blocking pool right
+        // here, on the caller's tick: publication only first polls an append
+        // after its predecessor settles, and by then the barrier that owes this
+        // receipt is released. Nothing below waits for that first poll.
         let witness = crate::storage::stimulus::registry_stimulus_queued_pending(
             self.stimulus.as_ref(),
             event,
         );
         let run = run.clone();
         let event = event.clone();
-        let append = self.call(move |registry| registry.append(&run, &event));
+        let jobs = self.jobs.clone();
+        let append = move || Self::dispatch(jobs, move |registry| registry.append(&run, &event));
         match witness {
-            None => append,
-            Some(witness) => {
-                let queued: RegistryFuture<()> = Box::pin(async move {
-                    witness.await?;
-                    append.await
-                });
-                queued
-            }
+            None => append(),
+            // The receipt is evidence for the write that follows it, so settle
+            // it first: a witness failure then fails the append before the job
+            // reaches the worker, as the synchronous writer site does.
+            Some(witness) => Box::pin(async move {
+                witness.await?;
+                append().await
+            }),
         }
     }
 }

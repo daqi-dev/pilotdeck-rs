@@ -22,6 +22,11 @@ const POLL: Duration = Duration::from_millis(10);
 /// Barrier bound for explicit-release tests: long enough to release by hand,
 /// short enough that a broken release fails fast instead of wedging.
 const HELD_BOUND_MS: f64 = 3000.0;
+/// Barrier bound for the publication-path witness, where the receipt must land
+/// before the collector releases: the bound has to outlive the whole
+/// observation cap, or a bound-expiry release would unblock the predecessor and
+/// a receipt written by a lazily dispatched append would look correct.
+const OUTLIVED_BOUND_MS: f64 = 30000.0;
 
 /// The controlled entry for one test: a dedicated instance injected into the
 /// test's own writer and registry stores at construction, so an armed
@@ -695,6 +700,204 @@ async fn registry_port_appends_queue_with_witness_receipts() {
         "registry",
         "complete",
         "agent_status:input_accepted",
+    );
+}
+
+// Matrix 12b: the same queued witness through the real publication path. The
+// port alone is not enough: `Publication` serializes by predecessor, so the
+// second append's future is only first polled after the blocked one settles.
+// The receipt is owed to the entry, not to the first poll, so it must be
+// decided and dispatched when `append` is invoked — with the barrier still
+// held — otherwise the collector waits for a receipt that never comes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publication_queued_receipt_survives_predecessor_serialization() {
+    use crate::runtime::turn::coordinator::TurnEventCoordinator;
+    use crate::runtime::turn::publish::{FileRegistry, TurnPublisher, TurnRunRegistry};
+    let scratch = Scratch::new();
+    let control = scratch.control();
+    let registry = Arc::new(
+        FileRegistry::new(
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    registry.accept(&accept_input()).await.unwrap();
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            "registry",
+            "p1",
+            "agent_status:turn_timeout",
+            OUTLIVED_BOUND_MS,
+        )]),
+    );
+    let publisher = TurnPublisher::start(
+        run(),
+        Some(registry.clone()),
+        Arc::new(TurnEventCoordinator::new()),
+    );
+    negative_assert!(
+        publisher.gateway_event(agent_status_event("turn_timeout")),
+        "#1370 publication admits the blocked event"
+    );
+    let block = wait_receipt(
+        &control,
+        "registry",
+        "block",
+        "agent_status:turn_timeout",
+        "#1370 publication blocks the first append",
+    );
+    negative_assert!(
+        publisher.gateway_event(agent_status_event("input_accepted")),
+        "#1370 publication admits the event queued behind the barrier"
+    );
+    // The second append's future is not polled until the blocked one settles,
+    // so this receipt only exists if the entry tick decided it.
+    wait_receipt(
+        &control,
+        "registry",
+        "queued",
+        "agent_status:input_accepted",
+        "#1370 publication publishes the queued receipt while the barrier is held",
+    );
+    release(&control, seq_of(&block));
+    tokio::time::timeout(OBSERVE, publisher.finish())
+        .await
+        .expect("#1370 publication finishes within the observation cap");
+    let events = registry.events(&run()).await.unwrap();
+    negative_assert_eq!(
+        events.len(),
+        2,
+        "#1370 publication persists the queued append after the blocked one"
+    );
+    let first = field(&events[0], "event")
+        .as_string()
+        .expect("#1370 event name");
+    negative_assert!(
+        first.equals_str("turn_timeout"),
+        "#1370 publication keeps FIFO behind the barrier: first={first:?}"
+    );
+}
+
+// Matrix 12c: a queued receipt that cannot be written fails the append before
+// the durable job reaches the worker. Otherwise the caller would see a failed
+// persistence while the event landed anyway, and a retry would write it twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_queued_witness_fails_the_append_before_the_worker() {
+    use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
+    let scratch = Scratch::new();
+    let control = scratch.control();
+    let port = Arc::new(
+        FileRegistry::new(
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    port.accept(&accept_input()).await.unwrap();
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            "registry",
+            "w1",
+            "agent_status:turn_timeout",
+            HELD_BOUND_MS,
+        )]),
+    );
+    let blocked = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.append(&run(), &agent_status_event("turn_timeout"))
+                .await
+        })
+    };
+    let block = wait_receipt(
+        &control,
+        "registry",
+        "block",
+        "agent_status:turn_timeout",
+        "#1370 witness failure fixture blocks the first append",
+    );
+    // Sabotage exactly the next receipt: the atomic rename cannot replace a
+    // non-empty directory, so this one write fails and nothing else does.
+    let queued_path = control
+        .join("witness")
+        .join(format!("{:06}.json", seq_of(&block) + 1));
+    fs::create_dir(&queued_path).unwrap();
+    fs::write(queued_path.join("occupied"), "x").unwrap();
+    let failed = port
+        .append(&run(), &agent_status_event("input_accepted"))
+        .await;
+    negative_assert!(
+        failed.is_err(),
+        "#1370 a failed queued witness fails the append"
+    );
+    release(&control, seq_of(&block));
+    tokio::time::timeout(OBSERVE, blocked)
+        .await
+        .expect("#1370 blocked append finishes within the observation cap")
+        .expect("#1370 blocked append did not panic")
+        .expect("#1370 blocked append persists");
+    let events = port.events(&run()).await.unwrap();
+    let durable = events.iter().any(|event| {
+        field(event, "event")
+            .as_string()
+            .is_some_and(|n| n.equals_str("input_accepted"))
+    });
+    negative_assert!(
+        !durable,
+        "#1370 a failed queued witness never dispatches the durable append"
+    );
+}
+
+// Matrix 12d: a barrier that fails while held must release its hold. A hold
+// left behind stamps every later entry at the site with a receipt it does not
+// owe, so the collector would see a queued witness that never existed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_barrier_releases_its_hold_before_later_entries() {
+    use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
+    let scratch = Scratch::new();
+    let control = scratch.control();
+    let port = Arc::new(
+        FileRegistry::new(
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    port.accept(&accept_input()).await.unwrap();
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            "registry",
+            "f1",
+            "agent_status:turn_timeout",
+            HELD_BOUND_MS,
+        )]),
+    );
+    // A directory is not a release marker: reading it fails the held barrier.
+    fs::create_dir(control.join("release.json")).unwrap();
+    let failed = port
+        .append(&run(), &agent_status_event("turn_timeout"))
+        .await;
+    negative_assert!(
+        failed.is_err(),
+        "#1370 an unreadable release fails the held append"
+    );
+    let appended = port
+        .append(&run(), &agent_status_event("input_accepted"))
+        .await;
+    negative_assert!(
+        appended.is_ok(),
+        "#1370 the site accepts entries again after a failed barrier"
+    );
+    let stamped = receipts(&control)
+        .iter()
+        .any(|receipt| matches(receipt, "registry", "queued", "agent_status:input_accepted"));
+    negative_assert!(
+        !stamped,
+        "#1370 a failed barrier releases its hold before later entries"
     );
 }
 

@@ -171,25 +171,32 @@ impl StorageStimulus {
         parse_config(&value)
     }
 
-    /// Whether a barrier currently holds this site, i.e. whether an entry at it
-    /// is owed a `queued` receipt. Takes only the in-memory state, so a caller
-    /// can ask on its own tick without touching the filesystem.
-    pub(crate) fn held(&self, site: Site) -> bool {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        site_state_ref(&inner, site).held.is_some()
-    }
-
     /// Entry observation (`writer.append` / `runRegistry.append` invoked):
     /// publish a `queued` receipt when a barrier is currently held at this
     /// site, so the collector can witness what FIFO-queued behind the block.
     pub(crate) fn queued(&self, site: Site, key: &str) -> io::Result<()> {
-        let seq = {
-            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if site_state_ref(&inner, site).held.is_none() {
-                return Ok(());
-            }
-            next_sequence(&mut inner)
-        };
+        match self.reserve_queued(site) {
+            None => Ok(()),
+            Some(seq) => self.write_queued(seq, site, key),
+        }
+    }
+
+    /// Decide, on the caller's tick, whether an entry is owed a `queued`
+    /// receipt, and reserve that receipt's sequence. The decision and the
+    /// sequence have to be taken together with the barrier's own `held`
+    /// transition: a later re-check would already see the released barrier and
+    /// silently drop a receipt the collector is still waiting for.
+    fn reserve_queued(&self, site: Site) -> Option<u64> {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let held = site_state_ref(&inner, site).held.is_some();
+        if !held {
+            return None;
+        }
+        Some(next_sequence(&mut inner))
+    }
+
+    /// Write a `queued` receipt whose sequence was reserved at entry.
+    fn write_queued(&self, seq: u64, site: Site, key: &str) -> io::Result<()> {
         self.publish(seq, site, key, "queued", None)
     }
 
@@ -488,8 +495,8 @@ pub(crate) fn writer_stimulus_queued_entry(
         .map_err(super::LedgerError::Io)
 }
 
-/// A witness receipt owed by an async port: written off the executor, awaited
-/// by the operation it stamps.
+/// A witness receipt owed by an async port: already decided and sequenced on
+/// the entry tick, with its write running off the executor.
 pub(crate) type PendingReceipt =
     Pin<Box<dyn Future<Output = Result<(), super::RunRegistryError>> + Send>>;
 
@@ -498,35 +505,38 @@ pub(crate) type PendingReceipt =
 /// handle (`None` keeps the entry inert).
 ///
 /// The async port owes two things the synchronous writer site does not: the
-/// receipt has to be decided and dispatched on the caller's tick (it is only
-/// meaningful while the barrier still holds the write behind it), and the
-/// write must not run on a Tokio executor thread. So the in-memory decision
-/// happens here and the filesystem write is handed to the blocking pool;
-/// `None` means no receipt is owed, and awaiting the returned future surfaces
-/// write failures to the append exactly as the synchronous variant did.
+/// receipt has to be decided on the caller's tick (it is only meaningful while
+/// the barrier still holds the write behind it), and the write must not run on
+/// a Tokio executor thread. So the in-memory decision and the sequence happen
+/// here, and the handoff to the blocking pool happens here too — not from
+/// inside the returned future, which a publication only first polls after its
+/// predecessor settles. `None` means no receipt is owed, and awaiting the
+/// returned future surfaces write failures to the append.
 pub(crate) fn registry_stimulus_queued_pending(
     stimulus: Option<&Arc<StorageStimulus>>,
     event: &JsValue,
 ) -> Option<PendingReceipt> {
     let stimulus = Arc::clone(stimulus?);
-    if !stimulus.held(Site::Registry) {
-        return None;
-    }
+    let seq = stimulus.reserve_queued(Site::Registry)?;
     let key = registry_event_key(event);
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+    let write = move || stimulus.write_queued(seq, Site::Registry, &key);
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            let write = handle.spawn_blocking(write);
+            Some(Box::pin(async move {
+                write
+                    .await
+                    .map_err(|_| {
+                        super::RunRegistryError::Invalid(
+                            "Storage stimulus witness task stopped.".into(),
+                        )
+                    })?
+                    .map_err(super::RunRegistryError::Io)
+            }))
+        }
         // No executor to protect: the caller's own thread writes the receipt.
-        let result = stimulus.queued(Site::Registry, &key);
-        return Some(Box::pin(std::future::ready(
-            result.map_err(super::RunRegistryError::Io),
-        )));
-    };
-    Some(Box::pin(async move {
-        handle
-            .spawn_blocking(move || stimulus.queued(Site::Registry, &key))
-            .await
-            .map_err(|_| {
-                super::RunRegistryError::Invalid("Storage stimulus witness task stopped.".into())
-            })?
-            .map_err(super::RunRegistryError::Io)
-    }))
+        Err(_) => Some(Box::pin(std::future::ready(
+            write().map_err(super::RunRegistryError::Io),
+        ))),
+    }
 }
