@@ -17,9 +17,11 @@
 ### A. 仓内（本 PR 落地，合并进 main 即生效）
 
 1. **上限常量仍只有一处**：`scripts/lib/worktree-count.sh` 的 `PDRS_WORKTREE_CAP_MAX`，值 40 → **60**。`scripts/wt-status.sh` 与 `pdrs-ops` 的 `new-tree.sh` 都 source 它，不另写数字。
-2. **磁盘三档的阈值与测量也收敛到一处**：新增 `scripts/lib/disk-budget.sh`（`PDRS_DISK_TOTAL_GIB=200` / `PDRS_DISK_HARD_GIB=180` / `PDRS_DISK_WARN_GIB=160`、`pdrs_disk_used_kib`、`pdrs_disk_level`）。判断一律用 `du -sk` 的 **KiB 原值**，不做 GiB 四舍五入；`du` 非 0 或输出非数字返回 2，**fail-closed**，不把「没量到」当 0 放行。两处易踩的坑已实测并处理：
+2. **磁盘三档的阈值与测量也收敛到仓内一处**：新增 `scripts/lib/disk-budget.sh`（`PDRS_DISK_TOTAL_GIB=200` / `PDRS_DISK_HARD_GIB=180` / `PDRS_DISK_WARN_GIB=160`、`pdrs_disk_used_kib`、`pdrs_disk_level_of_kib`、`pdrs_disk_level`）。判断一律用 `du -sk` 的 **KiB 原值**，不做 GiB 四舍五入；判档只走 `pdrs_disk_level_of_kib`（`pdrs-loop.sh` 与 ops `new-tree.sh` 都调它，调用方不再自写比较式）。四处易踩的坑已实测并处理：
    - **命令行符号链接 `du -sk` 不跟随**（11-05 BSD 实测：指向 3 MiB 目录的链接报 `0 KiB`、rc=0）——本仓 runner 树确有 `_build` 指向外接卷的配置，直接量会让闸门静默失效。改为先 `cd + pwd -P` 取物理路径再量。
    - **断链**同样是 `0 KiB` + rc=0，按测量失败处理（rc=2 拒开）。
+   - **仓根不存在**此前被算成 0 GiB 放行（与断链处理相反）；改为前置错误 rc=2。仓根在、但没有 `_build`/`_tmp`（远端宿主）仍按 0。
+   - **`du` 部分失败**：`_build` 是 cargo target 树，编译并发删改文件时 du 会以非 0 退出。改为失败先重试一次，仍失败才 fail-closed；`pdrs_disk_level` 失败打印 `unknown` 而不是空串（空串会被 `[ "$lvl" = hard ]` 形式静默放行）。
 3. **`scripts/pdrs-loop.sh` 接同一实现**：删掉自带的 `DISK_CAP_KIB=167772160` 与内联 `du`，改调 `pdrs_disk_used_kib`；保留「在 160 GiB 就停派新活」的保守行为（比开树硬闸早一档），并把陈旧的「超 100GiB 上限」文案改正。测量失败同样停机（fail-closed）。
 4. `CLAUDE.md` §五「资源上限」两条与 `.42cog/real.md` 的 40 同步为 60，细节指向两处 lib，不重复写数字。
 
@@ -33,7 +35,7 @@
 6. `pdrs-ops/scripts/loop/recycle-tree.sh` 在 `git worktree remove` 前删该树的 `_build/cargo-target` 与 `target/`，并打印释放量；顺带加树名单段校验（脚本现在会 `rm -rf`，挡 `../` 越界）。
 7. `pdrs-ops/scripts/remote-worker/README.md` §7.6 写明：每棵树的 `CARGO_TARGET_DIR` 必须在树内 `_build/cargo-target`（或 `target/`），否则回收删不掉。
 
-> 状态说明：ops 是仓外本地 git（无远端），按本次任务约定只提交到新分支、不合并、不推送。**在 ops 侧合并之前，`/Users/da/ws/pdrs-ops` 主检出里的 `new-tree.sh` 仍是旧行为（185 GiB 硬闸、无 WARN、GiB 四舍五入）**，仓内文档描述的是合并后的目标行为。要核这侧实现，读 worktree `/Users/da/ws/pdrs-ops-cap60` 的分支 `chore/worktree-cap-60-1105`（两笔提交：名额/磁盘闸/回收删 target、改用主仓 `disk-budget.sh`；ops main 每次前进都要 rebase，故这里不写死 SHA），不要读 `/Users/da/ws/pdrs-ops`（那里有别的会话未提交改动，本单未触碰）。
+> 状态说明：ops 是仓外本地 git（无远端），按本次任务约定只提交到新分支、不合并、不推送。**在 ops 侧合并之前，`/Users/da/ws/pdrs-ops` 主检出里的 `new-tree.sh` 仍是旧行为（185 GiB 硬闸、无 WARN、GiB 四舍五入）**，仓内文档描述的是合并后的目标行为。要核这侧实现，读 worktree `/Users/da/ws/pdrs-ops-cap60` 的分支 `chore/worktree-cap-60-1105`（提交含：名额/磁盘闸/回收删 target、改用主仓 `disk-budget.sh`、判档改调 `pdrs_disk_level_of_kib`；ops main 每次前进都要 rebase，故这里不写死 SHA），不要读 `/Users/da/ws/pdrs-ops`（那里有别的会话未提交改动，本单未触碰）。
 
 ## 选项与后果
 
@@ -55,6 +57,11 @@
 - `du` 有缓存/延迟，实际值可能略低于瞬时真值；KiB 原值比较至少消掉了四舍五入这一层误差。
 - 回收删 `target/` 只删可重建的编译产物；`git status` 干净检查与 `_tmp` 归档在此之前完成，不碰未提交改动与证据。
 - ops 侧改动未合并（见上「状态说明」），合并前磁盘闸不生效。
+- **闸的测量面 = 主仓 `_build` + `_tmp`**：`~/.codex/worktrees/…`、`/tmp` 下的树同样吃磁盘（它们已计入名额口径），但它们的树内 `_build/cargo-target` 不在磁盘闸视野里。阈值按「少算的数」标定，真占用可能高于闸看到的数。
+- **`du` 无超时**：`_build` 若指向一个挂死的外接卷，`cd`/`du` 会阻塞，闸门自身挂起（本机没有 `timeout` 命令，需自建 watchdog）。未做，属已知缺口。
+- **冻结装置 `scripts/ui-server-parity/calibrate.py` 的 80 GiB 闸仍有同类反模式**：`p.exists()` 会滤掉断链、`du -sk` 不跟随 symlink、失败时取 `max(totals)` 的部分和。阈值属已登记的例外，但**测量**要在冻结程序里改，本单不动。
+- **ops 侧还有两处自带测量**：`disk-guard.sh`（内联 `du | awk` + 字面量 160）与 `disk-trim-idle.sh`；「唯一实现」目前只对仓内成立，收敛这侧要另开一笔。
+- **开树的名额/磁盘闸与 `git worktree add` 之间无锁**：两个并发 `new-tree` 可读到同一快照（59 棵 / 179 GiB）后都放行。上限放宽到 60 反而让并发开树更常见；收口需一把全局 flock。
 
 ## 原则（一次拍板 → 一条原则）
 

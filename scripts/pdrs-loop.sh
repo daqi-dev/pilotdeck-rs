@@ -106,9 +106,10 @@ while :; do
   if [ -e "$STOP_FILE" ]; then echo "pdrs-loop: 见 stop 文件，停"; rm -f "$STOP_FILE"; exit 0; fi
 
   if ! used_kib="$(pdrs_disk_used_kib "$ROOT")"; then
-    echo "pdrs-loop: 磁盘测量失败（du 非 0），停（fail-closed；CLAUDE.md 资源上限）" >&2; exit 1
+    echo "pdrs-loop: 磁盘测量失败（du 未取到结果，已重试一次），停（fail-closed；CLAUDE.md 资源上限）" >&2; exit 1
   fi
-  if [ "$used_kib" -gt "$((PDRS_DISK_WARN_GIB * 1048576))" ]; then
+  # 档位判定只走 lib 的 pdrs_disk_level_of_kib：循环比开树硬闸早一档（>160 GiB 即停派新活）
+  if [ "$(pdrs_disk_level_of_kib "$used_kib")" != ok ]; then
     echo "pdrs-loop: _build+_tmp=$((used_kib / 1048576)) GiB（${used_kib} KiB）超 ${PDRS_DISK_WARN_GIB} GiB 预警线，停（先回收；CLAUDE.md 资源上限）" >&2; exit 1
   fi
 
