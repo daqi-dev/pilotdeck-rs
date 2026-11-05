@@ -24,8 +24,10 @@ board() {  # $1 = updated 行（空串 = 不写 updated 行）
 }
 setup() {  # 全新 fixture；$1 = progress|stall|wipe
   rm -rf "$T/root" "$T/bin" "$T/calls"
-  mkdir -p "$T/root/scripts" "$T/root/state" "$T/root/_build" "$T/root/_tmp" "$T/bin"
+  mkdir -p "$T/root/scripts/lib" "$T/root/state" "$T/root/_build" "$T/root/_tmp" "$T/bin"
   cp "$SRC/pdrs-loop.sh" "$SRC/next-task.sh" "$T/root/scripts/"
+  # 磁盘阈值/测量是 lib 里的唯一实现（pdrs-loop 会 source），fixture 必须带上
+  cp "$SRC/lib/disk-budget.sh" "$T/root/scripts/lib/"
   board "2026-10-17 10:00"
   stub "$1"
 }
@@ -130,6 +132,18 @@ check "⑪ 第二迭代任务书带超时交接提示" 'grep -q "超时终止" "
 # ⑫ 超时但 board 已变（会话写了交接）：记 timeout、board_changed=1，不计入守卫，跑满 max-iter
 setup hang-touch; MI=3 ITO=2 run_loop
 check "⑫ 超时但已写交接：3 行 timeout、board_changed 全为 1、exit 0" '[ "$rc" = 0 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^timeout$")" = 3 ] && [ "$(tail -n +2 "$(ledger)" | cut -f9 | sort -u)" = 1 ]'
+
+# ⑬ 磁盘闸：阈值/测量唯一实现在 scripts/lib/disk-budget.sh，循环在 WARN 线（160 GiB）就停派新活
+setup progress
+printf '%s\n' '#!/usr/bin/env bash' 'echo -e "178257920\t$2"' > "$T/bin/du"; chmod +x "$T/bin/du"
+run_loop
+check "⑬ 磁盘 170 GiB（WARN 档）：exit 1、runner 0 次、消息含预警线" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "预警线" "$T/out.log"'
+
+# ⑬b du 失败必须 fail-closed 停机，不能当 0 放行
+setup progress
+printf '%s\n' '#!/usr/bin/env bash' 'echo "du: permission denied" >&2' 'exit 1' > "$T/bin/du"; chmod +x "$T/bin/du"
+run_loop
+check "⑬b du 失败：exit 1、runner 0 次、消息含 fail-closed" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "fail-closed" "$T/out.log"'
 
 check "锁已释放" '[ ! -e "$T/lock" ]'
 echo "test-pdrs-loop: $([ "$fails" = 0 ] && echo OK || echo "$fails FAIL")"

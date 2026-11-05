@@ -8,43 +8,58 @@
   - `_build`+`_tmp` = 165.9 GiB（`du -sk` 原值 173,996,420 KiB），上限 200 GiB —— **磁盘才是当前真瓶颈，不是树数**。
 
   40 棵本身没被顶满（37/40），但每开一棵就可能带进十几 GB 编译产物；只放宽数字而不加磁盘闸，等于把闸门从「数树」换成「撞 200 GiB 上限时停工」。
-- **谁受影响**：协调者的开树闸门（`pdrs-ops/bin/new-tree`）、回收闸门（`scripts/wt-status.sh` rc）、本机磁盘与并行席位；不改任何产品代码行为。
-- **能否撤回**：可撤回。改回 40 只改 `PDRS_WORKTREE_CAP_MAX` 一处常量；磁盘闸（180 GiB 硬闸 / 160 GiB WARN）可单独调阈值或移除，无数据迁移、无历史重写。
+- **谁受影响**：协调者的开树闸门（`pdrs-ops/bin/new-tree`）、回收闸门（`pdrs-ops/bin/recycle` / `scripts/wt-status.sh` rc）、外层循环 `scripts/pdrs-loop.sh`、本机磁盘与并行席位；不改任何产品代码行为。
+- **能否撤回**：可撤回。改回 40 只改 `PDRS_WORKTREE_CAP_MAX` 一处常量；磁盘三档可单独调阈值或移除，无数据迁移、无历史重写。
 - **动不动尺子/意向**：都不动。不碰 `.42cog/intent.md`、不碰任何冻结文件与判分语义。
 
-## 决定（已执行）
+## 决定
 
-1. 上限常量仍只有一处：`scripts/lib/worktree-count.sh` 的 `PDRS_WORKTREE_CAP_MAX`，值 40 → **60**。`scripts/wt-status.sh` 与 `pdrs-ops` 的 `new-tree.sh` 都 source 它，不另写数字。
-2. `new-tree.sh` 开树前加磁盘闸：`du -sk _build _tmp` 求和**用 KiB 原值**判断（不做 GiB 四舍五入）——
-   - `> 180 GiB`：直接拒开，打印「先回收」；
-   - `160–180 GiB`：打 WARN 但放行；
+### A. 仓内（本 PR 落地，合并进 main 即生效）
+
+1. **上限常量仍只有一处**：`scripts/lib/worktree-count.sh` 的 `PDRS_WORKTREE_CAP_MAX`，值 40 → **60**。`scripts/wt-status.sh` 与 `pdrs-ops` 的 `new-tree.sh` 都 source 它，不另写数字。
+2. **磁盘三档的阈值与测量也收敛到一处**：新增 `scripts/lib/disk-budget.sh`（`PDRS_DISK_TOTAL_GIB=200` / `PDRS_DISK_HARD_GIB=180` / `PDRS_DISK_WARN_GIB=160`、`pdrs_disk_used_kib`、`pdrs_disk_level`）。判断一律用 `du -sk` 的 **KiB 原值**，不做 GiB 四舍五入；`du` 非 0 或输出非数字返回 2，**fail-closed**，不把「没量到」当 0 放行。
+3. **`scripts/pdrs-loop.sh` 接同一实现**：删掉自带的 `DISK_CAP_KIB=167772160` 与内联 `du`，改调 `pdrs_disk_used_kib`；保留「在 160 GiB 就停派新活」的保守行为（比开树硬闸早一档），并把陈旧的「超 100GiB 上限」文案改正。测量失败同样停机（fail-closed）。
+4. `CLAUDE.md` §五「资源上限」两条与 `.42cog/real.md` 的 40 同步为 60，细节指向两处 lib，不重复写数字。
+
+### B. ops 侧（**已提交在 ops 本地分支 `chore/worktree-cap-60-1105`（commit `74cb144`），尚未合并进 ops 运行树——合并后才生效**）
+
+5. `pdrs-ops/scripts/loop/new-tree.sh` 开树前加磁盘闸：`pdrs_disk_used_kib` 测 `_build`+`_tmp`，KiB 原值比较——
+   - `> 180 GiB`：直接拒开，打印「先回收」并列出 `wt-status` 可回收项；`du` 失败 rc=2 拒开；
+   - `> 160 GiB`：打 WARN 但放行；
    - `≤ 160 GiB`：放行。
-3. 回收树（`pdrs-ops/bin/recycle`）在 `git worktree remove` 前删该树的 `_build/cargo-target` 与 `target/`，并打印释放量。`_build/cargo-target` 是每棵树的主要磁盘来源（见上）。
+   （阈值与测量 source 上面的 `scripts/lib/disk-budget.sh`，`PDRS_DISK_LIB` 仅供自测指向同内容副本。）
+6. `pdrs-ops/scripts/loop/recycle-tree.sh` 在 `git worktree remove` 前删该树的 `_build/cargo-target` 与 `target/`，并打印释放量；顺带加树名单段校验（脚本现在会 `rm -rf`，挡 `../` 越界）。
+7. `pdrs-ops/scripts/remote-worker/README.md` §7.6 写明：每棵树的 `CARGO_TARGET_DIR` 必须在树内 `_build/cargo-target`（或 `target/`），否则回收删不掉。
+
+> 状态说明：ops 是仓外本地 git（无远端），按本次任务约定只提交到新分支、不合并、不推送。**在 ops 侧合并之前，`/Users/da/ws/pdrs-ops` 主检出里的 `new-tree.sh` 仍是旧行为（185 GiB 硬闸、无 WARN、GiB 四舍五入）**，仓内文档描述的是合并后的目标行为。要核这侧实现，读 worktree `/Users/da/ws/pdrs-ops-cap60`（分支 `chore/worktree-cap-60-1105`，commits `74cb144` + `310640e`），不要读 `/Users/da/ws/pdrs-ops`（那里有别的会话未提交改动，本单未触碰）。
 
 ## 选项与后果
 
 | 选项 | 后果 |
 |---|---|
 | A. 只把 40 改 60，不加磁盘闸 | 树数不再卡，但一棵新树可能带进 10–30 GB；`_build+_tmp` 会更快撞 200 GiB，撞上即全仓停止新增写入（CLAUDE.md §五） |
-| B. **40 → 60 + 磁盘闸 180/160 + 回收删 target**（采纳） | 放宽并行席位的同时把闸门落在真瓶颈上；回收即释放十几 GB，磁盘回到可用区间 |
+| B. **40 → 60 + 磁盘三档 180/160 + 回收删 target**（采纳） | 放宽并行席位的同时把闸门落在真瓶颈上；回收即释放十几 GB，磁盘回到可用区间 |
 | C. 不动上限，只加磁盘闸 | 37/40 已接近顶，并行度上不去；人已明确同意放宽 |
 | D. 按磁盘折算成树数（比如每 3 GiB 算一棵） | 需要新的测量口径与换算表，且磁盘已有独立阈值，重复建模 |
 
 ## 建议
 
-采纳 B。**上限不是目标**：READY 有互相独立的产品单才并行，60 只是天花板。磁盘闸取 180 GiB 是给 200 GiB 上限留 20 GiB 缓冲（一次 cargo 构建/对拍的瞬时增量），160 GiB WARN 是提前提醒回收。
+采纳 B。**上限不是目标**：READY 有互相独立的产品单才并行，60 只是天花板。磁盘闸取 180 GiB 是给 200 GiB 上限留 20 GiB 缓冲，160 GiB WARN 是提前提醒回收。
 
 **残留风险**：
-- `new-tree.sh` 用绝对路径 source 主仓的 `scripts/lib/worktree-count.sh`；主仓检出切到不含该文件的旧提交时开树会 exit 2（fail-closed），不会静默退回旧口径。
-- 磁盘闸的 `du` 有缓存/延迟，实际值可能略低于瞬时真值；180 vs 200 的 20 GiB 缓冲覆盖这个误差。
+- **磁盘闸是「开树时刻」的快照，不覆盖构建期增长**：`du` → 判 → `git worktree add` 之间无锁，建树后编译出的 target（单棵实测 17–34 GB）不在闸的视野里。165.9 GiB 时放行、新树编译出 33.9 GB 就贴到 200 GiB 线上。缓解是 `pdrs-ops/scripts/loop/disk-guard.sh`（>160 GiB 时每 10 min 清**空闲**树），正在编译的树的增量仍不设防——所以 **160 GiB 起就必须真回收，不能等到 180**。
+- **180 GiB 缓冲（20 GiB）小于单棵树的 target 峰值（33.9 GB）**：硬闸挡住的是「再开一棵」，挡不住「已开的树把磁盘写满」。真正兜底是 200 GiB 上限 + 回收纪律，不是 180 这个数。
+- `new-tree.sh` 用绝对路径 source 主仓的 `scripts/lib/{worktree-count,disk-budget}.sh`；主仓检出切到不含这两个文件的旧提交时开树会 exit 2（fail-closed），不会静默退回旧口径。
+- `du` 有缓存/延迟，实际值可能略低于瞬时真值；KiB 原值比较至少消掉了四舍五入这一层误差。
 - 回收删 `target/` 只删可重建的编译产物；`git status` 干净检查与 `_tmp` 归档在此之前完成，不碰未提交改动与证据。
+- ops 侧改动未合并（见上「状态说明」），合并前磁盘闸不生效。
 
 ## 原则（一次拍板 → 一条原则）
 
-上限数字跟着真瓶颈走：树数不再是瓶颈时放宽树数，同时把闸门挪到磁盘；每棵树的构建产物必须可回收，回收时必须真删。
+上限数字跟着真瓶颈走：树数不再是瓶颈时放宽树数，同时把闸门挪到磁盘；阈值与测量各只有一处实现，闸门 fail-closed、回收必须真删。
 
 ## 登记者
 
 AI 代批，待人复核。
-依据：人已明确同意放宽 worktree 上限（2026-11-05 询问后答复「往宽做」）；改动可撤回、不动尺子与意向；上限常量收敛到一处，磁盘阈值以实测（165.9 GiB 现状、单棵 target 17–34 GB）为依据。
-关联：`state/decisions-20261105-worktree-cap.md`（计数口径，PR #1548）、PR #1547（`scripts/lib/worktree-count.sh` 实现）。
+依据：人已明确同意放宽 worktree 上限（2026-11-05 询问后答复「往宽做」）；改动可撤回、不动尺子与意向；上限常量与磁盘阈值各收敛到一处，磁盘档位以实测（165.9 GiB 现状、单棵 target 17–34 GB）为依据。
+关联：`state/decisions-20261105-worktree-cap.md`（计数口径，PR #1548）、`state/decisions-20261105-parallel-speedup.md`（其「worktree ≤ 40」条目已被本卡取代）、PR #1547（`scripts/lib/worktree-count.sh` 实现，本卡改动叠在其分支上）。

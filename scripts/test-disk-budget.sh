@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# test-disk-budget.sh — scripts/lib/disk-budget.sh 的规则测试。
+# 三档：ok ≤160 GiB · warn (160,180] · hard >180 GiB，判断用 KiB 原值。
+# 用法：bash scripts/test-disk-budget.sh     退出码 0 全过 · 1 有失败 · 2 前置错误
+# 自足：在临时目录里放 du 桩（stub），不读真实磁盘、不依赖仓内 _build/_tmp。
+
+set -u
+# 环境里残留的阈值会让「默认值」用例假失败：先清掉，本脚本自设自清。
+unset PDRS_DISK_TOTAL_GIB PDRS_DISK_HARD_GIB PDRS_DISK_WARN_GIB
+LIB="$(cd "$(dirname "$0")" && pwd -P)/lib/disk-budget.sh"
+[ -r "$LIB" ] || { echo "缺 $LIB" >&2; exit 2; }
+
+GIB=1048576 # KiB
+
+T=$(mktemp -d "${TMPDIR:-/tmp}/pdrs-diskbudget.XXXXXX") || exit 2
+cleanup() { rm -rf "$T"; }
+trap cleanup EXIT
+
+fail=0
+ok() { echo "ok   $1"; }
+bad() { echo "FAIL $1"; fail=1; }
+eq() { [ "$2" = "$3" ] && ok "$1（$2）" || bad "$1：期望 $3，实得 $2"; }
+
+# du 桩：按路径后缀返回 DU_BUILD_KIB / DU_TMP_KIB；DU_FAIL=1 模拟 du 失败（fail-closed 用例）
+mkdir -p "$T/bin" "$T/root/_build" "$T/root/_tmp"
+cat >"$T/bin/du" <<'STUB'
+#!/usr/bin/env bash
+[ "${DU_FAIL:-0}" = 1 ] && { echo "du: permission denied" >&2; exit 1; }
+for a in "$@"; do last=$a; done
+case $last in
+  */_build) v=${DU_BUILD_KIB:-0} ;;
+  */_tmp) v=${DU_TMP_KIB:-0} ;;
+  *) echo "du stub: 未知路径 $last" >&2; exit 1 ;;
+esac
+printf '%s\t%s\n' "$v" "$last"
+STUB
+chmod +x "$T/bin/du"
+PATH="$T/bin:$PATH"
+export PATH
+
+# shellcheck source=lib/disk-budget.sh
+. "$LIB" || exit 2
+
+# 1. 阈值默认值与「只许调低」
+th() { ( . "$LIB" >/dev/null 2>&1; echo "$PDRS_DISK_TOTAL_GIB/$PDRS_DISK_HARD_GIB/$PDRS_DISK_WARN_GIB" ); }
+eq "默认阈值" "$(th)" "200/180/160"
+eq "HARD 调高被夹回" "$(PDRS_DISK_HARD_GIB=999 th)" "200/180/160"
+eq "HARD 非数字回落" "$(PDRS_DISK_HARD_GIB=abc th)" "200/180/160"
+eq "HARD 允许调低" "$(PDRS_DISK_HARD_GIB=100 th)" "200/100/100"
+
+# 2. 求和：两个目录相加（首行数字，忽略路径）
+eq "两目录求和" "$(DU_BUILD_KIB=$((3 * GIB)) DU_TMP_KIB=$((2 * GIB)) pdrs_disk_used_kib "$T/root")" "$((5 * GIB))"
+
+# 3. 三档边界：等于阈值为低一档，超 1 KiB 才升级（容不得四舍五入）
+lv() { DU_BUILD_KIB=$1 DU_TMP_KIB=0 pdrs_disk_level "$T/root"; }
+eq "159 GiB → ok" "$(lv $((159 * GIB)))" ok
+eq "160 GiB 整 → ok" "$(lv $((160 * GIB)))" ok
+eq "160 GiB + 1 KiB → warn" "$(lv $((160 * GIB + 1)))" warn
+eq "180 GiB 整 → warn" "$(lv $((180 * GIB)))" warn
+eq "180 GiB + 1 KiB → hard" "$(lv $((180 * GIB + 1)))" hard
+
+# 4. 目录不存在按 0（远端宿主的 target 不在 _build/_tmp）
+mkdir -p "$T/empty"
+eq "无 _build/_tmp 计 0" "$(pdrs_disk_used_kib "$T/empty")" 0
+eq "无 _build/_tmp → ok" "$(pdrs_disk_level "$T/empty")" ok
+
+# 5. fail-closed：du 失败必须 rc=2，且不把「没量到」当成 0 放行
+out=$(DU_FAIL=1 pdrs_disk_used_kib "$T/root" 2>/dev/null); rc=$?
+eq "du 失败 rc" "$rc" 2
+eq "du 失败无输出" "[$out]" "[]"
+out=$(DU_FAIL=1 pdrs_disk_level "$T/root" 2>/dev/null); rc=$?
+eq "du 失败 level rc" "$rc" 2
+eq "du 失败 level 无输出" "[$out]" "[]"
+
+# 6. 直接执行：打印三档与当前级别
+o=$(cd "$T/root" && DU_BUILD_KIB=$((170 * GIB)) bash "$LIB" 2>&1); rc=$?
+eq "直接执行 rc" "$rc" 0
+case $o in *"180 GiB"*"170 GiB"*warn*) ok "直接执行打印阈值与级别" ;; *) bad "直接执行输出：[$o]" ;; esac
+
+echo "----"
+[ "$fail" = 0 ] && echo "PASS test-disk-budget" || echo "FAILED test-disk-budget"
+exit "$fail"
