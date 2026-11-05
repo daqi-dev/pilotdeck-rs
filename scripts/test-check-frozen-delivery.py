@@ -35,6 +35,8 @@ def init_repo(root):
     git(root, "init", "-q")
     git(root, "config", "user.email", "test@example.invalid")
     git(root, "config", "user.name", "test")
+    # 非 ASCII 路径的负控依赖这个默认值；本机全局配成 false 时它会变成伪负控。
+    git(root, "config", "core.quotePath", "true")
 
 
 def commit(root, message):
@@ -329,13 +331,24 @@ def run():
 
     with tempfile.TemporaryDirectory() as td:
         # parity 同向：源里新增 sixth.md 且文件是新加的，没有链就必须拦。
-        payload = dict(parity_payload)
-        proc = delivery(Path(td), "parity", payload,
+        proc = delivery(Path(td), "parity", dict(parity_payload),
                         source=PARITY_MANIFEST.replace("'multimodal.md')",
                                                        "'multimodal.md', 'sixth.md')"),
                         files=[("specs/parity/sixth.md", "SIXTH\n")])
         case("parity 清单新增 spec 文档、无事件链 → BLOCKED",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = delivery(Path(td), "parity", dict(parity_payload),
+                        source=PARITY_MANIFEST.replace("'multimodal.md')",
+                                                       "'multimodal.md', 'sixth.md')"),
+                        files=[("specs/parity/sixth.md", "SIXTH\n")],
+                        events=[("specs/parity/frozen/20260101-y.md",
+                                 f"Change: - {sha('SIXTH\n')} specs/parity/sixth.md\n"
+                                 + EVENT_FIELDS)])
+        case("parity 清单新增 spec 文档、有 Change: - <hash> → READY（端到端正控）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
@@ -783,6 +796,26 @@ def run():
          parity_registrable(five, "specs/parity/foo.md") is False)
     case("parity names 改成非字面量 → 不可判定（不退回副本）",
          parity_registrable(five, names_expr="SPEC_NAMES") is None)
+    # 真装置的 manifest_path：已是 scripts/ specs/ 开头的名字原样登记，
+    # 其余挂到 specs/parity/ 下。一律拼前缀会两种方向都判错。
+    case("parity 带 specs/ 前缀的名字按原样登记",
+         parity_registrable(five + ('specs/parity/sixth.md',),
+                            "specs/parity/sixth.md") is True)
+    case("parity 名字非规范（..） → 不可判定（--write 会拒）",
+         parity_registrable(five + ('../escape.md',), "specs/parity/README.md") is None)
+    with tempfile.TemporaryDirectory() as td:
+        # names 先赋值再 +=：解释器看到六个名字，只认首个字面量会漏掉一个成员。
+        root = Path(td)
+        init_repo(root)
+        body = ("\ndef manifest_inventory(root):\n"
+                "    names = ('README.md', 'acceptance.md', 'normalization.md',\n"
+                "             'accepted-diffs.md', 'multimodal.md')\n"
+                "    names += ('sixth.md',)\n"
+                "    return {name: name for name in names}\n")
+        write(root, "scripts/parity/check_frozen.py", body)
+        commit(root, "base")
+        case("parity names 二次 += → 不可判定（不取首个字面量）",
+             cfd.registrable(root, "parity", "specs/parity/README.md") is None)
 
     # 下面四条都是「认不出就阻塞」：任何一种静默退出都会让模型漂移变成假 READY。
     case("装置源解析不出（NUL 字节）→ 不可判定，不按子串猜",
@@ -794,6 +827,12 @@ def run():
     case("SPEC 绑定两次 → 不可判定（不取首个）",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN + "\nSPEC = ROOT / 'specs/ui-server-parity-alt'\n") is None)
+    case("REQUIRED.discard(...) 就地改集合 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nREQUIRED.discard('acceptance.md')\n") is None)
+    case("check_frozen 里重绑 SPEC_FILES → 不可判定（不是导入的那份）",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nSPEC_FILES = SPEC_FILES[:-1]\n") is None)
     case("scan 调用带额外参数 → 不可判定（形状认不出）",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN.replace("scan(root / 'scripts/exp008')",

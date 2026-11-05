@@ -33,9 +33,10 @@ A first registration is not always named in the report: parity only says the
 hash list differs and lists the files it skipped in ``unregistered_skipped``;
 gateway-parity only says the generated inventory differs.  So the tool also
 scans the files added on the branch that the apparatus would actually register
-(parity: tracked files under ``scripts/parity/`` plus its five fixed spec files;
-gateway-parity: a file under its apparatus directories that its own source
-names).  Each one needs the same exact ``Change: - <sha256> <path>`` chain,
+(both apparatuses: every tracked file under ``scripts/<kind>/`` and
+``specs/<kind>/`` that the apparatus's own source says it would register --
+parity's ``manifest_inventory.names``, gateway's ``manifest_inventory``
+literals).  Each one needs the same exact ``Change: - <sha256> <path>`` chain,
 otherwise it is a blocker: after ``--write`` the registration check would reject
 it.  A new file the apparatus would *not* register is ignored -- the real gate
 ignores it too, and a chain for it would itself be an unused event row.
@@ -83,7 +84,7 @@ import hashlib
 import json
 import re
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ACCEPT_HASH_LIST = 'hash list differs from generated inventory'
 BLOCK_MARKERS = ('lacks exact new event chain', 'missing', 'unregistered', 'cannot')
@@ -101,10 +102,17 @@ ADDED_EVENT = re.compile(r'specs/([^/]+)/frozen/([^/]+\.md)$')
 BARE_PATH = re.compile(r'(?:\.\./\.\./)?[\w./-]+')
 BYTECODE = re.compile(r'(?:^|/)__pycache__(?:/|$)|\.py[co]$')
 # Where each apparatus's ``--write`` takes its rows from.  parity walks
-# ``scripts/parity/`` recursively and takes five fixed top-level files of
-# ``specs/parity/``; gateway-parity keeps an explicit inventory in its own
-# source, so a new member there must be named by that source to be registrable.
+# ``scripts/parity/`` recursively and registers the names in its own
+# ``manifest_inventory`` (under ``specs/parity/`` unless already prefixed);
+# gateway-parity keeps an explicit inventory in its own source, so a new member
+# there must be named by that source to be registrable.  Either way the list
+# itself lives in the apparatus -- this tool keeps no second copy.
 GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
+# Directories either apparatus may register a file in.  One table: the
+# "is this registrable" question and the "what is newly registered" scan must
+# agree, or a spec document added under specs/<kind>/ reads as READY.
+REGISTRABLE_DIRS = {'parity': ('scripts/parity/', 'specs/parity/'),
+                    'gateway-parity': GATEWAY_DIRS + ('specs/gateway-parity/',)}
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 
@@ -560,23 +568,42 @@ def _parents(tree):
 
 
 def _tuple_value(tree, function, name, external=()):
-    """Tuple bound to ``name`` inside ``function`` (local assignment first), else None."""
+    """Tuple bound to ``name`` inside ``function`` (local assignment first), else None.
+
+    The local binding must be *the* binding: ``names = (...)`` followed by
+    ``names += ('sixth.md',)``, a second assignment, or an annotated one leaves
+    the interpreter with a value this parser never saw, so the shape is
+    "cannot tell" (None).  Returning the first literal would keep registering a
+    member the branch removed -- the same false-READY class ``_module_tuple``
+    already guards against.
+    """
+    stores = [node for node in ast.walk(function)
+              if isinstance(node, ast.Name) and node.id == name
+              and isinstance(node.ctx, ast.Store)]
+    augments = [node for node in ast.walk(function)
+                if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
+                and node.target.id == name]
+    if augments or len(stores) > 1:
+        return None
     found = None
-    for node in ast.walk(function):
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if not (isinstance(target, ast.Name) and target.id == name):
-                continue
-            if found is not None:
-                return None
-            try:
-                value = ast.literal_eval(node.value)
-            except (ValueError, SyntaxError):
-                return None
-            if not isinstance(value, tuple) or not all(isinstance(item, str) for item in value):
-                return None
-            found = value
+    if stores:
+        for node in ast.walk(function):
+            targets, value = [], None
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, value = [node.target], node.value
+            for target in targets:
+                if not (isinstance(target, ast.Name) and target.id == name):
+                    continue
+                try:
+                    parsed = ast.literal_eval(value)
+                except (ValueError, SyntaxError):
+                    return None
+                if not isinstance(parsed, tuple) or not all(
+                        isinstance(item, str) for item in parsed):
+                    return None
+                found = parsed
     if found is not None:
         return found
     if name in external:
@@ -731,6 +758,18 @@ def _ui_required_names(tree):
               and isinstance(node.ctx, ast.Store)]
     if len(stores) != 1:
         return None
+    # ``SPEC_FILES`` must be the *imported* tuple: a local rebinding
+    # (``SPEC_FILES = SPEC_FILES[:-1]``) puts a second, invisible list back.
+    if any(isinstance(node, ast.Name) and node.id == 'SPEC_FILES'
+           and isinstance(node.ctx, ast.Store) for node in ast.walk(tree)):
+        return None
+    # ``REQUIRED.discard(...)`` / ``.update(...)`` edit the set in place, so the
+    # binding still looks derived while the registered names are not.
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'REQUIRED'):
+            return None
     for node in tree.body:
         targets, value = [], None
         if isinstance(node, ast.Assign):
@@ -801,6 +840,28 @@ def parity_spec_names(root, commit=None):
                 names = set(value)
     _SOURCE_CACHE[key] = names
     return names
+
+
+def _parity_manifest_paths(names):
+    """Paths parity's ``manifest_path`` derives from its ``names`` tuple, or None.
+
+    Mirrors the apparatus (``scripts/parity/check_frozen.py``): a name that
+    already starts with ``scripts/`` or ``specs/`` is registered as written,
+    every other name lives under ``specs/parity/``.  A non-canonical name is a
+    ``ValueError`` there, i.e. ``--write`` cannot produce a target -- "cannot
+    tell" here.
+    """
+    paths = set()
+    for name in names:
+        if not isinstance(name, str) or not name:
+            return None
+        parts = PurePosixPath(name).parts
+        if (name.startswith('/') or '..' in parts
+                or PurePosixPath(name).as_posix() != name):
+            return None
+        paths.add(name if name.startswith(('scripts/', 'specs/'))
+                  else f'specs/parity/{name}')
+    return paths
 
 
 def gateway_inventory(root, commit=None):
@@ -897,7 +958,7 @@ def registrable(root, kind, path):
 
     Only such a path can be a first registration, and only an unregistrable one
     can have its row dropped: accepting a chain for anything else blesses a
-    failure ``--write`` cannot clear (parity keeps five fixed spec files and
+    failure ``--write`` cannot clear (parity's ``manifest_inventory`` names and
     ``git ls-files scripts/parity/``; gateway-parity's inventory and
     ui-server-parity's ``SPEC_FILES`` are written out in their own sources).
 
@@ -910,7 +971,10 @@ def registrable(root, kind, path):
         specs = parity_spec_names(root)
         if specs is None:
             return None  # shape not recognised: never guess in either direction
-        if path in {f'specs/parity/{name}' for name in specs}:
+        manifest = _parity_manifest_paths(specs)
+        if manifest is None:
+            return None  # a name --write would reject: cannot model the target
+        if path in manifest:
             return True
         if not path.startswith('scripts/parity/'):
             return False
@@ -976,8 +1040,7 @@ def unregistered_added(root, kind, mb):
         # reports a *new* spec document that has no hash row (parity only skips
         # them, gateway only says "hash list differs"), so an unscanned spec
         # directory is a false READY that ``--write`` turns into a missing chain.
-        prefixes = {'parity': ('scripts/parity/', 'specs/parity/'),
-                    'gateway-parity': GATEWAY_DIRS + ('specs/gateway-parity/',)}.get(kind, ())
+        prefixes = REGISTRABLE_DIRS.get(kind, ())
     for prefix in prefixes:
         code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
                              pinned_head(), '--', prefix)
