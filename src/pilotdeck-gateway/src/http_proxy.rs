@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicI64, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
 };
@@ -200,7 +200,10 @@ struct UpgradeReadGate<S> {
     /// probe `probe-p11.out`: after a served first request, a follow-up head
     /// dribbling one byte per second — every segment refreshing the 6 s idle
     /// deadline — is answered with the 51-byte 408 at the head's first byte
-    /// + 60 s).
+    /// (first byte + 60 s). fix-r2 probe `probe-c1.out`: the same holds for
+    /// the *first*
+    /// head — connect, silent 30 s, then an incomplete head gets its 408 at
+    /// first byte + 90 s on the checker grid, not at connect + 60 s.
     headers_timeout: Option<std::time::Duration>,
     /// #1292: when the currently awaited request head's `headersTimeout`
     /// expires ([`NODE_HEADERS_TIMEOUT`]); `None` once disarmed. Disarmed the
@@ -224,16 +227,34 @@ struct UpgradeReadGate<S> {
     /// `last_message_start_`); this lane arms at the finish — the 6 s idle
     /// close owns the silent case just the same — and re-arms at the next
     /// head's first byte, which also covers a head already mid-arrival
-    /// when its predecessor's response ends.
+    /// when its predecessor's response ends. fix-r2: when such a head is
+    /// already mid-arrival the finish keeps that head's own deadline
+    /// instead of re-arming (Node's `last_message_start_` was set at the
+    /// head's first byte, and the response ending does not move it).
     rearm: watch::Receiver<usize>,
     /// #1292 fix-r1: `served_heads` at deadline-arm time: the head that
     /// completes after an arming is the one that disarms it.
     disarm_after: usize,
-    /// #1292 fix-r1: set while the next request head is awaited (a response
-    /// finished); its first byte re-arms the deadline — Node's
-    /// `headersTimeout` does not refresh on partial reads — and later
-    /// dribble segments must not.
-    awaiting_head: bool,
+    /// #1292 fix-r2: set while the awaited request head has received its
+    /// first byte (Node's `on_message_begin` has fired for it): the armed
+    /// deadline is that head's own, and later dribble segments never defer
+    /// it. Cleared when the head parsed (the disarm watermark passing) —
+    /// the next read in the dead zone before its response finishes
+    /// belongs to the *next* head and starts its own window (fix-r2
+    /// review #2: a follow-up head already arriving while the previous
+    /// response still streams is timed from its first byte, not from the
+    /// rearm at the response's finish).
+    awaited_head_started: bool,
+    /// #1292 fix-r2: hyper has written bytes for a response that has not
+    /// finished. Node's `socketOnError` answers a headers-timeout expiry
+    /// with the 51-byte 408 only while no in-flight `ServerResponse` has
+    /// sent its head (`!this._httpMessage || !this._httpMessage
+    /// ._headerSent`; probe `probe-g2.out`/`probe-c2.out`: a streaming
+    /// response is simply destroyed with no 408, `probe-g4.out`: a held
+    /// response that has written nothing still gets the 408). Mirrors
+    /// `_headerSent` by treating any hyper write as the head: hyper never
+    /// writes a response's body ahead of its head.
+    response_head_written: bool,
     /// The connection's own stop signal, consulted only while
     /// [`Self::headers_deadline`] is armed: a stop disarms it (and blocks
     /// re-arming; Node clears its checker in `server.close()`).
@@ -256,6 +277,29 @@ struct UpgradeReadGate<S> {
     timeout_408: Option<&'static [u8]>,
     timeout_408_written: usize,
     timeout_408_closed: bool,
+    /// #1292 fix-r2: request-body bytes the connection still owes the handler
+    /// — set from the parsed request's `Content-Length` (a chunked body
+    /// stays "open", the conservative residual) — so the read gate can tell
+    /// the request's own body segments from a *next* head's first byte
+    /// arriving mid-response. Node's parser consumes both from the socket,
+    /// but only a head start opens a `headersTimeout` window
+    /// (`last_message_start_` is set at `on_message_begin`, not by body
+    /// bytes).
+    body_remaining: Arc<AtomicI64>,
+    /// #1292 fix-r2: bytes of a next request head that arrived while the
+    /// previous response was still streaming, parked gate-side instead of
+    /// hyper's read buffer. Hyper cannot parse them until the response
+    /// finishes (`can_read_head` needs `Reading::Init`), and once they land
+    /// in its read buffer its `mid_message_detect_eof` parks on the
+    /// non-empty buffer without polling io again — stranding the gate (and
+    /// its parked headers deadline) without a poll to fire in. Held back and
+    /// re-fed to hyper's parse path once the response finishes, exactly like
+    /// Node's socket buffer holds them for its parser.
+    withheld_head: Vec<u8>,
+    /// #1292 fix-r2: EOF seen while withholding — parked with the bytes and
+    /// reported to hyper only when they are, the same way hyper parks a
+    /// mid-stream EOF behind a non-empty read buffer.
+    withheld_eof: bool,
 }
 impl<S> UpgradeReadGate<S> {
     #[allow(clippy::too_many_arguments)] // The per-request headersTimeout state machine's inputs.
@@ -270,6 +314,7 @@ impl<S> UpgradeReadGate<S> {
         stop: Option<watch::Receiver<bool>>,
         rearm: watch::Receiver<usize>,
         in_flight: Arc<AtomicUsize>,
+        body_remaining: Arc<AtomicI64>,
     ) -> Self {
         // A stop-less connection gets a never-true receiver: the gate only
         // consults its stop while the deadline is armed.
@@ -286,22 +331,28 @@ impl<S> UpgradeReadGate<S> {
             stop: stop.unwrap_or(gate_stop),
             rearm,
             disarm_after: 0,
-            awaiting_head: false,
+            awaited_head_started: false,
+            response_head_written: false,
             headers_sleep: headers_deadline
                 .map(|deadline| Box::pin(tokio::time::sleep_until(deadline))),
             in_flight,
             timeout_408: None,
             timeout_408_written: 0,
             timeout_408_closed: false,
+            body_remaining,
+            withheld_head: Vec::new(),
+            withheld_eof: false,
         }
     }
 
-    /// #1292 fix-r1: re-arm the headers deadline for the next request head —
-    /// Node starts a fresh `headersTimeout` per request (`on_message_begin`),
-    /// not just for the connection's first. `await_next_head` marks that the
-    /// head has not begun yet, so its first byte re-arms the deadline again
-    /// at the true request start (dribble segments never defer it).
-    fn rearm_headers_deadline(&mut self, await_next_head: bool) {
+    /// #1292 fix-r1/fix-r2: arm the headers deadline for a request head.
+    /// Node starts a fresh `headersTimeout` at every `on_message_begin`
+    /// (`node_http_parser.cc` sets `last_message_start_`), so this runs at
+    /// each response finish (a standby window, `started == false`, whose
+    /// first byte re-arms at the true request start) and at a head's first
+    /// byte (`started == true`: the deadline is that head's own and later
+    /// dribble segments never defer it).
+    fn arm_headers_deadline(&mut self, started: bool) {
         if crate::mutants::on("native-http-headers-rearm-off") {
             // The pre-fix-r1 behavior the negative control kills: the
             // deadline armed once at the connection's start and never
@@ -320,7 +371,68 @@ impl<S> UpgradeReadGate<S> {
         self.headers_deadline = Some(landing);
         self.headers_sleep = Some(Box::pin(tokio::time::sleep_until(landing)));
         self.disarm_after = self.served_heads.load(Ordering::Relaxed);
-        self.awaiting_head = await_next_head;
+        self.awaited_head_started = started;
+    }
+
+    /// #1292 fix-r2: a request is in flight whose body is fully read, so a
+    /// read now can only serve the *next* request's head — bytes hyper
+    /// cannot parse until the response finishes (`can_read_head` needs
+    /// `Reading::Init`). Only the native lane withholds them: it is what
+    /// keeps the read gate — and the parked headers deadline — pollable
+    /// through hyper's `mid_message_detect_eof` while the response streams
+    /// (`probe-g2.out`/`probe-c2.out`); the proxy lane has no headers
+    /// deadline and keeps reading through.
+    fn withholding_mid_stream(&self) -> bool {
+        self.headers_timeout.is_some()
+            && self.in_flight.load(Ordering::Relaxed) > 0
+            && self.body_remaining.load(Ordering::Relaxed) <= 0
+    }
+
+    /// #1292 fix-r2: count `read` bytes against the awaited request's body,
+    /// so the reader can tell where the body ends and the next head starts —
+    /// Node's parser sets `last_message_start_` only at `on_message_begin`.
+    fn consume_request_body(&self, read: usize) {
+        let remaining = self.body_remaining.load(Ordering::Relaxed);
+        if remaining > 0 {
+            self.body_remaining
+                .fetch_sub(std::cmp::min(remaining, read as i64), Ordering::Relaxed);
+        }
+    }
+
+    /// #1292 fix-r2: a request head's first byte just arrived (not a body
+    /// segment): arm the head's own deadline. Two shapes reach here — a
+    /// standby window's awaited head, for the connection's *first* head too
+    /// (`probe-c1.out`: silent 30 s then an incomplete head is answered at
+    /// first byte + 90 s, not at connect + 60 s), and a head already
+    /// arriving while its predecessor's response streams
+    /// (`probe-g2.out`/`probe-c2.out`) or between responses.
+    fn arm_started_head(&mut self, cx: &mut Context<'_>, head_start: bool) {
+        if !head_start || self.awaited_head_started {
+            return;
+        }
+        let served = self.served_heads.load(Ordering::Relaxed) > self.disarm_after;
+        let first_head = self.served_heads.load(Ordering::Relaxed) == 0;
+        let standby = self.headers_deadline.is_some();
+        if (standby && !(first_head && crate::mutants::on("native-http-first-head-anchor-off")))
+            || (!standby
+                && served
+                // The pre-fix-r2 behavior the negative control kills: a
+                // mid-stream head never anchoring, so the streaming
+                // response's finish re-arms from its own instant instead of
+                // the head's first byte.
+                && !crate::mutants::on("native-http-mid-stream-head-anchor-off"))
+        {
+            self.arm_headers_deadline(true);
+            // Park the fresh deadline under this poll's waker straight
+            // away: while the previous response streams, this gate's own
+            // poll is the only place the deadline will ever be consulted —
+            // hyper's mid-message read keeps polling io exactly because the
+            // withheld bytes never reach its read buffer — so the sleep
+            // must register its wake before the poll that armed it parks.
+            if let Some(sleep) = self.headers_sleep.as_mut() {
+                let _ = sleep.as_mut().poll(cx);
+            }
+        }
     }
 }
 impl<S: AsyncWrite + Unpin> UpgradeReadGate<S> {
@@ -360,28 +472,58 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
         if self.timeout_408.is_some() {
             return self.poll_headers_timeout_408(cx);
         }
+        // #1292 fix-r2: no in-flight response means no response head is on
+        // the wire — Node's socket detaches `_httpMessage` at the response's
+        // finish — so an expiry from here on writes the 408 (`probe-g4.out`).
+        // While one is streaming, poll_write has set the flag and the expiry
+        // closes silently instead (`probe-g2.out`/`probe-c2.out`).
+        if self.in_flight.load(Ordering::Relaxed) == 0 {
+            self.response_head_written = false;
+        }
         // #1292 fix-r1: each response finish re-arms the deadline for the
         // next request head. The bump is only a signal — the instant is read
         // here — so a bump consumed late still lands after every reachable
-        // idle close.
+        // idle close. fix-r2: a head already mid-arrival — its first byte
+        // anchored its own deadline — keeps it; the response ending does not
+        // move Node's `last_message_start_`.
         if self.rearm.has_changed().unwrap_or(false) {
             self.rearm.borrow_and_update();
-            self.rearm_headers_deadline(true);
+            if !self.awaited_head_started
+                || crate::mutants::on("native-http-rearm-resets-started-head")
+            {
+                self.arm_headers_deadline(false);
+            }
         }
         if let Some(deadline) = self.headers_deadline {
-            let served_or_busy = self.served_heads.load(Ordering::Relaxed) > self.disarm_after
-                || self.in_flight.load(Ordering::Relaxed) > 0;
+            // #1292 fix-r2: the armed deadline belongs to one specific head.
+            // `served`: that head parsed — the disarm watermark passing — so
+            // the deadline disarms and the next read starts the next head's
+            // own window. `busy`: a standby window (the anchored head has no
+            // bytes yet) while another request is still in flight — a
+            // pipelined head that parsed before the response-finish re-arm
+            // was consumed. A *started* head's deadline rides out the
+            // previous response's stream: Node's checker stays active
+            // through it (`probe-g2.out`/`probe-c2.out`).
+            let served = self.served_heads.load(Ordering::Relaxed) > self.disarm_after;
+            let busy = self.in_flight.load(Ordering::Relaxed) > 0
+                && (!self.awaited_head_started
+                    // The pre-fix-r2 behavior the negative control kills:
+                    // the in-flight check disarming a mid-stream head's own
+                    // deadline too, so a head arriving during a streaming
+                    // response is never bounded.
+                    || crate::mutants::on("native-http-headers-timeout-busy-blocks-head"));
             if *self.stop.borrow_and_update()
-                || (served_or_busy
+                || (served || busy)
                     // The regression the negative control kills: answering a
                     // request that already parsed — its head completed, or its
                     // response is still streaming — with the 408. Node's
                     // parser leaves the checker's active list on
                     // `on_message_complete`, so a served or busy socket is
                     // never header-timeout-eligible.
-                    && !crate::mutants::on("native-http-headers-timeout-ignores-served"))
+                    && !crate::mutants::on("native-http-headers-timeout-ignores-served")
             {
                 self.headers_deadline = None;
+                self.awaited_head_started = false;
             } else {
                 let sleep = self
                     .headers_sleep
@@ -390,6 +532,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
                 if tokio::time::Instant::now() >= deadline
                     && !crate::mutants::on("native-http-headers-timeout-off")
                 {
+                    if self.response_head_written
+                        && !crate::mutants::on("native-http-408-into-started-response")
+                    {
+                        // #1292 fix-r2: Node's `socketOnError` answers the
+                        // expiry with a bare `destroy` once the in-flight
+                        // response has sent its head (`_headerSent` guard) —
+                        // no 408, the stream just ends
+                        // (`probe-g2.out`/`probe-c2.out`: close-only at the
+                        // grid point).
+                        self.timeout_408_closed = true;
+                        return Poll::Ready(Ok(()));
+                    }
                     self.timeout_408 = Some(NODE_HEADERS_TIMEOUT_408);
                     self.timeout_408_written = 0;
                     return self.poll_headers_timeout_408(cx);
@@ -403,17 +557,81 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
                 return Poll::Pending;
             }
         }
+        // #1292 fix-r2: a next head's bytes arriving while the response
+        // streams. Hyper parks once such bytes reach its read buffer (its
+        // `mid_message_detect_eof` waits on the non-empty buffer without
+        // polling io again), so the gate parks them itself — keeping
+        // hyper's io polls, and the parked headers deadline, alive — and
+        // re-feeds them to the parse path once the response finishes.
+        if self.withholding_mid_stream() {
+            let mut scratch = [0u8; 4096];
+            let mut arrived = 0usize;
+            loop {
+                let mut read_buf = ReadBuf::new(&mut scratch);
+                match Pin::new(&mut self.stream).poll_read(cx, &mut read_buf) {
+                    Poll::Ready(Ok(())) => {
+                        let n = read_buf.filled().len();
+                        if n == 0 {
+                            // Peer EOF parks with the bytes: hyper today
+                            // parks a mid-stream EOF behind a non-empty read
+                            // buffer the same way.
+                            self.withheld_eof = true;
+                            break;
+                        }
+                        self.withheld_head.extend_from_slice(&scratch[..n]);
+                        arrived += n;
+                    }
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Pending => break,
+                }
+            }
+            if arrived > 0 {
+                // The withheld bytes are all next-head bytes: the request's
+                // own body is fully read (withholding_mid_stream), so the
+                // first of them is the head's first byte — Node's
+                // `on_message_begin` — and it anchors the head's own
+                // deadline.
+                self.arm_started_head(cx, true);
+                if !crate::mutants::on("native-http-read-refresh-off")
+                    && (crate::mutants::on("native-http-unserved-read-arms-idle")
+                        || self.served_heads.load(Ordering::Relaxed) > 0)
+                {
+                    self.activity
+                        .send_replace(Some(tokio::time::Instant::now()));
+                }
+            }
+            return Poll::Pending;
+        }
+        // The response finished: hand the withheld head bytes to hyper's
+        // parse path, one buffer at a time — the parse loop re-polls for
+        // the rest.
+        if !self.withheld_head.is_empty() {
+            let n = std::cmp::min(buf.remaining(), self.withheld_head.len());
+            buf.put_slice(&self.withheld_head[..n]);
+            if n == self.withheld_head.len() {
+                self.withheld_head.clear();
+            } else {
+                self.withheld_head.drain(..n);
+            }
+            return Poll::Ready(Ok(()));
+        }
+        if self.withheld_eof {
+            return Poll::Ready(Ok(()));
+        }
         let filled = buf.filled().len();
         match Pin::new(&mut self.stream).poll_read(cx, buf) {
             Poll::Ready(Ok(())) => {
                 if buf.filled().len() > filled {
-                    if self.awaiting_head {
-                        // #1292 fix-r1: the next head's first byte is the
-                        // request's own headersTimeout start (Node's
-                        // `on_message_begin`); later dribble segments refresh
-                        // only the idle deadline below.
-                        self.rearm_headers_deadline(false);
-                    }
+                    let read = buf.filled().len() - filled;
+                    let body_before = self.body_remaining.load(Ordering::Relaxed);
+                    self.consume_request_body(read);
+                    // #1292 fix-r2: only the bytes past the awaited
+                    // request's body can start its successor's head — the
+                    // body's own segments never anchor a deadline (Node's
+                    // `last_message_start_` is set at `on_message_begin`,
+                    // not by body bytes).
+                    let head_start = body_before <= 0 || read as i64 > body_before;
+                    self.arm_started_head(cx, head_start);
                     if !crate::mutants::on("native-http-read-refresh-off")
                         // The pre-fix-r1 behavior the negative control kills:
                         // refreshing on any read, so a first head's segments
@@ -455,7 +673,20 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
                 "connection closed",
             )));
         }
-        Pin::new(&mut self.stream).poll_write(cx, buf)
+        // #1292 fix-r2: hyper wrote response bytes — Node's `_headerSent`:
+        // hyper never writes a response's body ahead of its head, so any
+        // successful write means the in-flight response's head is on the
+        // wire, and a headers-timeout expiry from here on closes silently
+        // (`probe-g2.out`/`probe-c2.out`).
+        match Pin::new(&mut self.stream).poll_write(cx, buf) {
+            Poll::Ready(Ok(written)) => {
+                if written > 0 {
+                    self.response_head_written = true;
+                }
+                Poll::Ready(Ok(written))
+            }
+            other => other,
+        }
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.stream).poll_flush(cx)
@@ -535,11 +766,11 @@ const NODE_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// ~45 ms of post-startup loop lag; `mech-P2.out`'s near-identical setup
 /// waited for the next point) — registered as the one residual in
 /// A8.4-NATIVE-HTTP-002-R2: this lane deterministically fires at the first
-/// grid point at or after the deadline, never before the deadline.
+/// grid point strictly after the deadline, never at or before the deadline.
 const NODE_CONNECTIONS_CHECKING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// #1292 fix-r1: the instant the headersTimeout 408 fires — the first
-/// connections-checker grid point at or after the deadline
+/// #1292 fix-r1/fix-r2: the instant the headersTimeout 408 fires — the first
+/// connections-checker grid point strictly *after* the deadline
 /// ([`NODE_CONNECTIONS_CHECKING_INTERVAL`] ticks from the listener's bind),
 /// or the deadline itself when no grid anchors the connection.
 fn headers_deadline_landing(
@@ -557,10 +788,20 @@ fn headers_deadline_landing(
     };
     let interval = NODE_CONNECTIONS_CHECKING_INTERVAL;
     let elapsed = deadline.saturating_duration_since(anchor).as_nanos();
-    let ticks = elapsed.div_ceil(interval.as_nanos());
-    if ticks == 0 {
-        return deadline;
-    }
+    // The checker's comparison is strictly greater (`ConnectionsList::Expired`
+    // expires when `last_message_start_ < now - timeout`, node_http_parser
+    // v22.22.0 disassembly at 0xda3db0: `b.cs` skips the expiry on equality),
+    // so a deadline that lands exactly on a grid point survives that tick and
+    // fires at the next one — 整除进一. fix-r2 `probe-c1.out`: a first byte at
+    // +30 s arms exactly the +90 s grid point and Node answers at +120.001 s.
+    let ticks = if crate::mutants::on("native-http-headers-grid-inclusive") {
+        // The pre-fix-r2 behavior the negative control kills: an on-grid
+        // deadline firing at its own grid point, one checker interval before
+        // Node's strictly-greater comparison would let it.
+        elapsed.div_ceil(interval.as_nanos())
+    } else {
+        elapsed / interval.as_nanos() + 1
+    };
     let ticks = u32::try_from(ticks).expect("the checker grid stays within u32 ticks");
     anchor + interval * ticks
 }
@@ -712,6 +953,10 @@ where
     let state = SharedReadState::default();
     let served_heads = Arc::new(AtomicUsize::new(0));
     let in_flight = Arc::new(AtomicUsize::new(0));
+    // #1292 fix-r2: the bytes the awaited request still owes its handler —
+    // set at each parsed head — so the read gate can tell the request's own
+    // body segments from a next head's first byte arriving mid-response.
+    let body_remaining = Arc::new(AtomicI64::new(0));
     let (activity, mut activity_rx) = watch::channel(None::<tokio::time::Instant>);
     // #1292 fix-r1: each finished response bumps the gate's re-arm signal, so
     // the next request head is bounded by a fresh `headersTimeout` like
@@ -735,13 +980,33 @@ where
         stop.clone(),
         rearm_rx,
         in_flight.clone(),
+        body_remaining.clone(),
     );
     let served_heads_in_connection = served_heads.clone();
     let in_flight_in_connection = in_flight.clone();
     let activity_in_connection = activity.clone();
     let rearm_in_connection = rearm.clone();
+    let body_remaining_in_connection = body_remaining.clone();
     let service = service_fn(move |request| {
         served_heads_in_connection.fetch_add(1, Ordering::Relaxed);
+        // #1292 fix-r2: this request's body byte count. Node's parser sets
+        // `last_message_start_` only at `on_message_begin` — a body segment
+        // never opens a headersTimeout window — so the gate counts the body
+        // down to tell where it ends; a chunked body stays "open" (the
+        // conservative residual: no mid-stream anchoring for it).
+        let body = match (
+            request
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<i64>().ok()),
+            request.headers().contains_key(header::TRANSFER_ENCODING),
+        ) {
+            (Some(length), _) => length,
+            (None, true) => i64::MAX,
+            (None, false) => 0,
+        };
+        body_remaining_in_connection.store(body, Ordering::Relaxed);
         // This must run before returning a future: Hyper can poll read again
         // before it polls that future. Invalid upgrade requests close anyway.
         let lease = if is_upgrade(&request)
