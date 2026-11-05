@@ -80,7 +80,7 @@ def main():
     results = []
     try:
         with mutating_sources(root, [source]) as originals:
-            for name, old, new, test, assertion in chosen:
+            for name, _path, old, new, test, assertion in chosen:
                 row = dict(mutation=name, test=test, assertion=assertion,
                            status='INVALID', reason='', compiled=False)
                 try:
