@@ -1478,6 +1478,51 @@ async fn shutdown_drain_panic_settles_the_keys_closing_entry() {
         .expect("#1245 a record-less close after shutdown must fulfill like TS await undefined");
 }
 
+/// #1365: the close task's panic path stages no outcome, so the closing guard
+/// only releases the ticket and the outer `Completion` guard settles the key's
+/// closing entry with its dropped error after the release. The settle_order
+/// probe records the release only (`closing-settled` requires a staged
+/// outcome), and a record-less second close of the same key must not hang
+/// behind the settled entry. TS has no panic; the closest analogue is a
+/// rejected eviction, which `finishEviction` still removes from
+/// closingSessions (读码推断，未实测) — the Rust guard contract keeps the
+/// entry settled instead.
+#[tokio::test]
+async fn close_task_panic_settles_its_closing_entry_through_the_completion_guard() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    owner
+        .get_or_create(context("a"))
+        .await
+        .expect("#1365 the fixture creation must complete before the panicked close");
+    probe.0.evict_panics.lock().unwrap().insert("a".into());
+    let _ = settle_order::take();
+    let error = bounded(owner.close(&"a".into()))
+        .await
+        .expect_err("#1365 a panicked close task must reject with the guard's dropped error");
+    assert!(
+        error.message == "Session close task was dropped or panicked before completion.",
+        "#1365 the panicked close settles with the completion guard's dropped error: got {}",
+        error.message
+    );
+    assert_eq!(
+        settle_order::take(),
+        ["ticket-released"],
+        "#1365 the panicked close only releases the ticket; the outer completion guard settles"
+    );
+    bounded(owner.close(&"a".into()))
+        .await
+        .expect("#1365 a record-less second close must not hang behind the settled entry");
+    assert!(
+        owner.current_handle(&"a".into()).is_none(),
+        "#1365 the panicked close must still evict the record"
+    );
+    owner
+        .shutdown()
+        .await
+        .expect("#1365 the shutdown must fulfill");
+}
+
 /// #1245 fix-r3: the settle-before-release ordering has machine evidence. The
 /// close task stages its outcome in a guard that settles the key's closing
 /// entry strictly before the serial ticket is released; the order probe
@@ -1534,6 +1579,48 @@ async fn idle_sweep_settles_its_closing_entry_before_releasing_the_ticket() {
     assert!(
         owner.current_handle(&key).is_none(),
         "#1245 the swept key must leave no cached record"
+    );
+}
+
+/// #1365: the ticket release write is the only thing a queued same-key waiter
+/// can observe — `Ticket::drop` records its probe only after
+/// `done.send_replace(true)`, the same probe-binds-the-write shape as the
+/// closing guard's settle. A close queued behind an in-flight same-key
+/// creation drains only when that creation's ticket actually writes its
+/// release; the recorded order stays queue-head-release, then the queued
+/// close's settle, then its own release.
+#[tokio::test]
+async fn queued_close_drains_through_the_ticket_release_write() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let key = JsString::from("a");
+    let creation_gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert(key.clone(), creation_gate.clone());
+    let creating = owner.get_or_create(context("a"));
+    until(|| probe.seen("create:a:1")).await;
+    let closing = owner.close(&key);
+    let _ = settle_order::take();
+    creation_gate.open();
+    bounded(creating)
+        .await
+        .expect("#1365 the same-key creation must complete once its gate opens");
+    let drained = tokio::time::timeout(Duration::from_millis(200), closing)
+        .await
+        .expect("#1365 the queued close must drain after the creation's ticket release write");
+    drained.expect("#1365 the drained close must fulfill with a succeeding disposal");
+    assert_eq!(
+        settle_order::take(),
+        ["ticket-released", "closing-settled", "ticket-released"],
+        "#1365 the queued close settles its entry before releasing its own ticket"
+    );
+    assert!(
+        owner.current_handle(&key).is_none(),
+        "#1365 the queued close must evict the record the same-key creation published"
     );
 }
 

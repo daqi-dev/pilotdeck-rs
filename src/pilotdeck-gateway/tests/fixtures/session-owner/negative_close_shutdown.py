@@ -32,7 +32,17 @@ Rows follow anchor_selfcheck's ``MUTATIONS`` dict layout
 resolve every anchor. A row may bind several tests (one ``Case`` each) and list
 several markers; ``negative_suite.classify`` treats the marker list as
 alternatives — the bound test may fail at any one of them — so a row is one
-mutation, not one marker per case.
+mutation, not one marker per case. A row may carry a sixth element, a list of
+extra ``(before, after)`` pairs applied alongside the main pair: the #1365
+fix-r1 paired mutations delete the closing guard's write *and* redirect the
+outer ``Completion``'s sender to a fresh channel, because the single-site
+deletion is an equivalent mutation (measured SURVIVED by the gate run — the
+guard's ``send_replace`` and ``Completion::finish`` re-send the identical
+outcome in the same poll, with no await point between them on the
+current-thread test runtime). The extra pairs travel through ``Case.scope``
+into this script's ``mutate``; the shared runner's call shape is unchanged.
+The static preflight only audits fields 0-4, so ``check_anchors`` verifies the
+extra anchors itself.
 """
 import argparse
 import json
@@ -83,6 +93,14 @@ CLOSE_SETTLES = (
 IDLE_SETTLES = (
     "runtime::session::owner::tests::"
     "idle_sweep_settles_its_closing_entry_before_releasing_the_ticket"
+)
+CLOSE_PANIC = (
+    "runtime::session::owner::tests::"
+    "close_task_panic_settles_its_closing_entry_through_the_completion_guard"
+)
+QUEUED_DRAIN = (
+    "runtime::session::owner::tests::"
+    "queued_close_drains_through_the_ticket_release_write"
 )
 
 
@@ -288,14 +306,24 @@ MUTATIONS = {
             "releasing the serial ticket",
         ],
     ),
-    # #1365: the settle write is deleted; the closing-settled probe still fires
-    # (it now sits after send_replace in production code) but the watch channel
-    # is never sent a value.  close() gets Err when the sender drops, so the
-    # bounded().expect() in the test turns red — the probe-before-release order
-    # alone cannot witness the write.  IDLE_SETTLES is NOT bound: that test
-    # never awaits the settle result, so deleting send_replace leaves its event
-    # sequence unchanged and it would SURVIVE (correct — order is still correct,
-    # the settle itself is a separate invariant covered by CLOSE_SETTLES here).
+    # #1365 fix-r1 (paired, F1): the closing entry's settle write is doubly
+    # covered on the success path — the guard writes, then the outer
+    # `Completion::finish` re-sends the identical outcome in the same poll,
+    # with no await point between them on the current-thread test runtime. A
+    # mutation deleting only the guard's `send_replace` is therefore an
+    # equivalent mutation in this design (the coordinator's gate run measured
+    # it SURVIVED: `_tmp/20261105-issue-1365-gate/negctl/
+    # closing-settle-write-removed/`, cargo exit=0, bound test still passed);
+    # the guard write's own observable effect is its ordering strictly before
+    # the ticket release, which `settle-after-release` kills through the
+    # event sequence. This row removes BOTH writers — the guard's
+    # `send_replace` plus the close task's `done` sender, redirected to a
+    # fresh channel so the real closing entry is never sent a value — so
+    # close() must then reject with wait_result's lifecycle-stopped stand-in
+    # and the bounded().expect() turns red. IDLE_SETTLES is NOT bound: that
+    # test never awaits the settle result and its probe keeps firing, so it
+    # would SURVIVE (order remains correct; the idle task's own settle-write
+    # is covered by the paired idle-settle-write-removed below).
     "closing-settle-write-removed": (
         owner,
         """            self.settle.send_replace(Some(outcome));
@@ -307,12 +335,85 @@ MUTATIONS = {
         [
             "#1245 the close must fulfill with a succeeding disposal",
         ],
+        [
+            (
+                """        let settle = done.clone();
+        let owner = self.clone();""",
+                """        let settle = done.clone();
+        let (done, _) = watch::channel(None);
+        let owner = self.clone();""",
+            ),
+        ],
+    ),
+    # #1365 fix-r1 (sibling of the paired close row, 自查-1): the idle sweep
+    # task has the same dual-sender shape, so its settle-write needs the same
+    # paired treatment — the guard's write is deleted and the idle task's
+    # `done` sender is redirected to a fresh channel. A close arriving
+    # mid-flight then awaits an entry nobody writes and answers wait_result's
+    # lifecycle-stopped stand-in instead of transmitting the idle eviction's
+    # own dispose failure.
+    "idle-settle-write-removed": (
+        owner,
+        """            self.settle.send_replace(Some(outcome));
+            #[cfg(test)]
+            settle_order::record("closing-settled");""",
+        """            #[cfg(test)]
+            settle_order::record("closing-settled");""",
+        [IDLE_EVICT],
+        [
+            "#1245 close during an idle eviction transmits the per-key dispose aggregate",
+        ],
+        [
+            (
+                """            let owner = self.clone();
+            let settle = done.clone();""",
+                """            let owner = self.clone();
+            let settle = done.clone();
+            let (done, _) = watch::channel(None);""",
+            ),
+        ],
+    ),
+    # #1365 fix-r1 (F3): the close task's panic path stages no outcome — the
+    # guard only releases the ticket — and the outer `Completion` guard settles
+    # the entry with its dropped error after the release. Losing that
+    # completion guard (a bare tokio::spawn, mirroring drain-guard-removed
+    # for the shutdown drain) leaves the panicked entry with no writer at
+    # all: close() then answers wait_result's lifecycle-stopped stand-in
+    # instead of the guard's dropped error.
+    "close-panic-guard-removed": (
+        owner,
+        """        super::super::cleanup_task::spawn_with_error(
+            &tokio::runtime::Handle::current(),
+            done,
+            RuntimeError::new("Session close task was dropped or panicked before completion."),
+            async move {""",
+        """        drop(done);
+        tokio::spawn(async move {""",
+        [CLOSE_PANIC],
+        [
+            "#1365 the panicked close settles with the completion guard's dropped error",
+        ],
+    ),
+    # #1365 fix-r1 (P2): the serial ticket's release write is the only thing
+    # a queued same-key waiter can observe. Deleting `done.send_replace(true)`
+    # from `Ticket::drop` parks a close queued behind an in-flight same-key
+    # creation forever — the probe (now recorded after the write) keeps
+    # firing, so the event sequence alone cannot witness the write; the
+    # bound test's bounded drain is what turns red.
+    "ticket-release-write-removed": (
+        owner,
+        """        self.done.send_replace(true);""",
+        """        let _ = &self.done;""",
+        [QUEUED_DRAIN],
+        [
+            "#1365 the queued close must drain after the creation's ticket release write",
+        ],
     ),
 }
 
 
-def mutate(original, _scope, replacements):
-    for old, new in replacements:
+def mutate(original, scope, replacements):
+    for old, new in list(replacements) + list(scope or []):
         count = original.count(old)
         if count != 1:
             raise ValueError(f"expected one mutation anchor, got {count}")
@@ -320,22 +421,29 @@ def mutate(original, _scope, replacements):
     return original
 
 
+def extra_pairs(name):
+    """The paired mutation's extra (before, after) sites, or None."""
+    row = MUTATIONS[name]
+    return row[5] if len(row) > 5 else None
+
+
 def cases_for(names):
     bound = []
     for name in names:
-        source, old, new, tests, markers = MUTATIONS[name]
+        source, old, new, tests, markers = MUTATIONS[name][:5]
         for test in tests:
-            bound.append(Case(name, source, old, new, test, markers))
+            bound.append(Case(name, source, old, new, test, markers, extra_pairs(name)))
     return bound
 
 
 def check_anchors(selected):
     stale = []
     for name in selected:
-        source, old = MUTATIONS[name][0], MUTATIONS[name][1]
-        count = source.read_text().count(old)
-        if count != 1:
-            stale.append((name, source.relative_to(root).as_posix(), count))
+        source = MUTATIONS[name][0]
+        for old in [MUTATIONS[name][1]] + [pair[0] for pair in (extra_pairs(name) or [])]:
+            count = source.read_text().count(old)
+            if count != 1:
+                stale.append((name, source.relative_to(root).as_posix(), count))
     if stale:
         for name, path, count in stale:
             print(f"STALE ANCHOR {name}: {count} matches in {path}")
@@ -353,7 +461,7 @@ def compile_cases(selected, out):
                 source, old, new = MUTATIONS[name][:3]
                 status, reason = "INVALID", ""
                 try:
-                    source.write_text(mutate(originals[source].decode(), None, [(old, new)]))
+                    source.write_text(mutate(originals[source].decode(), extra_pairs(name), [(old, new)]))
                     slot = wait_for_slot(root / "scripts/cargo-slots.sh")
                     (out / f"{name}-compile.slots.log").write_text(slot.stdout + slot.stderr)
                     result = run_owned(
