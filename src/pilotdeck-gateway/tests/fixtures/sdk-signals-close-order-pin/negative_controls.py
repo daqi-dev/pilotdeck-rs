@@ -20,7 +20,10 @@ half of that pin:
   - unordered-close-content-retargeted: a row keeps its per-ID name but its
     anchor, mutant value and assertion are pointed at another registered ID,
     so the name-set comparison still passes while the named ID has no
-    independent control and the other ID's mutation runs twice.
+    independent control and the other ID's mutation runs twice;
+  - unordered-close-assertion-retargeted: only the bound assertion names
+    another registered ID, leaving the anchor and mutant value intact, so the
+    assertion half of the content pin cannot be left untested.
 
 The "ledger gains one ID" direction is the same set difference as
 unordered-close-row-removed (a registered ID without a mutation); the
@@ -53,6 +56,12 @@ from negative_process import (
 root = Path(__file__).resolve().parents[5]
 catalog_relative = "src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py"
 catalog = root / catalog_relative
+# The catalog's #1382 pin reads this frozen ledger from the working tree, but
+# mutating_sources' workspace guard only covers src/.cargo/toolchain. Name the
+# ledger explicitly so an uncommitted edit cannot move the comparison baseline
+# behind our back (the #1145 catalog runner already guards it).
+ledger_relative = "specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md"
+ledger = root / ledger_relative
 
 # (name, path, before, after, expected fragment of the dedicated failure)
 mutations = [
@@ -84,6 +93,13 @@ mutations = [
         catalog_relative,
         "'\\n    \"run--query-resume-hold-sigint\",\\n', '\\n    \"run--query-resume-hold-sigint-unregistered\",\\n'",
         "'\\n    \"run--second-sigint\",\\n', '\\n    \"run--second-sigint-unregistered\",\\n'",
+        "wrong content: run--query-resume-hold-sigint",
+    ),
+    (
+        "unordered-close-assertion-retargeted",
+        catalog_relative,
+        "#1252 unordered close swap must pass: run--query-resume-hold-sigint'),",
+        "#1252 unordered close swap must pass: run--second-sigint'),",
         "wrong content: run--query-resume-hold-sigint",
     ),
 ]
@@ -123,7 +139,7 @@ def run_check(label):
 
 
 results = []
-with mutating_sources(root, [catalog]) as snapshots:
+with mutating_sources(root, [catalog, ledger]) as snapshots:
     positive = run_check("positive-before")
     if not preflight_passed(positive):
         raise SystemExit(
