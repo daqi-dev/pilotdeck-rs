@@ -606,12 +606,14 @@ fn mask_request_platform(request: &mut Value, native: bool) {
 
 /// The Node `process.platform` name for this host: the sidecar records
 /// `process.platform`, while `std::env::consts::OS` uses its own names for the
-/// two that differ (`macos`/`windows` vs `darwin`/`win32`); the rest share
+/// three that differ (`macos`→`darwin`, `windows`→`win32`, `solaris`→`sunos`,
+/// matching the production `PromptAssembler::process_platform`); the rest share
 /// spellings.
 fn node_platform() -> &'static str {
     match std::env::consts::OS {
         "macos" => "darwin",
         "windows" => "win32",
+        "solaris" => "sunos",
         os => os,
     }
 }

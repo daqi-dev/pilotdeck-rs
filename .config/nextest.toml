@@ -2,3 +2,12 @@
 [profile.ci]
 retries = 0
 slow-timeout = { period = "60s" }
+
+# #1525 / #1263：能「按环境跳过」的用例在被跳过时仍然 PASS，而 nextest 默认只回放
+# 失败用例的输出——通过用例里的 `skip:` 行（无论 eprintln! 还是直写 stderr 句柄）
+# 在 CI 日志里都看不见，等于静默绿。只对这几个可能跳过的用例打开成功输出，避免
+# 整个 workspace 的日志膨胀。实测 nextest 0.9.148：`success-output` 只在此 override
+# 命中的用例上生效，`pilotdeck` 其余用例保持默认。
+[[profile.ci.overrides]]
+filter = 'test(=case_insensitive_cwd_spelling_writes_and_edits) | test(=nfd_directory_with_nfc_cwd_writes_and_edits) | test(=permission_denied_is_not_reported_as_outside) | test(=grep_outputs_match_real_ts) | test(=clear_failing_inside_delete_entries_rearms_indexed_rows)'
+success-output = "final"

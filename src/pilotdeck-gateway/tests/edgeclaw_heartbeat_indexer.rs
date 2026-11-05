@@ -15,6 +15,8 @@ mod baseline;
 mod llm_stub;
 #[path = "../src/mutants.rs"]
 mod mutants;
+#[path = "common/permission_faults.rs"]
+mod permission_faults;
 #[path = "common/skip_line.rs"]
 mod skip_line;
 #[allow(dead_code)]
@@ -77,16 +79,10 @@ const DIVERGED_CASES: [&str; 6] = [
 
 // -- oracle access ---------------------------------------------------------
 
-// #1525: CI and formal hosts set PDRS_REQUIRE_PERMISSION_FAULTS=1 so that a
-// permission-fault probe which succeeds on a privileged host (root /
-// CAP_DAC_OVERRIDE bypasses the mode bits) is a loud failure instead of the
-// #1263 skip line, and the re-arm contract cannot pass unexercised.
-fn require_permission_faults() -> bool {
-    matches!(
-        std::env::var("PDRS_REQUIRE_PERMISSION_FAULTS").as_deref(),
-        Ok("1" | "true")
-    )
-}
+// #1525: the switch itself lives in `tests/common/permission_faults.rs`; the
+// parsing matrix below pins its four states. CI registers
+// `PDRS_REQUIRE_PERMISSION_FAULTS=1` (.github/workflows/ci.yml, 测试 step), and
+// a root host recipe that keeps the skip must leave the switch unset.
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value
@@ -3056,7 +3052,7 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     // first and skip with a recognizable line when the mode does not bite.
     if fs::OpenOptions::new().write(true).open(&manifest).is_ok() {
         let _ = fs::set_permissions(&manifest, original_permissions);
-        if require_permission_faults() {
+        if permission_faults::require_permission_faults() {
             panic!(
                 "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
                  succeeds (root or CAP_DAC_OVERRIDE); the mid-deletion clear-failure \
@@ -3814,7 +3810,7 @@ fn require_permission_faults_env_child() {
     let case = std::env::var("PDRS_CASE_ID").expect("#1525 case id");
     let value = std::env::var("PDRS_REQUIRE_PERMISSION_FAULTS");
     assert_eq!(
-        require_permission_faults(),
+        permission_faults::require_permission_faults(),
         expected,
         "#1525 PDRS_REQUIRE_PERMISSION_FAULTS={value:?} must parse as {expected}"
     );
