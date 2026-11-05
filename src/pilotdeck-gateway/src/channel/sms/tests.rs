@@ -530,11 +530,27 @@ enum V6Port {
 /// [`V6Port::Unknown`] and abort a replay the product would run fine (it falls
 /// back to `0.0.0.0`). `libc` is already a dependency of this crate
 /// (`src/node_io/generated.rs` uses `libc::EAFNOSUPPORT`).
+///
+/// #1339 fix-r12 (P1, minimax boundary): `ErrorKind::Unsupported` is **not**
+/// evidence of "no IPv6" and was removed. On Unix it is reachable only from
+/// `ENOSYS` and `EOPNOTSUPP` — neither is an address-family error. Measured
+/// (`_tmp/20261106-issue-1339-fix-r6/errno-kind2.log`):
+///
+/// ```text
+/// macOS  errno  78 (ENOSYS)      -> kind Unsupported
+/// macOS  errno 102 (EOPNOTSUPP)  -> kind Unsupported
+/// Linux  errno  38 (ENOSYS)      -> kind Unsupported
+/// Linux  errno  95 (EOPNOTSUPP)  -> kind Unsupported
+/// ```
+///
+/// Keeping that arm was fail-open: a sandbox that answers `socket(AF_INET6)`
+/// with `ENOSYS` would be read as "this host has no IPv6", the v6 half of the
+/// occupancy check would be skipped, and the replay could pass on a host where
+/// someone else serves `[::]:<port>` — the exact shape fix-r10 closed. Every
+/// error that is not provably "no IPv6" must stay [`V6Port::Unknown`].
 fn means_no_ipv6(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
-    ) || error.raw_os_error() == Some(libc::EAFNOSUPPORT)
+    error.kind() == std::io::ErrorKind::AddrNotAvailable
+        || error.raw_os_error() == Some(libc::EAFNOSUPPORT)
 }
 
 fn v6_wildcard_state(port: u16) -> V6Port {
@@ -546,6 +562,36 @@ fn v6_wildcard_state(port: u16) -> V6Port {
         Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => V6Port::Occupied,
         Err(error) if means_no_ipv6(&error) => V6Port::Absent,
         Err(_) => V6Port::Unknown,
+    }
+}
+
+/// #1339 fix-r12 (P2, Codex r11 #1 / minimax simplify r11 #2): pin the
+/// classifier itself, not just the one arm a dual-stack host can reach.
+///
+/// Without this, deleting the `EAFNOSUPPORT` arm or re-adding a non-family arm
+/// (`Unsupported` was one until fix-r12) leaves every existing test green on a
+/// host that has IPv6, and only an IPv4-only host or a sandboxed runner would
+/// notice — one direction a false pass, the other a false failure.
+#[test]
+fn means_no_ipv6_accepts_only_address_family_errors() {
+    let err = std::io::Error::from_raw_os_error;
+    // Address-family errors: this host really has no usable IPv6.
+    assert!(means_no_ipv6(&err(libc::EAFNOSUPPORT)));
+    assert!(means_no_ipv6(&err(libc::EADDRNOTAVAIL)));
+    // Anything else — port taken, permission, descriptors, unimplemented
+    // syscall — proves nothing about IPv6 and must abort the replay instead of
+    // being read as "no IPv6 here" (fail-open).
+    for raw in [
+        libc::EADDRINUSE,
+        libc::EACCES,
+        libc::EMFILE,
+        libc::ENOSYS,
+        libc::EOPNOTSUPP,
+    ] {
+        assert!(
+            !means_no_ipv6(&err(raw)),
+            "errno {raw} must not be read as `no IPv6`"
+        );
     }
 }
 
