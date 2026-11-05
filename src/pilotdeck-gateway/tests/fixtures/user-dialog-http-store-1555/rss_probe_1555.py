@@ -27,6 +27,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (SourceBaselineError, _assert_workspace_sources,
@@ -102,6 +103,39 @@ def workspace_dirty(root):
     return None
 
 
+def negctl_restore():
+    """#1555: undo the dirty-tree control's marker while this driver holds the lock.
+
+    The control writes a marker into one tracked source and then starts this
+    driver, which blocks on the tree lock. If the *control* restored the bytes
+    after this process exited, the marker would stay on disk across the gap
+    between this driver releasing the lock and the control re-acquiring it, and
+    a runner queued behind would take the lock first, see the marker and record
+    a false `src/ is dirty` (fix-r5 review, concurrency P1). Restoring here,
+    still inside the lock and before the refusal is returned, removes that
+    window: the marker exists only while this process holds the lock.
+
+    `PDRS_NEGCTL_RESTORE` is `<relative path>\\x1f<original file>\\x1f<marked
+    file>`; both files live in the control's output directory, outside the
+    repository. Unset (the normal case) this is a no-op, and the write only
+    happens when the bytes on disk are exactly the marker that control wrote.
+    """
+    spec = os.environ.get('PDRS_NEGCTL_RESTORE')
+    if not spec:
+        return None
+    try:
+        relative, original_path, marked_path = spec.split('\x1f')
+        target = root / relative
+        if target.read_bytes() != Path(marked_path).read_bytes():
+            return 'left untouched: the bytes are not this control\'s marker'
+        temp = root / f'.negctl-{os.getpid()}-probe-restore'
+        temp.write_bytes(Path(original_path).read_bytes())
+        os.replace(temp, target)
+    except (OSError, ValueError) as error:
+        return f'{type(error).__name__}: {error}'
+    return 'restored under the tree lock'
+
+
 def summary_for(provenance, status, **over):
     """Build the summary from one skeleton so both exits share a shape."""
     summary = dict(provenance=provenance, status=status, executable=None,
@@ -157,7 +191,12 @@ def main():
     # acquired" as a state proof of blocking instead of inferring it from a
     # quiet window (the dirty check below is git-heavy on a cold cache).
     print(f'starting {json.dumps({"pid": os.getpid()})}', flush=True)
-    print('lock-requested', flush=True)
+    # The timestamp is this process's own monotonic clock, not the control's
+    # read time: a control that polls the log every 50 ms -- and may be slow to
+    # read it at all on a cold cache -- always stamps the request *late*, which
+    # inflates the measured wait. Both processes read the same host clock, so
+    # the control can subtract this value directly (fix-r5 boundary P2).
+    print(f'lock-requested {time.monotonic():.6f}', flush=True)
     with tree_lock(root, timeout=3600):
         print('lock-acquired', flush=True)
         dirty = workspace_dirty(root)
@@ -165,6 +204,9 @@ def main():
             head=_git(root, 'rev-parse', 'HEAD').decode().strip(),
             src_dirty=dirty is not None, host=platform.node(),
             time_tool='time -l' if DARWIN else 'time -v', rounds=args.rounds)
+        if dirty is not None:
+            # Still inside the lock: see `negctl_restore`.
+            provenance['negctl_restore'] = negctl_restore()
         print(f'provenance {json.dumps(provenance)}', flush=True)
         if dirty is not None:
             summary = summary_for(provenance, 'INVALID', failures=[

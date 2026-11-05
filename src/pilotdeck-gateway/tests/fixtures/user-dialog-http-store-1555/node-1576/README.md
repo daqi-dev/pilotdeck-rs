@@ -6,9 +6,10 @@ Node v22.22.0（macOS arm64，raw socket 直打 `node:http` `createServer` 无�
 
     node node-obs-fold-probe.mjs > /tmp/x.out && diff /tmp/x.out node-obs-fold-probe.out
 
-`.out` 打印的是**稳定投影**（响应字节数 + 状态行；410 类拒绝另附完整 hex），不含
-`Date`，因此同一 Node 版本重跑逐字节一致。被拒连接的 `why` 字段在 `EOF` 与
-`error:ECONNRESET` 之间可能抖动（连接拆除时序），判读看 `bytes` 与 `head`。
+`.out` 打印的是**稳定投影**（响应字节数 + 状态行；`node-obs-fold-probe` 对不带 `Date`
+的响应另附完整 hex，`cr-ows*` 两对只有 `bytes` / `head`），不含
+`Date`，也不含连接拆除原因（`EOF` / `ECONNRESET` 取决于拒绝后的拆除时序，同一份已入库的
+输出里两种写法都出现过），因此同一 Node 版本重跑逐字节一致，可直接按上面的 `diff` 复算。
 四个 CR / 折叠 / 请求行探针都**不装** `clientError` 处理器，47 B 400 是 Node 默认
 形状；需要对照组时以不装处理器的 `node-obs-fold-probe` 背书。
 
@@ -16,15 +17,19 @@ Node v22.22.0（macOS arm64，raw socket 直打 `node:http` `createServer` 无�
   两个对照格 `X: ok` 与 `X:  ok`（冒号后前导空格）都是 **96 B 200**。用来把 400 归因到 CR
   本身而不是值前导空格。
 - `cr-ows-length-probe.mjs` / `.out` — CR 族第三形状的长度实测（fix-r3 补，fix-r4 加真 431
-  对照）：`X: \r` + 90,000 空格 + `  \n`（与 Rust 测试
+  对照，fix-r5 加阈值两侧夹逼）：`X: \r` + 90,000 空格 + `  \n`（与 Rust 测试
   `cr_in_value_past_the_raw_bound_keeps_the_registered_431` 同一字节形状）与值长
   16,300 / 16,360 / 16,380 / 16,400 空格四档**全部 47 B 400**；`ows-90000-control`
-  （90,000 空格前导 OWS）96 B 200；`long-value-16380` / `long-value-20000`
-  （非空白长值）**67 B 431**。后两行是「这台 server 不是只会 400」的反证：Node 的
-  16 KiB `maxHeaderSize` 溢出确实以 67 B 431 出现，而 CR 在值第 33 B 时 llhttp 在 CR
-  处即停、根本走不到溢出记账，所以 CR 形状任意长度都是 400；纯空白值则完全不计入
-  上限（90,000 空格仍 200）。四档 `cr-pad-*` 的 CR 都固定在第 33 B，属冗余确认，
-  真正跨过 16 KiB 的是 `cr-90000` 一行。
+  （90,000 空格前导 OWS）96 B 200；非空白值 `long-value-16357` **200**、
+  `long-value-16358` / `16380` / `20000` **67 B 431**。后几行是「这台 server 不是只会
+  400」的反证：Node 的 16 KiB `maxHeaderSize` 溢出确实以 67 B 431 出现，而且在本请求
+  形状下阈值被 16,357（200）与 16,358（431）从两侧夹住——它计的是**整块头部**而不是
+  值长本身（16,357 的 `req_len` 已是 16,412）。CR 形状任意长度都是 400，是因为
+  llhttp 在值第 33 B 的 CR 处即停、根本走不到溢出记账；纯空白值则完全不计入上限
+  （90,000 空格仍 200）。四档 `cr-pad-*` 的 CR 都固定在第 33 B，属冗余确认：其中
+  16,360 / 16,380 / 16,400 三档按整块头部本已越过 16 KiB（真溢出会像 `long-value-*`
+  那样给 431），它们仍是 400 恰好证明拒绝发生在 CR 而不是溢出处。`cr-90000` 则是远超
+  上限、把「越界也不给 431」推到极端的一档。
 - `node-obs-fold-probe.mjs` / `.out` — 折叠续行（`X: a\r\n<SP>b`）短 / 90,000 空格 / 16,400 B
   三格**全部 47 B 400**；同文件 `leading-ows-90000`（冒号后前导 OWS）对照格是 200 / 141 B，
   说明拒绝发生在折叠本身而非填充量。R7 §范围 1 用这一格更正 R6 的「Node 该形状 200」。

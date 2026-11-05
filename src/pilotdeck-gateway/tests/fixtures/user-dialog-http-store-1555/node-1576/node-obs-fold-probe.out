@@ -1,13 +1,13 @@
 {"node":"v22.22.0","baseline":"plain http.createServer defaults"}
 
 === obs-fold-short ===
-{"bytes":47,"why":"EOF","head":"HTTP/1.1 400 Bad Request","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
+{"bytes":47,"head":"HTTP/1.1 400 Bad Request","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
 
 === obs-fold-90000-spaces ===
-{"bytes":47,"why":"error:ECONNRESET","head":"HTTP/1.1 400 Bad Request","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
+{"bytes":47,"head":"HTTP/1.1 400 Bad Request","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
 
 === obs-fold-16400-bytes ===
-{"bytes":47,"why":"EOF","head":"HTTP/1.1 400 Bad Request","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
+{"bytes":47,"head":"HTTP/1.1 400 Bad Request","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
 
 === leading-ows-90000 ===
-{"bytes":141,"why":"EOF","head":"HTTP/1.1 200 OK"}
+{"bytes":141,"head":"HTTP/1.1 200 OK"}

@@ -18,7 +18,11 @@ for (const [name, raw] of Object.entries(cases)) {
     s.on('error', () => resolve(buf));
     setTimeout(() => s.destroy(), 3000);
   });
-  const head = out.subarray(0, out.indexOf('\r\n')).toString('latin1');
+  // See cr-ows-length-probe.mjs: an empty buffer is reported as NO-RESPONSE
+  // instead of a blank head that reads like a normal row.
+  const cut = out.indexOf('\r\n');
+  const head = out.length === 0 ? 'NO-RESPONSE'
+    : out.subarray(0, cut === -1 ? out.length : cut).toString('latin1');
   console.log(`${name}\tbytes=${out.length}\thead=${JSON.stringify(head)}`);
 }
 server.close(); process.exit(0);

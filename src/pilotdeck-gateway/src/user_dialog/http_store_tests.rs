@@ -902,7 +902,8 @@ async fn leading_ows_head_still_parses_a_valid_request() {
 /// the CR, so the guard stripped the spaces behind it and handed hyper the
 /// valid empty value `X:\r\n` — the request reached the handler (405) while
 /// Node v22.22.0 answers both shapes with its 47-byte 400 (raw-socket probe
-/// `_tmp/20261106-1576-review/raw/cr-ows-probe.out`: `X: \r  \n` and
+/// `tests/fixtures/user-dialog-http-store-1555/node-1576/cr-ows-probe.out`:
+/// `X: \r  \n` and
 /// `X:\r \r\n`, bytes=47). httparse 1.10.1 rejects a CR followed by a
 /// non-LF in a value (`Err(HeaderValue)`), so the guard must forward these
 /// bytes untouched.

@@ -44,3 +44,8 @@ target/
 # Negative-control tree lock: a persistent flock file, never deleted while a
 # runner may still hold it (see tests/fixtures/negative_process.py).
 .negative-source.lock
+# Negative-control scratch files: the dirty-tree control writes the marker and
+# the restore through a temp file at the repo root (`os.replace`, same
+# filesystem, outside the guarded `src/`). A run killed between write and
+# replace must not leave an untracked file in `git status --porcelain`.
+.negctl-*
