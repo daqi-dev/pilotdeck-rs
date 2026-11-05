@@ -44,8 +44,8 @@ MUTATIONS = [
     # errcode 40014 must clear the cached token like the TS channel, or the
     # token-expiry-refresh cell loses its second gettoken.
     ('token-not-cleared', source / 'mod.rs',
-     'if value == 40014.0 || value == 42001.0 {',
-     'if value == 42001.0 {',
+     'if value == 40014.0 || value == 42001.0) {',
+     'if value == 42001.0) {',
      'channel_matches_real_ts', '#1336 case token-expiry-refresh matches the TS oracle'),
     # A bare `/new` is a command too; dropping the equality arm sends it to
     # the general session instead of rotating the mapper.
