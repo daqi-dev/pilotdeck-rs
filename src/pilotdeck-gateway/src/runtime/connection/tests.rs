@@ -916,6 +916,12 @@ async fn authed_connection() -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConne
 async fn authed_with_mode(
     submit_mode: &str,
 ) -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
+    authed_as_client("ui", submit_mode).await
+}
+async fn authed_as_client(
+    client_name: &str,
+    submit_mode: &str,
+) -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
     let text = Arc::new(MemoryText::default());
     let mut gateway = Gateway::new(false);
     gateway.submit_mode = submit_mode.to_owned();
@@ -927,12 +933,162 @@ async fn authed_with_mode(
         "test".into(),
     ));
     connection
-        .receive(
-            r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
-        )
+        .receive(&format!(
+            r#"{{"type":"hello","protocolVersion":"1.2","clientName":"{client_name}","clientVersion":"test","token":"fixture-token"}}"#
+        ))
         .await
         .unwrap();
     (text, gateway, connection)
+}
+
+// #1632 item 5: the interaction round-trip tests in
+// `native_process::methods::interaction` call `GatewayRequests::request`
+// directly, which skips this layer. These pin that the inputs those tests
+// rely on are reachable over the WebSocket path, and which ones are not:
+//  * a non-string `sessionKey` is forwarded verbatim (never coerced);
+//  * on an SDK-control connection the layer does not overwrite
+//    `interactionBinding`, so a client-supplied (here malformed) binding
+//    reaches the gateway and the in-process miss semantics apply;
+//  * a regular UI connection always overwrites `interactionBinding` with the
+//    connection's own binding, so a client-supplied one is not a reachable
+//    input there.
+#[tokio::test]
+async fn interaction_inputs_reach_the_gateway_through_the_connection() {
+    // SDK control: `sdkControlConnection` suppresses the injected binding
+    // (runtime/connection/context.rs, permission_decide branch).
+    let (_text, gateway, connection) = authed_as_client("sdk", "").await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"permission_decide","params":{"sessionKey":5,"requestId":"r1","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "describe + permission_decide");
+        let params = calls[1].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::Number(5.0)),
+            "a non-string sessionKey reaches the gateway unchanged"
+        );
+        assert!(
+            params
+                .get("interactionBinding")
+                .and_then(|binding| binding.get("connectionId"))
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| id.equals_str("client")),
+            "sdk control leaves the client binding in place"
+        );
+    }
+
+    // Regular UI connection: the interactionBinding is the connection's own.
+    let (_text, gateway, connection) = authed_connection().await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"permission_decide","params":{"sessionKey":"s1","requestId":"r1","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        let params = calls[1].get("params").unwrap();
+        let injected = params
+            .get("interactionBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("the connection injects its own binding");
+        assert!(
+            !injected.equals_str("client"),
+            "the connection overwrites a client-supplied interactionBinding"
+        );
+    }
+
+    // elicitation_respond takes the same unconditional injection branch as
+    // submit_turn, so a client-supplied binding never reaches the gateway.
+    connection
+        .receive(
+            r#"{"type":"request","id":"2","method":"elicitation_respond","params":{"sessionKey":"s1","requestId":"e1","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        let params = calls[2].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::from("s1")),
+            "elicitation_respond forwards its sessionKey unchanged"
+        );
+        let injected = params
+            .get("interactionBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("elicitation_respond is injected with the connection binding");
+        assert!(
+            !injected.equals_str("client"),
+            "elicitation_respond overwrites a client-supplied interactionBinding"
+        );
+    }
+
+    // An sdk control connection whose session the connection already tracks
+    // (a prior reconnect_interaction) is no longer exempt: the injection rule
+    // falls back to the ordinary branch, so the client binding is replaced.
+    let (_text, gateway, connection) = authed_as_client("sdk", "").await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"0","method":"reconnect_interaction","params":{"sessionKey":"s1","nextBinding":{"connectionId":"c0","generation":1}}}"#,
+        )
+        .await
+        .unwrap();
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"permission_decide","params":{"sessionKey":"s1","requestId":"r1","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "describe + reconnect + permission_decide");
+        let params = calls[2].get("params").unwrap();
+        let injected = params
+            .get("interactionBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("a tracked sdk session gets the connection binding");
+        assert!(
+            !injected.equals_str("client"),
+            "a tracked sdk session is not exempt from the binding injection"
+        );
+    }
+
+    // reconnect_interaction forwards a non-string sessionKey verbatim and
+    // replaces the client's nextBinding with the connection's binding.
+    let (_text, gateway, connection) = authed_connection().await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"reconnect_interaction","params":{"sessionKey":5,"nextBinding":{"connectionId":"client","generation":1}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        let params = calls[1].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::Number(5.0)),
+            "reconnect forwards a non-string sessionKey unchanged"
+        );
+        let next = params
+            .get("nextBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("the connection injects its own nextBinding");
+        assert!(
+            !next.equals_str("client"),
+            "reconnect replaces the client nextBinding"
+        );
+    }
 }
 
 // Ordinary ASCII request: pins the top-level type,id,ok,result insertion order

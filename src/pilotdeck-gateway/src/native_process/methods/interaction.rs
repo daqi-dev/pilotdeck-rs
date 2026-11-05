@@ -85,14 +85,14 @@ impl Requests {
                 InteractionBinding::from_value(value).unwrap_or_else(|_| never_matching())
             });
         let Some(owner) = params.get("sessionKey").and_then(JsValue::as_string) else {
-            // The port's owner domain is the TS `string` type (JsString); a
-            // non-string sessionKey is a never-seen Map key in TS. Such an
-            // owner never holds bindings or pending requests here either, so it
-            // walks the fresh-owner path without storing state.
-            return Ok(match previous {
-                Some(_) => reconnect_result("stale_binding", None, vec![]),
-                None => reconnect_result("no_pending", Some(&next), vec![]),
-            });
+            // A non-string sessionKey is outside the port's string owner
+            // domain; the runtime port owns that outcome rule (#1632 item 8,
+            // A7.8-INTERACTION-NONSTRING-OWNER-001). The adapter only maps the
+            // owner, it does not decide what the miss looks like.
+            return self
+                .interactions
+                .reconnect_unkeyed(next, previous.as_ref())
+                .map_err(RequestError::new);
         };
         self.interactions
             .reconnect(owner, Some(next), previous.as_ref())
