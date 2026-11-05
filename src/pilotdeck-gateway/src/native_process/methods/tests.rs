@@ -1200,6 +1200,106 @@ async fn user_dialog_optional_nulls_match_typescript_tri_state() {
         .expect("#1309 r5 fixture project shutdown");
 }
 
+#[tokio::test]
+async fn user_dialog_respond_validates_result_before_lease_id() {
+    use crate::metadata::object;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1453 guard-order fixture setup");
+    let behavior_error = "result.behavior must be answered or cancelled.";
+    let value_error = "answered user dialog results require a value.";
+    let reason_error = "cancelled user dialog reason must be a string.";
+    let lease_error = "leaseId must be a non-empty string when provided.";
+    let cases = [
+        ("missing-result", None, behavior_error),
+        ("null-result", Some(JsValue::Null), behavior_error),
+        ("missing-behavior", Some(object([])), behavior_error),
+        (
+            "invalid-behavior",
+            Some(object([("behavior", "invalid".into())])),
+            behavior_error,
+        ),
+        (
+            "answered-missing-value",
+            Some(object([("behavior", "answered".into())])),
+            value_error,
+        ),
+        (
+            "answered-undefined-value",
+            Some(object([
+                ("behavior", "answered".into()),
+                ("value", JsValue::Undefined),
+            ])),
+            value_error,
+        ),
+        (
+            "cancelled-null-reason",
+            Some(object([
+                ("behavior", "cancelled".into()),
+                ("reason", JsValue::Null),
+            ])),
+            reason_error,
+        ),
+        (
+            "answered-null-value",
+            Some(object([
+                ("behavior", "answered".into()),
+                ("value", JsValue::Null),
+            ])),
+            lease_error,
+        ),
+        (
+            "cancelled-missing-reason",
+            Some(object([("behavior", "cancelled".into())])),
+            lease_error,
+        ),
+        (
+            "cancelled-string-reason",
+            Some(object([
+                ("behavior", "cancelled".into()),
+                ("reason", "".into()),
+            ])),
+            lease_error,
+        ),
+    ];
+    for (name, result, expected_message) in cases {
+        let mut fields = vec![
+            ("sessionKey", "guard-order-session".into()),
+            ("requestId", "guard-order-request".into()),
+            ("leaseId", JsValue::Null),
+        ];
+        if let Some(result) = result {
+            fields.push(("result", result));
+        }
+        let error = requests
+            .user_dialog_request("user_dialog_respond".into(), object(fields))
+            .await
+            .expect_err("#1453 guard-order invalid input must fail");
+        assert_eq!(
+            error.code, "INVALID_USER_DIALOG_RESPONSE",
+            "#1453 guard-order error code: {name}"
+        );
+        assert_eq!(
+            error
+                .message
+                .to_utf8()
+                .expect("#1453 guard-order error message UTF-8"),
+            expected_message,
+            "#1453 guard-order error message: {name}"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1453 guard-order owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1453 guard-order project shutdown");
+}
+
 // #1309 fix-r6 (gate r5 P1): the bus sees the TRIMMED leaseId, matching TS
 // `input.leaseId?.trim()` / `.trim()` at the three call sites (claim
 // InProcessGateway.ts:2754, respond :2683, release :2769). A padded
