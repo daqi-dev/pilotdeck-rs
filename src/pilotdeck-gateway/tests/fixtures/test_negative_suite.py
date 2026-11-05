@@ -1160,10 +1160,63 @@ class MatrixRunnerTests(unittest.TestCase):
             self.assertEqual(len(filters), 3, 'positive, negative and restored')
             report = json.loads((root / 'out/summary.json').read_text())
             self.assertEqual(code, 0)
-            self.assertEqual(report['controls'][0]['status'], 'KILLED')
-            self.assertEqual({cell['test']: cell['status']
-                              for cell in report['controls'][0]['cells']},
-                             {'cell_one': 'KILLED', 'cell_two': 'KILLED'})
+            row = report['controls'][0]
+            self.assertEqual(row['status'], 'KILLED')
+            # Both declared cells are recorded as hits — the registered column
+            # that carries per-cell evidence (#1579 P1). A `cells` column here
+            # made `_negkit/compare_verdicts.py` reject the whole summary.
+            self.assertEqual(row['hits'], ['cell_one', 'cell_two'])
+            self.assertEqual(set(row), set(suite.RESULT_ROW_FIELDS))
+
+
+class ResultRowSchemaTests(unittest.TestCase):
+    """#1579 P1: `matrix_main` rows must stay inside the registered schema.
+
+    `_negkit/compare_verdicts.py` rejects unknown row fields with exit 2, so a
+    row that grows a column turns every summary un-comparable (false FAIL).
+    These tests run the real comparator over a real row shape.
+    """
+
+    @staticmethod
+    def comparator():
+        import importlib.util
+        path = Path(__file__).resolve().parent / '_negkit' / 'compare_verdicts.py'
+        spec = importlib.util.spec_from_file_location('pdrs_compare_verdicts', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def load(comparator, row):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'summary.json'
+            path.write_text(json.dumps({'controls': [row],
+                                        'counts': {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0}}))
+            return comparator.load_table(path)
+
+    def test_matrix_row_is_accepted_by_the_comparator(self):
+        comparator = self.comparator()
+        row = suite.result_row('rejection-silenced', status='KILLED',
+                               reason='named assertions produced current nonce receipts',
+                               compiled=True, restored_pass=True,
+                               targets=[('rejects_unmigrated_qq', '#1386 marker')],
+                               hits=['rejects_unmigrated_qq'])
+        self.assertEqual(set(row), set(suite.RESULT_ROW_FIELDS))
+        table = self.load(comparator, row)
+        self.assertEqual(table[0]['case'], 'rejection-silenced')
+        self.assertEqual(table[0]['status'], 'KILLED')
+        self.assertEqual(table[0]['hits'], ['rejects_unmigrated_qq'])
+
+    def test_unregistered_row_field_is_rejected(self):
+        # Negative control: the schema guard must actually fire. Re-adding the
+        # removed `cells` column reproduces the #1579 failure.
+        comparator = self.comparator()
+        row = suite.result_row('rejection-silenced', status='KILLED',
+                               targets=[('rejects_unmigrated_qq', '#1386 marker')],
+                               hits=['rejects_unmigrated_qq'])
+        row['cells'] = [{'test': 'rejects_unmigrated_qq', 'status': 'KILLED'}]
+        with self.assertRaises(comparator.InputError):
+            self.load(comparator, row)
 
 
 if __name__ == '__main__':

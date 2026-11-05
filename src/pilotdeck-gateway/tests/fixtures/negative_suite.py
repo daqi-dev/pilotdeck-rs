@@ -267,11 +267,14 @@ class ReceiptRun:
 
 
 def cell_states(result, prefix, targets, receipts):
-    """Per-target observation states, recorded as evidence next to each row.
+    """Per-target observation states behind one verdict.
 
-    Never a verdict on its own: ``judge`` owns that. Reported separately so a
-    row's ``cells`` can show which declared targets actually executed, without
-    changing ``judge``'s three-value contract (sixteen fixtures import it).
+    Never a verdict on its own and never written to the result row: ``judge``
+    owns both. The row stays inside the schema registered with
+    ``_negkit/compare_verdicts.py``, whose unknown-field check rejects any new
+    key and would turn every ``matrix_main`` summary into a false FAIL
+    (#1579 P1). Kept as a separate function so the three-value ``judge``
+    contract sixteen fixtures import stays untouched.
     """
     if not targets or len({test for test, _ in targets}) != len(targets):
         return []
@@ -322,6 +325,22 @@ def judge(result, prefix, targets, receipts, *, any_cell=False, require_all_ran=
 def _write_new(path, text):
     with path.open('x') as stream:
         stream.write(text)
+
+
+# The `controls[]` row schema published to `_negkit/compare_verdicts.py`
+# (#1579 P1). Its `normalize` rejects any key outside the registered whitelist
+# and exits 2, so a summary that grows a field becomes un-comparable — a false
+# FAIL for every consumer. Rows are therefore built only from these fields;
+# new evidence must be registered with the comparator first.
+RESULT_ROW_FIELDS = ('name', 'status', 'reason', 'compiled', 'restoredPass', 'targets', 'hits')
+
+
+def result_row(name, *, status='INVALID', reason='not run', compiled=False,
+               restored_pass=False, targets=(), hits=()):
+    """One `controls[]` row, restricted to :data:`RESULT_ROW_FIELDS`."""
+    return {'name': name, 'status': status, 'reason': reason,
+            'compiled': compiled, 'restoredPass': restored_pass,
+            'targets': [list(target) for target in targets], 'hits': list(hits)}
 
 
 def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
@@ -458,8 +477,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
                     any_cell=name in any_cell, require_all_ran=exact)
                 item.update(status='KILLED' if killed else
                             ('SURVIVED' if positive(result, row) else 'INVALID'),
-                            reason=reason, hits=hits,
-                            cells=cell_states(result, prefix, targets(row), receipts))
+                            reason=reason, hits=hits)
         except Exception as error:
             item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         finally:
@@ -475,8 +493,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
 
     for row in selected:
         name, source, old, new = row[:4]
-        item = dict(name=name, status='INVALID', reason='not run', compiled=False,
-                    restoredPass=False, targets=targets(row))
+        item = result_row(name, targets=targets(row))
         try:
             with mutating_sources(root, guarded) as originals:
                 entry = pending.match(registrations, name)

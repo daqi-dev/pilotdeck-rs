@@ -48,12 +48,22 @@ MUTATIONS = [
      '    "qq",\n    "wecom",\n];',
      '    "qq",\n    "wecom",\n    "sms",\n];',
      'unmigrated_subset_channels_stay_loadable', '#1386 subset channel must not be rejected'),
-    # M5: the enabled gate is constant-true; the falsy-enabled control kills.
+    # M5: the loader-table truthiness gate is constant-true; the falsy-enabled
+    # control kills. Anchor is the `else` arm of `rejects_enabled`, which is
+    # the only place the eleven loader keys read `js_truthy`.
     ('enabled-gate-always-true', source / 'loader.rs',
-     'if js_truthy(cfg.get("enabled")) {',
-     'if true {',
+     '    } else {\n        js_truthy(cfg.get("enabled"))\n    }',
+     '    } else {\n        true\n    }',
      'unmigrated_falsy_or_absent_enabled_does_not_reject',
      '#1386 disabled unmigrated channel must not reject'),
+    # M7 (#1579 P1): the two `ChannelAdapterBundle` keys fall back to JS
+    # truthiness, so `enabled: 1` aborts startup where TS just skips the
+    # channel. The strict-`true` control kills.
+    ('qq-wecom-gate-loosened', source / 'loader.rs',
+     'matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))',
+     'js_truthy(cfg.get("enabled"))',
+     'unmigrated_bundle_channels_require_strict_boolean_true',
+     '#1386 bundle channel requires strict enabled === true'),
     # M6: iterating the loader table instead of the config-key table misses
     # `qq`/`wecom` (they are outside CHANNEL_LOADER_KEYS in TS too).
     ('loader-table-iteration', source / 'loader.rs',

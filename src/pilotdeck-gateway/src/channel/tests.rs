@@ -1206,6 +1206,44 @@ fn rejects_unmigrated_wecom() {
     assert_rejects_unmigrated("wecom");
 }
 
+// #1579 P1: the frozen TS baseline gates these 13 keys with two different
+// expressions. `ChannelAdapterBundle.createQQ` / `createWeCom` open with
+// `if (settings?.enabled !== true) return undefined`, so `enabled: 1` or
+// `"true"` builds nothing and the TS gateway starts — rejecting those configs
+// on the Rust side would abort startup where TS does not.
+#[test]
+fn unmigrated_bundle_channels_require_strict_boolean_true() {
+    for key in ["qq", "wecom"] {
+        for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
+            let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{truthy}}}}}"));
+            crate::negative_assert!(
+                reject_unmigrated_channels(Some(&adapters)).is_ok(),
+                "#1386 bundle channel requires strict enabled === true"
+            );
+        }
+        assert_rejects_unmigrated(key);
+    }
+}
+
+// The other eleven keys are consumed by `loadEnabledChannels`'s
+// `if (!cfg?.enabled) continue`, i.e. JS truthiness — so a non-boolean truthy
+// `enabled` must still reject.
+#[test]
+fn unmigrated_loader_channels_use_js_truthiness() {
+    for key in UNMIGRATED_CHANNEL_KEYS {
+        if matches!(*key, "qq" | "wecom") {
+            continue;
+        }
+        for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
+            let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{truthy}}}}}"));
+            crate::negative_assert!(
+                reject_unmigrated_channels(Some(&adapters)).is_err(),
+                "#1386 loader channel uses JS truthiness"
+            );
+        }
+    }
+}
+
 #[test]
 fn unmigrated_subset_channels_stay_loadable() {
     for key in SUBSET_CHANNEL_KEYS {
