@@ -87,6 +87,15 @@ MUTATIONS = [
      'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom", "telegram"];',
      'strict_true_channel_keys_are_exactly_qq_and_wecom',
      '#1386 strict-true channel key set must be exactly qq and wecom'),
+    # M11 (#1579 r5 P2 sibling): the strict arm is constant-true, so a disabled
+    # `qq`/`wecom` would refuse startup. The paired falsy/absent control kills;
+    # without this row nothing proved the strict arm's false half is pinned
+    # (M7 only loosens it, M5/M8 only touch the loader-table arm).
+    ('strict-gate-always-true', source / 'loader.rs',
+     'matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))',
+     'true',
+     'unmigrated_falsy_or_absent_enabled_does_not_reject',
+     '#1386 disabled unmigrated channel must not reject'),
     # M6: iterating the loader table instead of the config-key table misses
     # `qq`/`wecom` (they are outside CHANNEL_LOADER_KEYS in TS too).
     ('loader-table-iteration', source / 'loader.rs',
