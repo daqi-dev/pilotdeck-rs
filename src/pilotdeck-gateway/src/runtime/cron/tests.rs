@@ -1362,11 +1362,18 @@ fn store_tail_entry_removed_after_panicking_mutation() {
 
 /// #1258 item 3: the contended tail lifecycle must hold through
 /// `mutate_task_file` itself, not only through direct `task_file_tail` /
-/// `release_task_file_tail` calls. The holder's mutation body parks at the
-/// barrier with the per-file mutex held; the sibling's mutation call starts
-/// inside that window, so its tail clone (or, under a different schedule,
-/// its own fresh entry) must keep the registry holding an entry until the
-/// last finisher removes it — and both writes must land.
+/// `release_task_file_tail` calls. The interleaving is pinned the way the
+/// direct-entry test above pins it: the sibling takes its own clone before
+/// `both_cloned`, so the holder's release always sees a live waiter and must
+/// keep the entry. The holder then reports completion over a channel only
+/// after its mutation returned (its tail release already ran), and the
+/// sibling — still inside its own mutation, holding the per-file mutex —
+/// asserts against the registry at that point, including that it still maps
+/// the file to the very tail the waiter cloned (`Arc::ptr_eq`), so a rebuilt
+/// fresh entry cannot make the check vacuous. Whichever way the scheduler
+/// orders the threads, the entry it observes is the one the holder held. The
+/// wait is bounded so a broken invariant fails this test instead of hanging
+/// it. Both writes must land.
 #[test]
 fn store_tail_entry_removed_after_contended_mutate_task_file_pair() {
     let scratch = Scratch::new("cron-store-tail-contended-mutate");
@@ -1388,40 +1395,65 @@ fn store_tail_entry_removed_after_contended_mutate_task_file_pair() {
         !super::store::task_file_tail_registered(&tasks_file),
         "#1258 tail contended mutate: the seed mutations must leave no tail entry"
     );
-    let overlap = Arc::new(Barrier::new(2));
+    let both_cloned = Arc::new(Barrier::new(2));
+    let (holder_done, sibling_waits) = std::sync::mpsc::channel();
     let mut handles = Vec::new();
-    // The holder parks inside its mutation body (mutex held); the sibling
-    // only starts its real mutation call once the holder is provably inside
-    // that body, so the two mutations overlap.
+    // The holder parks inside its mutation body (mutex held) until the
+    // sibling has taken its clone, then finishes and reports completion.
     {
         let store = Arc::clone(&store);
-        let overlap = Arc::clone(&overlap);
+        let both_cloned = Arc::clone(&both_cloned);
         handles.push(thread::spawn(move || {
             store
                 .update_task("t-a", |_| {
-                    overlap.wait();
+                    both_cloned.wait();
                     Some(fresh_task_with_message("t-a", "mutated-by-holder"))
                 })
                 .unwrap_or_else(|error| {
                     panic!("#1258 tail contended mutate: holder updateTask: {error}")
                 });
+            // The holder's mutation has written and its tail release has run;
+            // only now may the sibling inspect the registry.
+            let _ = holder_done.send(());
         }));
     }
     {
         let store = Arc::clone(&store);
-        let overlap = Arc::clone(&overlap);
+        let both_cloned = Arc::clone(&both_cloned);
         let tasks_file = tasks_file.clone();
         handles.push(thread::spawn(move || {
-            overlap.wait();
-            store
-                .update_task("t-b", |_| {
-                    assert!(
-                        super::store::task_file_tail_registered(&tasks_file),
-                        "#1258 tail contended mutate: an in-flight mutation must find its file's tail in the registry (a finishing sibling must not remove it while a waiter still holds a clone)"
-                    );
-                    Some(fresh_task_with_message("t-b", "mutated-by-sibling"))
-                })
-                .unwrap_or_else(|error| panic!("#1258 tail contended mutate: sibling updateTask: {error}"));
+            // Hold a clone from before the holder can release, mirroring the
+            // direct pair test's "both clones exist" pin through the real
+            // mutation entry point: the holder's release then sees a live
+            // waiter and must keep the registry entry.
+            let held = super::store::task_file_tail(&tasks_file);
+            both_cloned.wait();
+            let result = store.update_task("t-b", |_| {
+                sibling_waits
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "#1258 tail contended mutate: holder never finished its mutation: {error}"
+                        )
+                    });
+                assert!(
+                    super::store::task_file_tail_registered(&tasks_file),
+                    "#1258 tail contended mutate: a finishing sibling must not remove the tail entry while a waiter still holds a clone"
+                );
+                // The registry must still hold the very tail the waiter
+                // cloned — not a fresh entry rebuilt after a removal, which
+                // would make the assertion above vacuous.
+                let current = super::store::task_file_tail(&tasks_file);
+                assert!(
+                    Arc::ptr_eq(&held, &current),
+                    "#1258 tail contended mutate: the registry must still map the file to the tail the waiter cloned"
+                );
+                Some(fresh_task_with_message("t-b", "mutated-by-sibling"))
+            });
+            super::store::release_task_file_tail(&tasks_file, held);
+            result.unwrap_or_else(|error| {
+                panic!("#1258 tail contended mutate: sibling updateTask: {error}")
+            });
         }));
     }
     for (index, handle) in handles.into_iter().enumerate() {
