@@ -23,9 +23,9 @@ cd src && cargo test -p pilotdeck-gateway --lib api_web
 - 鉴权：缺 / 错 token / 小写 `bearer` / `Bearer\t` / 尾随空格 / `Basic` / 空值 / 重复头两种顺序（Node 取第一个重复头）；均落在 `/api/web/projects`。
 - 方法与路由：GET / POST / PUT / HEAD（HEAD 不走 GET 分支，落到最终 404 且无 body、无 TE/CL）、`/api/web/projects/` 尾斜杠、`/api/web/`、`/api/web`（不掉进 web 路由，落 native 纯文本 `not found`）、`/api/web/nope`、`files/nope`、`files%2Ftree`（不匹配正则）、GET 打 write。
 - describe：正常、尾斜杠、POST、key 坏百分号（`decodeURIComponent` 抛错在 try 内 → 404 `project_not_found` "URI malformed"）、`a+b`、stub 抛错 → 404 带错因。
-- tree：根 / 子目录 / 空 path / `.` / `sub/..` / 不存在 / 指向文件 / `..`（403 越界）/ 绝对路径（403）/ `..foo`（不算越界）。目录在前、同类按 `localeCompare`（ICU：小写先于大写）。
+- tree：根 / 子目录 / 空 path / `.` / `sub/..` / 不存在 / 指向文件 / `..`（403 越界）/ 绝对路径（403）/ `..foo`（`normalize` 后同样以 `..` 开头 → 403，与 `..` 同类）。目录在前、同类按 `localeCompare`（ICU：小写先于大写）。
 - read：文本、`./` 与 `sub/../` 归一、重复 `path`（取第一个）、`+`→空格、`%2F` 解码、二进制扩展名 base64、无扩展名走 base64、大写扩展名、`.env` 走文本、空文件、1 MiB+1 超限、符号链接、缺 query、空 path、`../..` 越界、绝对路径、不存在、指向目录（`Not a file`）、query 坏百分号（`URLSearchParams` 宽松解码成 U+FFFD，随后 `stat` ENOENT → 500）。
-- write：文本、base64、非法 base64（Node 宽松解码）、嵌套目录自动建、多余字段忽略、坏 JSON / 空 body / 缺 path / 空 path / 非字符串 path 与 content / 非法 encoding / `encoding: null`、`..` 越界、绝对路径、`..foo`；`files-write-round` + `files-read-round` 是两次独立请求（同一连接上流水线 write+read 在 Node 里会与 `await writeFile` 竞态，故拆开）。
+- write：文本、base64、非法 base64（Node 宽松解码）、嵌套目录自动建、多余字段忽略、坏 JSON / 空 body / 缺 path / 空 path / 非字符串 path 与 content / 非法 encoding / `encoding: null`、`..` 越界、绝对路径、`..foo`（同样 403）；`files-write-round` + `files-read-round` 是两次独立请求（同一连接上流水线 write+read 在 Node 里会与 `await writeFile` 竞态，故拆开）。
 - 传输：同连接两次 keep-alive 复用、`Connection: close`、HTTP/1.0（Node 始终回 `HTTP/1.1` 状态行 + `Connection: close` + 无 framing 的 close 定界体）。
 
 ## Rust 重放规则
