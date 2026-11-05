@@ -93,10 +93,27 @@ const STRANGER_PID_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 /// `started` appears, on any host. #1297: this is scenario pacing now, not
 /// handshake machinery — only the within-cap test below delays its
 /// `started` this long (the delay is what exposes a re-hardcoded 5 s cap
-/// there); the dead-helper test releases the stranger's `started`
-/// immediately, so no test's handshake depends on this sleep completing
+/// there), and no test's handshake depends on a fixed sleep completing
 /// inside the cap.
 const STRANGER_STARTED_DELAY: Duration = Duration::from_secs(8);
+
+/// #1297 review (concurrency P1): how long the dead-helper test's stranger
+/// holds its `started` back after confirming it holds the pipe — 250 ms of
+/// deliberate pacing, not a handshake wait.
+///
+/// The `expiry-hoisted-before-spawn` mutant kills only while the hook
+/// provably outlasts [`DEADLINE_FLOOR_SLACK`]: hoisting the expiry above the
+/// spawn moves everything the hook spends into the write budget, so the
+/// floor assertion catches the mutant by exactly `hook - slack - teardown`
+/// (the return path's scan, kill and reap run after the write phase and are
+/// inside the measured `took`). The event-driven handshake's guaranteed
+/// content is only the probe's interpreter boot — ~15 ms measured, and load
+/// can starve it below the 5 ms floor on a bad day — so the margin that
+/// used to come from the old 8-second sleep is bought back here explicitly.
+/// 250 ms is two orders of magnitude above the slack and still 40× inside
+/// the 10 s started cap, so it cannot become the flake the 8 s sleep was: it
+/// is a delay the test chooses, never a wait on a cap it does not own.
+const DEAD_HELPER_STRANGER_DELAY: Duration = Duration::from_millis(250);
 
 /// How long the helper below may take to record its write-end observation
 /// after the go signal: the go decision is made on an arbitrary scheduler and
@@ -112,12 +129,14 @@ const MARKER_TIMEOUT: Duration = Duration::from_secs(8);
 /// never land before it). #1297 tightened the slack from 100 ms to 5 ms
 /// together with the release-gated handshake: the floor is also what kills
 /// the expiry-hoisted mutant, and that kill is deterministic only while the
-/// handshake provably outlives the slack. The old 8-second delay made that
-/// trivial; the handshake's guaranteed content now is the stranger's
-/// interpreter startup — a physical floor no unix host boots CPython under —
-/// which 5 ms sits well below (measured ~15 ms for the boot itself, ~23 ms
-/// end to end through the probe's FIFO check and staging rename on this
-/// host, and load only grows it).
+/// handshake outlives the slack plus whatever the return path spends after
+/// the write phase (the mutant moves the hook into the write budget, while
+/// `took` still includes the scan/kill/reap that follow it). The old
+/// 8-second delay covered that by accident; with event-driven release the
+/// margin is bought deliberately — the dead-helper test's stranger holds
+/// its `started` back for [`DEAD_HELPER_STRANGER_DELAY`] (250 ms), so the
+/// kill margin is ~240 ms rather than the interpreter boot's ~15 ms, which
+/// load could starve below the slack (#1297 review, concurrency P1).
 const DEADLINE_FLOOR_SLACK: Duration = Duration::from_millis(5);
 
 /// #1155 r3 review P2-1: how long a write-end candidate found by the
@@ -206,10 +225,13 @@ const DELIBERATE_PANIC: &str = "#1141 deliberate panic while the stranger is run
 /// what moves `started`, so a handshake that used to race its cap under
 /// load (the dead-helper test's 8-second delay against its 10-second cap,
 /// with only the python startup left as headroom) now completes whenever
-/// the test says so. The delay survives as scenario pacing only: the
-/// within-cap test still delays its `started` past the 5 s a reverted
-/// helper's wait would hardcode alone (#1155 r4 review P2), while the
-/// dead-helper test releases immediately. After the go signal it drains
+/// the test says so. The delay survives as pacing only: the within-cap test
+/// delays its `started` past the 5 s a reverted helper's wait would hardcode
+/// alone (#1155 r4 review P2), and the dead-helper test uses
+/// [`DEAD_HELPER_STRANGER_DELAY`] — a short, deliberate hold that keeps the
+/// expiry-hoisted mutant's kill margin well above [`DEADLINE_FLOOR_SLACK`]
+/// (#1297 review) without putting a cap-adjacent wait back on the path.
+/// After the go signal it drains
 /// the pipe with a zero-timeout
 /// `select` on its stdin and classifies what it sees — a 0-byte read means
 /// EOF was pending, i.e. every write end was closed before the observation,
@@ -409,7 +431,10 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
                 &saw,
                 &paused,
                 &resume,
-                Duration::ZERO,
+                // #1297 review (concurrency P1): the pacing delay below the
+                // write deadline is what keeps the expiry-hoisted mutant
+                // killable — see [`DEAD_HELPER_STRANGER_DELAY`].
+                DEAD_HELPER_STRANGER_DELAY,
             )
         },
         // #1141 fix-r2 review P1-1: the helper runs as its own group leader
@@ -432,10 +457,11 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         // round outright. #1297: the release signal below is the handshake's
         // trigger — the stranger's `started` appears because this file
         // exists, not after a fixed sleep — so this hook's wait is bounded
-        // polling over an event this test owns, and only the stranger's
-        // interpreter startup (a physical floor — measured ~15 ms on this
-        // host, well above the 5 ms floor slack, and load only grows it)
-        // sits between the release and the `started`.
+        // polling over an event this test owns. What sits between the
+        // release and the `started` is the stranger's interpreter boot
+        // (~15 ms measured on this host, load only grows it) plus the
+        // deliberate [`DEAD_HELPER_STRANGER_DELAY`] pacing the floor
+        // assertion needs; neither is a cap this test has to fit inside.
         |pid| {
             stranger.adopt(helper_group(pid));
             publish_release_signal(&release);

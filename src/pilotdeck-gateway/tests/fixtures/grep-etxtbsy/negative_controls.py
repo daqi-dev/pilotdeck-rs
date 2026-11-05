@@ -486,12 +486,17 @@ cases = [
     # back to the r4 shape, so the handshake the dead-helper test runs in
     # its hook (publishing the release, then waiting for the probe's
     # `started` — event-driven since #1297) lands inside the write budget:
-    # the writer's give-up leaves the handshake unspent, and that
-    # handshake's guaranteed content is the probe's interpreter boot
-    # (measured ~23 ms end to end against the 5 ms floor slack), so the
-    # deadline floor assert trips — or the writer-exit race assert fires
-    # first when the already-past expiry collapses the grace; either
-    # assertion kills (one anchor list, both deterministic).
+    # the writer's give-up leaves the handshake unspent, and the deadline
+    # floor assert trips — or the writer-exit race assert fires first when
+    # the already-past expiry collapses the grace; either assertion kills
+    # (one anchor list, both deterministic). #1297 review (concurrency P1):
+    # the floor catches the mutant by exactly `hook − slack − teardown`, and
+    # the return path (scan, kill, reap) is inside the measured `took` too.
+    # The handshake's event-driven content alone is the probe boot (~15 ms,
+    # starvable under load), so the dead-helper test's stranger now holds
+    # `started` back for `DEAD_HELPER_STRANGER_DELAY` (250 ms) — the kill
+    # margin is ~240 ms instead of the boot's own few milliseconds, while
+    # the delay stays 40× inside the 10 s started cap.
     ('expiry-hoisted-before-spawn', helper,
      '''    spawned(helper_id);
     // #1155 r4 review P2: the expiry starts here, after the handover, so a

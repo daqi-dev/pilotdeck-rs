@@ -955,6 +955,19 @@ fn migration_blocked_dir_tasks_eacces_matches_ts() {
         // chmod 000 cannot make the tasks file unreadable for root: the cell
         // would fail on its recorded warning/tree, not on parity. The read
         // error itself is still covered by the EISDIR cell below.
+        //
+        // #1400 review (sibling): this is the same "absent cell reads as a
+        // passing one" hazard the non-UTF-8 guard above just closed, so the
+        // skip is printed the same way — straight to the stderr handle,
+        // because the print-family macros are captured by the test harness
+        // and a passing (skipping) test's captured output never reaches the
+        // log. A root-hosted run of the migration matrix is 22/23 cells,
+        // and the log now says so instead of reporting a clean sweep.
+        let _ = std::io::stderr().write_all(
+            b"migration_blocked_dir_tasks_eacces_matches_ts: skipped, running as root \
+              (chmod 000 is not a read error for root); the read-error branch stays \
+              covered by blocked-dir-tasks-isdir\n",
+        );
         return;
     }
     replay_migration_cell(cell("migration", "blocked-dir-tasks-eacces"));
@@ -1075,11 +1088,14 @@ fn store_concurrent_puts_across_threads_keep_every_task() {
 // fixture's own directory (`non_utf8_names_writable` below): where the
 // bytes are rejected the test skips itself with a printed skip line —
 // never a silent pass — and where they are accepted (Linux ext4 and
-// friends) the original assertions run unchanged. The probe writes a
-// file of its own name before anything else, so a genuine Linux-side
-// fixture failure (EACCES, ENOSPC, …) still fails the test hard instead
-// of being swallowed by the skip — the exact concern that made #1289
-// prefer the compile-time gate over "skip when create_dir_all fails".
+// friends) the original assertions run unchanged. The probe performs the
+// fixture's own operations (a `create_dir_all` of the same non-UTF-8-named
+// chain, then a non-empty file write through it) and sorts the outcome by
+// errno: only EILSEQ — the name itself being rejected — skips, so a
+// genuine Linux-side fixture failure (EACCES, ENOSPC, …) still fails the
+// test hard instead of being swallowed by the skip, the exact concern that
+// made #1289 prefer the compile-time gate over "skip when create_dir_all
+// fails".
 #[cfg(unix)]
 #[test]
 fn migration_non_utf8_home_keeps_one_physical_key() {
@@ -1132,26 +1148,43 @@ fn migration_non_utf8_home_keeps_one_physical_key() {
 
 /// #1400: whether `dir`'s filesystem accepts the byte paths the fixture
 /// above needs. The probe performs the fixture's own operations, in its
-/// order, at throwaway names: a mkdir of a non-UTF-8-named directory, then
-/// a file write whose path runs through that directory. #1400 r2: the
-/// shapes cannot be a cheaper stand-in — a host whose filesystem accepted
-/// the old file-leaf write (`fs::write` of `probe-\xff` directly under
-/// `dir`) but rejected the fixture's mkdir (EILSEQ) turned the skip into a
-/// deterministic failure there (32/32 full-suite copies on macmini-01,
-/// load 16–22, `_tmp/20261026-issue-1495/fix-1297/single-lib-*.log`), while
-/// hosts rejecting both shapes hid the divergence behind the skip. The
+/// order and at its depth, at throwaway names: a `create_dir_all` of a
+/// non-UTF-8-named directory chain, then a non-empty file write whose path
+/// runs through that directory. #1400 r2: the shapes cannot be a cheaper
+/// stand-in — a host whose filesystem accepted the old file-leaf write
+/// (`fs::write` of `probe-\xff` directly under `dir`) but rejected the
+/// fixture's mkdir (EILSEQ) turned the skip into a deterministic failure
+/// there (32/32 full-suite copies on macmini-01, load 16–22,
+/// `_tmp/20261026-issue-1495/fix-1297/single-lib-*.log`), while hosts
+/// rejecting both shapes hid the divergence behind the skip. The
 /// integration-side `tests/workspace_snapshot.rs::non_utf8_names_writable`
 /// keeps its file-leaf write: that fixture creates non-UTF-8-named *files*
 /// and never mkdirs a non-UTF-8-named directory, so there the file write
 /// is the same-shape probe.
+///
+/// Only `EILSEQ` — the errno APFS / HFS+ return for the invalid name bytes
+/// themselves (os error 92 on darwin, 84 on Linux) — answers "this
+/// filesystem can never host the fixture, skip". Every other error
+/// (EACCES, ENOSPC, EROFS, EMFILE, …) is a real failure of the scratch the
+/// caller handed us and panics with its own `#1400` marker: folding those
+/// into the skip would silently delete a Linux-side P1 guard from the
+/// suite, which is what #1289 refused to do and #1400 must not reintroduce.
 #[cfg(unix)]
 fn non_utf8_names_writable(dir: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
-    let probe_dir = dir.join(std::ffi::OsStr::from_bytes(b"probe-\xff"));
-    let writable = fs::create_dir(&probe_dir)
-        .and_then(|()| fs::write(probe_dir.join("probe"), b""))
-        .is_ok();
-    let _ = fs::remove_dir_all(&probe_dir);
+    let probe_home = dir.join(std::ffi::OsStr::from_bytes(b"probe-\xff"));
+    let probe_project = probe_home.join("cron/projects/w-same");
+    let outcome = fs::create_dir_all(&probe_project)
+        .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\"probe\": true}"));
+    let writable = match outcome {
+        Ok(()) => true,
+        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => false,
+        Err(error) => panic!(
+            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",
+            probe_project.display()
+        ),
+    };
+    let _ = fs::remove_dir_all(&probe_home);
     writable
 }
 

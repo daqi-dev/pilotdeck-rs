@@ -74,7 +74,13 @@ P2b 跟进）：屏障自身的 30s 安全超时是失败而非静默通过—�
 ~23ms，负载只会更大）。deadline 下界余量 `DEADLINE_FLOOR_SLACK` 随之
 100ms→5ms——健康路径本就用不到余量（expiry 在 `write_began` 之后才计算，
 写阶段只能超时不能提前），而该余量同时是 `expiry-hoisted-before-spawn` 的
-判杀线，事件化后其杀伤内容只剩解释器启动，5ms 保住判杀裕度 4×+。panic 用例
+判杀线。#1297 评审（concurrency P1）：判杀裕度是
+`hook 耗时 − 余量 − 返回路径耗时`，事件化后 hook 的保证内容只剩解释器启动，
+负载可能把它饿到 5ms 以下；返回路径（扫描、kill、收割）也在被测的 `took`
+里，会进一步吃掉裕度。故 dead-helper 用例的探针改为在确认持有管道后**故意
+停 `DEAD_HELPER_STRANGER_DELAY`（250ms）**再发 `started`：这是测试自己选的
+节拍，不是等 cap，距 10s `started` 上限仍有 40× 余量，判杀裕度回到 ~240ms。
+panic 用例
 与三个场景用例（迟到 started / within-cap / 屏障超时）同样先发布 release
 再等信号，场景节奏不变（within-cap 仍以 8s 延迟的 `started` 暴露硬回 5s 的
 cap）。
@@ -136,11 +142,12 @@ cap）。
   dies` 判杀——两个失败点收进一个锚点列表（列表即备选集）；
 - `expiry-hoisted-before-spawn`（#1155 r4 评审 P2）：expiry 移回 spawn 前
   ——`spawned` 钩子里的 release 门控 `started` 握手（#1297 起事件化，内容是
-  探针解释器启动，实测 ~23ms）落进写预算，dead-helper 用例的
-  `#1155 the write phase must last its full deadline` 下界断言失败（实测
-  elapsed ≈ 1.48s，低于 1.5s 减 5ms 余量）；若 expiry 已过导致 writer-exit
-  竞态先行，则以 `#1125 helper writer did not exit by its deadline` 判杀
-  （双锚点，确定性）；
+  探针解释器启动 + `DEAD_HELPER_STRANGER_DELAY` 的 250ms 节拍）落进写预算，
+  dead-helper 用例的 `#1155 the write phase must last its full deadline` 下界
+  断言失败（本机 darwin 实测 `1.213185417s elapsed`，比 `1.5s − 5ms` 的阈值
+  低 282ms，即判杀裕度 ≈ 250ms，不再依赖解释器启动那 15ms）；若 expiry 已过
+  导致 writer-exit 竞态先行，则以 `#1125 helper writer did not exit by its
+  deadline` 判杀（双锚点，确定性）；
 - `started-cap-hardcoded-short`（#1155 r4 评审 P2，fix-r1 改形状，fix-r2b
   锚点带 `+ 1` 截断补偿，fix-r3 改绑）：helper 侧 started 等待秒数退回字面量
   `5`（墙钟，`date +%s` 基准）——fix-r3 起绑定走事件屏障受控路径的新用例
