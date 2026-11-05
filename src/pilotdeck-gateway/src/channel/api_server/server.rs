@@ -94,7 +94,18 @@ pub(crate) async fn accept_loop(
                             let shared = shared.clone();
                             async move { handle(shared, request).await }
                         };
-                        let _ = http_proxy::serve_connection_native_with_shutdown(socket, handler, stop).await;
+                        // `stop_observed` is the #1292 test-only observation and
+                        // `grid_anchor` the Node 30 s checker grid of the
+                        // native-http lane; this channel listener has neither, so
+                        // a headers-timeout 408 fires at the deadline itself.
+                        let _ = http_proxy::serve_connection_native_with_shutdown(
+                            socket,
+                            handler,
+                            stop,
+                            None,
+                            None,
+                        )
+                        .await;
                     });
                 }
                 Err(_) => break,
