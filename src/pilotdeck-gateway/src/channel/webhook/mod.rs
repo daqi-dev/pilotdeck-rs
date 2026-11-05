@@ -377,8 +377,17 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Rece
                     async move { handle_request(ctx, request).await }
                 }
             };
-            let _ = http_proxy::serve_connection_native_with_shutdown(socket, handler, stop_signal)
-                .await;
+            // #1292 added the test-only `stop_observed` counter and the
+            // `grid_anchor` deadline origin; the webhook listener needs
+            // neither (its 5 s header deadline is not part of the parity grid).
+            let _ = http_proxy::serve_connection_native_with_shutdown(
+                socket,
+                handler,
+                stop_signal,
+                None,
+                None,
+            )
+            .await;
         });
         connections.push(served);
         connections.retain(|handle| !handle.is_finished());
