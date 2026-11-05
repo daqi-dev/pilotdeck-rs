@@ -41,16 +41,13 @@ struct RawResponse {
 /// `<N bytes>` stands for `N` repeated `x` bytes: the oracle records the
 /// request *length*, not a megabyte of filler, so a replay that sends the
 /// placeholder literally would exercise a 15-byte body instead of the cap.
-/// Any other string is the request body itself.
+/// Any string that is not exactly that shape is the request body itself.
 ///
-/// Expansion is load-bearing, so it is fail-closed (#1606 r1). The
+/// Expansion is load-bearing, so it is fail-closed (#1606 r1/r2). The
 /// `body-limit-exact` cell expects the same `400 invalid_json` for a 15-byte
 /// body as for the full megabyte, so a placeholder that quietly failed to
 /// expand would leave the cell green while testing nothing. A `<... bytes>`
-/// whose middle does not parse is a fixture bug and panics, and a count past
-/// the replay budget is refused before allocating: a fixture edited to a huge
-/// count would otherwise abort the whole test binary on allocation instead of
-/// failing one assertion.
+/// whose middle does not parse is a fixture bug and panics.
 fn recorded_body(text: &str) -> Vec<u8> {
     let Some(count) = text
         .strip_prefix('<')
@@ -62,19 +59,73 @@ fn recorded_body(text: &str) -> Vec<u8> {
         panic!("#1333 request placeholder {text:?} does not expand to a byte count: {error}")
     });
     assert!(
-        count <= 8 * MAX_REQUEST_BYTES,
+        count <= REPLAY_BODY_BUDGET,
         "#1333 request placeholder {text:?} is beyond the replay budget"
     );
     vec![b'x'; count]
 }
 
+/// Allocation ceiling for a fixture-supplied byte count (#1606 r2). The
+/// largest placeholder the oracle legitimately records is the over-cap probing
+/// body, `MAX_REQUEST_BYTES + 1`; anything past that is a fixture bug, so it is
+/// refused *before* `vec![b'x'; count]` can abort the whole test binary on
+/// allocation instead of failing one assertion. It is derived from the product
+/// cap on purpose: a fixture that stops tracking the cap is the drift this
+/// guard exists to catch.
+const REPLAY_BODY_BUDGET: usize = MAX_REQUEST_BYTES + 1;
+
+/// Pin each boundary cell's *expanded* body to the cap it exists to probe
+/// (#1606 r2). The placeholder's syntax was already fail-closed, but its count
+/// was unconstrained: `body-limit-exact` and the `oversized-*` cells all answer
+/// exactly as a short body would (`400 invalid_json` / a zero-byte close), so
+/// an oracle edited to `<15 bytes>` — or a generator that recorded the wrong
+/// count — would leave every one of them green while proving nothing. Each
+/// boundary cell must therefore replay the length it claims to test.
+fn assert_boundary_body_len(id: &str, case: &Value) {
+    let expected = match id {
+        "body-limit-exact" => MAX_REQUEST_BYTES,
+        _ if id.starts_with("oversized-") => MAX_REQUEST_BYTES + 1,
+        _ => return,
+    };
+    let requests = case["requests"].as_array().expect("#1333 requests");
+    assert_eq!(
+        requests.len(),
+        1,
+        "#1333 {id}: a boundary cell replays exactly one request"
+    );
+    let text = requests[0]["body"]
+        .as_str()
+        .unwrap_or_else(|| panic!("#1333 {id}: a boundary cell must record a body"));
+    let len = recorded_body(text).len();
+    assert_eq!(
+        len, expected,
+        "#1333 {id}: boundary cell must replay {expected} bytes (the product cap), not {len}; \
+         the fixture and `MAX_REQUEST_BYTES` have drifted apart"
+    );
+}
+
 #[test]
 fn recorded_body_expands_the_length_placeholder() {
     assert_eq!(recorded_body("<5 bytes>"), b"xxxxx");
-    assert_eq!(recorded_body("<1000000 bytes>").len(), MAX_REQUEST_BYTES);
+    // A literal, not `MAX_REQUEST_BYTES`: this test owns the placeholder
+    // syntax. That the fixture's cap *is* the product cap is asserted where it
+    // matters, by `assert_boundary_body_len` over the real oracle cells.
+    assert_eq!(recorded_body("<1000000 bytes>").len(), 1_000_000);
     // Anything that is not the placeholder syntax is the body verbatim.
     assert_eq!(recorded_body("{}"), b"{}");
     assert_eq!(recorded_body(""), b"");
+}
+
+#[test]
+#[should_panic(expected = "request body must be a string")]
+fn req_spec_refuses_a_non_string_body() {
+    // `unwrap_or("")` here would replay an empty body against a cell that only
+    // distinguishes bodies by "is this valid JSON".
+    ReqSpec::from_json(&json!({
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "body": 15,
+    }));
 }
 
 #[test]
@@ -88,7 +139,9 @@ fn recorded_body_refuses_a_malformed_placeholder() {
 #[test]
 #[should_panic(expected = "is beyond the replay budget")]
 fn recorded_body_refuses_an_unbounded_count() {
-    recorded_body("<5000000000 bytes>");
+    // Parseable by a 32-bit `usize` too, so the test depends on the budget
+    // rule and not on the target's pointer width.
+    recorded_body("<9000000 bytes>");
 }
 
 struct ReqSpec {
@@ -110,14 +163,29 @@ impl ReqSpec {
                     .collect()
             })
             .unwrap_or_default();
-        let body = recorded_body(value["body"].as_str().unwrap_or(""));
+        // #1606 r2: a missing `body` is legitimate (GET/HEAD cells), but a
+        // present non-string one is a fixture bug: `unwrap_or("")` would
+        // replay an empty body and a boundary cell would stay green.
+        let body = match value.get("body") {
+            Some(Value::String(text)) => recorded_body(text),
+            Some(other) => panic!("#1333 request body must be a string, found {other:?}"),
+            None => Vec::new(),
+        };
         let keep_alive = value["headers"]["connection"]
             .as_str()
             .map(|value| value.eq_ignore_ascii_case("keep-alive"))
             .unwrap_or(false);
+        // #1606 r2: every oracle request carries both fields, so a missing one
+        // is fixture drift, not a defaultable cell.
+        let method = value["method"]
+            .as_str()
+            .unwrap_or_else(|| panic!("#1333 request is missing a string `method`: {value}"));
+        let path = value["path"]
+            .as_str()
+            .unwrap_or_else(|| panic!("#1333 request is missing a string `path`: {value}"));
         Self {
-            method: value["method"].as_str().unwrap_or("GET").to_owned(),
-            path: value["path"].as_str().unwrap_or("/").to_owned(),
+            method: method.to_owned(),
+            path: path.to_owned(),
             headers,
             body,
             keep_alive,
@@ -667,11 +735,15 @@ async fn replays_real_ts_api_server_cells() {
     );
     for case in cases {
         let id = case["id"].as_str().expect("#1333 case id");
+        // Runs for the boundary cells only; a no-op everywhere else.
+        assert_boundary_body_len(id, case);
         if id.starts_with("oversized-") {
-            // The three oversized cells are exercised separately by
-            // `oversized_body_closes_without_response`: the server destroys the
-            // connection mid-write there, so the error shape (ECONNRESET /
-            // EPIPE / EOF) depends on write progress and is not replayable.
+            // The three oversized cells record the same request; one of them is
+            // replayed for real by `oversized_body_closes_without_response`
+            // (`assert_boundary_body_len` above keeps the other two honest
+            // about their length). Not replayed here because the server
+            // destroys the connection mid-write, and the exact error string
+            // (ECONNRESET / EPIPE / a clean EOF) depends on write progress.
             // `body-limit-exact` stays in this loop: a body at the cap is read
             // in full and answered, so its response is deterministic.
             continue;
@@ -1127,6 +1199,11 @@ async fn null_body_is_registered_divergence() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn oversized_body_closes_without_response() {
     let started = start(options(&json!({"options":{}}), None), None).await;
+    // Deliberately a literal, not `MAX_REQUEST_BYTES + 1`: the `body-limit`
+    // negative control rewrites the cap in `mod.rs` to 10,000,000 and expects
+    // *this* test to go red. Deriving the body from the cap would move the
+    // body with the mutation and let it survive, so the two stay independent
+    // and `assert_boundary_body_len` is what ties the fixture to the cap.
     let body = "x".repeat(1_000_001);
     let response = exchange(
         started.addr,
@@ -1143,6 +1220,13 @@ async fn oversized_body_closes_without_response() {
         response.error.is_some() && response.status.is_none(),
         "#1333 oversized body closes with zero bytes, got status {:?}",
         response.status
+    );
+    // #1606 r2: the TS baseline sends *nothing* back, so a truncated response
+    // head before the reset must not pass as "closed with zero bytes".
+    assert!(
+        response.body.is_empty(),
+        "#1333 oversized body must close without sending any bytes, got {}",
+        response.body.len()
     );
     assert_ne!(
         response.error.as_deref(),
