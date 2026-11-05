@@ -179,16 +179,26 @@ def _backtick_runs(text):
     return runs
 
 
+# 段落边界（CommonMark）：空行与 ATX 标题行都断开段落，行内代码不能跨段配对。
+# 修前只在整篇里按「同长度反引号串」配对：正文里一个笔误的未闭合 `` ` `` 会和**后面任意段落**的
+# 反引号配成一对，把中间顶格的 `<!-- pdrs-scope: files=16 est_min=300 -->` 整段抹成空格 ——
+# scope 既解析不到也报不出错，静默退回人日 / `.rs` 启发式（gate20 GLM boundary P0 实测：
+# 杂散反引号 + 顶格 scope + 后面任意 `src/a.py` → rc 0「小包」，正是 #1316 那类假 PASS）。
+PARA_BREAK = re.compile(r"\n[ \t]*\n|^ {0,3}#{1,6}\s", re.M)
+
+
 def mask_inline_code(text):
     """把行内代码整段抹成空格（换行保留）。没有配对串的反引号按字面量处理。
 
-    先建「长度 → 起点」表再二分找闭合串：修前每个开串都往后重扫一遍，长度 1..k 的开串
-    全不闭合时是 O(k·n)（2 MiB 病态输入实测 53 s，派单闸门跟着卡住）。
+    配对**不跨段落**：段内未闭合的反引号按字面量处理（CommonMark 同），否则一个笔误会吞掉
+    后面段落里的真声明。先建「长度 → 起点」表再二分找闭合串：修前每个开串都往后重扫一遍，
+    长度 1..k 的开串全不闭合时是 O(k·n)（2 MiB 病态输入实测 53 s，派单闸门跟着卡住）。
     """
     runs = _backtick_runs(text)
     by_len = {}
     for st, ln in runs:
         by_len.setdefault(ln, []).append(st)
+    breaks = [m.start() for m in PARA_BREAK.finditer(text)]
     out = list(text)
     consumed = 0                                 # 已经抹掉的区间末尾：里面的开串不再当开串
     for a, run in runs:
@@ -199,6 +209,9 @@ def mask_inline_code(text):
         if k >= len(pos):
             continue                             # 没有闭合：这串反引号是字面量
         close = pos[k]
+        bk = bisect.bisect_right(breaks, a)
+        if bk < len(breaks) and close >= breaks[bk]:
+            continue                             # 闭合串在下一个段落：跨段不配对，按字面量处理
         for x in range(a, close + run):
             if out[x] != "\n":
                 out[x] = " "
@@ -652,17 +665,22 @@ COMPACT_UNIT = re.compile(
     r"(?<![0-9.])(?P<h>[0-9]+(?:\.[0-9]+)?)\s*(?:hours?|hrs?|h|小时|时)\s*(?P<m>[0-9]{1,4})\s*"
     r"(?:minutes?|mins?|min|m|分钟|分)?(?!\s*[0-9])", re.I)
 # 区间 / 上限语义取最大值：`80–120 min`、`80/90 min`、`80 min（上限 90 min）`
-RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=\d)\s*-\s*(?=\d)")
+# `或` / `、` 是「二选一 / 列表」：`60 min 或 90 min` 修前落进求和分支读成 150 > 90 → 合规段被拒
+# （假 FAIL，gate20 GLM boundary P2 实测）。按并列取最大值与 `/` 同待遇。
+RANGE_MARK = re.compile(r"[–—~～/、]|至|到|上限|不超过|最多|或|≤|(?<=\d)\s*-\s*(?=\d)")
 # 只有 `+` / `＋` / `另加` / `再加` / `再补` 是明确加法；`、，,` 是列表分隔符，`含` 常是「含联调」、
 # `和` 常是「S1 和 S2」——把这些当加法会把 `60–80 min，含联调` 加成 140（假 FAIL）。
 # 裸「加」是「增加 / 加班」的子串（`60–80 min（增加 20 min 联调）`），不当加法。
-ADD_MARK = re.compile(r"\+|＋|另加|再加|再补")
+ADD_MARK = re.compile(r"\+|＋|另加|再加|再补|外加")
 BREAK_CHARS = "（(，,；;"     # 回看窗口的边界：括注开头 / 句读
 # 括注里「包含」类说明词：它们后面的数字不计入主估时。**否定式不算包含**——否定词在词前 4 字符内
 # （`不含` / `不包含` / `未包含` / `不需要包括` / `除…含`）时那段时间必须计入。
 # 窗口取 4 而不是 3：`不需要包含` 里 `不` 与 `含` 隔着 `需要包` 三字；窗口 3 只能看到 `需`，于是
 # 只能把 `需` 也当否定词，反过来把**肯定的** `需要包含 30 min` 判成否定式（120 min，假 FAIL）。
-INCLUDE_WORDS = re.compile(r"含|各|其中|包括|内含|外加")
+# 「外加」**不是**包含说明：`80 min（外加 20 min 联调）` 是 100 min，按包含跳过会读成 80
+# （假 PASS，gate20 MiniMax boundary P1 实测；同一措辞不加括注时却是 100，两种写法结论相反）。
+# 它归 ADD_MARK。
+INCLUDE_WORDS = re.compile(r"含|各|其中|包括|内含")
 INCLUDE_NEG = re.compile(r"[不未无除没]")
 EXCLUDE_WORDS = re.compile(r"不计入|不算")
 INCLUDE_LOOKBACK = 4
@@ -692,6 +710,9 @@ def _excludes_after(text, end):
     return bool(EXCLUDE_WORDS.search(text, end, hi))
 
 
+# 非时长量词开头的单位（`2 个文件` / `3 项` / `2 处`）：是数量说明，不是估时。只收明确是计数的量词，
+# `人日` 这类真时长单位不在内（仍判「读不出」）。
+NON_DURATION_UNIT = re.compile(r"^(?:个|项|文件|段|处|次|条|份|张|行|块|名|位)")
 MAX_EST_CELL = 65536        # 单个估时格子 64 KiB 上限：正常格子 < 100 字符
 UNIT_MIN = ("", "min", "mins", "minute", "minutes", "m", "分", "分钟")
 UNIT_HOUR = ("h", "hr", "hrs", "hour", "hours", "时", "小时", "个小时")
@@ -830,8 +851,11 @@ def parse_est(cell, default_unit=""):
         u = u.strip("至到")   # `60 至 80 分钟`：区间词被并进单位，剥掉后按无单位处理（后面按区间取 max）
         mins = _unit_minutes(v, u)
         if mins is None:
-            if inside[pos]:
-                continue    # `（2 个文件）` 这类括注不是时长，跳过；整格没有时长数字时才报「读不出」
+            # `（2 个文件）` 这类括注不是时长；括注**外**、句读后面同样常见的说明
+            # （`80 min，涉及 2 个文件` / `80 min；另含缓冲说明 3 项`）也跳过——修前整格判
+            # 「读不出」→ 拒派合规任务书（gate20 GLM boundary P2 实测）。
+            if inside[pos] or NON_DURATION_UNIT.match(u):
+                continue    # 整格没有时长数字时才报「读不出」
             return None
         resolved.append((mins, pos))
     if not resolved:
@@ -970,7 +994,10 @@ def check_segments(text):
                     continue
                 table_lines.append(line)
                 # GFM 分隔行只能紧贴表头（第 2 行）；后面的全 `-` 行是没填的段行，不许整行跳过。
-                if not data and is_separator(r):
+                # 修前判据是 `not data and is_separator(r)`：第一条数据行若是全 `-`（没填的段行），
+                # data 仍为空 → 被当第二条分隔行整行丢掉，该行的占位符 / 空值 / 估时全不校验
+                # （gate20 MiniMax boundary P0 实测：三段表的首行全 `-` → rc 0）。
+                if len(table_lines) == 1 and is_separator(r):
                     continue
                 if not any(r):
                     problems.append(f"分段表第 {len(data) + 1} 行整行为空（不许用空行占位）")
@@ -1296,9 +1323,16 @@ def main(argv):
     as_json = "--json" in args
     explain = "--explain" in args
     quiet = "--quiet" in args
+    if as_json and explain:
+        # 修前 if/elif 顺序把 --explain 静默吞掉：调用方按 --explain 想要判定依据却只拿到 JSON
+        return usage("--json 与 --explain 不能同用（一个只出 JSON、一个只打判定依据，选一个）")
+    modes = [n for n, on in (("--json", as_json), ("--explain", explain), ("--quiet", quiet)) if on]
     if "--print-skeleton" in args:
         if [a for a in args if not a.startswith("--")]:
             return usage("--print-skeleton 不能与任务书参数同用（会让人误以为文件被检查过）")
+        if modes:
+            # 修前只打骨架、rc 0：按 `--json` 解析的调用方拿到非 JSON
+            return usage(f"--print-skeleton 不能与 {' '.join(modes)} 同用（它只打模板文本）")
         print(SKELETON, end="")
         return 0
     hours = None
