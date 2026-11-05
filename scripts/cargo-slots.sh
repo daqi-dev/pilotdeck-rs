@@ -38,8 +38,10 @@
 #     只是慢（限时内没答完，典型就是冷 du）→ 沿用旧缓存并盖 ts、**不推进 lastok**（#1556 r2：旧实现
 #     无条件连时间戳一起回写，既能把 lastok 推进到「永远不用再问闸」，也能覆盖并发方刚刷到的新值）；
 #   · lastok 超过 24 h → 退出 4（名额缓存陈旧到不可信，fail-closed，跑 --refresh-cap 恢复）；
-#   · 本机没有缓存（首次）→ 给足冷启动预算（默认 120 s）问一次闸（消费方 deadline 更短时
-#     会先超时，那属于「环境未取得判定」；预热用 `--refresh-cap`）。
+#   · 本机没有缓存（首次）→ 给足冷启动预算（默认 240 s）问一次闸。预算必须盖过闸自己的单次
+#     du 上限 180 s（cargo_gate.py 的 `timeout=180`），否则「闸本来答得出」的调用会被我们判超时
+#     → exit 4 → 消费方当硬错（#1556 r4 boundary P1）。消费方 deadline 更短（多数手写站点 180 s）
+#     时会先超时，那走的是 `TimeoutExpired`，属于「环境未取得判定」；预热用 `--refresh-cap`。
 # 判定口径（#1556 r3，r4 修正）：ps 数出的进程树 `n` 与闸的 flock 占用 `used` 都要有余量才放行。
 # 只看 n 会假放行：shim 先取槽位、后做磁盘 du，冷 du 那几十秒里 ps 只看到 python，n=0 而 used 已满。
 # 但 `used` 是**快变量**（秒级变化），只能信「刚从闸拿到的」那一份：缓存里的 used 是写缓存那一刻的
@@ -52,10 +54,10 @@
 set -uo pipefail
 CAP_TTL=${PDRS_CARGO_SLOTS_CAP_TTL:-300}
 REFRESH_TIMEOUT=${PDRS_CARGO_SLOTS_REFRESH_TIMEOUT:-5}
-BOOTSTRAP_TIMEOUT=${PDRS_CARGO_SLOTS_BOOTSTRAP_TIMEOUT:-120}
+BOOTSTRAP_TIMEOUT=${PDRS_CARGO_SLOTS_BOOTSTRAP_TIMEOUT:-240}
 # `--refresh-cap` 是人工恢复路径，没有消费方 deadline，预算要盖过闸自己的单次 du 上限 180 s
-# （cargo_gate.py 的 `timeout=180`）——跟 bootstrap 共用 120 s 会让慢盘上「恢复」也救不回来
-# （#1556 r3 boundary P1）。
+# （cargo_gate.py 的 `timeout=180`）——跟 bootstrap 共用同一个数会让慢盘上「恢复」也救不回来
+# （#1556 r3 boundary P1）；bootstrap 在 r4 也提到 240 s，两条路径同口径（#1556 r4 boundary P1）。
 REFRESH_CAP_TIMEOUT=${PDRS_CARGO_SLOTS_REFRESH_CAP_TIMEOUT:-240}
 # lastok 超过这个岁数就不再问 5 s，改用冷启动预算（#1556 r2：慢闸永远答不进 5 s 时，
 # 靠这条把「永久冻结在首次 bootstrap 值」变成「15 min 后会有一次真的刷新」）。
