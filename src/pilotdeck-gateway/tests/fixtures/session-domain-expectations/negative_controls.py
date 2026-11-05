@@ -295,6 +295,13 @@ def run_bound(out, label, name, expected_rule, source, expect_fail):
 
 
 def check_anchors(selected):
+    # #1364 P0-b: an empty selection used to print "0 anchors: ok" and return
+    # 0 -- zero anchors validated but the gate looked green. Fail closed and
+    # say why, so a deleted MUTATIONS table can never pass preflight.
+    if not selected:
+        print('EMPTY ANCHOR SELECTION: nothing to validate; '
+              'the anchor gate must not pass', file=sys.stderr)
+        return 2
     for name, source, old, _new in selected:
         count = source.read_text().count(old)
         if count != 1:

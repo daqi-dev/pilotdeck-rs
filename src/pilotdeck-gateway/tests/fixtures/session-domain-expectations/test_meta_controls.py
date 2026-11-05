@@ -238,13 +238,23 @@ class DriftTests(unittest.TestCase):
                                 '#1279 standalone-anchors: rc must be 0 without --output/--source')
             finally:
                 active = False
+        self.assertGreater(len(gate.MUTATIONS), 0,
+                           '#1364 empty-anchors: the shipped mutation table must not be empty')
         self.assertTrue(anchors.call_count == 1
                         and list(anchors.call_args.args[0]) == list(gate.MUTATIONS),
                         '#1279 standalone-anchors: the full mutation table must be preflighted, '
                         'rows compared whole (name, source, old, new) — not just the names')
+        # #1364 P0-b: set equality with an empty table and "0 anchors: ok" both
+        # used to pass, so the self-check certified zero validated anchors.
+        self.assertGreater(len(anchors.call_args.args[0]), 0,
+                           '#1364 empty-anchors: zero validated anchors must not count as ok')
         lines = output.getvalue().splitlines()
-        self.assertTrue(lines and lines[-1] == f'{len(gate.MUTATIONS)} anchors: ok',
+        self.assertTrue(lines, '#1279 standalone-anchors: the anchor report must be printed')
+        self.assertTrue(lines[-1] == f'{len(gate.MUTATIONS)} anchors: ok',
                         '#1279 standalone-anchors: the anchor report must be the final output line')
+        self.assertRegex(lines[-1], r'^[1-9][0-9]* anchors: ok$',
+                         '#1364 empty-anchors: the report must name a positive anchor count, '
+                         'never "0 anchors: ok"')
         self.assertTrue(not any(line.lstrip().startswith('{') for line in lines),
                         '#1279 standalone-anchors: standalone must not print the JSON listing')
         self.assertTrue(errors.getvalue() == '',
@@ -255,6 +265,34 @@ class DriftTests(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(gate.main() == 2,
                             '#1279 standalone-anchors: failed anchors must fail standalone too')
+
+    def test_check_anchors_rejects_empty_selection(self):
+        """#1364 P0-b: zero anchors must fail closed, never print "0 anchors: ok"."""
+        with contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(gate.check_anchors([]), 2,
+                             '#1364 empty-anchors: an empty selection must not return success')
+        self.assertTrue('EMPTY ANCHOR SELECTION' in errors.getvalue(),
+                        '#1364 empty-anchors: the failure must name its cause on stderr')
+        self.assertTrue(output.getvalue() == '',
+                        '#1364 empty-anchors: an empty selection must not report an ok count')
+
+    def test_standalone_check_anchors_rejects_empty_table(self):
+        """#1364 P0-b: the CLI preflight must fail when MUTATIONS is empty."""
+        with patch.object(sys, 'argv', ['negative_controls.py', '--check-anchors']), \
+                patch.object(gate, 'MUTATIONS', []), \
+                patch.object(gate, 'BOUND', {}), \
+                patch.object(gate, 'UNAFFECTED', {}), \
+                patch.object(gate, 'check_bindings', return_value=[]), \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertTrue(gate.main() == 2,
+                            '#1364 empty-anchors: an empty mutation table must fail the preflight')
+        self.assertTrue('EMPTY ANCHOR SELECTION' in errors.getvalue(),
+                        '#1364 empty-anchors: the preflight failure must name its cause')
+        self.assertTrue(not any(line.endswith('anchors: ok')
+                               for line in output.getvalue().splitlines()),
+                        '#1364 empty-anchors: no invocation may report an ok anchor count')
 
     def test_early_errors_have_fresh_evidence_and_continue(self):
         source = Mock()
@@ -337,6 +375,15 @@ def negative_checks():
          "                            'restored': None}\n", '',
          'test_early_errors_have_fresh_evidence_and_continue',
          '#1190 evidence: early errors must stay row-local'),
+        # #1364 P0-b: dropping the empty-selection guard restores the old
+        # "0 anchors: ok" / rc 0 behaviour, which the bound test must catch.
+        ('empty-anchors-pass', 'check_anchors',
+         "    if not selected:\n"
+         "        print('EMPTY ANCHOR SELECTION: nothing to validate; '\n"
+         "              'the anchor gate must not pass', file=sys.stderr)\n"
+         "        return 2\n", '',
+         'test_check_anchors_rejects_empty_selection',
+         '#1364 empty-anchors: an empty selection must not return success'),
     )
     DriftTests.setUpClass()
     results = []
