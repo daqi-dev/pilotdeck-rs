@@ -27,7 +27,7 @@
 
 | 选项 | 做法 | 后果 |
 |---|---|---|
-| **A 装配层周期任务（选）** | `native_process/assembly.rs` 起一个 detached `tokio` 任务：15 min 一次，`spawn_blocking` 调 `cleanup_expired`，失败 `eprintln!("[uploads] cleanup failed: …")`；`Weak` 持有 store，store 全 drop 即退出 | 与 TS 同节奏同语义（首扫在 t=15min、不阻塞关停、失败继续）。代价：多一个常驻任务（15 min 一次空转，成本可忽略）；与在途 PR #1561 同改 `assembly.rs`（不同段落，rebase 可解） |
+| **A 装配层周期任务（选）** | `native_process/assembly.rs` 起一个 detached `tokio` 任务：15 min 一次，`spawn_blocking` 调 `cleanup_expired`，失败 `eprintln!("[uploads] cleanup failed: …")`；`Weak` 持有 store，store 全 drop 后下一个 tick 退出 | 与 TS 同节奏同语义（首扫在 t=15min、失败继续、空闲 tick 不挡退出）。代价：多一个常驻任务（15 min 一次空转，成本可忽略）；与在途 PR #1561 同改 `assembly.rs`（不同段落，rebase 可解） |
 | B 惰性清理 | 每次 `upload_*` 请求或附件解析前顺带跑一次 | 无新任务、无生命周期问题；但**空闲进程永不清**（正是本 issue 的无界增长场景），且把 O(上传数) 的目录扫描塞进请求热路径。语义偏离 TS |
 | C 挂在 `TurnGateway` host 线程 runtime | 在 `start_with_cleanup` 的 build 闭包里 spawn | 生命周期天然绑 host；但清理与 turn 串行宿主耦合，host 重启会重置节奏，且清洁任务与 turn 抢同一个 current_thread runtime。语义比 A 更偏 |
 | D 不做，登记差异账本 | 写明「原生侧由 TS ui/server 负责清理」 | 零成本；但原生独立运行时目录无界增长，且与 #1321 的「原生接线」目标相反（该闸门条目本来就是把这条列为待修） |
@@ -42,6 +42,16 @@
 
 ## 复核要点（待人）
 
-1. 15 分钟常量是否按 TS 原值（`15 * 60 * 1000`）——是。
-2. detached（不 await / 不 abort）是否等价 `unref()`——是：runtime 丢弃即停，关停路径不等待。
+1. 15 分钟常量是否按 TS 原值（`15 * 60 * 1000`）——是，且有单测钉住（`cleanup_schedule_pins_the_ts_interval_and_ends_with_the_store`）。
+2. detached（不 await / 不 abort）与 `unref()` 的等价边界——**空闲 tick 不阻塞退出**；但已在 `spawn_blocking` 里跑的一轮 sweep 不可取消，默认 runtime drop 会等它跑完（TS 侧已开始的 `rm` 同理，只是 Node 的退出不等异步 I/O）。即：不挡 host 关停，但可能推迟到 sweep 结束才退出。
 3. 是否应该两边都跑（TS + 原生同跑时会出现两个清理者）——TS 与原生本就是两个进程共享磁盘格式；`cleanup_expired` 对已删条目幂等（`NotFound` 视为成功），重复清理无副作用。若后续由 TS 单侧负责，删掉本任务即可。
+
+## 已知限制（本 PR 不改，另开 P2-跟进）
+
+这几条都在 `cleanup_expired` 既有实现里，且与 TS `UploadStore.ts` 同构；本单把它们从「生产零调用者」变成「每 15 分钟执行一次」，可达性变了，语义没变：
+
+1. 单条记录读/删失败（坏 JSON、`UPLOAD_INTEGRITY_MISMATCH`、EACCES）会让整个 project 这一轮返回 Err，后续记录与本项目的租约都跳过，下一轮在同一处再失败。
+2. 没有 `metadata.json` 的孤儿 upload 目录（`create` 建完 `files/` 后崩溃）`read_at` 返回 `None`，永不被清理。
+3. `lease.json` 是 `open_new` + `write_all` 非原子写：清理者与租约获取者现在同进程同 blocking 池，读者可能读到空/半截 JSON 而删掉一个活租约（TS 跨进程时窗口更窄）。
+4. 一次 `list_in_project` 把该项目全部记录物化进 `Vec`，峰值内存与总上传数成正比。
+

@@ -839,14 +839,22 @@ impl UploadStore {
     }
 }
 
-/// TS `ui/server/routes/uploads.js:73`: `15 * 60 * 1000`.
+/// TS `ui/server/routes/uploads.js:73-76`: `15 * 60 * 1000`.
 pub const CLEANUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 /// TS `ui/server/routes/uploads.js:73-76`: detached `setInterval` that calls
 /// [`UploadStore::cleanup_expired`] and only logs failures. `Weak` follows
-/// `config::store::watch_loop`: the loop ends when the last store handle is
-/// dropped, so nothing has to cancel it on shutdown.
+/// `config::store::watch_loop`: the tick after the last store handle is
+/// dropped ends the loop, so nothing has to cancel it on shutdown. Dropping
+/// the returned handle does not wait, but a sweep already running inside
+/// `spawn_blocking` is not cancelled either: dropping the runtime still waits
+/// for that one in-flight sweep (TS's `unref` timer likewise leaves an
+/// already-started `rm` running).
 pub fn spawn_cleanup(store: &Arc<UploadStore>, interval: Duration) -> tokio::task::JoinHandle<()> {
+    // `tokio::time::interval` panics on a zero period, and a panic raised
+    // inside this detached task is invisible: the caller drops the handle and
+    // cleanup stops silently. Clamp instead so any separator yields a live loop.
+    let interval = interval.max(Duration::from_millis(1));
     let store = Arc::downgrade(store);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);

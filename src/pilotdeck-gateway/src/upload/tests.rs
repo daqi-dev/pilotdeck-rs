@@ -999,3 +999,91 @@ fn upload_mkdir_failure_matches_real_ts_caller() {
         row["observed"]["message"]
     );
 }
+
+// #1439: the native assembly is the only production caller of
+// `cleanup_expired`. These pin the schedule the TS baseline owns
+// (`ui/server/routes/uploads.js:73-76`): the literal 15 min interval, the
+// `Weak` exit that stands in for `unref()`, and "a failed sweep only logs".
+fn seed_cleanup_record(uploads: &Path, project_key: &Path, id: &str, expires_at: &str) {
+    let dir = uploads.join(id);
+    fs::create_dir_all(&dir).unwrap();
+    let mut record = JsValue::Object(JsObject::new());
+    set(&mut record, "uploadId", text(id));
+    set(&mut record, "projectKey", path_value(project_key));
+    set(&mut record, "status", text("created"));
+    set(&mut record, "expiresAt", text(expires_at));
+    let line = stringify_json(&record).unwrap().unwrap();
+    fs::write(dir.join("metadata.json"), format!("{line}\n")).unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn cleanup_schedule_pins_the_ts_interval_and_ends_with_the_store() {
+    // The TS literal is `15 * 60 * 1000`; any other value silently diverges.
+    assert_eq!(CLEANUP_INTERVAL, Duration::from_secs(15 * 60));
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    seed_cleanup_record(
+        &uploads,
+        &project,
+        "upload-gone",
+        "1970-01-01T00:00:00.000Z",
+    );
+    let handle = spawn_cleanup(&h.store, Duration::from_millis(100));
+    // Last strong handle gone before the first tick: like `unref()`, a pending
+    // schedule must neither keep the store alive nor touch the disk.
+    drop(h);
+    for _ in 0..3 {
+        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        handle.is_finished(),
+        "the detached loop ends once the store is dropped"
+    );
+    assert!(
+        uploads.join("upload-gone").exists(),
+        "a dropped store is never swept"
+    );
+}
+
+#[tokio::test]
+async fn cleanup_failure_keeps_the_schedule_alive() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let other = scratch.dir("other");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    // A `projectKey` that does not match its directory fails `read_at`
+    // (UPLOAD_INTEGRITY_MISMATCH), which fails the whole project round like a
+    // torn metadata.json does. It sorts first, so the expired record is only
+    // reached once the failure is gone.
+    seed_cleanup_record(&uploads, &other, "upload-bad", "2100-01-01T00:00:00.000Z");
+    seed_cleanup_record(
+        &uploads,
+        &project,
+        "upload-expired",
+        "1970-01-01T00:00:00.000Z",
+    );
+    h.now.store(EPOCH, Ordering::SeqCst);
+    let handle = spawn_cleanup(&h.store, Duration::from_millis(100));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        !handle.is_finished(),
+        "a failed sweep is logged and the schedule keeps ticking"
+    );
+    assert!(
+        uploads.join("upload-expired").exists(),
+        "the failed round removes nothing"
+    );
+    fs::remove_dir_all(uploads.join("upload-bad")).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while uploads.join("upload-expired").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the next tick sweeps again after the failed one");
+    handle.abort();
+}
