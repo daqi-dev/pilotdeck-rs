@@ -167,14 +167,14 @@ def build_body(a: argparse.Namespace) -> bytes:
     total, texts = 0, []
     try:
         for p in [a.prompt, *a.input]:
-            before = os.stat(p)
+            before = stat_sig(p)
             limit = MAX_INPUT_BYTES - total
             with open(p, "rb") as f:
                 data = f.read(limit + 1)
-            after = os.stat(p)
+            after = stat_sig(p)
             # 读前后身份/大小/mtime 不变、且读到的是整文件（没被上限截断时）才算完整材料
-            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or \
-                    (before.st_size <= limit and len(data) != before.st_size):
+            if before is None or after != before or \
+                    (before[2] <= limit and len(data) != before[2]):
                 raise Fail(2, f"输入 {p} 在读取期间被改动，材料可能是半截；请重跑")
             total += len(data)
             if total > MAX_INPUT_BYTES:
@@ -254,9 +254,10 @@ def extract_text(resp: dict) -> str:
     blocks = resp.get("content")
     if not isinstance(blocks, list) or not blocks:
         raise Fail(1, f"响应无 content：{json.dumps(resp, ensure_ascii=False)[:65536]}")
-    if "stop_reason" not in resp:
-        raise Fail(1, f"响应缺 stop_reason（形状异常，无法判断是否完整）：{json.dumps(resp, ensure_ascii=False)[:4096]}")
     stop = resp.get("stop_reason")
+    # 键缺失和值为 null 一样是形状异常：把「上游没说停在哪」当成完整回复会放行截断
+    if "stop_reason" not in resp or stop is None:
+        raise Fail(1, f"响应缺 stop_reason 或其值为 null（形状异常，无法判断是否完整）：{json.dumps(resp, ensure_ascii=False)[:4096]}")
     # MiniMax 有时把回复拆成多条消息，全部 text 块拼接（trial-20261103 REPORT.md §3）
     text = "".join(
         b.get("text") for b in blocks
@@ -267,7 +268,7 @@ def extract_text(resp: dict) -> str:
         thinking = any(isinstance(b, dict) and str(b.get("type", "")).endswith("thinking") for b in blocks)
         raise Fail(1, f"空回复（stop_reason={stop}，output_tokens={usage.get('output_tokens')}，"
                       f"含 thinking 块={thinking}）；若含 thinking 块，多半是思考吃光 --max-tokens，调大再试")
-    if stop not in (None, "end_turn", "stop_sequence"):
+    if stop not in ("end_turn", "stop_sequence"):
         raise Fail(1, f"回复未完成（stop_reason={stop}），不当作评审结论")
     return text
 
@@ -340,7 +341,8 @@ def check_verdict(text: str) -> str:
     seen = set()
     for tok in last[len("VERDICT:"):].split():
         k, _, v = tok.partition("=")
-        if k in VERDICT_LEVELS and v.isdigit():
+        # 只认 ASCII 数字：isdigit() 对 `²` / 全角 `０` 也为真，消费方 int() 会炸
+        if k in VERDICT_LEVELS and v.isascii() and v.isdigit():
             seen.add(k)
     if seen != set(VERDICT_LEVELS):
         return "VERDICT 缺等级计数"

@@ -8,7 +8,7 @@
 用法：
   python3 -I scripts/review-deepseek.py --prompt _tmp/<日期>-<名>/task.md [--input X.patch ...] --out _tmp/<日期>-<名>/out-deepseek.md
   --model deepseek-v4.1-flash-mb（默认）· --force 允许覆盖已存在的 --out
-退出码：0 有非空完整回复 · 1 API/网络/响应异常（不写 --out）· 2 参数/前置错误
+退出码：0 非空完整回复且满足评审契约（末行 VERDICT + 覆盖行；--no-require-verdict 可关）· 1 API/网络/响应/契约异常（不写 --out）· 2 参数/前置错误
 """
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ THINKING_BUDGET = 8192  # --thinking enabled 时的 budget_tokens（须小于 ma
 MAX_INPUT_BYTES = 2 * 1024 * 1024    # 任务书 + 材料合计；超限失败，不静默截断
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 KEY_RE = re.compile(r"[A-Za-z0-9._\-]+")
+VERDICT_LEVELS = ("P0", "P1", "P2", "P3")  # 评审契约的四级，缺一级就不算做完
 
 
 def say(msg: str, stream=None) -> None:
@@ -116,6 +117,15 @@ def is_secret(p: Path, envs: list[Path]) -> bool:
     return p.name.startswith(".env") or p.resolve().name.startswith(".env") or any(same_file(p, e) for e in envs)
 
 
+def stat_sig(p: Path):
+    """文件的身份/大小/mtime 签名；不存在返回 None。用来判断「请求期间别人建过/改过它」。"""
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
 def check_paths(a: argparse.Namespace) -> None:
     if a.timeout <= 0:
         raise Fail(2, "--timeout 须为正数")
@@ -140,20 +150,31 @@ def check_paths(a: argparse.Namespace) -> None:
         raise Fail(2, f"--out 的上级路径 {parent} 不是目录")
     if a.out.exists() and not a.force:
         raise Fail(2, f"{a.out} 已存在（保护上一轮证据；确需覆盖加 --force）")
+    # --force 也留一道闸：请求期间别人重建/改写了 --out，就不能无条件 os.replace 掉它
+    a._out_stat = stat_sig(a.out)
 
 
 def build_body(a: argparse.Namespace) -> bytes:
     total, texts = 0, []
     try:
         for p in [a.prompt, *a.input]:
+            before = stat_sig(p)
+            limit = MAX_INPUT_BYTES - total
             with open(p, "rb") as f:  # 按剩余预算有界读取，读取期间文件增长也会被拦下
-                data = f.read(MAX_INPUT_BYTES - total + 1)
+                data = f.read(limit + 1)
+            after = stat_sig(p)
+            # 读前后身份/大小/mtime 不变、且读到的是整文件（没被上限截断时）才算完整材料
+            if before is None or after != before or \
+                    (before[2] <= limit and len(data) != before[2]):
+                raise Fail(2, f"输入 {p} 在读取期间被改动，材料可能是半截；请重跑")
             total += len(data)
             if total > MAX_INPUT_BYTES:
                 raise Fail(2, f"输入合计超过上限 {MAX_INPUT_BYTES} 字节；请缩小材料或分批")
             texts.append(data.decode("utf-8"))
     except (OSError, UnicodeError) as e:
         raise Fail(2, f"读取输入失败：{type(e).__name__}") from None
+    if total == 0:
+        raise Fail(2, "输入为空（--prompt 与 --input 都是 0 字节文件）；空材料发给上游只会换来 400")
     parts = [texts[0], *(f"\n\n===== {p} =====\n{t}" for p, t in zip(a.input, texts[1:]))]
     say(f"review-deepseek: 输入 {total} 字节（{1 + len(a.input)} 个文件）")
     return json.dumps({
@@ -223,6 +244,9 @@ def extract_text(resp: dict, thinking: str = "disabled") -> str:
     if not isinstance(blocks, list) or not blocks:
         raise Fail(1, f"响应无 content：{json.dumps(resp, ensure_ascii=False)[:65536]}")
     stop = resp.get("stop_reason")
+    # 键缺失和值为 null 一样是形状异常：把「上游没说停在哪」当成完整回复会放行截断
+    if "stop_reason" not in resp or stop is None:
+        raise Fail(1, f"响应缺 stop_reason 或其值为 null（形状异常，无法判断是否完整）：{json.dumps(resp, ensure_ascii=False)[:4096]}")
     text = "".join(b.get("text") for b in blocks
                    if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str))
     if not text.strip():
@@ -232,13 +256,14 @@ def extract_text(resp: dict, thinking: str = "disabled") -> str:
         if has_thinking and stop == "max_tokens":
             raise Fail(1, head + "：思考占满输出额度，调大 --max-tokens" + ("，或用 --thinking disabled" if thinking == "enabled" else ""))
         raise Fail(1, head)
-    if stop not in (None, "end_turn", "stop_sequence"):
+    if stop not in ("end_turn", "stop_sequence"):
         raise Fail(1, f"回复未完成（stop_reason={stop}），不当作评审结论")
     return text
 
 
-def write_atomic(out: Path, text: str, force: bool) -> None:
+def write_atomic(out: Path, text: str, force: bool, expected=None) -> None:
     """完整写进同目录随机临时文件再发布；不带 --force 时用 link 发布，目标已存在即失败（不覆盖并发写入者）。
+    --force 时比对请求前后的 --out 签名：请求期间被别人建/改过就拒绝覆盖。
     发布成功后临时文件清理失败只警告，不改退出码；发布失败时保留原始错误。"""
     tmp = None
     try:
@@ -247,7 +272,12 @@ def write_atomic(out: Path, text: str, force: bool) -> None:
         tmp = Path(name)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
+            f.flush()
+            os.fsync(f.fileno())  # 掉电后不留「文件在、内容空」
         if force:
+            # 请求期间别人建/改过 --out 就不覆盖：两跑同 --out --force 时后跑者不得静默销毁先跑者证据
+            if stat_sig(out) != expected:
+                raise Fail(1, f"{out} 在请求期间被别人创建或改动，拒绝 --force 覆盖；本次回复不落盘")
             os.replace(tmp, out)
             tmp = None
             return
@@ -289,6 +319,31 @@ def redact(msg: str, key: str) -> str:
     return (msg.replace(key, "***") if key else msg)[:500]
 
 
+def check_verdict(text: str) -> str:
+    """评审契约：末个非空行 `VERDICT: P0=a P1=b P2=c P3=d` 且正文有 `覆盖:` 行。返回空串=通过，否则为原因。
+
+    与 scripts/run-review-roles.py 的 validate_final、scripts/review-minimax.py 同义；exit 0 必须等于
+    「评审真的做完了」，否则空文本 / 前言 / 截断 / 复读都会被调用方当成 PASS（state/memory/20261016-review-bounds.md）。
+    """
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return "回复为空"
+    last = lines[-1]
+    if not last.startswith("VERDICT:"):
+        return "末行不是 VERDICT"
+    seen = set()
+    for tok in last[len("VERDICT:"):].split():
+        k, _, v = tok.partition("=")
+        # 只认 ASCII 数字：isdigit() 对 `²` / 全角 `０` 也为真，消费方 int() 会炸
+        if k in VERDICT_LEVELS and v.isascii() and v.isdigit():
+            seen.add(k)
+    if seen != set(VERDICT_LEVELS):
+        return "VERDICT 缺等级计数"
+    if not any(ln.startswith("覆盖:") or ln.startswith("覆盖：") for ln in lines):
+        return "缺『覆盖:』行（无法核角色覆盖）"
+    return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--prompt", required=True, type=Path, help="评审任务书（提示词文件）")
@@ -303,6 +358,8 @@ def main() -> int:
                     help="默认 disabled：2026-10-17 实测 37K token 输入的评审，开思考时 16K/65K 输出额度全被 reasoning 吃光、正文为空"
                          "（_tmp/20261017-deepseek-diag/），关思考 19 s 给出完整结论。enabled 时 budget_tokens 取 8192 与 max_tokens-1 的较小者")
     ap.add_argument("--timeout", type=int, default=1800, help="整个请求的墙钟总时限（也是单次 socket 超时），秒")
+    ap.add_argument("--no-require-verdict", dest="require_verdict", action="store_false",
+                    help="关闭评审契约校验（仅连通性冒烟等自由文本场景；默认要求 VERDICT + 覆盖行）")
     ap.add_argument("--api", help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()
     if a.channel not in CHANNELS:
@@ -326,8 +383,16 @@ def main() -> int:
         text = extract_text(resp, a.thinking)
         if key in text:
             raise Fail(1, "回复中回显了密钥，拒绝落盘")
+        got_model = resp.get("model")
+        if got_model != a.model:  # 防上游静默换模型：换了模型这条回复就不算本谱系的评审结论
+            raise Fail(1, f"响应模型 {got_model!r} 与请求 {a.model} 不一致，结论不计")
+        if a.require_verdict:
+            why = check_verdict(text)
+            if why:
+                raise Fail(1, f"回复未按评审契约完成（{why}），按未完成处理、不写 {a.out}；"
+                              f"确属自由文本场景加 --no-require-verdict")
         line = success_line(resp, a.out, key)
-        write_atomic(a.out, text, a.force)
+        write_atomic(a.out, text, a.force, getattr(a, "_out_stat", None))
     except Fail as e:
         say(f"review-deepseek: {redact(str(e), key)}")
         return e.code
