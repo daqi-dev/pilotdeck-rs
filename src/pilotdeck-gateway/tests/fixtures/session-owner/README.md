@@ -91,6 +91,12 @@ serial ticket 的释放写删除（#1365 fix-r1 `ticket-release-write-removed`�
 通过，若转为 KILLED 则报 INVALID 要求转回判杀集合）。一行变异可绑定多个测试
 （每测试一个 `Case`），marker list 走 `negative_suite.classify` 的 alternatives
 语义——绑定测试在任一列名断言失败即 KILLED，不把多个 marker 拆成多个 Case；
+多 `Case` 的行的证据按 `<变异>-<测试短名>-{positive,negative,restored}.log` 分文件
+落盘（单 `Case` 行沿用 `<变异>-…` 的历史名），控制台结论用同一 stem，所以按
+`Case` 计的 KILLED 数可以逐条追到测试名。`EQUIVALENT` 与 `MUTATIONS` 之间有交叉
+校验：等价名必须在变异表内、绑定的测试必须是该行绑定的测试、且不得同时被判为必杀
+（漂移即 `REGISTRY DRIFT` 拒绝运行）；等价侧若守卫失败（源码被判改动）则发布整份
+`INVALID` 的 `equivalent-summary.json`，超时同样把原始输出与异常写进 `{label}.log`；
 带第六元素的行是成对变异（主替换 + 附加 `(before, after)` 位点，经 `Case.scope`
 进本脚本 `mutate`，锚点由 `--check-anchors` 一并核数）。TS 依据为真实路由探针
 `_tmp/20261026-issue-1245/probe/close-during-shutdown.out`、

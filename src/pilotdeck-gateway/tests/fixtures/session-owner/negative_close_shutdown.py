@@ -52,11 +52,12 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed, run_cases
+from negative_suite import Case, classify, passed, run_cases, short_test
 
 root = Path(__file__).resolve().parents[5]
 assert os.environ.get("CARGO_TARGET_DIR"), "caller must set CARGO_TARGET_DIR"
@@ -450,6 +451,43 @@ def must_kill(names):
     return [name for name in names if name not in EQUIVALENT]
 
 
+def check_registries():
+    """#1365 fix-r3: the two registries must classify a row the same way.
+
+    ``MUTATIONS`` is the single source of a row's anchor, bound tests and
+    markers; ``EQUIVALENT`` is the runtime certificate that the row cannot be
+    killed. If the name or the bound test drifts apart, the certificate
+    measures a test that no longer belongs to the row — or nothing at all —
+    and still reports EQUIVALENT, so the reverse check silently expires. A
+    registered equivalent must also never be selected as must-kill: the two
+    tables may agree about a name, but never disagree about the verdict.
+    """
+    problems = []
+    for name, (test, _reason) in EQUIVALENT.items():
+        row = MUTATIONS.get(name)
+        if row is None:
+            problems.append(f'{name}: registered equivalent has no MUTATIONS row')
+            continue
+        if not row[3]:
+            problems.append(f'{name}: equivalent row binds no test')
+        elif test not in row[3]:
+            problems.append(f'{name}: EQUIVALENT binds {test!r}, '
+                            f'MUTATIONS binds {list(row[3])!r}')
+        if not row[4]:
+            problems.append(f'{name}: equivalent row lists no marker')
+    overlap = sorted(set(EQUIVALENT).intersection(must_kill(list(MUTATIONS))))
+    if overlap:
+        problems.append(f'{overlap}: equivalent rows also selected as must-kill')
+    if problems:
+        for problem in problems:
+            print(f'REGISTRY DRIFT {problem}')
+        # RuntimeError, not SystemExit: main() turns an Exception into rc 1
+        # (refusal), while rc 2 is reserved for an unverified restore. The
+        # registries are checked before any source is touched, so nothing here
+        # needs the restore-failure channel.
+        raise RuntimeError('REGISTRY DRIFT: refusing to run')
+
+
 def mutate(original, scope, replacements):
     for old, new in list(replacements) + list(scope or []):
         count = original.count(old)
@@ -477,74 +515,122 @@ def cases_for(names):
 def run_equivalent_cases(selected, out):
     """Re-measure every registered equivalent row; a stale claim fails the run.
 
-    An equivalent mutation must compile and leave its bound test green. If the
-    test starts failing, the witness it lacked now exists: report INVALID so
-    the row is promoted back into the must-kill set instead of silently
-    rotting in the registry.
+    An equivalent mutation must compile and leave every test its row binds
+    green. If any bound test starts failing, the witness it lacked now exists:
+    report INVALID so the row is promoted back into the must-kill set instead
+    of silently rotting in the registry.
     """
+    check_registries()
     names = [name for name in selected if name in EQUIVALENT]
     if not names:
         return 0
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
+    results = []
 
     def run(label, test):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-        (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
-        result = run_owned(command + [test, '--', '--exact', '--include-ignored'],
-                           cwd=root, env=os.environ.copy(), timeout=1800)
-        (out / f'{label}.log').write_text(result.stdout + result.stderr)
-        return result
+        # #1365 fix-r3: a mutant that hangs must still leave its raw output on
+        # disk. The shared executor's run() appends the timeout payload for the
+        # same reason; without it the evidence directory keeps one printed line
+        # and the next reader cannot see that the mutant parked the close.
+        try:
+            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+            (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
+            result = run_owned(command + [test, '--', '--exact', '--include-ignored'],
+                               cwd=root, env=os.environ.copy(), timeout=1800)
+            (out / f'{label}.log').write_text(result.stdout + result.stderr)
+            return result
+        except Exception as error:
+            raw = ''
+            if isinstance(error, subprocess.TimeoutExpired):
+                for value in (error.stdout, error.stderr):
+                    raw += (value.decode(errors='replace')
+                            if isinstance(value, bytes) else value or '')
+            with (out / f'{label}.log').open('a') as log:
+                log.write(raw + f'\n{type(error).__name__}: {error}\n')
+            raise
 
-    results = []
+    def publish():
+        (out / 'equivalent-summary.json').write_text(json.dumps(results, indent=2) + '\n')
+
+    def record(case, label, status, detail):
+        results.append({'mutation': case.mutation, 'test': case.test, 'status': status,
+                        'reason': detail, 'restored': status == 'EQUIVALENT'})
+        print(f'{label}: {status}: {detail}', flush=True)
+
+    def bound_cases(name):
+        """Every test the row binds, each with the label its evidence uses."""
+        row = MUTATIONS[name]
+        tests = list(dict.fromkeys(row[3]))
+        labels = {test: (name if len(tests) == 1 else f'{name}-{short_test(test)}')
+                  for test in tests}
+        return [(Case(name, row[0], row[1], row[2], test, row[4], extra_pairs(name)),
+                 test, labels[test]) for test in tests]
+
     paths = list(dict.fromkeys(MUTATIONS[name][0] for name in names))
-    with mutating_sources(root, paths) as pristine:
+    try:
+        with mutating_sources(root, paths) as pristine:
+            for name in names:
+                reason = EQUIVALENT[name][1]
+                for case, test, label in bound_cases(name):
+                    status, detail = 'INVALID', ''
+                    try:
+                        if not passed(run(f'{label}-positive', test), test):
+                            detail = 'positive control did not pass the bound test'
+                        else:
+                            case.path.write_text(mutate(pristine[case.path].decode(),
+                                                        case.scope,
+                                                        [(case.old, case.new)]))
+                            measured, measured_reason = classify(
+                                run(f'{label}-equivalent', test), case)
+                            if measured == 'SURVIVED':
+                                status = 'EQUIVALENT'
+                                detail = f'registered equivalent survives: {reason}'
+                            elif measured == 'KILLED':
+                                detail = ('registered equivalent is now killed by its bound '
+                                          'test; promote it to the must-kill set: '
+                                          + measured_reason)
+                            else:
+                                detail = f'equivalent row not measurable: {measured_reason}'
+                    except Exception as error:
+                        status, detail = 'INVALID', f'{type(error).__name__}: {error}'
+                    finally:
+                        # Restore before the restored check, also on timeout or bad anchors.
+                        case.path.write_bytes(pristine[case.path])
+                        if case.path.read_bytes() != pristine[case.path]:
+                            raise RuntimeError(f'byte restoration failed: {case.path}')
+                    if status == 'EQUIVALENT':
+                        try:
+                            if not passed(run(f'{label}-restored', test), test):
+                                status = 'INVALID'
+                                detail += '; restored bound test did not pass'
+                        except Exception as error:
+                            status = 'INVALID'
+                            detail += f'; restored: {type(error).__name__}: {error}'
+                    record(case, label, status, detail)
+    except BaseException as error:
+        # #1365 fix-r3: a guard failure inside the equivalent window must never
+        # leave the must-kill phase's all-green summary.json as the only file on
+        # disk. Void every recorded row, account for the bound tests that never
+        # ran, publish the INVALID equivalent summary, then let the caller fail
+        # closed. A missing summary is fail-closed; a stale all-EQUIVALENT one
+        # next to a non-zero exit is not.
+        guard = f'source guard: {type(error).__name__}: {error}'
+        for row in results:
+            row.update(status='INVALID', reason=row['reason'] + '; ' + guard,
+                       restored=False)
+        done = {(row['mutation'], row['test']) for row in results}
         for name in names:
-            test, reason = EQUIVALENT[name]
-            source, old, new = MUTATIONS[name][:3]
-            case = Case(name, source, old, new, test, MUTATIONS[name][4],
-                        extra_pairs(name))
-            status, detail = 'INVALID', ''
-            try:
-                if not passed(run(f'{name}-positive', test), test):
-                    detail = 'positive control did not pass the bound test'
-                else:
-                    source.write_text(mutate(pristine[source].decode(), case.scope,
-                                             [(old, new)]))
-                    measured, measured_reason = classify(
-                        run(f'{name}-equivalent', test), case)
-                    if measured == 'SURVIVED':
-                        status = 'EQUIVALENT'
-                        detail = f'registered equivalent survives: {reason}'
-                    elif measured == 'KILLED':
-                        detail = ('registered equivalent is now killed by its bound '
-                                  'test; promote it to the must-kill set: '
-                                  + measured_reason)
-                    else:
-                        detail = f'equivalent row not measurable: {measured_reason}'
-            except Exception as error:
-                status, detail = 'INVALID', f'{type(error).__name__}: {error}'
-            finally:
-                # Restore before the restored check, also on timeout or bad anchors.
-                source.write_bytes(pristine[source])
-                if source.read_bytes() != pristine[source]:
-                    raise RuntimeError(f'byte restoration failed: {source}')
-            if status == 'EQUIVALENT':
-                try:
-                    if not passed(run(f'{name}-restored', test), test):
-                        status = 'INVALID'
-                        detail += '; restored bound test did not pass'
-                except Exception as error:
-                    status = 'INVALID'
-                    detail += f'; restored: {type(error).__name__}: {error}'
-            results.append({'mutation': name, 'test': test, 'status': status,
-                            'reason': detail, 'restored': status == 'EQUIVALENT'})
-            print(f'{name}: {status}: {detail}', flush=True)
-    (out / 'equivalent-summary.json').write_text(json.dumps(results, indent=2) + '\n')
+            for case, test, label in bound_cases(name):
+                if (case.mutation, test) not in done:
+                    record(case, label, 'INVALID', guard)
+        publish()
+        raise
+    publish()
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('EQUIVALENT', 'INVALID')}
     print('equivalent summary: ' + ', '.join(f'{key}={value}' for key, value in counts.items()))
-    return int(any(row['status'] != 'EQUIVALENT' for row in results))
+    return int(not results or any(row['status'] != 'EQUIVALENT' for row in results))
 
 
 def check_anchors(selected):
@@ -609,6 +695,9 @@ def main():
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--check-anchors", action="store_true")
     args = parser.parse_args()
+    # #1365 fix-r3: refuse before any source is touched. A drifted registry
+    # would otherwise be measured against a test the row no longer binds.
+    check_registries()
     selected = ["close-else-awaits-nothing"] if args.sample else (args.names or list(MUTATIONS))
     if args.check_anchors:
         check_anchors(selected)
