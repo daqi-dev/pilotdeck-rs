@@ -695,6 +695,22 @@ case("两个不同的 xml 不是共写（正控）", 0,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`config/a.xml`")
      .replace("`src/native_http.rs`", "`config/b.xml`"))
 
+# ---- fix-r19：gate20（GLM boundary P0×1 P2×4；MiniMax boundary P0×1 P1×1 P2×2）------------------
+# 行内代码的反引号修前跨段落配对：正文里一个笔误的未闭合反引号会和后面段落的反引号配成一对，
+# 把中间的顶格 scope 整段抹成空格 → 既解析不到也报不出错，退到 `.rs` 回退（0 个）判小包。
+case("杂散未闭合反引号不许吞掉后面段落里的真 scope（P0 假 PASS）", 1,
+     "# t\n\n一些正文，笔误：按`下面写法统一\n\n<!-- pdrs-scope: files=16 est_min=300 -->\n\n"
+     "## 要做\n1. 改 `src/a.py`\n", must=["分段交付"])
+case("同一段落里的行内代码仍屏蔽 scope（正控）", 0,
+     "# t\n\n正文 `示例 <!-- pdrs-scope: files=2 est_min=30 --> 这样` 结束\n\n## 要做\n1. 改 `src/a.rs`\n")
+# 首条数据行全 `-`（没填的段行）被当成第二条分隔行整行丢掉：占位符 / 空值 / 估时全不校验
+case("第一条数据行全是 - 也要查估时（P0 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(TABLE.splitlines()[2],
+                                     "| - | - | - | - | - |"), must=["读不出"])
+case("第一条数据行全是 - 且带占位符也要报（P0 同类）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(TABLE.splitlines()[2],
+                                     "| - | - | - | <待填> | - |"), must=["占位符"])
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -728,6 +744,12 @@ PARSE_EST = [
     ("60 到 80 分钟", "", 80.0),
     ("60-80 分钟", "", 80.0),
     ("1.5 小时", "", 90.0),
+    ("80 min（外加 20 min 联调）", "", 100.0),   # 外加是加法，不是「包含说明」（MiniMax P1）
+    ("80 min 外加 20 min", "", 100.0),
+    ("60 min 或 90 min", "", 90.0),               # 或 / 、是二选一 / 列表，取 max 不求和（GLM P2）
+    ("60 min、90 min", "", 90.0),
+    ("80 min，涉及 2 个文件", "", 80.0),          # 句读后的「数字 + 计数量词」不是估时（GLM P2）
+    ("80 min；另含缓冲说明 3 项", "", 80.0),
     ("2", "h", 120.0),
     ("2", "d", None),
     ("2", None, None),
@@ -748,6 +770,10 @@ CLI_CASES = [
          ["x", "--recent", "24", "--recent", "24"], 3),
         ("--root 写了两次是用法错误（last-wins 会漏扫）",
          ["x", "--recent", "24", "--root", ".", "--root", "."], 3),
+        ("--json 与 --explain 同用是用法错误（explain 被静默吞掉）",
+         ["x", "--json", "--explain", "task.md"], 3),
+        ("--print-skeleton 与 --json 同用是用法错误（输出不是 JSON）",
+         ["x", "--print-skeleton", "--json"], 3),
 ]
 
 
