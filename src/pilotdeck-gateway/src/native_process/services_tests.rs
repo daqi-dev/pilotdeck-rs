@@ -247,6 +247,62 @@ fn lease_symlink_escape_softens_to_not_found() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn symlinked_project_spelling_keeps_lease_attachments() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1618 r1: `projectKey` keeps Node's path.resolve identity (symlinks
+    // included), so the lease paths the client echoes carry the project's
+    // logical spelling. The lexical root has to use that same spelling —
+    // comparing against a canonicalized root dropped every lease attachment of
+    // a symlinked project into the not-found branch.
+    let alias = scratch.0.with_file_name(format!(
+        "{}-alias",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1321")
+    ));
+    symlink(&scratch.0, &alias).expect("#1618 project alias symlink");
+    let path = alias
+        .join(".tmp")
+        .join("chat-upload-leases")
+        .join("u1")
+        .join("a.png");
+    std::fs::write(&path, [1u8, 2, 3, 4]).expect("#1618 alias lease file");
+    let logical = path.to_str().expect("#1618 lease UTF-8").to_owned();
+    let result = compose_attachment_turn(
+        &alias,
+        &message("hello"),
+        &[attachment(&logical, "image/png")],
+    )
+    .expect("#1618 a symlinked project spelling must still compose");
+    std::fs::remove_file(&alias).ok();
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| block.get("type") == Some(&"image".into())),
+        "#1618 a lease attachment under a symlinked project must inline, got: {}",
+        diagnostics_block(&blocks)
+    );
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed == vec![JsValue::from(logical.as_str())],
+        "#1618 a lease attachment under a symlinked project must be registered"
+    );
+    negative_assert!(
+        !diagnostics_block(&blocks).contains("not found"),
+        "#1618 an in-lease attachment must not get a not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+}
+
 #[test]
 fn lease_parent_dotdot_softens_to_not_found() {
     let scratch = Scratch::new();
