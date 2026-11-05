@@ -11,6 +11,7 @@ use crate::channel::protocol::{
     ChannelAdapter, ChannelError, ChannelGateway, ChannelKey, ChannelStartDeps, ChannelTurn,
     TurnEvent, TurnEvents,
 };
+use crate::user_dialog::NODE_408_RESPONSE;
 use crate::{negative_assert, negative_assert_eq, test_baseline};
 use serde_json::{Value, json};
 use std::{
@@ -36,14 +37,35 @@ const POLLS: usize = 200;
 /// The generator's `mapperFixedUuid` option.
 const FIXED_UUID: &str = "00000000-0000-4000-8000-000000000000";
 /// The 408 the body-read deadline writes before closing the connection.
-/// Node v22.22.0's raw `requestTimeoutResponse` is 51 bytes with no framing
-/// header (probe `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`);
-/// hyper's public API frames an unknown-length HTTP/1.1 body as chunked, so
-/// the wire adds `Transfer-Encoding: chunked` + `0\r\n\r\n` — the
-/// A8.4-NATIVE-HTTP-001 presentation-diff class, pinned here until a ledger
-/// entry registers it.
+/// Node v22.22.0's raw `requestTimeoutResponse` is 51 unframed bytes
+/// ([`NODE_408_RESPONSE`], probe
+/// `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`); hyper's public
+/// API frames an unknown-length HTTP/1.1 body as chunked, so the wire adds
+/// `Transfer-Encoding: chunked` + `0\r\n\r\n`. The test
+/// `webhook_408_is_node_bytes_plus_hyper_framing` below pins exactly that
+/// relationship; the entry registering the framing is
+/// `specs/gateway-parity/diffs/A8.3-CH-WEBHOOK-001.md` (draft, not an
+/// accepted diff).
 const WEBHOOK_REQUEST_TIMEOUT_RESPONSE: &[u8] = b"HTTP/1.1 408 Request Timeout\r\nConnection: \
      close\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+
+/// hyper's chunked framing of an empty, unknown-length body.
+const HYPER_CHUNKED_EMPTY_FRAMING: &[u8] = b"Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+
+/// The pinned 408 bytes are Node's raw 51 bytes minus their terminating CRLF
+/// plus hyper's chunked framing: the body-read assertion pins a presentation
+/// difference from the baseline, not "the Node 408".
+#[test]
+fn webhook_408_is_node_bytes_plus_hyper_framing() {
+    let node = NODE_408_RESPONSE;
+    let mut expected = node[..node.len() - 2].to_vec();
+    expected.extend_from_slice(HYPER_CHUNKED_EMPTY_FRAMING);
+    negative_assert_eq!(
+        WEBHOOK_REQUEST_TIMEOUT_RESPONSE,
+        expected.as_slice(),
+        "#1334 hyper's 408 is Node's unframed 408 plus the chunked framing"
+    );
+}
 
 fn oracle() -> Value {
     test_baseline::oracle(ORACLE);
@@ -1011,7 +1033,7 @@ async fn shutdown_with_partial_body_finishes_at_request_timeout() {
     negative_assert_eq!(
         response.as_slice(),
         WEBHOOK_REQUEST_TIMEOUT_RESPONSE,
-        "#1334 the body requestTimeout answers the Node 408 and closes"
+        "#1334 the body requestTimeout answers Node's 408 in hyper's chunked framing and closes"
     );
     timeout(DEADLINE, stopping)
         .await
