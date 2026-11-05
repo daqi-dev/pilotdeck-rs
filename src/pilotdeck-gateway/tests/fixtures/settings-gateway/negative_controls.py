@@ -51,10 +51,25 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import baseline_passed
+from negative_selection import baseline_passed, select, verdict_exit
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
+
+
+def atomic_write(path, text):
+    """#1538 fix-r1 (concurrency P2): publish evidence through tmp + rename.
+
+    `write_text` truncates in place and this loop rewrites `summary.json` after
+    every mutant; a concurrent reader (host gate, another agent polling the
+    evidence directory) could parse a half-written file or a subset that looks
+    complete. `specs/negative-controls/README.md` asks for tmp + rename.
+    """
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(text, encoding='utf-8')
+    temporary.replace(path)
+
+
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/settings'
@@ -88,6 +103,15 @@ mutations = [
      'Some(value) if truthy(value) => Some(JsString::from_utf16(',
      'Some(value) => Some(JsString::from_utf16(', EXTENSIONS_TRUTHINESS),
 ]
+# #1538 fix-r1 (boundary P0): an emptied table used to run zero mutants, print
+# `0/0 killed` and exit 0 — a ruler that passes without measuring anything.
+# `mutating_sources([])` accepts an empty path set, so nothing downstream
+# caught it either. The count is captured here, before `[name ...]` narrows it,
+# so the final "N/M killed" always names the registered denominator.
+if not mutations:
+    sys.exit('#1538 no mutations defined: the negative control would pass '
+             'without testing anything')
+REGISTERED_TOTAL = len(mutations)
 # A dedicated exit code for "everything was killed, but the baseline was not
 # HEAD, so this run is not host evidence" — distinct from 1 (a mutant not
 # killed / INVALID) so automation and humans cannot mistake a green non-HEAD
@@ -105,12 +129,18 @@ MARKERS = {
 }
 selected = sys.argv[2:]
 if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    # #1538: an explicit check, not `assert`: under `python3 -O` an assert is
-    # stripped entirely and a misspelt name silently selected nothing, so the
-    # loop below ran zero mutants, printed `0/0 killed` and exited 0.
-    if len(mutations) != len(selected):
-        sys.exit(f'#1318 unknown mutation name: {selected}')
+    # #1538: `select` raises on an unknown name instead of `assert`-ing: under
+    # `python3 -O` an assert is stripped, a misspelt name silently selected
+    # nothing, and the loop below ran zero mutants, printed `0/0 killed` and
+    # exited 0. It also reports the names that are actually unknown rather than
+    # echoing the whole selection, and folds a repeated name instead of calling
+    # it unknown. Exit code 2 keeps "never ran" distinguishable from "ran and
+    # did not kill" (1) for the host gate.
+    try:
+        mutations = select(mutations, selected, always=())
+    except ValueError as error:
+        print(f'#1538 {error}', file=sys.stderr)
+        sys.exit(2)
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -220,23 +250,42 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
             path.write_bytes(original)
             # #1538: explicit, so `-O` cannot strip the byte-for-byte restore
             # proof and let a dirty tree exit 0.
-            if hashlib.sha256(path.read_bytes()).hexdigest() != before:
-                raise RuntimeError(f'#1318 restore failed: {filename}')
-            (out / 'summary.json').write_text(
-                json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-            (out / 'baseline.json').write_text(json.dumps(
+            restored = hashlib.sha256(path.read_bytes()).hexdigest() == before
+            if not restored:
+                # #1538 fix-r1 (boundary P1): record the broken round *before*
+                # raising. Raising first skipped both evidence writes, so the
+                # files ended with the previous mutant and read as all-green.
+                row = dict(name=name, test=test, status='INVALID',
+                           reason='restore failed: source bytes differ',
+                           sourceSha256=before,
+                           baseline=baseline_sha,
+                           baselineSource=baseline_source,
+                           hostEvidence=baseline_source == 'HEAD')
+                if summary and summary[-1]['name'] == name:
+                    summary[-1] = row
+                else:
+                    summary.append(row)
+                failures.append(name)
+            atomic_write(out / 'summary.json',
+                         json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+            atomic_write(out / 'baseline.json', json.dumps(
                 {'baseline': baseline_sha, 'baselineSource': baseline_source,
                  'nonHeadBaseline': baseline_source != 'HEAD',
                  'hostEvidence': baseline_source == 'HEAD',
+                 'registeredTotal': REGISTERED_TOTAL,
                  'mutations': [row['name'] for row in summary]},
                 ensure_ascii=False, indent=2) + '\n')
+            if not restored:
+                raise RuntimeError(f'#1318 restore failed: {filename}')
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
-if failures:
+# `verdict_exit` is the shared rule (a zero-row run is a zero denominator, never
+# a pass), so this script cannot drift back to `if failures:` alone.
+if verdict_exit(summary, key='status') != 0:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
     sys.exit(1)
-print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte '
+print(f'{len(summary)}/{REGISTERED_TOTAL} killed; every source restored byte-for-byte '
       f'against baseline {baseline_sha} ({baseline_source})', flush=True)
 if baseline_source != 'HEAD':
     # Even a fully-killed run against a non-HEAD baseline is not host
