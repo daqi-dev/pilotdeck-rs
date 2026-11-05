@@ -986,8 +986,78 @@ def _calls_aggregate(node):
                for n in ast.walk(node))
 
 
+# #892 r1: a hard-coded status literal may only be *fail-closed*.  ``'PASS'`` /
+# ``'PASS_WITH_SKIPS'`` written straight into a summary slot claim a clean run
+# without going through the shared map, which is exactly the bypass this check
+# exists to stop (MiniMax boundary P0-2 / DeepSeek boundary P1-2).
+_FAIL_CLOSED_LITERALS = frozenset({'BLOCKED', 'FAIL', 'NOT_RUN'})
+
+
 def _relays_status(node):
-    return isinstance(node, (ast.Constant, ast.Name, ast.Attribute, ast.Subscript))
+    """A slot that carries an already-aggregated value.
+
+    Names / attributes / subscripts relay whatever the shared call produced;
+    literals are accepted only when they are fail-closed.
+    """
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str) and node.value in _FAIL_CLOSED_LITERALS
+    return isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
+
+
+def _own_nodes(function):
+    """Nodes of *function* itself, without descending into nested definitions.
+
+    A nested ``def`` is its own aggregation point and the enumeration reports
+    it under its own name; charging its return paths to the enclosing
+    registered point would misattribute the failure (MiniMax boundary P2-4).
+    """
+    stack = [function]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.Lambda, ast.ClassDef)):
+                continue
+            stack.append(child)
+
+
+def _returned_names(value):
+    if isinstance(value, ast.Name):
+        return [value.id]
+    if isinstance(value, ast.Tuple):
+        return [element.id for element in value.elts if isinstance(element, ast.Name)]
+    return []
+
+
+def _bound_summary_dicts(function):
+    """Summary dicts assigned to a name inside *function* (#892 r1).
+
+    The dominant shape in the apparatus is ``report = {'status': ...}`` followed
+    by ``return report``; without this the return path was not inspected at all
+    (both reviewers' top finding).
+    """
+    bound = {}
+    for node in _own_nodes(function):
+        if not isinstance(node, ast.Assign):
+            continue
+        dicts = _returned_summary_dicts(node.value)
+        if not dicts:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                bound.setdefault(target.id, []).extend(dicts)
+    return bound
+
+
+def _optimistic_exit(node):
+    """A bare ``return 0`` claims a clean run without the shared map (#892 r1).
+
+    Fail-closed literals (``return 2`` for BLOCKED, ``return 3`` for NOT_RUN)
+    stay legal; only the optimistic zero is a bypass.
+    """
+    return (isinstance(node, ast.Constant) and isinstance(node.value, int)
+            and not isinstance(node.value, bool) and node.value == 0)
 
 
 def _exit_code_shaped(node):
@@ -1015,11 +1085,16 @@ def unshared_status_slots(function):
     Returns a list of one-line violation descriptions.
     """
     violations = []
-    for node in ast.walk(function):
+    bound = _bound_summary_dicts(function)
+    for node in _own_nodes(function):
         if not (isinstance(node, ast.Return) and node.value is not None):
             continue
         value = node.value
         dicts = _returned_summary_dicts(value)
+        # ``report = {...}; return report`` is the dominant shape here; resolve
+        # the returned name back to the dict built inside this function.
+        for name in _returned_names(value):
+            dicts.extend(bound.get(name, []))
         is_pair = bool(dicts) or _status_literals(value) or _has_passed_aggregate(value)
         for summary in dicts:
             slot = _status_slot(summary)
@@ -1033,7 +1108,7 @@ def unshared_status_slots(function):
                 if not (_calls_aggregate(element) or isinstance(element, ast.Dict)):
                     violations.append(f'inline status/exit {ast.unparse(element)[:60]} '
                                       f'at line {node.lineno}')
-            elif (is_pair and _exit_code_shaped(element)
+            elif ((is_pair or _optimistic_exit(element)) and _exit_code_shaped(element)
                     and not _calls_aggregate(element)):
                 violations.append(f'inline exit code {ast.unparse(element)[:60]} '
                                   f'at line {node.lineno}')
@@ -1099,7 +1174,8 @@ def aggregation_audit():
     The detector is self-tested with an inline summary (must be flagged) and a
     shared call (must be recognized), so deleting a call cannot pass silently.
     #892 adds a directly returned summary dict, a branch that computes an exit
-    code around the shared call, and a clean shared pair to the self-tests, and
+    code around the shared call, a clean shared pair, a summary dict returned
+    through a local name, and a bare optimistic exit code to the self-tests, and
     requires every registered point's return paths to compute batch status and
     exit codes only through the shared function.
     """
@@ -1185,7 +1261,14 @@ def aggregation_audit():
         "    if report.get('special'):\n"
         "        return {'status': 'BLOCKED'}, common.aggregate_status('BLOCKED')[1]\n"
         "    status, code = common.aggregate_status(report['status'])\n"
-        "    return {'status': status}, code\n")
+        "    return {'status': status}, code\n"
+        "def _assigned_summary(rows):\n"
+        "    report = {'status': 'PASS', 'rows': rows}\n"
+        "    return report\n"
+        "def _bare_zero(report):\n"
+        "    if report.get('special'):\n"
+        "        return 0\n"
+        "    return common.aggregate_status(report['status'])[1]\n")
     probe892_found = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -1199,6 +1282,14 @@ def aggregation_audit():
     if not pair or unshared_status_slots(pair[1]) or not calls_shared(pair[1]):
         failures.append('#892 aggregation-audit: detector self-test rejected a '
                         'shared status/exit pair')
+    assigned = probe892_found.get(('<self-test-892>', '_assigned_summary'))
+    if not assigned or not unshared_status_slots(assigned[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not follow a '
+                        'summary dict returned through a local name')
+    bare = probe892_found.get(('<self-test-892>', '_bare_zero'))
+    if not bare or not unshared_status_slots(bare[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'bare optimistic exit code')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,

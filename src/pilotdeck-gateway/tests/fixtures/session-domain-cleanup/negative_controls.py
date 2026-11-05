@@ -181,6 +181,54 @@ def branch_exit_inline(rows):
     return True, 'aggregation-audit: main inline exit branch flagged, passed=False'
 
 
+def summary_name_bypass(rows):
+    """#892 r1: a summary dict built into a local name and returned by name must
+    still have its status slot checked (the dominant real-code shape)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: '
+            'scripts/gateway-parity/controls/session_domain.py:run_all ')
+            and "found status slot 'PASS'" in failure
+            for failure in failures):
+        return False, f'failures={failures!r}, want the #892 run_all name-returned slot failure'
+    slots = (row.get('points', {}).get('controls-run-all', {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, 'points.controls-run-all.unsharedSlots is empty, want the name-returned slot'
+    if any(failure.startswith('#164-fix-r7 aggregation-audit: unregistered')
+           for failure in failures):
+        return False, f'failures={failures!r}, want no unregistered point in this mutant'
+    return True, ('aggregation-audit: the status slot of a name-returned summary dict '
+                  'flagged, passed=False')
+
+
+def bare_exit_zero(rows):
+    """#892 r1: a bare ``return 0`` exit path must be flagged even when another
+    branch still computes the code through the shared function."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: '
+            'scripts/gateway-parity/controls/session_domain.py:main ')
+            and 'inline exit code 0' in failure
+            for failure in failures):
+        return False, f'failures={failures!r}, want the #892 main bare exit-code failure'
+    slots = (row.get('points', {}).get('controls-main', {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, 'points.controls-main.unsharedSlots is empty, want the bare exit code'
+    return True, 'aggregation-audit: bare optimistic exit code flagged, passed=False'
+
+
 # (name, source, old, new).  Every old block must occur once.  Per-mutant
 # judge metadata (mode, judge, uses_launcher, allowed_probe_errors) lives in
 # JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
@@ -312,6 +360,16 @@ MUTATIONS = [
      "        return common.aggregate_status(report['status'])[1]\n",
      "        print(json.dumps(report, ensure_ascii=False))\n"
      "        return 0 if report['status'] == 'PASS' else 1\n"),
+    ('summary-name-bypass', CONTROLS_SOURCE,
+     "    report = {'status': status,\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n",
+     "    report = {'status': 'PASS',\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n"),
+    ('bare-exit-zero', CONTROLS_SOURCE,
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return common.aggregate_status(report['status'])[1]\n",
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return 0\n"),
     ('restored-skip-accepted', NEGATIVE,
      "            top_status, exit_code = common.aggregate_status(\n"
      "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
@@ -463,6 +521,8 @@ JUDGES = {
         ()),
     'summary-dict-bypass': ('aggregation-audit', summary_dict_bypass, False, ()),
     'aggregation-branch-exit-inline': ('aggregation-audit', branch_exit_inline, False, ()),
+    'summary-name-bypass': ('aggregation-audit', summary_name_bypass, False, ()),
+    'bare-exit-zero': ('aggregation-audit', bare_exit_zero, False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
