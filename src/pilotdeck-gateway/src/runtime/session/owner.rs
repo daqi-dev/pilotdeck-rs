@@ -1046,9 +1046,12 @@ impl Ticket {
 impl Drop for Ticket {
     fn drop(&mut self) {
         self.done.send_replace(true);
-        // #1365: recorded only after the release write, so the probe
-        // witnesses the write instead of merely the drop's entry — a removed
-        // write must not keep a green event sequence.
+        // #1365: the probe records the release event (and its order against
+        // the settle), not the write above it. A dropped sender wakes
+        // `enter`'s `wait_for` exactly like `send_replace(true)` — the
+        // receiver returns `Err`, which `enter` ignores — so deleting the
+        // write is an equivalent mutation and no event sequence can witness
+        // it. See the fixture's EQUIVALENT registry.
         #[cfg(test)]
         settle_order::record("ticket-released");
     }

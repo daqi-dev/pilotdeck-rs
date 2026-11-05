@@ -66,9 +66,11 @@ sweep 会停止，以及发布时旧 handle 的 admission cutoff 无需执行资
 的错误语义对齐 TS，含 fix-r1 的 close-先于-shutdown 同 tick 格、fix-r2 的混合格与
 drain 守卫）的专用负控，走共享
 M6 执行器（`mutating_sources` 原位变异 + `negative_suite.run_cases` 逐项
-KILLED/SURVIVED/INVALID），要求提交后源码等于 `HEAD`，与 `negative.py` 的独立
-`/tmp` 副本方式并存。十三项变异：close 的 shutdown 窗口变异回旧的整个 shutdown
-聚合分支、else 分支不 await 就放行、close 任务的 closing 登记、idle sweep 的
+KILLED/SURVIVED/INVALID；登记在 `EQUIVALENT` 表的等价变异另由本脚本反向核验，
+要求仍 SURVIVED 且 restore 后测试通过），要求提交后源码等于 `HEAD`，与 `negative.py`
+的独立 `/tmp` 副本方式并存。十三行变异（十二行必须判杀 + 一行登记为等效变异）：close
+的 shutdown 窗口变异回旧的整个 shutdown 聚合分支、else 分支不 await 就放行、close
+任务的 closing 登记、idle sweep 的
 closing 登记、shutdown drain 的 closing 登记、shutdown 的 drain 清单抢走已有未
 结算 closing 的 key 的 record（最后一项去掉后 close-first-same-tick 格漂移为
 Ok + `shutdown` 原因）、skip 提前 `break` 不再排空其余 key（fix-r2）、per-key
@@ -82,8 +84,11 @@ lifecycle-stopped）、idle sweep 同型的成对 settle 写删除（#1365 fix-r
 `idle-settle-write-removed`，close 等 mid-flight idle 驱逐时答 lifecycle-stopped
 而非透传 dispose 聚合）、close 任务 panic 失去完成守卫（#1365 fix-r1
 `close-panic-guard-removed`，退回裸 `tokio::spawn`，panic 后条目无人结算）、
-serial ticket 的释放写删除（#1365 fix-r1 `ticket-release-write-removed`，排队
-close 永远挂起，由排队排空测试的带消息 timeout 判杀）。一行变异可绑定多个测试
+serial ticket 的释放写删除（#1365 fix-r1 `ticket-release-write-removed`；单删是
+实测等价变异——sender 在 `Drop` 末仍被丢弃，`Ticket::enter` 的 `let _` 吞掉
+`wait_for` 的 `Err(RecvError)`，排队 close 照常排空，`ticket-released` 探针也照常
+记录；登记在脚本 `EQUIVALENT` 表，运行时要求该行仍 SURVIVED 且 restore 后测试
+通过，若转为 KILLED 则报 INVALID 要求转回判杀集合）。一行变异可绑定多个测试
 （每测试一个 `Case`），marker list 走 `negative_suite.classify` 的 alternatives
 语义——绑定测试在任一列名断言失败即 KILLED，不把多个 marker 拆成多个 Case；
 带第六元素的行是成对变异（主替换 + 附加 `(before, after)` 位点，经 `Case.scope`
