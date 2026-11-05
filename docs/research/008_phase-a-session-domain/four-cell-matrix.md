@@ -149,10 +149,13 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 ### 4.1 先跑「裸」deadline（无采集）
 
 ```text
-$ python3 -I scripts/gateway-parity/session_domain.py --suite deadline --output _tmp/20261106-issue-590/deadline-bare-2
-{"status": "NOT_RUN", "suite": "deadline", "report": ".../deadline-bare-2/report.json", "failure": null, "acceptanceStatus": "NOT_RUN"}
+$ python3 -I scripts/gateway-parity/session_domain.py --suite deadline --output _tmp/20261106-issue-590/deadline-bare-3
+{"status": "NOT_RUN", "suite": "deadline", "report": ".../deadline-bare-3/report.json", "failure": null, "acceptanceStatus": "NOT_RUN"}
 EXIT=3
 ```
+
+（退出码由脚本回显写进 `_tmp/20261106-issue-590/deadline-bare-3.log` 的 `EXIT=3` 行，不是凭终端回忆；
+早先 `deadline-bare-2` 那次只留了 JSON 输出、没留退出码，本页以 bare-3 为准。）
 
 `structureStatus=PASS`、`frozen.exitCode=0`（30 项登记全对），四格全 `NOT_RUN`，批 `NOT_RUN` / exit 3 ——
 这正是任务书里说的"当前 NOT_RUN"的原始形态。
@@ -196,10 +199,13 @@ GitHub 亦可 `ls-remote` 到同一 SHA），再打分：
 
 ```text
 $ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
-    --native-capture <evidence>/native-session-001 --output <evidence>/deadline-native-001
-{"status": "NOT_RUN", "suite": "deadline", "report": ".../deadline-native-001/report.json", "failure": null, "acceptanceStatus": "NOT_RUN"}
+    --native-capture <evidence>/native-session-001 --output <evidence>/deadline-native-002
+{"status": "NOT_RUN", "suite": "deadline", "report": ".../deadline-native-002/report.json", "failure": null, "acceptanceStatus": "NOT_RUN"}
 EXIT=3
 ```
+
+（`EXIT=3` 来自 cb8 上 `deadline-native-002.log` 的回显行；`deadline-native-001` 是同一命令的首次运行，
+两次报告内容一致，-002 只是补上退出码留痕。）
 
 报告本身有内容，不是空壳：
 
