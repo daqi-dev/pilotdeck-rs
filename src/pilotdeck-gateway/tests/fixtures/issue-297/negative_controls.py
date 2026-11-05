@@ -46,10 +46,18 @@ prefix = 'runtime::project::factory::tests::persistence_tests::'
 # still the pre-fix unconditional install and `if false {` still never
 # installs — only the anchor text follows the code.
 guard = 'if installed {'
+# fix-r3: fix-r1 gave the reproduction test an earlier issue-tagged assertion —
+# with the pre-fix unconditional install the writer rewinds, the recorder loses
+# `t2`, and `record_model_request("s2", "t2")` panics with `event_outside_turn`
+# long before the reopened-chain assertion is reached. Both markers are owned by
+# this test and both describe the same corruption, so the case binds the pair:
+# which one the mutant trips first is an implementation detail of where the test
+# notices, not a change in what the control proves.
 cases = [
     ('restore-rewinds-stale-writer', source, guard, 'if true {', None,
      prefix + 'stale_snapshot_restore_must_not_corrupt_the_transcript_chain',
-     '#297 a stale snapshot restore wrote a transcript the reader can no longer load'),
+     ['#297 a stale snapshot restore wrote a transcript the reader can no longer load',
+      '#297 a stale restore must not drop the turns the live writer still holds']),
     ('restore-never-installs', source, guard, 'if false {', None,
      prefix + 'persistence_real_recorder_survives_runtime_restart_and_isolates_sessions',
      '#297 the reopened session writer must retain the persisted parent chain'),
