@@ -75,6 +75,20 @@ headers, and body for every cell. A recorded request body of the form
 request length instead of the filler. `submit_inputs_match_real_ts` compares
 the exact `submitTurn` inputs recorded by the TS generator.
 
+The placeholder is a fixture protocol with a fail-closed reader
+(`channel::api_server::tests::recorded_body`), so a generator change cannot
+silently degrade a cell into "some short body":
+
+- `N` must be plain decimal. A near miss such as `<1_000_000 bytes>` is a
+  fixture bug and panics the replay instead of being sent verbatim.
+- `N` is capped at `MAX_REQUEST_BYTES + 1`; a larger count is refused before
+  allocation.
+- A `body` field that is present but not a string panics; an absent one means
+  no body (GET/HEAD cells).
+- `body-limit-exact` must expand to exactly `MAX_REQUEST_BYTES` and
+  `oversized-*` to exactly `MAX_REQUEST_BYTES + 1`, asserted on every replay:
+  the cap and the fixture must not drift apart.
+
 ## Known divergence
 
 - A JSON `null` body is not a cell: TS crashes the whole process at
