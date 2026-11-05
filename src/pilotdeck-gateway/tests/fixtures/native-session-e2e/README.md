@@ -6,7 +6,7 @@
 
 端口在受控的 gateway 28999..29008 系列中成对探测，并预留 gateway 与下一 provider 端口。provider 实际绑定前必须释放预留，因此第三方抢占会让本样本失败；不借用用户进程。并行副本验证各自取不同端口对。
 
-`negative_controls.py` 的 `cases` 与执行汇总是变异列表和数量的唯一来源。每项绑定完整测试名与专属失败消息，先 compile，再 positive → mutant → restored，全部跑完汇总。原地模式用共享 mutating_sources/run_owned，并要求被测源码与 HEAD 一致；新冻结文件提交之前由协调者在提交后运行。
+`negative_controls.py` 的 `cases` 与执行汇总是变异列表和数量的唯一来源。每项绑定完整测试名与专属失败消息，先 compile，再 positive → mutant → restored，全部跑完汇总。原地模式用共享 mutating_sources/run_owned，并要求被测源码与 HEAD 一致；新冻结文件提交之前由协调者在提交后运行。#1402 起原地模式按 case 粒度取/还全局 parity 租约：等槽与正控在租约外，租约界为 BUILD_SECONDS+BOUND_TEST_SECONDS（低于 stale 上限 MAX_AGE），case 间空窗允许第二台宿主取走租约；超时与取消路径同样释放租约并把该 case 记 INVALID（`test_e2e.py::NegativeRunnerTests` 以私有锁目录覆盖这些性质）。
 
 ```sh
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-session-e2e/test_e2e.py

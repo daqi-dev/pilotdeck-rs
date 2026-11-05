@@ -66,8 +66,12 @@ class PlanTests(unittest.TestCase):
             manifest = c.session_manifest()
         except Exception as error:
             self.fail(marker + ': ' + str(error))
-        self.assertTrue(len(actual) == 72 and inputs(actual) == expected
+        self.assertTrue(len(actual) == len(expected) and inputs(actual) == expected
                         and [item['case'] for item in actual] == manifest, marker)
+        # #1402: the length comparison is derived from the registration, so a
+        # dropped row must change its outcome (the old literal 72 could not).
+        self.assertFalse(len(actual) == len(expected[:-1]),
+                         '#1402 a dropped registration row must fail the length comparison')
         # Data negatives are independent of the source mutation runner.
         self.assertFalse(inputs(actual[:-1]) == expected, '#1368 missing cell rejected')
         for field, replacement in (('registry', True), ('phase', 'tool'),
@@ -176,7 +180,10 @@ class PlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='stimulus-measurement-') as tmp:
             folder = Path(tmp)
             case_count = len(registration_rows({'cells': v.s.CELLS, 'phases': ['model', 'tool']}))
-            for repeats in (1, 2, 5):
+            # #1402: never use 5 here -- 72 * 5 = 360 equals the literal the
+            # hardcoded-unchecked-count mutant writes, so that iteration would
+            # let the mutant survive; 1, 2 and 3 all stay clear of 360.
+            for repeats in (1, 2, 3):
                 measurement_fixture(folder, repeats)
                 with mock.patch.object(v.s, 'plan', side_effect=unchecked_plan):
                     result = v.verify(folder)

@@ -23,6 +23,22 @@ common = root / 'scripts/gateway-parity/common.py'
 native = root / 'scripts/gateway-parity/native_evidence.py'
 collector = root / 'scripts/native-witness/collect.py'
 fixture = Path(__file__).with_name('test_e2e.py')
+chain = fixture.parent.parent / 'native-witness/test_chain.py'
+runner = Path(__file__).resolve()
+# Every guarded-source path this runner may mutate or must prove pristine.
+# Module-level because #1402 takes the global parity lease per case instead
+# of one whole-run lease, so the loop no longer sits inside a single with.
+paths = [session, common, native, collector, fixture, runner, chain]
+# #1402 per-case lease window: a case holds /tmp/pdrs-parity.lock only while
+# its mutant is on disk (cargo no-run preflight + bound test + restore).
+# wait_for_slot and the positive/restored controls run outside the lease, so
+# other trees can take it in every gap. The window must stay below the
+# stale-lease takeover age in common.py, or another tree could take a live
+# window over; test_negative_lease_bound_composition pins the composition.
+BUILD_SECONDS = 900
+BOUND_TEST_SECONDS = 300
+SLOT_WAIT_SECONDS = 900
+PER_CASE_LEASE_SECONDS = BUILD_SECONDS + BOUND_TEST_SECONDS
 # Each row mutates one #1140 fix-r1 addition and names the e2e test whose
 # dedicated assertion message must fire (the named FAIL the classifier pins):
 # the scoring-side shapes in session_domain.py and the recorder/contract-side
@@ -49,6 +65,11 @@ cases = [
     ('drop-unwitnessed-transcript-path', collector, '                        sources.append(source)', "                        sources.append(dict(source, transcriptPath='') if row['stimulus']['status'] != 'WITNESSED' else source)", 'test_unwitnessed_stimuli_are_not_executed'),
     ('unwitnessed-counts-executed', session, "            cell['executedCases'] = [row['case'] for row in native['verdicts']\n                                     if row['status'] != 'NOT_RUN']\n", "            cell['executedCases'] = [row['case'] for row in native['verdicts']]\n", 'test_unwitnessed_stimuli_are_not_executed'),
     ('drop-unwitnessed-candidate', session, "            cell['cases'] = native['verdicts']", "            cell['cases'] = [] if all(row['status'] == 'NOT_RUN' for row in native['verdicts']) else native['verdicts']", 'test_unwitnessed_stimuli_are_not_executed'),
+    ('manifest-count-minus-one', fixture, "    return len(c.session_manifest())", "    return len(c.session_manifest()) - 1", 'test_e2e_scores_real_capture'),
+    ('chain-manifest-count-minus-one', chain, "        return len(self.healthy['expected'])", "        return len(self.healthy['expected']) - 1", 'test_negative_chain_denominators_derived'),
+    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    path.write_text(changed)", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    path.write_text(changed)", 'test_negative_lease_released_and_loud_on_cancellation'),
+    ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
+    ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
 ]
 messages = {
     'decoder-frame-for-send-rows': '#1140 e2e real capture scores 72/72 per-case PASS',
@@ -71,11 +92,18 @@ messages = {
     'drop-unwitnessed-transcript-path': '#1368 NOT_RUN retains all raw originals and missing target reasons',
     'unwitnessed-counts-executed': '#1368 unwitnessed stimuli never count as executed',
     'drop-unwitnessed-candidate': '#1368 NOT_RUN retains exactly one native candidate',
+    'manifest-count-minus-one': '#1140 e2e real capture scores 72/72 per-case PASS',
+    'chain-manifest-count-minus-one': '#1402 chain denominators derive from the calibration manifest',
+    'lease-enter-without-release': '#1402 a cancelled case must release the parity lease and stay loud',
+    'lease-bound-erased': '#1402 the per-case lease bound is composed and below the stale-lease age',
+    'lease-cancel-swallowed': '#1402 a cancelled case must release the parity lease and stay loud',
 }
 
 
 def bound(test):
-    classname = 'LifecycleTests' if test.startswith('test_collector_profile_') else 'E2ETests'
+    classname = ('LifecycleTests' if test.startswith('test_collector_profile_')
+                 else 'NegativeRunnerTests' if test.startswith('test_negative_')
+                 else 'E2ETests')
     return classname + '.' + test
 
 
@@ -137,6 +165,9 @@ def memory_run(name):
 def execution_environment():
     if not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')
+    # #1402: this guard pair is byte-duplicated in native-stimulus-plan's
+    # runner; consolidating it means changing the shared negative_process.py,
+    # which belongs to the M6 lane (#1099) and is out of scope here.
     return target_environment(root)
 
 
@@ -175,13 +206,21 @@ def main():
     out = Path(output).resolve()
     out.mkdir(parents=True, exist_ok=False)
     results = []
+    def publish():
+        # Publish only after mutating_sources has verified restoration; a
+        # cancellation below re-publishes every row as INVALID before raising.
+        temporary = out / 'summary.json.tmp'
+        summary = {'mode': 'memory-only' if memory else 'guarded-source', 'controls': results}
+        temporary.write_text(json.dumps(summary, indent=2) + '\n')
+        temporary.replace(out / 'summary.json')
+        print(json.dumps(summary, indent=2))
     def run(name, test, mutant=None):
         # The bound test executes Python; the host Rust preflight below is
         # recorded separately for each mutation as required by the taskbook.
         command = ([sys.executable, '-I', __file__, '--memory-run', mutant] if mutant else
                    [sys.executable, '-I', str(fixture), bound(test)])
         result = run_owned(command,
-                            cwd=root, env=env, timeout=300)
+                            cwd=root, env=env, timeout=BOUND_TEST_SECONDS)
         (out / (name + '.log')).write_text(result.stdout + result.stderr)
         return result
     def one(row):
@@ -195,26 +234,36 @@ def main():
             compile(changed, str(path), 'exec')
             if not passed(run(name + '-positive', test)):
                 raise ValueError('positive bound test did not pass')
+            # #1402: the slot probe runs outside the lease -- it reads no
+            # guarded bytes, so the shared parity lease need not be held.
             if not memory:
-                path.write_text(changed)
-            if not memory:
-                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=SLOT_WAIT_SECONDS)
                 (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
-                build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-                                   '-p', 'pilotdeck-gateway', '--test', 'native_session_e2e', '--no-run'],
-                                  cwd=root, env=env, timeout=900)
-                (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
-                if build.returncode != 0:
-                    raise ValueError('no-run failed')
-                compiled = True
-            status = classify(run(name + '-negative', test, name if memory else None), test, messages[name])
-            reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
-                      'INVALID': 'exit/test identity/assertion marker did not match'}[status]
+                # One lease per case: acquired by mutating_sources below and
+                # held only while the mutant is on disk (no-run preflight,
+                # bound test, restore). The restored control runs after the
+                # release, so other trees can use every between-case gap.
+                with mutating_sources(root, paths, baseline=baseline) as originals:
+                    path.write_text(changed)
+                    try:
+                        build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                                           '-p', 'pilotdeck-gateway', '--test', 'native_session_e2e', '--no-run'],
+                                          cwd=root, env=env, timeout=BUILD_SECONDS)
+                        (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
+                        if build.returncode != 0:
+                            raise ValueError('no-run failed')
+                        compiled = True
+                        status = classify(run(name + '-negative', test), test, messages[name])
+                        reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
+                                  'INVALID': 'exit/test identity/assertion marker did not match'}[status]
+                    finally:
+                        path.write_bytes(originals[path])
+            else:
+                status = classify(run(name + '-negative', test, name), test, messages[name])
+                reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
+                          'INVALID': 'exit/test identity/assertion marker did not match'}[status]
         except Exception as error:
             status, reason = 'INVALID', str(error)
-        finally:
-            if not memory:
-                path.write_bytes(originals[path])
         try:
             if not passed(run(name + '-restored', test)):
                 status, reason = 'INVALID', reason + '; restored test failed'
@@ -223,25 +272,23 @@ def main():
         results.append({'name': name, 'status': status, 'compiled': compiled, 'reason': reason,
                         'test': bound(test), 'marker': messages[name]})
     try:
-        if memory:
-            for row in selected:
-                one(row)
-        else:
-            paths = [session, common, native, collector, fixture, Path(__file__).resolve()]
-            with mutating_sources(root, paths, baseline=baseline) as originals:
-                for row in selected:
-                    one(row)
-    except Exception as error:
+        for row in selected:
+            one(row)
+    except BaseException as error:
+        # A guard failure or a cancellation voids every row; a swallowed
+        # Ctrl-C would keep a stale green summary. The per-case with above
+        # has already restored the bytes and released the lease; publish
+        # the INVALID summary, then stay loud for non-Exception exits.
         for row in results:
             row.update(status='INVALID', compiled=False, reason='guard failure: ' + str(error))
-        if not results:
-            results = [{'name': name, 'status': 'INVALID', 'compiled': False, 'reason': 'guard refusal: ' + str(error)} for name, *_ in selected]
-    # Publish only after mutating_sources has verified restoration.
-    temporary = out / 'summary.json.tmp'
-    summary = {'mode': 'memory-only' if memory else 'guarded-source', 'controls': results}
-    temporary.write_text(json.dumps(summary, indent=2) + '\n')
-    temporary.replace(out / 'summary.json')
-    print(json.dumps(summary, indent=2))
+        for name, *_ in selected[len(results):]:
+            results.append({'name': name, 'status': 'INVALID', 'compiled': False,
+                            'reason': 'guard refusal: ' + str(error)})
+        publish()
+        if not isinstance(error, Exception):
+            raise
+    else:
+        publish()
     return 0 if len(results) == len(selected) and all(row['status'] == 'KILLED' for row in results) else 1
 
 
