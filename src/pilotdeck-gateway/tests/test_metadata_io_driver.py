@@ -37,6 +37,8 @@ class EnvironmentControls(unittest.TestCase):
         'test(=skills::tests::real_ts_scenarios_match_outcomes_and_file_trees) | '
         'test(=runtime::tools::builtin::grep::tests::files_sort_keeps_submillisecond_mtime_precision) | '
         'test(=project_files::tests::node_round4_unreadable_huge_file_reports_open_error_first) | '
+        'test(=project_files::tests::special_files_do_not_block_and_unreadable_files_still_list) | '
+        'test(=project_files::tests::native_read_errors_match_node_ws_responses) | '
         'test(=runtime::cron::tests::migration_blocked_dir_tasks_eacces_matches_ts) | '
         'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key)')
 
