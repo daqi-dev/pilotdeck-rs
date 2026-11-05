@@ -143,7 +143,10 @@ therefore judges every other write (subscript, `update`, `|`, walrus,
 unresolvable name, a dict rebuilt with `{**name}`) but exempts the fresh literal
 for such a name.  The batch status of both registered `main` points is instead
 pinned at runtime: the published status must equal what the one shared
-aggregation returns for the observed cell statuses.  The exit-code reachability judgement errs
+aggregation returns for the observed cell statuses, and a `--case all` replay
+with one failing case must come out `FAIL`/exit 1 (`caseFailure`), so a clean
+status hardcoded into the shared call's argument list is caught even though no
+slot shows it.  The exit-code reachability judgement errs
 strict: an overwrite that can be skipped (`for` / `while` bodies, `match` cases)
 does not count, so an initializer overwritten only inside a loop is still
 flagged — a false FAIL on unusual code, never a false PASS.  The
@@ -220,7 +223,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 59 mutants:
+`JUDGES`, keyed by the same names. The current table has 60 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -247,7 +250,7 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-boolean-exit`, `calibrate-sys-exit-relay`,
 `calibrate-system-exit-bare`, `calibrate-delegated-chain`,
 `calibrate-container-slot`, `calibrate-alias-cycle`,
-`calibrate-verdict-dict`.  The batch-related
+`calibrate-verdict-dict`, `calibrate-clean-argument`.  The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
@@ -311,7 +314,11 @@ passes a local dict's zero to `sys.exit(...)`; `calibrate-system-exit-bare` rais
 twice (`_exit_a` -> `_exit_b`); `calibrate-container-slot` fills the slot from an
 unproven subscript; `calibrate-alias-cycle` feeds the slot through a swap cycle;
 `calibrate-verdict-dict` builds and prints a summary keyed `verdict` (the
-enumeration side of the key family).  The first six replace the one shared exit
+enumeration side of the key family); `calibrate-clean-argument` hardcodes the
+clean status into the shared call's *argument* list
+(`common.aggregate_status('PASS', cleanup['status'])`), which no slot can see —
+it is pinned at runtime instead, by the `caseFailure` row of
+`--mode batch-aggregation` (a failing case must reach the batch status).  The first six replace the one shared exit
 line in `controls/session_domain.py:main` (`CT_EXIT`), the last one prepends a
 function to that module.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s

@@ -47,11 +47,13 @@ import ast
 import contextlib
 import copy
 import importlib.util
+import atexit
 import io
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+import shutil
 import signal
 import subprocess
 import sys
@@ -62,7 +64,10 @@ from unittest.mock import patch
 # Loading the apparatus by explicit path is still an import: stop bytecode
 # writes before the loader reads the source, otherwise a __pycache__ appears in
 # the frozen apparatus directory and check_frozen (correctly) rejects it.
+# #892 r6: the prefix directory is ours, so clean it up -- a batch of 59 mutants
+# spawns 59 interpreters and used to leave 59 temp dirs behind (MiniMax P2).
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-session-cleanup-pyc-')
+atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -2608,15 +2613,24 @@ def batch_aggregation_control(md, output):
     """
     controls = load_controls()
 
-    def fake_run(command, **_kwargs):
-        name = command[command.index('--case') + 1]
-        accept = name == 'healthy' or name in controls.LABEL_KNOWN_ACCEPT
-        return SimpleNamespace(
-            returncode=0 if accept else 1, stderr='',
-            stdout=json.dumps({'rule': controls.CASES.get(name),
-                               'status': 'PASS' if accept else 'FAIL'}))
+    def replay(tag, cleanup_status, source=True, failing=None):
+        """Drive ``controls.main()`` with an in-memory case runner.
 
-    def replay(tag, cleanup_status, source=True):
+        #892 r6: ``failing`` makes exactly that case report FAIL, so the batch
+        status must follow the case rows.  A clean status hardcoded into the
+        argument list of the shared call (``aggregate_status('PASS',
+        cleanup['status'])``) drops the FAIL branch without touching any slot,
+        and this row is what catches it (MiniMax concurrency P1-1).
+        """
+        def fake_run(command, **_kwargs):
+            name = command[command.index('--case') + 1]
+            accept = (name == 'healthy' or name in controls.LABEL_KNOWN_ACCEPT) \
+                and name != failing
+            return SimpleNamespace(
+                returncode=0 if accept else 1, stderr='',
+                stdout=json.dumps({'rule': controls.CASES.get(name),
+                                   'status': 'PASS' if accept else 'FAIL'}))
+
         case = output / ('batch-aggregation-' + tag)
         argv = ['session_domain.py', '--case', 'all', '--output', str(case)]
         if source:
@@ -2651,6 +2665,7 @@ def batch_aggregation_control(md, output):
         'blocked': replay('blocked', 'BLOCKED'),
         'notRun': replay('not-run', 'PASS', source=False),
         'allPass': replay('all-pass', 'PASS'),
+        'caseFailure': replay('case-failure', 'PASS', failing='healthy'),
         'order': order,
         'negativeRestored': negative_restored,
         'summaries': {
@@ -2712,6 +2727,9 @@ def batch_aggregation_control(md, output):
         'blocked': {'status': 'BLOCKED', 'returncode': 2},
         'notRun': {'status': 'PASS_WITH_SKIPS', 'returncode': 1},
         'allPass': {'status': 'PASS', 'returncode': 0},
+        # A failing case row must reach the batch status even though the
+        # cleanup helper is clean and the shared call is still called.
+        'caseFailure': {'status': 'FAIL', 'returncode': 1},
         'order': {'pass': 'PASS', 'skip': 'PASS_WITH_SKIPS',
                   'blocked': 'BLOCKED', 'notRun': 'NOT_RUN',
                   'fail': 'FAIL', 'unknown': 'FAIL'},
