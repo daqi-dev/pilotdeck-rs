@@ -586,6 +586,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
             let mut scratch = [0u8; 4096];
             let mut arrived = 0usize;
             loop {
+                // #1292 fix-r3: stop reading once the cap is reached instead
+                // of extending the buffer without bound — the socket's own
+                // backpressure stands in for Node's 16 KB TrackHeader
+                // rejection, which the lane reproduces through hyper's
+                // `max_headers` parse after the response finishes.
+                if self.withheld_head.len() >= WITHHELD_HEAD_CAP {
+                    break;
+                }
                 let mut read_buf = ReadBuf::new(&mut scratch);
                 match Pin::new(&mut self.stream).poll_read(cx, &mut read_buf) {
                     Poll::Ready(Ok(())) => {
@@ -614,6 +622,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
                 if self.read_refreshes_idle() {
                     self.activity
                         .send_replace(Some(tokio::time::Instant::now()));
+                }
+            }
+            if self.withheld_head.len() >= WITHHELD_HEAD_CAP {
+                // #1292 fix-r3: at the cap the gate no longer polls the
+                // socket, so nothing else would register a waker for the
+                // parked headers deadline — poll the sleep here, the same
+                // way `arm_started_head` parks it under this poll's waker.
+                if let Some(sleep) = self.headers_sleep.as_mut() {
+                    let _ = sleep.as_mut().poll(cx);
                 }
             }
             return Poll::Pending;
@@ -761,6 +778,18 @@ const NODE_KEEP_ALIVE_TIMEOUT_BUFFER: std::time::Duration = std::time::Duration:
 /// the one body-consuming route answers 401 before its body loop), also
 /// registered in 002-R2.
 const NODE_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// #1292 fix-r3: upper bound on the bytes a next request head may park in
+/// [`UpgradeReadGate::withheld_head`] while the previous response still
+/// streams. Node never buffers such a head whole: its parser counts the head
+/// against the 16 KB `TrackHeader` budget as the bytes arrive and answers
+/// `HPE_HEADER_OVERFLOW` (431 + destroy) once it is passed. The gate caps at
+/// twice that budget — far enough for hyper's own `max_headers(16384)` parse
+/// to see the overflow and answer through the lane's registered 431 path,
+/// small enough that no client can pin an unbounded buffer for the length of
+/// a streaming response (MiniMax gate boundary P1: the uncapped `Vec` grew
+/// with the client's upload rate, and refeeding it copied O(n²) bytes).
+const WITHHELD_HEAD_CAP: usize = 32 * 1024;
 
 /// Node v22.22.0 `_http_server.js`: the connections checker runs on
 /// `setInterval(checkConnections, 30_000)` — the default
