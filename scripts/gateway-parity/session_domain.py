@@ -2025,7 +2025,7 @@ webui:
         addresses = [line[1:] for line in listener_probe.stdout.splitlines() if line.startswith('n')]
         row['listeners'] = {'pid': gateway.pid, 'addresses': addresses,
                             'loopbackOnly': addresses == [f'127.0.0.1:{gateway_port}']}
-        driver = launch('driver-retirement', ['node', '--import', baseline / 'node_modules/tsx/dist/loader.mts',
+        driver = launch('driver-retirement', ['node', '--import', baseline / 'node_modules/tsx/dist/loader.mjs',
                                               RETIREMENT_DRIVER, '--url', f'ws://127.0.0.1:{gateway_port}/ws',
                                               '--token', run_round_module.TOKEN, '--methods', methods_fixture,
                                               '--out', folder / 'driver'], None)
