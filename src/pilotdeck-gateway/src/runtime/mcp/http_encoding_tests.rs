@@ -368,12 +368,37 @@ async fn mcp_legacy_start_failure_matrix() {
     .as_bytes()
     .to_vec();
     let corrupt = [corrupt, b"invalid compressed body".to_vec()].concat();
-    let stalled = concat!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n",
-        "Content-Length: 10\r\nConnection: close\r\n\r\n"
-    )
-    .as_bytes()
-    .to_vec();
+    // Same wire shape as the TS row (`process.mts`: gzip member, only its
+    // first 10 bytes written, Content-Length left at the full member size), so
+    // the client is blocked inside the gzip decode of the body, not on a plain
+    // read. The member is produced here instead of pinned as hex so it stays a
+    // valid stream for whatever encoder the product links.
+    let stalled_body = {
+        use async_compression::tokio::write::GzipEncoder;
+        let mut encoder = GzipEncoder::new(Vec::new());
+        encoder
+            .write_all(b"event: endpoint\ndata: /post\n\n")
+            .await
+            .unwrap_or_else(|error| panic!("{tag}: gzip probe member: {error}"));
+        encoder
+            .shutdown()
+            .await
+            .unwrap_or_else(|error| panic!("{tag}: gzip probe finish: {error}"));
+        encoder.into_inner()
+    };
+    assert!(
+        stalled_body.len() > 10,
+        "{tag}: the stalled row sends a 10-byte prefix of a longer member"
+    );
+    let stalled = [
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            stalled_body.len()
+        )
+        .into_bytes(),
+        stalled_body[..10].to_vec(),
+    ]
+    .concat();
     let clean_eof = concat!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n",
         "Content-Length: 0\r\nConnection: close\r\n\r\n"
@@ -452,6 +477,12 @@ async fn mcp_legacy_start_failure_matrix() {
         bounded(held.recv(), tag)
             .await
             .unwrap_or_else(|| panic!("{tag}: the server must reach the stalled body"));
+        // The signal only proves the server wrote. Park the runtime so the I/O
+        // driver delivers that read and the event source consumes the headers,
+        // which puts it inside the body read; without a real yield this
+        // single-threaded test task is re-queued ahead of hyper's connection
+        // task and `close()` lands while the response is still being awaited.
+        tokio::time::sleep(Duration::from_millis(50)).await;
         std::future::poll_fn(|cx| {
             assert!(
                 pending.as_mut().poll(cx).is_pending(),
