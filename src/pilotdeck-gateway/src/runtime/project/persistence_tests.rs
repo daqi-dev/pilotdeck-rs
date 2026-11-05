@@ -799,6 +799,19 @@ async fn stale_snapshot_restore_must_not_corrupt_the_transcript_chain() {
     // `SessionRuntime.restore` now installs the stale snapshot and the session
     // keeps recording. Neither step may damage the chain.
     let _ = session.recorder.restore(&stale);
+    // #297 review (concurrency, both families): the writer refused to install
+    // the stale snapshot, so the recorder must keep the turns it already
+    // tracks. t2 is live in the writer's domain; answering "has not started"
+    // for it here would leave that turn permanently unusable (the domain also
+    // refuses to re-start it), which is the desync this assertion pins.
+    session
+        .recorder
+        .record_model_request(
+            &"s".into(),
+            &"t2".into(),
+            parse_json(r#"{"messages":[]}"#).unwrap(),
+        )
+        .expect("#297 a stale restore must not drop the turns the live writer still holds");
     let _ = session.recorder.start_turn(&"s".into(), &"t4".into());
     drop(session);
     drop(handle);
