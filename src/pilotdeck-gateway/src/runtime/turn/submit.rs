@@ -133,6 +133,26 @@ struct SnapshotProgress {
     failure: Option<(String, String)>,
 }
 
+/// First-writer-wins claim on the turn's terminal record.
+///
+/// The deadline and the pump's failure path are independent racers: the timer
+/// may abort the live session (which surfaces as a pump error) while the pump
+/// may also fail on its own, and the worker may observe a timeout that the
+/// deadline branch has already settled. Exactly one of them may durably record
+/// the terminal status and publish the terminal events. Losing the claim means
+/// "a terminal already exists": do not register another one, and do not close
+/// live delivery out from under the winner.
+#[derive(Default)]
+struct TerminalClaim(AtomicBool);
+impl TerminalClaim {
+    /// Returns true for exactly one caller across the whole turn.
+    fn claim(&self) -> bool {
+        self.0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+}
+
 struct PumpContext<'a> {
     input: &'a JsValue,
     run: &'a RunRef,
@@ -547,6 +567,7 @@ impl TurnSubmitter {
         ));
         let progress = Arc::new(Mutex::new(SnapshotProgress::default()));
         let timed_out = Arc::new(AtomicBool::new(false));
+        let terminal = Arc::new(TerminalClaim::default());
         let (ready, timer_ready) = oneshot::channel();
         let (timeout_settled, timeout_settlement) = oneshot::channel();
         // The worker owns all dependencies: after a hard timeout it may finish
@@ -558,6 +579,7 @@ impl TurnSubmitter {
         let worker_publisher = publisher.clone();
         let worker_progress = progress.clone();
         let worker_timeout = timed_out.clone();
+        let worker_terminal = terminal.clone();
         let recorder = workspace.recorder.clone();
         let workspace_id = workspace.id.clone();
         let mut worker = tokio::spawn(async move {
@@ -582,9 +604,16 @@ impl TurnSubmitter {
                         progress.failure = Some(("gateway_error".into(), error.message.clone()));
                     }
                 }
-                if submitter
-                    .owner
-                    .is_current_completion(&worker_run.session_key, &worker_completion)
+                // Ordering: pump exit → timeout check → fence check → claim →
+                // durable failure. A deadline that already took the turn over
+                // (`timed_out`, set before the session abort) owns the terminal,
+                // so the pump error it caused must not register a second one.
+                // The claim keeps the independent-failure race single-writer.
+                if !worker_timeout.load(Ordering::SeqCst)
+                    && submitter
+                        .owner
+                        .is_current_completion(&worker_run.session_key, &worker_completion)
+                    && worker_terminal.claim()
                 {
                     submitter
                         .publish_failure(&worker_run, &worker_publisher, &error)
@@ -592,6 +621,9 @@ impl TurnSubmitter {
                 }
             }
             let _ = submitter.host.finish_pump(&worker_run).await;
+            // After a takeover, finish only once the deadline's terminal write,
+            // events and close_live are all complete: `finish` then closes the
+            // delivery channel after the winner's queue drains.
             if worker_timeout.load(Ordering::SeqCst) {
                 let _ = timeout_settlement.await;
             }
@@ -622,30 +654,49 @@ impl TurnSubmitter {
                 biased;
                 result = &mut worker => {
                     if let Err(error) = result {
-                        self.publish_failure(&run, &publisher, &SubmitError::new("gateway_submit_failed", error.to_string())).await;
+                        // A panicked worker never reached its own `finish`;
+                        // delivery must still close. Only the failure record is
+                        // claim-guarded: a terminal the deadline already owns
+                        // must not be registered a second time.
+                        if terminal.claim() {
+                            self.publish_failure(&run, &publisher, &SubmitError::new("gateway_submit_failed", error.to_string())).await;
+                        }
                         publisher.finish().await;
                     }
                 },
                 handle = &mut timer => {
+                    // Deadline takeover, in this order: mark the timeout (the pump
+                    // checks it before registering its own failure), take the
+                    // single terminal claim, stop admission/abort the live
+                    // session, then durably record and publish the timeout.
+                    // Losing the claim means the pump already recorded a terminal
+                    // during this tick; keep its events live and let its worker
+                    // close delivery after the settlement below.
                     timed_out.store(true, Ordering::SeqCst);
+                    let owns_terminal = terminal.claim();
                     let ms = timeout.expect("timer only fires with a timeout");
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
                     let _ = self.host.reject_pending(&run.session_key, "turn_timeout");
                     let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
-                    let mut failure = status("turn_timeout", &message, hint, "turn");
-                    let mut detail = field(&failure, "detail").clone();
-                    set(&mut detail, "timeoutMs", JsValue::Number(ms));
-                    set(&mut failure, "detail", detail);
-                    let record = object([("event", "turn_timeout".into()), ("kind", "error".into()),
-                        ("text", message.as_str().into()), ("detail", field(&failure, "detail").clone())]);
-                    if self.host.record_failure(&run, &record).await.is_ok() {
-                        publisher.gateway_event(with_run(failure, &run));
+                    if owns_terminal {
+                        let mut failure = status("turn_timeout", &message, hint, "turn");
+                        let mut detail = field(&failure, "detail").clone();
+                        set(&mut detail, "timeoutMs", JsValue::Number(ms));
+                        set(&mut failure, "detail", detail);
+                        let record = object([("event", "turn_timeout".into()), ("kind", "error".into()),
+                            ("text", message.as_str().into()), ("detail", field(&failure, "detail").clone())]);
+                        if self.host.record_failure(&run, &record).await.is_ok() {
+                            publisher.gateway_event(with_run(failure, &run));
+                        }
+                        let mut event = error_event(&run, "turn_timeout", &message, false);
+                        set(&mut event, "userHint", hint.into());
+                        publisher.gateway_event(event);
+                        publisher.close_live();
                     }
-                    let mut event = error_event(&run, "turn_timeout", &message, false);
-                    set(&mut event, "userHint", hint.into());
-                    publisher.gateway_event(event);
-                    publisher.close_live();
+                    // Settlement is sent after the terminal is fully written so a
+                    // worker that observed the timeout cannot close delivery
+                    // before the winner's events exist.
                     let _ = timeout_settled.send(());
                 }
             }
