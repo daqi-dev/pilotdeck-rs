@@ -84,19 +84,20 @@ jobs:
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     env:
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      CARGO_PROFILE_TEST_DEBUG: line-tables-only
-      # 夹具要求调用方提供；指向 src/target 让 rust-cache 的产物直接复用
-      CARGO_TARGET_DIR: ${{ github.workspace }}/src/target
+      # 夹具要求调用方提供 target；#1166 共享入口拒收 src/ 内与仓库根目录，
+      # 树内 _build/cargo-target 是本仓负控的既有约定（fixtures/README.md）。
+      CARGO_TARGET_DIR: ${{ github.workspace }}/_build/cargo-target
     steps:
       - uses: actions/checkout@v4
         with:
           # 变异前要按 git show HEAD:<path> 证明源码未被改动
           fetch-depth: 0
-      - run: rustup show active-toolchain
+      - name: 锁定工具链
+        run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2.9.2
         with:
-          workspaces: src -> target
+          # 缓存 CARGO_TARGET_DIR 指向的 _build/cargo-target（相对 workspace src/）
+          workspaces: src -> ../_build/cargo-target
           cache-bin: false
           shared-key: negative-controls
       - name: 网关负控锚点自检 + 槽位守卫自检（#1632）

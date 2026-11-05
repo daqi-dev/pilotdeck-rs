@@ -18,6 +18,11 @@ class EnvironmentControls(unittest.TestCase):
     nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
                        '--config-file ../.config/nextest.toml')
     doctest_command = 'cargo test --workspace --doc'
+    negative_controls_command = ('python3 -I src/pilotdeck-gateway/tests/fixtures/'
+                                 'session-assembly-1316/negative_controls.py')
+    anchor_selfcheck_command = ('python3 -I src/pilotdeck-gateway/tests/fixtures/'
+                                'anchor_selfcheck.py --anchors-only')
+    self_check_command = negative_controls_command + ' --self-check'
     # #1525: the workflow may carry exactly one step-level env block, and the ci
     # profile exactly one override. Both are inputs to the tests (a permission
     # switch; replaying the output of tests that can skip), never to the
@@ -187,11 +192,13 @@ class EnvironmentControls(unittest.TestCase):
                                 f'{issue} unsupported job declaration')
                 jobs[name] += line
         # New jobs must explicitly register their Node setup and merge gating here:
-        # scope runs Python/git only and gates the three heavy jobs (#1199);
+        # scope runs Python/git only and gates the four heavy jobs (#1199);
         # metadata-observer/rust/a51-coverage need their own Node and check gates;
+        # negative-controls is Python/cargo only (#1632) and is gated like a heavy job;
         # check only aggregates; gateway-schema-baseline has Node and its own required check.
         self.assertEqual(set(jobs), {'scope', 'metadata-observer', 'check', 'rust', 'a51-coverage',
-                                    'gateway-schema-baseline'}, f'{issue} exact six CI jobs')
+                                    'negative-controls', 'gateway-schema-baseline'},
+                         f'{issue} exact CI job inventory')
         return jobs
 
     def ci_steps(self, name, body, issue='#904'):
@@ -276,7 +283,7 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
         for name in jobs:
             self.assertIn(name, jobs, f'#904 required job {name} exists')
             self.assertNotRegex(jobs[name], r'''(?m)^\s*(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''',
@@ -287,7 +294,7 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
         steps = self.ci_steps('check', check)
-        self.assertEqual(len(steps), 4, '#904 exactly four rejection steps')
+        self.assertEqual(len(steps), 5, '#904 exactly five rejection steps')
 
         def gate_steps(condition):
             return [step for step in steps
@@ -326,7 +333,7 @@ class EnvironmentControls(unittest.TestCase):
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
         cases = []
 
         def change(label, old, new, message):
@@ -354,11 +361,13 @@ class EnvironmentControls(unittest.TestCase):
                       "        if: ${{ always() && needs.scope.result != 'success' }}\n"
                       '        working-directory: .\n'
                       '        run: exit 1\n')
-        change('scope-gate-removed', scope_step, '', '#904 exactly four rejection steps')
+        change('scope-gate-removed', scope_step, '', '#904 exactly five rejection steps')
         change('scope-gate-relaxed', "needs.scope.result != 'success'",
                "needs.scope.result == 'failure'", '#904 scope failure must reject the merge')
-        change('check-needs-drops-scope', 'needs: [scope, metadata-observer, rust, a51-coverage]',
-               'needs: [metadata-observer, rust, a51-coverage]', '#904 exact required needs')
+        change('check-needs-drops-scope',
+               'needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
+               'needs: [metadata-observer, rust, a51-coverage, negative-controls]',
+               '#904 exact required needs')
         # #1199 规格 4：重 job 加 continue-on-error → 必须失败。
         for owner in heavy:
             change_job(f'{owner}-continue-on-error', owner, '    steps:\n',
@@ -517,6 +526,63 @@ class EnvironmentControls(unittest.TestCase):
         self.assertIn(fields.get('working-directory'), (None, ('.', [])),
                       '#994 isolation CI step must run from repository root')
 
+    def test_negative_controls_job_runs_the_gateway_fixture(self):
+        # #1632 P2-3：这个 job 存在的唯一理由是让夹具真的跑起来；删掉执行步、
+        # 让 --self-check 掉队、把 target 指回 src/ 或丢掉历史克隆都必须被判红，
+        # 否则「接进 CI」只是一行没人绑定的 YAML。
+        jobs = self.ci_jobs('#1632')
+        body = jobs['negative-controls']
+        steps = self.ci_steps('negative-controls', body, '#1632')
+        checkout = self.ci_step_fields(steps[0], '#1632')
+        self.assertEqual(checkout.get('uses'), ('actions/checkout@v4', []),
+                         '#1632 negative-controls checks out the repository')
+        self.assertIn('fetch-depth: 0', steps[0],
+                      '#1632 mutating_sources needs HEAD history for its pristine check')
+        self.assertEqual(re.findall(r'^      CARGO_TARGET_DIR: (.*)$', body, re.M),
+                         ['${{ github.workspace }}/_build/cargo-target'],
+                         '#1632 the scanner builds into the in-tree _build target')
+        commands = [self.ci_run_commands(step, '#1632') for step in steps]
+        self.assertIn([self.anchor_selfcheck_command, self.self_check_command], commands,
+                      '#1632 anchors and the slot guard are checked before any mutation')
+        self.assertIn([self.negative_controls_command + ' "$RUNNER_TEMP/negctl-1316"'], commands,
+                      '#1632 the fixture itself runs in CI')
+        for step in steps:
+            fields = self.ci_step_fields(step, '#1632')
+            for key in ('if', 'continue-on-error'):
+                self.assertNotIn(key, fields, '#1632 negative-control steps stay unconditional')
+
+    def test_negative_controls_job_regressions_are_rejected(self):
+        workflow = self.ci_workflow_fixture()
+        body = self.ci_jobs('#1632')['negative-controls']
+        anchor_pair = ('          ' + self.anchor_selfcheck_command + '\n'
+                       '          ' + self.self_check_command + '\n')
+        run_step = '      - name: session-assembly-1316 负控夹具执行（#1316 / #1632）\n'
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(body.count(old), 1, f'#1632 unique job anchor: {label}')
+            cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1), message))
+
+        change('fixture-step-removed',
+               run_step + '        run: ' + self.negative_controls_command
+               + ' "$RUNNER_TEMP/negctl-1316"\n', '',
+               '#1632 the fixture itself runs in CI')
+        change('fixture-step-conditional', run_step, run_step + '        if: false\n',
+               '#1632 negative-control steps stay unconditional')
+        change('fixture-step-continue-on-error', run_step,
+               run_step + '        continue-on-error: true\n',
+               '#1632 negative-control steps stay unconditional')
+        change('self-check-dropped', anchor_pair, '          ' + self.anchor_selfcheck_command + '\n',
+               '#1632 anchors and the slot guard are checked before any mutation')
+        change('anchors-dropped', anchor_pair, '          ' + self.self_check_command + '\n',
+               '#1632 anchors and the slot guard are checked before any mutation')
+        change('shallow-checkout', '          fetch-depth: 0\n', '          fetch-depth: 1\n',
+               '#1632 mutating_sources needs HEAD history for its pristine check')
+        change('target-inside-src', 'CARGO_TARGET_DIR: ${{ github.workspace }}/_build/cargo-target',
+               'CARGO_TARGET_DIR: ${{ github.workspace }}/src/target',
+               '#1632 the scanner builds into the in-tree _build target')
+        self.check_ci_mutations(cases, 'test_negative_controls_job_runs_the_gateway_fixture', '#1632')
+
     def test_isolation_ci_regressions_are_rejected(self):
         workflow = self.ci_workflow_fixture()
         command = 'run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
@@ -553,8 +619,8 @@ class EnvironmentControls(unittest.TestCase):
         workflow = self.ci_workflow_fixture()
         cases = []
         for name, body in self.ci_jobs().items():
-            if name in ('check', 'scope'):
-                continue  # check 只聚合；scope 只跑 Python/git，无 Node（#1199）
+            if name in ('check', 'scope', 'negative-controls'):
+                continue  # check 只聚合；scope 只跑 Python/git（#1199）；negative-controls 只跑 Python/cargo（#1632）
             setups = re.findall(r'      - uses: actions/setup-node@v4\n'
                                 r'(?:        .*\n|          .*\n)*', body)
             self.assertEqual(len(setups), 1, f'#909 {name} unique setup anchor')
@@ -849,7 +915,8 @@ class EnvironmentControls(unittest.TestCase):
         cases.append(('doctest-in-other-job', workflow.replace(doc, '', 1).replace('    steps:\n', '    steps:\n' + doc, 1),
                       '#922 文档测试 occurs once in rust'))
         for old, new, message in (
-                ('needs: [scope, metadata-observer, rust, a51-coverage]', 'needs: [scope, metadata-observer, a51-coverage]',
+                ('needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
+                 'needs: [scope, metadata-observer, a51-coverage, negative-controls]',
                  '#904 exact required needs'),
                 ("needs.rust.result != 'success'", "needs.rust.result == 'failure'",
                  '#904 rust rejects every non-success beyond the docs-only skip')):
@@ -1215,9 +1282,9 @@ class EnvironmentControls(unittest.TestCase):
         for name in self.ci_jobs():
             with self.subTest(renamed_job=name):
                 self.assert_ci_rejects(workflow.replace(f'  {name}:\n', f'  renamed-{name}:\n', 1),
-                                       target, '#904 exact six CI jobs')
+                                       target, '#904 exact CI job inventory')
         for declaration, message in (
-                ('  extra:\n    steps:\n      - run: npm test\n', '#904 exact six CI jobs'),
+                ('  extra:\n    steps:\n      - run: npm test\n', '#904 exact CI job inventory'),
                 ('  "extra": {steps: [{run: npm test}]}\n', '#904 unsupported job declaration'),
                 ('  extra: *other-job\n', '#904 unsupported job declaration'),
                 ('  rust:\n    steps:\n      - run: npm test\n', '#904 unique job names')):
