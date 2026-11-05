@@ -104,10 +104,9 @@ impl WeixinSessionMapper {
             let fresh = (self.uuid)();
             units.extend_from_slice(fresh.units());
             let session_key = JsString::from_utf16(units);
-            state.active_by_chat.insert(
-                chat_id.clone(),
-                JsValue::String(session_key.clone()),
-            );
+            state
+                .active_by_chat
+                .insert(chat_id.clone(), JsValue::String(session_key.clone()));
             return WeixinResolveResult {
                 session_key,
                 project_key: project_of(&state, chat_id),
@@ -138,7 +137,10 @@ impl WeixinSessionMapper {
     }
 
     pub fn get_project(&self, chat_id: &JsString) -> Option<JsString> {
-        project_of(&self.state.lock().unwrap_or_else(|e| e.into_inner()), chat_id)
+        project_of(
+            &self.state.lock().unwrap_or_else(|e| e.into_inner()),
+            chat_id,
+        )
     }
 
     pub fn get_session(&self, chat_id: &JsString) -> JsString {

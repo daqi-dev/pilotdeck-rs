@@ -70,7 +70,10 @@ pub fn create_channel_runtime_status_reporter(pilot_home: PathBuf) -> ChannelRun
         // fields — each only when its value is truthy (a non-empty string).
         let mut entry = JsObject::new();
         entry.insert("channelKey".into(), JsValue::String(channel_key.clone()));
-        entry.insert("state".into(), JsValue::String(update.state.as_str().into()));
+        entry.insert(
+            "state".into(),
+            JsValue::String(update.state.as_str().into()),
+        );
         entry.insert("updatedAt".into(), JsValue::String(now.clone()));
         if let Some(message) = update.message.clone().filter(|text| !text.is_empty()) {
             entry.insert("message".into(), JsValue::String(JsString::from(message)));
@@ -97,7 +100,10 @@ pub fn create_channel_runtime_status_reporter(pilot_home: PathBuf) -> ChannelRun
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&path, format!("{}\n", stringify_pretty(&JsValue::Object(next))))
+            std::fs::write(
+                &path,
+                format!("{}\n", stringify_pretty(&JsValue::Object(next))),
+            )
         })();
         if let Err(error) = written {
             eprintln!(

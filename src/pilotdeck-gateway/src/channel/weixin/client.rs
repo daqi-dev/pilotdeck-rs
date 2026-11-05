@@ -35,9 +35,8 @@ const MESSAGE_STATE_FINISH: f64 = 2.0;
 /// TypingStatus.TYPING.
 const TYPING_STATUS_TYPING: f64 = 1.0;
 
-type WeixinConnector = hyper_rustls::HttpsConnector<
-    hyper_util::client::legacy::connect::HttpConnector,
->;
+type WeixinConnector =
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 
 fn weixin_connector() -> WeixinConnector {
     let mut http = hyper_util::client::legacy::connect::HttpConnector::new();
@@ -149,7 +148,10 @@ fn uri_encode_component(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         let keep = byte.is_ascii_alphanumeric()
-            || matches!(byte, b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')');
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            );
         if keep {
             out.push(byte as char);
         } else {
@@ -175,7 +177,10 @@ fn random_wechat_uin() -> String {
 /// client.js `generateClientId`: `ilink-{Date.now()}-{12 hex}`.
 fn generate_client_id() -> String {
     let bytes = uuid::Uuid::new_v4();
-    let hex: String = bytes.as_bytes()[..6].iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = bytes.as_bytes()[..6]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     format!(
         "ilink-{}-{hex}",
         std::time::SystemTime::now()
@@ -208,8 +213,7 @@ impl IlinkHttpClient {
             long_poll_timeout: Duration::from_secs(35),
             api_timeout: Duration::from_secs(15),
             cursor: Arc::new(Mutex::new(String::new())),
-            http: Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build(weixin_connector()),
+            http: Client::builder(hyper_util::rt::TokioExecutor::new()).build(weixin_connector()),
         }
     }
 
@@ -314,11 +318,7 @@ impl IlinkHttpClient {
     }
 
     /// client.js `sendText` message envelope.
-    fn text_message(
-        to_user_id: &JsString,
-        text: &JsString,
-        context_token: &JsString,
-    ) -> JsValue {
+    fn text_message(to_user_id: &JsString, text: &JsString, context_token: &JsString) -> JsValue {
         let mut text_item = JsObject::new();
         text_item.insert("text".into(), JsValue::String(text.clone()));
         let mut item = JsObject::new();
@@ -327,7 +327,10 @@ impl IlinkHttpClient {
         let mut message = JsObject::new();
         message.insert("from_user_id".into(), JsValue::from(""));
         message.insert("to_user_id".into(), JsValue::String(to_user_id.clone()));
-        message.insert("client_id".into(), JsValue::from(generate_client_id().as_str()));
+        message.insert(
+            "client_id".into(),
+            JsValue::from(generate_client_id().as_str()),
+        );
         message.insert("message_type".into(), JsValue::Number(MESSAGE_TYPE_BOT));
         message.insert(
             "message_state".into(),
@@ -388,14 +391,21 @@ impl IlinkHttpClient {
     /// auth.js `fetchQRCode` (GET `get_bot_qrcode?bot_type=3`).
     async fn fetch_qr_code(&self, base_url: &str) -> Result<JsValue, WeixinClientError> {
         let root = base_url.trim_end_matches('/');
-        self.get_json(&format!("{root}/ilink/bot/get_bot_qrcode?bot_type=3"), &[], QR_POLL_TIMEOUT)
-            .await
+        self.get_json(
+            &format!("{root}/ilink/bot/get_bot_qrcode?bot_type=3"),
+            &[],
+            QR_POLL_TIMEOUT,
+        )
+        .await
     }
 }
 
 impl WeixinIlinkClient for IlinkHttpClient {
     fn cursor(&self) -> String {
-        self.cursor.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.cursor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn set_cursor(&self, cursor: &str) {
@@ -530,8 +540,7 @@ pub async fn login_with_qr(
     let root = base_url.trim_end_matches('/');
     let mut qr = client.fetch_qr_code(base_url).await?;
     let mut refresh_count = 1u32;
-    let qr_image =
-        string_field(&qr, "qrcode_img_content").unwrap_or_else(|| JsString::from(""));
+    let qr_image = string_field(&qr, "qrcode_img_content").unwrap_or_else(|| JsString::from(""));
     (callbacks.on_qr_code)(&qr_image);
     (callbacks.on_status_change)("waiting");
     let deadline = tokio::time::Instant::now() + LOGIN_TIMEOUT;
@@ -568,8 +577,8 @@ pub async fn login_with_qr(
                 }
                 (callbacks.on_status_change)("refreshing");
                 qr = client.fetch_qr_code(base_url).await?;
-                let qr_image = string_field(&qr, "qrcode_img_content")
-                    .unwrap_or_else(|| JsString::from(""));
+                let qr_image =
+                    string_field(&qr, "qrcode_img_content").unwrap_or_else(|| JsString::from(""));
                 (callbacks.on_qr_code)(&qr_image);
                 (callbacks.on_status_change)("waiting");
             }
@@ -607,9 +616,13 @@ pub fn default_login_base_url() -> String {
     DEFAULT_BASE_URL.into()
 }
 
+/// The `clientFactory` seam type (WeixinChannel.ts): fresh client per
+/// credentials.
+pub type WeixinClientFactory =
+    Arc<dyn Fn(&SavedCredentials) -> Arc<dyn WeixinIlinkClient> + Send + Sync>;
+
 /// The default injected seams: real hyper client + real QR login.
-pub fn default_client_factory(
-) -> Arc<dyn Fn(&SavedCredentials) -> Arc<dyn WeixinIlinkClient> + Send + Sync> {
+pub fn default_client_factory() -> WeixinClientFactory {
     Arc::new(|creds: &SavedCredentials| {
         Arc::new(IlinkHttpClient::new(
             creds.base_url.clone(),

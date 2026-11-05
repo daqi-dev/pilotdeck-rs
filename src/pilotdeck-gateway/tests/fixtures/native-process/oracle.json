@@ -1328,11 +1328,13 @@
         "mode": "ok",
         "before": {
           "calls": [
+            "channels",
             "session"
           ],
           "settled": false
         },
         "calls": [
+          "channels",
           "session",
           "project"
         ],
@@ -1343,11 +1345,13 @@
         "mode": "session-error",
         "before": {
           "calls": [
+            "channels",
             "session"
           ],
           "settled": false
         },
         "calls": [
+          "channels",
           "session",
           "project"
         ],
@@ -1363,11 +1367,13 @@
         "mode": "project-error",
         "before": {
           "calls": [
+            "channels",
             "session"
           ],
           "settled": false
         },
         "calls": [
+          "channels",
           "session",
           "project"
         ],
@@ -1383,11 +1389,13 @@
         "mode": "both-errors",
         "before": {
           "calls": [
+            "channels",
             "session"
           ],
           "settled": false
         },
         "calls": [
+          "channels",
           "session",
           "project"
         ],
@@ -1407,11 +1415,13 @@
         "mode": "release",
         "before": {
           "calls": [
+            "channels",
             "session"
           ],
           "settled": false
         },
         "calls": [
+          "channels",
           "session",
           "project"
         ],
@@ -1422,11 +1432,13 @@
         "mode": "cancel",
         "before": {
           "calls": [
+            "channels",
             "session"
           ],
           "settled": false
         },
         "calls": [
+          "channels",
           "session",
           "project"
         ],
@@ -1442,6 +1454,7 @@
         "mode": "never",
         "before": {
           "calls": [
+            "channels",
             "session"
           ],
           "settled": false

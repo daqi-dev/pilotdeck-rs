@@ -98,7 +98,7 @@ impl NativeChannels {
         let weixin_runtime = runtime.clone();
         let mut weixin = options.weixin;
         weixin.runtime_status = Some(Arc::new(move |status| {
-            weixin_runtime(&weixin_key().as_js(), &weixin_update(&status));
+            weixin_runtime(weixin_key().as_js(), &weixin_update(&status));
         }));
         let state = ChannelStatePersistence::new(options.pilot_home.join("channels"));
         Self {
@@ -133,14 +133,14 @@ impl NativeChannels {
     /// ChannelAdapterBundle.makeWeixin: mapper from the persisted state (or a
     /// fresh one), `onStateChange` persisting back through the debounce.
     async fn make_weixin(&self) -> Arc<dyn ChannelAdapter> {
-        let saved = self.state.load(&weixin_key().as_js()).await;
+        let saved = self.state.load(weixin_key().as_js()).await;
         let mapper = match saved {
             Some(saved) => Arc::new(WeixinSessionMapper::from_saved(&saved)),
             None => Arc::new(WeixinSessionMapper::new()),
         };
         let state = self.state.clone();
         let on_state_change: WeixinStateChange =
-            Arc::new(move |value| state.save(&weixin_key().as_js(), value.clone()));
+            Arc::new(move |value| state.save(weixin_key().as_js(), value.clone()));
         let mut options = self.weixin.clone();
         options.mapper = mapper;
         options.on_state_change = Some(on_state_change);
@@ -205,12 +205,9 @@ impl NativeChannels {
             let channels = channels.clone();
             Box::pin(async move {
                 let requested_at = now_iso();
-                channels
-                    .hot_start_weixin()
-                    .await
-                    .map_err(|error| {
-                        crate::runtime::connection::RequestError::new(error.message())
-                    })?;
+                channels.hot_start_weixin().await.map_err(|error| {
+                    crate::runtime::connection::RequestError::new(error.message())
+                })?;
                 Ok(crate::metadata::object([
                     ("requested", JsValue::Bool(true)),
                     ("requestedAt", JsValue::String(requested_at)),

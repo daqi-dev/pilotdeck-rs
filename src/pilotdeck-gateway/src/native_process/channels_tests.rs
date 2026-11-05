@@ -87,9 +87,7 @@ impl ChannelAdapter for MockWeixin {
     ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
         self.lifecycle.push("start".into());
         let lifecycle = self.lifecycle.clone();
-        Box::pin(async move {
-            Ok(Arc::new(MockHandle { lifecycle }) as Arc<dyn ChannelHandle>)
-        })
+        Box::pin(async move { Ok(Arc::new(MockHandle { lifecycle }) as Arc<dyn ChannelHandle>) })
     }
 }
 struct MockHandle {
@@ -196,7 +194,8 @@ async fn prepare_login_callback_hot_starts_and_replaces() {
         .map(|(key, _)| key.to_utf8().expect("#1328 key UTF-8").to_string())
         .collect();
     assert_eq!(
-        keys, ["requested", "requestedAt"],
+        keys,
+        ["requested", "requestedAt"],
         "#1328 prepare result field order"
     );
     assert_eq!(
@@ -252,11 +251,7 @@ async fn startup_gate_requires_strict_boolean_true() {
     ] {
         let harness = harness(config);
         let channel = harness.channels.create_startup_weixin().await;
-        assert_eq!(
-            channel.is_some(),
-            expected,
-            "#1328 startup gate ({config})"
-        );
+        assert_eq!(channel.is_some(), expected, "#1328 startup gate ({config})");
         if let Some(channel) = channel {
             harness.channels.server().start_channels(vec![channel]);
             harness.lifecycle.until(1).await;
@@ -296,7 +291,10 @@ async fn reload_reconciles_the_weixin_key() {
         vec![ChannelKey::new("weixin")],
         "#1328 enable reload starts weixin"
     );
-    assert!(result.stopped.is_empty(), "#1328 enable reload stops nothing");
+    assert!(
+        result.stopped.is_empty(),
+        "#1328 enable reload stops nothing"
+    );
     harness.lifecycle.until(1).await;
     let result = harness
         .channels
@@ -350,10 +348,7 @@ async fn close_stops_running_channel_and_memoizes() {
         .await
         .expect("#1328 empty server closes cleanly");
     let running = harness("{}");
-    running
-        .channels
-        .prepare_login_callback()
-        ()
+    running.channels.prepare_login_callback()()
         .await
         .expect("#1328 running harness starts");
     running.lifecycle.until(1).await;
@@ -401,10 +396,7 @@ async fn gateway_port_publishes_once_and_reaches_channels() {
         !published.channels.set_gateway_port(Arc::new(ProbePort)),
         "#1328 second publish is rejected"
     );
-    published
-        .channels
-        .prepare_login_callback()
-        ()
+    published.channels.prepare_login_callback()()
         .await
         .expect("#1328 published harness starts");
     published.lifecycle.until(1).await;
@@ -420,10 +412,7 @@ async fn gateway_port_publishes_once_and_reaches_channels() {
     // Without a publish, the constructed channel has no gateway (the TS
     // baseDeps.gateway is only present once the gateway exists).
     let fresh = harness("{}");
-    fresh
-        .channels
-        .prepare_login_callback()
-        ()
+    fresh.channels.prepare_login_callback()()
         .await
         .expect("#1328 unpublished harness starts");
     fresh.lifecycle.until(1).await;
@@ -437,10 +426,7 @@ async fn gateway_port_publishes_once_and_reaches_channels() {
 #[tokio::test]
 async fn hot_start_restores_mapper_state_and_persists_changes() {
     let harness = harness("{}");
-    harness
-        .channels
-        .prepare_login_callback()
-        ()
+    harness.channels.prepare_login_callback()()
         .await
         .expect("#1328 mapper harness starts");
     harness.lifecycle.until(1).await;
@@ -456,9 +442,7 @@ async fn hot_start_restores_mapper_state_and_persists_changes() {
         r#"{"activeByChatId":{"chat-1":"weixin:chat=chat-1:s_persisted"},"projectByChatId":{"chat-1":"proj-1"}}"#,
     )
     .expect("#1328 mapper snapshot JSON");
-    first
-        .on_state_change
-        .expect("#1328 on_state_change wired")(&snapshot);
+    first.on_state_change.expect("#1328 on_state_change wired")(&snapshot);
     harness
         .channels
         .flush()
@@ -474,20 +458,23 @@ async fn hot_start_restores_mapper_state_and_persists_changes() {
     .expect("#1328 persisted mapper state file");
     let saved = parse_json(&raw).expect("#1328 persisted mapper state JSON");
     assert_eq!(
-        field_text(&saved.get("activeByChatId").expect("#1328 active map"), "chat-1"),
+        field_text(
+            saved.get("activeByChatId").expect("#1328 active map"),
+            "chat-1"
+        ),
         Some("weixin:chat=chat-1:s_persisted".into()),
         "#1328 flushed active session"
     );
     assert_eq!(
-        field_text(&saved.get("projectByChatId").expect("#1328 project map"), "chat-1"),
+        field_text(
+            saved.get("projectByChatId").expect("#1328 project map"),
+            "chat-1"
+        ),
         Some("proj-1".into()),
         "#1328 flushed project binding"
     );
     // A second hot start restores the mapper from the persisted state.
-    harness
-        .channels
-        .prepare_login_callback()
-        ()
+    harness.channels.prepare_login_callback()()
         .await
         .expect("#1328 repeat hot start resolves");
     harness.lifecycle.until(3).await;
@@ -498,7 +485,10 @@ async fn hot_start_restores_mapper_state_and_persists_changes() {
         "#1328 restored mapper keeps the persisted session"
     );
     assert_eq!(
-        second.mapper.get_project(&chat).map(|key| String::from_utf16_lossy(key.units())),
+        second
+            .mapper
+            .get_project(&chat)
+            .map(|key| String::from_utf16_lossy(key.units())),
         Some("proj-1".into()),
         "#1328 restored mapper keeps the persisted project"
     );
@@ -552,15 +542,15 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
         "#1328 invalid file reads epoch updatedAt"
     );
     // The lifecycle reporter writes the connected entry.
-    harness
-        .channels
-        .prepare_login_callback()
-        ()
+    harness.channels.prepare_login_callback()()
         .await
         .expect("#1328 status harness starts");
     harness.lifecycle.until(1).await;
     let (raw, status) = read_status_file(&path);
-    assert!(raw.ends_with('\n'), "#1328 runtime status file ends newline");
+    assert!(
+        raw.ends_with('\n'),
+        "#1328 runtime status file ends newline"
+    );
     assert_eq!(
         entry_keys(&status),
         ["updatedAt", "channels"],

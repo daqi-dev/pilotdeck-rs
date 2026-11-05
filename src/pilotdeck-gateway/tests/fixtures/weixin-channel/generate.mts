@@ -108,7 +108,7 @@ const HEADER_KEYS = ['content-type', 'authorization', 'authorizationtype', 'ilin
 // getupdates long-polls are HELD until the scenario pushes the next scripted
 // item, and are recorded when the server answers — so request order in the
 // oracle follows the scenario's gated steps, not connection races. A held
-// poll parked when a stop begins is answered with the AbortError shape.
+// poll parked when a stop begins is answered with the empty shape.
 class FakeIlink {
   requests: any[] = [];
   private scripts = new Map<string, any[]>();
@@ -316,6 +316,9 @@ scenario('session-expired', [
   { op: 'wait-reports', state: 'connected' },
   { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-1', [message('user-5', 'hi', 'ctx-5', 'm-5')])] },
   { op: 'wait-requests', path: '/ilink/bot/sendtyping', count: 1 },
+  // Gate the -14 delivery on the held turn having consumed turn_started, so
+  // the marker's place against the expired-notice sendmessage is fixed.
+  { op: 'wait-held', turn: 0 },
   { op: 'script', endpoint: '/ilink/bot/getupdates', items: [{ errcode: -14 }] },
   { op: 'wait-reports', state: 'expired' },
   { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
@@ -465,7 +468,12 @@ async function run(definition: any) {
     pilotdeckModule, pilotdeckModule.exports,
   );
   const startPilotDeckServer = pilotdeckModule.exports.startPilotDeckServer;
-  const { WeixinChannel, WeixinSessionMapper } = loadModule(join(baseline, 'src/adapters/channel/weixin/WeixinChannel.ts'));
+  const { WeixinChannel } = loadModule(join(baseline, 'src/adapters/channel/weixin/WeixinChannel.ts'));
+  // WeixinChannel imports its mapper without re-exporting it, so the class
+  // comes from the mapper's own module (the pr1 delivery found the repeat-
+  // prepare case recording `TypeError: WeixinSessionMapper is not a
+  // constructor` instead of the hot reload it exists to pin).
+  const { WeixinSessionMapper } = loadModule(join(baseline, 'src/adapters/channel/weixin/WeixinSessionMapper.ts'));
   const { ChannelStatePersistence } = loadModule(join(baseline, 'src/adapters/channel/protocol/ChannelStatePersistence.ts'));
 
   const turns = definition.turns ?? [];
@@ -597,19 +605,34 @@ async function run(definition: any) {
   async function waitRequests(items: any[]) {
     for (const item of items) await until(() => fake.countPath(item.path) >= item.count);
   }
-  // A stop waits for the poll loop, which is parked on a held long poll; the
-  // abort is issued first, so answering it lets the loop exit at its top check.
+  // A stop parks on the poll loop's held long poll (TS stop issues its abort
+  // synchronously, then awaits the poll promise). The settle gives the stop a
+  // head start so the abort has landed before the parked poll is answered:
+  // the loop then exits at its top check and never re-parks, and the polls the
+  // replacement channel issues once the stop completes are ordinary long
+  // polls — answering those (or a re-park) made the recorded request count
+  // depend on event-loop granularity, so they stay parked for the next script
+  // item.
   async function settleStop<T>(promise: Promise<T>): Promise<T> {
-    let settled = false;
-    const guarded = promise.then(
-      (value) => { settled = true; return value; },
-      (error) => { settled = true; throw error; },
+    const settled = promise.then(
+      (value) => ({ value }) as { value: T },
+      (error) => ({ error }) as { error: unknown },
     );
-    while (!settled) {
+    if (await Promise.race([settled, new Promise((done) => setTimeout(done, 25))]) === undefined) {
       fake.releaseHeld();
-      await new Promise((done) => setImmediate(done));
     }
-    return guarded;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const outcome = await Promise.race([
+        settled,
+        new Promise((done) => setTimeout(done, 2000)),
+      ]);
+      if (outcome !== undefined) {
+        if ('error' in outcome) throw outcome.error;
+        return outcome.value;
+      }
+      fake.releaseHeld();
+    }
+    throw new Error('#1328 settleStop timed out');
   }
   const capture = (promise: Promise<any>) => promise.then(
     (value) => mask(value ?? null),
@@ -652,7 +675,10 @@ async function run(definition: any) {
           return { requested: true, requestedAt };
         });
       } else if (step.op === 'prepare') {
-        results.push(await capture(gateway.prepareWeixinLogin()));
+        // The CLI callback awaits the hot start, which replaces (stops) any
+        // running channel; a parked long poll only clears when released, so
+        // the step settles the replacement like reload/close do.
+        results.push(await capture(settleStop(gateway.prepareWeixinLogin())));
       } else if (step.op === 'credentials') {
         const json = JSON.parse(JSON.stringify(step.json).replaceAll('$BASE', baseUrl));
         await mkdir(dirname(credentialsPath), { recursive: true });
