@@ -34,7 +34,11 @@ class EnvironmentControls(unittest.TestCase):
         'test(=scenarios_match_ts_outcomes_and_trees) | '
         'test(=real_ts_tool_budget_and_apply_tool_results_replay) | '
         'test(=skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore) | '
-        'test(=runtime::tools::builtin::grep::tests::files_sort_keeps_submillisecond_mtime_precision)')
+        'test(=skills::tests::real_ts_scenarios_match_outcomes_and_file_trees) | '
+        'test(=runtime::tools::builtin::grep::tests::files_sort_keeps_submillisecond_mtime_precision) | '
+        'test(=project_files::tests::node_round4_unreadable_huge_file_reports_open_error_first) | '
+        'test(=runtime::cron::tests::migration_blocked_dir_tasks_eacces_matches_ts) | '
+        'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -645,34 +649,42 @@ class EnvironmentControls(unittest.TestCase):
         # fix-r3: `test(=name)` is an exact match on the name nextest reports.
         # Integration tests (`tests/*.rs`) report their bare fn name, unit tests
         # (`src/**`) report their module path — a bare leaf never selects them
-        # (measured on nextest 0.9.150: `test(=bar)` misses `foo::tests::bar`,
-        # `test(=foo::tests::bar)` hits). Derive the expected name from the file
-        # that declares the fn instead of only grepping the leaf.
-        names = re.findall(r'test\(=([A-Za-z0-9_:]+)\)', filter_text)
-        self.assertTrue(names, '#922 the success-output filter names its tests')
+        # (measured on nextest 0.9.150 and on CI's pinned 0.9.148: `test(=bar)`
+        # misses `foo::tests::bar`, `test(=foo::tests::bar)` hits).
+        # fix-r4: derive exactly ONE name per declaring file from the module
+        # path. Taking a union of guesses let `skills::tests::tests::leaf`
+        # (which nextest never reports) pass while selecting nothing.
+        entries = re.findall(r'test\(([^)]*)\)', filter_text)
+        self.assertTrue(entries, '#922 the success-output filter names its tests')
         crate = Path(__file__).resolve().parents[1]
         sources = {source: source.read_text(errors='replace')
                    for source in crate.rglob('*.rs') if 'target' not in source.parts}
-        for name in names:
+        for entry in entries:
+            # `[^)]*` also catches a name the old `[A-Za-z0-9_:]+` regex
+            # silently truncated at a `-` or a space.
+            self.assertRegex(entry, r'^=[A-Za-z0-9_:]+$',
+                             f'#922 the success-output filter entry test({entry}) is not a '
+                             f'plain `test(=name)` matcher')
+            name = entry[1:]
             leaf = name.rsplit('::', 1)[-1]
             defining = [source for source, text in sources.items() if f'fn {leaf}(' in text]
             self.assertTrue(defining, f'#922 the success-output filter names the real test {name}')
-            expected = set()
-            for source in defining:
-                expected |= self.nextest_visible_names(crate, source, leaf)
+            expected = {self.nextest_visible_name(crate, source, leaf) for source in defining}
             self.assertIn(name, expected,
                           f'#922 the success-output filter must use the nextest-visible name '
                           f'for {leaf}: {sorted(expected)}, not {name}')
 
     @staticmethod
-    def nextest_visible_names(crate, source, leaf):
+    def nextest_visible_name(crate, source, leaf):
         relative = source.relative_to(crate)
         if relative.parts[0] != 'src':
-            return {leaf}
+            return leaf
         parts = list(relative.relative_to('src').with_suffix('').parts)
         if parts[-1] == 'mod':
             parts.pop()
-        return {'::'.join([*parts, 'tests', leaf]), '::'.join([*parts, leaf])}
+        if parts[-1] != 'tests':
+            parts.append('tests')
+        return '::'.join([*parts, leaf])
 
     def test_success_output_filter_rejects_a_renamed_test(self):
         # The filter is a list of nextest-visible test names: a rename would
@@ -687,6 +699,17 @@ class EnvironmentControls(unittest.TestCase):
             self.assert_success_output_filter_names_real_tests(
                 self.nextest_success_output_filter
                 + ' | test(=files_sort_keeps_submillisecond_mtime_precision)')
+        # fix-r4: a doubled module segment names nothing in nextest; the old
+        # union-of-guesses accepted it.
+        with self.assertRaisesRegex(AssertionError, 'must use the nextest-visible name'):
+            self.assert_success_output_filter_names_real_tests(
+                self.nextest_success_output_filter
+                + ' | test(=skills::tests::tests::unreadable_scan_child_matches_real_ts_'
+                  'before_denial_and_after_restore)')
+        # fix-r4: the entry regex must not silently truncate at a stray char.
+        with self.assertRaisesRegex(AssertionError, 'is not a plain'):
+            self.assert_success_output_filter_names_real_tests(
+                self.nextest_success_output_filter + ' | test(=skills::tests::foo-bar)')
 
     def test_ci_rejects_nextest_execution_drift(self):
         workflow = self.ci_workflow_fixture()
