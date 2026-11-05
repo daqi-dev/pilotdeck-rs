@@ -38,6 +38,9 @@ switches = [
     ('webhook-rate-window', SOURCE_WEBHOOK, 'rate_limit_window_slides_at_sixty_seconds', '#1334 the rate limit window slides at exactly 60 s'),
     # Without the `-{now}` suffix every delivery from one route shares an id.
     ('webhook-delivery-id-fallback', SOURCE_WEBHOOK, 'missing_delivery_id_falls_back_to_route_and_now', '#1334 the delivery id falls back to route and now'),
+    # The oversize request must end as a zero-byte close (`closed` cell);
+    # answering with the catch arm's 413 instead makes that cell red.
+    ('webhook-oversize-answers', SOURCE_WEBHOOK, 'too_large', '#1334 webhook oracle case too-large'),
     # A null JSON body must hang the connection (noResponse cell), never be
     # answered with a 400.
     ('webhook-null-body-responds', SOURCE_WEBHOOK, 'no_text', '#1334 webhook oracle case no-text'),

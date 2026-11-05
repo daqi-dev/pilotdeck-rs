@@ -373,7 +373,13 @@ fn content_length(head_text: &str) -> Option<usize> {
 #[derive(Debug)]
 enum Exchange {
     Error(String),
+    /// The recorder's deadline passed with nothing on the wire: the socket is
+    /// still open and silent (the 400 ms null-body probe).
     NoResponse,
+    /// The peer closed the socket without sending a byte (the oversize cell).
+    /// Kept apart from `NoResponse` so the oracle can tell "closed" from
+    /// "hung", which the two endings used to collapse into one value.
+    Closed,
     Raws(Vec<String>),
 }
 
@@ -387,6 +393,15 @@ fn finish_raws(mut raws: Vec<String>, buffer: String) -> Vec<String> {
 fn timer_finish(raws: Vec<String>, buffer: String) -> Exchange {
     if buffer.is_empty() && raws.is_empty() {
         Exchange::NoResponse
+    } else {
+        Exchange::Raws(finish_raws(raws, buffer))
+    }
+}
+
+/// The recorder's `close` handler: the peer ended the socket.
+fn eof_finish(raws: Vec<String>, buffer: String) -> Exchange {
+    if buffer.is_empty() && raws.is_empty() {
+        Exchange::Closed
     } else {
         Exchange::Raws(finish_raws(raws, buffer))
     }
@@ -429,12 +444,7 @@ async fn raw_exchange(port: Option<u16>, request: &str, mode: &str, count: usize
         };
         match timeout(wait, stream.read(&mut chunk)).await {
             Err(_elapsed) => return timer_finish(raws, buffer),
-            Ok(Ok(0)) => {
-                if buffer.is_empty() && raws.is_empty() {
-                    return Exchange::NoResponse;
-                }
-                return Exchange::Raws(finish_raws(raws, buffer));
-            }
+            Ok(Ok(0)) => return eof_finish(raws, buffer),
             Ok(Ok(read)) => {
                 buffer.extend(chunk[..read].iter().map(|&byte| byte as char));
                 if mode == "keepalive" && response_end(&buffer).is_some() {
@@ -549,6 +559,7 @@ async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value
     match exchange {
         Exchange::Error(code) => responses.push(json!({"label": label, "error": code})),
         Exchange::NoResponse => responses.push(json!({"label": label, "noResponse": true})),
+        Exchange::Closed => responses.push(json!({"label": label, "closed": true})),
         Exchange::Raws(raws) => {
             if count == 1 {
                 let one = raws.into_iter().next().unwrap_or_default();
@@ -716,6 +727,38 @@ async fn run_case(case: &Value) -> Value {
         "logs": masked,
         "cron": *cron.lock().expect("#1334 replay cron mutex"),
     })
+}
+
+/// `Date.now() / 1000` carries millisecond resolution and nothing finer, so
+/// two no-id deliveries inside one millisecond share a fallback id there. A
+/// finer Rust clock would hand them different dedup keys, which is why the
+/// default clock is quantized to milliseconds.
+#[test]
+fn fallback_delivery_id_carries_millisecond_resolution() {
+    let text = number_to_string(default_now());
+    let decimals = text.split('.').nth(1).map(str::len).unwrap_or(0);
+    negative_assert!(
+        decimals <= 3,
+        "#1334 the fallback delivery id keeps TS millisecond resolution, got {text}"
+    );
+}
+
+/// The recorder must keep "the peer closed without a byte" apart from "the
+/// deadline passed in silence": the oversize cell is the former and the
+/// null-body cell the latter, and a single `noResponse` value for both made
+/// the oversize cell blind to a regression from "close" to "hang".
+#[test]
+fn silence_and_zero_byte_close_stay_distinguishable() {
+    negative_assert_eq!(
+        format!("{:?}", timer_finish(Vec::new(), String::new())),
+        "NoResponse",
+        "#1334 the silence probe records noResponse"
+    );
+    negative_assert_eq!(
+        format!("{:?}", eof_finish(Vec::new(), String::new())),
+        "Closed",
+        "#1334 the zero-byte close records closed"
+    );
 }
 
 async fn replay(name: &str) {
