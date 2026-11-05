@@ -23,6 +23,11 @@ class Case:
     scope: object = None
 
 
+def short_test(test):
+    """The last component of a Rust test identity, for evidence file names."""
+    return test.rsplit('::', 1)[-1]
+
+
 def passed(result, test):
     log = result.stdout + result.stderr
     # `--nocapture` can interleave a test's stdout between the name and the
@@ -96,6 +101,37 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
 
+    # #1365 fix-r3 P1: one mutation row may bind several tests, one ``Case``
+    # each. Naming the evidence by the mutation alone made every later Case
+    # overwrite the earlier Case's positive/negative/restored logs, so a
+    # multi-test row kept raw output for its last test only while the summary
+    # still reported one row per test — an evidence gap under a green count.
+    # Multi-Case rows therefore carry a per-Case component in the log stem and
+    # in the printed verdict; single-Case rows keep their historical names so
+    # existing evidence paths stay valid. Two Cases of the same row that share
+    # a short name (the same test bound to two markers) fall back to the whole
+    # identity, and a repeated label gains an ordinal, so no two Cases share
+    # a stem.
+    groups = {}
+    for case in cases:
+        groups.setdefault(case.mutation, []).append(case)
+    labels = {}
+    for mutation, group in groups.items():
+        if len(group) == 1:
+            labels[id(group[0])] = mutation
+            continue
+        shorts = [short_test(case.test) for case in group]
+        unique = len(set(shorts)) == len(shorts)
+        seen = {}
+        for case, short in zip(group, shorts):
+            base = short if unique else case.test.replace('::', '.')
+            seen[base] = seen.get(base, 0) + 1
+            ordinal = '' if seen[base] == 1 else f'-{seen[base]}'
+            labels[id(case)] = f'{mutation}-{base}{ordinal}'
+
+    def stem(case):
+        return labels[id(case)]
+
     def run(label, test):
         try:
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
@@ -122,7 +158,7 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
         # restore/re-verify window has closed successfully (#1076).
         results.append({'mutation': case.mutation, 'test': case.test,
                         'assertion': case.assertion, 'status': status, 'reason': reason})
-        print(f'{case.mutation}: {status}: {reason}', flush=True)
+        print(f'{stem(case)}: {status}: {reason}', flush=True)
 
     # Where the guarded window raised, for the three-state exit contract:
     # 'enter' is a refusal to run (HEAD/baseline mismatch, busy lock, bad
@@ -154,12 +190,12 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                         changed = mutate(originals[case.path].decode(), case.scope,
                                          [(case.old, case.new)])
                         stage = 'positive'
-                        if not passed(run(case.mutation + '-positive', case.test), case.test):
+                        if not passed(run(stem(case) + '-positive', case.test), case.test):
                             reason = 'positive control did not pass the bound test'
                         else:
                             stage = 'negative'
                             case.path.write_text(changed)
-                            status, reason = classify(run(case.mutation + '-negative', case.test), case)
+                            status, reason = classify(run(stem(case) + '-negative', case.test), case)
                     except Exception as error:
                         status, reason = 'INVALID', f'{stage}: {type(error).__name__}: {error}'
                     finally:
@@ -171,7 +207,7 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                             raise RuntimeError(f'byte restoration failed: {case.path}')
                         phase = 'body'
                     try:
-                        if not passed(run(case.mutation + '-restored', case.test), case.test):
+                        if not passed(run(stem(case) + '-restored', case.test), case.test):
                             status, reason = 'INVALID', reason + '; restored bound test did not pass'
                     except Exception as error:
                         status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'

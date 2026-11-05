@@ -292,6 +292,102 @@ class SuiteTests(unittest.TestCase):
                                  'positive needs exact test and one pass')
 
 
+class EvidenceLabelTests(unittest.TestCase):
+    """#1365 fix-r3 P1: a row that binds several tests keeps one log per Case."""
+
+    FIRST = 'runtime::owner::tests::alpha_drain'
+    SECOND = 'runtime::owner::tests::beta_drain'
+    SOLO = 'runtime::owner::tests::solo_drain'
+
+    def result_for(self, test, kind):
+        if kind == 'pass':
+            return subprocess.CompletedProcess(
+                [], 0, f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;\n', '')
+        return subprocess.CompletedProcess(
+            [], 101, f'test {test} ... FAILED\ntest result: FAILED\n',
+            f"thread '{test}' panicked at fixture.rs:1:1:\n{ANCHOR}\n")
+
+    def drive(self, specs):
+        """Run ``(mutation, test, marker)`` specs through the shared runner."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        source = root / 'fixture.rs'
+        source.write_text('original')
+        out = root / 'logs'
+        out.mkdir()
+        cases = [suite.Case(mutation, source, 'original', 'mutant', test, marker)
+                 for mutation, test, marker in specs]
+
+        def run(command, **_kwargs):
+            self.assertEqual(command[-3:], ['--', '--exact', '--include-ignored'],
+                             '#1365 the evidence probe must run the exact bound test')
+            return self.result_for(command[-4],
+                                   'kill' if source.read_text() == 'mutant' else 'pass')
+
+        def mutate(text, _scope, replacements):
+            old, new = replacements[0]
+            self.assertEqual(text.count(old), 1, '#1365 stale label fixture anchor')
+            return text.replace(old, new, 1)
+
+        with patch.object(suite, 'mutating_sources') as sources, \
+                patch.object(suite, 'wait_for_slot',
+                             return_value=self.result_for(self.FIRST, 'pass')), \
+                patch.object(suite, 'run_owned', side_effect=run), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            sources.return_value.__enter__.return_value = {source: b'original'}
+            sources.return_value.__exit__.return_value = False
+            code = suite.run_cases(root, cases, out,
+                                   {'CARGO_TARGET_DIR': str(root / 'target')}, mutate)
+        self.assertEqual(source.read_text(), 'original', '#1365 evidence probe restores bytes')
+        return code, out, stdout.getvalue()
+
+    def test_multi_test_row_keeps_per_case_logs_and_labels(self):
+        code, out, text = self.drive([
+            ('row', self.FIRST, ANCHOR),
+            ('row', self.SECOND, ANCHOR),
+            ('solo', self.SOLO, ANCHOR),
+        ])
+        self.assertEqual(code, 0, '#1365 every bound Case must still be killed')
+        names = sorted(path.name for path in out.iterdir())
+        for test, other in ((self.FIRST, self.SECOND), (self.SECOND, self.FIRST)):
+            short = suite.short_test(test)
+            for stage in ('positive', 'negative', 'restored'):
+                path = out / f'row-{short}-{stage}.log'
+                self.assertTrue(path.is_file(),
+                                f'#1365 {path.name} must exist; got {names}')
+                self.assertIn(f'test {test} ', path.read_text(),
+                              f'#1365 {path.name} must hold its own bound test output')
+                self.assertNotIn(other, path.read_text(),
+                                 f'#1365 {path.name} must not hold the sibling Case output')
+        self.assertIn('solo-positive.log', names,
+                      '#1365 single-test rows keep their historical log names')
+        for label in (f'row-{suite.short_test(self.FIRST)}',
+                      f'row-{suite.short_test(self.SECOND)}', 'solo'):
+            self.assertIn(f'{label}: KILLED', text,
+                          '#1365 every Case must be traceable to its test on the console')
+        summary = json.loads((out / 'summary.json').read_text())
+        self.assertEqual([row['mutation'] for row in summary['controls']],
+                         ['row', 'row', 'solo'],
+                         '#1365 the summary keeps the real mutation name, not the log stem')
+        self.assertEqual([row['test'] for row in summary['controls']],
+                         [self.FIRST, self.SECOND, self.SOLO])
+
+    def test_same_test_bound_twice_gets_ordinal_labels(self):
+        code, out, text = self.drive([
+            ('row', self.FIRST, ANCHOR),
+            ('row', self.FIRST, ANCHOR),
+        ])
+        self.assertEqual(code, 0)
+        names = sorted(path.name for path in out.iterdir())
+        self.assertIn('row-runtime.owner.tests.alpha_drain-positive.log', names,
+                      '#1365 a repeated Case falls back to the whole test identity')
+        self.assertIn('row-runtime.owner.tests.alpha_drain-2-positive.log', names,
+                      '#1365 a repeated label gains an ordinal instead of overwriting')
+        self.assertIn('row-runtime.owner.tests.alpha_drain: KILLED', text,
+                      '#1365 the console label must match the disambiguated log stem')
+
+
 class CancellationTests(unittest.TestCase):
     """#1076: a cancellation in the guard exit must never keep an all-KILLED file."""
 
