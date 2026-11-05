@@ -5,9 +5,9 @@ use pilotdeck_gateway::{
     runtime::{
         async_hooks::{
             AsyncHookClock, AsyncHookRegistration, AsyncHookRegistry, AsyncHookStatus,
-            AsyncHookTimer, AsyncHookTurn, timer_delay_ms,
+            AsyncHookTimer, AsyncHookTurn, AsyncHookTurnHandle, timer_delay_ms,
         },
-        steer::{MutationRecorder, SteerMailbox},
+        steer::{EnqueueResult, MutationRecorder, SteerMailbox, SteerMessage},
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -53,6 +53,43 @@ fn js(s: &JsString) -> JsValue {
 }
 fn ok(value: JsValue) -> JsValue {
     object([("ok", JsValue::Bool(true)), ("value", value)])
+}
+/// Test delivery handle over a bare mailbox. Each `MailboxTurn::new` gets a
+/// fresh run identity, so a restarted run with the same textual turn ID is a
+/// different run — exactly what the production `ActiveSteerInfo` handle does.
+struct MailboxTurn {
+    run_id: JsString,
+    identity: Arc<()>,
+    mailbox: SteerMailbox,
+    turn_id: JsString,
+}
+impl MailboxTurn {
+    fn new(run_id: impl Into<JsString>, mailbox: SteerMailbox) -> Self {
+        let run_id = run_id.into();
+        Self {
+            turn_id: run_id.clone(),
+            run_id,
+            identity: Arc::new(()),
+            mailbox,
+        }
+    }
+    fn turn(run_id: impl Into<JsString>, mailbox: SteerMailbox) -> AsyncHookTurn {
+        AsyncHookTurn::new(Self::new(run_id, mailbox))
+    }
+}
+impl AsyncHookTurnHandle for MailboxTurn {
+    fn run_id(&self) -> &JsString {
+        &self.run_id
+    }
+    fn identity(&self) -> &Arc<()> {
+        &self.identity
+    }
+    fn is_live(&self) -> bool {
+        true
+    }
+    fn enqueue(&self, message: SteerMessage) -> HostFuture<EnqueueResult> {
+        self.mailbox.enqueue(self.turn_id.clone(), message)
+    }
 }
 async fn capture(future: HostFuture<JsValue>) -> JsValue {
     match future.await {
@@ -224,13 +261,10 @@ impl Harness {
             "start" => {
                 let mailbox = self.mailbox(&session);
                 mailbox.start(run.clone());
-                self.active.lock().unwrap().insert(
-                    session,
-                    AsyncHookTurn {
-                        run_id: run,
-                        mailbox,
-                    },
-                );
+                self.active
+                    .lock()
+                    .unwrap()
+                    .insert(session, MailboxTurn::turn(run, mailbox));
             }
             "finish" => {
                 self.active.lock().unwrap().remove(&session);
@@ -524,10 +558,7 @@ async fn empty_context_settlement_does_not_overwrite_expiry_that_won_the_race() 
     let clock = Arc::new(Clock::default());
     let mailbox = SteerMailbox::new(None);
     mailbox.start("r".into());
-    let turn = AsyncHookTurn {
-        run_id: "r".into(),
-        mailbox,
-    };
+    let turn = MailboxTurn::turn("r", mailbox);
     let lookups = Arc::new(Mutex::new(0));
     let events = Arc::new(Mutex::new(Vec::new()));
     let (timer_clock, count, sink) = (clock.clone(), lookups.clone(), events.clone());
@@ -594,10 +625,7 @@ fn status_sink(events: &Arc<Mutex<Vec<String>>>) -> impl Fn(&JsString, JsObject)
 fn started_turn() -> AsyncHookTurn {
     let mailbox = SteerMailbox::new(None);
     mailbox.start("r".into());
-    AsyncHookTurn {
-        run_id: "r".into(),
-        mailbox,
-    }
+    MailboxTurn::turn("r", mailbox)
 }
 
 /// Blocks one `now_ms` call (the deadline check of a chosen submit) until
@@ -810,10 +838,7 @@ async fn expiry_event_precedes_delivery_that_settled_after_it() {
         state: recording.clone(),
     })));
     mailbox.start("r".into());
-    let turn = AsyncHookTurn {
-        run_id: "r".into(),
-        mailbox,
-    };
+    let turn = MailboxTurn::turn("r", mailbox);
     let events = Arc::new(Mutex::new(Vec::new()));
     let (sink, entered, go) = blocking_first_sink(&events);
     let registry = AsyncHookRegistry::new(clock.clone(), move |_| Some(turn.clone()), sink);
@@ -856,14 +881,11 @@ async fn expire_for_turn_burst_is_not_interleaved() {
         (JsString::from("s"), started_turn()),
         (
             JsString::from("t"),
-            AsyncHookTurn {
-                run_id: "r".into(),
-                mailbox: {
-                    let mailbox = SteerMailbox::new(None);
-                    mailbox.start("r".into());
-                    mailbox
-                },
-            },
+            MailboxTurn::turn("r", {
+                let mailbox = SteerMailbox::new(None);
+                mailbox.start("r".into());
+                mailbox
+            }),
         ),
     ]);
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -1027,6 +1049,64 @@ async fn old_run_expiry_event_reaches_sink_after_admission_lock_is_released() {
         Some(Some(AsyncHookStatus::Expired)),
         "sink ran while A still held the admission lock"
     );
+}
+
+/// A deferred hook result carrying `additionalContext`, i.e. the branch that
+/// enters the steer mailbox.
+fn context_output() -> JsValue {
+    object([(
+        "hookSpecificOutput",
+        object([
+            ("hookEventName", "PreToolUse".into()),
+            ("additionalContext", "old-run context".into()),
+        ]),
+    )])
+}
+
+#[tokio::test]
+async fn async_hook_result_cannot_cross_runs_after_a_same_text_turn_restart() {
+    // #1450: delivery used to compare the textual turn/run ID only and enqueue
+    // into a bare mailbox. A pending result from r1 therefore landed in r2
+    // after a restart that reused the same textual turn ID. The fence must be
+    // run identity, and the result must never enter the restarted mailbox.
+    let clock = Arc::new(Clock::default());
+    let mailbox = SteerMailbox::new(None);
+    mailbox.start("t".into());
+    let first = MailboxTurn::turn("t", mailbox.clone());
+    let restarted = Arc::new(Mutex::new(false));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (flag, live) = (restarted.clone(), mailbox.clone());
+    let registry = AsyncHookRegistry::new(
+        clock,
+        move |_| {
+            Some(if *flag.lock().unwrap() {
+                // r2: equal textual turn ID and the restarted mailbox, but a
+                // fresh run identity.
+                MailboxTurn::turn("t", live.clone())
+            } else {
+                first.clone()
+            })
+        },
+        status_sink(&events),
+    );
+    registry.register(registration("inv", 60_000.0)).unwrap();
+    // r1 ends; the retry restarts the same textual turn ID on the mailbox.
+    mailbox.start("t".into());
+    *restarted.lock().unwrap() = true;
+    let result = registry
+        .submit("s".into(), "inv".into(), context_output())
+        .await
+        .unwrap();
+    assert_eq!(
+        result.status,
+        AsyncHookStatus::Expired,
+        "#1450 an old run's result must expire"
+    );
+    assert!(
+        mailbox.drain(&"t".into()).is_empty(),
+        "#1450 the restarted run must not receive the old run's result"
+    );
+    assert_eq!(*events.lock().unwrap(), vec!["expired".to_string()]);
 }
 
 /// `submit` futures that settle synchronously are already ready.

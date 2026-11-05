@@ -47,6 +47,10 @@ struct Session {
     run: Option<Arc<Run>>,
 }
 struct Run {
+    /// Opaque run identity handed to out-of-band consumers (async hooks). A
+    /// restarted run gets a fresh token even when it reuses the textual run or
+    /// turn ID, so pointer identity — never text — decides "same run".
+    identity: Arc<()>,
     id: JsString,
     turn_id: JsString,
     session_key: JsString,
@@ -235,6 +239,18 @@ impl ActiveSteerInfo {
                 })
             })
         })
+    }
+    /// Opaque identity of the captured run. Two infos compare equal here iff
+    /// they were captured from the same session binding and run; a restarted
+    /// run gets a fresh token even with equal textual IDs.
+    pub fn identity(&self) -> &Arc<()> {
+        &self.run.identity
+    }
+    /// Admission-locked liveness re-check without touching the mailbox. Used
+    /// for settlements that must not enter the steer queue (empty context) but
+    /// still may not claim a run that ended after the lookup.
+    pub fn is_live(&self) -> bool {
+        self.check(&self.owner.0.lock().unwrap()).is_ok()
     }
 }
 
@@ -440,6 +456,7 @@ impl SessionSteer {
             .as_ref()
             .map(SteerAuthorizations::fresh_for_turn);
         let run = Arc::new(Run {
+            identity: Arc::new(()),
             id: run_id,
             turn_id: turn_id.clone(),
             session_key: self.key.clone(),
