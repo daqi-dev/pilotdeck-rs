@@ -571,6 +571,7 @@ impl TurnSubmitter {
         let terminal = Arc::new(TerminalClaim::default());
         let (ready, timer_ready) = oneshot::channel();
         let (timeout_settled, timeout_settlement) = oneshot::channel();
+        let (worker_flushed, flush_wait) = oneshot::channel();
         // The worker owns all dependencies: after a hard timeout it may finish
         // a misbehaving host future without holding admission or the fence.
         let submitter = self.clone();
@@ -630,6 +631,7 @@ impl TurnSubmitter {
                 let _ = timeout_settlement.await;
             }
             worker_publisher.finish().await;
+            let _ = worker_flushed.send(());
         });
         let timeout = field(&input, "timeoutMs")
             .as_number()
@@ -695,16 +697,27 @@ impl TurnSubmitter {
                         set(&mut event, "userHint", hint.into());
                         publisher.gateway_event(event);
                     }
-                    // The deadline always closes delivery, whoever wrote the
-                    // terminal: the winner's worker only reaches `finish` after
-                    // its own host futures return, and a hanging host future
-                    // would otherwise keep the turn (and its admission and
-                    // fence) alive forever. Events the winner already queued
-                    // still drain; this only stops new ones. The settlement is
-                    // sent first so a worker that observed the timeout can
-                    // drain and finish before the close.
+                    // The settlement lets a worker that observed the timeout
+                    // drain and finish (which closes delivery itself).
                     let _ = timeout_settled.send(());
-                    publisher.close_live();
+                    if owns_terminal {
+                        publisher.close_live();
+                    } else {
+                        // The pump owns the terminal this tick, so closing here
+                        // would drop the frame it already queued and leave the
+                        // client with a silent end. Let its worker finish, but
+                        // never wait forever: a worker stuck in a host future
+                        // must not keep the turn (and its admission and fence)
+                        // alive, so a detached backstop closes delivery once the
+                        // abort budget runs out.
+                        let publisher = publisher.clone();
+                        let budget = Duration::from_millis(self.host.abort_turn_timeout_ms());
+                        tokio::spawn(async move {
+                            if tokio::time::timeout(budget, flush_wait).await.is_err() {
+                                publisher.finish().await;
+                            }
+                        });
+                    }
                 }
             }
         };
