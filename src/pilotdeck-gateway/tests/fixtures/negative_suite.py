@@ -338,21 +338,54 @@ class ReceiptRun:
             return False
 
 
-def judge(result, prefix, targets, receipts, *, any_cell=False):
-    """Require named FAILED and this run's exact assertion receipt, never prose."""
-    if (result.returncode != 101 or not targets
-            or len({test for test, _ in targets}) != len(targets)):
-        return False, 'missing runtime failure or invalid targets', []
+def cell_states(result, prefix, targets, receipts):
+    """Per-target observation states, recorded as evidence next to each row.
+
+    Never a verdict on its own: ``judge`` owns that. Reported separately so a
+    row's ``cells`` can show which declared targets actually executed, without
+    changing ``judge``'s three-value contract (sixteen fixtures import it).
+    """
+    if not targets or len({test for test, _ in targets}) != len(targets):
+        return []
     # --show-output captures diagnostics until after each complete result line.
     # A receipt still cannot substitute for the named libtest failure.
     lines = set(result.stdout.splitlines())
-    hits = [test for test, assertion in targets
-            if f'test {prefix}{test} ... FAILED' in lines
-            and receipts.matches(prefix + test, assertion)]
-    unrelated = [test for test, _ in targets
-                 if f'test {prefix}{test} ... FAILED' in lines and test not in hits]
+    cells = []
+    for test, assertion in targets:
+        failed = f'test {prefix}{test} ... FAILED' in lines
+        if failed and receipts.matches(prefix + test, assertion):
+            cells.append({'test': test, 'status': 'KILLED'})
+        elif failed:
+            cells.append({'test': test, 'status': 'NO_RECEIPT'})
+        elif f'test {prefix}{test} ... ok' in lines:
+            cells.append({'test': test, 'status': 'OK'})
+        else:
+            cells.append({'test': test, 'status': 'NOT_RUN'})
+    return cells
+
+
+def judge(result, prefix, targets, receipts, *, any_cell=False, require_all_ran=False):
+    """Require named FAILED and this run's exact assertion receipt, never prose.
+
+    ``require_all_ran`` pins the exact-mode contract: a command built from only
+    the first declared target still runs and kills, so the row would collect a
+    verdict for cells that never executed (#1579 P1). Every declared target
+    must then show either its named FAILED plus receipt or its named ``ok``
+    line. Prefix mode keeps the old leniency: an ``any_cell`` row may declare
+    cells that an early return makes unreachable (#879b), and those never
+    appear as ``ok``.
+    """
+    cells = cell_states(result, prefix, targets, receipts)
+    if result.returncode != 101 or not cells:
+        return False, 'missing runtime failure or invalid targets', []
+    hits = [cell['test'] for cell in cells if cell['status'] == 'KILLED']
+    unrelated = [cell['test'] for cell in cells if cell['status'] == 'NO_RECEIPT']
     if unrelated:
         return False, f'declared failures lack current assertion receipts: {unrelated}', hits
+    if require_all_ran:
+        missing = [cell['test'] for cell in cells if cell['status'] == 'NOT_RUN']
+        if missing:
+            return False, f'declared targets never ran: {missing}', hits
     killed = bool(hits) if any_cell else len(hits) == len(targets)
     return killed, ('named assertions produced current nonce receipts' if killed else
                     'missing named FAILED line or current assertion receipt'), hits
@@ -435,14 +468,21 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         # No `-q`: cargo forwards it to libtest as `--quiet`, which replaces
         # the per-test `test <name> ... FAILED` line that `judge()` requires
         # with `<name> --- FAILED` (#818 fix-r3).
-        command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib']
+        base = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib']
+        libtest = ['--', '--show-output', '--format=pretty', '--test-threads=1']
         if compile:
-            command += ['--no-run']
+            command = base + ['--no-run']
+        elif exact:
+            # Cargo takes one TESTNAME positionally; libtest takes several.
+            # Every declared cell therefore travels after `--`, and `--exact`
+            # pins each filter to its full name. Passing only targets(row)[0]
+            # left the other cells unexecuted while the row was still recorded
+            # as killed (#1579 P1); judge() now also refuses a row whose
+            # declared targets produced no named result line.
+            command = (base + libtest + ['--exact']
+                       + [prefix + test for test, _ in targets(row)])
         else:
-            command += [prefix + targets(row)[0][0] if exact else prefix, '--',
-                        '--show-output', '--format=pretty', '--test-threads=1']
-            if exact:
-                command.append('--exact')
+            command = base + [prefix] + libtest
         _write_new(out / f'{label}.command.json', json.dumps({
             'command': command, 'cwd': str(root / 'src'),
             'CARGO_TARGET_DIR': run_env['CARGO_TARGET_DIR']}, indent=2) + '\n')
@@ -455,10 +495,13 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         _write_new(out / f'{label}.stderr', result.stderr)
         return result
 
-    def positive(result):
-        # Keep the previous matrix's pass/child cardinalities.
+    def positive(result, row):
+        # Prefix mode keeps the matrix-wide cardinality. Exact mode runs exactly
+        # the row's declared cells, so its pass count is that row's cell count
+        # (#1579: the old first-target shortcut also pinned the count at one).
+        expected = len(targets(row)) if exact else passed_count
         return (result.returncode == 0
-                and f'test result: ok. {passed_count} passed; 0 failed;' in result.stdout
+                and f'test result: ok. {expected} passed; 0 failed;' in result.stdout
                 and result.stdout.count('PDRS_VERIFIED_CHILD ') == child_count)
 
     def execute(row, item, originals):
@@ -466,7 +509,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         original = originals[source].decode()
         anchor(row, original)
         try:
-            if not compile_only and not positive(run(name + '-positive', row, env)):
+            if not compile_only and not positive(run(name + '-positive', row, env), row):
                 raise RuntimeError('positive matrix did not pass with all child receipts')
             changed = original.replace(old, new, 1)
             _write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
@@ -482,11 +525,13 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
                 receipts = ReceiptRun(out, name + '-negative',
                                       [(prefix + t, a) for t, a in targets(row)])
                 result = run(name + '-negative', row, receipts.environment(env))
-                killed, reason, hits = judge(result, prefix, targets(row), receipts,
-                                             any_cell=name in any_cell)
+                killed, reason, hits = judge(
+                    result, prefix, targets(row), receipts,
+                    any_cell=name in any_cell, require_all_ran=exact)
                 item.update(status='KILLED' if killed else
-                            ('SURVIVED' if positive(result) else 'INVALID'),
-                            reason=reason, hits=hits)
+                            ('SURVIVED' if positive(result, row) else 'INVALID'),
+                            reason=reason, hits=hits,
+                            cells=cell_states(result, prefix, targets(row), receipts))
         except Exception as error:
             item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         finally:
@@ -496,7 +541,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
             if source.read_bytes() != originals[source]:
                 raise RuntimeError('source restoration failed')
         if not compile_only:
-            item['restoredPass'] = positive(run(name + '-restored', row, env))
+            item['restoredPass'] = positive(run(name + '-restored', row, env), row)
             if not item['restoredPass']:
                 item.update(status='INVALID', reason=item['reason'] + '; restored matrix failed')
 
