@@ -84,6 +84,15 @@ impl GatewayInteractionCoordinator {
         };
         self.reconnect_port.reconnect(owner, next, previous)
     }
+    /// Reconnect for an owner that is not a string (see
+    /// [`InteractionReconnectPort::reconnect_unkeyed`]).
+    pub fn reconnect_unkeyed(
+        &self,
+        next: InteractionBinding,
+        previous: Option<&InteractionBinding>,
+    ) -> Result<JsValue, JsString> {
+        self.reconnect_port.reconnect_unkeyed(next, previous)
+    }
     pub fn reconnect_for_turn(
         &self,
         owner: &JsString,
