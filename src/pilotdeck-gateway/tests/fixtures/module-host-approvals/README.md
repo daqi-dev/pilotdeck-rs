@@ -8,21 +8,21 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-ga
 cd src && cargo test -p pilotdeck-gateway --lib module_host::approvals
 ```
 
-`oracle.json` 89 个 cell 记录 server、原始请求字节、响应字节（latin1 映射）与 closed/halfClose 标志。64 KiB 预算 cell 的请求体不落盘实料：oracle 只存 `__PDRS_PAD__` 标记与长度，重放方写入 `'a'.repeat(size)`。已测场景族：
+`oracle.json` 91 个 cell 记录 server、原始请求字节、响应字节（latin1 映射）与 closed/halfClose 标志。64 KiB 预算 cell 的请求体不落盘实料：oracle 只存 `__PDRS_PAD__` 标记与长度，重放方写入 `'a'.repeat(size)`。已测场景族：
 
-- 鉴权（缺 / 错 / 小写 scheme / 双空格 / GET+错鉴权序）、方法（GET / DELETE / HEAD）、路由（尾斜杠 / 近似路径 / `%73` 百分号 / 点段 / 大写 / 查询串）；
+- 鉴权（缺 / 错 / 小写 scheme / 双空格 / 双 `Authorization` 头取首值 / GET+错鉴权序）、方法（GET / DELETE / HEAD）、路由（尾斜杠 / 近似路径 / `%73` 百分号 / 点段 / 大写 / 查询串）；
 - 坏 JSON / 空 / 数字 / 数组 / null / 字符串 body、字段白名单（status 4 项共享 + resume 6 项独占，越权字段 / 体内 approverAuthorization）；
 - 传输层 scope（静态 binding 下 tenant / agent 不匹配 / 缺失 403）、approver 鉴权（缺 / 坏 scheme / 空余段 / `BEARER` 大小写不敏感 / 未知 bearer）、subject 检查（跨租户 / 禁用 / 非 web 源 / guest 角色 / 空 userId）、session 解析（未注册 / projectKey 不匹配 / sessionKey 不匹配）；
 - 未配置面（nomap 503 / bare 503 / nobind 503）；
 - store 的 status 快照（handoff admin/member/other、active、缺失 null、坏 pin、无 assignee、模块禁用 502、resume 后）；
-- store 的 resume 路径（成功 member/admin、重复 receipt / message 冲突 / revision 冲突 409、external_task 源不匹配、wait 过期、revision 冲突、不存在、非 human 源、坏 message/revision/waitId、member 越权）；
+- store 的 resume 路径（成功 member/admin、重复 receipt / message 冲突 / revision 冲突 409、external_task 源不匹配、wait 过期、revision 冲突、不存在、非 human 源、坏 message/revision/waitId、member 越权、`requestId:"constructor"` 走原型链命中 legacy receipt 分支 502）；
 - 动态 binding（scope 跳过 / 换 binding 403 / 解析器抛错 403）；
 - stub bridge 的结果序列化（快照 / null / undefined / scope / 双头 approver 注入与 Node 逗号拼接 / 自定义 status+code / 418 数字 code / 499 unknown reason / 裸 Error 默认 502 / 只有 code 无 status / resume 成功 / undefined 空体 / 409 冲突 / 413）；
 - 64 KiB 预算（恰 65536 字节照常服务 / 超 1 字节零字节关闭）、Connection: close、HTTP/1.0（Node 1.1 状态行，已登记差异）、keep-alive 双请求复用、提前断连（Node 解析器层 400，已登记差异）。
 
 **超预算的线上行为**：TS 的 `for await` 内抛出走 IteratorClose，销毁请求流后 'aborted' 先于 catch 的 `send` 触发（nextTick 早于 promise 微任务），catch 看到 `signal.aborted` 后 destroy 响应——线上是**零字节关闭**，传输自己的 413 `APPROVAL_INPUT_TOO_LARGE` 帧到不了线上（最小探针 `_tmp/20261105-issue-1350/ts-probe/probe.mjs` 实测 5/5 确定性）。Rust 侧 `ReadError::OverBudget` 对应零字节关闭，这是 TS 内部行为不是 hyper/Node 差异，未登记账本条目。
 
-Rust 重放在 `src/module_host/approvals/tests.rs`：同一请求字节经真实 TCP 监听器打到 `http_proxy::serve_connection_native_with_shutdown`，approvals 组件前置（TS `GatewayServer.ts:96` 的 `handlePublicApprovalHttpRequest` 同位）、#1349 module-host 组件次之、#1209 路由器兜底 404；每个 server 的 bridge/store 按 oracle 的 server 字段重建（每测试全新 store + 种子 + `sess-done` 预 resume，mutating cell 各占独立 session，cell 顺序无状态）。响应按 #1209 规则归一化（Date 掩码、头名小写、空 `content-length: 0` 删除、chunk 大小小写）逐 cell 与金样比对，closed 标志另比。`http10`（HTTP/1.0 状态行）与 `premature-close`（Node 解析器层 400）为字节 pin，不进归一化比对；`replay_cells_cover_exactly_the_oracle` 断言重放列表 + pin 列表 = oracle cell 全集。组件级直测另含：空 token 401、resume 形状校验先于 session 映射、传输 resume 后同一 store 对 WS 侧可见（A8.4 要求）、`isDeepStrictEqual` 语义。
+Rust 重放在 `src/module_host/approvals/tests.rs`：同一请求字节经真实 TCP 监听器打到 `http_proxy::serve_connection_native_with_shutdown`，approvals 组件前置（TS `GatewayServer.ts:96` 的 `handlePublicApprovalHttpRequest` 同位）、#1349 module-host 组件次之、#1209 路由器兜底 404；每个 server 的 bridge/store 按 oracle 的 server 字段重建（每测试全新 store + 种子 + `sess-done` 预 resume，mutating cell 各占独立 session，cell 顺序无状态）。响应按 #1209 规则归一化（Date 掩码、头名小写、空 `content-length: 0` 删除、chunk 大小小写）逐 cell 与金样比对，closed 标志另比。`http10`（HTTP/1.0 状态行）、`premature-close`（Node 解析器层 400）与 `resume-requestid-proto`（TS 原型链命中 legacy receipt 502、Rust 自有键 200，A8.4-MODULE-HOST-APPROVALS-001 已登记差异）为字节 pin，不进归一化比对；`replay_cells_cover_exactly_the_oracle` 断言重放列表 + pin 列表 = oracle cell 全集。组件级直测另含：空 token 401、resume 形状校验先于 session 映射、传输 resume 后同一 store 对 WS 侧可见（A8.4 要求）、`isDeepStrictEqual` 语义。
 
 重生成守卫（`#[ignore]`）：`PDRS_BASELINE=… cargo test -p pilotdeck-gateway --lib module_host::approvals::tests::regenerates_identically -- --exact --ignored --show-output`。生成器输出目录递归创建，oracle.json 以 `flag:'wx'` 独占创建。除 Date 掩码外无时钟 / PID 依赖（stateRoot 目录名含 PID 但只在 tmpdir），未登记 regeneration mask。
 

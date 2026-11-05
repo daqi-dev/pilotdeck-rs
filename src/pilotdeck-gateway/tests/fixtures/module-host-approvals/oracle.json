@@ -694,6 +694,15 @@
       "closed": false
     },
     {
+      "id": "auth-dup",
+      "server": "main",
+      "request": "POST /api/module-host/approvals/status HTTP/1.1\r\nHost: 127.0.0.1\r\nx-staffdeck-approver-authorization: Bearer staff-admin\r\nAuthorization: Bearer fixture-token\r\nAuthorization: Bearer other\r\nContent-Length: 60\r\n\r\n{\"tenantId\":\"t1\",\"agentId\":\"a1\",\"sessionKey\":\"sess-handoff\"}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n219\r\n{\"status\":{\"sessionId\":\"sess-handoff\",\"revision\":1,\"state\":{\"version\":1,\"selected_skill_id\":\"skill-1\",\"slots_json\":{},\"skill_stack_json\":[],\"successful_tool_names\":[],\"status\":\"handoff\",\"active_skill_id\":\"skill-1\",\"active_step_id\":\"step-1\",\"awaiting_input_json\":{\"wait_id\":\"wait-1\"}},\"wait\":{\"id\":\"wait-1\",\"kind\":\"handoff\",\"skillId\":\"skill-1\",\"stepId\":\"step-1\",\"createdAt\":\"2026-01-01T00:00:00.000Z\"},\"approval\":{\"waitId\":\"wait-1\",\"revision\":1,\"skillId\":\"skill-1\",\"version\":\"1.0.0\",\"nodeId\":\"step-1\",\"assigneeUserId\":\"staff-member-id\"}}}\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
       "id": "auth-get-wrong",
       "server": "main",
       "request": "GET /api/module-host/approvals/status HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer wrong\r\n\r\n",
@@ -1249,6 +1258,15 @@
       "pad": null,
       "halfClose": false,
       "response": "HTTP/1.1 502 Bad Gateway\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n21\r\n{\"code\":\"SOP_APPROVAL_FORBIDDEN\"}\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
+      "id": "resume-requestid-proto",
+      "server": "main",
+      "request": "POST /api/module-host/approvals/resume HTTP/1.1\r\nHost: 127.0.0.1\r\nx-staffdeck-approver-authorization: Bearer staff-admin\r\nAuthorization: Bearer fixture-token\r\nContent-Length: 164\r\n\r\n{\"tenantId\":\"t1\",\"agentId\":\"a1\",\"sessionKey\":\"sess-handoff4\",\"source\":\"human\",\"requestId\":\"constructor\",\"waitId\":\"wait-1\",\"expectedRevision\":1,\"message\":\"approved\"}",
+      "pad": null,
+      "halfClose": false,
+      "response": "HTTP/1.1 502 Bad Gateway\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n26\r\n{\"code\":\"SOP_APPROVAL_LEGACY_RECEIPT\"}\r\n0\r\n\r\n",
       "closed": false
     },
     {
