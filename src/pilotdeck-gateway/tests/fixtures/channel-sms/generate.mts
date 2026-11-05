@@ -224,6 +224,17 @@ interface Definition {
   env?: Record<string, string>;
   extra?: Record<string, unknown>;
   blockPort?: boolean;
+  /**
+   * How this case's `start()` is supposed to end (#1339 fix-r4).
+   *
+   * `listen-failure` — the channel reaches the listener and is refused there:
+   * exactly one `sms: HTTP server failed:` error line (busy port, port out of
+   * range, port NaN, unavailable host). `no-listen` — start fails before it
+   * ever builds a listener. Default `ok` — the webhook must log its ready line
+   * exactly once; a case that claims to start but never bound (an external
+   * occupier took the port during the run) is refused instead of recorded.
+   */
+  startOutcome?: 'ok' | 'listen-failure' | 'no-listen';
   /** Add the TS-computed X-Twilio-Signature to every request step. */
   sign?: boolean;
   turn?: { gate?: string; error?: string; events?: any[]; holdAfter?: string };
@@ -340,30 +351,30 @@ const effectiveSteps = (definition: Definition) =>
     : step);
 
 scenario({
-  name: 'start-missing-config', port: port(0), steps: [
+  name: 'start-missing-config', port: port(0), startOutcome: 'no-listen', steps: [
     connect(), stop(),
   ],
 });
 scenario({
-  name: 'start-twilio-init-failed', port: port(1),
+  name: 'start-twilio-init-failed', port: port(1), startOutcome: 'no-listen',
   extra: { accountSid: 'THROW', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
     connect(), stop(),
   ],
 });
 scenario({
-  name: 'start-port-busy', port: port(2), blockPort: true,
+  name: 'start-port-busy', port: port(2), blockPort: true, startOutcome: 'listen-failure',
   extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
     connect(), stop(),
   ],
 });
 scenario({
-  name: 'start-port-out-of-range', port: port(3),
+  name: 'start-port-out-of-range', port: port(3), startOutcome: 'listen-failure',
   extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookPort: 65536 }, steps: [
     connect(), stop(),
   ],
 });
 scenario({
-  name: 'start-port-nan', port: port(4),
+  name: 'start-port-nan', port: port(4), startOutcome: 'listen-failure',
   extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookPort: 'not-a-port' }, steps: [
     connect(), stop(),
   ],
@@ -805,7 +816,7 @@ scenario({
   turn: { events: [textDelta('any address')] },
 });
 scenario({
-  name: 'start-host-unavailable', port: port(52),
+  name: 'start-host-unavailable', port: port(52), startOutcome: 'listen-failure',
   extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookHost: '203.0.113.7' }, steps: [
     // A non-local webhookHost fails the bind with Node's EADDRNOTAVAIL line.
     connect(), stop(),
@@ -828,7 +839,7 @@ scenario({
   // drive while a test holds it busy. Its own replay cell would race that
   // test for the port in the parallel suite, so the preflight test is the
   // only consumer.
-  name: 'port-busy-preflight', port: port(54),
+  name: 'port-busy-preflight', port: port(54), startOutcome: 'listen-failure',
   extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookHost: '203.0.113.7' }, steps: [
     connect(), stop(),
   ],
@@ -926,9 +937,9 @@ await mkdir(out, { recursive: true });
 // any case port is taken instead of publishing a corrupted oracle.
 //
 // This probe is a fast path only, and it covers IPv4 loopback alone: the
-// authoritative guard is the listen-failure check after each run, which sees
-// every case whatever address family it binds (`empty-webhook-host` binds the
-// dual-stack `::`).
+// authoritative guard is the `startOutcome` check after each run, which reads
+// the channel's own logs whatever address family it binds
+// (`empty-webhook-host` binds the dual-stack `::`).
 const portIsFree = (port: number) => new Promise<boolean>((done) => {
   const probe = net.createServer();
   probe.once('error', () => done(false));
@@ -945,24 +956,42 @@ const cases: any[] = [];
 // a listener that takes it during the recording run makes `start` fail with
 // EADDRINUSE, which the channel records as an error instead of throwing — the
 // probe requests then reach the occupant and both determinism runs record the
-// same contamination, so `deepEqual` cannot tell it from a good case. A case
-// whose listener never came up cannot describe our channel, so refuse it.
+// same contamination, so `deepEqual` cannot tell it from a good case.
+//
+// #1339 fix-r4 (P1): the first cut of this guard keyed on `blockPort` alone and
+// therefore rejected the four cases that fail *by design* at the listener
+// (`start-port-out-of-range` / `start-port-nan` / `start-host-unavailable` /
+// `port-busy-preflight` all record `sms: HTTP server failed:`), aborting the
+// whole recording. Each definition now declares its `startOutcome`, and the
+// `ok` branch proves the listener actually came up (its ready line) instead of
+// only proving that no failure line was logged.
 const LISTEN_FAILURE = 'sms: HTTP server failed:';
+const WEBHOOK_READY = 'sms: Twilio webhook ';
+const textOf = (entry: [string, string]) => entry[1];
 for (const definition of definitions) {
   const first = await run(definition);
   const second = await run(definition);
   assert.deepEqual(second, first, `#1339 case ${definition.name} is not deterministic`);
+  const outcome = definition.startOutcome ?? 'ok';
   for (const [index, record] of [first, second].entries()) {
-    const failed = record.logs.filter(
-      ([level, text]: [string, string]) => level === 'error' && text.startsWith(LISTEN_FAILURE),
-    );
-    if (definition.blockPort) {
-      // `start-port-busy` exists to record exactly that failure.
-      assert.equal(failed.length, 1, `#1339 case ${definition.name} must record one listen failure (run ${index + 1})`);
+    const logs = record.logs as [string, string][];
+    const failed = logs.filter(([level, text]) => level === 'error' && text.startsWith(LISTEN_FAILURE));
+    const ready = logs.filter(([, text]) => text.startsWith(WEBHOOK_READY));
+    const where = `#1339 case ${definition.name} (${outcome}, run ${index + 1})`;
+    if (outcome === 'listen-failure') {
+      assert.equal(failed.length, 1, `${where} must record exactly one listen failure: ${failed.map(textOf).join('; ') || 'none'}`);
+      assert.equal(ready.length, 0, `${where} must not log a live webhook: ${ready.map(textOf).join('; ')}`);
+    } else if (outcome === 'no-listen') {
+      assert.equal(failed.length, 0, `${where} must not reach the listener: ${failed.map(textOf).join('; ')}`);
+      assert.equal(ready.length, 0, `${where} must not log a live webhook: ${ready.map(textOf).join('; ')}`);
     } else {
       assert.deepEqual(
         failed, [],
-        `#1339 case ${definition.name} never bound its port (run ${index + 1}): ${failed.map(([, text]: [string, string]) => text).join('; ')}; refusing to record an oracle the webhook never reached`,
+        `${where} never bound its port: ${failed.map(textOf).join('; ')}; refusing to record an oracle the webhook never reached`,
+      );
+      assert.equal(
+        ready.length, 1,
+        `${where} must log its webhook ready line exactly once, got ${ready.length}; refusing to record an oracle the webhook never reached`,
       );
     }
   }

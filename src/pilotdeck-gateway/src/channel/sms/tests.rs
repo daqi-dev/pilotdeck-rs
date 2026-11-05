@@ -745,18 +745,47 @@ fn every_oracle_case_has_a_replay_cell() {
     // that `port_busy_preflight_fails_fast` holds busy.
     const WITHOUT_CELL: &[&str] = &["port-busy-preflight"];
     let cases = oracle_cases();
+    // #1339 fix-r4 (P2): never drop a case for lacking a name — a nameless
+    // case would fall out of both sets and the comparison would pass while its
+    // `expected` stopped being compared (`case_by_name` cannot find it either).
     let mut oracle: Vec<&str> = cases
         .iter()
-        .filter_map(|case| case["name"].as_str())
+        .map(|case| {
+            case["name"]
+                .as_str()
+                .expect("#1339 every oracle case carries a string name")
+        })
         .filter(|name| !WITHOUT_CELL.contains(name))
         .collect();
     let mut cells: Vec<&str> = REPLAY_CELL_NAMES.to_vec();
     oracle.sort_unstable();
     cells.sort_unstable();
+    // Duplicates on either side would let a second `port-busy-preflight` (or a
+    // duplicated cell name) mask a missing real case.
+    for (side, names) in [("oracle", &oracle), ("replay cells", &cells)] {
+        let mut unique = names.clone();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "#1339 duplicate {side} case name"
+        );
+    }
     assert_eq!(
         cells, oracle,
         "#1339 every oracle case needs exactly one replay cell"
     );
+    // The exemption itself must stay exactly one case, or a second exempt case
+    // could hide behind it.
+    let exempt = cases
+        .iter()
+        .filter(|case| {
+            case["name"]
+                .as_str()
+                .is_some_and(|name| WITHOUT_CELL.contains(&name))
+        })
+        .count();
+    assert_eq!(exempt, WITHOUT_CELL.len(), "#1339 replay-cell exemptions");
 }
 
 #[test]

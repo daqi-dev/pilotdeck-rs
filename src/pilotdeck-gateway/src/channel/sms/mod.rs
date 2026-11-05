@@ -576,12 +576,18 @@ async fn bind_listener(host: &str, port: u16) -> std::io::Result<TcpListener> {
 /// #1339 fix-r3 (P2): `::` is dual-stack only while the host keeps
 /// `net.ipv6.bindv6only` at 0 — Rust std does not clear `IPV6_V6ONLY` the way
 /// Node's `listen` does. Verify it instead of assuming: a dual-stack wildcard
-/// already owns the IPv4 port, so a second bind to `127.0.0.1` collides. If it
-/// succeeds, the wildcard serves IPv6 only, the 127.0.0.1 probe would be
-/// refused, and the caller falls back to `0.0.0.0`.
+/// already owns the IPv4 port, so a second bind to `127.0.0.1:<assigned port>`
+/// collides. If it succeeds, the wildcard serves IPv6 only, the 127.0.0.1
+/// probe would be refused, and the caller falls back to `0.0.0.0` (a
+/// host-dependent difference recorded in `A8.3-CH-SMS-008.md`).
 async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
     let listener = TcpListener::bind(("::", port)).await?;
-    let shared_with_v4 = TcpListener::bind(("127.0.0.1", port)).await.is_err();
+    // #1339 fix-r4 (P1): probe the port the kernel actually assigned. With
+    // `port == 0` the wildcard owns an ephemeral port, so probing
+    // `127.0.0.1:0` would always succeed and every `webhookPort: 0` start
+    // would be demoted to the IPv4-only fallback.
+    let bound = listener.local_addr()?.port();
+    let shared_with_v4 = TcpListener::bind(("127.0.0.1", bound)).await.is_err();
     if shared_with_v4 {
         return Ok(listener);
     }
