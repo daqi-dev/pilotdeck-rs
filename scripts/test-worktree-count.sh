@@ -5,7 +5,7 @@
 # 自足：在临时目录自建仓库，不读写真实工作树。
 
 set -u
-# 环境里残留 PDRS_WORKTREE_CAP 会让下面「默认 40」等用例假失败：先清掉，本脚本自设自清。
+# 环境里残留 PDRS_WORKTREE_CAP 会让下面「默认 60」等用例假失败：先清掉，本脚本自设自清。
 unset PDRS_WORKTREE_CAP
 LIB="$(cd "$(dirname "$0")" && pwd -P)/lib/worktree-count.sh"
 [ -r "$LIB" ] || { echo "缺 $LIB" >&2; exit 2; }
@@ -69,11 +69,11 @@ out=$(cd / && pdrs_worktree_count 2>/dev/null); rc=$?
 eq "仓外不传参 rc" "$rc" 2
 eq "仓外不传参无输出" "[$out]" "[]"
 
-# 6. 上限只能调低：非数字 / >40 一律回落 40
+# 6. 上限只能调低：非数字 / >60 一律回落 60
 cap() { ( . "$LIB" >/dev/null 2>&1; echo "$PDRS_WORKTREE_CAP" ); }
-eq "默认上限" "$(cap)" 40
-eq "PDRS_WORKTREE_CAP=999 被夹回 40" "$(PDRS_WORKTREE_CAP=999 cap)" 40
-eq "PDRS_WORKTREE_CAP=abc 回落 40" "$(PDRS_WORKTREE_CAP=abc cap)" 40
+eq "默认上限" "$(cap)" 60
+eq "PDRS_WORKTREE_CAP=999 被夹回 60" "$(PDRS_WORKTREE_CAP=999 cap)" 60
+eq "PDRS_WORKTREE_CAP=abc 回落 60" "$(PDRS_WORKTREE_CAP=abc cap)" 60
 eq "PDRS_WORKTREE_CAP=1 允许调低" "$(PDRS_WORKTREE_CAP=1 cap)" 1
 
 # 7. bare 主仓：porcelain 首条仍是 worktree 行，只该砍掉主仓 1 条
