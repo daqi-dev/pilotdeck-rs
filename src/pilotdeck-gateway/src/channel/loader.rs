@@ -99,8 +99,9 @@ pub fn load_enabled_channels(
     channels
 }
 
-/// JavaScript truthiness for the `cfg?.enabled` gate.
-fn js_truthy(value: Option<&JsValue>) -> bool {
+/// JavaScript truthiness for the `cfg?.enabled` gate (and, since #1334, the
+/// webhook channel's `route.secret || globalSecret` and extractText gates).
+pub(super) fn js_truthy(value: Option<&JsValue>) -> bool {
     match value {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) | Some(JsValue::Bool(false)) => false,
         Some(JsValue::Bool(true)) | Some(JsValue::Object(_)) | Some(JsValue::Array(_)) => true,

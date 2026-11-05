@@ -105,14 +105,19 @@ pub(crate) async fn serve<B>(
     Ok(response)
 }
 
-async fn route<B>(
+/// Node http.Server's parser-level admission, shared by every native listener
+/// (the module-host router here and the webhook channel's own listener). This
+/// is not router policy: llhttp and `_http_server.js` enforce it before any
+/// request handler runs, so each native listener applies the same gate.
+/// `Ok(None)` admits the request; `Err` is the zero-byte socket close a
+/// CONNECT to a plain http.Server performs (no `connect` listener).
+pub(crate) fn node_parser_admission<B>(
     request: &hyper::Request<B>,
-    config: &Config,
-) -> Result<hyper::Response<Body>, io::Error> {
+) -> Result<Option<hyper::Response<Body>>, io::Error> {
     if !crate::mutants::on("native-http-method-allowlist-off")
         && !LLHTTP_METHODS.contains(&request.method().as_str())
     {
-        return Ok(parser_bad_request());
+        return Ok(Some(parser_bad_request()));
     }
     // llhttp validates the request-target bytes before method dispatch, so a
     // non-ASCII target is a bare 400 even for CONNECT; authority-form targets
@@ -129,7 +134,7 @@ async fn route<B>(
                 .path_and_query()
                 .is_some_and(|path| path.as_str().bytes().any(|byte| byte >= 0x80)))
     {
-        return Ok(parser_bad_request());
+        return Ok(Some(parser_bad_request()));
     }
     // llhttp validates the request-target grammar during the URL scan, so a
     // bad form (authority-form for non-CONNECT, non-alpha scheme) is a bare
@@ -142,7 +147,7 @@ async fn route<B>(
     let budget_exceeded = over_header_budget(request);
     if request.method() == hyper::Method::CONNECT {
         if budget_exceeded {
-            return Ok(request_header_fields_too_large());
+            return Ok(Some(request_header_fields_too_large()));
         }
         // TS destroys the socket with no bytes; a service error makes hyper
         // close the connection without writing a response.
@@ -156,19 +161,35 @@ async fn route<B>(
         && (!llhttp_scheme_alpha(request.uri().scheme())
             || !llhttp_target_form(request.uri().scheme(), target))
     {
-        return Ok(parser_bad_request());
+        return Ok(Some(parser_bad_request()));
     }
     if budget_exceeded {
-        return Ok(request_header_fields_too_large());
+        return Ok(Some(request_header_fields_too_large()));
     }
     if request.version() == hyper::Version::HTTP_11
         && !request.headers().contains_key(hyper::header::HOST)
     {
-        return Ok(headless_bad_request());
+        return Ok(Some(headless_bad_request()));
     }
-    let keep_alive = !crate::mutants::on("native-http-connection-close-off")
+    Ok(None)
+}
+
+/// Node's keep-alive decision for a served response: HTTP/1.1 with no
+/// `Connection: close` request token (probe `probe-fixr1.out` A).
+pub(crate) fn node_keep_alive<B>(request: &hyper::Request<B>) -> bool {
+    !crate::mutants::on("native-http-connection-close-off")
         && request.version() == hyper::Version::HTTP_11
-        && !request_wants_close(request);
+        && !request_wants_close(request)
+}
+
+async fn route<B>(
+    request: &hyper::Request<B>,
+    config: &Config,
+) -> Result<hyper::Response<Body>, io::Error> {
+    if let Some(rejection) = node_parser_admission(request)? {
+        return Ok(rejection);
+    }
+    let keep_alive = node_keep_alive(request);
     let path = if crate::mutants::on("native-http-normalization-off") {
         request.uri().path().to_owned()
     } else if request.uri().scheme().is_some() {
@@ -177,6 +198,10 @@ async fn route<B>(
         // path-and-query would resolve to.
         whatwg_path(&request.uri().to_string())
     } else {
+        let target = request
+            .uri()
+            .path_and_query()
+            .map_or("", |value| value.as_str());
         whatwg_path(target)
     };
     if path == "/health" {
@@ -265,7 +290,7 @@ fn llhttp_target_form(scheme: Option<&hyper::http::uri::Scheme>, target: &str) -
 /// "http://127.0.0.1").pathname` produces in TS: dot segments collapse,
 /// backslashes separate, `%2e` is a dot, fragments and queries split off.
 /// This is the traversal defense the static layer relies on.
-fn whatwg_path(target: &str) -> String {
+pub(crate) fn whatwg_path(target: &str) -> String {
     static BASE: std::sync::OnceLock<url::Url> = std::sync::OnceLock::new();
     let base = BASE.get_or_init(|| url::Url::parse("http://127.0.0.1").expect("valid base URL"));
     url::Url::options()
@@ -393,7 +418,7 @@ fn not_found(keep_alive: bool) -> hyper::Response<Body> {
 /// literal `content-type`, Node's `Date`, and either Node's default keep-alive
 /// pair or `Connection: close` for close/HTTP/1.0 requests, in Node's exact
 /// header order.
-fn handler_response(
+pub(crate) fn handler_response(
     status: hyper::StatusCode,
     content_type: &str,
     body: String,
@@ -415,6 +440,31 @@ fn handler_response(
     }
     builder
         .body(streamed(Some(Bytes::from(body))))
+        .expect("valid response")
+}
+
+/// A TS `statusCode = <status>; end(body)` response with no explicit header:
+/// like [`handler_response`] minus the `content-type` line, so Node's implicit
+/// `Date` comes first. Used by the webhook channel's plain 404
+/// (`res.statusCode = 404; res.end("Not Found")`).
+pub(crate) fn node_plain_response(
+    status: hyper::StatusCode,
+    body: Option<String>,
+    keep_alive: bool,
+) -> hyper::Response<Body> {
+    let mut builder = hyper::Response::builder().status(status).header(
+        hyper::header::DATE,
+        httpdate::fmt_http_date(SystemTime::now()),
+    );
+    if keep_alive {
+        builder = builder
+            .header(hyper::header::CONNECTION, "keep-alive")
+            .header("keep-alive", "timeout=5");
+    } else {
+        builder = builder.header(hyper::header::CONNECTION, "close");
+    }
+    builder
+        .body(streamed(body.map(Bytes::from)))
         .expect("valid response")
 }
 
