@@ -152,7 +152,7 @@ with mutating_sources(root, [registry, family, memory_mod]) as snapshots:
             slot_deadline = time.monotonic() + 1800
             while True:
                 slot = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, timeout=10)
-                if slot.returncode == 0:
+                if slot.returncode in (0, 2):
                     break
                 if slot.returncode != 1:
                     raise RuntimeError('cargo slot preflight failed')

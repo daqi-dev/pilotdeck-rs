@@ -25,7 +25,11 @@ with mutating_sources(REPO, [BUDGET, FILES]) as snapshots:
 
 
     def run(name, args):
-        subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], check=True, timeout=10)
+        slots = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')],
+                               capture_output=True, text=True, timeout=10)
+        # 2 = unified gate unavailable (CI has none); only a full pool (1) blocks.
+        if slots.returncode not in (0, 2):
+            raise SystemExit(slots.stdout + slots.stderr)
         command = ['cargo', 'test', '--manifest-path', str(REPO / 'src/Cargo.toml'),
                    '--locked', '--offline', '-p', 'pilotdeck-gateway', *args,
                    '--', '--test-threads=4']

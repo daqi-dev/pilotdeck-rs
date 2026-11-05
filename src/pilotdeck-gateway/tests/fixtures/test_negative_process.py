@@ -279,7 +279,12 @@ class ProcessControls(unittest.TestCase):
                               'echo full; exit 1; fi; echo available; exit 0\n')
             self.assertEqual(wait_for_slot(script, timeout=5, interval=0.02).stdout,
                              "full\navailable\n")
+            # Exit 2 = unified gate unavailable (CI has none): there is no
+            # shared quota to wait for, so wait_for_slot proceeds instead of
+            # failing. Any other unexpected status is still a hard error.
             script.write_text("exit 2\n")
+            self.assertEqual(wait_for_slot(script, timeout=2).returncode, 0)
+            script.write_text("exit 3\n")
             with self.assertRaises(subprocess.CalledProcessError):
                 wait_for_slot(script, timeout=2)
 

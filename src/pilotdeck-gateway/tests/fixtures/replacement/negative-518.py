@@ -153,7 +153,7 @@ def main():
             slot_deadline = time.monotonic() + 1800
             while True:
                 slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=10)
-                if slots.returncode == 0:
+                if slots.returncode in (0, 2):
                     break
                 if slots.returncode != 1:
                     raise RuntimeError(slots.stdout + slots.stderr)
