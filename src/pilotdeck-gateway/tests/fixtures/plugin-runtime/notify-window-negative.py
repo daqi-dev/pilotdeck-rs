@@ -14,7 +14,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
+from negative_process import CARGO_SLOTS_WAIT_SECONDS, mutating_sources, run_owned, wait_for_slot, target_environment
 from negative_selection import baseline_passed
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -38,7 +38,8 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     mutated = before.replace(old, new)
     assert mutated != before
     started = time.monotonic()
-    slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=180)
+    slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
+                         timeout=CARGO_SLOTS_WAIT_SECONDS)
     (OUT / 'slots.log').write_text(slot.stdout + slot.stderr)
     command = [
         'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),

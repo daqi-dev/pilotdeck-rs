@@ -20,7 +20,9 @@
 #   2   保留：本脚本从不主动使用。bash 自身语法错误会返回 2，调用方见到就是「脚本坏了」，不得放行。
 #   3   取样失败（ps 失败 / 输出为空），无法判断名额
 #   4   统一闸存在但给不出名额（--status 非 0 / 输出解不出名额 / 冷启动超时且本机无名额缓存 /
-#       HOME 未设导致闸路径无法确定 / 本机有 pdrs-ops 或共享池迹象但闸不可执行 / 名额缓存超过 24 h 未从闸刷新）→ fail-closed
+#       HOME 未设或不是目录导致闸路径无法确定 / 本机有 pdrs-ops 或共享池迹象但闸不可执行 /
+#       名额缓存超过 24 h 未从闸刷新）→ fail-closed。冷启动超时的恢复路径是人工跑
+#       `--refresh-cap`（预算 240 s ≥ 闸自己的单次 du 上限 180 s）：写完缓存后消费方只读缓存。
 #   64  用法错误（传了旧的上限参数）
 #   69  本机确实没有统一闸（EX_UNAVAILABLE：CI / 普通开发机：$HOME 下既无 pdrs-ops 也无共享池目录），
 #       或调用方用 PDRS_CARGO_SLOT_BIN 显式声明「本机不用共享名额」→ 无共享名额可等，可以继续
@@ -36,13 +38,21 @@
 #     只是慢（限时内没答完，典型就是冷 du）→ 沿用旧缓存并盖 ts、**不推进 lastok**（#1556 r2：旧实现
 #     无条件连时间戳一起回写，既能把 lastok 推进到「永远不用再问闸」，也能覆盖并发方刚刷到的新值）；
 #   · lastok 超过 24 h → 退出 4（名额缓存陈旧到不可信，fail-closed，跑 --refresh-cap 恢复）；
-#   · 本机没有缓存（首次）→ 给足冷启动预算（默认 120 s）问一次闸。
+#   · 本机没有缓存（首次）→ 给足冷启动预算（默认 120 s）问一次闸（消费方 deadline 更短时
+#     会先超时，那属于「环境未取得判定」；预热用 `--refresh-cap`）。
+# 判定口径（#1556 r3）：ps 数出的进程树 `n` 与闸的 flock 占用 `used` **都要**有余量才放行。
+# 只看 n 会假放行：shim 先取槽位、后做磁盘 du，冷 du 那几十秒里 ps 只看到 python，n=0 而 used 已满；
+# 只看 used 会漏掉不经 shim 直接起的 cargo。两个口径取更保守的那个。
 # 慢路径回写前重读缓存做 CAS：读到的那一行变了（别的进程刚刷新过）就不再回写，本次直接用它的新值。
 # 缓存键含闸路径 / 主机名 / 名额相关环境变量，负控用桩闸时不会互相污染。
 set -uo pipefail
 CAP_TTL=${PDRS_CARGO_SLOTS_CAP_TTL:-300}
 REFRESH_TIMEOUT=${PDRS_CARGO_SLOTS_REFRESH_TIMEOUT:-5}
 BOOTSTRAP_TIMEOUT=${PDRS_CARGO_SLOTS_BOOTSTRAP_TIMEOUT:-120}
+# `--refresh-cap` 是人工恢复路径，没有消费方 deadline，预算要盖过闸自己的单次 du 上限 180 s
+# （cargo_gate.py 的 `timeout=180`）——跟 bootstrap 共用 120 s 会让慢盘上「恢复」也救不回来
+# （#1556 r3 boundary P1）。
+REFRESH_CAP_TIMEOUT=${PDRS_CARGO_SLOTS_REFRESH_CAP_TIMEOUT:-240}
 # lastok 超过这个岁数就不再问 5 s，改用冷启动预算（#1556 r2：慢闸永远答不进 5 s 时，
 # 靠这条把「永久冻结在首次 bootstrap 值」变成「15 min 后会有一次真的刷新」）。
 FAT_REFRESH_AFTER=${PDRS_CARGO_SLOTS_FAT_REFRESH_AFTER:-900}
@@ -56,21 +66,19 @@ if [ $# -gt 0 ]; then
   echo "cargo-slots: 不再接受上限参数（收到「${1}」）；名额以统一闸 --status 为准" >&2
   exit 64
 fi
-# 时间参数只接受正整数（#1556 r2 P2）：非数字会让 `$((secs * 10))` 把 "abc" 当变量名，
-# `set -u` 下脚本以 1（=已满）退出，调用方会空等到 deadline；REFRESH_TIMEOUT=0 则让刷新
-# 恒判超时、永远取不到新值。一律 fail-closed 到 4，别伪装成「已满」。
-for knob in "$CAP_TTL" "$REFRESH_TIMEOUT" "$BOOTSTRAP_TIMEOUT" "$FAT_REFRESH_AFTER" "$MAX_STALE"; do
+# 时间参数只接受正整数（#1556 r2 P2、r3 P2）：非数字会让 `$((secs * 10))` 把 "abc" 当变量名，
+# `set -u` 下脚本以 1（=已满）退出，调用方会空等到 deadline；前导零（08 / 09）能过 `-lt` 却在
+# `$(( ))` 里按八进制解析（09 非法 → 算术错误、非交互 shell 退 1）；0 则让 MAX_STALE / FAT_REFRESH_AFTER
+# 变成恒真。一律 fail-closed 到 4，别伪装成「已满」。
+for knob in "$CAP_TTL" "$REFRESH_TIMEOUT" "$BOOTSTRAP_TIMEOUT" "$REFRESH_CAP_TIMEOUT" \
+            "$FAT_REFRESH_AFTER" "$MAX_STALE"; do
   case "$knob" in
-    ''|*[!0-9]*)
-      echo "cargo-slots: 时间参数必须是正整数（收到「${knob}」）→ fail-closed" >&2
+    ''|*[!0-9]*|0*)
+      echo "cargo-slots: 时间参数必须是正整数（收到「${knob}」；0 与前导零都不接受）→ fail-closed" >&2
       exit 4
       ;;
   esac
 done
-if [ "$REFRESH_TIMEOUT" -lt 1 ]; then
-  echo "cargo-slots: PDRS_CARGO_SLOTS_REFRESH_TIMEOUT 必须 ≥1（0 会让刷新恒判超时）→ fail-closed" >&2
-  exit 4
-fi
 # 闸定位（#1556 r2 P1）：别把「闸路径解析不出来」当成「本机没有闸」——那会让 env -u HOME、
 # 服务账号 HOME、掉 +x 的闸都静默放行到超名额。三分：
 #   · PDRS_CARGO_SLOT_BIN 显式指定 = 调用方声明闸在哪（负控桩闸 / 换机）；不可执行按「显式 opt-in
@@ -84,8 +92,8 @@ if [ -n "${PDRS_CARGO_SLOT_BIN:-}" ]; then
     echo "cargo-slots: PDRS_CARGO_SLOT_BIN=${GATE} 不可执行 → 按显式声明「本机不用共享名额」继续" >&2
     exit 69
   fi
-elif [ -z "${HOME:-}" ]; then
-  echo "cargo-slots: HOME 未设，无法定位统一闸（\$HOME/ws/pdrs-ops/bin/cargo-slot）→ fail-closed" >&2
+elif [ -z "${HOME:-}" ] || [ ! -d "${HOME}" ]; then
+  echo "cargo-slots: HOME 未设或不是目录（「${HOME:-}」），无法定位统一闸（\$HOME/ws/pdrs-ops/bin/cargo-slot）→ fail-closed" >&2
   exit 4
 else
   GATE=$HOME/ws/pdrs-ops/bin/cargo-slot
@@ -171,7 +179,7 @@ cache_unchanged() { # $1=cap $2=used $3=ts $4=lastok
 # 限时跑一次闸：结果在 GATE_OUT / GATE_RC；超时返回 1（并把闸连同它的 du 孙进程整组杀掉，
 # 不把孤儿留给 init 去等 180 s）。超时用 job control 给子进程单独建进程组，`kill -- -pid` 整组清。
 run_gate() {
-  local secs=$1 out rc pid waited timed_out=0
+  local secs=$1 out rc pid start timed_out=0
   out=$(mktemp "${TMPDIR:-/tmp}/cargo-slots-gate.XXXXXX") || return 1
   GATE_OUT=; GATE_RC=
   # 整段 stderr 丢弃：job control 在作业被杀时会打印「Terminated」通知，那不是本脚本的诊断信息，
@@ -181,9 +189,12 @@ run_gate() {
     "$GATE" --status >"$out" 2>&1 &
     pid=$!
     set +m 2>/dev/null || true
-    waited=0
+    # 墙钟判定（bash 内建 $SECONDS），不用迭代计数：每轮还含一次 kill -0 的 fork，
+    # 负载高时单轮 > 0.1 s，名义预算会被放大成 1.1–1.2 倍并顶穿消费方的硬 deadline
+    # （#1556 r3 boundary P2）。
+    start=$SECONDS
     while kill -0 "$pid" 2>/dev/null; do
-      if [ "$waited" -ge "$((secs * 10))" ]; then
+      if [ $((SECONDS - start)) -ge "$secs" ]; then
         timed_out=1
         kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
         sleep 1
@@ -191,7 +202,6 @@ run_gate() {
         break
       fi
       sleep 0.1
-      waited=$((waited + 1))
     done
     wait "$pid" 2>/dev/null
     rc=$?
@@ -220,7 +230,7 @@ query_cap_or_die() { # $1 = 限时秒数，$2 = 失败提示
 }
 
 if [ "$REFRESH_ONLY" = 1 ]; then
-  query_cap_or_die "$BOOTSTRAP_TIMEOUT" "无法预热名额缓存"
+  query_cap_or_die "$REFRESH_CAP_TIMEOUT" "无法预热名额缓存"
   write_cap_cache "$CAP" "$USED" "$(date +%s)"
   echo "cargo-slots: 已缓存统一闸名额 ${USED}/${CAP}（${CACHE_FILE}）"
   exit 0
@@ -233,7 +243,9 @@ if read_cap_cache; then
   # 时钟回拨 / 未来时间戳不能夹成 0——那会把这份缓存无限期当成「刚写的」，闸再也不被问（#1556 r2）。
   [ "$age" -ge 0 ] 2>/dev/null || age=$((CAP_TTL + 1))
   stale=$((now - CAP_CACHE_LASTOK))
-  [ "$stale" -ge 0 ] 2>/dev/null || stale=0
+  # lastok 落到未来（写缓存后时钟回拨）不能夹成 0——那会把「24 h 没从闸刷新」整段回拨窗口
+  # 变成永不触发，闸若同时一直答不进 5 s，缓存就永久冻结（#1556 r3 P2）。
+  [ "$stale" -ge 0 ] 2>/dev/null || stale=$((MAX_STALE + 1))
   if [ "$stale" -gt "$MAX_STALE" ]; then
     echo "cargo-slots: 名额缓存已 ${stale}s 未从统一闸刷新（上限 ${MAX_STALE}s）→ fail-closed；跑 scripts/cargo-slots.sh --refresh-cap 恢复" >&2
     exit 4
@@ -270,7 +282,16 @@ if read_cap_cache; then
       else
         CAP=$CAP_CACHE_CAP
         USED=$CAP_CACHE_USED
-        CAP_SOURCE="闸 ${budget}s 内无答复，改用并发方刚刷新的名额（闸内 $((now - CAP_CACHE_LASTOK))s 前刷新）"
+        if [ -z "$CAP" ]; then
+          # 缓存文件在刷新窗口内被删（tmp 清理 / 他人 rm）：read_cap_cache 返回前已把
+          # CAP_CACHE_* 清空，回落到本次读到的旧值，别让空 CAP 走到末端的整数比较（bash 报
+          # integer expression expected → rc=2「脚本坏了」，#1556 r3 P3）。
+          CAP=$old_cap
+          USED=$old_used
+          CAP_SOURCE="闸 ${budget}s 内无答复，沿用 ${age}s 前的缓存名额（缓存文件已被并发方删除）"
+        else
+          CAP_SOURCE="闸 ${budget}s 内无答复，改用并发方刚刷新的名额（闸内 $(( $(date +%s) - CAP_CACHE_LASTOK ))s 前刷新）"
+        fi
       fi
     fi
   fi
@@ -302,4 +323,6 @@ n=$(printf '%s\n' "$snap" | awk '
         }
         print c+0 }')
 echo "cargo-slots: 在跑 ${n} / 上限 ${CAP}（名额来自统一闸 cargo-slot，${CAP_SOURCE}，闸内已占 ${USED}）"
-[ "$n" -lt "$CAP" ]
+# 两个口径都要有余量（见头注释「判定口径」）：n 抓得到不走闸的直接 cargo，USED 抓得到
+# 「shim 已取槽、还没 exec 出 cargo」的冷 du 窗口。只看 n 会在闸已满时假放行。
+[ "$n" -lt "$CAP" ] && [ "$USED" -lt "$CAP" ]

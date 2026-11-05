@@ -286,7 +286,7 @@ class ProcessControls(unittest.TestCase):
             # errors) and 4 (gate present but unusable) -- stays a hard error.
             script.write_text("exit 69\n")
             self.assertEqual(wait_for_slot(script, timeout=2).returncode, 0)
-            for broken in ("exit 2\n", "exit 3\n", "exit 4\n"):
+            for broken in ("exit 2\n", "exit 3\n", "exit 4\n", "exit 64\n"):
                 script.write_text(broken)
                 with self.assertRaises(subprocess.CalledProcessError):
                     wait_for_slot(script, timeout=2)
@@ -308,6 +308,48 @@ class ProcessControls(unittest.TestCase):
         result = subprocess.run(["bash", str(script)], capture_output=True,
                                 text=True, timeout=60, env=env)
         self.assertEqual(result.returncode, 69, result.stdout + result.stderr)
+        # HOME 设了但不是目录（服务账号 / 拼错）= 同样无法定位，只对「未设」fail-closed
+        # 会把这条静默成 69（#1556 r3 boundary P2）。
+        env = {k: v for k, v in os.environ.items() if k != "PDRS_CARGO_SLOT_BIN"}
+        env["HOME"] = str(Path(tempfile.gettempdir()) / "no-such-home-1556")
+        result = subprocess.run(["bash", str(script)], capture_output=True,
+                                text=True, timeout=60, env=env)
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+
+    def test_cargo_slots_judges_by_gate_used(self):
+        # #1556 r3 P1：只看本机 ps 数出的 cargo 会假放行——shim 先取槽位、后做冷 du，那几十秒
+        # ps 只看到 python。闸报 999/999 时必须判满，哪怕本机一个 cargo 都没有；闸报 0/999
+        # 时也不能因为 ps 而误判满。
+        script = Path(__file__).resolve().parents[4] / "scripts" / "cargo-slots.sh"
+        report = "cargo-slot x host=h 名额 {}  磁盘 1.0 GiB / 190（cache）"
+        with tempfile.TemporaryDirectory(prefix="pdrs-cargo-slots-used-") as temp:
+            temp = Path(temp)
+            for name, slots, expected in (("full", "999/999", 1), ("free", "0/999", 0)):
+                gate = temp / f"gate-{name}.sh"
+                gate.write_text(f'#!/bin/bash\necho "{report.format(slots)}"\n')
+                gate.chmod(0o755)
+                env = dict(os.environ,
+                           PDRS_CARGO_SLOT_BIN=str(gate),
+                           PDRS_CARGO_SLOTS_CACHE_DIR=str(temp / f"cache-{name}"))
+                result = subprocess.run(["bash", str(script)], capture_output=True,
+                                        text=True, timeout=120, env=env)
+                self.assertEqual(result.returncode, expected,
+                                 f"{slots}: " + result.stdout + result.stderr)
+
+    def test_cargo_slots_rejects_bad_time_knobs(self):
+        # 0 / 前导零 / 非数字都必须 fail-closed 4：0 让 MAX_STALE、FAT_REFRESH_AFTER 变成恒真，
+        # 前导零在 $(( )) 里按八进制解析（09 非法 → 算术错误退 1 = 「已满」），非数字在 set -u
+        # 下退 1（#1556 r3 P2）。校验先于闸定位，所以这里连 PDRS_CARGO_SLOT_BIN 都不用给。
+        script = Path(__file__).resolve().parents[4] / "scripts" / "cargo-slots.sh"
+        for knob, value in (("PDRS_CARGO_SLOTS_MAX_STALE", "0"),
+                            ("PDRS_CARGO_SLOTS_CAP_TTL", "08"),
+                            ("PDRS_CARGO_SLOTS_REFRESH_CAP_TIMEOUT", "abc")):
+            env = dict(os.environ, **{knob: value})
+            env.pop("PDRS_CARGO_SLOT_BIN", None)
+            result = subprocess.run(["bash", str(script)], capture_output=True,
+                                    text=True, timeout=60, env=env)
+            self.assertEqual(result.returncode, 4,
+                             f"{knob}={value}: " + result.stdout + result.stderr)
 
     @staticmethod
     def wait_path(path, timeout=15):
