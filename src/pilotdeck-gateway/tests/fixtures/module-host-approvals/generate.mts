@@ -83,7 +83,7 @@ const authenticate = async (input: {bearer: string}) => {
 };
 // The scripted resolveSession port: the registered session catalog.
 const sessionProjects: Record<string, string> = {
-  'sess-handoff': 'proj1', 'sess-handoff2': 'proj1', 'sess-handoff3': 'proj1', 'sess-active': 'proj1', 'sess-ext': 'proj1',
+  'sess-handoff': 'proj1', 'sess-handoff2': 'proj1', 'sess-handoff3': 'proj1', 'sess-handoff4': 'proj1', 'sess-active': 'proj1', 'sess-ext': 'proj1',
   'sess-waitstale': 'proj1', 'sess-rev': 'proj1', 'sess-badpin': 'proj1', 'sess-unassigned': 'proj1',
   'sess-gone': 'proj1', 'sess-proj2': 'proj2', 'sess-done': 'proj1', 'sess-mismatch': 'proj1',
   'sess-dyn2': 'proj1', 'sess-dynfail': 'proj1',
@@ -116,6 +116,9 @@ const seeds: Array<[string, number, string | null, string, string]> = [
   ['sess-handoff', 1, HANDOFF_WAIT, HANDOFF_STATE, BUNDLE],
   ['sess-handoff2', 1, HANDOFF_WAIT, HANDOFF_STATE, BUNDLE],
   ['sess-handoff3', 1, HANDOFF_WAIT, HANDOFF_STATE, BUNDLE],
+  // The prototype-chain cell's own session, so its mutating resume touches
+  // no other cell's state.
+  ['sess-handoff4', 1, HANDOFF_WAIT, HANDOFF_STATE, BUNDLE],
   ['sess-done', 1, HANDOFF_WAIT, HANDOFF_STATE, BUNDLE],
   ['sess-active', 3, null, ACTIVE_STATE, BUNDLE],
   ['sess-ext', 2, EXT_WAIT, EXT_STATE, BUNDLE],
@@ -242,6 +245,11 @@ const cells: Array<{id: string, server: string, request: string, pad?: {marker: 
   {id: 'auth-wrong', server: 'main', request: post(STATUS, statusBody('sess-handoff'), 'Authorization: Bearer wrong\r\n', false)},
   {id: 'auth-lower', server: 'main', request: post(STATUS, statusBody('sess-handoff'), 'Authorization: bearer fixture-token\r\n', false)},
   {id: 'auth-dblspace', server: 'main', request: post(STATUS, statusBody('sess-handoff'), 'Authorization: Bearer  fixture-token\r\n', false)},
+  // authorization duplicated: Node keeps only the first value of a repeated
+  // single-value header, so the correct bearer on the first line admits the
+  // request all the way to the served snapshot (the join-everything reading
+  // would 401 at the transport gate).
+  {id: 'auth-dup', server: 'main', request: post(STATUS, statusBody('sess-handoff'), `${APPROVER('staff-admin')}Authorization: Bearer fixture-token\r\nAuthorization: Bearer other\r\n`, false)},
   {id: 'auth-get-wrong', server: 'main', request: `GET ${STATUS} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer wrong\r\n\r\n`},
   // method: anything but POST, with the body unread like TS.
   {id: 'method-get', server: 'main', request: `GET ${STATUS} HTTP/1.1\r\nHost: 127.0.0.1\r\n${A}\r\n`},
@@ -316,6 +324,13 @@ const cells: Array<{id: string, server: string, request: string, pad?: {marker: 
   {id: 'resume-invalid-negative', server: 'main', request: R('sess-handoff', 'req-i4', 'staff-admin', {expectedRevision: -1})},
   {id: 'resume-invalid-wait', server: 'main', request: R('sess-handoff', 'req-i5', 'staff-admin', {waitId: ''})},
   {id: 'resume-member-forbidden', server: 'main', request: R('sess-handoff3', 'req-f1', 'staff-other')},
+  // requestId on the prototype chain: TS `current.resumeRequests[requestId]`
+  // walks Object.prototype, so 'constructor' hits the Object constructor and
+  // the duplicate branch reads a function without `authorization` — the
+  // legacy-receipt 502. The Rust store's own-key lookup misses it and the
+  // resume succeeds; the divergence is registered (pinned test, not a
+  // replay).
+  {id: 'resume-requestid-proto', server: 'main', request: R('sess-handoff4', 'constructor')},
   // the dynamic binding mode.
   {id: 'dynamic-scope-skipped', server: 'dynamic', request: post(STATUS, JSON.stringify({sessionKey: 'sess-handoff'}), APPROVER('staff-admin'))},
   {id: 'dynamic-other-binding', server: 'dynamic', request: post(STATUS, JSON.stringify({tenantId: 't1', agentId: 'a1', sessionKey: 'sess-dyn2'}), APPROVER('staff-admin'))},

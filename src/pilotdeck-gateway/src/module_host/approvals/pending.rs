@@ -447,12 +447,12 @@ fn pinned_approval(value: &PendingState) -> Result<JsValue, PendingFailure> {
         _ => Vec::new(),
     }
     .into_iter()
-    // `sop.skill_id === wait.skillId || sop.id === wait.skillId`: a
-    // missing field is `undefined`, which also equals an absent skillId.
-    .filter(|sop| match skill_id {
-        Some(id) => sop.get("skill_id") == Some(id) || sop.get("id") == Some(id),
-        None => sop.get("skill_id").is_none() || sop.get("id").is_none(),
-    })
+    // `sop.skill_id === wait.skillId || sop.id === wait.skillId`: one
+    // strict `===` per disjunct, the same expression for a present and an
+    // absent skillId — a missing field is `undefined`, which equals an
+    // absent `wait.skillId` but never a present one, so only a sop missing
+    // the very field the disjunct names can match an absent skillId.
+    .filter(|sop| sop.get("skill_id") == skill_id || sop.get("id") == skill_id)
     .collect::<Vec<_>>();
     if matches.len() != 1 {
         return Err(pending(
@@ -687,7 +687,12 @@ pub(crate) fn deep_strict_equal(left: &JsValue, right: &JsValue) -> bool {
     match (left, right) {
         (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
         (JsValue::Bool(a), JsValue::Bool(b)) => a == b,
-        (JsValue::Number(a), JsValue::Number(b)) => a.to_bits() == b.to_bits(),
+        (JsValue::Number(a), JsValue::Number(b)) => {
+            // SameValue: every NaN equals every NaN regardless of payload
+            // bits (`to_bits` alone would split NaN representations), while
+            // +0 and -0 stay distinct through their bits.
+            (a.is_nan() && b.is_nan()) || a.to_bits() == b.to_bits()
+        }
         (JsValue::String(a), JsValue::String(b)) => a == b,
         (JsValue::Array(a), JsValue::Array(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| deep_strict_equal(a, b))

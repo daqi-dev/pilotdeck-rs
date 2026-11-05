@@ -567,10 +567,13 @@ pub(crate) async fn serve(
     let keep_alive = version == hyper::Version::HTTP_11 && !request_wants_close(request);
     // TS checks the bearer token before the method, and an empty configured
     // token is always the 401: `!options.token ||
-    // req.headers.authorization !== `Bearer ${options.token}``.
+    // req.headers.authorization !== `Bearer ${options.token}``. Node keeps
+    // only the first value of a repeated `authorization` header (its
+    // single-value header list), so a duplicated bearer compares its first
+    // line alone — `first_header`, not the `", "` join.
     let authorized = !crate::mutants::on("approvals-auth-off")
         && !config.token.is_empty()
-        && joined_header(request.headers(), "authorization") == format!("Bearer {}", config.token);
+        && first_header(request.headers(), "authorization") == format!("Bearer {}", config.token);
     if !authorized {
         return Some(Ok(finalize(
             send_json(
@@ -777,10 +780,7 @@ pub(crate) async fn serve(
                     }
                 }
             };
-            let serialized = stringify_json(&code)
-                .expect("#1350 a failure code is serializable")
-                .unwrap_or_default();
-            let body = format!("{{\"code\":{}}}", serialized);
+            let body = failure_body(&code);
             Some(Ok(finalize(
                 send_json(
                     hyper::StatusCode::from_u16(status).unwrap_or(hyper::StatusCode::BAD_GATEWAY),
@@ -796,6 +796,18 @@ pub(crate) async fn serve(
 enum Operation {
     Status,
     Resume,
+}
+
+/// The catch branch's `send(status, { code })` body: `JSON.stringify` of the
+/// already-defaulted code. Production TS always replaces a missing `code`
+/// with the `?? 'PUBLIC_APPROVAL_BRIDGE_FAILED'` default, so the `undefined`
+/// case only exists behind the `approvals-failure-default-off` switch — and
+/// there it must still be a valid JSON frame (`JSON.stringify(undefined)`
+/// writes nothing, which would produce the illegal `{"code":}`), so it
+/// serializes as `null`.
+fn failure_body(code: &JsValue) -> String {
+    let serialized = stringify_json(code).expect("#1350 a failure code is serializable");
+    format!("{{\"code\":{}}}", serialized.as_deref().unwrap_or("null"))
 }
 
 enum ReadError {
@@ -896,10 +908,27 @@ fn connection_headers(
     }
 }
 
+/// The `authorization` request header the way Node exposes it to TS: Node
+/// discards every value but the first of a repeated single-value header
+/// (`authorization` among them), unlike the `", "` join of
+/// [`joined_header`] — measured against Node v22.22.0 with a two-line
+/// raw-socket probe: `req.headers.authorization` is the first value alone
+/// while `x-staffdeck-approver-authorization` joins (oracle cells `auth-dup`
+/// and `stub-echo-approver` pin both sides). The lossy byte fold for
+/// non-UTF-8 values keeps an exact compare on the rejecting side.
+fn first_header(headers: &hyper::HeaderMap, name: &str) -> String {
+    headers
+        .get(name)
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .unwrap_or_default()
+}
+
 /// A request header the way Node exposes it to TS: lowercased name and, when
-/// the client repeats the header, the values joined with `", "`. The joined
-/// text only ever feeds an exact string compare or the bearer prefix check,
-/// so a lossy byte fold for non-UTF-8 values stays on the rejecting side.
+/// the client repeats the header, the values joined with `", "` (every
+/// header except Node's single-value list, which `authorization` belongs to
+/// — see [`first_header`]). The joined text only ever feeds an exact string
+/// compare or the bearer prefix check, so a lossy byte fold for non-UTF-8
+/// values stays on the rejecting side.
 fn joined_header(headers: &hyper::HeaderMap, name: &str) -> String {
     headers
         .get_all(name)

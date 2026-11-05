@@ -145,9 +145,10 @@ struct Catalog;
 fn session_project(session: &str) -> Option<&'static str> {
     match session {
         "sess-proj2" => Some("proj2"),
-        "sess-handoff" | "sess-handoff2" | "sess-handoff3" | "sess-active" | "sess-ext"
-        | "sess-waitstale" | "sess-rev" | "sess-badpin" | "sess-unassigned" | "sess-gone"
-        | "sess-done" | "sess-mismatch" | "sess-dyn2" | "sess-dynfail" => Some("proj1"),
+        "sess-handoff" | "sess-handoff2" | "sess-handoff3" | "sess-handoff4" | "sess-legacy"
+        | "sess-active" | "sess-ext" | "sess-waitstale" | "sess-rev" | "sess-badpin"
+        | "sess-unassigned" | "sess-gone" | "sess-done" | "sess-mismatch" | "sess-dyn2"
+        | "sess-dynfail" => Some("proj1"),
         _ => None,
     }
 }
@@ -318,7 +319,7 @@ async fn seeded_store() -> Arc<PendingSopStore> {
             _ => None,
         },
     )));
-    let seeds: [(&str, i64, Option<&str>, &str, &str); 10] = [
+    let seeds: [(&str, i64, Option<&str>, &str, &str); 11] = [
         ("sess-handoff", 1, Some(HANDOFF_WAIT), HANDOFF_STATE, BUNDLE),
         (
             "sess-handoff2",
@@ -329,6 +330,13 @@ async fn seeded_store() -> Arc<PendingSopStore> {
         ),
         (
             "sess-handoff3",
+            1,
+            Some(HANDOFF_WAIT),
+            HANDOFF_STATE,
+            BUNDLE,
+        ),
+        (
+            "sess-handoff4",
             1,
             Some(HANDOFF_WAIT),
             HANDOFF_STATE,
@@ -356,6 +364,16 @@ async fn seeded_store() -> Arc<PendingSopStore> {
         );
         store.seed(None, &JsString::from(session), &json(&persisted));
     }
+    // A pre-migration legacy receipt: a stored resume result without the
+    // `authorization` facts (it survives `isResumeResult`), so a human
+    // replay of its requestId hits the legacy-receipt rejection.
+    store.seed(
+        None,
+        &JsString::from("sess-legacy"),
+        &json(&format!(
+            r#"{{"schemaVersion":3,"sessionId":"sess-legacy","bundle":{BUNDLE},"state":{HANDOFF_STATE},"revision":1,"wait":{HANDOFF_WAIT},"resumeRequests":{{"req-legacy":{{"accepted":true,"sessionId":"sess-legacy","requestId":"req-legacy","revision":2,"message":"legacy","waitId":"wait-1","source":"human"}}}},"updatedAt":"2026-01-01T00:00:00.000Z"}}"#
+        )),
+    );
     let resumed = ApprovalPendingStore::resume(
         &*store,
         &StoreResumeInput {
@@ -611,6 +629,7 @@ replay_tests! {
     auth_wrong => "auth-wrong",
     auth_lower => "auth-lower",
     auth_dblspace => "auth-dblspace",
+    auth_dup => "auth-dup",
     auth_get_wrong => "auth-get-wrong",
     method_get => "method-get",
     method_delete => "method-delete",
@@ -697,8 +716,8 @@ replay_tests! {
 }
 
 /// The cells pinned raw instead of replayed: their bytes carry a registered
-/// transport diff no normalization may swallow.
-const PINNED_CELL_IDS: &[&str] = &["http10", "premature-close"];
+/// transport or component diff no normalization may swallow.
+const PINNED_CELL_IDS: &[&str] = &["http10", "premature-close", "resume-requestid-proto"];
 
 /// #1350: the replay list plus the pinned list is the oracle's cell set; a
 /// cell added to the oracle without a test (or vice versa) fails here.
@@ -777,6 +796,52 @@ async fn premature_close_is_a_zero_byte_close() {
     assert!(
         closed,
         "#1350 pin premature-close: the truncated body closes the connection"
+    );
+}
+
+/// #1350 (registered A8.4-MODULE-HOST-APPROVALS-001): TS
+/// `current.resumeRequests[input.requestId]` walks `Object.prototype`, so a
+/// `requestId` of `"constructor"` hits the `Object` constructor and the
+/// duplicate branch reads a function without `authorization` — the golden
+/// cell `resume-requestid-proto` records TS answering
+/// 502 `SOP_APPROVAL_LEGACY_RECEIPT` (measured against baseline cc7c4e6).
+/// The Rust store looks up own keys only, so the same request resumes
+/// normally: the pinned 200 below is the registered divergence, not a
+/// replay.
+#[tokio::test]
+async fn requestid_on_the_prototype_chain_diverges() {
+    let golden = cell("resume-requestid-proto");
+    assert!(
+        golden.response.starts_with("HTTP/1.1 502")
+            && golden
+                .response
+                .contains("{\"code\":\"SOP_APPROVAL_LEGACY_RECEIPT\"}"),
+        "#1350 pin proto: the TS golden must record the legacy-receipt 502: {}",
+        golden.response
+    );
+    let setup = server_setup(&golden.server).await;
+    let (raw, closed) = serve_and_capture(
+        setup.approvals,
+        &golden.request,
+        &golden.id,
+        golden.half_close,
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "#1350 pin proto: the Rust store's own-key lookup must let the resume through (the TS prototype-chain 502 is the registered divergence): {response}"
+    );
+    assert!(
+        response.contains("\"accepted\":true")
+            && response.contains("\"duplicate\":false")
+            && response.contains("\"requestId\":\"constructor\"")
+            && response.contains("\"sessionId\":\"sess-handoff4\""),
+        "#1350 pin proto: the Rust resume result must be the fresh acceptance of the 'constructor' request id: {response}"
+    );
+    assert!(
+        !closed,
+        "#1350 pin proto: the keep-alive response must leave the connection open"
     );
 }
 
@@ -1141,6 +1206,23 @@ fn deep_strict_equal_is_isdeepequal() {
         deep_strict_equal(&json("\"NaN\""), &json("\"NaN\"")),
         "#1350 the string NaN equals itself"
     );
+    // SameValue: every NaN equals every NaN regardless of payload bits (JSON
+    // cannot carry NaN, but a scripted bridge value can).
+    assert!(
+        deep_strict_equal(&JsValue::Number(f64::NAN), &JsValue::Number(f64::NAN)),
+        "#1350 isDeepStrictEqual equates NaN with NaN"
+    );
+    assert!(
+        deep_strict_equal(
+            &JsValue::Number(f64::NAN),
+            &JsValue::Number(f64::from_bits(0xFFF8_0000_0000_0001)),
+        ),
+        "#1350 isDeepStrictEqual equates NaN with any NaN bit pattern, not only identical bits"
+    );
+    assert!(
+        !deep_strict_equal(&JsValue::Number(f64::NAN), &json("1")),
+        "#1350 isDeepStrictEqual never equates NaN with a number"
+    );
 }
 
 /// #996-style regeneration guard for the fixture; see the fixture README for
@@ -1149,4 +1231,256 @@ fn deep_strict_equal_is_isdeepequal() {
 #[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0"]
 fn regenerates_identically() {
     test_baseline::regenerates_identically("module-host-approvals");
+}
+
+// --------------------------------------------- fix-r1 component tests
+
+/// #1350 fix-r1 (DS review P1): the catch branch's `{ code }` body must stay
+/// valid JSON even when the `?? 'PUBLIC_APPROVAL_BRIDGE_FAILED'` default is
+/// switched off and the code is `undefined` — `JSON.stringify(undefined)`
+/// writes nothing, which produced the illegal `{"code":}` frame. `undefined`
+/// now serializes as `null`; production TS always applies the default, so
+/// the wire bytes of every real failure are unchanged.
+#[test]
+fn failure_body_is_valid_json_for_every_code() {
+    assert_eq!(
+        failure_body(&JsValue::Undefined),
+        "{\"code\":null}",
+        "#1350 an undefined code must serialize as null, never an empty insertion"
+    );
+    assert_eq!(
+        failure_body(&JsValue::String(JsString::from("X_CODE"))),
+        "{\"code\":\"X_CODE\"}"
+    );
+    assert_eq!(failure_body(&JsValue::Number(123.0)), "{\"code\":123}");
+    for code in [
+        JsValue::Undefined,
+        JsValue::String(JsString::from("X_CODE")),
+        JsValue::Number(123.0),
+    ] {
+        let body = failure_body(&code);
+        parse_json(&body).expect("#1350 the failure body must parse as JSON");
+    }
+}
+
+/// One direct store resume, the WS lane's own call shape (the shape
+/// `native_process`'s `sop_resume` family will hold once #1313 wires it) —
+/// the only caller that can reach the store branches the HTTP bridge's own
+/// validation keeps out.
+async fn store_resume(
+    store: &Arc<PendingSopStore>,
+    session: &str,
+    request_id: &str,
+    authority: Option<StoreAuthority>,
+    expected_revision: Option<f64>,
+) -> Result<JsValue, ApprovalFailure> {
+    ApprovalPendingStore::resume(
+        store.as_ref(),
+        &StoreResumeInput {
+            session_key: JsString::from(session),
+            project_key: Some(JsValue::String(JsString::from("proj1"))),
+            request_id: JsString::from(request_id),
+            wait_id: JsString::from("wait-1"),
+            message: JsString::from("approved"),
+            expected_revision,
+            slot_updates: None,
+            source: ResumeSource::Human,
+            authority,
+        },
+    )
+    .await
+}
+
+fn member_authority(session: &str) -> StoreAuthority {
+    StoreAuthority {
+        tenant_id: JsString::from("t1"),
+        session_id: JsString::from(session),
+        subject: subject("staff-member").expect("#1350 the fixture staff member"),
+    }
+}
+
+/// A store failure's code as a plain string, for assertions.
+fn failure_code(failure: &ApprovalFailure) -> String {
+    match &failure.code {
+        Some(JsValue::String(code)) => code.to_utf8().unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// One seeded session over a fresh store, the same persisted shape
+/// [`seeded_store`] writes.
+async fn single_session_store(
+    session: &str,
+    wait: &str,
+    state: &str,
+    bundle: &str,
+) -> Arc<PendingSopStore> {
+    let store = Arc::new(PendingSopStore::new(Arc::new(
+        |project_key: Option<&JsValue>| match project_key {
+            None => Some("root1".to_owned()),
+            Some(JsValue::String(key)) if key.equals_str("proj1") => Some("root1".to_owned()),
+            _ => None,
+        },
+    )));
+    let persisted = format!(
+        r#"{{"schemaVersion":3,"sessionId":{session:?},"bundle":{bundle},"state":{state},"revision":1,"wait":{wait},"resumeRequests":{{}},"updatedAt":"2026-01-01T00:00:00.000Z"}}"#
+    );
+    store.seed(None, &JsString::from(session), &json(&persisted));
+    store
+}
+
+/// #1350 fix-r1 (DS review P2): `sop.skill_id === wait.skillId || sop.id ===
+/// wait.skillId` is one strict `===` per disjunct — a sop that merely *lacks*
+/// a field never matches a *present* skillId, so this collision (one sop
+/// matching on `skill_id` while another has an `id` of its own and no
+/// `skill_id`) pins exactly one SOP, exactly like TS.
+#[tokio::test]
+async fn pinned_sop_match_needs_both_sides_of_the_strict_equal() {
+    const WAIT: &str = r#"{"id":"wait-1","kind":"handoff","skillId":"skill-1","stepId":"step-1","createdAt":"2026-01-01T00:00:00.000Z"}"#;
+    const STATE: &str =
+        r#"{"status":"handoff","active_skill_id":"skill-1","active_step_id":"step-1"}"#;
+    const SOP: &str = r#""version":"1.0.0","content":{"nodes":[{"node_id":"step-1","assignee_user_id":"staff-member-id"}]}"#;
+    let bundle =
+        format!(r#"{{"sops":[{{"skill_id":"skill-1",{SOP}}},{{"id":"sop-other",{SOP}}}]}}"#);
+    let store = single_session_store("sess-pin-collide", WAIT, STATE, &bundle).await;
+    let snapshot = store_status(&store, "sess-pin-collide").await;
+    assert!(
+        matches!(snapshot.get("approval"), Some(JsValue::Object(_))),
+        "#1350 only the skill_id match may count; the id-bearing skill_id-less sop must not collide: {}",
+        stringify_json(&snapshot)
+            .unwrap_or_default()
+            .unwrap_or_default()
+    );
+    assert_eq!(
+        snapshot.get("approval").and_then(|a| a.get("skillId")),
+        Some(&JsValue::String(JsString::from("skill-1"))),
+        "#1350 the pinned approval must be the skill_id-matching sop's"
+    );
+}
+
+/// #1350 fix-r1 (DS review P2): with the wait's own `skillId` absent, a sop
+/// matches through the disjunct naming the very field it lacks (`undefined
+/// === undefined`), so one sop missing `skill_id` and another missing `id`
+/// both match — the ambiguous pair TS and Rust alike reject as
+/// `SOP_APPROVAL_PIN_INVALID`, while a single such sop still pins.
+#[tokio::test]
+async fn pinned_sop_collision_of_missing_fields_is_ambiguous() {
+    const WAIT: &str = r#"{"id":"wait-1","kind":"handoff","stepId":"step-1","createdAt":"2026-01-01T00:00:00.000Z"}"#;
+    const STATE: &str = r#"{"status":"handoff","active_step_id":"step-1"}"#;
+    const SOP: &str = r#""version":"1.0.0","content":{"nodes":[{"node_id":"step-1","assignee_user_id":"staff-member-id"}]}"#;
+    let colliding =
+        format!(r#"{{"sops":[{{"id":"sop-a",{SOP}}},{{"skill_id":"skill-x",{SOP}}}]}}"#);
+    let store = single_session_store("sess-pin-ambiguous", WAIT, STATE, &colliding).await;
+    let snapshot = store_status(&store, "sess-pin-ambiguous").await;
+    let error = snapshot
+        .get("approvalError")
+        .expect("#1350 the ambiguous pin");
+    assert_eq!(
+        error.get("code"),
+        Some(&JsValue::String(JsString::from("SOP_APPROVAL_PIN_INVALID"))),
+        "#1350 two sops each matching through the missing-field disjunct must be ambiguous"
+    );
+    let single = format!(r#"{{"sops":[{{"id":"sop-a",{SOP}}}]}}"#);
+    let store = single_session_store("sess-pin-single", WAIT, STATE, &single).await;
+    let snapshot = store_status(&store, "sess-pin-single").await;
+    assert!(
+        matches!(snapshot.get("approval"), Some(JsValue::Object(_))),
+        "#1350 a single sop missing skill_id still pins an absent skillId"
+    );
+}
+
+/// #1350 fix-r1 (Opus review P2): the store branches no golden cell or test
+/// reached — first `SOP_NOT_WAITING`, the late resume on an already-active
+/// session (the wait is gone), over the real transport.
+#[tokio::test]
+async fn late_resume_on_an_active_session_is_not_waiting() {
+    let body = r#"{"tenantId":"t1","agentId":"a1","sessionKey":"sess-active","source":"human","requestId":"req-late","waitId":"wait-1","expectedRevision":3,"message":"late"}"#;
+    let request = format!(
+        "POST /api/module-host/approvals/resume HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nx-staffdeck-approver-authorization: Bearer staff-admin\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let setup = server_setup("main").await;
+    let (raw, _) = serve_and_capture(
+        setup.approvals,
+        request.as_bytes(),
+        "resume-late-active",
+        false,
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 502") && response.contains("{\"code\":\"SOP_NOT_WAITING\"}"),
+        "#1350 a resume on an active session must be the SOP_NOT_WAITING 502: {response}"
+    );
+}
+
+/// #1350 fix-r1 (Opus review P2): `SOP_APPROVAL_AUTH_REQUIRED` — the WS
+/// lane's resume without an authority (the HTTP bridge always supplies one).
+/// A `sopStateError` failure carries no status; the transport maps that
+/// channel to 502 (the golden `resume-not-found` cell pins the mapping).
+#[tokio::test]
+async fn resume_without_authority_requires_auth() {
+    let store = seeded_store().await;
+    let failure = store_resume(&store, "sess-handoff", "req-auth", None, Some(1.0))
+        .await
+        .expect_err("#1350 an authority-less resume must fail");
+    assert_eq!(
+        failure.status, None,
+        "#1350 a state error never carries its own status"
+    );
+    assert_eq!(
+        failure_code(&failure),
+        "SOP_APPROVAL_AUTH_REQUIRED",
+        "#1350 the authority-less resume must demand the authority"
+    );
+}
+
+/// #1350 fix-r1 (Opus review P2): `SOP_REVISION_REQUIRED` — a handoff resume
+/// without `expectedRevision`. The HTTP bridge's own shape gate rejects that
+/// input first (400 `APPROVAL_INPUT_INVALID`, the `resume-invalid-*` cells),
+/// so this store branch belongs to the WS lane alone.
+#[tokio::test]
+async fn handoff_resume_without_expected_revision_requires_it() {
+    let store = seeded_store().await;
+    let failure = store_resume(
+        &store,
+        "sess-handoff2",
+        "req-norev",
+        Some(member_authority("sess-handoff2")),
+        None,
+    )
+    .await
+    .expect_err("#1350 a revision-less handoff resume must fail");
+    assert_eq!(failure.status, None);
+    assert_eq!(
+        failure_code(&failure),
+        "SOP_REVISION_REQUIRED",
+        "#1350 the handoff resume must demand the original revision"
+    );
+}
+
+/// #1350 fix-r1 (Opus review P2): `SOP_APPROVAL_LEGACY_RECEIPT` — a stored
+/// receipt without `authorization` facts (the pre-migration shape) replays
+/// as rejected for the human source, over the real transport.
+#[tokio::test]
+async fn legacy_receipt_replay_is_rejected() {
+    let body = r#"{"tenantId":"t1","agentId":"a1","sessionKey":"sess-legacy","source":"human","requestId":"req-legacy","waitId":"wait-1","expectedRevision":1,"message":"legacy"}"#;
+    let request = format!(
+        "POST /api/module-host/approvals/resume HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nx-staffdeck-approver-authorization: Bearer staff-member\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let setup = server_setup("main").await;
+    let (raw, _) = serve_and_capture(
+        setup.approvals,
+        request.as_bytes(),
+        "resume-legacy-receipt",
+        false,
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 502")
+            && response.contains("{\"code\":\"SOP_APPROVAL_LEGACY_RECEIPT\"}"),
+        "#1350 the legacy receipt replay must be the legacy 502: {response}"
+    );
 }
