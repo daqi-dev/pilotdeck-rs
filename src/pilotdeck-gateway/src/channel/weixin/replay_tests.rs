@@ -1,4 +1,4 @@
-//! #1328 oracle replay: the 11 committed TS scenarios (`weixin-channel`
+//! #1328 oracle replay: the 15 committed TS scenarios (`weixin-channel`
 //! `generate.mts` running the real baseline stack against a scripted loopback
 //! ilink mock) re-run against the Rust assembly — `NativeChannels` + the
 //! `WeixinChannel` on the #1327 lifecycle core — through the same step
@@ -960,10 +960,10 @@ fn oracle_cases(oracle: &Value) -> &[Value] {
         !cases.is_empty(),
         "#1328 weixin oracle cases must be non-empty"
     );
-    crate::negative_assert_eq!(cases.len(), 11, "#1328 weixin oracle case count");
+    crate::negative_assert_eq!(cases.len(), 15, "#1328 weixin oracle case count");
     crate::negative_assert_eq!(
         oracle["expectedCaseCount"],
-        json!(11),
+        json!(15),
         "#1328 weixin generator declaration"
     );
     cases

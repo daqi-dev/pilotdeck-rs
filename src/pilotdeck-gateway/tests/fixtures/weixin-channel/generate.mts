@@ -423,7 +423,64 @@ scenario('pending-reply-queue', [
   { events: [typingWait(2, 2), started('run-12'), delta('second reply')] },
 ] });
 
-const EXPECTED_CASE_COUNT = 11;
+// c12: a confirmed QR answer with an EMPTY bot_token is falsy in JS
+// (`if (!status.ilink_bot_id || !status.bot_token)`), so the login fails
+// exactly like the missing-field shape of c9 and the credentials watcher
+// recovers. Pins the empty-string truthiness filter.
+scenario('qr-login-empty-bot-token-recovery', [
+  { op: 'server', config: CONFIG_ON },
+  { op: 'script', endpoint: '/ilink/bot/get_qrcode_status', items: [{ status: 'confirmed', ilink_bot_id: 'acct-12', bot_token: '' }] },
+  { op: 'wait-reports', state: 'failed' },
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-12', accountId: 'acct-12b' } },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-12', [message('user-12', 'back', 'ctx-12', 'm-12')])] },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-12'), delta('recovered')] }] });
+
+// c13: the same for an empty ilink_bot_id (the other half of auth.js:81).
+scenario('qr-login-empty-account-id-recovery', [
+  { op: 'server', config: CONFIG_ON },
+  { op: 'script', endpoint: '/ilink/bot/get_qrcode_status', items: [{ status: 'confirmed', ilink_bot_id: '', bot_token: 'tok-13' }] },
+  { op: 'wait-reports', state: 'failed' },
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-13b', accountId: 'acct-13b' } },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-13', [message('user-13', 'back', 'ctx-13', 'm-13')])] },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-13'), delta('recovered')] }] });
+
+// c14: an EMPTY get_updates_buf in the response is falsy (`if
+// (resp.get_updates_buf)`) and must NOT clear the cursor: the next poll body
+// still carries the persisted cur-14.
+scenario('empty-getupdates-buffer-keeps-cursor', [
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-14', accountId: 'acct-14', cursor: 'cur-14' } },
+  { op: 'server', config: CONFIG_ON },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [{ ret: 0, msgs: [], get_updates_buf: '' }] },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-15', [message('user-14', 'hi', 'ctx-14', 'm-14')])] },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-14'), delta('ok')] }] });
+
+// c15: an EMPTY typing_ticket is falsy (`if (config.typing_ticket)`): the
+// client still fetches the config but sends no sendtyping request.
+scenario('empty-typing-ticket-skips-sendtyping', [
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-15', accountId: 'acct-15', cursor: 'cur-15' } },
+  { op: 'server', config: CONFIG_ON },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/ilink/bot/getconfig', items: [{ ret: 0, typing_ticket: '' }] },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-16', [message('user-15', 'hi', 'ctx-15', 'm-15')])] },
+  { op: 'wait-requests', path: '/ilink/bot/getconfig', count: 1 },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 0), started('run-15'), delta('ok')] }] });
+
+const EXPECTED_CASE_COUNT = 15;
 assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1328 weixin generator case count');
 
 // --- Harness ----------------------------------------------------------------
