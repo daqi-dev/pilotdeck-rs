@@ -118,7 +118,7 @@ def main():
     baseline = env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
     selected = [row for row in ROWS if sys.argv[2:] == []
                 or row['name'] in sys.argv[2:]]
-    if not selected or len(selected) != len(sys.argv[2:]):
+    if not selected or (sys.argv[2:] and len(selected) != len(sys.argv[2:])):
         raise SystemExit('unknown/duplicate mutation')
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
