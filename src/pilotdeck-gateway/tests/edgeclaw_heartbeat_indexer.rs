@@ -3264,11 +3264,15 @@ fn concurrent_capture_cannot_land_between_l0_id_selection_and_delete() {
         "#1207 the released clear must have completed exactly one bump"
     );
     assert!(
-        stores.session_clear_removed_since("s1", 0, "s1_a_raw"),
+        stores
+            .session_clear_removed_since("s1", 0, "s1_a_raw")
+            .expect("#1207 the removed record must be readable"),
         "#1207 the row that predates the clear must be recorded as removed"
     );
     assert!(
-        !stores.session_clear_removed_since("s1", 0, "s1_b_raw"),
+        !stores
+            .session_clear_removed_since("s1", 0, "s1_b_raw")
+            .expect("#1207 the removed record must be readable"),
         "#1207 the capture that landed inside the guarded segment is new data and must never read as a recorded removal"
     );
     let rows = stores
@@ -3373,7 +3377,9 @@ fn stale_removed_entry_after_later_clear_keeps_since_semantics() {
         "#1207 the second clear must advance the generation without re-recording the repaired row"
     );
     assert!(
-        !stores.session_clear_removed_since("s1", baseline, "s1_x_raw"),
+        !stores
+            .session_clear_removed_since("s1", baseline, "s1_x_raw")
+            .expect("#1207 the removed record must be readable"),
         "#1207 a row whose deleting clear predates the baseline must not read as cleared-since it"
     );
     // Positive control: a row the later clears really delete still reads
@@ -3392,7 +3398,9 @@ fn stale_removed_entry_after_later_clear_keeps_since_semantics() {
         "#1207 the third clear must advance the generation again"
     );
     assert!(
-        stores.session_clear_removed_since("s1", baseline, "s1_y2_raw"),
+        stores
+            .session_clear_removed_since("s1", baseline, "s1_y2_raw")
+            .expect("#1207 the removed record must be readable"),
         "#1207 a row deleted by a clear after the baseline must still read as cleared-since it"
     );
 }
@@ -3522,6 +3530,25 @@ async fn recapture_with_the_same_id_after_clear_is_not_marked_indexed_unpersiste
         "2026-10-22T00:00:01.000Z",
         "turn re-captured with the same id",
     );
+    // #1246 same id premise (review P2): the whole reproducer hinges on the
+    // re-capture getting the *same* id, which follows from
+    // `build_l0_index_id(session_key, timestamp, payload)`. Assert it instead
+    // of assuming it — if the id derivation ever adds a varying field, the
+    // re-capture becomes an ordinary new row and this test would silently
+    // stop reproducing anything.
+    let first_id = {
+        let rows = lab
+            .stores
+            .storage
+            .list_all_l0()
+            .expect("#1246 list l0 rows after the first capture");
+        assert_eq!(
+            rows.len(),
+            1,
+            "#1246 the first capture must insert exactly one row, got {rows:?}"
+        );
+        rows[0].l0_index_id.clone()
+    };
     let stores = lab.stores.clone();
     let capturing = lab.indexer.clone();
     let hooked =
@@ -3571,6 +3598,10 @@ async fn recapture_with_the_same_id_after_clear_is_not_marked_indexed_unpersiste
     assert_eq!(
         rows[0].timestamp, "2026-10-22T00:00:01.000Z",
         "#1246 the surviving L0 row must be the re-captured turn"
+    );
+    assert_eq!(
+        rows[0].l0_index_id, first_id,
+        "#1246 same id premise: the re-capture must reuse the cleared incarnation's id"
     );
     assert!(
         rows[0].indexed,

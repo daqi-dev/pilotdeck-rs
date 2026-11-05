@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# anchor-selfcheck: unsupported issue-1246 table-free executor over the heartbeat integration test binary
+# anchor-selfcheck: unsupported issue-1246 executor: ROWS is not one of anchor_selfcheck's TABLES, so `--check` (below) is the anchor preflight; this script is not wired into CI or a host manifest yet
 """#1246 negative controls: the live-row qualifier of `session_clear_removed_since`.
 
-Two mutations, each bound to one named test that must fail at its own
+Three mutations, each bound to one named test that must fail at its own
 issue-tagged assertion message:
 
 - ``removed-since-ignores-live-row`` drops the "the row still exists" qualifier
@@ -17,6 +17,11 @@ issue-tagged assertion message:
   deliberately not bound: its row never enters the removed record, so
   always-false cannot change its outcome; the discard-family cell carries the
   "the judgment is not a no-op" evidence.
+- ``removed-since-closed-fails-open`` flips the `Closed` arm from "keep the
+  record's answer" to "fail open": a close after the clear stops discarding and
+  the cleared turn's file is written again (review P2: the third error path had
+  no bound control).
+  Bound test: ``clear_then_close_discards_candidates_and_fails_closed``.
 
 Every mutation runs to completion — compile gate, bound-test run, byte restore,
 restored-pass check — and only the final summary decides the exit status: a
@@ -34,7 +39,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from negative_panic import marker_kills_named_test, named_test_failed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, tree_lock, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 entries_rs = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/entries.rs'
@@ -46,8 +51,8 @@ ROWS = [
     {
         'name': 'removed-since-ignores-live-row',
         'path': entries_rs,
-        'old': '            Ok(rows) => rows.is_empty(),',
-        'new': '            Ok(_) => true,',
+        'old': '            Ok(rows) => Ok(rows.is_empty()),',
+        'new': '            Ok(_) => Ok(true),',
         'test': 'recapture_with_the_same_id_after_clear_is_not_marked_indexed_unpersisted',
         'assertion': '#1246 the re-captured turn is new data and must be written, not silently marked indexed',
     },
@@ -66,8 +71,16 @@ ROWS = [
             })''',
         'new': '''        let _ = (session, baseline, l0_index_id);
         false''',
-        'test': 'clear_while_create_note_request_in_flight_discards_persist',
-        'assertion': "#917 a clear while the createNote request is in flight must discard the turn's persist",
+        'test': 'clear_then_close_discards_candidates_and_fails_closed',
+        'assertion': "#917 the clear generation must discard the turn even though SQLite is closed",
+    },
+    {
+        'name': 'removed-since-closed-fails-open',
+        'path': entries_rs,
+        'old': '            Err(super::StorageError::Closed) => Ok(true),',
+        'new': '            Err(super::StorageError::Closed) => Ok(false),',
+        'test': 'clear_then_close_discards_candidates_and_fails_closed',
+        'assertion': "#917 the clear generation must discard the turn even though SQLite is closed",
     },
 ]
 
@@ -184,18 +197,22 @@ def main():
 if __name__ == '__main__':
     if sys.argv[1:] == ['--check']:
         problems = []
-        for row in ROWS:
-            try:
-                original = row['path'].read_text(encoding='utf-8')
-            except OSError as error:
-                problems.append(f'{row["name"]}: {error}')
-                continue
-            count = original.count(row['old'])
-            if count != 1:
-                problems.append(f'{row["name"]}: anchor occurs {count} times, expected 1')
-                continue
-            if original.count(row['new']) != 0:
-                problems.append(f'{row["name"]}: mutant text already present')
+        # Same tree lock the mutation runner takes: a concurrent executor may
+        # hold the tree with a mutant written, and reading the anchors then
+        # would report a false "anchor occurs 0 times".
+        with tree_lock(root):
+            for row in ROWS:
+                try:
+                    original = row['path'].read_text(encoding='utf-8')
+                except OSError as error:
+                    problems.append(f'{row["name"]}: {error}')
+                    continue
+                count = original.count(row['old'])
+                if count != 1:
+                    problems.append(f'{row["name"]}: anchor occurs {count} times, expected 1')
+                    continue
+                if original.count(row['new']) != 0:
+                    problems.append(f'{row["name"]}: mutant text already present')
         print('\n'.join(problems) if problems
               else f'{len(ROWS)} unique anchors checked')
         raise SystemExit(int(bool(problems)))

@@ -821,6 +821,17 @@ impl HeartbeatIndexer {
             return Ok(());
         }
 
+        // #1246 review P1 (deepseek concurrency, GLM concurrency): a session
+        // discarded because a clear removed its row must not be handed to
+        // `mark_l0_indexed`. The id is keyed by (session_key, timestamp,
+        // payload), so a re-capture that lands after the discard decision
+        // would be stamped `indexed` below without ever having its files
+        // written — the silent turn loss this fix exists to remove. Leaving
+        // the id unmarked is idempotent when the row really is gone (the
+        // UPDATE is a no-op for an absent id) and makes a re-captured row
+        // listable again. Declared outside the per-turn loop because the
+        // decision is taken inside it and consumed after it.
+        let mut discarded_for_clear = false;
         for focus_turn in focus_user_turns {
             let current_project_meta = match self
                 .repository
@@ -1175,6 +1186,7 @@ impl HeartbeatIndexer {
                         "[clawxmemory] skip persist for cleared session={}",
                         session.session_key
                     )));
+                    discarded_for_clear = true;
                     break;
                 }
                 let Some(candidate) = candidate else {
@@ -1201,15 +1213,20 @@ impl HeartbeatIndexer {
                 // #917 fix-r3 (review P0): per-row discrimination here too —
                 // a clear that completed since the baseline discards only the
                 // rows it deleted, never a turn captured after it finished.
-                if self.repository.session_clear_removed_since(
-                    &session.session_key,
-                    clear_baseline,
-                    &session.l0_index_id,
-                ) {
+                if self
+                    .repository
+                    .session_clear_removed_since(
+                        &session.session_key,
+                        clear_baseline,
+                        &session.l0_index_id,
+                    )
+                    .map_err(HeartbeatError::File)?
+                {
                     self.info(JsString::from(format!(
                         "[clawxmemory] skip persist for cleared session={}",
                         session.session_key
                     )));
+                    discarded_for_clear = true;
                     break;
                 }
                 self.fire(HeartbeatStage::BeforePersistCommit, &session.session_key);
@@ -1679,7 +1696,9 @@ impl HeartbeatIndexer {
             );
         }
 
-        processed_ids.push(session.l0_index_id.clone());
+        if !discarded_for_clear {
+            processed_ids.push(session.l0_index_id.clone());
+        }
         stats.captured_sessions += 1;
         self.repository.storage.set_pipeline_state(
             LAST_INDEXED_AT_STATE_KEY,
@@ -1710,6 +1729,10 @@ impl HeartbeatIndexer {
     /// exactly like the TS baseline persists it on the next run, so the
     /// mismatch arm consults the per-row removed record (row id → the
     /// generation of the clear that deleted it).
+    /// #1246: `session_clear_removed_since` also asks the store whether a row
+    /// with this id is alive right now — a live row can only be a re-capture
+    /// inserted after the clear's DELETE, so it is new data and the record
+    /// alone would have discarded it.
     fn session_cleared(
         &self,
         session_key: &str,
@@ -1717,11 +1740,10 @@ impl HeartbeatIndexer {
         l0_index_id: &String,
     ) -> Result<bool, HeartbeatError> {
         if self.repository.session_clear_generation(session_key) != clear_baseline {
-            return Ok(self.repository.session_clear_removed_since(
-                session_key,
-                clear_baseline,
-                l0_index_id,
-            ));
+            return self
+                .repository
+                .session_clear_removed_since(session_key, clear_baseline, l0_index_id)
+                .map_err(HeartbeatError::File);
         }
         match self
             .repository

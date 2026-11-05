@@ -588,29 +588,36 @@ impl EdgeClawFileStores {
     /// one connection guard, see [`Self::clear_session_l0_tail`]), which is
     /// new data, not the deleted incarnation. A row the clear deleted and
     /// nobody re-captured is still gone and still answers true. A read that
-    /// fails keeps the record's answer: `Closed` after a clear must keep
-    /// discarding (`clearSession` then `close`), and any other error surfaces
-    /// again at `mark_l0_indexed` instead of silently resurrecting the turn.
+    /// fails keeps the record's answer only when the store is `Closed`
+    /// (`clearSession` then `close` must keep discarding); every other read
+    /// error propagates, exactly like the `session_cleared` L0 lookup it
+    /// mirrors, so a transient failure can never read as "the row was
+    /// deleted" and drop the turn (review, both families).
     /// The check lives here — not in [`SessionClears::removed_since`] — so
     /// every caller (the `session_cleared` mismatch arm and the per-candidate
     /// recheck inside the commit scope) shares one semantics. It is
     /// synchronous SQLite only: no await, no file-store lock, the same
     /// snapshot-scope-then-connection order `clearSession` itself takes.
+    /// Residual window (registered as a `P2-跟进`, out of this fix's scope):
+    /// `mark_l0_indexed` still keys rows by id alone and runs after the batch,
+    /// so a re-capture that lands between this inspection and that UPDATE is
+    /// not told apart from the listed incarnation.
     pub fn session_clear_removed_since(
         &self,
         session: &str,
         baseline: u64,
         l0_index_id: &str,
-    ) -> bool {
+    ) -> Result<bool> {
         if !self
             .session_clears
             .removed_since(session, baseline, l0_index_id)
         {
-            return false;
+            return Ok(false);
         }
         match self.storage.get_l0_by_ids(&[l0_index_id.to_string()]) {
-            Ok(rows) => rows.is_empty(),
-            Err(_) => true,
+            Ok(rows) => Ok(rows.is_empty()),
+            Err(super::StorageError::Closed) => Ok(true),
+            Err(error) => Err(FileMemoryError::Storage(error)),
         }
     }
     fn clear_result(

@@ -58,19 +58,22 @@ PRE_LOOP_RECHECK = '''            let session_cleared =
                 self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
 '''
 
-IN_LOOP_RECHECK = '''                if self.repository.session_clear_removed_since(
-                    &session.session_key,
-                    clear_baseline,
-                    &session.l0_index_id,
-                ) {
+IN_LOOP_RECHECK = '''                if self
+                    .repository
+                    .session_clear_removed_since(
+                        &session.session_key,
+                        clear_baseline,
+                        &session.l0_index_id,
+                    )
+                    .map_err(HeartbeatError::File)?
+                {
 '''
 
 HELPER_MARKER = '''        if self.repository.session_clear_generation(session_key) != clear_baseline {
-            return Ok(self.repository.session_clear_removed_since(
-                session_key,
-                clear_baseline,
-                l0_index_id,
-            ));
+            return self
+                .repository
+                .session_clear_removed_since(session_key, clear_baseline, l0_index_id)
+                .map_err(HeartbeatError::File);
         }
 '''
 
@@ -115,20 +118,26 @@ HOISTED_RECHECK = '''            let session_cleared = self
 # recheck is gated on an empty storedResults list, so every candidate after
 # the first write resurrects.
 FIRST_ROUND_RECHECK = '''                if stored_results_len(trace) == 0
-                    && self.repository.session_clear_removed_since(
-                        &session.session_key,
-                        clear_baseline,
-                        &session.l0_index_id,
-                    )
+                    && self
+                        .repository
+                        .session_clear_removed_since(
+                            &session.session_key,
+                            clear_baseline,
+                            &session.l0_index_id,
+                        )
+                        .map_err(HeartbeatError::File)?
                 {
 '''
 
 DISABLED_RECHECK = '''                if false
-                    && self.repository.session_clear_removed_since(
-                        &session.session_key,
-                        clear_baseline,
-                        &session.l0_index_id,
-                    )
+                    && self
+                        .repository
+                        .session_clear_removed_since(
+                            &session.session_key,
+                            clear_baseline,
+                            &session.l0_index_id,
+                        )
+                        .map_err(HeartbeatError::File)?
                 {
 '''
 
