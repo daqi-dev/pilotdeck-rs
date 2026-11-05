@@ -26,7 +26,7 @@ use std::{
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, Weak, mpsc},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 type Result<T> = std::result::Result<T, UploadError>;
@@ -837,6 +837,35 @@ impl UploadStore {
         let _ = (operation, path);
         Ok(())
     }
+}
+
+/// TS `ui/server/routes/uploads.js:73`: `15 * 60 * 1000`.
+pub const CLEANUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// TS `ui/server/routes/uploads.js:73-76`: detached `setInterval` that calls
+/// [`UploadStore::cleanup_expired`] and only logs failures. `Weak` follows
+/// `config::store::watch_loop`: the loop ends when the last store handle is
+/// dropped, so nothing has to cancel it on shutdown.
+pub fn spawn_cleanup(store: &Arc<UploadStore>, interval: Duration) -> tokio::task::JoinHandle<()> {
+    let store = Arc::downgrade(store);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // A `setInterval` callback first runs after one interval, not at t=0.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let Some(store) = store.upgrade() else { return };
+            let failure = match tokio::task::spawn_blocking(move || store.cleanup_expired()).await {
+                Ok(Ok(_)) => None,
+                Ok(Err(error)) => Some(error.to_string()),
+                Err(error) => Some(error.to_string()),
+            };
+            if let Some(error) = failure {
+                eprintln!("[uploads] cleanup failed: {error}");
+            }
+        }
+    })
 }
 
 pub struct UploadSubscription {

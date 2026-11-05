@@ -684,6 +684,62 @@ async fn run_registry_switch_controls_startup() {
     }
 }
 
+// TS ui/server/routes/uploads.js:73-76: the assembly, not a request, drives
+// `cleanup_expired` — the first sweep lands after one interval and only
+// removes records whose expiresAt has passed (#1439).
+#[tokio::test]
+async fn upload_cleanup_runs_on_the_assembly_schedule() {
+    let scratch = Scratch::new();
+    let options = Options::parse(scratch.args()).expect("#1439 upload cleanup options");
+    std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG)
+        .expect("#1439 upload cleanup config");
+    let project_key = std::fs::canonicalize(&options.project).expect("#1439 project canonical");
+    let uploads = options.project.join(".tmp/chat-uploads");
+    for (id, expires_at) in [
+        ("upload-expired", "1970-01-01T00:00:00.000Z"),
+        ("upload-live", "2100-01-01T00:00:00.000Z"),
+    ] {
+        let dir = uploads.join(id);
+        std::fs::create_dir_all(&dir).expect("#1439 upload cleanup seed directory");
+        let record = json!({
+            "uploadId": id,
+            "projectKey": project_key.to_string_lossy(),
+            "status": "created",
+            "expiresAt": expires_at,
+        });
+        std::fs::write(dir.join("metadata.json"), format!("{record}\n"))
+            .expect("#1439 upload cleanup seed metadata");
+    }
+    let host = crate::test_negative_receipt::expect_ok(
+        assembly::start_observed_with_upload_cleanup(
+            options.clone(),
+            options.environment(Env::new()),
+            std::time::Duration::from_millis(20),
+            Arc::new(|_, result| Box::pin(async move { result })),
+            Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        )
+        .await,
+        "#1439 upload cleanup assembly starts",
+    );
+    let expired = uploads.join("upload-expired");
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while expired.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("#1439 upload cleanup removes the expired record within the deadline");
+    negative_assert!(
+        uploads.join("upload-live").exists(),
+        "#1439 upload cleanup keeps the unexpired record"
+    );
+    host.request_shutdown(options.drain_budget);
+    tokio::time::timeout(std::time::Duration::from_secs(10), host.stopped())
+        .await
+        .expect("#1439 upload cleanup host stop deadline")
+        .expect("#1439 upload cleanup host stopped clean");
+}
+
 // TS InProcessGateway.ts:2093-2095 and :2525-2544: without a configured
 // registry, describeServer drops the run capabilities and every run read
 // fails with CAPABILITY_UNAVAILABLE; with one, they are listed and served.
