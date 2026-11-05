@@ -1706,8 +1706,8 @@
 },
 "run_full_fork_Np8VXA": {
 "errors": [
-{"code":"subagent_depth_exceeded","observed":"lexical","refs":["B/src/tool/builtin/agent.ts:388"],"summary":{"template":"id39mw"}},
-{"code":"subagent_execution_failed","observed":"lexical","refs":["B/src/tool/builtin/agent.ts:417"],"summary":{"template":"id39mw"}}
+{"code":"subagent_depth_exceeded","observed":"lexical","refs":["B/src/tool/builtin/agent.ts:388"],"summary":{"template":"XaKp1A"}},
+{"code":"subagent_execution_failed","observed":"lexical","refs":["B/src/tool/builtin/agent.ts:417"],"summary":{"template":"XaKp1A"}}
 ],
 "source_ranges": ["qZliKg"]
 },
@@ -1976,6 +1976,7 @@
 "VqnYZw": ["upload_get 调用链的 readAt 分支产生 ","；对应 WS error.code，条件与传播位置见逐函数锚点。"],
 "WeAr-Q": ["background_task_stop 调用链的 stopBackgroundTask 分支产生 ","；对应 WS error.code，条件与传播位置见逐函数锚点。"],
 "WwAKCA": ["仅自定义 IPG 同时未配置 projectFileRead/listProjects 时 ","；默认 CLI inline provider 已注入，不走此 fallback guard。"],
+"XaKp1A": ["独立自动扫描发现 "," 字面量；它只出现在 PilotDeckToolRuntimeError 第 3 参 options 的 details.errorCode，抛出的主码恒为 tool_execution_failed，不能直接认作 WS 顶层码，可达性与最终传播由下游复核。"],
 "ZvYkEg": ["submit_turn 调用链的 configureProjectTaskBudget 分支产生 ","；对应 submit event.code，条件与传播位置见逐函数锚点。"],
 "Zw9sqA": ["always_on_rerun_plan 调用链的 rerunPlan 分支产生 ","；对应 result.error.code，条件与传播位置见逐函数锚点。"],
 "_APhxA": ["seed_read_state 调用链的 configureProjectTaskBudget 分支产生 ","；对应 WS error.code，条件与传播位置见逐函数锚点。"],
