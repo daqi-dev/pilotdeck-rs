@@ -2714,6 +2714,31 @@ class RetirementScoring(unittest.TestCase):
         for name in ('TS_FALLBACK', 'STREAM_ERROR_NO_FRAME', 'STREAM_OK_NON_FINAL'):
             self.assertEqual(classes[name], 'NOT_APPLICABLE', f'#36 {name}: {controls}')
         report = self._assert_full_faces(self._report_for(row, expected), '#36 methodless')
+        # Same filters, positive side: a nameless row ahead of a named one must
+        # be skipped, not selected — otherwise the class degrades to
+        # NOT_APPLICABLE on a round where the mutation is perfectly
+        # establishable (false BLOCKED).
+        expected = ['run_get', 'submit_turn']
+        row = self._with_round_faces(self._round_row(
+            [{'method': '', 'outcome': 'ok', 'shape': 'request'},
+             {'method': 'run_get', 'outcome': 'ok', 'shape': 'request'},
+             {'method': '', 'outcome': 'ok', 'shape': 'stream'},
+             {'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
+            [{'seq': 1, 'connection': 1, 'direction': 'send',
+              'frame': {'type': 'request', 'id': 'id-get', 'method': 'run_get'}},
+             {'seq': 2, 'connection': 1, 'direction': 'receive',
+              'frame': {'type': 'response', 'id': 'id-get', 'ok': True, 'result': {}}},
+             {'seq': 3, 'connection': 1, 'direction': 'send',
+              'frame': {'type': 'request', 'id': 'id-turn', 'method': 'submit_turn'}},
+             {'seq': 4, 'connection': 1, 'direction': 'receive',
+              'frame': {'type': 'event', 'id': 'id-turn', 'final': True,
+                        'event': {'type': 'done'}}}]), 'round-01')
+        controls = self.session._retirement_controls(row, expected)
+        classes = {c['class']: c for c in controls['classes']}
+        for name in ('TS_FALLBACK', 'STREAM_ERROR_NO_FRAME', 'STREAM_OK_NON_FINAL'):
+            self.assertEqual(classes[name]['status'], 'PASS', f'#36b {name}: {controls}')
+        self.assertIn("'run_get'", classes['TS_FALLBACK']['injection'])
+        self.assertIn("'submit_turn'", classes['STREAM_OK_NON_FINAL']['injection'])
 
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for
