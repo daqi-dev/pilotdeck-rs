@@ -88,9 +88,10 @@ silently degrade a cell into "some short body":
 - A `body` field that is present but not a string panics; an absent one means
   no body (GET/HEAD cells). A header value that is not a string panics too, and
   so does a `headers` that is present but not an object (only an absent one
-  means "no headers"). The same rule covers `options.apiKey` / `options.modelName`:
-  absent takes the cell default, present-but-not-a-string panics. Expected
-  (oracle-side) response header values are read the same way.
+  means "no headers"). The same rule covers `options.apiKey` / `options.modelName`
+  (absent takes the cell default, present-but-not-a-string panics) and
+  `options.corsOrigins` (absent means no CORS, present-but-not-an-array-of-strings
+  panics). Expected (oracle-side) response header values are read the same way.
 - The `oversized-*` cells are never re-sent by the replay, so their recorded
   response used to be compared by nothing at all. Both ends now pin its shape:
   the generator refuses to record anything but a zero-byte close, and the
@@ -103,7 +104,9 @@ silently degrade a cell into "some short body":
 - Every cell must record exactly as many `expect` responses as `requests`; a
   surplus response would never be compared. A cell must also record at least
   one request — `0 == 0` would otherwise count as a covered cell that replays
-  nothing.
+  nothing. The same reasoning pins the `submits` roster: `submit_inputs_match_real_ts`
+  asserts the cells carrying `submitTurn` inputs are exactly
+  `buffered` / `stream` / `new-command`.
 - The generator derives each placeholder count from the same constant as the
   body it sends, so the two cannot disagree.
 

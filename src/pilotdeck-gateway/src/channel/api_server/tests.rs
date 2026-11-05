@@ -690,9 +690,26 @@ fn js_string_array(values: &[Value]) -> JsValue {
     JsValue::Array(
         values
             .iter()
-            .map(|value| JsValue::String(JsString::from(value.as_str().unwrap_or(""))))
+            .map(|value| match value.as_str() {
+                // #1606 r5: an element that is not a string used to become an
+                // empty origin, i.e. an allow-list entry nobody wrote.
+                Some(origin) => JsValue::String(JsString::from(origin)),
+                None => panic!("#1333 corsOrigins entries must be strings, found {value:?}"),
+            })
             .collect(),
     )
+}
+
+/// #1606 r5: `corsOrigins` is the last field in this struct that was still
+/// two-state. Present-but-not-an-array silently started a server with no CORS
+/// at all — the same "absent vs. wrong type" conflation this file removes
+/// everywhere else.
+fn case_origins(options: &Value) -> Option<JsValue> {
+    match options.get("corsOrigins") {
+        None => None,
+        Some(Value::Array(values)) => Some(js_string_array(values)),
+        Some(other) => panic!("#1333 options.corsOrigins must be an array, found {other:?}"),
+    }
 }
 
 /// #1606 r4: the same tri-state rule the request fields follow. A recorded
@@ -715,9 +732,7 @@ fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
         api_key: Some(case_option(options, "apiKey", "")),
         host: Some("127.0.0.1".to_owned()),
         model_name: Some(case_option(options, "modelName", "parity-model")),
-        cors_origins: options["corsOrigins"]
-            .as_array()
-            .map(|values| js_string_array(values)),
+        cors_origins: case_origins(options),
         mapper: None,
         request_timeout: timeout,
         uuid: Some(Arc::new(|| FIXED_UUID.to_owned())),
@@ -888,6 +903,23 @@ async fn replays_real_ts_api_server_cells() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn submit_inputs_match_real_ts() {
     let oracle = oracle();
+    // #1606 r5: `submits` is optional, so a regenerated oracle that lost (or
+    // renamed) every `submits` key would leave this test green while comparing
+    // nothing — the same "0 == 0 counts as covered" shape as the replay loop.
+    // The cells that carry `submitTurn` inputs are part of the fixture
+    // contract, so pin them.
+    let mut with_submits = Vec::new();
+    for case in oracle["cases"].as_array().expect("#1333 oracle cases") {
+        if case.get("submits").is_some() {
+            with_submits.push(case["id"].as_str().expect("#1333 case id"));
+        }
+    }
+    assert_eq!(
+        with_submits,
+        ["buffered", "stream", "new-command"],
+        "#1333 the cells that record `submitTurn` inputs changed; \
+         `submit_inputs_match_real_ts` must be updated with the oracle"
+    );
     for case in oracle["cases"].as_array().expect("#1333 oracle cases") {
         let Some(expected) = case.get("submits") else {
             continue;
