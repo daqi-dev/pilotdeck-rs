@@ -2,11 +2,16 @@
 """#1316 A7.8-pr1 session-domain assembly: product mutations for the wire-up.
 
 Every mutant removes one piece of the assembly (a registry entry, a describe
-capability, the always-on family registration, the explicit HTTP same-domain
-entry) and must be killed by the named oracle test in the same process, with
-the marker of the mutant inside that test's own panic payload. Original source
-bytes and hashes are verified after every mutation; the summary is emitted
-only after all mutants have run.
+capability, an always-on method message, the always-on family registration,
+the explicit HTTP same-domain entry) and must be killed by the named oracle
+test in the same process, with the marker of the mutant inside that test's own
+panic payload. Original source bytes and hashes are verified after every
+mutation; the summary is emitted only after all mutants have run.
+
+Modes: `--self-check` proves the slot guard still exits bounded under
+`python3 -O` (#1632); `--slot-guard-probe BUSY_SCRIPT TIMEOUT` is the child
+mode that self-check drives. Both run before any output directory is created,
+so neither needs `CARGO_TARGET_DIR`.
 """
 import difflib
 import hashlib
@@ -15,17 +20,16 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
 from negative_selection import baseline_passed
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src'
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 
 # (name, file under src/pilotdeck-gateway/src, old bytes, replacement,
 #  full libtest name, required panic-payload marker). Each mutant is applied
@@ -72,40 +76,79 @@ mutations = [
      '',
      'native_http::tests::user_dialog_store_entry_is_explicitly_not_yet_open',
      '#1316 user-dialog store entry is a 503'),
+    # #1632 P2-1: the wire-up has ten mutation points; four were covered. The
+    # five below cover the rest: both remaining registry entries of the
+    # interaction family, the per-method always-on message, and the two
+    # capability entries the wire-up added next to permission_decide. Each row
+    # names the assertion message the product test already prints, so the kill
+    # is attributable to that one assertion.
+    ('registry-drops-elicitation-respond',
+     'native_process/methods/interaction.rs',
+     '    "elicitation_respond",\n',
+     '',
+     'native_process::methods::tests::session_domain_reconciles_with_coverage_manifest',
+     '#1316 A7 method elicitation_respond is dispatched'),
+    ('registry-drops-permission-decide',
+     'native_process/methods/interaction.rs',
+     '    "permission_decide",\n',
+     '',
+     'native_process::methods::tests::session_domain_reconciles_with_coverage_manifest',
+     '#1316 A7 method permission_decide is dispatched'),
+    # The three always-on methods share one code path and differ only in the
+    # message they return, so the per-method message is the only thing that can
+    # tell them apart. Copying the apply text into abort is exactly the
+    # copy-paste slip this row has to kill.
+    ('always-on-abort-copies-apply-message',
+     'native_process/methods/always_on.rs',
+     '                "always_on_abort" => "Always-On abort is not configured on this gateway.",',
+     '                "always_on_abort" => "Always-On apply is not configured on this gateway.",',
+     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
+     '#1316 always_on_abort message'),
+    ('describe-drops-async-hook-result',
+     'native_process/requests.rs',
+     '                            "async_hook_result",\n'
+     '                            "delete_session",\n',
+     '                            "delete_session",\n',
+     'native_process::management_tests::production_host_management_and_restart',
+     '#1231 exact wired capability set'),
+    ('describe-drops-delete-session',
+     'native_process/requests.rs',
+     '                            "delete_session",\n'
+     '                        ]\n',
+     '                        ]\n',
+     'native_process::management_tests::production_host_management_and_restart',
+     '#1231 exact wired capability set'),
 ]
 # Fail closed on an empty run: with no mutants the loops below sweep nothing and
 # the script would print KILLED=0 and exit 0, so "the table was emptied" would
-# look exactly like "the control is healthy". Nothing else in CI runs this
-# fixture (ci.yml only globs the cli fixtures), so this check is the only thing
-# standing between a trimmed mutation table and a silent green.
+# look exactly like "the control is healthy". ci.yml runs this fixture itself
+# (#1632), but an emptied table still has to fail here rather than rely on a
+# caller noticing that a green run covered nothing.
 if not mutations:
     sys.exit('no mutations defined: the negative control would pass without testing anything')
-selected = sys.argv[2:]
-if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    # Explicit exit, not an assert: `python3 -O` strips asserts and the unknown
-    # name would then silently narrow the run (or empty it) instead of failing.
-    if len(mutations) != len(selected):
-        sys.exit(f'unknown mutation name(s): {sorted(set(selected) - {m[0] for m in mutations})}')
-    if not mutations:
-        sys.exit('no mutations selected: the negative control would pass without testing anything')
-env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
-    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
-summary = []
-failures = []
 
 
-def acquire_slot():
-    slot_deadline = time.monotonic() + 1800
-    while True:
-        slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root,
-                               capture_output=True, text=True, timeout=10)
-        if slots.returncode != 1:
-            assert slots.returncode == 0
-            return slots
-        assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-        time.sleep(5)
+# #1632 P2-2: the slot wait and its deadline were both `assert`s. `python3 -O`
+# strips assertions, so the deadline disappeared and the loop waited forever -
+# while `mutating_sources` still held the tree lock, which blocks every other
+# negative control in the repository. The wait now goes through the shared
+# bounded helper (`run_owned`: own session, group kill, wall-clock timeout) and
+# ends in an explicit `sys.exit`, which `-O` cannot strip.
+SLOT_TIMEOUT_SECONDS = 1800
+
+
+def acquire_slot(script=None, timeout=SLOT_TIMEOUT_SECONDS):
+    """Wait for a cargo slot; the deadline is an explicit exit, never an assert."""
+    script = root / 'scripts/cargo-slots.sh' if script is None else script
+    try:
+        return wait_for_slot(script, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        sys.exit(f'cargo slots unavailable for {timeout}s: refusing to run cargo '
+                 'while the source tree lock is held')
+    except subprocess.CalledProcessError as error:
+        # A slot gate that cannot be sampled (cargo-slots.sh rc 2/3) must abort
+        # the run instead of being read as "0 slots in use".
+        sys.exit(f'cargo slot gate failed with rc={error.returncode}: {error.stderr}')
 
 
 def run(full):
@@ -117,16 +160,89 @@ def run(full):
     return result.returncode, result.stdout + result.stderr
 
 
-def wait_for_slot(name):
+def take_slot(name):
     slots = acquire_slot()
     (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
+
+
+def self_check(timeout=2, wall=60):
+    """Negative control for the slot guard: `-O` must not change the exit (#1632).
+
+    A permanently busy gate forces the deadline. The guard runs in child
+    interpreters both plain and under `-O`; the old assert-based deadline never
+    returned under `-O`, so the bounded child would have to be killed at `wall`
+    and this check would report the hang instead of passing.
+    """
+    problems = []
+    with tempfile.TemporaryDirectory(prefix='negctl-1316-slot-') as directory:
+        busy = Path(directory) / 'cargo-slots-busy.sh'
+        busy.write_text('#!/bin/sh\necho "cargo-slots: 1 / cap 1"\nexit 1\n')
+        busy.chmod(0o755)
+        for flags in ([], ['-O']):
+            label = ' '.join(['python3'] + flags)
+            started = time.monotonic()
+            try:
+                result = run_owned(
+                    [sys.executable, '-I', *flags, str(Path(__file__).resolve()),
+                     '--slot-guard-probe', str(busy), str(timeout)],
+                    timeout=wall)
+            except subprocess.TimeoutExpired:
+                problems.append(f'{label}: the slot guard never returned within {wall}s')
+                continue
+            elapsed = time.monotonic() - started
+            if result.returncode != 1:
+                problems.append(f'{label}: expected the bounded exit rc=1, got rc={result.returncode}')
+            elif 'cargo slots unavailable' not in result.stderr:
+                problems.append(f'{label}: exit did not report the slot timeout')
+            else:
+                print(f'self-check {label}: bounded exit rc=1 in {elapsed:.1f}s', flush=True)
+    for problem in problems:
+        print('self-check FAILED: ' + problem, file=sys.stderr)
+    if problems:
+        return 1
+    print(f'self-check: the slot guard exits bounded with and without -O ({timeout}s deadline)',
+          flush=True)
+    return 0
+
+
+if sys.argv[1:2] == ['--slot-guard-probe']:
+    # Child mode driven by `self_check`: run the real guard against a gate that
+    # is always busy. Returning here at all would mean the wait was unbounded.
+    if len(sys.argv) != 4:
+        sys.exit('usage: --slot-guard-probe BUSY_SLOT_SCRIPT TIMEOUT_SECONDS')
+    try:
+        probe_timeout = float(sys.argv[3])
+    except ValueError:
+        sys.exit(f'--slot-guard-probe: not a timeout: {sys.argv[3]!r}')
+    acquire_slot(script=Path(sys.argv[2]), timeout=probe_timeout)
+    sys.exit('the slot guard returned instead of exiting at its deadline')
+if sys.argv[1:] == ['--self-check']:
+    sys.exit(self_check())
+
+selected = sys.argv[2:]
+if selected:
+    mutations = [mutation for mutation in mutations if mutation[0] in selected]
+    # Explicit exit, not an assert: `python3 -O` strips asserts and the unknown
+    # name would then silently narrow the run (or empty it) instead of failing.
+    if len(mutations) != len(selected):
+        sys.exit(f'unknown mutation name(s): {sorted(set(selected) - {m[0] for m in mutations})}')
+    if not mutations:
+        sys.exit('no mutations selected: the negative control would pass without testing anything')
+summary = []
+failures = []
+
+out = Path(sys.argv[1]).resolve()
+out.mkdir(parents=True, exist_ok=False)
+env = os.environ.copy()
+if not env.get('CARGO_TARGET_DIR'):
+    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
 
 
 with mutating_sources(root, sorted({source / filename for _, filename, _, _, _, _ in mutations})) as snapshots:
     # #819: an unmutated baseline of every named target must be green first.
     baseline_ok = set()
     for full in dict.fromkeys(test for *_, test, _ in mutations):
-        wait_for_slot('baseline-' + full.rsplit('::', 1)[-1])
+        take_slot('baseline-' + full.rsplit('::', 1)[-1])
         code, log = run(full)
         (out / f'baseline-{full.rsplit("::", 1)[-1]}.log').write_text(log)
         ok = code == 0 and baseline_passed(log, full)
@@ -148,7 +264,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _, 
             (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True),
                 fromfile=filename, tofile=filename)))
-            wait_for_slot(name)
+            take_slot(name)
             path.write_text(changed)
             code, log = run(full)
             (out / f'{name}.log').write_text(log)
