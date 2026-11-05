@@ -167,3 +167,37 @@ A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并
 #909：CI 的 Node 前置条件由实际运行的 `test_metadata_io_driver.EnvironmentControls` 逐 job 检查；冻结 prerequisites 不再用跨 job 的首个 setup/npm 文本索引冒充证明。四个 Node job 各有删除、后移和条件 setup 的配对负控。
 
 预置标记的可用性代价：即使获取锁后尚未 spawn，只要未正常退出，gateway 也不按 dead_pid/expired 自动回收；MAX_AGE 不覆盖这个保护。等待方有锁等待超时，不能据超时判断遗留组已消失。人工回收先保留 owner.json 与对应轮次原始日志，核实原 owner 已停止、所有本轮进程组均已停止且没有其他装置持锁，再由协调者处理该锁；证据不足则保留，继续独立工作。
+
+
+## 交付前冻结预检（`scripts/check-frozen-delivery.py`）
+
+冻结改动交给协调者执行 `check_frozen.py --write` **之前**，先在交付树跑一次：
+
+```sh
+python3 -I scripts/check-frozen-delivery.py
+python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另一棵树
+```
+
+交付判据只有一条：**只剩 hash list differs 这类 `--write` 能消除的项，才算可交付**
+（`BLOCKED 0 / READY <n>`，exit 0）。`check_frozen.py --base origin/main` 在
+`--write` 之前必然失败——旧 pin 与新字节不符——所以「有失败」本身不说明缺件，
+必须按失败的种类分流。预检自动发现三套装置（`parity` / `gateway-parity` /
+`ui-server-parity`），逐套跑 `--base origin/main` 并分类：
+
+- 可接受（`--write` 会消除）：`hash list differs from generated inventory`；
+  旧 pin 与实际字节不符（gateway 的裸清单行、parity 的 `<name>: hash mismatch`、
+  ui-server-parity 的 `invalid path/hash: <name>`）；首次登记的新文件
+  （`A2 apparatus missing FROZEN hash` 与新文件的 `lacks exact new event chain`）
+  在新增事件文件里有 `Change: - <当前字节 sha256> <路径>` 行时。
+- 阻塞：其余全部。尤其「改了冻结字节却没有对应事件行」的
+  `hash change lacks exact new event chain`、未登记文件、事件文件缺 `Change:`
+  行或四字段（`Calibration-Evidence` / `Independent-Reviews` / `Approved-By` /
+  `Approval-Basis`）、报告无法解析或无法读取；认不出的失败一律按阻塞
+  （fail-closed，不把未知消息当通过）。
+
+`Independent-Reviews: Pending: ...` 占位**不阻塞**，但输出单列
+`PENDING-REVIEWS`：协调者可以先 `--write`，最终登记仍须回填两家非作者的真实评审。
+
+脚本只读，绝不执行 `--write`、不改任何文件；最后一行 `BLOCKED n / READY m`
+按装置段落计数，任一阻塞即 exit 1。今天的 `#1355 fix-r2` 缺事件文件、
+协调者拒绝 `--write` 就是这一类：预检会在交付前直接指出缺哪一个事件文件/哪一条链。
