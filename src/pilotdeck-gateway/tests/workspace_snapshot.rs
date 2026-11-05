@@ -14,8 +14,12 @@
 //! PDRS_BASELINE and Node/tsx, like the run-registry fixture.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/permission_faults.rs"]
+mod permission_faults;
 #[path = "common/scratch.rs"]
 mod scratch;
+#[path = "common/skip_line.rs"]
+mod skip_line;
 
 use base64::Engine as _;
 use pilotdeck_gateway::storage::{
@@ -1814,15 +1818,20 @@ fn committed_marker_with_unreadable_manifest_republishes() {
     fs::set_permissions(&probe, fs::Permissions::from_mode(0o0))
         .expect("#293 fix-r4 drop the probe's permissions");
     if fs::read(&probe).is_ok() {
-        // #1263/#1525 review (DeepSeek sibling P1 at #1495 B10): write the
-        // note straight to the stderr handle — the print-family macros are
-        // captured by libtest and a passing (skipping) test's captured
-        // output never reaches the log, which left this audit leg's absence
-        // indistinguishable from a pass.
-        use std::io::Write as _;
-        let _ = std::io::stderr().write_all(
-            b"committed_marker_with_unreadable_manifest_republishes: skipped, \
-              running as root (chmod cannot make the manifest unreadable)\n",
+        // #1263/#1525: a privileged host cannot make the probe unreadable, so
+        // this regression never ran; the switch turns that skip into a failure,
+        // and the shared writer puts the note on the stderr handle (the
+        // print-family macros are captured by libtest, so a skipping test's
+        // note never reaches the log).
+        assert!(
+            !permission_faults::require_permission_faults(),
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a mode-000 file is still \
+             readable (root or CAP_DAC_OVERRIDE); the unreadable-manifest contract needs \
+             an unprivileged host (需要非特权宿主)"
+        );
+        skip_line::stderr_skip_line(
+            "committed_marker_with_unreadable_manifest_republishes: skipped, \
+             running as root (chmod cannot make the manifest unreadable)\n",
         );
         return;
     }

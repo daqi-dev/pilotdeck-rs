@@ -1825,7 +1825,9 @@ mod tests {
         let z_ms = raw_mtime_ms(&z);
         let a_ms = raw_mtime_ms(&a);
         if (a_ms - z_ms).abs() < 0.05 {
-            eprintln!("skip: filesystem did not preserve sub-millisecond mtimes");
+            crate::test_skip_line::stderr_skip_line(
+                "skip: filesystem did not preserve sub-millisecond mtimes\n",
+            );
             return;
         }
         let mut files = vec!["z.ts".to_owned(), "a.ts".to_owned()];

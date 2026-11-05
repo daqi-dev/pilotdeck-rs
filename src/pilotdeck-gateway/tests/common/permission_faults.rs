@@ -9,8 +9,10 @@
 //!
 //! `PDRS_REQUIRE_PERMISSION_FAULTS=1` (or `true`) flips that skip into a panic:
 //! CI and the formal host recipes export the switch, local runs leave it unset
-//! and keep the recognizable skip line. Shared by
-//! edgeclaw_heartbeat_indexer.rs and write_tools.rs — do not copy the parser.
+//! and keep the recognizable skip line. Shared by edgeclaw_heartbeat_indexer.rs,
+//! write_tools.rs, dump_request.rs and workspace_snapshot.rs (`#[path]`), and by
+//! the crate's own unit tests through `crate::test_permission_faults` (lib.rs) —
+//! do not copy the parser.
 
 pub fn require_permission_faults() -> bool {
     matches!(

@@ -18,6 +18,21 @@ class EnvironmentControls(unittest.TestCase):
     nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
                        '--config-file ../.config/nextest.toml')
     doctest_command = 'cargo test --workspace --doc'
+    # #1525: the workflow may carry exactly one step-level env block, and the ci
+    # profile exactly one override. Both are inputs to the tests (a permission
+    # switch; replaying the output of tests that can skip), never to the
+    # scheduler — the drift guards below pin their full text, not just a prefix.
+    permission_faults_env = ['PDRS_REQUIRE_PERMISSION_FAULTS: "1"']
+    nextest_success_output_filter = (
+        'test(=case_insensitive_cwd_spelling_writes_and_edits) | '
+        'test(=nfd_directory_with_nfc_cwd_writes_and_edits) | '
+        'test(=permission_denied_is_not_reported_as_outside) | '
+        'test(=grep_outputs_match_real_ts) | '
+        'test(=clear_failing_inside_delete_entries_rearms_indexed_rows) | '
+        'test(=dump_request_write_failure_semantics) | '
+        'test(=committed_marker_with_unreadable_manifest_republishes) | '
+        'test(=unreadable_scan_child_matches_real_ts_before_denial_and_after_restore) | '
+        'test(=files_sort_keeps_submillisecond_mtime_precision)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -569,8 +584,17 @@ class EnvironmentControls(unittest.TestCase):
                              f'#922 {title} occurs once in rust')
             _, index, step = found[0]
             positions.append(index)
-            self.assertEqual(set(self.ci_step_fields(step)), {'name', 'run'},
+            fields = self.ci_step_fields(step)
+            # #1525: only 测试 may carry a step-level env block, and only for the
+            # permission-faults switch (#1263). if/shell/timeout/env could all
+            # override execution or ignore failure.
+            self.assertEqual(set(fields), {'name', 'run'} | ({'env'} if title == '测试' else set()),
                              f'#922 {title} cannot override execution or ignore failure')
+            if title == '测试':
+                value, block = fields['env']
+                self.assertEqual((value, [line for line in block if not line.startswith('#')]),
+                                 ('', self.permission_faults_env),
+                                 '#922 测试 step env only registers the permission-faults switch')
             self.assertEqual(self.ci_run_commands(step), commands,
                              f'#922 {title} preserves exact commands')
         self.assertEqual(positions, sorted(positions), '#922 install precedes nextest and doctests')
@@ -604,29 +628,80 @@ class EnvironmentControls(unittest.TestCase):
             config = tomllib.loads(path.read_bytes().decode())
         except (OSError, ValueError) as error:
             self.fail(f'#922 nextest config must parse: {error}')
+        # #1525: exactly one override, with exactly the two keys that replay a
+        # passing test's output. Anything else (default-filter, retries,
+        # threads, terminate-after) changes which tests run or how they fail.
         self.assertEqual(config, {'profile': {'ci': {
             'retries': 0, 'slow-timeout': {'period': '60s'},
-        }}}, '#922 ci profile preserves all tests, default threads, zero retries and no termination')
+            'overrides': [{'filter': self.nextest_success_output_filter,
+                           'success-output': 'final'}],
+        }}}, '#922 ci profile preserves all tests, default threads, zero retries '
+            'and exactly one success-output override')
+        self.assert_success_output_filter_names_real_tests(self.nextest_success_output_filter)
+
+    def assert_success_output_filter_names_real_tests(self, filter_text):
+        names = re.findall(r'test\(=([A-Za-z0-9_]+)\)', filter_text)
+        self.assertTrue(names, '#922 the success-output filter names its tests')
+        sources = '\n'.join(source.read_text(errors='replace')
+                            for source in (Path(__file__).resolve().parents[1]).rglob('*.rs')
+                            if 'target' not in source.parts)
+        for name in names:
+            self.assertIn(f'fn {name}(', sources,
+                          f'#922 the success-output filter names the real test {name}')
+
+    def test_success_output_filter_rejects_a_renamed_test(self):
+        # The filter is a list of plain test names: a rename would silently drop
+        # the success-output replay. This is the negative control for that check.
+        self.assert_success_output_filter_names_real_tests(self.nextest_success_output_filter)
+        with self.assertRaisesRegex(AssertionError, 'names the real test no_such_test'):
+            self.assert_success_output_filter_names_real_tests(
+                self.nextest_success_output_filter + ' | test(=no_such_test)')
 
     def test_ci_rejects_nextest_execution_drift(self):
         workflow = self.ci_workflow_fixture()
+        steps = self.ci_steps('rust', self.ci_jobs(issue='#922')['rust'], issue='#922')
         cases = []
 
         def change(label, old, new, message):
             self.assertEqual(workflow.count(old), 1, f'#922 unique mutation anchor: {label}')
             cases.append((label, workflow.replace(old, new, 1), message))
 
+        def anchor(title):
+            matches = [step for step in steps
+                       if self.ci_step_fields(step, '#922').get('name') == (title, [])]
+            self.assertEqual(len(matches), 1, f'#922 {title} occurs once in rust')
+            # ci_steps canonicalises keys and keeps comments verbatim, so
+            # re-attaching the sequence bullet reproduces the file bytes.
+            return '      - ' + matches[0]
+
         for title, command in (('测试', self.nextest_command), ('文档测试', self.doctest_command)):
-            raw = f'      - name: {title}\n        run: {command}\n'
+            raw = anchor(title)
             change(f'{title}-missing', raw, '', f'#922 {title} occurs once in rust')
             change(f'{title}-duplicate', raw, raw + raw, f'#922 {title} occurs once in rust')
-            for field in ('if: false', "'if': false", '"continue-on-error": true',
-                          'shell: bash {0}', 'timeout-minutes: 1', 'env: {NEXTEST_RETRIES: 2}',
-                          'working-directory: .'):
+            fields = ('if: false', "'if': false", '"continue-on-error": true',
+                      'shell: bash {0}', 'timeout-minutes: 1', 'working-directory: .')
+            if title != '测试':
+                fields += ('env: {NEXTEST_RETRIES: 2}',)
+            for field in fields:
                 change(f'{title}-{field}', raw, raw + f'        {field}\n',
                        f'#922 {title} cannot override execution or ignore failure')
             change(f'{title}-extra-run', raw, raw + f'      - run: {command}\n',
                    '#922 workspace test invocations are unique and complete')
+            if title != '测试':
+                continue
+            # #1525: the one allowed env block is pinned entry by entry — a
+            # second env key, a rename, a different value, or dropping the
+            # switch entirely must all be rejected.
+            change(f'{title}-second-env', raw, raw + '        env: {NEXTEST_RETRIES: 2}\n',
+                   '#919 duplicate step key')
+            entry = '          PDRS_REQUIRE_PERMISSION_FAULTS: "1"\n'
+            self.assertEqual(workflow.count(entry), 1, '#922 unique permission-faults env anchor')
+            for label, new in (('env-value', '          PDRS_REQUIRE_PERMISSION_FAULTS: "0"\n'),
+                               ('env-renamed', '          PDRS_REQUIRE_PERMISSION_FAULT: "1"\n'),
+                               ('env-dropped', ''),
+                               ('env-extra-key', entry + '          NEXTEST_RETRIES: 2\n')):
+                cases.append((f'{title}-{label}', workflow.replace(entry, new, 1),
+                              '#922 测试 step env only registers the permission-faults switch'))
         for flag in (' --workspace', ' --no-fail-fast', ' --profile ci',
                      ' --config-file ../.config/nextest.toml'):
             change(f'nextest-without-{flag}', self.nextest_command,
@@ -651,8 +726,8 @@ class EnvironmentControls(unittest.TestCase):
                  '          key: cargo-nextest-0.9.148-${{ runner.os }}-${{ runner.arch }}\n')
         change('missing-cache', cache, '', '#922 one nextest binary cache')
         # Exact ordering and cross-job ownership also need negative controls.
-        first = f'      - name: 测试\n        run: {self.nextest_command}\n'
-        doc = f'      - name: 文档测试\n        run: {self.doctest_command}\n'
+        first = anchor('测试')
+        doc = anchor('文档测试')
         self.assertEqual(workflow.count(doc), 1, '#922 unique doctest relocation anchor')
         installer = [step for step in self.ci_steps('rust', self.ci_jobs()['rust'])
                      if step.startswith('name: cargo-nextest（cargo install 源码编译）\n')]
@@ -693,6 +768,27 @@ class EnvironmentControls(unittest.TestCase):
             self.assertEqual(config.count(old), 1, f'#922 unique profile mutation anchor: {label}')
             cases.append((label, config.replace(old, new, 1), '#922 ci profile preserves'))
         cases.append(('invalid-toml', b'[', '#922 nextest config must parse'))
+        # #1525: the single override may only add `success-output`; dropping it or
+        # smuggling in any other nextest knob must be rejected.
+        success = b'success-output = "final"'
+        for label, new in (
+                ('override-missing-success-output', b''),
+                ('override-terminate-after', success + b'\nterminate-after = 1'),
+                ('override-default-filter', success + b'\ndefault-filter = "test(none)"'),
+                ('override-threads', success + b'\ntest-threads = 1'),
+                ('override-retries', success + b'\nretries = 1')):
+            self.assertEqual(config.count(success), 1, f'#922 unique profile mutation anchor: {label}')
+            cases.append((label, config.replace(success, new, 1), '#922 ci profile preserves'))
+        override = b'[[profile.ci.overrides]]'
+        self.assertEqual(config.count(override), 1, '#922 unique override mutation anchor')
+        cases.append(('override-duplicated',
+                      config.replace(override, override + b'\nfilter = "test(none)"\n' + override, 1),
+                      '#922 ci profile preserves'))
+        self.assertEqual(config.count(b'test(=grep_outputs_match_real_ts) | '), 1,
+                         '#922 unique filter-widening mutation anchor')
+        cases.append(('override-filter-widened',
+                      config.replace(b'test(=grep_outputs_match_real_ts) | ', b'', 1),
+                      '#922 ci profile preserves'))
         self.check_ci_mutations(cases, 'test_nextest_ci_profile_has_no_retries_filters_or_kill_timeout',
                                 '#922 profile', reader='read_bytes')
 
