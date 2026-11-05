@@ -17,6 +17,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 STIMULUS = ROOT / 'src/pilotdeck-gateway/src/storage/stimulus.rs'
+PUBLISH = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/publish.rs'
 RUN_REGISTRY = ROOT / 'src/pilotdeck-gateway/src/storage/run_registry.rs'
 TRANSCRIPT_ADAPTER = ROOT / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
@@ -102,16 +103,53 @@ mutations = [
      '''let stimulus = self.stimulus.clone();''',
      '''let stimulus = super::stimulus::StorageStimulus::global();''',
      'storage::stimulus_tests::writer_barrier_blocks_underlying_append', '#1370 writer barrier blocks the underlying append'),
-    # The FIFO witness: the queued receipt is published while the barrier is
-    # held, before the caller queues on the chain lock.
+    # The FIFO witness: the queued receipt is decided and sequenced at the
+    # entry tick, while the barrier is held, before the caller queues on the
+    # chain lock.
     ('registry-queued-after-release', STIMULUS,
-     '''if site_state_ref(&inner, site).held.is_none() {
-                return Ok(());
-            }''',
-     '''if site_state_ref(&inner, site).held.is_some() {
-                return Ok(());
-            }''',
+     '''        let held = site_state_ref(&inner, site).held.is_some();
+        if !held {
+            return None;
+        }''',
+     '''        let held = site_state_ref(&inner, site).held.is_none();
+        if !held {
+            return None;
+        }''',
      'storage::stimulus_tests::registry_port_appends_queue_with_witness_receipts', '#1370 registry queued receipt is published while held'),
+    # fix-r2: the receipt is dispatched on the entry tick, not from inside the
+    # returned future. Publication only first polls an append after its
+    # predecessor settles, so a lazy dispatch writes the receipt after the
+    # barrier already released — the collector's wait then never sees it.
+    ('registry-witness-lazily-dispatched', STIMULUS,
+     '''            let write = handle.spawn_blocking(write);
+            Some(Box::pin(async move {''',
+     '''            Some(Box::pin(async move {
+                let write = handle.spawn_blocking(write);''',
+     'storage::stimulus_tests::publication_queued_receipt_survives_predecessor_serialization', '#1370 publication publishes the queued receipt while the barrier is held'),
+    # fix-r2: a barrier that fails while held must release the hold, or every
+    # later entry at the site is stamped with a queued receipt it does not owe.
+    ('registry-hold-not-cleared-on-error', STIMULUS,
+     '''    fn clear_hold(&self, site: Site) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        site_state(&mut inner, site).held = None;
+    }''',
+     '''    fn clear_hold(&self, site: Site) {
+        let _ = site;
+    }''',
+     'storage::stimulus_tests::failed_barrier_releases_its_hold_before_later_entries', '#1370 a failed barrier releases its hold before later entries'),
+    # fix-r2: the append is queued only after the receipt it owes settled, so a
+    # witness failure fails the append before the durable write can happen.
+    ('registry-dispatch-before-witness', PUBLISH,
+     '''            Some(witness) => Box::pin(async move {
+                witness.await?;
+                append().await
+            }),''',
+     '''            Some(witness) => Box::pin(async move {
+                let appended = append().await;
+                witness.await?;
+                appended
+            }),''',
+     'storage::stimulus_tests::failed_queued_witness_fails_the_append_before_the_worker', '#1370 a failed queued witness never dispatches the durable append'),
     # Production default: an unset entry must stay unarmed.
     ('stimulus-unset-activates', STIMULUS,
      'Err(_) => None,',
@@ -192,7 +230,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [STIMULUS, RUN_REGISTRY, TRANSCRIPT_ADAPTER, ASSEMBLY, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
+    guarded = [STIMULUS, PUBLISH, RUN_REGISTRY, TRANSCRIPT_ADAPTER, ASSEMBLY, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
                FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
