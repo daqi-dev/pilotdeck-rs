@@ -1050,9 +1050,16 @@ type TransientObservations = (
 /// lifetime is shorter than the gap between them, so a transient writer would
 /// slip through both and leave the audit green. This sampler keeps running
 /// until `finish`, accumulating every child pid and every foreign fd holder it
-/// ever observes; the assertions then judge the accumulated sets. The residual
-/// blind spot is one 1 ms sampling interval, far below the lifetime of any node
-/// writer this audit exists to catch.
+/// ever observes; the assertions then judge the accumulated sets.
+///
+/// Coverage is bracketed on both ends, not assumed: `start` returns only after
+/// the first full sweep has completed, and `finish` sets the stop flag *before*
+/// the worker takes its last sweep (`done` is read at the top of the cycle, so a
+/// stop request during a sweep still buys one more), which means the worker
+/// always sweeps once after the last write. The residual blind spot is the gap
+/// between two consecutive sweeps — one `/proc` pass pair plus the 1 ms sleep,
+/// i.e. proportional to the host's process and fd count, not 1 ms. A writer
+/// whose entire lifetime fits inside one such gap is invisible to this audit.
 #[cfg(target_os = "linux")]
 struct TransientAudit {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1064,20 +1071,40 @@ impl TransientAudit {
     fn start(root: std::path::PathBuf) -> Self {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
+        // `start` must not hand control back before the first sweep has run:
+        // otherwise the write could begin during the thread's scheduling delay
+        // and the opening of the window would be unsampled.
+        let (swept, first_sweep) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
             let mut children = std::collections::BTreeMap::new();
             let mut holders = std::collections::BTreeSet::new();
-            while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+            let mut announced = false;
+            loop {
+                // Read the flag before sweeping: a stop request that lands while
+                // this sweep runs still leaves one more sweep after the writes.
+                let done = flag.load(std::sync::atomic::Ordering::SeqCst);
                 for (pid, exe) in child_processes() {
                     children.insert(pid, exe);
                 }
                 for pid in foreign_data_dir_holders(&root) {
                     holders.insert(pid);
                 }
+                if !announced {
+                    announced = true;
+                    // A closed receiver only means `start` was abandoned; keep
+                    // sampling, `Drop` still stops this thread.
+                    let _ = swept.send(());
+                }
+                if done {
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             (children, holders)
         });
+        first_sweep
+            .recv()
+            .expect("#1316 the audit sampler completes its first sweep");
         Self {
             stop,
             worker: Some(worker),
