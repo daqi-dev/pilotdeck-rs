@@ -95,12 +95,13 @@ scripts/delivery-orphan.py --claims                                             
 ```bash
 python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过（含小包）/ 1 大包缺分段表 / 2 读不了、为空、读取中被改写或 scope 写坏 / 3 用法错误
 python3 -I scripts/check-taskbook-segments.py --print-skeleton
-python3 -I scripts/check-taskbook-segments.py --recent 24 [--root .]   # 兜底扫 _build/wt-*/_tmp/*/task.md，没扫到也是 0
-python3 -I scripts/test-check-taskbook-segments.py        # 79 条正控 / 负控（负控钉死具体报错文案）
+python3 -I scripts/check-taskbook-segments.py --recent 24 [--root .]   # 兜底递归扫 _build/wt-*/_tmp/**/task.md，没扫到也是 0
+python3 -I scripts/test-check-taskbook-segments.py        # 89 条正控 / 负控（负控钉死具体报错文案）
 ```
 
 命中大包的任务书必须含 `## 分段交付`（段名 / 涉及文件 / 交付物 / 预估时长 ≤90 min / 段间依赖，≥2 段；列序不限，按表头定位）与 `## 续跑`（带目录的实例进度文件路径 + 第 N 段失败从哪继续）。
 占位符按「像占位符」判：尖括号/花括号里含中文或是 `N` / `日期` / `待填` 这类词，外加裸 `...` / `…` / `？？？` / TBD / TODO；`Vec<u8>`、`Result<(), E>`、`<https://…>` 这类仓库常态不误伤。估时区间 / 上限（`80–120 min`、`80/90 min`、`上限 90 min`）取最大值，并列或连写（`60 min + 40 min`、`1h40m`）求和，单位只认 min/分钟/m/h/小时（表头写 `(h)` / `(hrs)` 时裸数字按小时算）。
-代码围栏（``` / ~~~）里的内容一律不算数：贴上一单的示例分段表不能顶替本包的，围栏里残留的 `<段名>` 也不会把合规任务书打回。
-`--recent` 与显式任务书可以同用：扫描到的文件允许在扫描期间被回收（静默跳过），**显式点名的文件不见了一律 rc 2**；读后复核 size/mtime，写方还在写（停顿 >10 s 的半截任务书）判回显不判「小包」。
+代码围栏（``` / ~~~）里的内容一律不算数：贴上一单的示例分段表不能顶替本包的，围栏里残留的 `<段名>` 也不会把合规任务书打回；**围栏开了没收口** rc 2（否则围栏后的 scope / 文件清单会被整段吞掉，判成小包）。
+`--recent` 递归扫 `_build/wt-*/_tmp/**/task.md`（修复 / 续跑 / 重生成轮次在 `fix-rN/`、`resume*/`、`regen*/` 下一层，只认一层会整类漏掉），但跳过 `remote-run/stage|artifacts` 里的派发副本与 `.prev-*` 备份，同一份任务书不重复判。
+`--recent` 与显式任务书可以同用：扫描到的文件允许在扫描期间被回收（静默跳过），**显式点名的文件不见了一律 rc 2**；读后复核 size/mtime，只挡 stat→read→stat 这个毫秒窗口内的写入——**写方停顿超过 10 s 再续写的半截任务书挡不住**（要堵得靠写方原子落盘），别当成已解决。空扫描 `--json` 打 `[]`、`--quiet` 只留 stderr 提示。
 `~/ws/pdrs-ops` 的 `dispatch-issue` / `dispatch-fix` / `fix-assemble` 已强制：不合规不启动 worker；`dispatch-resume` 只告警；`round-start` 9d 段每轮兜底。模板见 `~/ws/pdrs-ops/templates/taskbook-segments.md`。
