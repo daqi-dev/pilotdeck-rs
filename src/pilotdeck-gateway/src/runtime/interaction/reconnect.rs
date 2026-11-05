@@ -113,6 +113,29 @@ impl InteractionReconnectPort {
         };
         Ok(result(outcome, Some(&next), requests))
     }
+    /// Reconnect for an owner outside this port's key domain.
+    ///
+    /// The port's owner domain is the TS `string` type (`JsString`). A
+    /// non-string `sessionKey` is a Map key TS keys with SameValueZero but one
+    /// this port never stores, so it has no current binding, no last binding
+    /// and no pending requests: it walks the fresh-owner path of [`reconnect`]
+    /// without creating state. That is `stale_binding` when the caller supplied
+    /// a previous binding and `no_pending` otherwise, the same outcomes the
+    /// fresh-owner branch produces. The rule lives here, at the port, not in
+    /// the request adapter (A7.8-INTERACTION-NONSTRING-OWNER-001).
+    ///
+    /// [`reconnect`]: Self::reconnect
+    pub fn reconnect_unkeyed(
+        &self,
+        next: InteractionBinding,
+        previous: Option<&InteractionBinding>,
+    ) -> Result<JsValue, JsString> {
+        next.validate()?;
+        Ok(match previous {
+            Some(_) => result("stale_binding", None, vec![]),
+            None => result("no_pending", Some(&next), vec![]),
+        })
+    }
     pub fn disconnect(
         &self,
         owner: &JsString,
