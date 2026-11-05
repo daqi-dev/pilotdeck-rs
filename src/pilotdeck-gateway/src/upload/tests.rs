@@ -1072,8 +1072,16 @@ async fn cleanup_failure_keeps_the_schedule_alive() {
         "1970-01-01T00:00:00.000Z",
     );
     h.now.store(EPOCH, Ordering::SeqCst);
-    let handle = spawn_cleanup(&h.store, Duration::from_secs(1));
-    tokio::time::sleep(Duration::from_millis(1_300)).await;
+    // The assertions below only mean something once one tick has run, so the
+    // period must be one the clamp leaves alone — checked, not assumed, so a
+    // raised floor turns this red instead of silently making it vacuous.
+    let interval = Duration::from_secs(1);
+    assert!(
+        interval >= MIN_CLEANUP_INTERVAL,
+        "this test relies on spawn_cleanup honouring its period verbatim"
+    );
+    let handle = spawn_cleanup(&h.store, interval);
+    tokio::time::sleep(interval + Duration::from_millis(300)).await;
     assert!(
         !handle.is_finished(),
         "a failed sweep does not end the schedule"
@@ -1095,6 +1103,11 @@ async fn cleanup_failure_keeps_the_schedule_alive() {
 
 #[tokio::test]
 async fn cleanup_clamps_a_zero_interval_instead_of_panicking() {
+    // The floor's value is a decision, not an implementation detail: 1 ms turns
+    // a mistyped separator into a thousand full-project scans per second, and
+    // minutes hide the mistake. Pin it here, and pin that the failure test's
+    // period clears it.
+    assert_eq!(MIN_CLEANUP_INTERVAL, Duration::from_secs(1));
     let scratch = Scratch::new();
     let project = scratch.dir("p");
     let h = golden_store(&project);
