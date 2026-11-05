@@ -387,6 +387,35 @@ class EvidenceLabelTests(unittest.TestCase):
         self.assertIn('row-runtime.owner.tests.alpha_drain: KILLED', text,
                       '#1365 the console label must match the disambiguated log stem')
 
+    def test_cross_group_stem_collision_keeps_single_row_historical_name(self):
+        """#1413 fix-r4: a derived multi-Case stem must not take a row's name."""
+        colliding = f'row-{suite.short_test(self.FIRST)}'
+        code, out, text = self.drive([
+            ('row', self.FIRST, ANCHOR),
+            ('row', self.SECOND, ANCHOR),
+            (colliding, self.SOLO, ANCHOR),
+        ])
+        self.assertEqual(code, 0, '#1413 every bound Case must still be killed')
+        names = sorted(path.name for path in out.iterdir())
+        # The single-Case row keeps its historical bare stem and its evidence.
+        for stage in ('positive', 'negative', 'restored'):
+            path = out / f'{colliding}-{stage}.log'
+            self.assertIn(path.name, names,
+                          f'#1413 {path.name} must keep its historical name; got {names}')
+            self.assertIn(f'test {self.SOLO} ', path.read_text(),
+                          '#1413 the bare stem must hold the single-Case row output')
+        # The multi-Case row falls back to its whole test identity.
+        fallback = f'row-{self.FIRST.replace("::", ".")}'
+        self.assertIn(f'{fallback}-positive.log', names,
+                      '#1413 the colliding derived stem falls back to the full identity')
+        self.assertIn(f'{fallback}: KILLED', text,
+                      '#1413 the console label must match the disambiguated stem')
+        self.assertIn(f'{colliding}: KILLED', text)
+        summary = json.loads((out / 'summary.json').read_text())
+        self.assertEqual([row['mutation'] for row in summary['controls']],
+                         ['row', 'row', colliding],
+                         '#1413 the summary keeps the real mutation names')
+
 
 class CancellationTests(unittest.TestCase):
     """#1076: a cancellation in the guard exit must never keep an all-KILLED file."""

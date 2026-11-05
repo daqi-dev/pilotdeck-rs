@@ -28,6 +28,53 @@ def short_test(test):
     return test.rsplit('::', 1)[-1]
 
 
+def case_labels(cases):
+    """One unique evidence stem per Case, computed across the whole run.
+
+    #1413 fix-r4: #1365 fix-r3 deduplicated labels only inside one mutation
+    group, so a multi-test row's derived stem (``<row>-<short>``) could equal
+    another row's bare mutation name. Both Cases then wrote the same
+    ``-positive``/``-negative``/``-restored`` files: the second silently
+    replaced the first's evidence while the summary still counted every Case.
+    Uniqueness is now global. Single-Case rows keep their historical bare
+    mutation name because existing evidence paths depend on it; a Case that
+    would collide falls back to its whole test identity plus an ordinal.
+    """
+    groups = {}
+    for case in cases:
+        groups.setdefault(case.mutation, []).append(case)
+
+    proposed = {}
+    for mutation, group in groups.items():
+        if len(group) == 1:
+            proposed[id(group[0])] = mutation
+            continue
+        shorts = [short_test(case.test) for case in group]
+        unique = len(set(shorts)) == len(shorts)
+        for case, short in zip(group, shorts):
+            base = short if unique else case.test.replace('::', '.')
+            proposed[id(case)] = f'{mutation}-{base}'
+
+    # Single-Case bare names are admitted first: they are the historical
+    # paths. Every later stem is admitted only if no earlier Case claimed it.
+    ordered = ([case for case in cases if len(groups[case.mutation]) == 1]
+               + [case for case in cases if len(groups[case.mutation]) > 1])
+    labels = {}
+    taken = set()
+    for case in ordered:
+        stem = proposed[id(case)]
+        if stem in taken:
+            stem = f'{case.mutation}-{case.test.replace("::", ".")}'
+        base = stem
+        ordinal = 1
+        while stem in taken:
+            ordinal += 1
+            stem = f'{base}-{ordinal}'
+        labels[id(case)] = stem
+        taken.add(stem)
+    return labels
+
+
 def passed(result, test):
     log = result.stdout + result.stderr
     # `--nocapture` can interleave a test's stdout between the name and the
@@ -95,8 +142,14 @@ def publish_summary(out, results):
     temporary.replace(target)
 
 
-def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', script=None):
-    """Return an exit code; each case must pass before and after mutation."""
+def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', script=None,
+              labels=None):
+    """Return an exit code; each case must pass before and after mutation.
+
+    ``labels`` may carry stems computed over a wider Case set (the equivalent
+    measurement shares this output directory), so evidence files stay unique
+    across both phases; by default they are computed from ``cases`` alone.
+    """
     results = []
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
@@ -108,26 +161,9 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
     # still reported one row per test — an evidence gap under a green count.
     # Multi-Case rows therefore carry a per-Case component in the log stem and
     # in the printed verdict; single-Case rows keep their historical names so
-    # existing evidence paths stay valid. Two Cases of the same row that share
-    # a short name (the same test bound to two markers) fall back to the whole
-    # identity, and a repeated label gains an ordinal, so no two Cases share
-    # a stem.
-    groups = {}
-    for case in cases:
-        groups.setdefault(case.mutation, []).append(case)
-    labels = {}
-    for mutation, group in groups.items():
-        if len(group) == 1:
-            labels[id(group[0])] = mutation
-            continue
-        shorts = [short_test(case.test) for case in group]
-        unique = len(set(shorts)) == len(shorts)
-        seen = {}
-        for case, short in zip(group, shorts):
-            base = short if unique else case.test.replace('::', '.')
-            seen[base] = seen.get(base, 0) + 1
-            ordinal = '' if seen[base] == 1 else f'-{seen[base]}'
-            labels[id(case)] = f'{mutation}-{base}{ordinal}'
+    # existing evidence paths stay valid. #1413 fix-r4 moved uniqueness out to
+    # ``case_labels``, which deduplicates globally instead of per row.
+    labels = case_labels(cases) if labels is None else dict(labels)
 
     def stem(case):
         return labels[id(case)]
