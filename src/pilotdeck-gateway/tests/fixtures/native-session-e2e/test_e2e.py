@@ -17,6 +17,7 @@ if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
 import contextlib
+import fcntl
 import importlib.util
 import io
 import json
@@ -38,26 +39,96 @@ spec.loader.exec_module(c)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mock_gateway import Gateway, load_expectations
 
-def _reserve_port_pair(candidates=range(28999, 29009)):
-    """Hold both fixed-profile ports until handoff; mirror each server's bind policy."""
+def _port_lease_path(port):
+    """#1510 the per-port lease file; never removed (unlink would trade the
+    inode for a fresh open race between holders)."""
+    return Path(tempfile.gettempdir()) / f'pdrs-e2e-port-{port}.lock'
+
+
+def _acquire_port_lease(port):
+    """#1510 take this port's cross-process lease, or None when a sibling holds it.
+
+    flock dies with its holder, so a crashed suite never leaves a stale lease.
+    """
+    lease = os.open(_port_lease_path(port), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lease)
+        return None
+    return lease
+
+
+# #1510 concurrent sibling scanners transiently hold candidate leases and
+# guards while walking the same range; one pass can false-exhaust although a
+# pair frees up milliseconds later.  Bounded retries outlive a sibling's scan
+# (and most of a sibling's whole collection) without masking exhaustion: a
+# genuinely full range still fails with the reason map after this budget.
+PORT_SCAN_PASSES = 8
+PORT_SCAN_PASS_SECONDS = 0.05
+
+
+def _scan_port_pair_once(candidates):
+    """One reservation pass: ((port, guards, leases) or None, blocked reasons)."""
+    blocked = []
     for candidate in candidates:
+        gateway_lease = _acquire_port_lease(candidate)
+        if gateway_lease is None:
+            blocked.append(f'{candidate}:lease')
+            continue
+        provider_lease = _acquire_port_lease(candidate + 1)
+        if provider_lease is None:
+            os.close(gateway_lease)
+            blocked.append(f'{candidate}:peer-lease')
+            continue
         gateway_guard = socket.socket()
         try:
             gateway_guard.bind(('127.0.0.1', candidate))
-        except OSError:
+        except OSError as error:
             gateway_guard.close()
+            os.close(gateway_lease)
+            os.close(provider_lease)
+            blocked.append(f'{candidate}:gateway-bind:{error.errno}')
             continue
         port = gateway_guard.getsockname()[1]
         provider_guard = socket.socket()
         try:
             provider_guard.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             provider_guard.bind(('127.0.0.1', port + 1))
-        except (OSError, OverflowError):
+        except (OSError, OverflowError) as error:
             provider_guard.close()
             gateway_guard.close()
+            os.close(gateway_lease)
+            os.close(provider_lease)
+            blocked.append(f'{candidate}:provider-bind:{getattr(error, "errno", error)}')
             continue
-        return port, gateway_guard, provider_guard
-    raise AssertionError('#1140 e2e: no free gateway/provider port pair')
+        return (port, gateway_guard, provider_guard, (gateway_lease, provider_lease)), blocked
+    return None, blocked
+
+
+def _reserve_port_pair(candidates=range(28999, 29009), passes=PORT_SCAN_PASSES):
+    """Hold both fixed-profile ports until handoff; mirror each server's bind policy.
+
+    The guard sockets only defend against foreign processes: once a guard is
+    released for the real server's bind, an uncooperating peer can still take
+    the port.  This suite's own concurrent processes (the parent class and the
+    parallel-suite children) raced exactly inside those closed-guard handoff
+    windows (#1510), so both ports of the pair also take a flock lease, held
+    for the whole collection.  Both, not just the gateway candidate: the
+    provider port is the next sibling's gateway scan target and a REUSEADDR
+    provider guard can share a bound gateway port on macOS.  A failed pass is
+    retried (see PORT_SCAN_PASSES) because sibling scanners transiently block
+    candidates; a genuinely exhausted range still fails with the reason map.
+    """
+    reservation, blocked = None, []
+    for attempt in range(passes):
+        reservation, blocked = _scan_port_pair_once(candidates)
+        if reservation is not None:
+            return reservation
+        if attempt + 1 < passes:
+            time.sleep(PORT_SCAN_PASS_SECONDS)
+    raise AssertionError('#1510 e2e: no free gateway/provider port pair ('
+                         + ', '.join(blocked) + ')')
 
 
 def load_frozen():
@@ -152,10 +223,11 @@ class E2ETests(unittest.TestCase):
                 stderr.flush()
             return tracer
 
-        cls.port, gateway_guard, provider_guard = _reserve_port_pair()
+        cls.port, gateway_guard, provider_guard, port_leases = _reserve_port_pair()
         try:
             # The gateway slot is handed over to Gateway's own bind here; the
-            # provider slot only when _native_run is about to bind it.
+            # provider slot only when _native_run is about to bind it.  The
+            # #1510 port leases stay held across both handoff windows.
             gateway_guard.close()
             gateway = Gateway(cls.port, output / 'home', f'http://127.0.0.1:{cls.port + 1}',
                               load_expectations(ROOT), after_final=after_final)
@@ -190,6 +262,8 @@ class E2ETests(unittest.TestCase):
         finally:
             gateway_guard.close()
             provider_guard.close()
+            for lease in port_leases:
+                os.close(lease)
 
     # ---- scoring helpers ---------------------------------------------------
     def test_unwitnessed_stimuli_are_not_executed(self):
@@ -642,9 +716,11 @@ class LifecycleTests(unittest.TestCase):
         marker = '#1140 r9 consecutive collections release the same port pair'
         harness = type('CollectionHarness', (E2ETests,), {})
         reserve = _reserve_port_pair
-        port, gateway_guard, provider_guard = reserve()
+        port, gateway_guard, provider_guard, port_leases = reserve()
         gateway_guard.close()
         provider_guard.close()
+        for lease in port_leases:
+            os.close(lease)
         try:
             with mock.patch.dict(globals(), _reserve_port_pair=lambda: reserve([port])):
                 harness.setUpClass()
@@ -652,6 +728,8 @@ class LifecycleTests(unittest.TestCase):
                 pair = reserve([port])
                 pair[1].close()
                 pair[2].close()
+                for lease in pair[3]:
+                    os.close(lease)
             self.assertTrue(not c.common.LIVE_GROUPS, marker)
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
@@ -660,13 +738,74 @@ class LifecycleTests(unittest.TestCase):
 
     def test_failed_reservation_closes_both_sockets(self):
         marker = '#1140 r9 failed reservation closes both guards'
-        first, second = mock.Mock(), mock.Mock()
-        first.getsockname.return_value = ('127.0.0.1', 28999)
-        second.bind.side_effect = OSError('occupied fixture port')
-        with mock.patch.object(socket, 'socket', side_effect=[first, second]):
+        made = []
+
+        def fake_socket():
+            guard = mock.Mock()
+            if not len(made) % 2:
+                # gateway guard of each pass
+                guard.getsockname.return_value = ('127.0.0.1', 28999)
+            else:
+                # every pass fails the provider bind, so the retries exhaust too
+                guard.bind.side_effect = OSError('occupied fixture port')
+            made.append(guard)
+            return guard
+
+        with mock.patch.object(socket, 'socket', side_effect=fake_socket):
             with self.assertRaises(AssertionError, msg=marker):
-                _reserve_port_pair([28999])
-        self.assertTrue(first.close.called and second.close.called, marker)
+                _reserve_port_pair([28999], passes=3)
+        self.assertTrue(made and all(guard.close.called for guard in made), marker)
+        # #1510 the failed candidate must not leak its port leases either:
+        # both files must be immediately re-leasable from this process.
+        for port in (28999, 29000):
+            probe = os.open(_port_lease_path(port), os.O_RDWR)
+            try:
+                acquired = True
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    acquired = False
+                self.assertTrue(acquired,
+                                '#1510 a failed reservation releases both port leases (' + str(port) + ')')
+            finally:
+                os.close(probe)
+
+    def test_port_reservation_is_exclusive_across_processes(self):
+        marker = '#1510 the closed-guard handoff window stays exclusive via the port lease'
+        port, gateway_guard, provider_guard, port_leases = _reserve_port_pair()
+        # Replicate the handoff window: both guards are released for the real
+        # servers' binds, so only the port leases still defend the pair.  A
+        # sibling process reserving now must not pick this pair.
+        gateway_guard.close()
+        provider_guard.close()
+        try:
+            child = subprocess.run(
+                [sys.executable, '-I', '-c',
+                 'import importlib.util, os, sys\n'
+                 'spec = importlib.util.spec_from_file_location("e2e_port_lease_child", sys.argv[1])\n'
+                 'module = importlib.util.module_from_spec(spec)\n'
+                 'spec.loader.exec_module(module)\n'
+                 'port, gateway_guard, provider_guard, port_leases = module._reserve_port_pair()\n'
+                 'gateway_guard.close()\n'
+                 'provider_guard.close()\n'
+                 'for lease in port_leases:\n'
+                 '    os.close(lease)\n'
+                 'print(port)\n',
+                 str(Path(__file__).resolve())],
+                capture_output=True, text=True, timeout=300)
+        except subprocess.TimeoutExpired:
+            self.fail(marker + ': the sibling reservation did not finish in time')
+        finally:
+            for lease in port_leases:
+                os.close(lease)
+        self.assertTrue(child.returncode == 0,
+                        marker + ': the sibling reservation itself failed: '
+                        + child.stdout + child.stderr)
+        self.assertTrue(child.stdout.strip().isdigit(),
+                        marker + ': the sibling printed no port: ' + repr(child.stdout) + child.stderr)
+        self.assertTrue(int(child.stdout.strip()) != port,
+                        marker + ': the sibling picked the leased pair '
+                        + str(port) + '/' + str(port + 1) + ' inside the handoff window')
 
     def test_gateway_cancel_unconnected_and_partial_frame(self):
         marker = '#1140 r9 gateway cancellation stops listener and active socket'
@@ -752,9 +891,11 @@ class LifecycleTests(unittest.TestCase):
         marker = '#1140 r9 collection failure leaves no owned socket or thread'
         harness = type('FailureHarness', (E2ETests,), {})
         reserve = _reserve_port_pair
-        port, first, second = reserve()
+        port, first, second, port_leases = reserve()
         first.close()
         second.close()
+        for lease in port_leases:
+            os.close(lease)
         try:
             with mock.patch.dict(globals(), _reserve_port_pair=lambda: reserve([port])), \
                     mock.patch.object(c, 'validate_session', side_effect=c.w.Incomplete('injected validation failure')):
@@ -763,6 +904,8 @@ class LifecycleTests(unittest.TestCase):
             pair = reserve([port])
             pair[1].close()
             pair[2].close()
+            for lease in pair[3]:
+                os.close(lease)
             self.assertTrue(not c.common.LIVE_GROUPS, marker)
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
