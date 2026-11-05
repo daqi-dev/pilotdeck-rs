@@ -79,11 +79,14 @@ pub fn deliver_chat_cron_result<F>(
 where
     F: FnOnce(JsString, JsString) -> BoxFuture<bool> + Send + 'static,
 {
-    let chat_id = if delivery
+    // TS: `if (delivery.originChannelKey && delivery.originChannelKey !== channelKey)`.
+    // `""` is falsy in JS, so an empty origin channel means "not set" and the
+    // delivery proceeds; only a non-empty foreign channel aborts it.
+    let origin_set = delivery
         .origin_channel_key
         .as_ref()
-        .is_some_and(|origin| origin != channel_key)
-    {
+        .filter(|origin| !origin.as_js().is_empty());
+    let chat_id = if origin_set.is_some_and(|origin| origin != channel_key) {
         None
     } else {
         parse_chat_id_from_session_key(
@@ -183,6 +186,19 @@ mod tests {
         };
         assert!(
             !deliver_chat_cron_result(&foreign, &channel, |_, _| Box::pin(async { true })).await
+        );
+        // #1681: TS gates on `originChannelKey && originChannelKey !== channelKey`;
+        // the empty string is falsy, so it means "not set" and the delivery runs.
+        let empty_origin = CronResultDelivery {
+            origin_channel_key: Some(key("")),
+            ..base.clone()
+        };
+        assert!(
+            deliver_chat_cron_result(&empty_origin, &channel, |chat, _| {
+                assert_eq!(chat, js("alpha"));
+                Box::pin(async { true })
+            })
+            .await
         );
         let unparseable = CronResultDelivery {
             session_key: js("webhook:no-chat-marker"),

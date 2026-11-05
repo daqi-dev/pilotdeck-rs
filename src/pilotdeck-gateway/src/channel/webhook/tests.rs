@@ -891,6 +891,71 @@ fn extract_text_field_order_is_text_first() {
     );
 }
 
+/// #1681: `{"text": ""}` is not a delivery. The response is the ignored
+/// reply and no `deliveryInfo` entry is written, so a later reply for
+/// `webhook:main:d5` cannot resolve `deliver`.
+#[tokio::test]
+async fn empty_text_request_is_not_a_delivery() {
+    let case = case("no-text");
+    let options = &case["options"];
+    let routes = parse_json(&options["routes"].to_string())
+        .expect("#1334 oracle routes JSON")
+        .as_object()
+        .expect("#1334 oracle routes object")
+        .clone();
+    let channel = WebhookChannel::new(WebhookChannelOptions {
+        port: Some(0.0),
+        host: None,
+        secret: None,
+        routes: Some(routes),
+        rate_limit: None,
+        max_body_bytes: None,
+        mapper: None,
+        now: None,
+        request_timeout: None,
+    });
+    channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#1334 channel start");
+    let port = channel.bound_addr().map(|address| address.port());
+    let mut responses = Vec::new();
+    let step = json!({
+        "op": "request",
+        "label": "empty-text",
+        "method": "POST",
+        "target": "/webhooks/main",
+        "headers": {"x-delivery-id": "d5"},
+        "body": "{\"text\":\"\"}",
+        "mode": "close",
+    });
+    run_request(&port, &step, &mut responses).await;
+    negative_assert_eq!(
+        responses.first().and_then(|entry| entry["body"].as_str()),
+        Some("{\"status\":\"ignored\",\"reason\":\"no text content\"}"),
+        "#1681 the empty string is ignored"
+    );
+    negative_assert!(
+        channel
+            .ctx
+            .state
+            .lock()
+            .expect("#1334 webhook state mutex")
+            .delivery_info
+            .is_empty(),
+        "#1681 the empty string writes no delivery info"
+    );
+    channel
+        .stop_with_reason(None)
+        .await
+        .expect("#1334 channel stop");
+}
+
 #[test]
 fn prune_keeps_the_exact_cutoff() {
     let mut state = State::default();

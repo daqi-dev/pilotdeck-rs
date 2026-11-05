@@ -859,7 +859,13 @@ async fn handle_webhook(
     } else {
         extract_text(&body)
     };
-    let Some(text) = text else {
+    // TS: `if (!text)`. Among strings only `""` is falsy (`"0"` and `"false"`
+    // are truthy), and `null`/`undefined` already arrive as `None`; so filter
+    // the empty string here. `webhook-empty-text-accepted` restores the
+    // pre-#1681 behavior so the golden empty-string cell can turn red.
+    let Some(text) =
+        text.filter(|text| !text.is_empty() || crate::mutants::on("webhook-empty-text-accepted"))
+    else {
         let mut body = JsObject::new();
         body.insert("status".into(), JsValue::String("ignored".into()));
         body.insert("reason".into(), JsValue::String("no text content".into()));

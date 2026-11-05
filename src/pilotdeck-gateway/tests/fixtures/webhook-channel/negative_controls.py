@@ -64,6 +64,13 @@ switches = [
     ('webhook-log-truncation-200', SOURCE_WEBHOOK, 'submit_and_render', '#1334 webhook oracle case submit-and-render'),
     # A failed-turn log is truncated at 100 UTF-16 units, not 150.
     ('webhook-log-truncation-100', SOURCE_WEBHOOK, 'deliver_other', '#1334 webhook oracle case deliver-other'),
+    # #1681: TS gates the extracted text with `if (!text)`, and among strings
+    # only `""` is falsy, so an empty `text` field is no text: ignored reply,
+    # no deliveryInfo. Accepting it turns the `no-text` empty-string cell red
+    # and leaves a deliveryInfo entry behind.
+    ('webhook-empty-text-accepted', SOURCE_WEBHOOK,
+     ['no_text', 'empty_text_request_is_not_a_delivery'],
+     ['#1334 webhook oracle case no-text', '#1681 the empty string is ignored']),
     # An `s_` 36-hex session suffix is a cron chat id; without the suffix a
     # cron delivery to the new-session chat resolves no target.
     ('webhook-cron-suffix', SOURCE_CRON, 'cron_delivery_resolves_session_suffix_chat_ids', '#1334 an s_ session key is a cron target'),

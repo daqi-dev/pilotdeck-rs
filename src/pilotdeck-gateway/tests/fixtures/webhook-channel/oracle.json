@@ -1429,6 +1429,17 @@
     },
     {
      "op": "request",
+     "label": "empty-text",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "headers": {
+      "x-delivery-id": "d5"
+     },
+     "body": "{\"text\":\"\"}",
+     "mode": "close"
+    },
+    {
+     "op": "request",
      "label": "null-body",
      "method": "POST",
      "target": "/webhooks/main",
@@ -1476,6 +1487,17 @@
        "content-length: 40"
       ],
       "body": "{\"status\":\"accepted\",\"delivery_id\":\"d3\"}"
+     },
+     {
+      "label": "empty-text",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 47"
+      ],
+      "body": "{\"status\":\"ignored\",\"reason\":\"no text content\"}"
      },
      {
       "label": "null-body",
