@@ -17,6 +17,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "review-deepseek.py"
 FAKE_KEY = "sk-FAKE0123456789"
+MODEL = "deepseek-v4.1-flash-mb"  # 与脚本默认模型一致；响应模型不一致会被判失败
 
 
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -90,22 +91,24 @@ class Sink(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def ok_body(content, finish="end_turn", model="fake", usage=None, thinking=False):
+def ok_body(content, finish="end_turn", model=MODEL, usage=None, thinking=False):
     blocks = ([{"type": "thinking", "thinking": "..."}] if thinking else []) + \
              ([{"type": "text", "text": content}] if content is not None else [])
     return json.dumps({"model": model, "type": "message", "role": "assistant", "content": blocks,
                        "stop_reason": finish, "usage": usage}).encode()
 
 
-def run(tmp: Path, api: str, *extra, key=FAKE_KEY, out="out.md", script=SCRIPT, env_extra=None):
+def run(tmp: Path, api: str, *extra, key=FAKE_KEY, out="out.md", script=SCRIPT, env_extra=None, contract=False):
     # PDRS_DEEPSEEK_CHANNEL 一并剔除：宿主环境若残留已废弃的 official 值，会让被测脚本 argparse 报错、整套测试误红
     env = {k: v for k, v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "PDRS_DEEPSEEK_CHANNEL")}
     if key is not None:
         env["DEEPSEEK_API_KEY"] = key
     if env_extra:
         env.update(env_extra)
+    # 除非用例显式测契约，默认关掉：本套用例的自由文本回复只测通道/边界语义
+    verdict = () if contract else ("--no-require-verdict",)
     cmd = [sys.executable, "-I", str(script), "--prompt", str(tmp / "task.md"), "--out", str(tmp / out),
-           "--api", api, "--timeout", "5", *extra]
+           "--api", api, "--timeout", "5", *verdict, *extra]
     return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=tmp)
 
 
@@ -116,7 +119,7 @@ def main() -> int:
     fails = 0
 
     def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None, expect_msg=None,
-             secret=None, check=None, not_msg=(), env_extra=None):
+             secret=None, check=None, not_msg=(), env_extra=None, contract=False):
         secret = secret or (key.strip() if isinstance(key, str) and len(key.strip()) > 4 else FAKE_KEY)
         nonlocal fails
         with tempfile.TemporaryDirectory() as d:
@@ -131,7 +134,7 @@ def main() -> int:
                 (tmp / "scripts").mkdir()
                 script = tmp / "scripts" / SCRIPT.name
                 script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
-            r = run(tmp, api, *extra, key=key, script=script, env_extra=env_extra)
+            r = run(tmp, api, *extra, key=key, script=script, env_extra=env_extra, contract=contract)
             out = tmp / "out.md"
             got = out.read_text(encoding="utf-8") if out.exists() else None
             bad = []
@@ -144,7 +147,7 @@ def main() -> int:
             if expect_msg and expect_msg not in r.stderr:
                 bad.append(f"诊断缺「{expect_msg}」")
             bad += [f"诊断不该含「{m}」" for m in not_msg if m in r.stderr]
-            if expect_code != 0 and got not in (None, "OLD"):
+            if expect_code != 0 and got not in (None, "OLD") and got != expect_out:
                 bad.append(f"失败却写了 out={got!r}")
             if check and not check(tmp):
                 bad.append("受保护文件被改")
@@ -156,6 +159,24 @@ def main() -> int:
             fails += bool(bad)
 
     case("正常回复", (200, ok_body("结论 VERDICT: P0=0")), 0, expect_out="结论 VERDICT: P0=0")
+    # 评审契约（默认强制）：exit 0 必须等于「评审真的做完了」
+    good = "覆盖: 通读全文\nVERDICT: P0=0 P1=1 P2=2 P3=0"
+    case("契约满足 → 落盘", (200, ok_body(good)), 0, expect_out=good, contract=True)
+    case("契约：末行不是 VERDICT → 不落盘", (200, ok_body("结论：看着还行")), 1, contract=True,
+         expect_msg="未按评审契约完成")
+    case("契约：缺『覆盖:』行 → 不落盘", (200, ok_body("VERDICT: P0=0 P1=0 P2=0 P3=0")), 1, contract=True,
+         expect_msg="覆盖")
+    case("契约：VERDICT 缺等级 → 不落盘", (200, ok_body("覆盖: x\nVERDICT: P0=0 P1=0")), 1, contract=True,
+         expect_msg="缺等级计数")
+    case("响应模型与请求不一致 → 不落盘", (200, ok_body(good, model="other-model")), 1,
+         expect_msg="响应模型", not_msg=("Traceback",))
+    case("响应缺 stop_reason → 判形状异常", (200, b'{"model": "%s", "content": [{"type": "text", "text": "OK"}]}' % MODEL.encode()),
+         1, expect_msg="缺 stop_reason")
+    case("stop_reason=null → 判形状异常", (200, ok_body("OK", finish=None)), 1, expect_msg="null")
+    case("VERDICT 用全角数字 → 不落盘（只认 ASCII 数字）",
+         (200, ok_body("覆盖: x\nVERDICT: P0=０ P1=0 P2=0 P3=0")), 1, contract=True, expect_msg="缺等级计数")
+    case("无模型字段也算身份不符", (200, b'{"content": [{"type": "text", "text": "OK"}], "stop_reason": "end_turn"}'), 1,
+         expect_msg="响应模型")
     case("空回复", (200, ok_body("  ")), 1)
     case("content=null", (200, ok_body(None)), 1)
     case("截断 stop_reason=max_tokens", (200, ok_body("半截", "max_tokens")), 1)
@@ -173,7 +194,7 @@ def main() -> int:
     case("model 回显密钥", (200, ok_body("OK", model=FAKE_KEY)), 1)
     case("usage 回显密钥", (200, ok_body("OK", usage={"input_tokens": FAKE_KEY})), 0, expect_out="OK")
     case("model 含孤立代理", (200, b'{"model": "\\ud800", "content": [{"type": "text", "text": "OK"}], "stop_reason": "end_turn"}'),
-         0, expect_out="OK")
+         1, expect_msg="响应模型")  # 身份不一致按未完成退出，诊断里不得出 traceback
     case("响应超 16 MiB", (200, b" " * (16 * 1024 * 1024 + 1)), 1, expect_msg="响应超过")
     case("--out 指向 .env（--force）", (200, ok_body("x")), 2, "--out", ".env.local", "--force",
          pre=lambda t: (t / ".env.local").write_text("OLD"), check=lambda t: (t / ".env.local").read_text() == "OLD")
@@ -194,6 +215,11 @@ def main() -> int:
          pre=lambda t: (t / "out.md").write_text("OLD"), expect_out="OLD")
     case("--force 覆盖", (200, ok_body("NEW")), 0, "--force",
          pre=lambda t: (t / "out.md").write_text("OLD"), expect_out="NEW")
+    case("--force 期间别人改写了 --out → 拒绝覆盖", (200, ok_body("NEW")), 1, "--force", expect_out="RACED",
+         pre=lambda t: (t / "out.md").write_text("OLD"),
+         during=lambda t: (t / "out.md").write_text("RACED"), expect_msg="拒绝 --force 覆盖")
+    case("--force 期间别人建了原本不存在的 --out → 拒绝覆盖", (200, ok_body("NEW")), 1, "--force", expect_out="RACED",
+         during=lambda t: (t / "out.md").write_text("RACED"), expect_msg="拒绝 --force 覆盖")
     case("拒绝外发 .env", (200, ok_body("x")), 2, "--input", ".env.local",
          pre=lambda t: (t / ".env.local").write_text("X=1"))
     case("--out 等于输入", (200, ok_body("x")), 2, "--input", "out.md", "--force",
@@ -292,7 +318,7 @@ def main() -> int:
         Fake.reply, Fake.during = (200, ok_body("OK")), None
         env = dict(os.environ, DEEPSEEK_API_KEY=FAKE_KEY)
         proc = subprocess.Popen([sys.executable, "-I", str(SCRIPT), "--prompt", str(tmp / "task.md"), "--out",
-                                 str(tmp / "out.md"), "--api", api, "--timeout", "5"],
+                                 str(tmp / "out.md"), "--api", api, "--timeout", "5", "--no-require-verdict"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=tmp)
         proc.stdout.close()
         err = proc.stderr.read().decode()
@@ -323,6 +349,31 @@ def main() -> int:
     ok = sizes == want
     print(f"{'PASS' if ok else 'FAIL'} 有界读取 read 参数={sizes}")
     fails += not ok
+
+    # 读取期间输入被改写（size 变）→ 判半截材料，不外发
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "p.md"
+        p.write_bytes(b"abcd")
+        real_open2 = open
+        class Mut:
+            def __init__(self, path): self.path, self.f = path, real_open2(path, "rb")
+            def __enter__(self): return self
+            def __exit__(self, *a): self.f.close()
+            def read(self, n=-1):
+                data = self.f.read(n)
+                self.path.write_bytes(b"abcdef")  # 模拟并发写者把材料改长
+                return data
+        rd.open = lambda path, mode="rb": Mut(Path(path))
+        try:
+            rd.build_body(type("A", (), {"prompt": p, "input": [], "model": "m", "max_tokens": None, "thinking": "disabled"})())
+            err = None
+        except Exception as e:
+            err = e
+        finally:
+            del rd.open
+        ok = isinstance(err, rd.Fail) and "读取期间被改动" in str(err)
+        print(f"{'PASS' if ok else 'FAIL'} 读取期间输入被改动 err={err}")
+        fails += not ok
 
     # worktree 回退：git 公共目录的上级（主仓根）也在 .env.local 搜索路径里
     real_run = rd.subprocess.run

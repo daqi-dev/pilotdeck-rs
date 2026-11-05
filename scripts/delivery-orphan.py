@@ -493,7 +493,7 @@ ACTIVE_SIGS = (
     ("cargo", re.compile(r"\bcargo\b")),
     ("rustc", re.compile(r"\brustc\b")),
     ("worker", re.compile(r"run-worker|remote_glm_impl|glm_impl|dispatch-|rw\.sh|remote-worker")),
-    ("review", re.compile(r"run-review-roles|review-phase|glm_review|review-deepseek")),
+    ("review", re.compile(r"run-review-roles|review-phase|glm_review|review-deepseek|review-minimax|grokbot-call")),
     ("remote-wait", re.compile(r"remote-wait")),
     ("host", re.compile(r"host-chain|local-host-queue|host-only")),
     ("auto-receive", re.compile(r"auto-receive")),

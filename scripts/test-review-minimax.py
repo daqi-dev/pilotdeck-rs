@@ -124,6 +124,12 @@ def main() -> int:
 
     # —— 响应完整性 ——
     case("缺 stop_reason → 1", (200, resp(VERDICT, finish=_MISSING)), 1, expect_msg="缺 stop_reason")
+    case("stop_reason=null → 1（三态一致：null 也不算完整）", (200, resp(VERDICT, finish=None)), 1,
+         expect_msg="null")
+    case("响应不是 JSON → 1", (200, b"<html>portal</html>"), 1, expect_msg="不是 JSON")
+    case("响应超 16 MiB → 1", (200, b" " * (16 * 1024 * 1024 + 1)), 1, expect_msg="响应超过")
+    case("VERDICT 用全角数字 → 1（只认 ASCII 数字）", (200, resp("覆盖: x\nVERDICT: P0=０ P1=0 P2=0 P3=0")), 1,
+         expect_msg="缺等级计数")
     case("stop_reason=max_tokens → 1", (200, resp(VERDICT, finish="max_tokens")), 1, expect_msg="未完成")
     case("空回复带 thinking → 1 且提示思考吃额度",
          (200, resp(None, finish="max_tokens", blocks=[{"type": "thinking", "thinking": "…"}])), 1,
@@ -204,6 +210,36 @@ def main() -> int:
         fails += 0 if ok else 1
 
     srv.shutdown()
+
+    # build_body 的读取期间改动守卫（脚本内部函数，直接调）
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rm", SCRIPT)
+    rm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rm)
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "p.md"
+        p.write_bytes(b"abcd")
+        real_open = open
+        class Mut:
+            def __init__(self, path): self.path, self.f = path, real_open(path, "rb")
+            def __enter__(self): return self
+            def __exit__(self, *a): self.f.close()
+            def read(self, n=-1):
+                data = self.f.read(n)
+                self.path.write_bytes(b"abcdef")  # 模拟并发写者把材料改长
+                return data
+        rm.open = lambda path, mode="rb": Mut(Path(path))
+        try:
+            rm.build_body(type("A", (), {"prompt": p, "input": [], "model": "m", "max_tokens": None})())
+            err = None
+        except Exception as e:
+            err = e
+        finally:
+            del rm.open
+        ok = isinstance(err, rm.Fail) and "读取期间被改动" in str(err)
+        print(f"{'PASS' if ok else 'FAIL'} build_body 读取期间输入被改动 err={err}")
+        fails += 0 if ok else 1
+
     print(f"test-review-minimax: {fails} 处失败")
     return 1 if fails else 0
 

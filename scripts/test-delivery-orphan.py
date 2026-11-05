@@ -206,6 +206,9 @@ def t_signature_pid_prefix(_mod):
     assert mod.signature_of("98613 cargo test -p pilotdeck-gateway") == "cargo"
     assert mod.signature_of("66136 bash /Users/da/ws/pdrs-ops/scripts/remote-worker/remote-wait3.sh wt-1334") == "worker"
     assert mod.signature_of("85835 python3 run-review-roles.py --worktree wt-x") == "review"
+    # 同族评审脚本逐个点名：漏登记会让在跑的评审被判「无人在跑」→ 假 ORPHAN-DEAD
+    for prog in ("review-phase.py", "glm_review.py", "review-deepseek.py", "review-minimax.py", "grokbot-call.py"):
+        assert mod.signature_of(f"85835 python3 scripts/{prog} --worktree wt-x") == "review", prog
 
 
 @case("B 类静默：有单号按单号；无单号的工具树按树名归属，且允许 parked（P2a）")
