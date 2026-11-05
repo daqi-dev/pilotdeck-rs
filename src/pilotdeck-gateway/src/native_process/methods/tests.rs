@@ -127,13 +127,22 @@ async fn registry_management_gate_agrees() {
 
 #[tokio::test]
 async fn steer_turn_rejects_attachments_explicitly() {
-    // Reuse the isolated registry fixture: the handler never reaches project
-    // state for the attachment rejection, and without attachments the ordinary
-    // no-active-turn path must stay intact.
+    // Reuse the isolated registry fixture. Without a live turn every
+    // attachment-shaped input takes the ordinary no-active-turn path: TS
+    // steerTurn never reads `uploadedAttachments`, and its attachment merge
+    // runs after the activeTurnRunId gates (InProcessGateway.ts:1859-1870).
+    // With a live turn staged, a non-empty `attachments` payload is
+    // rejected explicitly instead of being silently dropped.
     use crate::runtime::turn::gateway::GatewayRequests;
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1307 registry fixture setup");
+    let upload = || {
+        JsValue::Array(vec![crate::metadata::object([
+            ("type", "text".into()),
+            ("text", "attachment".into()),
+        ])])
+    };
     let steer_params = |extra: Option<(&'static str, JsValue)>| {
         let fields: Vec<(&'static str, JsValue)> = [
             ("sessionKey", "s".into()),
@@ -146,47 +155,150 @@ async fn steer_turn_rejects_attachments_explicitly() {
         .collect();
         crate::metadata::object(fields)
     };
-    // No attachments (and an explicit empty array): the unchanged path still
-    // reports the ordinary no-active-turn rejection.
+    // No attachments, an explicit empty array, a non-empty
+    // `uploadedAttachments` (never read by TS steerTurn), and a non-empty
+    // `attachments` with no active turn: all report the ordinary
+    // no-active-turn rejection in TS order (state gates before attachments).
     for params in [
         steer_params(None),
         steer_params(Some(("attachments", JsValue::Array(vec![])))),
+        steer_params(Some(("uploadedAttachments", upload()))),
+        steer_params(Some(("attachments", upload()))),
     ] {
         let result = requests
             .request("steer_turn".into(), params)
             .await
-            .expect("#1307 no-attachment path stays Ok");
+            .expect("#1307 state-gated path stays Ok");
         negative_assert_eq!(
             result.get("accepted"),
             Some(&JsValue::Bool(false)),
-            "#1307 steer without attachments keeps no_active_turn shape"
+            "#1307 steer keeps no_active_turn shape"
         );
         negative_assert_eq!(
             result.get("reason").and_then(JsValue::as_string),
             Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
-            "#1307 steer without attachments reports no_active_turn"
+            "#1307 attachments are handled after the state gates"
         );
     }
-    // Non-empty attachments on either field: explicit domain error, not a
-    // fake accepted.
-    for field in ["attachments", "uploadedAttachments"] {
-        let params = steer_params(Some((
-            field,
-            JsValue::Array(vec![crate::metadata::object([
-                ("type", "text".into()),
-                ("text", "attachment".into()),
-            ])]),
-        )));
+    // Stage the state both gates require: an admission slot plus a live steer
+    // run with a matching run ID.
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = {
+        let lease = requests.project.acquire(None).expect("#1307 project lease");
+        lease
+            .runtime()
+            .resources()
+            .get::<crate::runtime::project::ProjectResources>()
+            .expect("#1307 project resources")
+            .context()
+            .resource(crate::runtime::project::Resource::InteractionSteer)
+            .expect("#1307 interaction steer resource")
+            .as_any()
+            .downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>()
+            .expect("#1307 steer resource type")
+            .clone()
+    };
+    steer
+        .bind_session("s".into(), None)
+        .expect("#1307 steer session binding")
+        .start_turn(
+            "t".into(),
+            "r".into(),
+            vec![],
+            crate::runtime::hooks::Cancellation::new(),
+            &mut crate::host::modules::ModuleRouter::default(),
+        )
+        .expect("#1307 steer turn start");
+    // With a live turn, a non-empty `attachments` payload is rejected with the
+    // domain error rather than a fake accepted.
+    let error = requests
+        .request(
+            "steer_turn".into(),
+            steer_params(Some(("attachments", upload()))),
+        )
+        .await
+        .expect_err("#1307 attachments must be rejected with a live turn");
+    negative_assert_eq!(
+        error.code,
+        "STEER_ATTACHMENTS_UNSUPPORTED",
+        "#1307 attachments rejection uses the domain code"
+    );
+    // A non-empty `uploadedAttachments` stays accepted-and-ignored with a live
+    // turn: TS steerTurn never reads the field, so the steer itself proceeds.
+    let result = requests
+        .request(
+            "steer_turn".into(),
+            steer_params(Some(("uploadedAttachments", upload()))),
+        )
+        .await
+        .expect("#1307 uploadedAttachments stays Ok with a live turn");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1307 uploadedAttachments does not block the steer"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn hook_async_result_validates_ids_before_registry_lookup() {
+    // The fixture stages no async-hook registry; TS submitAsyncHookResult
+    // validates blank ids unconditionally before any lookup
+    // (InProcessGateway.ts:1896-1899), so blank ids must be rejected on the
+    // registry-less path too instead of reporting `unknown`.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let hook_params = |session_key: &str, invocation_id: &str| {
+        crate::metadata::object([
+            ("sessionKey", session_key.into()),
+            ("invocationId", invocation_id.into()),
+        ])
+    };
+    for params in [
+        hook_params("", "i"),
+        hook_params("  ", "i"),
+        hook_params("s", ""),
+        hook_params("s", "\t"),
+    ] {
         let error = requests
-            .request("steer_turn".into(), params)
+            .request("hook_async_result".into(), params)
             .await
-            .expect_err("#1307 attachments must be rejected");
+            .expect_err("#1307 blank ids must be rejected without a registry");
         negative_assert_eq!(
             error.code,
-            "STEER_ATTACHMENTS_UNSUPPORTED",
-            "#1307 attachments rejection uses the domain code"
+            "INVALID_ASYNC_HOOK_RESULT",
+            "#1307 blank ids use the TS domain code"
         );
     }
+    // Non-blank ids without a registry keep the unknown shape, not an error.
+    let result = requests
+        .request("hook_async_result".into(), hook_params("s", "i"))
+        .await
+        .expect("#1307 registry-less lookup stays Ok");
+    negative_assert_eq!(
+        result.get("status").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("unknown")),
+        "#1307 non-blank ids without a registry report unknown"
+    );
+    negative_assert_eq!(
+        result.get("invocationId").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("i")),
+        "#1307 unknown result echoes the invocationId"
+    );
     requests
         .owner
         .shutdown()
