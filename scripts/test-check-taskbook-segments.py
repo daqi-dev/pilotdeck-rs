@@ -393,6 +393,27 @@ case("关闭围栏带尾随文本 = 未闭合（P2 假 PASS）", 2,
      "# t\n\n```\n``` x\n<!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n" + TEN_RS + "\n",
      must=["围栏"])
 
+# ---- fix-r11 第二批：第十轮闸门（GLM boundary P0×2 P1×1 P2×1 / DeepSeek boundary P0×1 P2×2）-----
+case("CRLF 任务书的围栏照常闭合（P0 假 PASS）", 1,
+     "# t\r\n\r\n```\r\n<!-- pdrs-scope: files=2 lines=80 est_min=30 -->\r\n```\r\n\r\n"
+     "<!-- pdrs-scope: files=16 est_min=180 -->\r\n", must=["分段交付"])
+case("闭合围栏长于开栏也算闭合（P0 假 ERROR）", 0,
+     "# t\n\n```\n<!-- pdrs-scope: files=16 -->\n````\n\n正文。\n")
+case("双反引号行内代码里的示例 scope 不算声明（P0 假 PASS）", 1,
+     "# t\n\n写法：``<!-- pdrs-scope: files=2 lines=80 est_min=30 -->``\n\n" + TEN_RS + "\n",
+     must=["分段交付"])
+case("列表续行缩进 4 格的裸示例 scope 不算声明（P1 假 PASS）", 1,
+     "# t\n\n- scope 写法示例：\n    <!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n"
+     + TEN_RS + "\n", must=["分段交付"])
+case("人日带量词「个」（P2 假 PASS）", 1,
+     "# #1\n约 2 个人日\n\n## 要做\n1. x\n", must=["分段交付"])
+case("空花括号 `format!(\"{}\", x)` 不是占位符（P2 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1",
+                                     "`S1-RESULT.md`，改 `format!(\"{}\", x)` 调用"))
+case("整格就是 {} 仍算占位符（正控）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "{}"),
+     must=["占位符"])
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -579,6 +600,130 @@ def run():
             print(f"{'PASS' if ok else 'FAIL'}  真实 chmod 000 的目录 → ScanError（不许静默漏扫）")
             fails += 0 if ok else 1
 
+        # ---- fix-r11：stat 与 open 之间换入 FIFO / 换 inode 的窗口（concurrency P1/P2）----
+        # 1) 任务书本身是符号链接：先解析成字面路径再 open，照读不误
+        real_md = Path(td) / "link-real.md"
+        real_md.write_text(SMALL, encoding="utf-8")
+        link_md = Path(td) / "link.md"
+        if not link_md.exists():
+            link_md.symlink_to(real_md)
+        r = ctbs.check_file(link_md)
+        ok = r is not None and r["rc"] == 0
+        print(f"{'PASS' if ok else 'FAIL'}  符号链接任务书照读（rc 0）：rc={r and r['rc']}")
+        fails += 0 if ok else 1
+
+        # 2) 打开标志必须带 O_NOFOLLOW | O_NONBLOCK（FIFO 换入不再挂死）
+        seen = {}
+        real_open = os.open
+
+        def spy_open(path, flags, *a, **kw):
+            seen["flags"] = flags
+            return real_open(path, flags, *a, **kw)
+
+        ctbs.os.open = spy_open
+        try:
+            ctbs.check_file(real_md)
+        finally:
+            ctbs.os.open = real_open
+        need = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        ok = seen.get("flags") == need
+        print(f"{'PASS' if ok else 'FAIL'}  open 标志带 O_NOFOLLOW|O_NONBLOCK：{seen.get('flags')!r}")
+        fails += 0 if ok else 1
+
+        # 3) 读到一半路径上的文件被换成同 size/mtime 的另一份 → rc 2（旧实现按路径 stat 会放行）
+        victim = Path(td) / "swap.md"
+        victim.write_text(SMALL, encoding="utf-8")
+        other = Path(td) / "swap-other.md"
+        other.write_text(SMALL, encoding="utf-8")
+        st = victim.stat()
+        os.utime(other, ns=(st.st_atime_ns, st.st_mtime_ns))
+        real_fdopen = os.fdopen
+
+        def spy_fdopen(fd, *a, **kw):
+            os.replace(other, victim)          # 读之前把路径换成另一份（inode 变了，size/mtime 不变）
+            return real_fdopen(fd, *a, **kw)
+
+        ctbs.os.fdopen = spy_fdopen
+        try:
+            r = ctbs.check_file(victim)
+        finally:
+            ctbs.os.fdopen = real_fdopen
+        ok = r is not None and r["rc"] == 2 and "替换" in r["problems"][0]
+        detail = (r["problems"] or [""])[0][:30] if r else ""
+        print(f"{'PASS' if ok else 'FAIL'}  读中路径被同 size/mtime 换掉 → rc=2：rc={r and r['rc']} {detail}")
+        fails += 0 if ok else 1
+
+        # 4) 换成 FIFO 也必须 rc 2 且不阻塞（O_NONBLOCK + fstat 判类型）
+        fifo_md = Path(td) / "swapfifo.md"
+        fifo_md.write_text(SMALL, encoding="utf-8")
+        real_fdopen2 = os.fdopen
+
+        def spy_fdopen2(fd, *a, **kw):
+            if fifo_md.exists():
+                fifo_md.unlink()
+            os.mkfifo(fifo_md)
+            return real_fdopen2(fd, *a, **kw)
+
+        ctbs.os.fdopen = spy_fdopen2
+        try:
+            r = ctbs.check_file(fifo_md)
+        finally:
+            ctbs.os.fdopen = real_fdopen2
+        ok = r is not None and r["rc"] == 2
+        print(f"{'PASS' if ok else 'FAIL'}  读中路径被换成 FIFO / 换后不是普通文件 → rc=2：rc={r and r['rc']}")
+        fails += 0 if ok else 1
+
+        # 5) --explain 的空扫描也不许打文本 SUMMARY（按行解析的调用方不认）
+        empty3 = Path(td) / "emptyroot3"
+        empty3.mkdir()
+        buf = io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(io.StringIO()):
+            rc = ctbs.main(["x", "--recent", "24", "--root", str(empty3), "--explain"])
+        ok = rc == 0 and "SUMMARY" not in buf.getvalue()
+        print(f"{'PASS' if ok else 'FAIL'}  --explain 空扫描不打 SUMMARY：rc={rc} 输出={buf.getvalue()!r}")
+        fails += 0 if ok else 1
+
+        # 6) scope / 注释扫描必须是线性：修前 2 MiB 病态输入 O(n²)，派单闸门挂死（实测 >120 s）
+        t0 = time.monotonic()
+        sc1, err1 = ctbs.parse_scopes("<!--" * 500000)                      # 2 MiB 全未闭合注释
+        sc2, err2 = ctbs.parse_scopes("<!--pdrs-scope files=2 -->" * 60000)  # 6 万条合法 scope
+        dt = time.monotonic() - t0
+        ok = (dt < 10.0 and len(sc2) == 60000 and not err2
+              and ctbs.parse_scopes("<!-- pdrs-scope: files=2")[1])   # 未闭合注释里的 scope 仍要报错
+        print(f"{'PASS' if ok else 'FAIL'}  scope 扫描线性（2 MiB 病态输入 {dt:.2f}s，60k 条={len(sc2)}）："
+              f"err1={len(err1)}")
+        fails += 0 if ok else 1
+
+        # 7) scandir entry 的 is_dir() 抛 OSError 也要 ScanError，不许 traceback 成 rc 1（GLM P3）
+        class _BoomEntry:
+            path = str(Path(td) / "_build" / "wt-boom")
+
+            def is_dir(self):
+                raise PermissionError(13, "Permission denied", self.path)
+
+        class _BoomScan:
+            def __enter__(self):
+                return iter([_BoomEntry()])
+
+            def __exit__(self, *a):
+                return False
+
+        real_scandir3 = os.scandir
+        os.scandir = lambda _p: _BoomScan()
+        try:
+            try:
+                ctbs._iter_taskbooks(Path(td) / "_build")
+                ok = False
+            except ctbs.ScanError:
+                ok = True
+            except Exception:      # 别的异常（PermissionError 直接漏出）也是 FAIL，不许把整轮测试打断
+                ok = False
+        finally:
+            os.scandir = real_scandir3
+        print(f"{'PASS' if ok else 'FAIL'}  scandir entry.is_dir() 抛 OSError → ScanError（不 traceback）")
+        fails += 0 if ok else 1
+
+
     # 命令行契约
     for name, argv, expect in (
             ("--print-skeleton 带文件参数", ["x", "--print-skeleton", "task.md"], 3),
@@ -596,7 +741,7 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 23 + len(PARSE_EST)   # 14 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
+    total = len(CASES) + 30 + len(PARSE_EST)   # 17 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
     # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
     for cell, unit, want in PARSE_EST:
         got = ctbs.parse_est(cell, unit)
