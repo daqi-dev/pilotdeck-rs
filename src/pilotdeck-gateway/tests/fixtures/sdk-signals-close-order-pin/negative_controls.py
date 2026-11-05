@@ -16,7 +16,11 @@ half of that pin:
     the #1382 pin can fail — the single-edit equivalent of the historical
     "raise the ledger, the whitelist and EXPECTED_TOTAL together" hole;
   - unordered-close-boundary-dropped: the boundary registration loses one
-    entry, so a whole-scope control is mistaken for a per-ID one.
+    entry, so a whole-scope control is mistaken for a per-ID one;
+  - unordered-close-content-retargeted: a row keeps its per-ID name but its
+    anchor, mutant value and assertion are pointed at another registered ID,
+    so the name-set comparison still passes while the named ID has no
+    independent control and the other ID's mutation runs twice.
 
 The "ledger gains one ID" direction is the same set difference as
 unordered-close-row-removed (a registered ID without a mutation); the
@@ -74,6 +78,13 @@ mutations = [
         "    \"unordered-close-overbroad\",\n",
         "",
         "mutations without a registered ID: ['overbroad']",
+    ),
+    (
+        "unordered-close-content-retargeted",
+        catalog_relative,
+        "'\\n    \"run--query-resume-hold-sigint\",\\n', '\\n    \"run--query-resume-hold-sigint-unregistered\",\\n'",
+        "'\\n    \"run--second-sigint\",\\n', '\\n    \"run--second-sigint-unregistered\",\\n'",
+        "wrong content: run--query-resume-hold-sigint",
     ),
 ]
 
@@ -153,11 +164,16 @@ with mutating_sources(root, [catalog]) as snapshots:
                     path.write_text(changed, encoding="utf-8")
                     result = run_check(name + "-negative")
                     log = result.stdout + result.stderr
-                    marker = (
+                    markers = (
                         "#1382 unordered-close controls must equal the"
-                        " registered close-order IDs"
+                        " registered close-order IDs",
+                        "#1382 unordered-close rows must bind their own ID",
                     )
-                    if result.returncode != 0 and marker in log and criterion in log:
+                    if (
+                        result.returncode != 0
+                        and any(marker in log for marker in markers)
+                        and criterion in log
+                    ):
                         status, reason = "KILLED", "preflight failed at its #1382 pin"
                     elif result.returncode == 0:
                         status, reason = "SURVIVED", "preflight still passed"
