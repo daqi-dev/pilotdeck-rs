@@ -34,6 +34,7 @@ REPLAY = "channel::api_server::tests::replays_real_ts_api_server_cells"
 DUPLICATE = "channel::api_server::tests::duplicate_chat_is_busy_then_free"
 OVERSIZED = "channel::api_server::tests::oversized_body_closes_without_response"
 RENDER_VISIBLE = "channel::api_server::tests::render_visible_failure_status_names_match_ts"
+DEFAULT_PORT_TEST = "channel::api_server::tests::unconfigured_port_falls_back_to_the_ts_default"
 
 mutations = [
     (
@@ -115,6 +116,14 @@ mutations = [
         "10_000_000",
         OVERSIZED,
         "#1333 oversized body closes with zero bytes",
+    ),
+    (
+        "default-port",
+        MOD,
+        ".unwrap_or(DEFAULT_PORT),",
+        ".unwrap_or(0.0),",
+        DEFAULT_PORT_TEST,
+        "#1333 an unconfigured port must default to 8642",
     ),
 ]
 

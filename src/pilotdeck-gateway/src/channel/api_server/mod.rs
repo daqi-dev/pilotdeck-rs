@@ -157,7 +157,13 @@ impl ApiServerChannel {
                 .clone()
                 .or_else(|| self.0.env.get("API_SERVER_HOST").cloned())
                 .unwrap_or_else(|| DEFAULT_HOST.to_owned()),
-            port: port.map(|value| server::js_number(&value)),
+            // TS `Number(options.port ?? env.API_SERVER_PORT ?? DEFAULT_PORT)`:
+            // the port is never absent, so an unconfigured adapter still binds
+            // 8642. Without the last fallback the channel silently never
+            // listens (and logs nothing), which no TS configuration produces.
+            port: port
+                .map(|value| server::js_number(&value))
+                .unwrap_or(DEFAULT_PORT),
             api_key,
             model_name: self
                 .0
@@ -179,7 +185,8 @@ impl ApiServerChannel {
 
 pub(crate) struct Resolved {
     pub host: String,
-    pub port: Option<f64>,
+    /// Always present: TS falls back to `DEFAULT_PORT` when nothing configures one.
+    pub port: f64,
     pub api_key: String,
     pub model_name: String,
     pub cors_origins: Vec<String>,
@@ -234,9 +241,7 @@ impl ChannelAdapter for ApiServerChannel {
         Box::pin(async move {
             let channel = ApiServerChannel(inner.clone());
             let resolved = channel.resolve(deps.config.as_deref());
-            let Some(port) = resolved.port else {
-                return Ok(noop_handle());
-            };
+            let port = resolved.port;
             if let Some(listener) = inner
                 .state
                 .lock()
