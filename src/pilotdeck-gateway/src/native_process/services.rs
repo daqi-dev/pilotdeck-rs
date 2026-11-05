@@ -1,7 +1,7 @@
 use super::{Options, assembly::Recorders};
 use crate::{
     config::Env,
-    metadata::object,
+    metadata::{object, text_field},
     runtime::{
         project::{ProjectResources, ProjectRuntimeRegistry},
         snapshot::{SnapshotProjectResolver, SnapshotProjects},
@@ -14,8 +14,10 @@ use crate::{
     upload::UploadStore,
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use pilotdeck_protocol::{JsString, JsValue};
-use std::fs;
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::collections::HashSet;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -43,38 +45,258 @@ const MAX_INLINE_FILE_BYTES: u64 = 1_000_000;
 /// being base64-inlined (verified against the TS source by the
 /// `_tmp/20261105-issue-1321-fix-r1/ts-probe/` probe).
 const MAX_INLINE_IMAGE_BYTES: u64 = 5_242_880;
+/// TS GatewayAttachmentTurnComposer.ts:21 — `ATTACHMENT_PATH_NOTE_MARKER`.
+const ATTACHMENT_PATH_NOTE_MARKER: &str = "[Registered attachment files in this session:]";
+/// TS GatewayAttachmentTurnComposer.ts:95 — the funasr install command the
+/// audio guidance names (`installCommand = "npm run install:asr"` default).
+/// The native process has no TS package root to compute
+/// `getPilotDeckInstallCommand()` (projectMcpSpec.ts:27-37), so the composer
+/// default is used verbatim.
+const FUNASR_INSTALL_COMMAND: &str = "npm run install:asr";
+/// TS AttachmentResolver.ts:40-61 — `TEXT_EXTENSIONS`: the whitelisted
+/// plain-text extensions a path-based file attachment is inlined from.
+const TEXT_EXTENSIONS: &[&str] = &[
+    ".txt", ".md", ".json", ".yaml", ".yml", ".csv", ".tsv", ".xml", ".html", ".css", ".ts",
+    ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".sh", ".log",
+];
+/// TS GatewayAttachmentTurnComposer.ts:22-40 —
+/// `READ_FILE_BINARY_ATTACHMENT_EXTENSIONS` (the same list as
+/// AttachmentResolver.ts:62-80 `BINARY_CONTAINER_EXTENSIONS`): attachments
+/// the guidance calls out as not directly inspectable with read_file.
+const BINARY_CONTAINER_EXTENSIONS: &[&str] = &[
+    ".zip", ".gz", ".tar", ".7z", ".rar", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+    ".odt", ".ods", ".odp", ".pages", ".key", ".numbers",
+];
+/// TS GatewayAttachmentTurnComposer.ts:283 — the audio suffixes
+/// `isAudioAttachment` matches case-insensitively.
+const AUDIO_EXTENSIONS: &[&str] = &[
+    ".aac", ".flac", ".m4a", ".mp3", ".oga", ".ogg", ".opus", ".wav", ".webm",
+];
+/// TS GatewayAttachmentTurnComposer.ts:118 — the plain (no-diagnostics)
+/// guidance closing the path note.
+const PLAIN_PATH_NOTE_GUIDANCE: &str = "These are path references for reuse. If an image/PDF is \
+     already visible in this turn, do not call read_file just to view it.";
 
-/// Per-attachment inline byte cap, mirroring TS AttachmentResolver
-/// (AttachmentResolver.ts:36-37): 5 MiB for images, 1 MB for other files.
-fn inline_byte_limit(mime: &str) -> u64 {
-    if mime.starts_with("image/") {
-        MAX_INLINE_IMAGE_BYTES
-    } else {
-        MAX_INLINE_FILE_BYTES
+/// One attachment as the composer sees it (the TS ChannelAttachment slice
+/// read by GatewayAttachmentTurnComposer.ts:211-253). A missing, empty, or
+/// non-UTF-8 path leaves `path` empty; the composer's own
+/// `if (!attachment.path) continue;` (:229) drops those silently.
+struct AttachEntry {
+    /// `attachment.type === "image"` (composer :212, :234).
+    image_type: bool,
+    /// `attachment.type === "text"` (composer :224).
+    text_type: bool,
+    path: String,
+    /// Raw `attachment.name` ("" when absent or not UTF-8).
+    name: String,
+    mime: String,
+    /// Raw nonempty `attachment.content`, inlined before any path handling
+    /// (composer :212, :224).
+    content: Option<String>,
+    /// Raw `attachment.bytes`: only the content image block forwards it
+    /// verbatim (composer :218); path-based blocks report the bytes actually
+    /// read (AttachmentResolver.ts:274).
+    declared_bytes: Option<JsValue>,
+}
+
+/// A path attachment that resolved inside the lease root and opened as a
+/// regular file. allowedReadFiles and the path-note lines come from these,
+/// mirroring TS `collectRegisteredAttachmentReadFiles`
+/// (GatewayAttachmentTurnComposer.ts:173-193, `kind === "file"` only).
+struct RegisteredAttachment {
+    resolved: PathBuf,
+    /// Raw attachment name; the note cleans it (composer :108-109).
+    name: String,
+    /// `isReadFileInspectableAttachment` (composer :153-165) — the input the
+    /// diagnostics guidance branches on (:142-151).
+    inspectable: bool,
+}
+
+/// Outcome of the per-attachment lease guard.
+enum LeaseGuard {
+    /// The path canonicalizes under the canonical lease root; inlining and
+    /// allowedReadFiles use this resolved path, never the client spelling.
+    Resolved(PathBuf),
+    /// The path is lexically inside the lease root but does not resolve
+    /// (missing file / dangling symlink — a lease TTL cleanup race): the
+    /// attachment becomes a TS-shaped not-found diagnostic instead of
+    /// failing the whole turn. A missing lease root (no uploads yet) takes
+    /// the same branch, never a panic.
+    Unresolved(std::io::Error),
+}
+
+/// `Err` rejects the turn: the path is not lexically inside the lease root
+/// (the canonical `<project>/.tmp/chat-upload-leases/`, computed once per
+/// prepare) or contains `..`, or it canonicalizes outside that root — a
+/// symlink escape. Guards P1-1: only hard-linked lease files may be inlined
+/// or added to allowedReadFiles; arbitrary client-supplied paths are
+/// rejected before they reach allowedReadFiles or any read (same shape as
+/// `read_at`'s PROJECT_PATH_FORBIDDEN symlink check in upload/mod.rs).
+fn lease_guard(
+    path: &str,
+    lexical_root: &Path,
+    canonical_root: Option<&Path>,
+) -> Result<LeaseGuard, SubmitError> {
+    let p = Path::new(path);
+    if p.components().any(|c| c == Component::ParentDir) || !p.starts_with(lexical_root) {
+        return Err(failure(
+            "Attachment path is outside the permitted lease directory.",
+        ));
+    }
+    match fs::canonicalize(p) {
+        Ok(resolved) => {
+            if canonical_root.is_some_and(|root| resolved.starts_with(root)) {
+                Ok(LeaseGuard::Resolved(resolved))
+            } else {
+                Err(failure(
+                    "Attachment path is outside the permitted lease directory.",
+                ))
+            }
+        }
+        Err(error) => Ok(LeaseGuard::Unresolved(error)),
     }
 }
 
-/// Returns true only if `path` is an absolute path strictly under
-/// `lease_root` (the canonical `<project>/.tmp/chat-upload-leases/`) with no
-/// `..` components, and `path` itself canonicalizes — symlinks followed — to
-/// a location still under `lease_root`. Guards P1-1: only hard-linked lease
-/// files may be inlined or added to allowedReadFiles; arbitrary
-/// client-supplied paths, including a lease-directory symlink that escapes
-/// the project, are rejected here before they can reach allowedReadFiles or
-/// fs::read (same shape as `read_at`'s PROJECT_PATH_FORBIDDEN symlink check
-/// in upload/mod.rs). Paths that cannot be resolved at all (missing file,
-/// dangling symlink) are rejected too: the guard must not pass a path it
-/// could not verify.
-fn is_safe_lease_path(path: &str, lease_root: &Path) -> bool {
-    let p = Path::new(path);
-    if p.components().any(|c| c == Component::ParentDir) {
-        return false;
+/// Node `extname` on the last path segment, lowercased with its leading dot
+/// ("" when there is no extension) — the shape both TS files compare against
+/// (AttachmentResolver.ts:148, GatewayAttachmentTurnComposer.ts:161).
+fn extension_of(source: &str) -> String {
+    Path::new(source)
+        .extension()
+        .map(|ext| format!(".{}", ext.to_string_lossy().to_lowercase()))
+        .unwrap_or_default()
+}
+
+/// TS AttachmentResolver.ts:148 — prefer the trimmed attachment name's
+/// extension, else the path's: upload stores use an opaque id on disk, so
+/// the original filename carries the format.
+fn resolver_extension(entry: &AttachEntry) -> String {
+    let trimmed = entry.name.trim();
+    extension_of(if trimmed.is_empty() {
+        entry.path.as_str()
+    } else {
+        trimmed
+    })
+}
+
+/// TS AttachmentResolver.ts:81-87 — the `IMAGE_MIME` extension map.
+fn image_mime_for_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        ".png" => Some("image/png"),
+        ".jpg" | ".jpeg" => Some("image/jpeg"),
+        ".gif" => Some("image/gif"),
+        ".webp" => Some("image/webp"),
+        _ => None,
     }
-    fs::canonicalize(p).is_ok_and(|resolved| resolved.starts_with(lease_root))
+}
+
+/// The image request's mime: the declared `mimeType`, else the extension
+/// map, else none (AttachmentResolver.ts:214-227).
+fn image_mime(entry: &AttachEntry) -> Option<String> {
+    if !entry.mime.is_empty() {
+        return Some(entry.mime.clone());
+    }
+    image_mime_for_ext(&extension_of(&entry.path)).map(str::to_owned)
+}
+
+/// TS GatewayAttachmentTurnComposer.ts:280-284 — the mime prefix first, else
+/// the audio suffixes matched case-insensitively on the path (name as the
+/// fallback).
+fn is_audio_attachment(entry: &AttachEntry) -> bool {
+    if entry.mime.to_lowercase().starts_with("audio/") {
+        return true;
+    }
+    let path_or_name = if entry.path.is_empty() {
+        entry.name.as_str()
+    } else {
+        entry.path.as_str()
+    };
+    let lower = path_or_name.to_lowercase();
+    AUDIO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+}
+
+/// TS GatewayAttachmentTurnComposer.ts:153-165 —
+/// `isReadFileInspectableAttachment`.
+fn is_read_file_inspectable(entry: &AttachEntry) -> bool {
+    let mime = entry.mime.to_lowercase();
+    if entry.image_type || mime.starts_with("image/") {
+        return true;
+    }
+    if mime == "application/pdf"
+        || mime.starts_with("text/")
+        || mime == "application/json"
+        || mime.ends_with("+json")
+    {
+        return true;
+    }
+    let path_or_name = if entry.name.is_empty() {
+        entry.path.as_str()
+    } else {
+        entry.name.as_str()
+    };
+    let ext = extension_of(path_or_name);
+    if ext == ".pdf" || ext == ".ipynb" {
+        return true;
+    }
+    !BINARY_CONTAINER_EXTENSIONS.contains(&ext.as_str())
+}
+
+/// TS GatewayAttachmentTurnComposer.ts:286-295 — the funasr hint only names
+/// audio paths inside the project (lexical `relative`, no symlink chase);
+/// anything else is left to the generic "project-local" wording.
+fn map_audio_path_for_funasr(path: &str, project_root: &Path) -> Option<String> {
+    let relative = Path::new(path).strip_prefix(project_root).ok()?;
+    if relative.as_os_str().is_empty() {
+        return None;
+    }
+    Some(path.to_string())
+}
+
+/// TS GatewayAttachmentTurnComposer.ts:108-109 —
+/// `String(name || fallback).replace(/[\r\n]+/g, " ").trim() || fallback`.
+fn clean_attachment_name(raw: &str, fallback: &str) -> String {
+    let base = if raw.is_empty() { fallback } else { raw };
+    let mut cleaned = String::with_capacity(base.len());
+    let mut previous_was_break = false;
+    for character in base.chars() {
+        if character == '\r' || character == '\n' {
+            if !previous_was_break {
+                cleaned.push(' ');
+            }
+            previous_was_break = true;
+        } else {
+            cleaned.push(character);
+            previous_was_break = false;
+        }
+    }
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// The flat canonical image block (TS AttachmentResolver.ts:267-275):
+/// `{type, source: "base64", data, mimeType, bytes}`. Every in-repo consumer
+/// reads `source`/`data`/`mimeType` at the top level
+/// (runtime/session/factory.rs `valid_snapshot_block`,
+/// runtime/turn/projector.rs `canonical_content_text`,
+/// runtime/model/count_body.rs).
+fn flat_image_block(data: &str, mime: &str, bytes: Option<f64>) -> JsValue {
+    let mut block = JsObject::new();
+    block.insert("type".into(), "image".into());
+    block.insert("source".into(), "base64".into());
+    block.insert("data".into(), JsValue::from(data));
+    block.insert("mimeType".into(), JsValue::from(mime));
+    if let Some(bytes) = bytes {
+        block.insert("bytes".into(), JsValue::Number(bytes));
+    }
+    JsValue::Object(block)
 }
 
 /// `Image attachment not found: ${absolute} (${error}).` — the missing-file
-/// diagnostic of TS AttachmentResolver (AttachmentResolver.ts:189-199). A
+/// diagnostic of TS AttachmentResolver (AttachmentResolver.ts:191-200). A
 /// read failure here (lease TTL cleanup, permissions, a directory swap)
 /// uses the same channel so the attachment is never silently dropped.
 fn image_not_found(path: &str, error: &std::io::Error) -> String {
@@ -83,171 +305,325 @@ fn image_not_found(path: &str, error: &std::io::Error) -> String {
 
 /// `Attachment not found: ${absolute} (${error}).` — the missing-file
 /// diagnostic of TS AttachmentResolver for non-image files
-/// (AttachmentResolver.ts:131-143).
+/// (AttachmentResolver.ts:134-143).
 fn file_not_found(path: &str, error: &std::io::Error) -> String {
     format!("Attachment not found: {path} ({error}).")
 }
 
+/// The not-found diagnostic in the TS resolver's own routing: image requests
+/// say "Image attachment not found", file requests "Attachment not found".
+fn attachment_not_found(entry: &AttachEntry, error: &std::io::Error) -> String {
+    if entry.image_type || entry.mime.starts_with("image/") {
+        image_not_found(&entry.path, error)
+    } else {
+        file_not_found(&entry.path, error)
+    }
+}
+
+/// TS AttachmentResolver.ts:171 — the file too-large diagnostic.
+fn file_too_large(path: &str, bytes: u64, limit: u64) -> String {
+    format!("Attachment {path} is {bytes} bytes (limit {limit}); skipped.")
+}
+
+/// TS AttachmentResolver.ts:209 — the image too-large diagnostic.
+fn image_too_large(path: &str, bytes: u64, limit: u64) -> String {
+    format!(
+        "Image {path} is {bytes} bytes (limit {limit}); skipped \
+         (PilotDeck does not resize, intentional_difference §4.5)."
+    )
+}
+
+/// Bounded inline read on the already-opened handle (codex#a/b): no second
+/// path lookup between the guard and the bytes, and `Read::take(limit + 1)`
+/// caps what enters memory. A read that fills the whole `limit + 1` budget
+/// is itself the proof the file exceeds `limit` (读满即超限) — the oversize
+/// file is never pulled in full.
+fn read_bounded(file: &mut File, limit: u64) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// TS GatewayAttachmentTurnComposer.ts:125-151 — `attachmentDiagnosticsGuidance`.
+fn attachment_diagnostics_guidance(
+    entries: &[AttachEntry],
+    has_inspectable: bool,
+    project_root: &Path,
+) -> String {
+    // :131-140 — the audio form wins whenever any audio attachment exists.
+    let audio_paths: Vec<String> = entries
+        .iter()
+        .filter(|entry| is_audio_attachment(entry))
+        .filter_map(|entry| map_audio_path_for_funasr(&entry.path, project_root))
+        .collect();
+    if !audio_paths.is_empty() {
+        let mapped_hint = if audio_paths.len() == 1 {
+            format!(
+                " Pass the registered project-local path {} to transcribe_audio.",
+                audio_paths[0]
+            )
+        } else {
+            format!(
+                " Pass the registered project-local paths {} to transcribe_audio.",
+                audio_paths.join(", ")
+            )
+        };
+        return format!(
+            "Audio attachments are not readable with read_file. When the user asks for \
+             transcription, subtitles, or audio analysis, use the funasr MCP server's \
+             mcp__funasr__transcribe_audio tool.{mapped_hint} If that tool reports that its \
+             runtime is missing, run {FUNASR_INSTALL_COMMAND} and retry the tool in this session."
+        );
+    }
+    // :142-151 — no registered inspectable attachment left → the conversion
+    // form; otherwise the read_file-scoped form.
+    if !has_inspectable {
+        return "Some attachments were not shown inline. These registered files are not \
+                directly inspectable with read_file; ask for a supported export or \
+                convert them before inspection."
+            .to_string();
+    }
+    "Some attachments were not shown inline. Use read_file with the exact path only for \
+     readable text, image, PDF, or notebook attachments; Office/archive/binary files \
+     need conversion before inspection."
+        .to_string()
+}
+
 /// Composes the blocks-type agent input for a turn with attachments,
-/// mirroring TS GatewayAttachmentTurnComposer: a text block for the message,
-/// base64 image blocks for inlined images, an `[Attachment diagnostics]`
-/// text block for skipped or unreadable attachments
-/// (GatewayAttachmentTurnComposer.ts:270-274, verified by the
-/// `_tmp/20261105-issue-1321-fix-r1/ts-probe/` probe), and the
-/// registered-path note. Extracted from `prepare_attachment_turn` so the
-/// lease guard and the size caps are unit-testable without the full native
-/// assembly; runs entirely on a blocking thread.
+/// mirroring TS GatewayAttachmentTurnComposer.prepare: a text block for the
+/// message, direct content blocks and inlined image/text blocks, the
+/// `[Attachment diagnostics]` text block (composer :270-274), and the
+/// registered-path note (composer :89-123). Falls back to a plain
+/// `{type:"text"}` turn when nothing but the message remains (composer
+/// :67-72). Extracted from `prepare_attachment_turn` so the lease guard and
+/// the inline pipeline are unit-testable without the full native assembly;
+/// runs entirely on a blocking thread.
 pub(super) fn compose_attachment_turn(
     project_dir: &Path,
     message: &JsValue,
     attachments: &[JsValue],
 ) -> Result<JsValue, SubmitError> {
+    let mut entries: Vec<AttachEntry> = Vec::new();
+    for attachment in attachments {
+        let kind = text_field(attachment, "type").unwrap_or_default();
+        entries.push(AttachEntry {
+            image_type: kind == "image",
+            text_type: kind == "text",
+            path: text_field(attachment, "path").unwrap_or_default(),
+            name: text_field(attachment, "name").unwrap_or_default(),
+            mime: text_field(attachment, "mimeType").unwrap_or_default(),
+            content: text_field(attachment, "content").filter(|content| !content.is_empty()),
+            declared_bytes: attachment
+                .get("bytes")
+                .filter(|bytes| bytes.as_number().is_some())
+                .cloned(),
+        });
+    }
+    // P1-1 (simplify#2): the lease roots are computed once per prepare; the
+    // lexical root is the cheap pre-filter, the canonicalized lease root is
+    // what resolved paths are held against. A root that does not exist (no
+    // uploads yet) simply leaves every lease path unresolved.
+    let project_canon = fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+    let lease_lexical = project_canon.join(".tmp").join("chat-upload-leases");
+    let lease_canon = fs::canonicalize(&lease_lexical).ok();
+
+    let mut direct_blocks: Vec<JsValue> = Vec::new();
+    let mut inline_blocks: Vec<JsValue> = Vec::new();
+    let mut diagnostics: Vec<String> = Vec::new();
+    let mut registered: Vec<RegisteredAttachment> = Vec::new();
+
+    // TS composer :211-227 — content blocks are produced before any path
+    // handling, so these attachments need neither a path nor a lease.
+    for entry in &entries {
+        if entry.image_type
+            && let Some(content) = &entry.content
+            && !entry.mime.is_empty()
+        {
+            let declared_bytes = entry.declared_bytes.as_ref().and_then(JsValue::as_number);
+            direct_blocks.push(flat_image_block(content, &entry.mime, declared_bytes));
+        } else if entry.text_type
+            && let Some(content) = &entry.content
+        {
+            direct_blocks.push(object([
+                ("type", "text".into()),
+                ("text", JsValue::from(content.as_str())),
+            ]));
+        }
+    }
+
+    for entry in &entries {
+        // TS composer :229 — a missing, empty, or non-UTF-8 path is skipped
+        // silently; the content branches above already handled their blocks.
+        if entry.path.is_empty() {
+            continue;
+        }
+        let resolved = match lease_guard(&entry.path, &lease_lexical, lease_canon.as_deref()) {
+            Ok(LeaseGuard::Resolved(resolved)) => resolved,
+            Ok(LeaseGuard::Unresolved(error)) => {
+                // A lease TTL cleanup race becomes a TS-shaped not-found
+                // diagnostic, not a whole-turn failure.
+                diagnostics.push(attachment_not_found(entry, &error));
+                continue;
+            }
+            Err(rejected) => return Err(rejected),
+        };
+        // codex#a/b: one open of the resolved path; every size check and read
+        // happens on this handle (fstat), so a leaf symlink swapped between
+        // the guard and the read cannot redirect the bytes.
+        let mut file = match File::open(&resolved) {
+            Ok(file) => file,
+            Err(error) => {
+                diagnostics.push(attachment_not_found(entry, &error));
+                continue;
+            }
+        };
+        let metadata = match file.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                diagnostics.push(attachment_not_found(entry, &error));
+                continue;
+            }
+        };
+        if metadata.is_file() {
+            registered.push(RegisteredAttachment {
+                resolved: resolved.clone(),
+                name: entry.name.clone(),
+                inspectable: is_read_file_inspectable(entry),
+            });
+        }
+        // TS composer :230-233 — audio stays a registered path reference for
+        // the FunASR MCP consumer; it is never read here.
+        if is_audio_attachment(entry) {
+            continue;
+        }
+        // P2a-1: the image routing half of composer :234 (image byte
+        // verification stays out of this round).
+        let image = entry.image_type || entry.mime.starts_with("image/");
+        // TS AttachmentResolver.ts:149-163 — only whitelisted text
+        // extensions are read; every other non-image stays a registered path
+        // reference.
+        let text_inline = !image && TEXT_EXTENSIONS.contains(&resolver_extension(entry).as_str());
+        if !image && !text_inline {
+            continue;
+        }
+        let limit = if image {
+            MAX_INLINE_IMAGE_BYTES
+        } else {
+            MAX_INLINE_FILE_BYTES
+        };
+        let bytes = match read_bounded(&mut file, limit) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                diagnostics.push(attachment_not_found(entry, &error));
+                continue;
+            }
+        };
+        // 读满即超限 (TS stat caps, AttachmentResolver.ts:164-175 and
+        // :202-212): a read that filled the limit + 1 budget is over the
+        // cap. The diagnostic reports the fstat size like the TS message.
+        if bytes.len() as u64 == limit + 1 {
+            let oversize = metadata.len().max(bytes.len() as u64);
+            diagnostics.push(if image {
+                image_too_large(&entry.path, oversize, limit)
+            } else {
+                file_too_large(&entry.path, oversize, limit)
+            });
+            continue;
+        }
+        if image {
+            match image_mime(entry) {
+                Some(mime) => inline_blocks.push(flat_image_block(
+                    &base64_encode(&bytes),
+                    &mime,
+                    Some(bytes.len() as f64),
+                )),
+                // AttachmentResolver.ts:216-227
+                None => diagnostics.push(format!(
+                    "Cannot determine image mime type from {}; provide mimeType explicitly.",
+                    entry.path
+                )),
+            }
+        } else {
+            // TS AttachmentResolver.ts:176-182 — readText into the
+            // `<attachment path=…>` wrapper (invalid UTF-8 decodes with
+            // replacement characters like Node's utf8 read).
+            let text = String::from_utf8_lossy(&bytes);
+            inline_blocks.push(object([
+                ("type", "text".into()),
+                (
+                    "text",
+                    JsValue::from(
+                        format!(
+                            "<attachment path=\"{}\">\n{text}\n</attachment>",
+                            resolved.display()
+                        )
+                        .as_str(),
+                    ),
+                ),
+            ]));
+        }
+    }
+
+    // TS composer :98-111 — the note lines come from registered paths,
+    // deduped by normalized path; allowedReadFiles holds the same resolved
+    // spellings (composer :167-171 `safeAllowedAttachmentPath`).
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut note_lines: Vec<String> = Vec::new();
+    let mut allowed_paths: Vec<JsValue> = Vec::new();
+    let mut has_inspectable = false;
+    for attachment in &registered {
+        if !seen.insert(attachment.resolved.clone()) {
+            continue;
+        }
+        let normalized = attachment.resolved.to_string_lossy().into_owned();
+        // composer :108 — `normalized.split(/[\\/]/).pop() || "attachment"`.
+        let fallback_name = normalized
+            .split(['/', '\\'])
+            .next_back()
+            .filter(|segment| !segment.is_empty())
+            .unwrap_or("attachment");
+        let name = clean_attachment_name(&attachment.name, fallback_name);
+        note_lines.push(format!("- {name}: {normalized}"));
+        allowed_paths.push(JsValue::from(normalized.as_str()));
+        has_inspectable |= attachment.inspectable;
+    }
+
+    // TS composer :114-122 — the guidance takes a diagnostics form when any
+    // diagnostic was collected, any attachment is audio, or any attachment
+    // is not read_file-inspectable; otherwise the plain form.
+    let guidance = if diagnostics.is_empty()
+        && !entries.iter().any(is_audio_attachment)
+        && entries.iter().all(is_read_file_inspectable)
+    {
+        PLAIN_PATH_NOTE_GUIDANCE.to_string()
+    } else {
+        attachment_diagnostics_guidance(&entries, has_inspectable, &project_canon)
+    };
+
+    // TS composer :67-72 — no content block, no inline block, no diagnostic,
+    // and no note leaves a plain text turn.
+    if direct_blocks.is_empty()
+        && inline_blocks.is_empty()
+        && diagnostics.is_empty()
+        && note_lines.is_empty()
+    {
+        return Ok(object([("type", "text".into()), ("text", message.clone())]));
+    }
     let mut blocks: Vec<JsValue> = Vec::new();
     if let JsValue::String(text) = message
         && !text.is_empty()
     {
         blocks.push(object([("type", "text".into()), ("text", message.clone())]));
     }
-    struct AttachEntry {
-        path: String,
-        name: String,
-        mime: String,
-        declared_bytes: Option<f64>,
-    }
-    let mut entries: Vec<AttachEntry> = Vec::new();
-    for attachment in attachments {
-        // TS drops attachments without a usable path silently instead of
-        // rejecting them (GatewayAttachmentTurnComposer.ts:102
-        // `if (!attachment.path) continue;` and :229): missing, empty, and
-        // non-UTF-8 paths are skipped the same way here.
-        let path = attachment
-            .get("path")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .unwrap_or_default();
-        if path.is_empty() {
-            continue;
-        }
-        let name = attachment
-            .get("name")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .unwrap_or_else(|| {
-                Path::new(&path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "attachment".into())
-            });
-        let mime = attachment
-            .get("mimeType")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .unwrap_or_default();
-        // Lease attachments carry the upload manifest's verified `bytes`;
-        // client-supplied attachments may declare any number.
-        let declared_bytes = attachment.get("bytes").and_then(JsValue::as_number);
-        entries.push(AttachEntry {
-            path,
-            name,
-            mime,
-            declared_bytes,
-        });
-    }
-    // P1-1: the canonical lease root is computed once per prepare (simplify#2)
-    // and every attachment path must canonicalize inside it before it can
-    // reach allowedReadFiles or fs::read.
-    let project_canon = fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
-    let lease_root = project_canon.join(".tmp").join("chat-upload-leases");
-    let mut allowed_paths: Vec<JsValue> = Vec::new();
-    let mut note_lines: Vec<String> = Vec::new();
-    let mut diagnostics: Vec<String> = Vec::new();
-    let mut image_blocks: Vec<JsValue> = Vec::new();
-    for entry in &entries {
-        if !is_safe_lease_path(&entry.path, &lease_root) {
-            return Err(failure(
-                "Attachment path is outside the permitted lease directory.",
-            ));
-        }
-        allowed_paths.push(JsValue::from(entry.path.as_str()));
-        note_lines.push(format!("- {}: {}", entry.name, entry.path));
-        let image = entry.mime.starts_with("image/");
-        let limit = inline_byte_limit(&entry.mime);
-        // P1-2: check the byte count before reading so an oversized
-        // attachment is never pulled into memory (TS stat cap,
-        // AttachmentResolver.ts:164-175 and :202-212). Prefer the
-        // manifest-declared `bytes`; `fs::metadata` is authoritative whenever
-        // it disagrees, so a small declared size cannot smuggle an oversized
-        // file past the stat.
-        let oversize = if let Some(bytes) =
-            entry.declared_bytes.filter(|b| b.is_finite() && *b >= 0.0)
-            && bytes > limit as f64
-        {
-            Some(bytes)
-        } else {
-            match fs::metadata(&entry.path) {
-                Ok(info) if info.len() > limit => Some(info.len() as f64),
-                Ok(_) => None,
-                Err(error) => {
-                    diagnostics.push(if image {
-                        image_not_found(&entry.path, &error)
-                    } else {
-                        file_not_found(&entry.path, &error)
-                    });
-                    continue;
-                }
-            }
-        };
-        if let Some(bytes) = oversize {
-            diagnostics.push(if image {
-                // AttachmentResolver.ts:202-212
-                format!(
-                    "Image {path} is {bytes} bytes (limit {limit}); skipped \
-                     (PilotDeck does not resize, intentional_difference §4.5).",
-                    path = entry.path
-                )
-            } else {
-                // AttachmentResolver.ts:164-175
-                format!(
-                    "Attachment {path} is {bytes} bytes (limit {limit}); skipped.",
-                    path = entry.path
-                )
-            });
-            continue;
-        }
-        if !image {
-            // Non-image attachments stay registered path references (the note
-            // above); only images are read for inlining.
-            continue;
-        }
-        // P2a-1: a read failure must not silently drop the attachment —
-        // lease TTL cleanup, permissions, or a directory in place of the
-        // file surfaces as a TS-shaped diagnostic instead.
-        match fs::read(&entry.path) {
-            Ok(bytes) => {
-                let encoded = base64_encode(&bytes);
-                image_blocks.push(object([
-                    ("type", "image".into()),
-                    (
-                        "source",
-                        object([
-                            ("type", "base64".into()),
-                            ("media_type", JsValue::from(entry.mime.as_str())),
-                            ("data", JsValue::from(encoded.as_str())),
-                        ]),
-                    ),
-                ]));
-            }
-            Err(error) => diagnostics.push(image_not_found(&entry.path, &error)),
-        }
-    }
-    blocks.extend(image_blocks);
+    blocks.extend(direct_blocks);
+    blocks.extend(inline_blocks);
     if !diagnostics.is_empty() {
-        // GatewayAttachmentTurnComposer.ts:270-274
+        // TS composer :270-274
         let note = format!(
             "[Attachment diagnostics]\n{}",
             diagnostics
                 .iter()
-                .map(|message| format!("- {message}"))
+                .map(|line| format!("- {line}"))
                 .collect::<Vec<_>>()
                 .join("\n")
         );
@@ -257,9 +633,9 @@ pub(super) fn compose_attachment_turn(
         ]));
     }
     if !note_lines.is_empty() {
-        let header = "[Registered attachment files in this session:]";
+        // TS composer :119-122 — `\n\n${MARKER}\n${lines}\n${guidance}`.
         let note = format!(
-            "{header}\n{lines}\nThese are path references for reuse.",
+            "\n\n{ATTACHMENT_PATH_NOTE_MARKER}\n{lines}\n{guidance}",
             lines = note_lines.join("\n")
         );
         blocks.push(object([

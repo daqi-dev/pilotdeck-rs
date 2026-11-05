@@ -1,12 +1,13 @@
-//! #1321 fix-r1 tests for the native attachment-turn composition
-//! (`compose_attachment_turn`): the canonical lease-root guard (P1-1),
-//! the TS-aligned inline size caps (P1-2), read-failure diagnostics
-//! (P2a-1), and the silent skip of pathless attachments (P2a-2).
+//! #1321 fix-r2 tests for the native attachment-turn composition
+//! (`compose_attachment_turn`): the flat image block, the four guidance
+//! forms of the registered-path note, text-extension inlining, the content
+//! branches and plain-text fallback, the handle-based bounded read with its
+//! 读满即超限 size gate, and the lease guard (P1-1, TTL-race tolerant).
 
 use super::services::compose_attachment_turn;
 use crate::{metadata::object, negative_assert};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use pilotdeck_protocol::{JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::path::{Path, PathBuf};
 
 /// Scratch project under the system temp dir (never inside the worktree),
@@ -71,6 +72,22 @@ fn content_blocks(result: &JsValue) -> Vec<JsValue> {
     }
 }
 
+fn diagnostics_block(blocks: &[JsValue]) -> String {
+    blocks
+        .iter()
+        .map(block_text)
+        .find(|text| text.starts_with("[Attachment diagnostics]"))
+        .unwrap_or_default()
+}
+
+fn note_block(blocks: &[JsValue]) -> String {
+    blocks
+        .iter()
+        .map(block_text)
+        .find(|text| text.contains("[Registered attachment files in this session:]"))
+        .unwrap_or_default()
+}
+
 fn message(text: &str) -> JsValue {
     JsValue::String(JsString::from(text))
 }
@@ -100,24 +117,29 @@ fn normal_lease_image_is_inlined_and_registered() {
         blocks[1].get("type") == Some(&"image".into()),
         "#1321 normal lease image must be inlined as an image block"
     );
-    let source = blocks[1]
-        .get("source")
-        .cloned()
-        .unwrap_or(JsValue::Undefined);
+    // TS AttachmentResolver.ts:267-275 — the flat image block shape.
     negative_assert!(
-        source.get("type") == Some(&"base64".into())
-            && source.get("media_type") == Some(&JsValue::from("image/png"))
-            && source.get("data")
+        blocks[1].get("source") == Some(&"base64".into())
+            && blocks[1].get("data")
                 == Some(&JsValue::from(
                     BASE64_STANDARD.encode([1, 2, 3, 4]).as_str()
-                )),
-        "#1321 normal lease image block must carry base64 data"
+                ))
+            && blocks[1].get("mimeType") == Some(&JsValue::from("image/png")),
+        "#1321 flat image block must carry source/data/mimeType at the top level"
     );
+    negative_assert!(
+        blocks[1].get("bytes") == Some(&JsValue::Number(4.0)),
+        "#1321 flat image block must report the bytes actually read"
+    );
+    // TS GatewayAttachmentTurnComposer.ts:118-122 — the plain-guidance note.
     let note = block_text(&blocks[2]);
     negative_assert!(
-        note.contains("[Registered attachment files in this session:]")
-            && note.contains(&format!("- a.png: {path}")),
-        "#1321 normal lease attachment must keep the registered-path note, got: {note}"
+        note == format!(
+            "\n\n[Registered attachment files in this session:]\n- a.png: {path}\n\
+             These are path references for reuse. If an image/PDF is already visible in this \
+             turn, do not call read_file just to view it."
+        ),
+        "#1321 path note must match the TS composer shape, got: {note}"
     );
     let allowed = match result.get("allowedReadFiles") {
         Some(JsValue::Array(files)) => files.clone(),
@@ -197,11 +219,14 @@ fn lease_parent_dotdot_is_rejected() {
 #[test]
 fn oversize_image_and_file_skip_to_diagnostics() {
     let scratch = Scratch::new();
+    // limit + 1024, not limit + 1: a mutant that drops the read bound must
+    // inline the file, so the oversize fixture has to be distinguishable
+    // from an exactly-limit+1 read.
     let image_path = scratch.lease("big.png");
-    std::fs::write(&image_path, vec![1u8; 5 * 1024 * 1024 + 1])
+    std::fs::write(&image_path, vec![1u8; 5 * 1024 * 1024 + 1024])
         .expect("#1321 oversize image fixture");
     let file_path = scratch.lease("big.txt");
-    std::fs::write(&file_path, vec![b'a'; 1_000_001]).expect("#1321 oversize file fixture");
+    std::fs::write(&file_path, vec![b'a'; 1_000_000 + 1024]).expect("#1321 oversize file fixture");
     let result = compose_attachment_turn(
         &scratch.0,
         &message("hello"),
@@ -212,21 +237,17 @@ fn oversize_image_and_file_skip_to_diagnostics() {
     )
     .expect("#1321 oversize attachments still compose the turn");
     let blocks = content_blocks(&result);
-    let diagnostics = blocks
-        .iter()
-        .map(block_text)
-        .find(|text| text.starts_with("[Attachment diagnostics]"))
-        .unwrap_or_default();
+    let diagnostics = diagnostics_block(&blocks);
     negative_assert!(
         diagnostics.contains(&format!(
-            "Image {image_path} is 5242881 bytes (limit 5242880); skipped \
+            "Image {image_path} is 5243904 bytes (limit 5242880); skipped \
              (PilotDeck does not resize, intentional_difference §4.5)."
         )),
         "#1321 P1-2: oversize image must be skipped with the TS diagnostic, got: {diagnostics}"
     );
     negative_assert!(
         diagnostics.contains(&format!(
-            "Attachment {file_path} is 1000001 bytes (limit 1000000); skipped."
+            "Attachment {file_path} is 1001024 bytes (limit 1000000); skipped."
         )),
         "#1321 P1-2: oversize file must be skipped with the TS diagnostic, got: {diagnostics}"
     );
@@ -236,15 +257,22 @@ fn oversize_image_and_file_skip_to_diagnostics() {
             .all(|block| block.get("type") != Some(&"image".into())),
         "#1321 P1-2: oversize image must not be inlined"
     );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| !block_text(block).starts_with("<attachment path=")),
+        "#1321 P1-2: oversize file must not be inlined"
+    );
 }
 
 #[test]
-fn declared_oversize_bytes_skip_without_reading() {
+fn declared_bytes_do_not_gate_inline_size() {
     let scratch = Scratch::new();
     let path = scratch.lease("declared-big.png");
     std::fs::write(&path, [9u8; 16]).expect("#1321 small actual fixture");
-    // A manifest that itself declares an oversize image is rejected before
-    // any read (fail-closed: the guard never reads to double-check it).
+    // TS AttachmentResolver.ts:187-202: path requests always trust the
+    // actual stat, never the attachment `bytes` field — the manifest's
+    // 6 MB declaration must not skip the 16 real bytes.
     let result = compose_attachment_turn(
         &scratch.0,
         &message("hello"),
@@ -252,30 +280,28 @@ fn declared_oversize_bytes_skip_without_reading() {
     )
     .expect("#1321 declared-oversize attachments still compose the turn");
     let blocks = content_blocks(&result);
-    let diagnostics = blocks
-        .iter()
-        .map(block_text)
-        .find(|text| text.starts_with("[Attachment diagnostics]"))
-        .unwrap_or_default();
     negative_assert!(
-        diagnostics.contains(&format!(
-            "Image {path} is 6000000 bytes (limit 5242880); skipped"
-        )),
-        "#1321 P1-2: manifest-declared oversize image must skip without reading, got: {diagnostics}"
+        blocks.len() == 3,
+        "#1321 declared bytes must not change the composition, got {} blocks",
+        blocks.len()
     );
     negative_assert!(
-        blocks
-            .iter()
-            .all(|block| block.get("type") != Some(&"image".into())),
-        "#1321 P1-2: manifest-declared oversize image must not be inlined"
+        blocks[1].get("type") == Some(&"image".into())
+            && blocks[1].get("bytes") == Some(&JsValue::Number(16.0)),
+        "#1321 the actually-16-byte image must be inlined with its real size"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1321 a small file with an oversize declaration must not diagnose"
     );
 }
 
 #[test]
 fn bytes_mismatch_uses_metadata() {
     let scratch = Scratch::new();
-    // The manifest claims 10 bytes; the file is a 5 MiB + 1 image. The stat
-    // is authoritative, so the smuggled oversize image is still skipped.
+    // The manifest claims 10 bytes; the file is a 5 MiB + 1 image. The
+    // handle stat is authoritative, so the smuggled oversize image is
+    // still skipped.
     let path = scratch.lease("smuggled.png");
     std::fs::write(&path, vec![1u8; 5 * 1024 * 1024 + 1]).expect("#1321 smuggled image fixture");
     let result = compose_attachment_turn(
@@ -285,11 +311,7 @@ fn bytes_mismatch_uses_metadata() {
     )
     .expect("#1321 mismatched manifest still composes the turn");
     let blocks = content_blocks(&result);
-    let diagnostics = blocks
-        .iter()
-        .map(block_text)
-        .find(|text| text.starts_with("[Attachment diagnostics]"))
-        .unwrap_or_default();
+    let diagnostics = diagnostics_block(&blocks);
     negative_assert!(
         diagnostics.contains(&format!(
             "Image {path} is 5242881 bytes (limit 5242880); skipped"
@@ -307,7 +329,7 @@ fn bytes_mismatch_uses_metadata() {
 #[test]
 fn read_failure_becomes_diagnostic() {
     let scratch = Scratch::new();
-    // A directory inside the lease root canonicalizes and stats fine, so the
+    // A directory inside the lease root canonicalizes and opens fine, so the
     // guard passes, but reading it fails (EISDIR): the failure must surface
     // as a diagnostic instead of silently dropping the image.
     let dir = scratch.lease("actually-a-dir.png");
@@ -319,11 +341,7 @@ fn read_failure_becomes_diagnostic() {
     )
     .expect("#1321 unreadable attachments still compose the turn");
     let blocks = content_blocks(&result);
-    let diagnostics = blocks
-        .iter()
-        .map(block_text)
-        .find(|text| text.starts_with("[Attachment diagnostics]"))
-        .unwrap_or_default();
+    let diagnostics = diagnostics_block(&blocks);
     negative_assert!(
         diagnostics.contains(&format!("Image attachment not found: {dir} (")),
         "#1321 P2a-1: read failure must surface as a not-found diagnostic, got: {diagnostics}"
@@ -340,7 +358,8 @@ fn read_failure_becomes_diagnostic() {
 fn pathless_attachments_are_skipped_silently() {
     let scratch = Scratch::new();
     // TS drops attachments without a usable path instead of rejecting them
-    // (GatewayAttachmentTurnComposer.ts:102, :229).
+    // (GatewayAttachmentTurnComposer.ts:229), and with no blocks and no note
+    // the turn falls back to the plain text input (composer :67-72).
     let pathless = object([("mimeType", JsValue::from("image/png"))]);
     let empty_path = object([
         ("path", JsValue::from("")),
@@ -348,14 +367,386 @@ fn pathless_attachments_are_skipped_silently() {
     ]);
     let result = compose_attachment_turn(&scratch.0, &message("hello"), &[pathless, empty_path])
         .expect("#1321 pathless attachments compose the turn");
-    let blocks = content_blocks(&result);
     negative_assert!(
-        blocks.len() == 1 && block_text(&blocks[0]) == "hello",
-        "#1321 P2a-2: pathless attachments must be skipped silently, got {} blocks",
-        blocks.len()
+        result.get("type") == Some(&"text".into()) && result.get("text") == Some(&message("hello")),
+        "#1321 P2a-2: an empty composition must fall back to the plain text turn"
+    );
+    negative_assert!(
+        result.get("content").is_none(),
+        "#1321 P2a-2: the plain-text fallback carries no blocks"
     );
     negative_assert!(
         result.get("allowedReadFiles").is_none(),
         "#1321 P2a-2: pathless attachments must not register allowedReadFiles"
+    );
+}
+
+#[test]
+fn non_utf8_path_is_skipped_silently() {
+    let scratch = Scratch::new();
+    let mut fields = JsObject::new();
+    // A lone surrogate cannot become a UTF-8 path; TS `attachment.path`
+    // handling never sees it, and the Rust side must skip it the same way.
+    fields.insert(
+        "path".into(),
+        JsValue::String(JsString::from_utf16(vec![0xD800])),
+    );
+    fields.insert("mimeType".into(), JsValue::from("image/png"));
+    let result = compose_attachment_turn(&scratch.0, &message("hello"), &[JsValue::Object(fields)])
+        .expect("#1321 a non-UTF-8 path composes the turn");
+    negative_assert!(
+        result.get("type") == Some(&"text".into()) && result.get("text") == Some(&message("hello")),
+        "#1321 a non-UTF-8 path must be skipped silently, leaving the plain text turn"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1321 a non-UTF-8 path must not register allowedReadFiles"
+    );
+}
+
+#[test]
+fn unresolvable_lease_path_becomes_not_found_diagnostic() {
+    let scratch = Scratch::new();
+    // Lexically inside the lease root but the file is gone (TTL cleanup
+    // race): a TS-shaped not-found diagnostic, never a whole-turn failure.
+    let path = scratch.lease("ttl-gone.png");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1321 a TTL-raced lease path must not fail the turn");
+    let blocks = content_blocks(&result);
+    let diagnostics = diagnostics_block(&blocks);
+    negative_assert!(
+        diagnostics.contains(&format!("Image attachment not found: {path} (")),
+        "#1321 P2a-3: an unresolvable lease path must diagnose not-found, got: {diagnostics}"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1321 P2a-3: an unresolvable lease path must not register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1321 P2a-3: an unresolvable lease path must not produce a note line"
+    );
+}
+
+#[test]
+fn missing_lease_root_behaves_like_no_lease() {
+    let scratch = Scratch::new();
+    let path = scratch.lease("gone-root.png");
+    std::fs::remove_dir_all(scratch.0.join(".tmp")).expect("#1321 remove lease root");
+    // A project without any upload lease root must not panic: the path is
+    // simply unresolvable.
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1321 a missing lease root must compose the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!("Image attachment not found: {path} (")),
+        "#1321 a missing lease root must diagnose not-found instead of panicking"
+    );
+}
+
+#[test]
+fn exact_limit_image_and_text_are_inlined() {
+    let scratch = Scratch::new();
+    // The caps are inclusive (TS stat `>` comparisons,
+    // AttachmentResolver.ts:164 and :202): exactly 5242880 / 1000000 bytes
+    // must still be inlined.
+    let image_path = scratch.lease("exact.png");
+    std::fs::write(&image_path, vec![7u8; 5 * 1024 * 1024]).expect("#1321 exact image fixture");
+    let text_path = scratch.lease("exact.txt");
+    std::fs::write(&text_path, vec![b'x'; 1_000_000]).expect("#1321 exact text fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&image_path, "image/png"),
+            attachment(&text_path, "text/plain"),
+        ],
+    )
+    .expect("#1321 exact-limit attachments compose the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 4,
+        "#1321 exact-limit attachments must inline both blocks, got {} blocks",
+        blocks.len()
+    );
+    negative_assert!(
+        blocks[1].get("type") == Some(&"image".into())
+            && blocks[1].get("bytes") == Some(&JsValue::Number(5_242_880.0)),
+        "#1321 an exactly-5242880-byte image must be inlined with its real size"
+    );
+    negative_assert!(
+        block_text(&blocks[2])
+            == format!(
+                "<attachment path=\"{text_path}\">\n{}\n</attachment>",
+                "x".repeat(1_000_000)
+            ),
+        "#1321 an exactly-1000000-byte text attachment must be inlined in the TS wrapper"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1321 exact-limit attachments must not diagnose"
+    );
+}
+
+#[test]
+fn binary_extension_attachment_stays_path_reference() {
+    let scratch = Scratch::new();
+    // TS AttachmentResolver.ts:149-163: only whitelisted text extensions are
+    // read; a .docx stays a registered path reference, and because it is not
+    // read_file-inspectable the note takes the conversion guidance
+    // (GatewayAttachmentTurnComposer.ts:147-149).
+    let path = scratch.lease("doc.docx");
+    std::fs::write(&path, b"PK\x03\x04office").expect("#1321 docx fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(
+            &path,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )],
+    )
+    .expect("#1321 binary attachments compose the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 2,
+        "#1321 a binary-container attachment must stay a path reference, got {} blocks",
+        blocks.len()
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- doc.docx: {path}")),
+        "#1321 the binary attachment must keep its note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. These registered files are not \
+             directly inspectable with read_file; ask for a supported export or convert \
+             them before inspection."
+        ),
+        "#1321 the no-inspectable guidance form must be selected, got: {note}"
+    );
+}
+
+#[test]
+fn guidance_inspectable_form_via_oversize_text() {
+    let scratch = Scratch::new();
+    // An oversize .txt is registered and inspectable but produces a
+    // diagnostic, so the guidance takes the read_file-scoped form
+    // (GatewayAttachmentTurnComposer.ts:150).
+    let path = scratch.lease("big2.txt");
+    std::fs::write(&path, vec![b'b'; 1_000_000 + 512]).expect("#1321 oversize text fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "text/plain")],
+    )
+    .expect("#1321 oversize text composes the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Attachment {path} is 1000512 bytes (limit 1000000); skipped."
+        )),
+        "#1321 the oversize text must be skipped with the TS diagnostic"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#1321 the inspectable guidance form must be selected, got: {note}"
+    );
+}
+
+#[test]
+fn guidance_audio_form_names_project_local_path() {
+    let scratch = Scratch::new();
+    // TS GatewayAttachmentTurnComposer.ts:131-140 — an audio attachment
+    // stays a registered path reference and selects the funasr guidance
+    // with the project-local path hint.
+    let path = scratch.lease("memo.mp3");
+    std::fs::write(&path, vec![0u8; 32]).expect("#1321 audio fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "audio/mpeg")],
+    )
+    .expect("#1321 audio attachments compose the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 2,
+        "#1321 an audio attachment must stay a path reference, got {} blocks",
+        blocks.len()
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note == format!(
+            "\n\n[Registered attachment files in this session:]\n- memo.mp3: {path}\n\
+             Audio attachments are not readable with read_file. When the user asks for \
+             transcription, subtitles, or audio analysis, use the funasr MCP server's \
+             mcp__funasr__transcribe_audio tool. Pass the registered project-local path \
+             {path} to transcribe_audio. If that tool reports that its runtime is missing, \
+             run npm run install:asr and retry the tool in this session."
+        ),
+        "#1321 the audio guidance form must match the TS composer text, got: {note}"
+    );
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed == vec![JsValue::from(path.as_str())],
+        "#1321 the audio attachment must register allowedReadFiles"
+    );
+}
+
+#[test]
+fn content_attachments_inline_before_path_checks() {
+    let scratch = Scratch::new();
+    // TS GatewayAttachmentTurnComposer.ts:212-227 — content blocks are
+    // produced before the path handling, without needing a path or a lease.
+    let image_content = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("ABC").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("bytes", JsValue::Number(3.0)),
+    ]);
+    let text_content = object([
+        ("type", JsValue::from("text")),
+        ("content", JsValue::from("inline text")),
+    ]);
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[image_content, text_content],
+    )
+    .expect("#1321 content attachments compose without any path or lease");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 3,
+        "#1321 content attachments must keep message, image and text blocks, got {}",
+        blocks.len()
+    );
+    let image = &blocks[1];
+    negative_assert!(
+        image.get("type") == Some(&"image".into())
+            && image.get("source") == Some(&"base64".into())
+            && image.get("data") == Some(&JsValue::from(BASE64_STANDARD.encode("ABC").as_str()))
+            && image.get("mimeType") == Some(&JsValue::from("image/png"))
+            && image.get("bytes") == Some(&JsValue::Number(3.0)),
+        "#1321 content image block must be the flat shape with the declared bytes"
+    );
+    negative_assert!(
+        block_text(&blocks[2]) == "inline text",
+        "#1321 a text-content attachment must become a plain text block"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1321 content attachments without paths must not register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1321 content attachments without paths must not produce a note"
+    );
+}
+
+#[test]
+fn note_name_cleaning_and_dedupe() {
+    let scratch = Scratch::new();
+    let path = scratch.lease("same.txt");
+    std::fs::write(&path, b"body").expect("#1321 dedupe fixture");
+    let named = object([
+        ("path", JsValue::from(path.as_str())),
+        ("mimeType", JsValue::from("text/plain")),
+        ("name", JsValue::from("multi\r\nline\nname")),
+    ]);
+    let unnamed = attachment(&path, "text/plain");
+    let newline_only = object([
+        ("path", JsValue::from(path.as_str())),
+        ("mimeType", JsValue::from("text/plain")),
+        ("name", JsValue::from("\n")),
+    ]);
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[named, unnamed, newline_only],
+    )
+    .expect("#1321 duplicate attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    // TS GatewayAttachmentTurnComposer.ts:105-111 — dedupe by normalized
+    // path, the first name wins, and CR/LF runs collapse to one space.
+    negative_assert!(
+        note.contains(&format!("- multi line name: {path}")),
+        "#1321 note names must collapse CR/LF runs to a single space, got: {note}"
+    );
+    negative_assert!(
+        !note.contains("multi\r") && !note.contains("multi\n"),
+        "#1321 note names must not leak raw CR/LF, got: {note}"
+    );
+    negative_assert!(
+        note.lines().filter(|line| line.starts_with("- ")).count() == 1,
+        "#1321 duplicate normalized paths must produce exactly one note line, got: {note}"
+    );
+}
+
+#[test]
+fn image_mime_falls_back_to_extension() {
+    let scratch = Scratch::new();
+    // TS AttachmentResolver.ts:214-215 — a missing mimeType falls back to
+    // the IMAGE_MIME extension map.
+    let path = scratch.lease("photo.jpg");
+    std::fs::write(&path, [1u8, 2]).expect("#1321 jpg fixture");
+    let entry = object([
+        ("path", JsValue::from(path.as_str())),
+        ("type", JsValue::from("image")),
+    ]);
+    let result = compose_attachment_turn(&scratch.0, &message("hi"), &[entry])
+        .expect("#1321 extension-typed image composes");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks[1].get("type") == Some(&"image".into())
+            && blocks[1].get("mimeType") == Some(&JsValue::from("image/jpeg")),
+        "#1321 an image without mimeType must use the TS extension map"
+    );
+}
+
+#[test]
+fn image_without_known_mime_is_diagnosed() {
+    let scratch = Scratch::new();
+    // TS AttachmentResolver.ts:216-227 — neither a mimeType nor a mapped
+    // extension is an attachment_unsupported warning.
+    let path = scratch.lease("blob.bin");
+    std::fs::write(&path, [1u8, 2]).expect("#1321 bin fixture");
+    let entry = object([
+        ("path", JsValue::from(path.as_str())),
+        ("type", JsValue::from("image")),
+    ]);
+    let result = compose_attachment_turn(&scratch.0, &message("hi"), &[entry])
+        .expect("#1321 unmapped image composes the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Cannot determine image mime type from {path}; provide mimeType explicitly."
+        )),
+        "#1321 an image without a determinable mime must be diagnosed"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1321 an image without a determinable mime must not be inlined"
     );
 }
