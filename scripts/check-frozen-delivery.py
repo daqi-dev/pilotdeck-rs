@@ -48,10 +48,14 @@ On top of the apparatus checks it inspects the event files added on the branch
 ``PENDING-REVIEWS`` and is *not* blocking: the coordinator may ``--write``,
 while final registration still waits for real reviews.
 
-All evidence is read from HEAD: an event file that was never committed, a
-working-tree edit to its ``Change:`` rows, or uncommitted target bytes cannot
-make the branch look ready.  A dirty tree is reported as a note because the
-apparatus itself reads the working tree.
+All evidence is read from HEAD: an event file that was never committed or a
+working-tree edit to its ``Change:`` rows cannot make the branch look ready.
+A first registration is decided by the merge-base *hash row* (not by the diff
+status): anything ``--write`` would add a row for needs an exact
+``Change: - <sha256> <path>`` chain, and a path that had no row at the
+merge-base starts there from ``-``.  A dirty tracked working tree is blocking:
+the apparatus hashes working-tree bytes, so HEAD could otherwise hide behind
+uncommitted changes.
 
 Read-only.  It never runs ``--write`` and never edits the tree.
 
@@ -132,10 +136,10 @@ def git_bytes(root, *args):
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def merge_base(root, base):
-    code, out, err = git(root, 'merge-base', 'HEAD', base)
+def merge_base(root, base, head='HEAD'):
+    code, out, err = git(root, 'merge-base', head, base)
     if code or not out.strip():
-        return None, f'cannot resolve merge-base(HEAD, {base}): {err.strip() or out.strip()}'
+        return None, f'cannot resolve merge-base({head}, {base}): {err.strip() or out.strip()}'
     return out.strip(), None
 
 
@@ -164,12 +168,73 @@ def blob_at(root, commit, path):
     return True, (hashlib.sha256(data).hexdigest() if code == 0 else None)
 
 
-def base_digest(root, mb, path):
-    """sha256 of <mb>:<path>, '-' when absent there, None when unknowable."""
+def base_digest(root, kind, mb, path):
+    """sha256 of the merge-base pin for ``path``, '-' when it had no row there.
+
+    ``check_frozen`` starts every registration chain from
+    ``old_hashes.get(name, '-')``, where ``old_hashes`` is built from the
+    merge-base **manifest rows** -- not from the blobs that happen to exist.
+    A file that was already in the tree at the merge-base but only entered the
+    apparatus inventory on this branch therefore starts at '-': anchoring on its
+    old blob would reject the correct ``Change: -`` chain (false block) and,
+    worse, accept a chain the real gate cannot follow (false READY).
+    """
+    if not mb:
+        return None
+    state = registered_at(root, kind, path, mb)
+    if state is None:
+        return None
+    if not state:
+        return '-'
     state, value = blob_at(root, mb, path)
     if state is None or (state is True and value is None):
         return None
-    return value if state else '-'
+    # A row whose blob is missing at the merge-base is a broken base: the real
+    # gate refuses it ("base manifest does not match base blob"), so nothing this
+    # branch can write would be deliverable.
+    return value if state else None
+
+
+# ------------------------------------------------------------ manifest rows
+ROW_BARE = re.compile(r'[0-9a-f]{16,64}  (\S+)')
+ROW_TABLE = re.compile(r'\| `([^`]+)` \| `[0-9a-f]{16,64}[^`]*`.*')
+_ROW_CACHE = {}
+_SOURCE_CACHE = {}
+
+
+def manifest_rows(root, kind, commit):
+    """Repo-relative paths that have a hash row in ``specs/<kind>/FROZEN.md``.
+
+    All three apparatuses write their ``--write`` rows into that one file
+    (gateway/ui as ``<hash>  ../../<path>``, parity as a table cell), so the row
+    list -- not the diff status and not the blob -- says what was registered at
+    a given commit.  ``None`` means "cannot tell"; callers fail closed.
+    """
+    key = (str(root), kind, commit)
+    if key in _ROW_CACHE:
+        return _ROW_CACHE[key]
+    code, data, _ = git_bytes(root, 'cat-file', 'blob', f'{commit}:specs/{kind}/FROZEN.md')
+    rows = None
+    if code == 0:
+        rows = set()
+        for line in data.decode('utf-8', 'replace').splitlines():
+            match = ROW_TABLE.fullmatch(line) or ROW_BARE.fullmatch(line)
+            if not match:
+                continue
+            name = match.group(1)
+            if name.startswith('../../'):
+                name = name[6:]
+            elif not name.startswith(('scripts/', 'specs/')):
+                name = f'specs/{kind}/{name}'
+            rows.add(name)
+    _ROW_CACHE[key] = rows
+    return rows
+
+
+def registered_at(root, kind, path, commit):
+    """True/False/None -- did ``path`` have a hash row at ``commit``?"""
+    rows = manifest_rows(root, kind, commit)
+    return None if rows is None else path in rows
 
 
 # ------------------------------------------------------------ discovery
@@ -276,10 +341,10 @@ def event_evidence(root, kind, mb):
     return edges, pending, issues
 
 
-def chain_backed(root, edges, path, mb):
+def chain_backed(root, kind, edges, path, mb):
     """True when the added event rows form the *exact* chain check_frozen demands.
 
-    Mirrors ``check_frozen.check_registration``: from the merge-base bytes, each
+    Mirrors ``check_frozen.check_registration``: from the merge-base row, each
     step needs exactly one matching edge (``old == current``), every edge is used
     at most once, no edge may remain unused, and the path must actually differ
     from the merge-base.  A bare "one matching edge exists" test would accept
@@ -293,7 +358,7 @@ def chain_backed(root, edges, path, mb):
         return False
     if not mb:
         return False
-    base = base_digest(root, mb, path)
+    base = base_digest(root, kind, mb, path)
     if base is None or base == actual:
         return False
     remaining = [(old, new) for _, name, old, new in edges if name == path]
@@ -363,6 +428,51 @@ def bare_manifest_file(root, kind, name):
     return path.is_file() and not path.is_symlink() and head_tracked(root, path)
 
 
+def source_text(root, commit, path):
+    """Text of ``commit:path``, or None when it cannot be read."""
+    key = ('source', str(root), commit, path)
+    if key in _SOURCE_CACHE:
+        return _SOURCE_CACHE[key]
+    code, data, _ = git_bytes(root, 'cat-file', 'blob', f'{commit}:{path}')
+    value = data.decode('utf-8', 'replace') if code == 0 else None
+    _SOURCE_CACHE[key] = value
+    return value
+
+
+def gateway_inventory(root, commit='HEAD'):
+    """Paths gateway-parity's ``--write`` would give a FROZEN row.
+
+    Its inventory is a literal in the apparatus source (``manifest_inventory``
+    over ``A2_SCRIPTS`` plus two session fixtures and five a5-19 files), *not*
+    every file the source mentions: ``A3_SCRIPTS`` and ``DATA_FILES`` are part of
+    the unregistered-file whitelist but get no hash row, so a basename match
+    over the sources demands chains for files ``--write`` never registers (a
+    dead end).  ``None`` means the shape was not recognised; callers fall back
+    to the coarse match, which errs towards blocking.
+    """
+    key = ('gateway-inventory', str(root), commit)
+    if key in _SOURCE_CACHE:
+        return _SOURCE_CACHE[key]
+    inventory = None
+    common = source_text(root, commit, 'scripts/gateway-parity/common.py')
+    frozen = source_text(root, commit, 'scripts/gateway-parity/check_frozen.py')
+    if common is not None and frozen is not None:
+        scripts = re.search(r'^A2_SCRIPTS\s*=\s*\((.*?)\)', common, re.S | re.M)
+        body = re.search(r'^def manifest_inventory\(.*?(?=^def |\Z)', frozen, re.S | re.M)
+        if scripts and body:
+            literals = re.findall(r"'([^']+)'", body.group(0))
+            prefixes = {item for item in literals if item.endswith('/')}
+            full = {item for item in literals if '/' in item and not item.endswith('/')}
+            bare = {item for item in literals if '/' not in item and '.' in item}
+            inventory = set(full)
+            inventory.update(f'specs/gateway-parity/{name}' for name in bare)
+            inventory.update(f'scripts/gateway-parity/{name}'
+                             for name in re.findall(r"'([^']+)'", scripts.group(1)))
+            inventory.update(prefix + name for prefix in prefixes for name in bare)
+    _SOURCE_CACHE[key] = inventory
+    return inventory
+
+
 def registrable(root, kind, path):
     """True when this apparatus's ``--write`` would add a FROZEN row for ``path``.
 
@@ -377,32 +487,48 @@ def registrable(root, kind, path):
             return True
         if not path.startswith('scripts/parity/'):
             return False
-        code, out, _ = git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--',
-                           'scripts/parity/')
-        return code == 0 and path in out.splitlines()
+        return tracked_at_head(root, path)
     if kind == 'gateway-parity':
         if path in {f'specs/gateway-parity/{name}' for name in GATEWAY_SPEC_FILES}:
             return True
         if not path.startswith(GATEWAY_DIRS):
             return False
+        inventory = gateway_inventory(root, 'HEAD')
+        if inventory is not None:
+            return path in inventory
         name = Path(path).name
         for source in ('scripts/gateway-parity/common.py',
                        'scripts/gateway-parity/check_frozen.py'):
-            code, data, _ = git_bytes(root, 'cat-file', 'blob', f'HEAD:{source}')
-            if code == 0 and name.encode() in data:
+            text = source_text(root, 'HEAD', source)
+            if text is not None and name in text:
                 return True
         return False
     return True  # ui-server-parity names the required files in its own report
 
 
-def unregistered_added(root, kind, mb):
-    """Files added on the branch that this apparatus's --write would register.
+def tracked_at_head(root, path):
+    """True when ``path`` is tracked in HEAD's tree (one ls-tree per prefix)."""
+    prefix = path.split('/', 1)[0] + '/' if '/' in path else path
+    key = (str(root), prefix)
+    if key not in _SOURCE_CACHE:
+        code, out, _ = git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--', prefix)
+        _SOURCE_CACHE[key] = set(out.splitlines()) if code == 0 else None
+    listing = _SOURCE_CACHE[key]
+    return listing is not None and path in listing
 
-    These never appear in a pre-write failure list of their own: parity only
-    says the hash list differs, gateway-parity only says the generated
-    inventory differs.  Without this scan a new file with no event row reads as
-    READY here and is rejected by check_frozen --base right after --write.
-    Files the apparatus would *not* register are ignored: they are inert for the
+
+def unregistered_added(root, kind, mb):
+    """Paths ``--write`` would add a FROZEN row for, that had no row at the base.
+
+    A first registration is a *row* question, not a diff-status question: a file
+    that already existed at the merge-base but only entered the apparatus
+    inventory on this branch is not an ``A`` entry (and a file moved into a
+    registrable directory is ``R`` under git's default rename detection), yet
+    ``--write`` adds a row for both.  Missing them means the failure list holds
+    only "the hash list differs", which reads as READY, while ``check_frozen
+    --base`` rejects the result right after ``--write``.
+
+    Files the apparatus would not register are ignored: they are inert for the
     real gate, and demanding an event row for them would be a dead end (an
     unused event row is itself a failure).
     """
@@ -412,18 +538,19 @@ def unregistered_added(root, kind, mb):
     prefixes = {'parity': ('scripts/parity/',),
                 'gateway-parity': GATEWAY_DIRS}.get(kind, ())
     for prefix in prefixes:
-        # --no-renames: a file moved *into* a registrable directory is status R
-        # under git's default rename detection and would be filtered out here,
-        # while its destination does become a new inventory row --write
-        # registers (a false READY).  Treated as an addition it is chained like
-        # any other first registration.
-        code, out, err = git(root, 'diff', '--no-renames', '--name-only',
-                             '--diff-filter=A', '-z', mb, 'HEAD', '--', prefix)
+        code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
+                             'HEAD', '--', prefix)
         if code:
-            issues.append(f'cannot list files added under {prefix}: {err.strip()}')
+            issues.append(f'cannot list files under {prefix}: {err.strip()}')
             continue
         for name in filter(None, out.split('\0')):
-            if BYTECODE.search(name) or not registrable(root, kind, name):
+            if BYTECODE.search(name):
+                continue
+            state = registered_at(root, kind, name, mb)
+            if state is None:
+                issues.append(f'{name}: cannot tell whether it had a hash row at the base')
+                continue
+            if state or not registrable(root, kind, name):
                 continue
             added.append(name)
     return sorted(set(added)), issues
@@ -448,7 +575,7 @@ def classify(ctx, item):
             if not name.strip():
                 continue
             relative = strip_reported(name)
-            if not relative or not chain_backed(root, edges, relative, mb):
+            if not relative or not chain_backed(root, kind, edges, relative, mb):
                 unbacked.append(relative or name.strip())
         if not unbacked:
             return 'ok', None, None
@@ -458,13 +585,13 @@ def classify(ctx, item):
     match = UNREGISTERED.fullmatch(item)
     if match:
         relative = strip_reported(match.group(1))
-        if relative and chain_backed(root, edges, relative, mb):
+        if relative and chain_backed(root, kind, edges, relative, mb):
             return 'ok', None, None
         return 'block', 'blocking', None
     match = LACKS_CHAIN.match(item)
     if match:
         name = match.group(1)
-        if registrable(root, kind, name) and chain_backed(root, edges, name, mb):
+        if registrable(root, kind, name) and chain_backed(root, kind, edges, name, mb):
             return 'ok', None, None
         return 'block', 'blocking', None
     # A Pending: placeholder can fail the two-family rule; that is expected.
@@ -546,7 +673,7 @@ def run_apparatus(root, kind, entry, base, mb):
         if exists_at(root, 'HEAD', name) is not True:
             result['blocking'].append(('blocking', f'{name}: unregistered file is not '
                                                    'committed (git add/commit required)', None))
-        elif not chain_backed(root, edges, name, mb):
+        elif not chain_backed(root, kind, edges, name, mb):
             result['blocking'].append(('blocking', f'{name}: first registration without an '
                                                    'exact Change: - <sha256> event chain '
                                                    '(--write would register it and check_frozen '
@@ -628,22 +755,14 @@ def main(argv=None):
         return 1
     kinds = {kind for kind, _ in apparatuses}
 
-    mb, mb_error = merge_base(root, args.base)
     print(f'check-frozen-delivery: root={root}')
-    print(f'  base={args.base} merge-base={mb or "<unresolved>"}')
-    if mb_error:
-        # Never fall back to mb=None: chain_backed would degrade the base to '-'
-        # and widen acceptance to existing files.
-        print('=== base === BLOCKED')
-        print(f'  BLOCK[blocking] {mb_error}')
-        print('BLOCKED 1 / READY 0')
-        return 1
 
     # Pin the SHA the run was started on and compare it at the end: evidence and
-    # target bytes are read from HEAD, and the child apparatus reads HEAD itself,
-    # so a commit landing mid-run (``--amend`` in the audited worker tree) would
-    # let event rows from one commit back bytes from another -- a false READY
-    # that is not fixed by pinning only this process's reads.
+    # target bytes are read from HEAD, and the child apparatus reads HEAD as
+    # well, so a commit landing mid-run (``--amend`` in the audited worker tree)
+    # would let event rows from one commit back bytes from another -- a false
+    # READY that is not fixed by pinning only this process's reads.  The
+    # merge-base is computed from this pinned SHA for the same reason.
     code, head_before, head_err = git(root, 'rev-parse', '--verify', 'HEAD')
     head_before = head_before.strip()
     if code or not head_before:
@@ -653,13 +772,30 @@ def main(argv=None):
         print('BLOCKED 1 / READY 0')
         return 1
 
+    mb, mb_error = merge_base(root, args.base, head_before)
+    print(f'  base={args.base} merge-base={mb or "<unresolved>"}')
+    if mb_error:
+        # Never fall back to mb=None: chain_backed would degrade the base to '-'
+        # and widen acceptance to existing files.
+        print('=== base === BLOCKED')
+        print(f'  BLOCK[blocking] {mb_error}')
+        print('BLOCKED 1 / READY 0')
+        return 1
+
+    # Uncommitted tracked changes are blocking, not a note: the apparatus hashes
+    # *working-tree* bytes, so a dirty tree can hide a HEAD side change (or the
+    # reverse) and yield READY for a branch CI will reject.  Untracked files are
+    # invisible to the apparatus, so they stay a note.
     code, dirty, dirty_err = git(root, 'status', '--porcelain', '--untracked-files=no')
+    tree_block = None
     if code != 0:
-        print('  note: cannot check working-tree cleanliness '
-              f'({dirty_err.strip() or f"git status rc={code}"})')
+        tree_block = ('cannot check working-tree cleanliness, so HEAD could be hiding '
+                      'behind uncommitted bytes: '
+                      + (dirty_err.strip() or f'git status rc={code}'))
     elif dirty.strip():
-        print('  note: working tree has uncommitted tracked changes; event evidence and '
-              'target bytes are read from HEAD, while the apparatus reads the working tree')
+        tree_block = ('working tree has uncommitted tracked changes; the apparatus hashes '
+                      'working-tree bytes, so HEAD is not what gets judged: '
+                      + '; '.join(sorted(line.strip() for line in dirty.splitlines())[:5]))
 
     # Pin the resolved SHA: pass it (not the symbolic ref) to every apparatus so
     # a concurrent ``git fetch`` cannot move the base between classification and
@@ -667,6 +803,12 @@ def main(argv=None):
     results = [run_apparatus(root, kind, entry, mb, mb)
                for kind, entry in apparatuses]
     issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
+
+    if tree_block:
+        results.insert(0, {'kind': 'worktree',
+                           'blocking': [('blocking', tree_block, None)],
+                           'reducible': [], 'pending': [], 'pending_events': [],
+                           'note': None})
 
     code, head_after, _ = git(root, 'rev-parse', '--verify', 'HEAD')
     head_after = head_after.strip() if code == 0 else ''

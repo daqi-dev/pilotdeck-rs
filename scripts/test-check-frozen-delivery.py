@@ -52,10 +52,20 @@ def write(root, name, text):
     (root / name).write_text(text)
 
 
+def row(root, kind, path, digest, text=None):
+    """在 base 的 FROZEN.md 里给 path 写一条清单行（注册起点是行，不是 blob）。"""
+    write(root, f"specs/{kind}/FROZEN.md",
+          f"# fake FROZEN\n\n{digest}  {path}\n")
+    if text is not None:
+        write(root, path, text)
+
+
 def fake_apparatus(root, kind, payload, source=""):
-    write(root, f"specs/{kind}/FROZEN.md", "# fake FROZEN\n")
-    write(root, f"scripts/{kind}/check_frozen.py",
-          "import json\nprint(json.dumps(" + repr(payload) + "))\n" + source)
+    body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + source
+    write(root, f"scripts/{kind}/check_frozen.py", body)
+    # 装置自身在 base 已有清单行：它改字节时走「改已登记文件」的路，不该被当成首登记。
+    write(root, f"specs/{kind}/FROZEN.md",
+          f"# fake FROZEN\n\n{sha(body)}  ../../scripts/{kind}/check_frozen.py\n")
 
 
 HASH_LIST = "hash list differs from generated inventory; run check_frozen.py --write"
@@ -104,7 +114,7 @@ def run():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_repo(root)
-        write(root, "scripts/fake/x.py", "A\n")
+        row(root, "fake", "scripts/fake/x.py", sha("A\n"), "A\n")
         commit(root, "base")
         base = git(root, "rev-parse", "HEAD")
         write(root, "scripts/fake/x.py", "B\n")
@@ -116,15 +126,15 @@ def run():
         case("event_evidence 收齐一条已提交的 Change 行",
              len(edges) == 1 and not issues, f"edges={edges} issues={issues}")
         case("单条边精确链通过",
-             cfd.chain_backed(root, edges, "scripts/fake/x.py", base) is True)
+             cfd.chain_backed(root, "fake", edges, "scripts/fake/x.py", base) is True)
         case("断链被拒（边指向别的 old）",
-             cfd.chain_backed(root, [("e.md", "scripts/fake/x.py", sha("X\n"), sha("B\n"))],
+             cfd.chain_backed(root, "fake", [("e.md", "scripts/fake/x.py", sha("X\n"), sha("B\n"))],
                               "scripts/fake/x.py", base) is False)
 
         # 工作树里写一个新文件，HEAD 没有它：不能用它的字节补链。
         write(root, "scripts/fake/y.py", "Y\n")
         case("工作树里的未提交文件不能补链",
-             cfd.chain_backed(root, edges, "scripts/fake/y.py", base) is False)
+             cfd.chain_backed(root, "fake", edges, "scripts/fake/y.py", base) is False)
 
         # 重复边：旧实现「找到一条 old==base 的边」就放行（假 PASS）。
         write(root, "specs/fake/frozen/20260101-e2.md",
@@ -132,7 +142,7 @@ def run():
         commit(root, "duplicate edge")
         dup, _, _ = cfd.event_evidence(root, "fake", base)
         case("重复边被拒（旧实现会假 PASS）",
-             len(dup) == 2 and cfd.chain_backed(root, dup, "scripts/fake/x.py", base) is False)
+             len(dup) == 2 and cfd.chain_backed(root, "fake", dup, "scripts/fake/x.py", base) is False)
 
         # 未提交的事件文件不能当证据。
         write(root, "specs/fake/frozen/20260101-e3.md",
@@ -156,13 +166,15 @@ def run():
               f"Change: {sha('C\n')} {sha('D\n')} scripts/fake/x.py\n")  # 只改工作树
         forged, _, _ = cfd.event_evidence(root, "fake", base2)
         case("工作树补的 Change 行不算证据（只读 HEAD）",
-             cfd.chain_backed(root, forged, "scripts/fake/x.py", base2) is False,
+             cfd.chain_backed(root, "fake", forged, "scripts/fake/x.py", base2) is False,
              f"edges={forged}")
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_repo(root)
-        write(root, "scripts/fake/x.py", "A\n")
+        row(root, "fake", "scripts/fake/x.py", sha("A\n"), "A\n")
+        write(root, "specs/ui-server-parity/FROZEN.md",
+              f"# fake FROZEN\n\n{sha('A\n')}  ../../scripts/fake/x.py\n")
         commit(root, "base")
         base = git(root, "rev-parse", "HEAD")
         write(root, "scripts/fake/x.py", "B\n")
@@ -281,6 +293,74 @@ def run():
         case("gateway 改名目的地有 Change: - 事件链 → READY",
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
+
+    # --------------------------------- 既有文件被本分支加进清单＝首登记
+    gw_payload = {"status": "FAIL", "failures": [HASH_LIST]}
+    new_source = "# inventory names fixtures/x.json\n"
+    named = "import json\nprint(json.dumps(" + repr(gw_payload) + "))\n" + new_source
+
+    with tempfile.TemporaryDirectory() as td:
+        # x.json 在 merge-base 就存在、但当时没有清单行；本分支改 check_frozen.py
+        # 把它加进清单 → --write 会加行，链必须从 '-' 起。旧实现只扫 diff 的 A，
+        # 该文件不是 A → 只剩「hash list differs」→ 假 READY。
+        proc = delivery(Path(td), "gateway-parity", gw_payload,
+                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n")],
+                        files=[("scripts/gateway-parity/check_frozen.py", named)])
+        case("既有文件被加进清单、无事件链 → BLOCKED（旧实现假 READY）",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 正控：按真实闸门的语义写 Change: - <sha>（起点是清单行缺失，不是旧 blob）。
+        proc = delivery(Path(td), "gateway-parity", gw_payload,
+                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n")],
+                        files=[("scripts/gateway-parity/check_frozen.py", named)],
+                        events=[("specs/gateway-parity/frozen/20260101-s.md",
+                                 f"Change: - {sha('{}\n')} "
+                                 "scripts/gateway-parity/fixtures/x.json\n"
+                                 + EVENT_FIELDS)])
+        case("既有文件加进清单、Change: - 链 → READY（旧实现假 BLOCKED）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 工作树的未提交改动 → 阻塞：子装置哈希的是工作树字节，HEAD 可以被遮住。
+        proc = delivery(Path(td), "parity", parity_payload,
+                        files=[("scripts/parity/new.py", "NEW\n")],
+                        events=[("specs/parity/frozen/20260101-d.md",
+                                 f"Change: - {sha('NEW\n')} scripts/parity/new.py\n"
+                                 + EVENT_FIELDS)],
+                        dirty=[("scripts/parity/new.py", "TAMPERED\n")])
+        case("工作树有未提交的已跟踪改动 → BLOCKED",
+             proc.returncode == 1 and "=== worktree === BLOCKED" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # ------------------------------------------- gateway 可登记集取自装置源码
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py",
+              "A2_SCRIPTS = ('alpha.py', 'beta.py')\n"
+              "A3_SCRIPTS = ('check_schema.py',)\n"
+              "DATA_FILES = ('README.md', 'package.json')\n")
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "def manifest_inventory(root):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    paths += ['scripts/gateway-parity/fixtures/one.json']\n"
+              "    return paths\n\n"
+              "def something_else():\n    return 1\n")
+        commit(root, "base")
+        case("gateway A2 成员算首登记",
+             cfd.registrable(root, "gateway-parity",
+                             "scripts/gateway-parity/alpha.py") is True)
+        case("gateway 清单内 fixtures 成员算首登记",
+             cfd.registrable(root, "gateway-parity",
+                             "scripts/gateway-parity/fixtures/one.json") is True)
+        case("gateway DATA_FILES / A3 不算首登记（--write 不加行）",
+             cfd.registrable(root, "gateway-parity",
+                             "scripts/gateway-parity/README.md") is False
+             and cfd.registrable(root, "gateway-parity",
+                                 "scripts/gateway-parity/check_schema.py") is False)
 
     # ------------------------------------------------------- fail-closed
     with tempfile.TemporaryDirectory() as td:
