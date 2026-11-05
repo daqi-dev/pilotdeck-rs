@@ -2,9 +2,10 @@
 """#1350 compiled controls: compile every switch once, then run the selected
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
-mutates exactly one module-host approvals transport gate and is killed by the
-replay cell that pins that gate's TS bytes (12 switches). Run one sample in
-the authoring session; the coordinator runs the complete list after the patch
+mutates exactly one module-host approvals transport or store gate and is
+killed by the replay cell that pins that gate's TS bytes or the fix-r1
+component test that pins its code (17 switches). Run one sample in the
+authoring session; the coordinator runs the complete list after the patch
 is committed.
 """
 import argparse
@@ -51,6 +52,21 @@ switches = [
     # duplicate-receipt replay off: the duplicate cell hits the cleared wait's
     # SOP_NOT_WAITING 502 instead of the stored receipt's 200.
     ('approvals-duplicate-off', PENDING, 'resume_duplicate', '#1350 cell resume-duplicate normalized response'),
+    # failure body null fallback off: the undefined code writes the illegal
+    # {"code":} frame again (fix-r1 direct test).
+    ('approvals-failure-body-null-off', SOURCE, 'failure_body_is_valid_json_for_every_code', '#1350 an undefined code must serialize as null'),
+    # not-waiting branch off: the late resume on an active session is
+    # relabeled with another state error (fix-r1 direct test).
+    ('approvals-not-waiting-off', PENDING, 'late_resume_on_an_active_session_is_not_waiting', '#1350 a resume on an active session must be the SOP_NOT_WAITING 502'),
+    # authority gate off: the authority-less store resume is relabeled
+    # (fix-r1 direct test).
+    ('approvals-auth-required-off', PENDING, 'resume_without_authority_requires_auth', '#1350 the authority-less resume must demand the authority'),
+    # expected-revision gate off: the revision-less handoff resume is
+    # relabeled (fix-r1 direct test).
+    ('approvals-revision-required-off', PENDING, 'handoff_resume_without_expected_revision_requires_it', '#1350 the handoff resume must demand the original revision'),
+    # legacy-receipt rejection off: the authorization-less receipt replays
+    # as a conflict instead (fix-r1 direct test, fix-r2 store-level).
+    ('approvals-legacy-receipt-off', PENDING, 'legacy_receipt_replay_is_rejected', '#1350 the legacy receipt replay must be rejected as the legacy shape'),
 ]
 GUARDED = [SOURCE, PENDING,
     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',
