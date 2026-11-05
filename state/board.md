@@ -1,10 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-06 00:29 · by Claude Code 状态维护子代理（READY 块按 00:29 实测重写：18 张 PR 已合出队 #1546 #1547 #1548 #1549 #1559 #1560 #1562 #1563 #1564 #1565 #1568 #1572 #1578 #1405 #1531 #1532 #1542 #1545；#1467 #1453 #1522 #1258 关单出队；merge queue 2 张 #1573 #1577）· 45 条（doing 23 / ready 7 / blocked 14 / human 1）· 磁盘 178.3/200 GiB · worktree 37/40
+updated: 2026-11-06 01:50 · by Claude Code 状态维护子代理（01:50 补：上一版块头漏改，本条修正——#1324/#1427 关单出队；worktree 上限已由 #1580 升到 60、磁盘最近成功实测 202.9 GiB 已越 200 上限）· 43 条（doing 22 / ready 7 / blocked 13 / human 1）· 磁盘 202.9/200 GiB（disk-budget level=hard，01:13 实测；01:19 复测 _tmp du 失败 fail-closed）· worktree 46/60 · merge queue 2 张 #1591 #1515
 - #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：#1498 人 20:06 回复 B（waiter 断链自动 resume + 证据轮次号，AI 可实施，待排）；#1475（#1313 重划，question）待人复核；#144 P0 候选待补决策卡；#401 实测无剩余工作、建议关单待人点头；worktree 上限已由 PR #1580 改为 60（2026-11-05 23:0x 人令，AI 代批、待人复核；磁盘阈值说了算）。本轮资源：磁盘最近一次成功实测 202.9/200 GiB（disk-budget level=hard，已越上限；01:19 复测 _tmp du 失败 → fail-closed 停机）→ 先回收再派新树；worktree 39/60；merge queue 1 张 #1590
 - #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412）已合；s3 #1370 已开 PR #1561 draft；s4/s5 #1371/#1372 顺次；#1408 前置于本单关单
-- #1355 | impl | doing | E1 --suite retirement 冻结装置：PR #1515 已转非 draft、「待评审」（head 636958585）；r4b 增量双家 anthropic P0/P1=0/0（P2=6）+ minimax P0/P1=0/1（P2=10）→ 剩 1 条 P1（第 1/5 类缺 send 帧仍记 PASS 的无凭 PASS）待修或仲裁；冻结 P1 不适用第 3 轮放行；收货后 check_frozen --write 由协调者执行；跟进 #1524
+- #1355 | impl | doing | E1 --suite retirement 冻结装置：PR #1515 已转非 draft、已入 merge queue 第 2 位（head 636958585）；r4b 增量双家 anthropic P0/P1=0/0（P2=6）+ minimax P0/P1=0/1（P2=10）→ 剩 1 条 P1（第 1/5 类缺 send 帧仍记 PASS 的无凭 PASS）待修或仲裁；冻结 P1 不适用第 3 轮放行；收货后 check_frozen --write 由协调者执行；跟进 #1524
 - #1365 | impl | doing | P1-跟进 #1245 ClosingGuard settle 写入无判据 + panic 先结算：PR #1413 draft（head f6a28b745）；fix-r1 b2e4450be 已推，待四角色闸门 + 宿主负控；与 #996（M6 车道）同改 owner.rs 族串行
 - #1328 | impl | doing | channel weixin：mbp2 worker 续跑（树 wt-1328），无 PR；与 #1329 的 native_http 串行已随 #1292 合入解除
 - #1339 | impl | doing | A8.3-ch-sms：PR #1526 draft（MERGEABLE，head 096bdb0e4），linux 负控 + 三通道评审证据在 _tmp/20261105-issue-1339-*，待评审收口入队
