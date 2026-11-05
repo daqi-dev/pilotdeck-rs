@@ -48,17 +48,23 @@ status: 一次性账本已记录；四格分别报告，无后续四格回归闸
 |---|---|---|
 | `session_domain.py --suite calibrate`（E1，TS 进程内受控，**无 sidecar、无 HTTP**） | `status=PASS`、`executionStatus=PASS`、`expectations=PASS`（72 case / 360 measurement / a19DiffCases 54）、`oracle=PASS`（360 条负控全部命中）、`cleanupStatus=VERIFIED`、`unstableGroups=[]`、`frozen.exitCode=0`（30 项登记） | `_tmp/20261106-issue-590/calibrate-ts-ts/report.json` |
 | `native-topology/run.py` 的 `TS-sidecar-ts` 格 | `NOT_RUN`，`reason="TS host not executed"` | `_tmp/20261106-issue-590/native-topology-001/report.json` |
-| `scripts/parity/round.py --side ts` | sidecar 身份 `identity_ok=true`（53/53 场景各一条 `harness.proof`，sha256 与预期一致、`spawnObserved=true`）、`valid_round=true`、`run_py_exit=1`；比较 53 场景 **26 条一致 / 27 条有差异** | `_tmp/20261106-issue-590/parity/side-ts/run.json` 与 `artifacts/*-pilotdeck.md` |
+| `scripts/parity/round.py --side ts` | sidecar 身份 `identity_ok=true`（53/53 场景各一条 `harness.proof`，sha256 与预期一致、`spawnObserved=true`）、`valid_round=true`、`run_py_exit=1`；`summary.json`：`scenarios=53` / `failed=27` / `expectedExtensions=3` / `blocked=0` / `oracleFailures=0` | `_tmp/20261106-issue-590/parity/side-ts/run.json` 与 `artifacts/*-pilotdeck.md` |
 
 E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-controlled`、`sidecar.status=NOT_APPLICABLE`
 （"controlled in-process TS loop; no sidecar binary"），`acceptanceStatus=NOT_RUN`、`freezeStatus=DRAFT_AWAITING_A5_4`。
 **它证明的是 TS 进程内会话域观察装置自身可用，不是"TS 宿主 + TS sidecar 这一格通过"。**
 
-对 `round.py --side ts` 的 27 条差异分诊（脚本口径：把每份报告的 semantic difference 条目取左/右非 null 值做多重集比对）：
+`summary.json` 的账：**27 条 failed**（26 条纯换位 + 1 条内容差异 `sidecar_budget_limit`）+
+**3 条 expectedExtensions**（`deadline` 的 2 条差异、两条 `sidecar_continuable_followup_*` 的 0 条差异）
++ 23 条完全一致 = 53。（分诊口径：把每份 md 的 semantic difference 条目取左/右非 null 值做多重集比对。）
 
-- **26 条是纯换位**：同一批事件/字段，出现位置不同。例：`single_tool` 的 `agent.status/turn_continued`
+- **26 条纯换位**：同一批事件/字段，出现位置不同。例：`single_tool` 的 `agent.status/turn_continued`
   在宿主侧落在 `trace[10]`、sidecar 侧落在 `trace[12]`，比较器按位置判成 2 条差异。
-- **2 条是内容差异**（两格都有，见下）。
+- **1 条内容差异**：`sidecar_budget_limit` —— 宿主写 `text="Reached Gateway-owned maxBudgetUsd ($0.500000) after spending $1.000000."`，
+  sidecar 侧写 `text="max_budget_reached"`。
+- **`deadline` 不算失败**：它的 2 条差异（`durableStopReason="aborted_streaming"`、`resultType="aborted"` 对 `null`）
+  是场景里**已声明的 transport extension**，`declared_extension_matches` 判为 `verified 2 declared transport difference(s)`。
+  注意：同一份 md 文件里仍印着 "FAIL: 2 semantic difference(s)" —— **判状态看 `summary.json`，不要看 md 标题**。
 
 ### 格② TS 宿主 × Rust sidecar
 
@@ -67,27 +73,30 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 | sidecar 二进制 | `pilotdeck-agent-loop-sidecar`，sha256 `37961b37b9340e49f0ec6d76a65a58703c5f6832aa34f1f49a4a02d72d7009f6` |
 | 身份 | `identity_ok=true`，**53/53 场景逐条** `harness.proof` 命中（side/sha256/spawnObserved 三项全对） |
 | 轮次 | `valid_round=true`，`run_py_exit=1`，用时 243.7 s |
-| 比较 | **4 条一致 / 49 条有差异**（47 条纯换位 + 2 条内容差异） |
+| 比较 | **49 条 failed**（47 条纯换位 + 2 条内容差异）+ **2 条 expectedExtensions**（0 条差异）+ **2 条完全一致**（`auto_compact`、`plan_mode_host_policy`）= 53 |
 
 **归因（这是本账本最有用的一格）：**
 
-- 23 条场景**只在②有差异、①没有** ⇒ 这 23 条归因 **sidecar 侧**（Rust sidecar 与 ts sidecar 在宿主眼里的可见行为不同）。
-  名单：`can_prompt_false`、`cancel_during_tool`、`checkpoint_resume`、`deadline`、`deadline_during_tool`、`image`、
+- **22 条场景② failed、① 完全无差异** ⇒ 归因 **sidecar 侧**（Rust sidecar 与 ts sidecar 在宿主眼里的可见行为不同）。
+  名单：`can_prompt_false`、`cancel_during_tool`、`checkpoint_resume`、`deadline_during_tool`、`image`、
   `malformed_model_response`、`max_turns`、`model_non_retryable_error`、`model_retryable_error`、`multi_tool_mixed_permission`、
   `multimodal_image_and_text`、`plan_mode_bypass_host_policy`、`pure_text`、`sidecar_additional_working_directories`、
   `sidecar_elicitation`、`sidecar_empty_system_prompt`、`sidecar_live_model_stream`、`sidecar_model_metadata`、
   `sidecar_one_shot_parent_abort_after_admission`、`sidecar_one_shot_parent_close_after_admission`、`stream_interruption`、
   `write_snapshot_resume`。
+- 第 23 条是 `deadline`：① 里它的 2 条差异被登记为**已声明扩展**（verified），② 里变成 `transport contract mismatch`
+  ⇒ 同样归因 **sidecar 侧**，但性质是"已声明的契约没兑现"，不是"凭空多出的差异"。22 + 1 = 23 条 sidecar 侧信号。
 - 1 条**只在①有差异**（`plan_mode_host_policy`）⇒ 归因 **sidecar 侧的反向不稳定**：换 Rust sidecar 后该场景反而对上了。
   这一条同时说明该场景的"一致"不稳，不能单独当通过证据。
-- **两条内容差异两格都有** ⇒ 归因 **宿主侧**（与 sidecar 是谁无关），且是基线自带、非本 PR 引入：
+- 2 条内容差异（`deadline`、`sidecar_budget_limit`）：
 
-  | 场景 | 宿主侧（native） | sidecar 侧 |
-  |---|---|---|
-  | `deadline` | `trace[3].durableStopReason="aborted_streaming"`、`resultType="aborted"` | 两者均为 `null`（②另报 `transport contract mismatch`） |
-  | `sidecar_budget_limit` | `text="Reached Gateway-owned maxBudgetUsd ($0.500000) after spending $1.000000."` | `text="max_budget_reached"` |
+  | 场景 | 宿主侧（native） | sidecar 侧 | 归因 |
+  |---|---|---|---|
+  | `deadline` | `trace[0]` 有 `model.request`；`durableStopReason="aborted_streaming"`、`resultType="aborted"` 有值 | `model.request` 落到 `trace[2]`（换位）；两个字段均为 `null`；另多一条 `trace[6].durable.status=gateway_submit_failed` | **sidecar 侧**：①只把它记成 "verified 2 declared transport difference(s)"（已声明扩展），②变成 `transport contract mismatch (5 semantic difference(s))` —— 声明对不上 + 多写一条失败态，是 Rust sidecar 的真实可见差 |
+  | `sidecar_budget_limit` | `text="Reached Gateway-owned maxBudgetUsd ($0.500000) after spending $1.000000."` | `text="max_budget_reached"` | **宿主侧**（①②同一条差异，与 sidecar 是谁无关），且是基线自带、非本 PR 引入；②另多一条 `context.budget` 换位 |
 
-  另 21 条换位差异②有①也有，归因**宿主与 sidecar 的公共差异**（排序），不指向任何一侧。
+  其余换位差异在①②两格都出现（同一批事件/字段只是出现位置不同），归因**宿主与 sidecar 的公共排序**，不指向任何一侧；
+  逐条计数见各自 `artifacts/*-pilotdeck.md` 的 semantic difference 行。
 
 **这一格的口径边界（必须照写）：** `round.py` 的 `PilotDeck` 比较是「当前 native 宿主 vs 当前 sidecar」，
 **不是** `specs/parity/README.md` 冻结尺子的「Rust sidecar 对 TS sidecar」。run.py 自己也写明
@@ -117,8 +126,8 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 
 | 格 | 一句话结论 | 主要归因 |
 |---|---|---|
-| ① TS/TS | 装置可跑；E1 进程内校准 PASS，但**带 sidecar 的这一格本身没有 PASS 判据**；宿主 vs sidecar 在 53 场景里 27 条有差异（26 换位 + 2 内容） | 宿主侧（2 条内容）+ 两侧公共排序 |
-| ② TS/Rust | Rust sidecar **身份 53/53 可核**；宿主 vs sidecar 差异 49 条，比①多 23 条 ⇒ 这 23 条是 Rust sidecar 的真实可见差 | sidecar 侧（23 条） |
+| ① TS/TS | 装置可跑；E1 进程内校准 PASS，但**带 sidecar 的这一格本身没有 PASS 判据**；宿主 vs sidecar 在 53 场景里 27 条 failed（26 换位 + 1 内容），另 3 条已声明扩展（`deadline` 等）判 verified | 宿主侧（1 条内容 `sidecar_budget_limit`）+ 两侧公共排序 |
+| ② TS/Rust | Rust sidecar **身份 53/53 可核**；宿主 vs sidecar 差异 49 条 failed（47 换位 + 2 内容），比①多 22 条 failed 场景、且 `deadline` 由"已声明扩展"降为契约不符 ⇒ sidecar 侧信号共 23 条 | sidecar 侧（22 条 + `deadline` 契约不符） |
 | ③ Rust/TS | 4 案 × 5 轮 PASS，但整份报告因生产入口/退役未接而 `NOT_RUN` | 无差异可归因（样本小） |
 | ④ Rust/Rust | 4 案 × 5 轮 PASS；72 case 的**采集成功、判分全 NOT_RUN**（前置于 #1242） | 无法归因（判分未执行） |
 
