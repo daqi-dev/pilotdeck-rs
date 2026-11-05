@@ -32,6 +32,18 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     }
+    // #1371: an armed controlled loop resolves and validates its plan before
+    // the server advertises readiness, so an invalid control directory fails
+    // closed here exactly like the gateway assembly.
+    if let Ok(value) = std::env::var(pilotdeck_transport::loop_stimulus::STIMULUS_ENV) {
+        match pilotdeck_transport::loop_stimulus::validate_value(&value) {
+            Ok(dir) => eprintln!("native loop stimulus on {}", dir.display()),
+            Err(message) => {
+                eprintln!("{message}");
+                return ExitCode::from(2);
+            }
+        }
+    }
     let process_cwd = match std::env::current_dir().and_then(|path| {
         path.into_os_string().into_string().map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "Process cwd is not valid UTF8.")

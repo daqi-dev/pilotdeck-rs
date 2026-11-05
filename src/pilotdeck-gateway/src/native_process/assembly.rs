@@ -118,6 +118,21 @@ pub(super) fn storage_stimulus_switch(env: &Env) -> Result<Option<PathBuf>, Prox
     Ok(Some(path))
 }
 
+/// The controlled loop/fence stimulus entry for collection and testing
+/// (#1371, `PILOTDECK_NATIVE_LOOP_STIMULUS`). Unset keeps the production
+/// default — no control files are read and no receipts are published. A set
+/// value names the control directory and publishes a construction receipt; a
+/// value that is not an existing directory (or carries a malformed plan) fails
+/// closed at startup.
+pub(super) fn loop_stimulus_switch(env: &Env) -> Result<Option<PathBuf>, ProxyError> {
+    let Some(value) = env.get(pilotdeck_transport::loop_stimulus::STIMULUS_ENV) else {
+        return Ok(None);
+    };
+    pilotdeck_transport::loop_stimulus::validate_value(value)
+        .map(Some)
+        .map_err(Into::into)
+}
+
 pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
     start_observed(
         options,
@@ -165,6 +180,13 @@ pub(super) async fn start_observed_with_upload_cleanup(
         // entry states its resolved directory at construction, before any turn
         // is driven. The receipt format follows the #1369 construction style.
         eprintln!("native storage stimulus on {}", dir.display());
+    }
+    let loop_switch = loop_stimulus_switch(&env)?;
+    let loop_armed = loop_switch.is_some();
+    if let Some(dir) = &loop_switch {
+        // #1371: the controlled loop/fence entry states its directory before
+        // any turn is driven, in the same construction style as #1370.
+        eprintln!("native loop stimulus on {}", dir.display());
     }
     if let Some(switch) = &registry_switch {
         // The #1368 registry boundary witness: the switch itself states its
@@ -312,8 +334,13 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 });
                 let tail = TailConfig {
                     cwd: Some(options.project.clone()),
-                    auto_generate_title: true,
-                    title_provider: Some(title),
+                    // #1371: the controlled loop emits no assistant text, so
+                    // the automatic title request is a stimulus difference
+                    // (RESULT.md TEXT row). An armed loop entry removes that
+                    // side effect instead of leaving a non-comparable extra
+                    // provider request in the recorded cells.
+                    auto_generate_title: !loop_armed,
+                    title_provider: (!loop_armed).then_some(title),
                     ..Default::default()
                 };
                 let session = context.session_key;

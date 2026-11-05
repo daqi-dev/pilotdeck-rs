@@ -96,11 +96,19 @@ impl TurnCompletionFence {
     }
 
     pub fn is_current(&self, session_key: &JsString, handle: &TurnCompletionHandle) -> bool {
-        self.0
+        let current = self
+            .0
             .lock()
             .unwrap()
             .get(session_key)
-            .is_some_and(|current| Arc::ptr_eq(&current.0, &handle.0))
+            .is_some_and(|current| Arc::ptr_eq(&current.0, &handle.0));
+        // #1371: the "outer fence still current" boundary witness. No-op
+        // unless the controlled loop entry is armed with a plan.
+        pilotdeck_transport::loop_stimulus::witness_fence(
+            "current",
+            if current { "true" } else { "false" },
+        );
+        current
     }
 
     /// The optional runId is checked for presence, not truthiness. Repeated
@@ -147,6 +155,11 @@ impl TurnCompletionFence {
             progress.done = true;
             changed
         });
+        // #1371: the "fence.complete before the late unknown" boundary
+        // witness. The collector waits for this receipt before releasing a
+        // late unknown, so the release can never overtake completion.
+        let run_id = handle.run_id().to_utf8().unwrap_or_default();
+        pilotdeck_transport::loop_stimulus::witness_fence("complete", run_id.as_str());
     }
 
     /// Snapshot *when called*, rather than on first poll. Replacement after a
