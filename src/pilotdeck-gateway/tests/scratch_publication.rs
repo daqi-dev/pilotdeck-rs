@@ -37,7 +37,7 @@ use std::{
     cell::Cell,
     fs, io,
     panic::{AssertUnwindSafe, catch_unwind},
-    path::Path,
+    path::{Path, PathBuf},
     process,
     sync::mpsc::{self, Receiver},
     thread,
@@ -90,7 +90,12 @@ const STRANGER_PID_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 /// (each round is a `/bin/sleep 0.05` plus its fork/exec), so the helper's
 /// bounded wait below is wall-clock (`date +%s`), which load cannot
 /// stretch: a 5 s cap gives up 3 s of real time before the delayed
-/// `started` appears, on any host.
+/// `started` appears, on any host. #1297: this is scenario pacing now, not
+/// handshake machinery — only the within-cap test below delays its
+/// `started` this long (the delay is what exposes a re-hardcoded 5 s cap
+/// there); the dead-helper test releases the stranger's `started`
+/// immediately, so no test's handshake depends on this sleep completing
+/// inside the cap.
 const STRANGER_STARTED_DELAY: Duration = Duration::from_secs(8);
 
 /// How long the helper below may take to record its write-end observation
@@ -102,8 +107,18 @@ const MARKER_TIMEOUT: Duration = Duration::from_secs(8);
 /// #1155 r4 review P2: how far below the deadline the measured write phase
 /// may land; a healthy writer cannot give up before its own expiry — the
 /// deadline now starts where the `spawned` hook returns — so the floor only
-/// absorbs the instant between the hook's return and the expiry computation.
-const DEADLINE_FLOOR_SLACK: Duration = Duration::from_millis(100);
+/// absorbs the instant between the hook's return and the expiry computation
+/// (microseconds; the writer's give-up check can only overshoot the expiry,
+/// never land before it). #1297 tightened the slack from 100 ms to 5 ms
+/// together with the release-gated handshake: the floor is also what kills
+/// the expiry-hoisted mutant, and that kill is deterministic only while the
+/// handshake provably outlives the slack. The old 8-second delay made that
+/// trivial; the handshake's guaranteed content now is the stranger's
+/// interpreter startup — a physical floor no unix host boots CPython under —
+/// which 5 ms sits well below (measured ~15 ms for the boot itself, ~23 ms
+/// end to end through the probe's FIFO check and staging rename on this
+/// host, and load only grows it).
+const DEADLINE_FLOOR_SLACK: Duration = Duration::from_millis(5);
 
 /// #1155 r3 review P2-1: how long a write-end candidate found by the
 /// return-boundary scan gets to disappear before it is declared a survivor.
@@ -186,10 +201,16 @@ const DELIBERATE_PANIC: &str = "#1141 deliberate panic while the stranger is run
 /// `/dev/null` stdin as a 0-byte `eof`, silently misclassifying the very
 /// broken shape it was there to observe. The `started` signal carries the
 /// stranger's own pid (#1155 r3 review P2-2), published atomically (#166
-/// r8) after a caller-chosen delay — the dead-helper test delays it past
-/// the 5 s a reverted helper's wait would hardcode alone, so a cap that
-/// drifts apart again shows up as a helper that gives up first (#1155 r4
-/// review P2). After the go signal it drains the pipe with a zero-timeout
+/// r8) after a caller-chosen delay and behind the `started.release` signal
+/// (#1297): the test — not a fixed sleep on the stranger's own clock — is
+/// what moves `started`, so a handshake that used to race its cap under
+/// load (the dead-helper test's 8-second delay against its 10-second cap,
+/// with only the python startup left as headroom) now completes whenever
+/// the test says so. The delay survives as scenario pacing only: the
+/// within-cap test still delays its `started` past the 5 s a reverted
+/// helper's wait would hardcode alone (#1155 r4 review P2), while the
+/// dead-helper test releases immediately. After the go signal it drains
+/// the pipe with a zero-timeout
 /// `select` on its stdin and classifies what it sees — a 0-byte read means
 /// EOF was pending, i.e. every write end was closed before the observation,
 /// while a not-ready read end means one is still held (the writer is gone
@@ -216,6 +237,10 @@ if not stat.S_ISFIFO(os.fstat(0).st_mode):
     publish(marker, "stdin-not-a-pipe")
 else:
     time.sleep(int(delay_ms) / 1000.0)
+    release = started + ".release"
+    deadline = time.monotonic() + 60.0
+    while not os.path.exists(release) and time.monotonic() < deadline:
+        time.sleep(0.05)
     publish(started, str(os.getpid()))
     deadline = time.monotonic() + 60.0
     while not os.path.exists(go) and time.monotonic() < deadline:
@@ -331,9 +356,16 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
 /// derive from (#1155 r4 review P2) — and the write phase measured from
 /// the hook's return lasted the full deadline and returned within its
 /// grace (#1155 r4 review P2: the deadline starts after the handshake, so
-/// the 8 s `started` delay below no longer eats the write budget — and a
-/// deadline that starts too early gives up on it and lands under the
-/// floor). #1155 r3 review P2-1 replaces the old evidence — the stranger
+/// the handshake below no longer eats the write budget — and a deadline
+/// that starts too early gives up on it and lands under the floor).
+/// #1297: the handshake is event-driven end to end — the hook publishes the
+/// release signal, the stranger (after confirming its stdin is the pipe)
+/// publishes `started` because of that file and nothing else, and the
+/// helper's saw write follows the hook's resume. No fixed sleep sits on the
+/// path whose completion a cap would have to absorb: under load the old
+/// 8-second delay left only the python startup as headroom inside the
+/// 10-second started cap, which is the flake this test no longer has.
+/// #1155 r3 review P2-1 replaces the old evidence — the stranger
 /// observing the read end after the go signal — with the publication's own
 /// return-boundary scan: a write end of the pipe still held by anyone in
 /// the process tree at the return fails the publication there, with the
@@ -345,13 +377,14 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
 fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     let scratch = Scratch::new("helper-dead-stranger");
     let marker = scratch.path().join(STRANGER_EOF);
-    // The go, started, paused, resume, and saw signals are test machinery
-    // rather than observations of the publication, so they live in a scratch
-    // of their own and the residue assertion keeps watching the
+    // The go, started, release, paused, resume, and saw signals are test
+    // machinery rather than observations of the publication, so they live in
+    // a scratch of their own and the residue assertion keeps watching the
     // publication's names.
     let signals = Scratch::new("helper-dead-stranger-signals");
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
+    let release = release_signal(&started);
     let saw = signals.path().join(STRANGER_SAW);
     let paused = signals.path().join(STRANGER_PAUSED);
     let resume = signals.path().join(STRANGER_RESUME);
@@ -376,7 +409,7 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
                 &saw,
                 &paused,
                 &resume,
-                STRANGER_STARTED_DELAY,
+                Duration::ZERO,
             )
         },
         // #1141 fix-r2 review P1-1: the helper runs as its own group leader
@@ -396,9 +429,16 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         // knows the handshake is done — releases it, so the saw write always
         // happens with the `started` signal provably present, never on the
         // far side of a scheduling pause that skipped the helper's poll
-        // round outright.
+        // round outright. #1297: the release signal below is the handshake's
+        // trigger — the stranger's `started` appears because this file
+        // exists, not after a fixed sleep — so this hook's wait is bounded
+        // polling over an event this test owns, and only the stranger's
+        // interpreter startup (a physical floor — measured ~15 ms on this
+        // host, well above the 5 ms floor slack, and load only grows it)
+        // sits between the release and the `started`.
         |pid| {
             stranger.adopt(helper_group(pid));
+            publish_release_signal(&release);
             let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT).expect(
                 "#1141 the stranger must confirm it holds the pipe read end \
                  before the publication writes",
@@ -494,6 +534,7 @@ fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
     let marker = signals.path().join(STRANGER_EOF);
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
+    let release = release_signal(&started);
     let saw = signals.path().join(STRANGER_SAW);
     let paused = signals.path().join(STRANGER_PAUSED);
     let resume = signals.path().join(STRANGER_RESUME);
@@ -518,6 +559,10 @@ fn a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll() {
     .spawn()
     .expect("#1155 the late-started helper must spawn");
     stranger.adopt(helper_group(helper.id()));
+    // #1297: release before the helper's stranger can even boot, so the
+    // 2-second scenario delay — not the release — keeps deciding when
+    // `started` appears.
+    publish_release_signal(&release);
     // The barrier receipt: the helper has computed `end`, launched the
     // stranger, and is now parked at its paused poll.
     wait_for_signal(&paused, STRANGER_STARTED_TIMEOUT)
@@ -574,6 +619,7 @@ fn a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll() {
     let marker = signals.path().join(STRANGER_EOF);
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
+    let release = release_signal(&started);
     let saw = signals.path().join(STRANGER_SAW);
     let paused = signals.path().join(STRANGER_PAUSED);
     let resume = signals.path().join(STRANGER_RESUME);
@@ -591,6 +637,10 @@ fn a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll() {
     .spawn()
     .expect("#1155 the within-cap helper must spawn");
     stranger.adopt(helper_group(helper.id()));
+    // #1297: release before the helper's stranger can even boot, so the
+    // scenario's 8-second delay — past the 5 s a re-hardcoded helper cap
+    // would allow — keeps deciding when `started` appears.
+    publish_release_signal(&release);
     wait_for_signal(&paused, STRANGER_STARTED_TIMEOUT)
         .expect("#1155 the within-cap helper must reach its paused poll");
     let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
@@ -641,6 +691,7 @@ fn a_barrier_timeout_without_a_resume_fails_the_helper() {
     let marker = signals.path().join(STRANGER_EOF);
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
+    let release = release_signal(&started);
     let saw = signals.path().join(STRANGER_SAW);
     let paused = signals.path().join(STRANGER_PAUSED);
     let resume = signals.path().join(STRANGER_RESUME);
@@ -665,6 +716,9 @@ fn a_barrier_timeout_without_a_resume_fails_the_helper() {
     .spawn()
     .expect("#1392 the barrier-timeout helper must spawn");
     stranger.adopt(helper_group(helper.id()));
+    // #1297: release before the helper's stranger can even boot, so the
+    // 2-second scenario delay keeps deciding when `started` appears.
+    publish_release_signal(&release);
     wait_for_signal(&paused, STRANGER_STARTED_TIMEOUT)
         .expect("#1392 the barrier-timeout helper must reach its paused poll");
     let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
@@ -723,6 +777,7 @@ fn a_panic_while_the_stranger_runs_still_ends_it() {
     let marker = signals.path().join(STRANGER_EOF);
     let go = signals.path().join(STRANGER_GO);
     let started = signals.path().join(STRANGER_STARTED);
+    let release = release_signal(&started);
     let saw = signals.path().join(STRANGER_SAW);
     let paused = signals.path().join(STRANGER_PAUSED);
     let resume = signals.path().join(STRANGER_RESUME);
@@ -748,6 +803,10 @@ fn a_panic_while_the_stranger_runs_still_ends_it() {
             },
             |pid| {
                 stranger.adopt(helper_group(pid));
+                // #1297: the release signal triggers the stranger's
+                // `started` here too, so the deliberate panic below still
+                // lands once the stranger provably holds the read end.
+                publish_release_signal(&release);
                 let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
                     .expect("#1141 the stranger must signal that it started");
                 stranger.watch(stranger_pid(&started_pid));
@@ -841,11 +900,13 @@ fn stalled_without_reading() -> process::Command {
 /// over: the group exists from the spawn on, so it never depends on the
 /// helper (or the stranger) publishing anything (#1141 fix-r2 review P1-1).
 /// The stranger itself is the [`STRANGER_PROBE`] python process: it waits
-/// for the go signal the test publishes once the publication has returned
-/// (capped, so even a test that never signals leaves it bounded), observes
-/// the pipe, records the verdict, and then parks in a bounded sleep that
-/// only the test's [`StrangerGuard`] may end, never EOF or a self-chosen
-/// lifetime (#1141 fix-r1 review P1-1).
+/// for the release signal before publishing `started` (#1297 — so the
+/// test, not a fixed sleep, moves the handshake), then for the go signal
+/// the test publishes once the publication has returned (both capped, so
+/// even a test that never signals leaves it bounded), observes the pipe,
+/// records the verdict, and then parks in a bounded sleep that only the
+/// test's [`StrangerGuard`] may end, never EOF or a self-chosen lifetime
+/// (#1141 fix-r1 review P1-1).
 fn dead_helper_with_a_stranger_reader(
     marker: &Path,
     go: &Path,
@@ -1624,6 +1685,34 @@ fn publish_resume_signal(resume: &Path) {
     let staging = resume.with_extension("staging");
     fs::write(&staging, b"resume").expect("#1155 write the resume signal's staging file");
     fs::rename(&staging, resume).expect("#1155 publish the resume signal");
+}
+
+/// #1297: the release signal's path, `started + ".release"` — exactly how the
+/// stranger derives it in [`STRANGER_PROBE`] (it receives the started path and
+/// nothing else it could derive a second signal from), and built from the
+/// path's own bytes so the two sides cannot disagree. Publishing this file is
+/// what makes the stranger's `started` event-driven: the test, not a fixed
+/// sleep on the stranger's clock, decides when the handshake completes.
+fn release_signal(started: &Path) -> PathBuf {
+    let mut release = started.as_os_str().to_os_string();
+    release.push(".release");
+    PathBuf::from(release)
+}
+
+/// #1297: publish the release signal atomically, staging + rename (#166 r8),
+/// like the go and resume signals. The staging name is `release + ".staging"`
+/// by string concatenation — mirroring the stranger's own python `path +
+/// ".staging"` — so it never reuses the `started` signal's staging name the
+/// way `with_extension` would ("stranger-started.release" with its extension
+/// replaced becomes "stranger-started.staging").
+fn publish_release_signal(release: &Path) {
+    let staging = {
+        let mut staging = release.as_os_str().to_os_string();
+        staging.push(".staging");
+        PathBuf::from(staging)
+    };
+    fs::write(&staging, b"release").expect("#1297 write the release signal's staging file");
+    fs::rename(&staging, release).expect("#1297 publish the release signal");
 }
 
 /// The guard's kill report is the only liveness evidence used (#1125

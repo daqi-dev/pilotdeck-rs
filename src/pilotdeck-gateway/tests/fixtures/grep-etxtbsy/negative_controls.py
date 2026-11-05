@@ -72,11 +72,15 @@ confirmation (`stranger-confirmation-inverted`) or drops the fd-3
 retention save (`stranger-retention-reverted`) leaves the publication
 blocked at the hook's expect. The #1155 mutants cover the four new
 contracts: the deadline starts only after the `spawned` hook's handshake
-(`expiry-hoisted-before-spawn`, r4 review P2 — the 8-second handshake
-must not eat the write budget; a deadline that starts too early gives up
-on the first blocked write, so the measured floor fails, or the
-already-past expiry collapses the writer-exit grace and that assert fires
-first — one anchor list for the two outcomes); the helper's and the
+(`expiry-hoisted-before-spawn`, r4 review P2 — the handshake must not eat
+the write budget; #1297 made that handshake event-driven — the test
+publishes the release the probe's `started` waits for — so its guaranteed
+content is the probe's interpreter boot and the floor slack was tightened
+to 5 ms to stay under it; a deadline that starts too early gives up on
+the first blocked write with the boot unspent, so the measured floor
+fails, or the already-past expiry collapses the writer-exit grace and
+that assert fires first — one anchor list for the two outcomes); the
+helper's and the
 test's started-wait caps are one derived constant
 (`started-cap-hardcoded-short`, r4 review P2, bound since fix-r3 to the
 within-cap event-barrier test the fix-r3 review P1-1 asked for — the
@@ -479,12 +483,15 @@ cases = [
       "#1155 the helper must observe the stranger's started signal before it dies"]),
     # #1155 r4 review P2: the write deadline must start after the `spawned`
     # hook's handshake, not before the spawn. The mutant hoists the expiry
-    # back to the r4 shape, so the dead-helper test's 8-second started
-    # handshake consumes the whole write budget: the writer gives up on its
-    # first blocked write — elapsed since the hook's return is ~0, far under
-    # the deadline floor — or the writer-exit race assert fires first when
-    # the already-past expiry collapses the grace; either assertion kills
-    # (one anchor list, both deterministic).
+    # back to the r4 shape, so the handshake the dead-helper test runs in
+    # its hook (publishing the release, then waiting for the probe's
+    # `started` — event-driven since #1297) lands inside the write budget:
+    # the writer's give-up leaves the handshake unspent, and that
+    # handshake's guaranteed content is the probe's interpreter boot
+    # (measured ~23 ms end to end against the 5 ms floor slack), so the
+    # deadline floor assert trips — or the writer-exit race assert fires
+    # first when the already-past expiry collapses the grace; either
+    # assertion kills (one anchor list, both deterministic).
     ('expiry-hoisted-before-spawn', helper,
      '''    spawned(helper_id);
     // #1155 r4 review P2: the expiry starts here, after the handover, so a
@@ -505,9 +512,10 @@ cases = [
     # the healthy helper records its `saw` marker; a re-hardcoded 5-second
     # cap has already lost its deadline by that same moment, refuses the saw
     # write, and the saw-exists assertion kills with its dedicated message.
-    # The mutant still fails the old dead-helper timing too (an 8 s started
-    # against a 5 s cap leaves no `saw` there either), but the binding now
-    # proves it inside the scenario that controls the pause, not beside it.
+    # Since #1297 the dead-helper test is no second witness — its `started`
+    # is event-driven now, published as soon as the probe boots, well inside
+    # any honest cap — so the binding proves the kill inside the scenario
+    # that controls the pause, the only place the cap is observable.
     ('started-cap-hardcoded-short', publication,
      '''    STRANGER_STARTED_TIMEOUT.as_secs() + 1''',
      '''    5''',
