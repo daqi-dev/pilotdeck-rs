@@ -5,9 +5,13 @@ import sys
 if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
+import ast
 import importlib.util
+import io
+import os
 from pathlib import Path
 import signal
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -128,6 +132,88 @@ class LeaseTests(unittest.TestCase):
                     finally:
                         signal.signal(signum, previous)
         except (Exception, KeyboardInterrupt) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_capture_cancel_unwind(self):
+        marker = '#1194 capture rehearsal preserves first cancellation and accepts later signals'
+        path = ROOT / 'src/pilotdeck-cli/tests/fixtures/sdk-signals/capture.py'
+        try:
+            tree = ast.parse(path.read_bytes().decode())
+            functions = [node for node in tree.body
+                         if isinstance(node, ast.FunctionDef) and node.name == 'interrupted']
+            self.assertTrue(len(functions) == 1, marker)
+            namespace = {'sys': sys}
+            exec(compile(ast.Module(body=functions, type_ignores=[]), str(path), 'exec'), namespace)
+            handler = namespace['interrupted']
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                with self.subTest(signal=signum):
+                    previous = signal.signal(signum, handler)
+                    try:
+                        first = None
+                        cleanup_tail = False
+                        try:
+                            try:
+                                signal.raise_signal(signum)
+                                self.fail(marker + ': initial signal ignored')
+                            except KeyboardInterrupt as error:
+                                first = error
+                                raise
+                            finally:
+                                signal.raise_signal(signum)
+                                cleanup_tail = True
+                        except KeyboardInterrupt as caught:
+                            self.assertTrue(caught is first and cleanup_tail, marker)
+                            # A handled cancellation is still active until except exits.
+                            signal.raise_signal(signum)
+                        with self.assertRaises(KeyboardInterrupt, msg=marker) as later:
+                            signal.raise_signal(signum)
+                        self.assertTrue(later.exception is not first, marker)
+                    finally:
+                        signal.signal(signum, previous)
+        except (Exception, KeyboardInterrupt) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_holds_tree_lock(self):
+        marker = '#1398 lease memory rehearsal holds the source tree lock'
+        path = Path(__file__).with_name('negative.py')
+        try:
+            spec = importlib.util.spec_from_file_location('lease_memory_lock', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-1398-lease-') as folder:
+                    with patch.object(module, 'tree_lock', recording_tree_lock), \
+                            patch.object(module, 'run_owned', fake_run_owned), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
+                                                       '--case', 'memory-rehearsal-without-lock']):
+                        module.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(seen == [((module.root,), {'timeout': 900})]
+                            and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
     def test_blocked_fixture_releases_lease(self):

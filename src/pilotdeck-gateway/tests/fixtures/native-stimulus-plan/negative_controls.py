@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_process import target_environment
 from negative_suite import invalidate_completed, publish_summary
 
@@ -64,6 +64,7 @@ cases = [
     ('memory-plan-claims-compiled', runner, "        status, reason, compiled = 'INVALID', '', False\n        try:", "        status, reason, compiled = 'INVALID', '', True\n        try:", 'test_memory_runners_do_not_compile_tree'),
     ('memory-e2e-claims-compiled', e2e_runner, "        status, reason, compiled = 'INVALID', '', False\n        try:", "        status, reason, compiled = 'INVALID', '', True\n        try:", 'test_memory_runners_do_not_compile_tree'),
     ('empty-before-wrong-error-counted', measurement, "if str(error) != '#1368 missing required order edges: ' + target['name']:", 'if False:', 'test_measurement_empty_order_controls'),
+    ('memory-rehearsal-without-lock', runner, '        if args.memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if args.memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
 ]
 messages = {
     'missing-cell': '#1368 all 72 inputs match TS preregistration',
@@ -102,6 +103,7 @@ messages = {
     'memory-plan-claims-compiled': '#1368 memory runners never launch cargo or claim a mutated build',
     'memory-e2e-claims-compiled': '#1368 memory runners never launch cargo or claim a mutated build',
     'empty-before-wrong-error-counted': '#1368 empty-before data controls cover every ordered measurement',
+    'memory-rehearsal-without-lock': '#1398 stimulus-plan memory rehearsal holds the source tree lock',
 }
 
 
@@ -236,8 +238,9 @@ def main():
 
     try:
         if args.memory:
-            for row in selected:
-                one(row)
+            with tree_lock(root, timeout=900):
+                for row in selected:
+                    one(row)
         else:
             paths = [source, collector, fixture, measurement, runner, e2e_runner, r11,
                      Path(__file__).with_name('preregistration.mjs'),

@@ -13,16 +13,17 @@ import re
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'scripts/gateway-parity/session_domain.py'
 common = root / 'scripts/gateway-parity/common.py'
 test_file = Path(__file__).with_name('test_lease.py')
 cli = root / 'scripts/cli-parity/run_round.py'
+capture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-signals/capture.py'
 readme = Path(__file__).with_name('README.md')
-guarded_sources = [common, source, test_file, Path(__file__).resolve(), cli, readme]
-EXPECTED_CASES = 22
+guarded_sources = [common, source, test_file, Path(__file__).resolve(), cli, readme, capture]
+EXPECTED_CASES = 24
 # Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('cli-term-raises-twice', cli, 'def interrupted(signum, frame):\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),
@@ -46,12 +47,16 @@ cases = [
     ('no-settle-window', source, "    deadline = time.monotonic() + 2\n    while True:", "    deadline = time.monotonic() + 0\n    while True:", 'test_lease_probe_waits_boundedly'),
     ('omit-term-registration', cli, 'return signal.' + 'signal(signal.SIGTERM, interrupted)', 'return signal.getsignal(signal.SIGTERM)', 'test_cli_signal_handlers_registered'),
     ('omit-alarm-registration', cli, 'return signal.' + 'signal(signal.SIGALRM, lease_expired)', 'return signal.getsignal(signal.SIGALRM)', 'test_cli_signal_handlers_registered'),
+    ('capture-term-raises-twice', capture, '    if isinstance(sys.exception(), KeyboardInterrupt):\n        return\n    raise KeyboardInterrupt(f\'#1145 capture interrupted by signal {signum}\')', '    if isinstance(None, KeyboardInterrupt):\n        return\n    raise KeyboardInterrupt(f\'#1145 capture interrupted by signal {signum}\')', 'test_capture_cancel_unwind'),
+    ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('omit-lease-case', Path(__file__).resolve(), "    ('cl" + "i-term-raises-twice', cli, 'def interrupted(signum, frame):\\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),\n", '', 'test_expected_case_count'),
 ]
 messages = {
     'test_cli_signal_handlers_registered': '#a5b CLI signal handlers are installed by production code',
     'test_expected_case_count': '#a5b lease negative case inventory is complete',
     'test_cli_cancel_unwind': '#1194 CLI preserves first cancellation and accepts later signals',
+    'test_capture_cancel_unwind': '#1194 capture rehearsal preserves first cancellation and accepts later signals',
+    'test_memory_rehearsal_holds_tree_lock': '#1398 lease memory rehearsal holds the source tree lock',
     'test_documented_release_definition': '#1221 allStopped documents lease proof separately from scoring',
     'test_guarded_sources_include_common': '#a5b parity mutation guards include common.py',
     'test_blocked_fixture_releases_lease': '#1221 BLOCKED empty fixture releases lease for successor',
@@ -198,8 +203,9 @@ def main():
         results.append({'name': name, 'status': status, 'reason': reason})
     try:
         if memory:
-            for row in selected:
-                one(row)
+            with tree_lock(root, timeout=900):
+                for row in selected:
+                    one(row)
         else:
             with mutating_sources(root, guarded_sources) as originals:
                 for row in selected:

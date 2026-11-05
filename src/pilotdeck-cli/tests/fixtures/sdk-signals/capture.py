@@ -26,6 +26,10 @@ output.mkdir(parents=True, exist_ok=False)
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 def interrupted(signum, _frame):
+    # #1194: a signal during KeyboardInterrupt unwinding must not cut the
+    # finally cleanup (owned-group stop and lease release) short.
+    if isinstance(sys.exception(), KeyboardInterrupt):
+        return
     raise KeyboardInterrupt(f'#1145 capture interrupted by signal {signum}')
 
 # Python unwinds through stop_group and the lease on parent interruption. Exec

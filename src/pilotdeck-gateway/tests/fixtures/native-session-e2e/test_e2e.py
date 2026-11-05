@@ -20,6 +20,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import socket
@@ -570,6 +571,49 @@ class E2ETests(unittest.TestCase):
                             'NATIVE_PROCESS (unexpected ' + type(error).__name__ + ': ' + str(error) + ')')
             return
         self.assertTrue(False, '#1140 e2e a balanced sidecar misallocation is rejected on NATIVE_PROCESS')
+
+    def test_memory_rehearsal_holds_tree_lock(self):
+        marker = '#1398 e2e memory rehearsal holds the source tree lock'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_memory_lock', path)
+            runner = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), runner.__dict__)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-1398-e2e-') as folder:
+                    with mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
+                            mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                            mock.patch('sys.stdout', new_callable=io.StringIO), \
+                            mock.patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
+                                                           '--case', 'memory-rehearsal-without-lock']):
+                        runner.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(seen == [((runner.root,), {'timeout': 900})]
+                            and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
 
 
 class LifecycleTests(unittest.TestCase):

@@ -4,7 +4,7 @@
 
 `test_witness.py` 的默认测试为合成 trace 与生命周期控制；`--capture` 才读取 Linux 原始采集结果。非 witness 的审计外壳明确标合成，不能作为完整 native 格证据。
 
-`negative.py` 与 `negative_authentication.py` 的 `cases` 列表及执行汇总是负控数量的唯一来源；每项绑定专属单行断言。`--case NAME` 选择样本，`--check-anchors` 只读核锚并编译每个 Python 变异。原地模式要求涉及源码、测试及脚本已提交且等于 HEAD，使用共享源码还原/进程守卫。认证套件与 `negative_boundary.py` 另有明确的 `--memory` 候选演练模式，只在子进程内编译并注入源码，不改文件、不代替提交后的正式验证。
+`negative.py` 与 `negative_authentication.py` 的 `cases` 列表及执行汇总是负控数量的唯一来源；每项绑定专属单行断言。`--case NAME` 选择样本，`--check-anchors` 只读核锚并编译每个 Python 变异。原地模式要求涉及源码、测试及脚本已提交且等于 HEAD，使用共享源码还原/进程守卫。认证套件与 `negative_boundary.py` 另有明确的 `--memory` 候选演练模式，只在子进程内编译并注入源码，不改文件、不代替提交后的正式验证；#1519 起整个演练循环在 `tree_lock(root, timeout=900)` 内执行（只读也持锁）。
 
 `test_authentication.py` 验证 parser、WS profile、原二进制前提及清理所有权；`test_chain.py` 验证正式边界、逐 case 原件归属、独立 profile 和冻结门控。标有 SYNTHETIC_CONTROL_ONLY 的正控只能走测试辅助路径，正式 loader 必须拒收。
 
@@ -12,4 +12,4 @@
 
 `test_r11.py` 覆盖 final 后落盘、两文件 size/mtime 连续三次稳定、总 deadline/取消、失败请求终态、NOT_RUN 原因、非对象 JSON、binding 两侧对拍、三域 Unicode JSONL 读取及延迟 receipt。真实 collector 接线测试复用 socket gateway 的 after_final 钩子；registry `failed` 单独不够，须同时有落盘 error result 与本请求 final error，两个错误仍原样进入评分。负控均登记在既有 `negative_authentication.py`，测试全名与标记由其 bound/messages 提供。
 
-#a5b `negative_boundary.py` 独立钉 `EXPECTED_CASES = 8`（原 7 项加清单删项负控）；所有入口（含样本选择和锚点检查）先核完整清单数量，少一项即非零。`BoundaryTests.test_expected_case_count` 同时覆盖完整清单和各模式缺项拒绝。
+#a5b `negative_boundary.py` 独立钉 `EXPECTED_CASES = 9`（原 7 项加清单删项负控与 #1519 memory 演练持锁项）；所有入口（含样本选择和锚点检查）先核完整清单数量，少一项即非零。`BoundaryTests.test_expected_case_count` 同时覆盖完整清单和各模式缺项拒绝。

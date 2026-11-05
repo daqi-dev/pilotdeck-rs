@@ -387,6 +387,45 @@ class PlanTests(unittest.TestCase):
                                 and not list(output.glob('*-compile.log'))
                                 and not list(output.glob('*-slots.log')), marker)
 
+    def test_memory_rehearsal_holds_tree_lock(self):
+        marker = '#1398 stimulus-plan memory rehearsal holds the source tree lock'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('plan_memory_lock', path)
+            runner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runner)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess([], 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            with tempfile.TemporaryDirectory(prefix='pdrs-1398-plan-') as tmp:
+                output = Path(tmp) / 'results'
+                with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory',
+                                                   '--case', 'memory-rehearsal-without-lock']), \
+                        mock.patch.object(runner, 'execution_environment', return_value={}), \
+                        mock.patch.object(runner, 'preflight'), \
+                        mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
+                        mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                        mock.patch('sys.stdout', new_callable=io.StringIO):
+                    runner.main()
+            self.assertTrue(seen == [((runner.root,), {'timeout': 900})]
+                            and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

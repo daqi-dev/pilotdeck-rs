@@ -12,7 +12,9 @@ sys.dont_write_bytecode = True
 import copy
 from contextlib import ExitStack
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -465,6 +467,48 @@ class AuthenticationTests(unittest.TestCase):
         except native.Incomplete:
             rejected = True
         self.assertTrue(rejected, '#1140 r8 same path changed executable bytes rejected')
+
+    def test_memory_rehearsal_holds_tree_lock(self):
+        marker = '#1398 authentication memory rehearsal holds the source tree lock'
+        path = Path(__file__).with_name('negative_authentication.py')
+        try:
+            runner = load_module('authentication_memory_lock', path)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-1398-authentication-') as folder:
+                    with mock.patch.object(runner, 'preflight', lambda: True), \
+                            mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
+                            mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                            mock.patch('sys.stdout', new_callable=io.StringIO), \
+                            mock.patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
+                                                           '--case', 'memory-rehearsal-without-lock']):
+                        runner.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(seen == [((runner.root,), {'timeout': 900})]
+                            and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
 
 
 if __name__ == '__main__':

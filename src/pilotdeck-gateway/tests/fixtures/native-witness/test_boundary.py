@@ -6,7 +6,10 @@ if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
 import importlib.util
+import io
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -65,6 +68,49 @@ class BoundaryTests(unittest.TestCase):
             'hello 观测独立于被测网关与预注册 contract，不独立于 driver。',
         ):
             self.assertTrue(expected in witness, marker)
+
+    def test_memory_rehearsal_holds_tree_lock(self):
+        marker = '#1398 boundary memory rehearsal holds the source tree lock'
+        path = Path(__file__).with_name('negative_boundary.py')
+        try:
+            spec = importlib.util.spec_from_file_location('boundary_memory_lock', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-1398-boundary-') as folder:
+                    with patch.object(module, 'tree_lock', recording_tree_lock), \
+                            patch.object(module, 'run_owned', fake_run_owned), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
+                                                       '--case', 'memory-rehearsal-without-lock']):
+                        module.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(seen == [((module.root,), {'timeout': 900})]
+                            and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
 
     def test_binding_writer_boundary(self):
         marker = '#1206 observer-only edit rejected, joint rewrite is a known boundary'

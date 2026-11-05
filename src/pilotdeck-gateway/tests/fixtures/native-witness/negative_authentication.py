@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 
 native = root / 'scripts/gateway-parity/native_evidence.py'
 session = root / 'scripts/gateway-parity/session_domain.py'
@@ -198,6 +198,7 @@ cases = [
     ('leak-active-gateway', gateway, 'owned_sockets = (self.listener, self.connection)', 'owned_sockets = (self.listener,)' , 'test_gateway_cancel_unconnected_and_partial_frame'),
     ('skip-exception-provider-cleanup', collector, '        try:\n            stop_provider()\n        except BaseException as cleanup_error:', '        try:\n            pass\n        except BaseException as cleanup_error:', 'test_collection_exception_still_cleans_up'),
     ('swallow-gateway-close-failure', e2e, 'if not gateway.close(30):', 'if not gateway.close(30) and False:', 'test_failed_gateway_close_is_asserted'),
+    ('memory-rehearsal-without-lock', Path(__file__), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
 ]
 messages = {
     'settle-inapplicable-ignore-turn-result': '#1140 r12 completed transcript differences remain scoreable with Unicode JSONL',
@@ -360,6 +361,7 @@ messages = {
     'binary-unavailable-not-blocked': '#1140 r8 absent binary is controlled BLOCKED prerequisite',
     'retain-successful-tracer': '#1140 r8 successful capture releases tracer ownership',
     'allow-scm-rights': '#1140 r8 SCM_RIGHTS egress rejected',
+    'memory-rehearsal-without-lock': '#1398 authentication memory rehearsal holds the source tree lock',
 }
 
 
@@ -478,8 +480,9 @@ def main():
         results.append({'name': name, 'status': status, 'reason': reason})
     try:
         if memory:
-            for row in selected:
-                one(row)
+            with tree_lock(root, timeout=900):
+                for row in selected:
+                    one(row)
         else:
             paths = [native, session, witness, collector, common, comparison, controls_script, session_controls, e2e, gateway, Path(__file__),
                      parity_g03, parity_score, parity_controls, parity_multimodal, b1_comparison, b1_run,

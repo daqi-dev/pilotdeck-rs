@@ -1,5 +1,5 @@
 {
-  "sourceSha256": "2e60cbe8f5a63b79af05527cef06ef9e14f20d3c3fd9b0d98ec2f674ab010562",
+  "sourceSha256": "b8c51a94da8610c41d7c5f07590b715aad2deeab08fbad2670e8e2ee2d6d2c7f",
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "nodeVersion": "v22.22.0",
   "kind": "real-ts-cli-real-websocket-observation-hooks",
