@@ -1009,13 +1009,22 @@ def _returned_summary_dicts(value):
 
     A constant ``status`` key is enough; the value may be a computed relay, so
     unlike the assignment shapes this does not require status-word literals.
+    A conditional or boolean arm hands back the same dict a plain ``return``
+    would, so every arm is expanded: ``return {'status': 'PASS'} if cond else
+    report`` used to read as "no dict returned", and the whole return path went
+    unaudited (GLM r6 boundary P0-1).
     """
-    if isinstance(value, ast.Dict):
-        dicts = [value]
+    if isinstance(value, ast.IfExp):
+        arms = (value.body, value.orelse)
+    elif isinstance(value, ast.BoolOp):
+        arms = value.values
+    elif isinstance(value, ast.Dict):
+        return [value] if _dict_has_status(value) else []
     elif isinstance(value, ast.Tuple):
-        dicts = [element for element in value.elts if isinstance(element, ast.Dict)]
+        arms = value.elts
     else:
         return []
+    dicts = [item for arm in arms for item in _returned_summary_dicts(arm)]
     return [item for item in dicts if _dict_has_status(item)]
 
 
@@ -1226,11 +1235,23 @@ def _own_nodes(function):
 
 
 def _returned_names(value):
+    """Names a returned expression can hand back, one level of arms deep.
+
+    ``return payload if cond else report`` returns one of two local summaries;
+    until the arms were expanded only a plain tuple of names was resolved, so
+    the bound dicts behind them were never slot-checked (GLM r6 boundary P0-1).
+    """
     if isinstance(value, ast.Name):
         return [value.id]
-    if isinstance(value, ast.Tuple):
-        return [element.id for element in value.elts if isinstance(element, ast.Name)]
-    return []
+    if isinstance(value, ast.IfExp):
+        arms = (value.body, value.orelse)
+    elif isinstance(value, ast.BoolOp):
+        arms = value.values
+    elif isinstance(value, ast.Tuple):
+        arms = value.elts
+    else:
+        return []
+    return [name for arm in arms for name in _returned_names(arm)]
 
 
 def _target_names(target):
@@ -1686,6 +1707,26 @@ def _delegated_exit(value, module, seen=None):
     return _helper_exits_zero(target, module, seen)
 
 
+def _exit_call_violation(call, bindings, function, module, point, lineno):
+    """Judge the argument of ``sys.exit(...)`` / ``os._exit(...)`` (#892 r7).
+
+    ``sys.exit(...)`` takes the same exit-code provenance as ``return``; the
+    statement form and the ``return sys.exit(0)`` form share this one judgement
+    so the two spellings cannot drift apart again (GLM r6 sibling P1-1/P1-2).
+    """
+    argument = call.args[0] if call.args else None
+    if argument is None or _constant_exit_zero(argument) or (
+            isinstance(argument, ast.Name)
+            and _name_is_optimistic(argument.id, bindings, lineno)):
+        return f'inline optimistic exit ({ast.unparse(call)[:50]}) at line {lineno}'
+    if (_status_literals(argument) or _has_passed_aggregate(argument)) \
+            and not _calls_aggregate(argument):
+        return f'inline status/exit {ast.unparse(argument)[:60]} at line {lineno}'
+    if _exit_provenance(argument, bindings, function, module, point):
+        return f'inline exit code {ast.unparse(argument)[:60]} at line {lineno}'
+    return None
+
+
 def _exit_provenance(argument, bindings, function, module, point):
     """Why an exit call's argument still computes its code inline (#892 r6).
 
@@ -1704,7 +1745,11 @@ def _exit_provenance(argument, bindings, function, module, point):
         if _status_literals(arm) or _has_passed_aggregate(arm):
             continue
         if _constant_exit_zero(arm) and point not in _SENTINEL_POINTS:
-            continue
+            # ``sys.exit(0 if cond else 1)``: the earlier skip trusted the
+            # caller to report a literal zero, but the callers only test the
+            # whole argument, so an IfExp arm walked through (GLM r6 sibling
+            # P1-1).  A plain literal is still reported by the caller first.
+            return True
         if isinstance(arm, ast.Name):
             if _exit_name_violation(arm.id, bindings, function):
                 return True
@@ -1765,6 +1810,29 @@ def _is_exit_call(call):
     return (isinstance(func, ast.Attribute) and func.attr in ('exit', '_exit')
             and isinstance(func.value, ast.Name)
             and func.value.id in ('sys', 'os'))
+
+
+def _unproven_expansion(call, bindings):
+    """``report.update(**payload)`` whose payload the function never built.
+
+    A keyword expansion carries its keys at runtime; when the value is neither a
+    dict literal nor a name bound to one *in this function*, the audit cannot
+    see which slots it writes, so it fails closed instead of passing silently
+    (GLM r6 boundary P1-2).
+    """
+    if call.func.attr != 'update':
+        return False
+    for keyword in call.keywords:
+        if keyword.arg is not None:
+            continue
+        value = keyword.value
+        if _returned_summary_dicts(value):
+            continue
+        if isinstance(value, ast.Name) and any(
+                isinstance(item, ast.Dict) for _lineno, item in bindings.get(value.id, ())):
+            continue
+        return True
+    return False
 
 
 def _call_written_values(call):
@@ -1870,24 +1938,19 @@ def unshared_status_slots(function, point=None, module=None):
                     violations.append(
                         f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
                         f'at line {node.lineno}')
+                elif _unproven_expansion(call, bindings):
+                    violations.append(
+                        f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
+                        f'at line {node.lineno}')
                 continue
             if _is_exit_call(call):
                 # ``sys.exit(0)`` / ``os._exit(0)`` leave the process with 0
                 # exactly like ``raise SystemExit(0)`` (MiniMax sibling P1-1);
                 # the same reasoning applies to a name bound to a zero.
-                argument = call.args[0] if call.args else None
-                if argument is None or _constant_exit_zero(argument) or (
-                        isinstance(argument, ast.Name)
-                        and _name_is_optimistic(argument.id, bindings, node.lineno)):
-                    violations.append(
-                        f'inline optimistic exit ({ast.unparse(call)[:50]}) at line {node.lineno}')
-                elif (_status_literals(argument) or _has_passed_aggregate(argument)) \
-                        and not _calls_aggregate(argument):
-                    violations.append(f'inline status/exit {ast.unparse(argument)[:60]} '
-                                      f'at line {node.lineno}')
-                elif _exit_provenance(argument, bindings, function, module, point):
-                    violations.append(f'inline exit code {ast.unparse(argument)[:60]} '
-                                      f'at line {node.lineno}')
+                violation = _exit_call_violation(
+                    call, bindings, function, module, point, node.lineno)
+                if violation:
+                    violations.append(violation)
             continue
         if isinstance(node, ast.Raise) and _is_system_exit_raise(node):
             # ``raise SystemExit(0)`` leaves the process with 0 and never
@@ -1916,6 +1979,15 @@ def unshared_status_slots(function, point=None, module=None):
             # A bare ``return`` hands back None, and SystemExit(None) exits 0.
             violations.append(f'inline optimistic exit (bare return) at line {node.lineno}')
             continue
+        if isinstance(value, ast.Call) and _is_exit_call(value):
+            # ``return sys.exit(0)`` evaluates the exit call, which leaves the
+            # process before the ``return`` can happen: the Return arm needs
+            # the same judgement as the statement form (GLM r6 sibling P1-2).
+            violation = _exit_call_violation(
+                value, bindings, function, module, point, node.lineno)
+            if violation:
+                violations.append(violation)
+            continue
         if _constant_exit_zero(value) and point not in _SENTINEL_POINTS:
             # Explicit ``return None`` / ``return False`` exits 0 too; only
             # ``_guard._failure`` uses None as its "propagate unchanged"
@@ -1939,7 +2011,11 @@ def unshared_status_slots(function, point=None, module=None):
                 continue  # its dict is already checked above
             for arm in _exit_arms(element):
                 if (_status_literals(arm) or _has_passed_aggregate(arm)):
-                    if not (_calls_aggregate(arm) or isinstance(arm, ast.Dict)):
+                    # A dict arm is judged by ``_summary_slot_violations`` above
+                    # -- but only the dicts this return actually hands back, not
+                    # every dict in the expression (GLM r6 boundary P0-1).
+                    if not (_calls_aggregate(arm)
+                            or any(arm is summary for summary in dicts)):
                         violations.append(f'inline status/exit {ast.unparse(arm)[:60]} '
                                           f'at line {node.lineno}')
                 elif isinstance(arm, ast.Name):
@@ -2332,7 +2408,23 @@ def aggregation_audit():
         "    if report.get('special'):\n"
         "        return {'status': 'BLOCKED'}, 2\n"
         "    status, code = common.aggregate_status(report['status'])\n"
-        "    return {'status': status}, code\n")
+        "    return {'status': status}, code\n"
+        "def _conditional_summary(report):\n"
+        "    return {'status': 'PASS'} if report.get('special') else report\n"
+        "def _bound_summary_arm(report, fallback):\n"
+        "    payload = {'status': 'PASS'}\n"
+        "    return payload if report.get('special') else fallback\n"
+        "def _expanded_update(report):\n"
+        "    report.update(**payload)\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _exit_conditional(report):\n"
+        "    if report.get('special'):\n"
+        "        sys.exit(0 if report.get('cells') else 1)\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _return_exit_call(report):\n"
+        "    if report.get('special'):\n"
+        "        return sys.exit(0)\n"
+        "    return common.aggregate_status(report['status'])[1]\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -2496,6 +2588,28 @@ def aggregation_audit():
     if not verdict_dict or 'assign-report-status' not in verdict_dict[0]:
         failures.append('#892 aggregation-audit: detector self-test did not enumerate '
                         'a summary dict keyed ``verdict``')
+    # #892 r7: the four return-path shapes the r6 reviews found still silent --
+    # a summary dict in a conditional arm, a bound summary returned from an arm,
+    # an unprovable ``update(**name)`` expansion, a zero arm inside an exit
+    # call's argument and an exit call in ``return`` position (GLM r6 boundary
+    # P0-1/P1-2, sibling P1-1/P1-2).
+    for probe_name, needle, message in (
+            ('_conditional_summary', "status slot 'PASS'",
+             'a summary dict in a conditional arm'),
+            ('_bound_summary_arm', "status slot 'PASS'",
+             'a conditional arm returning a bound summary'),
+            ('_expanded_update', 'report.update(**payload)',
+             'a keyword expansion the function never built'),
+            ('_exit_conditional', 'inline exit code 0 if',
+             'a zero arm inside an exit call argument'),
+            ('_return_exit_call', 'inline optimistic exit (sys.exit(0))',
+             'an exit call in return position')):
+        probe = next((node for node in probe892.body
+                      if getattr(node, 'name', None) == probe_name), None)
+        found_slots = unshared_status_slots(probe, None, probe_modules) if probe else []
+        if not any(needle in slot for slot in found_slots):
+            failures.append(f'#892 aggregation-audit: detector self-test did not flag '
+                            f'{message} (found {found_slots!r})')
     update_only = probe892_found.get(('<self-test-892>', '_update_only'))
     if (not update_only or 'write-status' not in update_only[0]
             or not unshared_status_slots(update_only[1])):
