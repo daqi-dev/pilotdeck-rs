@@ -229,14 +229,14 @@ def bare_exit_zero(rows):
     return True, 'aggregation-audit: bare optimistic exit code flagged, passed=False'
 
 
-def _main_failure(row, needle, point='controls-main'):
-    """The #892 main failure whose text contains *needle*, if any."""
+def _main_failure(row, needle, point='controls-main', function='main'):
+    """The #892 *function* failure whose text contains *needle*, if any."""
     failures = row.get('failures') or []
     if not any(failure.startswith(
             '#892 aggregation-audit: '
-            'scripts/gateway-parity/controls/session_domain.py:main ')
+            f'scripts/gateway-parity/controls/session_domain.py:{function} ')
             and needle in failure for failure in failures):
-        return False, f'failures={failures!r}, want the #892 main failure with {needle!r}'
+        return False, f'failures={failures!r}, want the #892 {function} failure with {needle!r}'
     slots = (row.get('points', {}).get(point, {}) or {}).get('unsharedSlots')
     if not slots:
         return False, f'points.{point}.unsharedSlots is empty, want it flagged'
@@ -255,7 +255,8 @@ def status_slot_relayed(rows):
     # The slot here is the local variable ``status`` (an ``ast.Name``), which
     # unparses without quotes — unlike the ``'PASS'`` constant that
     # ``summary-name-bypass`` pins.
-    ok, detail = _main_failure(row, 'status slot status at line', 'controls-run-all')
+    ok, detail = _main_failure(row, 'status slot status at line',
+                               'controls-run-all', 'run_all')
     if not ok:
         return ok, detail
     return True, 'aggregation-audit: locally computed status slot flagged, passed=False'
