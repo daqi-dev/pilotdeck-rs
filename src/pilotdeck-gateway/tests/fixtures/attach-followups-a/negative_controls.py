@@ -31,12 +31,12 @@ mutations = [
      'native_process::services_tests::unregistered_pdf_reports_size_estimate_diagnostic',
      '#1458 an unregistered pdf must carry the pdf_size_estimate diagnostic'),
     ('binary-container-severity-swapped', SERVICES,
-     '''                    let severity = if BINARY_CONTAINER_EXTENSIONS.contains(&ext.as_str()) {
+     '''                    let severity = if is_binary_container(&ext) {
                         DiagnosticSeverity::Info
                     } else {
                         DiagnosticSeverity::Warning
                     };''',
-     '''                    let severity = if BINARY_CONTAINER_EXTENSIONS.contains(&ext.as_str()) {
+     '''                    let severity = if is_binary_container(&ext) {
                         DiagnosticSeverity::Warning
                     } else {
                         DiagnosticSeverity::Info
@@ -44,12 +44,12 @@ mutations = [
      'native_process::services_tests::binary_container_info_diagnostic_gating',
      '#1469 a registered binary-container attachment must drop its info diagnostic'),
     ('read-failure-message-reverted', SERVICES,
-     '''                        let rejection = crate::node_fs_message(&error, "read", None)
-                            .unwrap_or_else(|| {
-                                format!("Attachment {} could not be read: {error}", entry.path)
-                            });''',
-     '''                        let rejection =
-                            format!("Attachment {} could not be read: {error}", entry.path);''',
+     '''                        return Err(failure(crate::node_fs_message_or_unknown(
+                            &error, "read", None,
+                        )));''',
+     '''                        return Err(failure(
+                            format!("Attachment {} could not be read: {error}", entry.path)
+                        ));''',
      'native_process::services_tests::read_failure_fails_the_turn',
      '#1462 a directory read failure must carry the Node EISDIR message'),
     ('lease-root-hard-failure-restored', SERVICES,

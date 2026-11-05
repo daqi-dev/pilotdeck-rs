@@ -269,9 +269,15 @@ fn pdf_size_estimate(size: u64, pages: u64) -> String {
 /// TS AttachmentResolver.ts:323-329 — `unsupportedFileMessage`: the
 /// non-whitelisted-extension diagnostic of `resolveFile`
 /// (severity per :158 — binary container info, otherwise warning).
+/// TS `BINARY_CONTAINER_EXTENSIONS.has(ext)` in all three call sites — the
+/// message form, the text-whitelist exclusion, and the info severity.
+fn is_binary_container(ext: &str) -> bool {
+    BINARY_CONTAINER_EXTENSIONS.contains(&ext)
+}
+
 fn unsupported_file_message(absolute: &str, ext: &str) -> String {
     let display_ext = if ext.is_empty() { "(none)" } else { ext };
-    if BINARY_CONTAINER_EXTENSIONS.contains(&ext) {
+    if is_binary_container(ext) {
         format!(
             "Attachment {absolute} has Office/archive/binary extension {display_ext}; it was \
              registered as a file path but not shown inline, and read_file cannot inspect this \
@@ -340,7 +346,7 @@ fn is_read_file_inspectable(entry: &AttachEntry) -> bool {
     if ext == ".pdf" || ext == ".ipynb" {
         return true;
     }
-    !BINARY_CONTAINER_EXTENSIONS.contains(&ext.as_str())
+    !is_binary_container(&ext)
 }
 
 /// TS GatewayAttachmentTurnComposer.ts:286-295 — the funasr hint only names
@@ -856,7 +862,7 @@ pub(super) fn compose_attachment_turn(
                 let ext = resolver_extension(entry);
                 let text_inline = !image && TEXT_EXTENSIONS.contains(&ext.as_str());
                 if !image && !text_inline {
-                    let severity = if BINARY_CONTAINER_EXTENSIONS.contains(&ext.as_str()) {
+                    let severity = if is_binary_container(&ext) {
                         DiagnosticSeverity::Info
                     } else {
                         DiagnosticSeverity::Warning
@@ -897,11 +903,12 @@ pub(super) fn compose_attachment_turn(
                     // an errno outside the libuv table falls back to the
                     // previous wording.
                     Err(error) => {
-                        let rejection = crate::node_fs_message(&error, "read", None)
-                            .unwrap_or_else(|| {
-                                format!("Attachment {} could not be read: {error}", entry.path)
-                            });
-                        return Err(failure(rejection));
+                        // #1462: Node's own message, including libuv's
+                        // `UNKNOWN: unknown error` fallback for errnos outside
+                        // the table — the shape must not be invented locally.
+                        return Err(failure(crate::node_fs_message_or_unknown(
+                            &error, "read", None,
+                        )));
                     }
                 };
                 // 读满即超限 (TS stat caps, AttachmentResolver.ts:164-175 and
