@@ -8,14 +8,36 @@
 //! to these tests live in the component sources.
 use super::*;
 use crate::channel::protocol::{
-    ChannelAdapter, ChannelError, ChannelGateway, ChannelKey, ChannelStartDeps, ChannelTurn,
-    TurnEvent, TurnEvents,
+    BoxFuture, ChannelAdapter, ChannelError, ChannelKey, ChannelStartDeps, TurnEventStream,
+    TurnGateway, TurnRequest,
 };
 use crate::user_dialog::NODE_408_RESPONSE;
+use pilotdeck_protocol::JsValue;
+/// One event, or the iterator rejection the TS channel catches per turn.
+type TurnEvent = Result<JsValue, ChannelError>;
+
+/// Adapts the mock channels' `mpsc` receivers to #1333's `TurnEventStream`
+/// (`crate::channel::protocol::TurnEventStream`).
+struct MockStream(mpsc::UnboundedReceiver<TurnEvent>);
+impl TurnEventStream for MockStream {
+    fn next(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, ChannelError>> + Send + '_>> {
+        Box::pin(async move {
+            match self.0.recv().await {
+                Some(Ok(event)) => Ok(Some(event)),
+                Some(Err(error)) => Err(error),
+                None => Ok(None),
+            }
+        })
+    }
+}
 use crate::{negative_assert, negative_assert_eq, test_baseline};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
+    future::Future,
+    pin::Pin,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -104,12 +126,15 @@ impl MockGateway {
     }
 }
 
-impl ChannelGateway for MockGateway {
-    fn submit_turn(&self, input: ChannelTurn) -> TurnEvents {
+impl TurnGateway for MockGateway {
+    fn submit(
+        &self,
+        request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
         self.calls.lock().expect("#1334 calls mutex").push(json!({
-            "sessionKey": String::from_utf16_lossy(input.session_key.units()),
-            "channelKey": input.channel_key.to_string(),
-            "message": String::from_utf16_lossy(input.message.units()),
+            "sessionKey": String::from_utf16_lossy(request.session_key.units()),
+            "channelKey": request.channel_key.to_string(),
+            "message": String::from_utf16_lossy(request.message.units()),
         }));
         let script = self
             .scripts
@@ -127,7 +152,7 @@ impl ChannelGateway for MockGateway {
                 let _ = sender.send(Ok(event));
             }
         }
-        TurnEvents::from(receiver)
+        Box::pin(async move { Ok(Box::new(MockStream(receiver)) as Box<dyn TurnEventStream>) })
     }
 }
 
@@ -138,18 +163,21 @@ struct HeldGateway {
     held: Mutex<Vec<mpsc::UnboundedSender<TurnEvent>>>,
 }
 
-impl ChannelGateway for HeldGateway {
-    fn submit_turn(&self, input: ChannelTurn) -> TurnEvents {
+impl TurnGateway for HeldGateway {
+    fn submit(
+        &self,
+        request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
         self.calls
             .lock()
             .expect("#1334 held gateway calls mutex")
-            .push(String::from_utf16_lossy(input.session_key.units()));
+            .push(String::from_utf16_lossy(request.session_key.units()));
         let (sender, receiver) = mpsc::unbounded_channel();
         self.held
             .lock()
             .expect("#1334 held gateway mutex")
             .push(sender);
-        TurnEvents::from(receiver)
+        Box::pin(async move { Ok(Box::new(MockStream(receiver)) as Box<dyn TurnEventStream>) })
     }
 }
 
@@ -160,12 +188,15 @@ struct GatedGateway {
     releases: Mutex<Vec<watch::Sender<bool>>>,
 }
 
-impl ChannelGateway for GatedGateway {
-    fn submit_turn(&self, input: ChannelTurn) -> TurnEvents {
+impl TurnGateway for GatedGateway {
+    fn submit(
+        &self,
+        request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
         self.calls
             .lock()
             .expect("#1334 gated calls mutex")
-            .push(String::from_utf16_lossy(input.session_key.units()));
+            .push(String::from_utf16_lossy(request.session_key.units()));
         let (sender, receiver) = mpsc::unbounded_channel();
         let (gate, _) = watch::channel(false);
         self.releases
@@ -179,7 +210,7 @@ impl ChannelGateway for GatedGateway {
             // The sender drops after the event: the turn completes on its reply.
             let _ = sender.send(Ok(event));
         });
-        TurnEvents::from(receiver)
+        Box::pin(async move { Ok(Box::new(MockStream(receiver)) as Box<dyn TurnEventStream>) })
     }
 }
 
@@ -246,7 +277,7 @@ fn test_options() -> WebhookChannelOptions {
 
 /// Install a gateway and logger without a listener, the state `start` would
 /// have set, for the direct `handle_incoming`/cron paths.
-fn install(channel: &WebhookChannel, gateway: Option<Arc<dyn ChannelGateway>>, logger: ChannelLog) {
+fn install(channel: &WebhookChannel, gateway: Option<Arc<dyn TurnGateway>>, logger: ChannelLog) {
     let mut state = channel.ctx.state.lock().expect("#1334 webhook state mutex");
     state.gateway = gateway;
     state.logger = Some(logger);
@@ -617,8 +648,8 @@ async fn run_case(case: &Value) -> Value {
         config: None,
         report_status: None,
         log: Some(logger),
-        gateway: (case["name"].as_str() != Some("gateway-missing"))
-            .then(|| gateway.clone() as Arc<dyn ChannelGateway>),
+        turn_gateway: (case["name"].as_str() != Some("gateway-missing"))
+            .then(|| gateway.clone() as Arc<dyn TurnGateway>),
     };
     channel
         .start(deps.clone())
@@ -863,7 +894,7 @@ async fn missing_delivery_id_falls_back_to_route_and_now() {
     channel
         .start(ChannelStartDeps {
             log: Some(recorder.logger()),
-            gateway: Some(gateway.clone() as Arc<dyn ChannelGateway>),
+            turn_gateway: Some(gateway.clone() as Arc<dyn TurnGateway>),
             ..Default::default()
         })
         .await
@@ -941,7 +972,7 @@ async fn stop_does_not_cancel_an_in_flight_turn() {
     channel
         .start(ChannelStartDeps {
             log: Some(recorder.logger()),
-            gateway: Some(gateway.clone() as Arc<dyn ChannelGateway>),
+            turn_gateway: Some(gateway.clone() as Arc<dyn TurnGateway>),
             ..Default::default()
         })
         .await
@@ -1004,7 +1035,7 @@ async fn shutdown_with_partial_body_finishes_at_request_timeout() {
     channel
         .start(ChannelStartDeps {
             log: Some(recorder.logger()),
-            gateway: Some(gateway.clone() as Arc<dyn ChannelGateway>),
+            turn_gateway: Some(gateway.clone() as Arc<dyn TurnGateway>),
             ..Default::default()
         })
         .await
@@ -1063,7 +1094,7 @@ async fn replacement_channel_rebinds_the_released_port() {
     first
         .start(ChannelStartDeps {
             log: Some(first_recorder.logger()),
-            gateway: Some(first_gateway.clone() as Arc<dyn ChannelGateway>),
+            turn_gateway: Some(first_gateway.clone() as Arc<dyn TurnGateway>),
             ..Default::default()
         })
         .await
@@ -1101,7 +1132,7 @@ async fn replacement_channel_rebinds_the_released_port() {
     second
         .start(ChannelStartDeps {
             log: Some(second_recorder.logger()),
-            gateway: Some(second_gateway.clone() as Arc<dyn ChannelGateway>),
+            turn_gateway: Some(second_gateway.clone() as Arc<dyn TurnGateway>),
             ..Default::default()
         })
         .await
