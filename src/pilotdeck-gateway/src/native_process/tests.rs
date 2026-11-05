@@ -628,6 +628,53 @@ fn run_registry_switch_matrix() {
     }
 }
 
+// #1370: the controlled storage stimulus entry. Unset keeps the production
+// default; a set value must name an existing directory and is returned as the
+// control directory; anything else — including the empty string and a missing
+// directory — fails closed at startup.
+#[test]
+fn storage_stimulus_switch_matrix() {
+    negative_assert!(
+        matches!(assembly::storage_stimulus_switch(&Env::new()), Ok(None)),
+        "#1370 unset storage stimulus keeps the production default"
+    );
+    let scratch = Scratch::new();
+    let control = scratch.0.join("control");
+    std::fs::create_dir(&control).expect("#1370 control directory fixture");
+    let mut env = Env::new();
+    env.insert(
+        "PILOTDECK_NATIVE_STORAGE_STIMULUS".into(),
+        control.to_str().expect("#1370 control UTF8").into(),
+    );
+    let resolved =
+        assembly::storage_stimulus_switch(&env).expect("#1370 existing control directory resolves");
+    negative_assert_eq!(
+        resolved.as_deref(),
+        Some(control.as_path()),
+        "#1370 stimulus switch returns the control directory"
+    );
+    for value in ["", " "] {
+        let mut env = Env::new();
+        env.insert("PILOTDECK_NATIVE_STORAGE_STIMULUS".into(), value.into());
+        negative_assert!(
+            assembly::storage_stimulus_switch(&env).is_err(),
+            "#1370 empty stimulus switch value rejected"
+        );
+    }
+    let missing = scratch.0.join("missing-control");
+    let mut env = Env::new();
+    env.insert(
+        "PILOTDECK_NATIVE_STORAGE_STIMULUS".into(),
+        missing.to_str().expect("#1370 missing UTF8").into(),
+    );
+    let error = assembly::storage_stimulus_switch(&env)
+        .expect_err("#1370 missing stimulus directory rejected");
+    negative_assert!(
+        error.to_string().contains("existing directory"),
+        "#1370 missing stimulus directory reports the explicit gate: {error}"
+    );
+}
+
 // A runs.json directory makes opening the persistent registry fail, so only
 // the off switch can complete startup: unset and "on" pin the production
 // default, and an invalid value is rejected before the file is touched.

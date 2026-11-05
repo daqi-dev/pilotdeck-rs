@@ -93,6 +93,12 @@ impl TurnRunRegistry for FileRegistry {
         })
     }
     fn append(&self, run: &RunRef, event: &JsValue) -> RegistryFuture<()> {
+        // #1370 FIFO witness at the `runRegistry.append` port: publish a
+        // queued receipt before the job enters the single worker, so the
+        // collector sees what queued behind a held registry barrier.
+        if let Err(error) = crate::storage::stimulus::registry_stimulus_queued(event) {
+            return Box::pin(std::future::ready(Err(error)));
+        }
         let run = run.clone();
         let event = event.clone();
         self.call(move |registry| registry.append(&run, &event))

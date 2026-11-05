@@ -9,6 +9,7 @@ mod projection;
 pub mod recorder;
 mod run_registry;
 mod session_domain;
+pub(crate) mod stimulus;
 mod transcript;
 mod transcript_adapter;
 mod workspace_snapshot;
@@ -94,6 +95,8 @@ fn invalid(message: impl Into<String>) -> LedgerError {
 
 #[cfg(test)]
 mod run_registry_tests;
+#[cfg(test)]
+mod stimulus_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
