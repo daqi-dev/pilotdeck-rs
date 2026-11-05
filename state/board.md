@@ -3028,3 +3028,24 @@ updated: 2026-11-02 12:22 · by Claude Code 子代理（READY 重写）
 - 人定方向重申：交接链推进直到 A7/A8 完成，仅核心 Agent 功能（always-on 暂缓），dev-launch 为入口、dev-docs 辅助、可开 loop；P2a 小补丁负控合并跑一次（新 memory p2a-negctl-batch-once）。
 - 08:1x–08:2x：**#1435（board state PR）合入** 51096e0d4（邮箱核过）；pr-gate 曾红=正文缺 waiver/no-issue 注释，已修正文（state PR 快路径）。**收口批次 1 三个 head 已推**：#1425=a5f5ecde6（直接复用 b4f6b0 的本地 rebase，clippy/lib 3459 已过）、#1419=0906d5eb8、#1418=17def4d37；worker f5 仍在跑测试，report 待出。**#1312 fix-r3 已派**（tmux aiw:fix-1312-r3，wt-1312-38）：方向按 b4f6b0 TS 实测= sop_request 无条件 CAPABILITY_UNAVAILABLE（连 sessionKey 都不先验，评审原「补 4 字段校验」是反的），翻转 sop_status_requires_session_key 期望码；负控一轮合并跑；原件 _tmp/20261105-handoff/closeout-3a-1312.md、任务书 _tmp/20261105-issue-1312-fix-r3/task.md。**谱系警示**：#1415 作者谱系 Claude+GLM，后续评审只能 codex+dsh。b4f6b0 已全线停工收尾（树状态见其交接）；faf940 已发停工令但 SendMessage 不可达（bg 忙轮），其工作线是 #1360，与收口批次不重叠，新协调者接手先 ListAgents 核它状态。#1426 / #1399 rust CI 进行中。
 - **08:2x 两小时交接**：上一交接点 06:35。下一步：① #1426 CI 绿→check-pr-gate 核验（本地 --body-file）→ gh pr merge 1426（不加 --delete-branch）→ 核邮箱 → project-mark；P2 已登记 #1434；② 收 f5 report→三 PR 逐个 gate 刷新+入队；③ #1312 fix-r3 收货→codex+dsh 两家评审；④ 批次 2：#1417（wt-1310）/#1423（wt-1322）rebase+gate 刷新，建议交同一 worker f5；⑤ #1399 CI 结果确认。挂起：scripts/review-minimax.py 未跟踪需单独 PR、READY 块 11-02 起陈旧需重写、磁盘 192 GiB 预警、远端三台不可达。用户 08:19 在 tmux ak 起了新协调会话（deepseek-v4.1-flash-mb，大总管指令），疑为交接链下一环——新会话接手时本会话停。
+### 10:2x（两小时交接）
+
+上一交接 08:2x。本轮做了什么：
+
+- **#1415（#1312）合入** e9ec214c2（邮箱 noreply 核过；issue #1312 自动关闭；看板已标 Done）。**#1426（#1323）合入** 90fd581a7、**#1399 合入** d64c9688e（闭 #1244，邮箱均核过）；看板已标 Done（#1323 仍 OPEN，等 #1434 跟进清完再关）。
+- **#1410（#1395）已入合并队列**：fix-r1（head 90aee5e89）DS 增量复核 0/0/0/1、闸门 r2 四角色全 PASS 0 P0/P1/P2；正文已按新 head 更新并转 ready（check-pr-gate PASS），CI 全绿（rust 19m14s）后入队，监控中。
+- **#1419（#1309）fix-r6 已交付**（head 5f9388d03，lib 3464/0，负控三变异 KILLED）→ 三路复核已起：DS + codex 增量 + 闸门 r6。
+- **#1425（#1307）fix-r3/fix-r3b**（head 5b74230da）：DS 增量复核 0/0/0/2；codex 复核 1 P1（附件拒绝位置仍偏一层：TS 在 activeRunId 两分支后立即准备附件，资源/会话门在更晚的 router.steer）+ 3 P2 测试缺口；闸门 r4 出 1 条新 P1（steer/cancel 校验→入队临界区脱离 admission 锁，同文本 turnId 重启可跨 run 投递，监视器注释自证不变量）+ simplify P2（run-ID 三遍核对/assembly 闭包重复）。→ **fix-r4 已派**（agent，任务书 `_tmp/20261105-issue-1307-fix-r4/task.md`：竞态纳入 admission 锁复用 mutate 语义 + 附件拒绝对位 + 去重 + 三条 P2a 测试）。
+- **#1418（#1321）fix-r1**（head bcc683074）：DS 增量复核 1 P1「上限判定顺序反转」→ **协调者读码仲裁驳回**（services.rs:181-199 声明 ≤ limit 时 else 分支必查 metadata；DS 推理自相矛盾；`_tmp/20261105-issue-1321-fix-r1-review/arbitration.md`）；但 codex 复核出真 4 P1（canonicalize 结果丢弃 TOCTOU、metadata/read 非原子无界、声明值单方向权威、content 分支缺失）+ 闸门 r2 boundary 4 P1（嵌套图片块 vs TS 扁平、note 文案四形缺失、文本扩展名内联缺失、content/text 回退缺失；TS 真相协调者已抽读核实）。→ **fix-r2 已派**（agent，任务书 `_tmp/20261105-issue-1321-fix-r2/task.md`：6 项 P1 + 当轮 P2a）。**跟进单已开：#1446（allowedReadFiles 门槛/双路径）、#1447（图片字节校验）、#1448（组合层测试补强）；#1441 评论补 attachmentIds=[] 待实测**。
+- **#1419（#1309）fix-r6 在跑**（agent，任务书 `_tmp/20261105-issue-1309-fix-r6/task.md`）：leaseId trim + 17 处 message 前缀 + #1445 分期声明。
+
+下一步（就绪序）：
+
+1. #1410 队列 MERGED 确认（监控 bdump）→ 核邮箱 → project-mark。
+2. #1419 三路复核（DS b2lw1kaka / codex bfda2hb1r / 闸门 r6 b7njsnk8v）齐后：无新 P0/P1 则更新正文（结果块覆盖 head 5f9388d03、含 #1445 分期声明、fix-r6 两项修复与负控）→ check-pr-gate → 合入 → 核邮箱。
+3. #1425 fix-r4 交付 → DS+codex 两家复核（修 P1 轮次）+ 新 head 闸门 r5 → 更新正文 → 合入。
+4. #1418 fix-r2 交付 → DS+codex 两家复核 + 新 head 闸门 r3 → 更新正文 → 合入（注意与 #1425 的 assembly.rs 改动可能撞队列：入队前 rebase 后 `cargo test --no-run`）。
+5. f5 批次 2（#1417 wt-1310 / #1423 wt-1322 rebase+gate）等其汇报。
+6. 挂起：READY 块重写（评审稿 `_tmp/20261105-ready-rewrite/ready-block.md` 103 条）、scripts/review-minimax.py 单独 PR、P2-跟进集中清理（本波收口后派 worker；#1443 已归入）、DS 官方通道 402 待充值（攒着问人）。
+
+资源：磁盘 161.4 GiB / cargo 0-2/4 / worktree 名额正常。谱系提醒：#1410/#1418/#1419/#1425 作者谱系全 Claude，评审只能 DS+codex（GLM 不算非作者）。在途：#1307 fix-r4 agent、#1321 fix-r2 agent、#1309 fix-r6 agent、f5（批次 2）、#1410 CI 等待器。
