@@ -72,6 +72,20 @@ out=$(DU_FAIL=1 pdrs_disk_level "$T/root" 2>/dev/null); rc=$?
 eq "du 失败 level rc" "$rc" 2
 eq "du 失败 level 无输出" "[$out]" "[]"
 
+# 5b. 符号链接：`du -sk` 对命令行 symlink 不跟随（BSD 实测 0 KiB），lib 必须先 cd + pwd -P。
+#     本仓库的 runner 树确有 `_build` 指向外接卷的配置，量成 0 会让闸门静默失效。
+mkdir -p "$T/data/_build" "$T/rootlink"
+dd if=/dev/zero of="$T/data/_build/blob" bs=1m count=3 2>/dev/null
+ln -s "$T/data/_build" "$T/rootlink/_build"
+k=$(PATH=/usr/bin:/bin pdrs_disk_used_kib "$T/rootlink")
+[ "${k:-0}" -ge 1024 ] && ok "symlink 的 _build 量到实体（${k} KiB）" || bad "symlink 的 _build 量到 ${k:-?} KiB，应 ≥1024"
+
+# 5c. 断链：du 对它返回 0 KiB 且 rc=0，必须 fail-closed 而不是静默放行
+mkdir -p "$T/rootbroken"; ln -s /nonexistent/pdrs "$T/rootbroken/_build"
+out=$(pdrs_disk_used_kib "$T/rootbroken" 2>/dev/null); rc=$?
+eq "断链 _build rc" "$rc" 2
+eq "断链 _build 无输出" "[$out]" "[]"
+
 # 6. 直接执行：打印三档与当前级别
 o=$(cd "$T/root" && DU_BUILD_KIB=$((170 * GIB)) bash "$LIB" 2>&1); rc=$?
 eq "直接执行 rc" "$rc" 0

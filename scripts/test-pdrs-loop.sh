@@ -135,9 +135,12 @@ check "⑫ 超时但已写交接：3 行 timeout、board_changed 全为 1、exit
 
 # ⑬ 磁盘闸：阈值/测量唯一实现在 scripts/lib/disk-budget.sh，循环在 WARN 线（160 GiB）就停派新活
 setup progress
-printf '%s\n' '#!/usr/bin/env bash' 'echo -e "178257920\t$2"' > "$T/bin/du"; chmod +x "$T/bin/du"
+# 桩必须按路径区分：lib 对 _build 与 _tmp 各调一次 du，两边都给同一个数会把「合计 170 GiB」悄悄变成 340 GiB，
+# 用例会在错误前提下发绿（评审 P2）。这里只让 _build 报 170 GiB、_tmp 报 0，合计才是真的 170 GiB。
+printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do last=$a; done' \
+  'case $last in' '  */_tmp) v=0 ;;' '  *) v=178257920 ;;' 'esac' 'echo -e "$v\t$last"' > "$T/bin/du"; chmod +x "$T/bin/du"
 run_loop
-check "⑬ 磁盘 170 GiB（WARN 档）：exit 1、runner 0 次、消息含预警线" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "预警线" "$T/out.log"'
+check "⑬ 磁盘合计 170 GiB（WARN 档）：exit 1、runner 0 次、消息含 170 GiB 与预警线" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "170 GiB" "$T/out.log" && grep -q "预警线" "$T/out.log"'
 
 # ⑬b du 失败必须 fail-closed 停机，不能当 0 放行
 setup progress
