@@ -6,15 +6,32 @@
 //! (header-name case, chunk-size case, the bare 400's `content-length: 0`)
 //! carry over from the A8.4-NATIVE-HTTP-001 ledger family.
 //!
-//! Registered residuals specific to this channel: the failed-start error log
-//! carries the Rust bind error where TS prints Node's (`Error: listen
-//! EADDRINUSE ...`), the message pipeline carries reply texts as Rust
-//! `String`s (lone surrogates become U+FFFD; truncation stays UTF-16-unit
-//! based), body text is Node `toString("utf8")` semantics, header values are
-//! Latin-1 decoded like Node's parser, an invalid port is rejected up front
-//! where Node throws inside `listen`, and a JSON body of literal `null`
-//! reproduces the TS hang (the voided rejection never writes a response) by
-//! never resolving the response future.
+//! The body read carries Node's default `requestTimeout` (v22.22.0: 300 s,
+//! [`DEFAULT_REQUEST_TIMEOUT`]) as its only deadline: a request whose body
+//! never completes is answered with a 408 and the connection closes, so
+//! `stop()` stays bounded (probe
+//! `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`). The deadline
+//! covers the body read only, never the whole handler: a JSON body of
+//! literal `null` keeps hanging the connection forever, reproducing the TS
+//! baseline where the voided rejection never writes a response (#1557).
+//!
+//! Known channel-specific residuals, *not yet registered* in the
+//! gateway-parity diff ledger — there is no `A8.3-CH-WEBHOOK-*` entry, and
+//! adding one needs human approval and two non-author reviews, so these stay
+//! pending until then: the failed-start error log carries the Rust bind error
+//! where TS prints Node's (`Error: listen EADDRINUSE ...`), the message
+//! pipeline carries reply texts as Rust `String`s (lone surrogates become
+//! U+FFFD; truncation stays UTF-16-unit based), body text is Node
+//! `toString("utf8")` semantics, header values are Latin-1 decoded like
+//! Node's parser, an invalid port is rejected up front where Node throws
+//! inside `listen`, the 408 above fires at exactly its deadline where Node
+//! lands request timeouts on the 30 s connections-checker grid (the same
+//! residual class the A8.4-NATIVE-HTTP-002-R2 entry registered for the
+//! native lane's headersTimeout), and hyper frames that 408's unknown-length
+//! empty body as `Transfer-Encoding: chunked` + `0\r\n\r\n` where Node's raw
+//! `_http_server.js` `requestTimeoutResponse` is 51 unframed bytes — the
+//! same hyper-public-API presentation-diff class the A8.4-NATIVE-HTTP-001
+//! entry registered for the native lane.
 mod hmac;
 mod mapper;
 mod render;
@@ -28,6 +45,7 @@ use std::{
     collections::{HashMap, HashSet},
     io,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use http_body_util::BodyExt;
@@ -56,6 +74,12 @@ const INSECURE_NO_AUTH: &str = "__INSECURE_NO_AUTH__";
 const RATE_LIMIT_WINDOW: f64 = 60.0;
 /// `pruneSeenDeliveries`/`pruneDeliveryInfo` cutoff, seconds.
 const PRUNE_CUTOFF: f64 = 3600.0;
+/// Node `http.createServer`'s default `requestTimeout` (v22.22.0: 300000 ms):
+/// the bound on receiving the whole request from the client. Here it bounds
+/// the body read only — the head is already bounded by the shared lane's
+/// `headersTimeout`, and a whole-handler deadline would turn the TS `null`
+/// -body hang (#1557) into a Rust divergence.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// `Date.now() / 1000` as the channel reads it; direct tests inject a fake.
 pub type Now = Arc<dyn Fn() -> f64 + Send + Sync>;
@@ -79,6 +103,10 @@ pub struct WebhookChannelOptions {
     pub max_body_bytes: Option<f64>,
     pub mapper: Option<WebhookSessionMapper>,
     pub now: Option<Now>,
+    /// The body-read deadline, [`DEFAULT_REQUEST_TIMEOUT`] when unset. TS
+    /// exposes no such option (it is Node's server default, not a channel
+    /// option); the field is the Rust tests' injection point, like `now`.
+    pub request_timeout: Option<Duration>,
 }
 
 /// The channel's mutable lifetime state, all behind one lock like the TS
@@ -109,6 +137,7 @@ struct Ctx {
     global_secret: String,
     rate_limit: f64,
     max_body_bytes: f64,
+    request_timeout: Duration,
     now: Now,
     mapper: Mutex<WebhookSessionMapper>,
     state: Mutex<State>,
@@ -129,6 +158,7 @@ impl WebhookChannel {
                 global_secret: options.secret.unwrap_or_default(),
                 rate_limit: options.rate_limit.unwrap_or(DEFAULT_RATE_LIMIT),
                 max_body_bytes: options.max_body_bytes.unwrap_or(DEFAULT_MAX_BODY_BYTES),
+                request_timeout: options.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
                 now: options.now.unwrap_or_else(|| Arc::new(default_now)),
                 mapper: Mutex::new(options.mapper.unwrap_or_else(|| {
                     WebhookSessionMapper::new(WebhookSessionMapper::random_uuid())
@@ -153,6 +183,7 @@ impl WebhookChannel {
             max_body_bytes: number("maxBodyBytes"),
             mapper: None,
             now: None,
+            request_timeout: None,
         })
     }
 
@@ -536,6 +567,23 @@ async fn read_request_body(body: Incoming, max: f64) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Node v22.22.0 `_http_server.js` `requestTimeoutResponse`: what the default
+/// `requestTimeout` writes before closing a socket whose request body never
+/// completes (probe `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`).
+/// The body is close-terminated (`Connection: close`, no `content-length`);
+/// hyper's public API frames an unknown-length HTTP/1.1 body as chunked, so
+/// the wire is Node's 51 bytes plus the chunked framing — a presentation
+/// residual of the A8.4-NATIVE-HTTP-001 class, pending registration.
+fn node_request_timeout_response() -> hyper::Response<Body> {
+    let mut response = hyper::Response::new(native_http::streamed(None));
+    *response.status_mut() = hyper::StatusCode::REQUEST_TIMEOUT;
+    response.headers_mut().insert(
+        hyper::header::CONNECTION,
+        "close".parse().expect("#1334 header"),
+    );
+    response
+}
+
 async fn handle_webhook(
     ctx: Arc<Ctx>,
     request: hyper::Request<Incoming>,
@@ -566,7 +614,18 @@ async fn handle_webhook(
         ));
     }
 
-    let body_text = match read_request_body(request.into_body(), ctx.max_body_bytes).await {
+    let body_read = read_request_body(request.into_body(), ctx.max_body_bytes);
+    let body_text = if crate::mutants::on("webhook-body-read-no-timeout") {
+        // The pre-fix behavior the negative control kills: no deadline on the
+        // body read, so a partial body hangs the connection and `stop()`.
+        body_read.await
+    } else {
+        match tokio::time::timeout(ctx.request_timeout, body_read).await {
+            Ok(result) => result,
+            Err(_) => return Ok(node_request_timeout_response()),
+        }
+    };
+    let body_text = match body_text {
         Ok(text) => text,
         // The catch arm's 413 never reaches the wire: TS destroyed the socket
         // before the rejection continuation runs, so the response is the
