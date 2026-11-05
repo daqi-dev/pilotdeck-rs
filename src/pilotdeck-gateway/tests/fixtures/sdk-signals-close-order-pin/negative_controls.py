@@ -46,8 +46,8 @@ first failure), a stale anchor is INVALID (never SURVIVED), a mutant that
 does not parse as Python is INVALID, and any non-KILLED control exits
 nonzero. The table itself is registered by EXPECTED_TOTAL (#1506): a
 zero or negative denominator, and an empty, short, or duplicated table, are
-refused before any control runs, and a run that produced no result row exits
-nonzero instead of printing `0/0 killed`. Because
+refused before any control runs, and a run that records no result row exits
+nonzero before it publishes any evidence. Because
 mutating_sources proves the tree equals HEAD, this must run
 after the #1382 patch is committed; a pre-commit working tree is refused on
 purpose.
@@ -187,6 +187,11 @@ def check_mutation_table(rows):
 
 check_mutation_table(mutations)
 
+# #1506 fix-r3: the registered name list is frozen here, before `[name ...]`
+# narrows `mutations` below. Read after that rebinding it is just `selected`
+# again, so the "8 registered" evidence proved nothing on a subset run.
+REGISTERED = [row[0] for row in mutations]
+
 if len(sys.argv) < 2:
     sys.exit(
         "usage: negative_controls.py NEW_OUTPUT_DIR [name ...] "
@@ -310,6 +315,12 @@ with mutating_sources(root, [catalog, ledger, d1_ledger]) as snapshots:
         )
         print(f"{name}: {status}: {reason}", flush=True)
 
+# #1506 fix-r3: an empty run is a zero denominator, never a pass, and it must
+# not publish evidence that looks like a finished run. The table guard above
+# already refuses an empty registry and the argv check refuses an empty
+# selection, so this only fires if a future path records no row at all.
+if not results:
+    sys.exit("#1506 no control ran: an empty run is not a pass")
 counts = {
     state: sum(row["status"] == state for row in results)
     for state in ("KILLED", "SURVIVED", "INVALID")
@@ -321,8 +332,8 @@ counts = {
 # names keeps the count and the uniqueness check green, and only the names
 # show it.
 summary = {
-    "registeredTotal": EXPECTED_TOTAL,
-    "registered": [row[0] for row in mutations],
+    "registeredTotal": len(REGISTERED),
+    "registered": REGISTERED,
     "selected": [row["mutation"] for row in results],
     "counts": counts,
     "results": results,
@@ -332,20 +343,13 @@ print(
     json.dumps(
         {
             "total": len(results),
-            "registeredTotal": EXPECTED_TOTAL,
+            "registeredTotal": len(REGISTERED),
             "selectedTotal": len(results),
             "counts": counts,
         }
     ),
     flush=True,
 )
-# #1506 fix-r2: an empty run is a zero denominator, never a pass. The guard
-# above already refuses an empty table, so this only fires if the selection
-# narrowed to nothing — which the argv check also refuses. Kept as the last
-# line of defence, because "no result rows" silently exiting green is the
-# exact failure this fixture was opened for.
-if not results:
-    sys.exit("#1506 no control ran: an empty run is not a pass")
 not_killed = [row["mutation"] for row in results if row["status"] != "KILLED"]
 if not_killed:
     sys.exit(f"#1382 non-KILLED controls: {not_killed}")
