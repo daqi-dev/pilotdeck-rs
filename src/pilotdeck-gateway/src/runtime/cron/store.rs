@@ -9,7 +9,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, LockResult, Mutex, MutexGuard, OnceLock},
     time::SystemTime,
 };
 
@@ -63,6 +63,42 @@ pub(super) fn release_task_file_tail(tasks_file: &Path, tail: Arc<Mutex<()>>) {
     }
 }
 
+/// CronTaskStore.ts:168-172's `finally` half for a mutating body: a
+/// panicking mutation must still drop the registry entry when its tail is
+/// the last one. Ownership of this mutation's tail clone lives here alone —
+/// an extra caller-held clone would keep the strong count above one and the
+/// registry entry would never come out. The mutex guard borrows this guard
+/// from a deeper scope, so an unwind (or a normal return) releases the file
+/// mutex first and only then touches the registry.
+struct TaskFileTailRelease {
+    tasks_file: PathBuf,
+    tail: Option<Arc<Mutex<()>>>,
+}
+
+impl TaskFileTailRelease {
+    fn new(tasks_file: &Path) -> Self {
+        Self {
+            tasks_file: tasks_file.to_path_buf(),
+            tail: Some(task_file_tail(tasks_file)),
+        }
+    }
+
+    fn lock(&self) -> LockResult<MutexGuard<'_, ()>> {
+        self.tail
+            .as_ref()
+            .expect("#1258 tail release: the tail is only absent while dropping")
+            .lock()
+    }
+}
+
+impl Drop for TaskFileTailRelease {
+    fn drop(&mut self) {
+        if let Some(tail) = self.tail.take() {
+            release_task_file_tail(&self.tasks_file, tail);
+        }
+    }
+}
+
 /// CronTaskStore.ts:157-173 `mutateTaskFile`: serialize the whole
 /// read-modify-write span on the per-file tail, then drop the registry entry
 /// when this mutation is still the last one.
@@ -70,12 +106,12 @@ fn mutate_task_file<T>(
     tasks_file: &Path,
     mutation: impl FnOnce() -> Result<T, CronStoreError>,
 ) -> Result<T, CronStoreError> {
-    let tail = task_file_tail(tasks_file);
+    let tail = TaskFileTailRelease::new(tasks_file);
     let result = {
         let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         mutation()
     };
-    release_task_file_tail(tasks_file, tail);
+    drop(tail);
     result
 }
 

@@ -289,6 +289,28 @@ mutations = [
      '        if Arc::strong_count(current) == 2 {',
      'runtime::cron::tests::store_tail_entry_removed_after_contended_mutation_pair',
      '#1216 tail contended: a finished release must not remove the tail entry while the sibling mutation\'s clone is still alive'),
+    # #1258: the Drop guard is swapped back for the pre-fix explicit release
+    # call, so a panicking mutation unwinds past it and the registry entry is
+    # stranded (CronTaskStore.ts:168-172's finally deletes on a throw too).
+    ('tail-release-skipped-on-panic', source,
+     '    let tail = TaskFileTailRelease::new(tasks_file);\n'
+     '    let result = {\n'
+     '        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());\n'
+     '        mutation()\n'
+     '    };\n'
+     '    drop(tail);\n'
+     '    result\n'
+     '}',
+     '    let tail = task_file_tail(tasks_file);\n'
+     '    let result = {\n'
+     '        let _guard = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());\n'
+     '        mutation()\n'
+     '    };\n'
+     '    release_task_file_tail(tasks_file, tail);\n'
+     '    result\n'
+     '}',
+     'runtime::cron::tests::store_tail_entry_removed_after_panicking_mutation',
+     '#1258 tail panic: a panicking mutation must still drop its finished tail from the registry'),
 ]
 
 
