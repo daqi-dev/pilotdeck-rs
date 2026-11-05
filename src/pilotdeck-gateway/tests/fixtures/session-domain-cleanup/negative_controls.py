@@ -635,7 +635,7 @@ def calibrate_ann_rebuilt(rows):
     """#892 r8: an annotated ``report: dict = {**report, ...}`` rebuild is the
     same write (MiniMax sibling r6 P2-1)."""
     return _controls_main_needle(
-        rows, "status slot 'PASS'",
+        rows, 'inline status/exit assignment {**report',
         'aggregation-audit: annotated rebuild flagged, passed=False')
 
 
