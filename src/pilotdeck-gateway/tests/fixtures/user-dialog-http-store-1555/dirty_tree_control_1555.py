@@ -79,8 +79,10 @@ a kill would be an untracked build input, and one left in the root would dirty
     CARGO_TARGET_DIR=... python3 dirty_tree_control_1555.py NEW_OUTPUT_DIR
 """
 import json
+import math
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import time
@@ -152,15 +154,29 @@ def requested_clock(text):
     or a driver whose marker line was rewritten -- and the caller falls back to
     its read time, which is the pre-fix behaviour and never turns a wait into a
     pass on its own.
+
+    Only *complete* lines count (fix-r6 review, boundary P2): the control polls
+    a file the driver is still writing, so the trailing newline-less segment
+    can be half a number (`lock-requested 12`), which would freeze a bogus
+    stamp and blow the measured wait up to the whole monotonic epoch -- the
+    direction that lets a slow no-lock mutant pass. A non-finite value (nan
+    compares False against every threshold) or one from the future is treated
+    the same as no value at all: fall back to the read time.
     """
-    for line in text.splitlines():
+    lines = text.split('\n')
+    if lines and lines[-1] != '':
+        lines = lines[:-1]  # the last segment may still be being written
+    for line in lines:
         if line.startswith('lock-requested'):
             fields = line.split()
             if len(fields) == 2:
                 try:
-                    return float(fields[1])
+                    value = float(fields[1])
                 except ValueError:
                     return None
+                if not math.isfinite(value) or value > time.monotonic():
+                    return None
+                return value
             return None
     return None
 
@@ -200,10 +216,15 @@ def settle(process, log):
     try:
         process.wait(timeout=WATCHDOG)
     except subprocess.TimeoutExpired:
-        # `launch` puts the driver in its own session, so killing the leader
-        # alone would leave cargo / rustc / the timing tool running in the
-        # shared target directory -- and in the `dirty-src` leg they are
-        # compiling the marked source (fix-r5 review, concurrency P2).
+        # Signal the driver's whole group rather than the leader alone: macOS
+        # can report EPERM for an unreaped exited leader and `_kill_group`
+        # retries after reaping, and any child that did *not* setsid (a future
+        # one) dies with it. It does **not** reach cargo / rustc / the timing
+        # tool today: the driver starts every one of them through
+        # `negative_process.run_owned`, which uses `start_new_session=True`, so
+        # each is in its own session and out of this group's reach (fix-r6
+        # review, concurrency P2 -- an earlier version of this comment claimed
+        # the opposite). Those orphans are registered as #1705.
         _kill_group(process)
         process.wait(timeout=60)
         raise
@@ -236,6 +257,11 @@ def restore(path, original, marked=None):
     temp = scratch('restore')
     try:
         temp.write_bytes(original)
+        # `os.replace` swaps in the temp file's inode, so without this the
+        # tracked source comes back with the umask's mode instead of its own
+        # (fix-r6 review, sibling P2 -- the driver's `negctl_restore` path got
+        # the same fix; both write the same tracked file).
+        os.chmod(temp, stat.S_IMODE(path.stat().st_mode))
         os.replace(temp, path)
     except OSError as error:
         try:
@@ -257,9 +283,15 @@ def restore_locked(path, original):
 
     The primary path is now the driver's own restore (`negctl_restore` in
     `rss_probe_1555.py`): it undoes the marker while it still holds the lock,
-    so no runner queued behind can see it. This function is the fallback for a
-    driver that never got that far (a mutant without the dirty gate, a crash),
-    and for the second call from `main`. It re-takes the tree lock with a
+    which closes the window between the driver releasing the lock and a
+    restore issued from here. It does not close the earlier one -- the marker
+    sits on disk from this process's write until the driver takes the lock,
+    and that handoff is not atomic (see the module docstring and #1695) -- so
+    this fallback is still required, not redundant: a sibling runner can win
+    the lock in that gap, and a driver that never reaches the dirty branch (a
+    mutant without the dirty gate, a crash, a watchdog kill) would otherwise
+    leave the source marked forever. This function is the fallback for exactly
+    those, and for the second call from `main`. It re-takes the tree lock with a
     bounded wait; a sibling that holds the lock for longer than the bound must
     not be able to skip the restore, so the timeout falls back to the unlocked
     path and says so. Any `OSError` from the lock itself (EMFILE, ENOSPC, a
@@ -338,8 +370,13 @@ def lock_check(out, env):
         returncode = None
     summary = read_summary(out / 'probe-lock' / 'summary.json')
     # The full output, not just the hold window: a real driver prints
-    # `lock-acquired` as soon as the control releases the lock.
-    acquired = 'lock-acquired' in read_log(path)
+    # `lock-acquired` as soon as the control releases the lock. `provenance`
+    # is printed a few statements later (under the lock), so its presence is
+    # the "the driver got past the lock call" bit that separates a mutant from
+    # a driver that crashed before ever asking (fix-r6 review, concurrency P2).
+    full = read_log(path)
+    acquired = 'lock-acquired' in full
+    passed_lock = acquired or 'provenance ' in full
     exited_early = process is not None and process.returncode is not None and not early
     status = 'KILLED'
     if 'lock-acquired' in early:
@@ -364,17 +401,29 @@ def lock_check(out, env):
         status = 'INVALID'
         reason = (f'the driver never asked for the lock during the hold '
                   f'(early={early.strip()[:200]!r}, early_exit={exited_early})')
-    elif not acquired:
-        # Decisive and independent of the timing band below: the driver asked
-        # for the lock and never printed `lock-acquired`, so it never took it.
-        # Checked before the rc / status branches on purpose -- a no-lock
-        # mutant whose build also fails is still a survivor, and reporting it
-        # as INVALID would hide the mutation behind a build error (fix-r5
-        # review, concurrency P2).
+    elif not acquired and passed_lock:
+        # The driver printed `provenance`, which happens only after the lock
+        # call returned, yet `lock-acquired` is nowhere in its output: the
+        # mutant skipped the lock and ran on. Decisive and independent of the
+        # timing band below, and checked before the rc / status branches on
+        # purpose -- a no-lock mutant whose build also fails is still a
+        # survivor, and reporting it as INVALID would hide the mutation behind
+        # a build error (fix-r5 review, concurrency P2).
         status = 'SURVIVED'
-        reason = ('the driver asked for the shared lock and never acquired it '
-                  '(no lock-acquired anywhere in its output; '
-                  f'rc={returncode} status={summary.get("status")!r})')
+        reason = ('the driver asked for the shared lock, never printed '
+                  'lock-acquired, and went on to print provenance -- it ran '
+                  f'without the lock (rc={returncode} '
+                  f'status={summary.get("status")!r})')
+    elif not acquired:
+        # No `lock-acquired` *and* no `provenance`: the driver never got past
+        # the lock call at all, which is what a crash or an external kill
+        # looks like (`os.open` failing in `tree_lock.__enter__`, EMFILE, a
+        # stray signal). Blaming the mutant for that would be a false FAIL
+        # with the wrong attribution (fix-r6 review, concurrency P2).
+        status = 'INVALID'
+        reason = ('the driver never reached the lock: no lock-acquired and no '
+                  f'provenance in its output (rc={returncode} '
+                  f'status={summary.get("status")!r})')
     elif blocked < MIN_BLOCK_SECONDS:
         status = 'INVALID'
         reason = (f'the request appeared {blocked:.2f}s before the release, '
@@ -411,6 +460,9 @@ def dirty_check(out, env, original):
             marked = original + MARKER
             temp = scratch('marker')
             temp.write_bytes(marked)
+            # Same inode swap as the two restore paths: keep the source's own
+            # mode instead of the umask's (fix-r6 review, sibling P2).
+            os.chmod(temp, stat.S_IMODE(source.stat().st_mode))
             os.replace(temp, source)
             # The driver undoes the marker itself, under the lock, before it
             # returns (`negctl_restore` in rss_probe_1555.py): a restore issued

@@ -114,7 +114,15 @@ def negctl_restore():
     a runner queued behind would take the lock first, see the marker and record
     a false `src/ is dirty` (fix-r5 review, concurrency P1). Restoring here,
     still inside the lock and before the refusal is returned, removes that
-    window: the marker exists only while this process holds the lock.
+    window.
+
+    It does not remove the *other* one (fix-r6 review, sibling P1): the marker
+    is on disk from the moment the control writes it until this process takes
+    the lock, and that handoff is not atomic -- `tree_lock` is `LOCK_NB` plus
+    50 ms polling with no kernel queue, so a sibling polling in the same
+    instant can win the lock first and see the marker. See
+    `dirty_tree_control_1555.py`'s module docstring, R7 §机器判据, and the
+    follow-up issue #1695.
 
     `PDRS_NEGCTL_RESTORE` is `<relative path>\\x1f<original file>\\x1f<marked
     file>`; both files live in the control's output directory, outside the
