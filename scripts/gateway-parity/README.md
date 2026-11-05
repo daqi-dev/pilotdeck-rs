@@ -191,10 +191,12 @@ python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另�
   在新增事件文件里有 `Change: - <当前字节 sha256> <路径>` 行时。
 - 首次登记不总是写在失败列表里：parity 只说 hash list differs 并把跳过的文件放进
   `unregistered_skipped`，gateway-parity 只说生成的清单不同。预检因此另扫交付分支上
-  各装置 `--write` 范围内的新增文件（`scripts/<装置>/`，gateway 另含 `scripts/a5-19/`，
-  parity 另含 `specs/parity/` 顶层文件），同样要求精确的
-  `Change: - <sha256> <路径>` 链——否则记为阻塞：`--write` 登记后
-  `check_frozen.py --base` 必然拒绝。
+  各装置 `--write` **真会登记**的新增文件：parity 是 `scripts/parity/` 下已跟踪的文件
+  加它固定的五个 spec 文档；gateway-parity 是装置目录下、被装置源码点名的文件。
+  这些同样要求精确的 `Change: - <sha256> <路径>` 链——否则记为阻塞：`--write`
+  登记后 `check_frozen.py --base` 必然拒绝。装置不会登记的新文件（未跟踪草稿、
+  清单外文件）一律忽略：真实闸门同样无感，给它补事件行反而会变成未使用的
+  event 行、被 `check_frozen` 判失败。
 - 阻塞：其余全部。尤其「改了冻结字节却没有对应事件行」的
   `hash change lacks exact new event chain`、未登记文件、事件文件缺 `Change:`
   行或四字段（`Calibration-Evidence` / `Independent-Reviews` / `Approved-By` /

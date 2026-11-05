@@ -32,11 +32,13 @@ failure:
 A first registration is not always named in the report: parity only says the
 hash list differs and lists the files it skipped in ``unregistered_skipped``;
 gateway-parity only says the generated inventory differs.  So the tool also
-scans the files added on the branch inside each apparatus's ``--write`` scope
-(``scripts/<kind>/`` and, for gateway-parity, ``scripts/a5-19/``; plus the
-top-level files of ``specs/parity/``).  Each one needs the same exact
-``Change: - <sha256> <path>`` chain, otherwise it is a blocker: after
-``--write`` the registration check would reject it.
+scans the files added on the branch that the apparatus would actually register
+(parity: tracked files under ``scripts/parity/`` plus its five fixed spec files;
+gateway-parity: a file under its apparatus directories that its own source
+names).  Each one needs the same exact ``Change: - <sha256> <path>`` chain,
+otherwise it is a blocker: after ``--write`` the registration check would reject
+it.  A new file the apparatus would *not* register is ignored -- the real gate
+ignores it too, and a chain for it would itself be an unused event row.
 
 On top of the apparatus checks it inspects the event files added on the branch
 (``specs/<kind>/frozen/``, merge-base..HEAD): each must carry at least one
@@ -46,9 +48,10 @@ On top of the apparatus checks it inspects the event files added on the branch
 ``PENDING-REVIEWS`` and is *not* blocking: the coordinator may ``--write``,
 while final registration still waits for real reviews.
 
-All evidence is read from HEAD: an event file that was never committed, or a
-working-tree edit, cannot make the branch look ready.  A dirty tree is reported
-as a note because the apparatus itself reads the working tree.
+All evidence is read from HEAD: an event file that was never committed, a
+working-tree edit to its ``Change:`` rows, or uncommitted target bytes cannot
+make the branch look ready.  A dirty tree is reported as a note because the
+apparatus itself reads the working tree.
 
 Read-only.  It never runs ``--write`` and never edits the tree.
 
@@ -92,14 +95,13 @@ ADDED_EVENT = re.compile(r'specs/([^/]+)/frozen/([^/]+\.md)$')
 BARE_PATH = re.compile(r'(?:\.\./\.\./)?[\w./-]+')
 BYTECODE = re.compile(r'(?:^|/)__pycache__(?:/|$)|\.py[co]$')
 # Where each apparatus's ``--write`` takes its rows from.  parity walks
-# ``scripts/parity/`` recursively and takes every top-level file of
-# ``specs/parity/``; gateway-parity keeps an explicit inventory, all of it under
-# these two directories.  A file added on the branch inside one of these scopes
-# is a first registration --write will settle, so it needs an event chain.
-WRITE_SCOPES = {
-    'parity': (('scripts/parity/', True), ('specs/parity/', False)),
-    'gateway-parity': (('scripts/gateway-parity/', True), ('scripts/a5-19/', True)),
-}
+# ``scripts/parity/`` recursively and takes five fixed top-level files of
+# ``specs/parity/``; gateway-parity keeps an explicit inventory in its own
+# source, so a new member there must be named by that source to be registrable.
+PARITY_SPEC_FILES = ('README.md', 'acceptance.md', 'normalization.md',
+                     'accepted-diffs.md', 'multimodal.md')
+GATEWAY_SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md')
+GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 
@@ -253,10 +255,16 @@ def event_evidence(root, kind, mb):
             issues.append(f'{relative}: event file is not committed '
                           '(git add/commit required before delivery)')
             continue
+        # Content also comes from HEAD: a working-tree edit that adds a Change
+        # row must not complete a chain the delivered branch does not contain.
+        code, data, _ = git_bytes(root, 'cat-file', 'blob', f'HEAD:{relative}')
+        if code:
+            issues.append(f'{relative}: cannot read from HEAD')
+            continue
         try:
-            text = path.read_text(encoding='utf-8')
-        except (OSError, UnicodeError) as error:
-            issues.append(f'{relative}: cannot read: {error}')
+            text = data.decode('utf-8')
+        except UnicodeError as error:
+            issues.append(f'{relative}: cannot decode as UTF-8: {error}')
             continue
         reviews = re.findall(r'^Independent-Reviews:([^\n]*)$', text, re.M)
         if len(reviews) == 1 and reviews[0].strip().startswith(PENDING_PREFIX):
@@ -355,6 +363,38 @@ def bare_manifest_file(root, kind, name):
     return path.is_file() and not path.is_symlink() and head_tracked(root, path)
 
 
+def registrable(root, kind, path):
+    """True when this apparatus's ``--write`` would add a FROZEN row for ``path``.
+
+    Only such a path can be a first registration: accepting a chain for anything
+    else blesses a failure ``--write`` cannot clear (parity keeps five fixed
+    spec files and ``git ls-files scripts/parity/``; gateway-parity's inventory
+    is written out in its own source, so a new member is registrable only when
+    that source names it).
+    """
+    if kind == 'parity':
+        if path in {f'specs/parity/{name}' for name in PARITY_SPEC_FILES}:
+            return True
+        if not path.startswith('scripts/parity/'):
+            return False
+        code, out, _ = git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--',
+                           'scripts/parity/')
+        return code == 0 and path in out.splitlines()
+    if kind == 'gateway-parity':
+        if path in {f'specs/gateway-parity/{name}' for name in GATEWAY_SPEC_FILES}:
+            return True
+        if not path.startswith(GATEWAY_DIRS):
+            return False
+        name = Path(path).name
+        for source in ('scripts/gateway-parity/common.py',
+                       'scripts/gateway-parity/check_frozen.py'):
+            code, data, _ = git_bytes(root, 'cat-file', 'blob', f'HEAD:{source}')
+            if code == 0 and name.encode() in data:
+                return True
+        return False
+    return True  # ui-server-parity names the required files in its own report
+
+
 def unregistered_added(root, kind, mb):
     """Files added on the branch that this apparatus's --write would register.
 
@@ -362,21 +402,23 @@ def unregistered_added(root, kind, mb):
     says the hash list differs, gateway-parity only says the generated
     inventory differs.  Without this scan a new file with no event row reads as
     READY here and is rejected by check_frozen --base right after --write.
+    Files the apparatus would *not* register are ignored: they are inert for the
+    real gate, and demanding an event row for them would be a dead end (an
+    unused event row is itself a failure).
     """
-    scopes = WRITE_SCOPES.get(kind)
-    if not scopes or not mb:
+    if not mb:
         return [], []
     added, issues = [], []
-    for prefix, recursive in scopes:
+    prefixes = {'parity': ('scripts/parity/',),
+                'gateway-parity': GATEWAY_DIRS}.get(kind, ())
+    for prefix in prefixes:
         code, out, err = git(root, 'diff', '--name-only', '--diff-filter=A', '-z',
                              mb, 'HEAD', '--', prefix)
         if code:
             issues.append(f'cannot list files added under {prefix}: {err.strip()}')
             continue
         for name in filter(None, out.split('\0')):
-            if not name.startswith(prefix) or BYTECODE.search(name):
-                continue
-            if not recursive and '/' in name[len(prefix):]:
+            if BYTECODE.search(name) or not registrable(root, kind, name):
                 continue
             added.append(name)
     return sorted(set(added)), issues
@@ -417,7 +459,7 @@ def classify(ctx, item):
     match = LACKS_CHAIN.match(item)
     if match:
         name = match.group(1)
-        if chain_backed(root, edges, name, mb):
+        if registrable(root, kind, name) and chain_backed(root, edges, name, mb):
             return 'ok', None, None
         return 'block', 'blocking', None
     # A Pending: placeholder can fail the two-family rule; that is expected.
@@ -493,6 +535,8 @@ def run_apparatus(root, kind, entry, base, mb):
     for name in sorted(set(new_files) | set(unregistered)):
         if BYTECODE.search(name) or name in reported:
             continue  # bytecode is already an apparatus error
+        if not registrable(root, kind, name):
+            continue  # --write ignores it; demanding a chain would be a dead end
         reported.add(name)
         if exists_at(root, 'HEAD', name) is not True:
             result['blocking'].append(('blocking', f'{name}: unregistered file is not '

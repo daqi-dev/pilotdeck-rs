@@ -19,11 +19,12 @@ cfd = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cfd)
 
 TOOL = HERE / "check-frozen-delivery.py"
+TIMEOUT = 120
 
 
 def git(root, *args):
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True,
-                          text=True, check=True).stdout.strip()
+                          text=True, check=True, timeout=TIMEOUT).stdout.strip()
 
 
 def sha(text):
@@ -43,18 +44,42 @@ def commit(root, message):
 
 def run_tool(*args):
     return subprocess.run(["python3", "-I", str(TOOL), *args],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, timeout=TIMEOUT)
 
 
-def fake_apparatus(root, kind, payload):
-    (root / f"specs/{kind}").mkdir(parents=True, exist_ok=True)
-    (root / f"specs/{kind}/FROZEN.md").write_text("# fake FROZEN\n")
-    (root / f"scripts/{kind}").mkdir(parents=True, exist_ok=True)
-    (root / f"scripts/{kind}/check_frozen.py").write_text(
-        "import json\nprint(json.dumps(" + repr(payload) + "))\n")
+def write(root, name, text):
+    (root / name).parent.mkdir(parents=True, exist_ok=True)
+    (root / name).write_text(text)
+
+
+def fake_apparatus(root, kind, payload, source=""):
+    write(root, f"specs/{kind}/FROZEN.md", "# fake FROZEN\n")
+    write(root, f"scripts/{kind}/check_frozen.py",
+          "import json\nprint(json.dumps(" + repr(payload) + "))\n" + source)
 
 
 HASH_LIST = "hash list differs from generated inventory; run check_frozen.py --write"
+
+EVENT_FIELDS = ("Calibration-Evidence: test fixture\n"
+                "Independent-Reviews: A <a@example.invalid>; B <b@example.invalid>\n"
+                "Approved-By: test\n"
+                "Approval-Basis: test fixture\n")
+
+
+def delivery(root, kind, payload, files=(), events=(), source="", dirty=None):
+    """base 提交（含两侧装置）→ 交付提交（files/events）→ 可选工作树脏改动。"""
+    init_repo(root)
+    fake_apparatus(root, kind, payload, source)
+    commit(root, "base")
+    git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+    for name, text in files:
+        write(root, name, text)
+    for name, text in events:
+        write(root, name, text)
+    commit(root, "delivery")
+    for name, text in (dirty or ()):
+        write(root, name, text)  # 只改工作树，不提交
+    return run_tool("--root", str(root), "--base", "origin/main")
 
 
 def run():
@@ -74,14 +99,12 @@ def run():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_repo(root)
-        (root / "scripts/fake").mkdir(parents=True)
-        (root / "scripts/fake/x.py").write_text("A\n")
+        write(root, "scripts/fake/x.py", "A\n")
         commit(root, "base")
         base = git(root, "rev-parse", "HEAD")
-        (root / "scripts/fake/x.py").write_text("B\n")
-        event = root / "specs/fake/frozen/20260101-e1.md"
-        event.parent.mkdir(parents=True)
-        event.write_text(f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/x.py\n")
+        write(root, "scripts/fake/x.py", "B\n")
+        write(root, "specs/fake/frozen/20260101-e1.md",
+              f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/x.py\n")
         commit(root, "delivery")
 
         edges, _, issues = cfd.event_evidence(root, "fake", base)
@@ -92,23 +115,56 @@ def run():
         case("断链被拒（边指向别的 old）",
              cfd.chain_backed(root, [("e.md", "scripts/fake/x.py", sha("X\n"), sha("B\n"))],
                               "scripts/fake/x.py", base) is False)
-        case("工作树未提交的字节不能补链",
+
+        # 工作树里写一个新文件，HEAD 没有它：不能用它的字节补链。
+        write(root, "scripts/fake/y.py", "Y\n")
+        case("工作树里的未提交文件不能补链",
              cfd.chain_backed(root, edges, "scripts/fake/y.py", base) is False)
 
         # 重复边：旧实现「找到一条 old==base 的边」就放行（假 PASS）。
-        (root / "specs/fake/frozen/20260101-e2.md").write_text(
-            f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/x.py\n")
+        write(root, "specs/fake/frozen/20260101-e2.md",
+              f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/x.py\n")
         commit(root, "duplicate edge")
         dup, _, _ = cfd.event_evidence(root, "fake", base)
         case("重复边被拒（旧实现会假 PASS）",
              len(dup) == 2 and cfd.chain_backed(root, dup, "scripts/fake/x.py", base) is False)
 
         # 未提交的事件文件不能当证据。
-        (root / "specs/fake/frozen/20260101-e3.md").write_text(
-            f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/z.py\n")
+        write(root, "specs/fake/frozen/20260101-e3.md",
+              f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/z.py\n")
         _, _, uncommitted = cfd.event_evidence(root, "fake", base)
         case("未提交的事件文件报阻塞而不是当证据",
              any("not committed" in issue for issue in uncommitted), f"{uncommitted}")
+
+        # HEAD 里没有该行、工作树补上：证据仍只取 HEAD（P0 回归）。
+        # 独立仓库：后面还要用 base/edges 做分类用例。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/fake/x.py", "C\n")
+        write(root, "specs/fake/frozen/20260101-e4.md", "Change: -\n")
+        commit(root, "base")
+        base2 = git(root, "rev-parse", "HEAD")
+        write(root, "scripts/fake/x.py", "D\n")
+        commit(root, "change without row")
+        write(root, "specs/fake/frozen/20260101-e4.md",
+              f"Change: {sha('C\n')} {sha('D\n')} scripts/fake/x.py\n")  # 只改工作树
+        forged, _, _ = cfd.event_evidence(root, "fake", base2)
+        case("工作树补的 Change 行不算证据（只读 HEAD）",
+             cfd.chain_backed(root, forged, "scripts/fake/x.py", base2) is False,
+             f"edges={forged}")
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/fake/x.py", "A\n")
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        write(root, "scripts/fake/x.py", "B\n")
+        write(root, "specs/fake/frozen/20260101-e1.md",
+              f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/x.py\n")
+        commit(root, "delivery")
+        edges, _, _ = cfd.event_evidence(root, "fake", base)
 
         # ---------------------------------------------------- classification
         ctx = {"root": root, "kind": "ui-server-parity", "mb": base,
@@ -130,21 +186,6 @@ def run():
              cfd.classify(ctx, "totally unknown failure")[0] == "block")
 
     # ------------------------------------------- 首登记：parity / gateway
-    def delivery(root, kind, payload, new_files, events):
-        init_repo(root)
-        fake_apparatus(root, kind, payload)
-        (root / f"scripts/{kind}/keep.py").write_text("keep\n")
-        commit(root, "base")
-        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
-        for name, text in new_files.items():
-            (root / name).parent.mkdir(parents=True, exist_ok=True)
-            (root / name).write_text(text)
-        for name, text in events.items():
-            (root / name).parent.mkdir(parents=True, exist_ok=True)
-            (root / name).write_text(text)
-        commit(root, "delivery")
-        return run_tool("--root", str(root), "--base", "origin/main")
-
     parity_payload = {"hashes_consistent": False, "ok": False, "fully_registered": False,
                       "checked": {}, "notes": [], "errors": [HASH_LIST],
                       "unregistered_skipped": ["scripts/parity/new.py"],
@@ -152,36 +193,66 @@ def run():
 
     with tempfile.TemporaryDirectory() as td:
         proc = delivery(Path(td), "parity", parity_payload,
-                        {"scripts/parity/new.py": "NEW\n"}, {})
+                        files=[("scripts/parity/new.py", "NEW\n")])
         case("parity 新文件无事件链 → BLOCKED（旧实现假 READY）",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
              f"rc={proc.returncode}")
 
     with tempfile.TemporaryDirectory() as td:
         proc = delivery(Path(td), "parity", parity_payload,
-                        {"scripts/parity/new.py": "NEW\n"},
-                        {"specs/parity/frozen/20260101-p.md":
-                         f"Change: - {sha('NEW\n')} scripts/parity/new.py\n"
-                         "Calibration-Evidence: test fixture\n"
-                         "Independent-Reviews: A <a@example.invalid>; B <b@example.invalid>\n"
-                         "Approved-By: test\n"
-                         "Approval-Basis: test fixture\n"})
+                        files=[("scripts/parity/new.py", "NEW\n")],
+                        events=[("specs/parity/frozen/20260101-p.md",
+                                 f"Change: - {sha('NEW\n')} scripts/parity/new.py\n"
+                                 + EVENT_FIELDS)])
         case("parity 新文件有 Change: - <hash> 事件链 → READY",
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
+        # manifests 只收 scripts/parity/ 与五个固定 spec 名：另一个顶层文档
+        # --write 不会登记，预检不能拿它的链当可交付（第二枚 P0）。
+        payload = dict(parity_payload, unregistered_skipped=["specs/parity/foo.md"],
+                       errors=[HASH_LIST, "specs/parity/foo.md: hash change lacks exact "
+                                          "new event chain"])
+        proc = delivery(Path(td), "parity", payload,
+                        files=[("specs/parity/foo.md", "FOO\n")],
+                        events=[("specs/parity/frozen/20260101-q.md",
+                                 f"Change: - {sha('FOO\n')} specs/parity/foo.md\n"
+                                 + EVENT_FIELDS)])
+        case("parity 清单外的 specs/ 新文件 → BLOCKED（--write 登记不了）",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
+        payload = dict(parity_payload, unregistered_skipped=["scripts/parity/scratch.txt"])
+        proc = delivery(Path(td), "parity", payload, dirty=[("scripts/parity/scratch.txt", "x\n")])
+        case("未跟踪草稿不计首登记（不误拦）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode}")
+
+    with tempfile.TemporaryDirectory() as td:
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
-                        {"scripts/gateway-parity/fixtures/new.json": "{}\n"}, {})
-        case("gateway 新增清单成员无事件链 → BLOCKED",
+                        files=[("scripts/gateway-parity/fixtures/new.json", "{}\n")],
+                        source="# inventory names fixtures/new.json\n")
+        case("gateway 清单成员无事件链 → BLOCKED",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 装置源码没提到的文件不在清单里：--write 不登记，不能误拦。
+        proc = delivery(Path(td), "gateway-parity",
+                        {"status": "FAIL", "failures": [HASH_LIST]},
+                        files=[("scripts/a5-19/extra.mjs", "x\n")])
+        case("gateway 清单外的 a5-19 新文件不误拦",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode}")
 
     # ------------------------------------------------------- fail-closed
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        proc = delivery(root, "parity", {"status": "FAIL", "failures": []}, {}, {})
+        proc = delivery(root, "parity", {"status": "FAIL", "failures": []})
         case("FAIL + 空失败列表 → BLOCKED（fail-closed）",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
              f"rc={proc.returncode}")
