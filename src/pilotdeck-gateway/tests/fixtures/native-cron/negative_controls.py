@@ -5,6 +5,9 @@ Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUT [mutation ...]
 Commit the tests and this script first. CARGO_TARGET_DIR is caller-owned.
 Every selected row is reported, including anchor/build/source-guard failures.
+`--check` only proves each mutation anchor is unique; it cannot prove the row's
+assertion string ever reaches a panic payload (rows 1-6 anchor the gold replay's
+interpolated message), so a full run is the only proof that a row can go KILLED.
 
 Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
 is that test's own panic payload carrying its `#1325` message. Six rows bind
@@ -115,7 +118,8 @@ mutations = [
      '                JsValue::Undefined | JsValue::Null => js_slice_end(runs.len(), 50.0),',
      '                JsValue::Undefined | JsValue::Null => runs.len(),',
      NULLISH_REPLAY,
-     '#1325 global list nullish limit default is not capped at 50'),
+     "#1325 global list nullish limit: absent limit takes the same `?? 50` default "
+     "as the per-runtime path"),
     # The fence carries no reservation, so `Drop` never calls `end_turn`: a
     # panicking body leaves the session at `session_busy` until restart.
     ('admission-fence-drop-skipped', manager,
