@@ -574,8 +574,8 @@
   {
     "name": "timeout-live-close-skipped",
     "case": "timeout-active",
-    "before": "publisher.close_live();",
-    "after": "let _ = &publisher;",
+    "before": "if owns_terminal {\n                        publisher.close_live();\n                    } else {",
+    "after": "if owns_terminal {\n                        let _ = &publisher;\n                    } else {",
     "exit": 101,
     "marker": "#813 timeout-active: step 2 \"timeout\": submit scenario must match",
     "test": "runtime::turn::submit::tests::real_ts_submit_scenarios",
