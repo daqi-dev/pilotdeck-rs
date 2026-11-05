@@ -197,6 +197,24 @@ case("空文件不是「小包」", 2, "   \n\n", must=["空文件"])
 case("纯 BOM 不是「小包」", 2, "﻿", must=["空文件"])
 case("只含全角空格不是「小包」", 2, "　　\n　", must=["空文件"])
 case("整份都是代码围栏不是「小包」", 2, "```\n# #1\n```\n", must=["围栏"])
+case("明确加法优先于「最多」措辞（60 + 40 + 20）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60 min + 40 min（最多再补 20 min） |"),
+     must=["120 min > 90 min"])
+case("区间里的「和」不是加法（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60–80 min（S1 和 S2 联调） |"))
+case("估时 1h30（连写无分单位）= 90（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1h30 |"))
+case("续跑 写 URL 里的 progress.md 不算", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
+                                     "https://example.com/2026/progress.md"),
+     must=["进度文件路径"])
+case("围栏里列 9 个 .rs 仍算大包", 1,
+     "# #1\n```\n" + "\n".join(f"- src/m{i}.rs" for i in range(9)) + "\n```\n", must=["分段交付"])
+case("人日数值有限但 ×480 溢出 → rc=2 读不出（不许 traceback）", 2,
+     "# t\n\n约 1" + "0" * 306 + " 人日\n", must=["读不出"])
+case("围栏开了没收口 → rc=2（不许把后面的 scope 整段吞掉）", 2,
+     "# t\n```text\n忘写闭合\n\n<!-- pdrs-scope: files=12 lines=900 est_min=200 -->\n\n## 要做\n1. x\n",
+     must=["围栏没有闭合"])
 case("URL 里的 .rs 不计入回退路径数", 0,
      "# #1\n" + "\n".join(f"- https://example.com/m{i}/x.rs" for i in range(9)))
 case("URL 后紧跟顿号枚举的 .rs 要计入", 1,
@@ -244,6 +262,34 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  --recent 空扫描 → rc=0：rc={rc}")
         fails += 0 if ok else 1
 
+        # --recent 递归扫：修复轮的 fix-rN 下一层要扫得到；remote-run 派发副本不重复扫
+        import os
+        import time
+        base = Path(td) / "_build" / "wt-9999" / "_tmp" / "20261105-issue-9999"
+        deep = base / "fix-r1"
+        deep.mkdir(parents=True)
+        stage = base / "remote-run" / "stage"
+        stage.mkdir(parents=True)
+        for f in (deep / "task.md", stage / "task.md"):
+            f.write_text("# t\n", encoding="utf-8")
+            os.utime(f, (time.time() - 3600, time.time() - 3600))
+        got = [str(x) for x in ctbs.find_recent(td, 24)]
+        ok = len(got) == 1 and got[0].endswith("fix-r1/task.md")
+        print(f"{'PASS' if ok else 'FAIL'}  --recent 扫到 fix-r1 深度且跳过 remote-run 副本：{got}")
+        fails += 0 if ok else 1
+
+        # 空扫描 + --json：按行解析 JSON 的调用方不能收到文本 SUMMARY
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        empty = Path(td) / "emptyroot"
+        empty.mkdir()
+        buf = io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(io.StringIO()):
+            rc = ctbs.main(["x", "--recent", "24", "--root", str(empty), "--json"])
+        ok = rc == 0 and buf.getvalue().strip() == "[]"
+        print(f"{'PASS' if ok else 'FAIL'}  --recent 空扫描 --json 打 []：rc={rc} 输出={buf.getvalue()!r}")
+        fails += 0 if ok else 1
+
     # 命令行契约
     for name, argv, expect in (
             ("--print-skeleton 带文件参数", ["x", "--print-skeleton", "task.md"], 3),
@@ -253,13 +299,14 @@ def run():
             ("--recent nan 是用法错误", ["x", "--recent", "nan", "task.md"], 3),
             ("--recent 0 是用法错误", ["x", "--recent", "0", "task.md"], 3),
             ("--recent 负数 是用法错误", ["x", "--recent", "-1", "task.md"], 3),
+            ("--recent --root 不是目录是用法错误", ["x", "--recent", "24", "--root", "/nonexistent-pdrs-xyz"], 3),
     ):
         rc = ctbs.main(argv)
         ok = rc == expect
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 11   # 4 条独立检查（非 UTF-8 / 树被回收 / --recent+显式缺文件 / 空扫描）+ 7 条命令行契约
+    total = len(CASES) + 14   # 6 条独立检查（非 UTF-8 / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json）+ 7 条命令行契约
     print(f"SUMMARY cases={total} failed={fails}")
     return 1 if fails else 0
 
