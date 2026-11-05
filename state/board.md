@@ -3341,3 +3341,33 @@ updated: 2026-11-05 23:09 · by Claude Code 协调者（23:0x READY 刷新：今
 做了什么：回收代理按 flock 取树锁 + 当场 ps 复核后，只删 5 个 `cargo-target`（wt-1334 20.7G / wt-1336 16.0G / wt-1355 11.0G / wt-1370 7.3G / wt-1316 1.7G），净回收 49.9 GiB，`_tmp` 一字节没删。跳过全部在编目录（主仓 33.3G、wt-1258 23.5G、wt-1522 13.0G、wt-1339 锁 HELD、wt-tools-main 红线）。
 两条要接的：① **会回涨**——这 5 棵都是活跃 PR，下一轮开工重新编译，wt-1355 收尾时已涨回 2.4G；长期得让每树 target 定期清或共享 target。② **wt-1522 有 `src/target` 25.6G 异常重复目录**（全仓仅此一棵不是 `_build/cargo-target`），是当前最大一块可回收冗余，等它构建空窗就删。
 下一步：分诊结论——12 张 draft 里只有 #1413（STALLED，fix-r1 已落地但 2h 未提交）与 #1235（ORPHAN，4 天无活动、树干净）可回收；#1558 22:07 刚交付且 CONFLICTING 需当轮 rebase，不然 1 小时内变无人管。
+
+### 23:17（四单进展：两单没过、一单救回、一单作废但归因干净）
+- **#1413 评审没过**：P0=0、P1=3（两个根因）。① `ticket-release-write-removed` 是**等价变异**，评审自开 worktree 实跑证出 SURVIVED（KILLED=3/SURVIVED=1/INVALID=0）：删 `Ticket::drop` 的 `send_replace(true)` 后 sender 照样 drop，`wait_for` 返回 Err 被 `let _ =` 吞掉，close 照常推进。**修法不是让它变绿**——要么证明等价并显式登记带判据，要么构造真能区分的绑定。② R5 账本类别与实测矛盾（「探针见证写入」不成立，真正转红的是绑定测试的有界 drain）。已派 fix-r2。
+- **#1558 救回**：CONFLICTING→MERGEABLE，head `97761132c`→`255209f44`，冲突全是纯追加型列表（能力集合数组 / BTreeSet 期望集合），`channel/mod.rs` 本次没冲突。rebase 后 fmt/check/gitleaks 全过，已派双家评审。
+- **#1233 宿主 r3 整轮作废**：head 早于 #1278 修复，且 `_shared/negative_control.py: source_copy()` **不拷 `specs/`** → 编译期 `include_str!` 读 specs 的测试在拷贝副本必失败，`background-output` 整组 17 条 INVALID。全轮 **0 SURVIVED**（201 KILLED / 19 INVALID）。已派 rebase + 修 `wake-disposed` 断言顺序（先 `await bounded(dispose())` 再断言导致 2s deadline 先炸，fail-closed 不是漏判）。
+- **负控并行 A/B 出结论**：判据1 PASS（127 vs 467 min，省 73%），判据2 **FAIL**（INVALID 集合 A=22 / B=19，B⊂A）。但三条反例**全是 A 侧 cargo 槽位超时**，即「A 没取得判定」；剔除后 266/266 相等。实验方没自行改判——对。已派决策卡 + question 单：倾向「并行只在槽位隔离前提下启用」，即消除 A 侧超时根因，不动「判定等价」这条硬判据。
+- 顺带：#1437 已派 cb8（GLM）；**new-tree 计 40/40 贴顶**（含 6 棵 codex 树），wt-status 只数 `_build/wt-*` 显示 34——两个口径的差再次证实 #1547 要修的东西。下一单会被拒开，等 #1547/#1565 合入。
+
+### 23:29（#1558 双家评审 r1：不转正，P1×3）
+做了什么：head 锁 `255209f44`，负控跑完树字节还原干净。**不执行 ready、不入队，PR 仍 draft**。三条 P1：
+1. **负控 `registry-drops-always-on` 必杀标记不可达**（MiniMax boundary + DeepSeek sibling + DeepSeek concurrency 三家独立命中，已实测复现）：marker 要 `#1316 always_on_apply code`，但删掉 `always_on: always_on::METHODS` 后落到 `metadata::unavailable`，code 同为 `CAPABILITY_UNAVAILABLE`（`metadata.rs:69`）→ code 断言过、message 断言死，载荷是 `#1316 always_on_apply message` → 恒 INVALID（`summary: KILLED=0, SURVIVED=0, INVALID=1`，整套 fixture 恒 exit 1，即 A7.8-HTTP-USER-DIALOG-STORE-001 的机器判据不成立）。另 3 个变异 `3/3 killed`。
+2. `negative_controls.py:155-159` 在 `mutating_sources` 守卫内逐变异覆写 `summary.json`，中途被读即假完整。
+3. `review_tests.rs:863,915-934` Linux 写入者审计只在窗口前后各采样一次 `/proc`，窗口内短命子进程/fd 持有者不可见 → 可假 PASS（Linux-only，评审未实测）。
+P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.md`（两家两角色同条）；`include_str!("../../../../../specs/...")` 让 crate 构建依赖 `src/` 外，而 `source_copy()` 只拷 `src` → `session-domain/fix2-negative.py`、`skills-tree-files/negative.py` 等既有负控转 INVALID（与 #1233 r3 同根因）；新 A7 尺子把「注册」当「派发」，52 项里 28 项 manifest `BLOCKED`。
+五个指定核验点已过：rebase 语义（`methods::` 58 / interaction+always_on 11 / native_http 131 / runtime::interaction 7 / management_tests 19 全 passed，fmt rc=0，`check_frozen --base origin/main` PASS 28 条 entries，5 个名字四处 `sort_unstable()` 后精确比较）；always-on 是明确声明非静默降级（依据 `state/decisions-20261105-1313-rescope.md` option A）；**声明未接线 = 0**（35 项逐项核，反向 15 项欠声明全为既有）；HTTP 同域 TS 前缀属独立 store 服务，Rust 显式 503 已登记；#1320 合入后需改四处（`methods/mod.rs` 尾部、`requests.rs` describe 同锚点、**`management_tests.rs` 四处精确能力集必红但不在它声明的车道里**、`methods/tests.rs`）。
+下一步：已派 fix-r1 修三条 P1（P1-1 要求本机实测复现 INVALID 再修到 KILLED，允许「证明等价并登记判据」但禁止放宽真实断言；P1-3 darwin 不可实测须如实标 Linux-only + 给复现步骤）。PR 保持 draft，修完再走增量复核。
+
+### 23:3x（两小时交接，接 21:1x；下一段 01:3x）
+
+**现场**（`date` 23:34、fleet 23:35:55、gh 23:34–23:37 实查）：今晚收尾三单已落 main——#1547 `ace160259`（worktree 计数口径统一）、#1562 `ff9c22092`、#1568 `977d1af55`（READY 块 44→49 条）。合并队列实查 5 张在队（#1546 #1549 #1560 #1563 #1548），open 21 张其中 9 张 draft。真在跑的：**#1320** 在 macmini `~/ws/pdrs-worker-wt/issue-1320`，S1 22:31 / S2 23:16 完成，S3 23:27 撞 7200 s 硬停（glm.status=exit=124），已走 resume 接续、不重开树（fleet 23:35 见 #1320:glm 1 分钟）；**#1413 fix-r2** 在跑（等价变异登记 + R5 类别更正）；**#1558 fix-r1** 在跑（r1 双家不转正，P1×3：负控必杀标记不可达致恒 INVALID、`summary.json` 逐变异覆写、Linux `/proc` 审计只采样前后两次）。三单交付未收已派收货代理：#1351 / #1386 / #1519。卡住的：#1233 宿主 r3 整轮作废（`source_copy()` 不拷 `specs/`，17 条 INVALID、0 SURVIVED），已派 rebase 与断言顺序修正；#1235（#132）DIRTY 且 4 天无活动、树干净，是唯一可回收的孤儿树。
+
+**证据**：#1558 评审与负控原始记录在 `_tmp/20261105-issue-1316-*`；#1413 在 `_tmp/20261105-issue-1365-fix-r2/`；#1355 r4d 在 `_tmp/20261105-issue-1355-r4d/`；负控并行决策卡走 PR #1573、材料 `_tmp/20261106-negctl-parallel-decision/`；今晚各时段原始命令输出留在本文件 22:4x / 22:50 / 22:55 / 23:17 / 23:29 五段，本段只做汇总不再重复。
+
+**持有人**：cb8 两个 GLM worker（#1553 已 1h28、#1437 20m）；macmini-01 两个（#1339 1h48、#1320 resume 1m）；mbp2 空（DarkWake 2h，别排长任务）；本机是协调者 + cargo 2/2 贴顶、宿主队列空，收货代理跑在本机子代理上。远端等待队列：#1320 #1339 #1437 #1553。
+
+**资源（实测）**：`du -sk _build _tmp` = **128.0 GiB**（fleet 同时刻 `_build+_tmp 129.5/200 GiB`），二轮回收生效、目标 <140 已达成；但 **worktree 仍 40/40 贴顶**（fleet 原始行 `_build+_tmp 129.5/200 GiB  worktree 40/40`；`ls -d _build/wt-*` 与 `wt-status.sh` 都是 34 棵 / 上限 40、可回收 3，差的 6 棵是 codex 树），#1565 不落地就开不了新树。cargo 名额：本机 `cargo 2/2` 贴顶，cb8 0/4、macmini-01 0/2、mbp2 0/2。闸门槽 zai 6/24、minimax 2/16、deepseek 3/16、anthropic 0/2。
+
+**待人（AI 队列外）**：① cb8 `~/ws/pdrs-ab` 56 GiB 待授权删除；② `specs/gateway-parity/diffs/A8-…md` 措辞过时，须新增 `<ID>-R<n>.md` + `check_frozen --write`（协调者执行）；③ 负控并行决策卡待人拍板（PR #1573 / #1571）；④ #1498 人已答选项 B，待排实施；⑤ #401 建议关单待人点头。
+
+**下一步（按序，全部取自 READY 块）**：1）合 #1565（worktree 上限按磁盘算、下一档 80）——#1547 已把计数口径统一，这张不落地任何新单都开不了树；2）给四张已合入单做收尾自查并关单：#360 / #283 / #1324 / #1382——合入不等于关单，还分别解锁 A6.4 收尾与下游 #1325；3）#1439 与 #1442 两个跟进家族（前置 #1321 / #1309 / #1419 均已关）——量最大且无前置，同文件串行分批派；4）#1351 族（#1351 / #1348 / #1383 / #1394 / #1404，前置 #1292 已合）——解锁最早、五个包互相独立可并行；5）#1450 / #1455（前置 #1307 / #1310 已 CLOSED）——单点小包，插空用。
