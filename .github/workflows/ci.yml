@@ -8,7 +8,7 @@ on:
   merge_group:
 
 jobs:
-  # #1199：改动只碰唯一精确路径 state/board.md 时输出 docs_only=true，三个重 job 才允许跳过；
+  # #1199：改动只碰唯一精确路径 state/board.md 时输出 docs_only=true，各重 job 才允许跳过；
   # state/ .42cog/ docs/ 的其余文件是重 job 尺子的输入，不放行（fix-r1 收窄，见
   # state/decisions-20261031-ci-docs-scope.md）。本 job 自身无条件运行（先跑分类器自测），
   # 重 job 的跳过只认它的输出，check 只放行「skipped 且 docs_only=true」这一条路径。
@@ -76,9 +76,10 @@ jobs:
           done
 
   # #1632：session-assembly-1316 负控夹具此前只在本机与宿主链跑，CI 里没有任何闸门——
-  # 锚点过期（源码改了、变异表没跟）或某条变异不再被杀，都没有 CI 步骤会红。本 job 与
-  # rust 并行（不延长关键路径）：先做静态锚点自检与槽位守卫自检（不跑 cargo），再逐条
-  # 应用变异、跑点名测试、按字节还原；任一条非 KILLED 即非零退出。#1632 P2-3。
+  # 锚点过期（源码改了、变异表没跟）或某条变异不再被杀，都没有 CI 步骤会红。先做静态
+  # 锚点自检与槽位守卫自检（不跑 cargo），再逐条应用变异、跑点名测试、按字节还原；任一
+  # 条非 KILLED 即非零退出。#1632 P2-3。本 job 与 rust 并行起跑，但 check 汇聚它，因此
+  # 它仍在合并闸门的关键路径上。
   negative-controls:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
@@ -94,12 +95,17 @@ jobs:
           fetch-depth: 0
       - name: 锁定工具链
         run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@v2.9.2
+      # 只缓存 cargo 注册表 / git 源，不缓存 target：夹具的护身扫描器
+      # （`negative_process._ensure_workspace_scanner`）见到现有可执行文件就直接复用、
+      # 从不重建，而它的源码摘要 `include_str!` 冻结在二进制里。缓存还原出上一轮的
+      # target 就会让「改了扫描器输入的 PR」拿到旧二进制 → 摘要不等 → SourceBaselineError
+      # → 闸门假红，且报错让人「prebuild」，在 CI 里做不到（#1632 评审 P1）。
+      - uses: actions/cache@v4
         with:
-          # 缓存 CARGO_TARGET_DIR 指向的 _build/cargo-target（相对 workspace src/）
-          workspaces: src -> ../_build/cargo-target
-          cache-bin: false
-          shared-key: negative-controls
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}
       - name: 网关负控锚点自检 + 槽位守卫自检（#1632）
         # --anchors-only 只读扫描全部网关夹具，任一锚点失配 / 脚本消失即 rc=1；
         # --self-check 证明槽位守卫在 python3 -O 下仍有界退出（旧 assert 版在 -O 下无界等待）。
@@ -109,7 +115,7 @@ jobs:
       - name: session-assembly-1316 负控夹具执行（#1316 / #1632）
         run: python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py "$RUNNER_TEMP/negctl-1316"
 
-  # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；三个重 job 的结果
+  # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；各重 job 的结果
   # 「非 success 且不是（skipped 且 docs_only=true）」才拒绝——即分类器确定纯文档改动才
   # 接受 skipped，取消 / 其他跳过照旧拒绝（#904 的有意放宽，边界见 state/decisions-20261031-ci-docs-scope.md）。
   check:
