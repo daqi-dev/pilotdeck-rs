@@ -19,8 +19,12 @@ mod steer;
 mod tools;
 mod upload;
 mod user_dialog;
+mod weixin_login;
 
 type Response = Result<JsValue, RequestError>;
+
+// The `Requests.prepare_weixin_login` field's callback type.
+pub(super) use weixin_login::PrepareWeixinLogin;
 type RequestHandler = for<'a> fn(&'a Requests, String, JsValue) -> Call<'a, Response>;
 type EarlyHandler = for<'a> fn(&'a Requests, &'a str, &'a JsValue) -> Call<'a, Option<Response>>;
 
@@ -62,6 +66,7 @@ register_families! {
     config: config::METHODS,
     interaction: interaction::METHODS,
     always_on: always_on::METHODS,
+    weixin_login: weixin_login::METHODS,
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.

@@ -44,6 +44,11 @@ pub struct Requests {
     pub user_dialog_bus: Arc<Mutex<GatewayUserDialogBus>>,
     /// A8 U1 upload + attachment lease gateway (#1321).
     pub upload_gateway: Arc<UploadGateway>,
+    /// U12 `prepareWeixinLogin` callback (InProcessGateway options field,
+    /// set through `setPrepareWeixinLogin`). `None` is the TS
+    /// "callback not configured" shape: `{requested: false, reason:
+    /// "unsupported"}` with a fresh `requestedAt`.
+    pub prepare_weixin_login: Option<methods::PrepareWeixinLogin>,
 }
 
 #[cfg(test)]
