@@ -336,6 +336,34 @@ class ProcessControls(unittest.TestCase):
                 self.assertEqual(result.returncode, expected,
                                  f"{slots}: " + result.stdout + result.stderr)
 
+    def test_cargo_slots_used_only_when_fresh(self):
+        # #1556 r4（两家评审）：`used` 是快变量，缓存里那份是写缓存那一刻的快照——旧的 used=0 会假放行，
+        # 旧的 used=cap 会让整段 TTL 恒判「满」。所以只有最近 USED_TTL 内真的从闸拿到的 used 才参与判定。
+        # 这里预置一份「闸报 999/999」的缓存：lastok 很旧 → 只按 ps 判（本机无 cargo → 0）；
+        # lastok 是现在 → 判满（1）。两条都走新鲜缓存路径，不碰闸，所以结果确定。
+        script = Path(__file__).resolve().parents[4] / "scripts" / "cargo-slots.sh"
+        now = int(time.time())
+        with tempfile.TemporaryDirectory(prefix="pdrs-cargo-slots-used-ttl-") as temp:
+            temp = Path(temp)
+            gate = temp / "gate.sh"
+            gate.write_text("#!/bin/bash\necho 'cargo-slot x host=h 名额 0/999  磁盘 1.0 GiB / 190（cache）'\n")
+            gate.chmod(0o755)
+            for name, lastok, expected in (("stale", now - 600, 0), ("live", now, 1)):
+                cache = temp / f"cache-{name}"
+                env = dict(os.environ,
+                           PDRS_CARGO_SLOT_BIN=str(gate),
+                           PDRS_CARGO_SLOTS_CACHE_DIR=str(cache))
+                subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                               timeout=60, env=env, check=False)
+                files = list(cache.glob("cap-cache.*"))
+                self.assertEqual(len(files), 1, f"{name}: 第一次调用应写出缓存：{files}")
+                files[0].write_text(f"999 999 {now} {lastok}\n")
+                result = subprocess.run(["bash", str(script)], capture_output=True,
+                                        text=True, timeout=60, env=env)
+                self.assertEqual(result.returncode, expected,
+                                 f"{name}: " + result.stdout + result.stderr)
+                self.assertIn("闸内", result.stdout)
+
     def test_cargo_slots_rejects_bad_time_knobs(self):
         # 0 / 前导零 / 非数字都必须 fail-closed 4：0 让 MAX_STALE、FAT_REFRESH_AFTER 变成恒真，
         # 前导零在 $(( )) 里按八进制解析（09 非法 → 算术错误退 1 = 「已满」），非数字在 set -u
