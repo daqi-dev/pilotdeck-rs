@@ -110,10 +110,7 @@ fn parse_head(data: &[u8]) -> Option<(usize, u16, BTreeMap<String, String>)> {
 
 fn dechunk(mut body: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    loop {
-        let Some(line_end) = body.windows(2).position(|window| window == b"\r\n") else {
-            break;
-        };
+    while let Some(line_end) = body.windows(2).position(|window| window == b"\r\n") {
         let Ok(size) =
             usize::from_str_radix(std::str::from_utf8(&body[..line_end]).unwrap_or("0"), 16)
         else {

@@ -287,7 +287,7 @@ impl ChannelAdapter for ApiServerChannel {
             let (stop, stop_rx) = watch::channel(false);
             let shared = Arc::new(server::ServerShared {
                 host: resolved.host.clone(),
-                port: port,
+                port,
                 api_key: resolved.api_key,
                 model_name: resolved.model_name,
                 cors_origins: resolved.cors_origins,
