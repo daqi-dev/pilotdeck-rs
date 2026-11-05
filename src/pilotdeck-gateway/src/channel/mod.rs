@@ -11,6 +11,7 @@ pub mod sms;
 mod tests;
 pub mod turn_submitter;
 pub mod webhook;
+pub mod wecom_callback;
 pub mod weixin;
 
 use std::{
