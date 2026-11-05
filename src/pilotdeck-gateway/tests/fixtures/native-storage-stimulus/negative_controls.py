@@ -137,18 +137,39 @@ mutations = [
         let _ = site;
     }''',
      'storage::stimulus_tests::failed_barrier_releases_its_hold_before_later_entries', '#1370 a failed barrier releases its hold before later entries'),
-    # fix-r2: the append is queued only after the receipt it owes settled, so a
-    # witness failure fails the append before the durable write can happen.
-    ('registry-dispatch-before-witness', PUBLISH,
-     '''            Some(witness) => Box::pin(async move {
-                witness.await?;
-                append().await
-            }),''',
-     '''            Some(witness) => Box::pin(async move {
-                let appended = append().await;
-                witness.await?;
-                appended
-            }),''',
+    # fix-r2: the queue slot is taken on the entry tick and only the job's
+    # execution waits for the receipt; queueing the job from inside the returned
+    # future lets a later plain append overtake it.
+    ('registry-witness-deferred-past-entry', PUBLISH,
+     '''        let (settled, gate) = mpsc::channel::<bool>();
+        let append = Self::witnessed(self.jobs.clone(), gate, run, event);
+        Box::pin(async move {
+            let outcome = witness.await;
+            let _ = settled.send(outcome.is_ok());
+            outcome?;
+            append.await
+        })''',
+     '''        let (settled, gate) = mpsc::channel::<bool>();
+        let parts = (self.jobs.clone(), gate, run, event);
+        Box::pin(async move {
+            let outcome = witness.await;
+            let _ = settled.send(outcome.is_ok());
+            outcome?;
+            Self::witnessed(parts.0, parts.1, parts.2, parts.3).await
+        })''',
+     'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append',
+     '#1370 a witnessed append keeps its FIFO slot before a later plain append'),
+    # fix-r2: the job runs only once the receipt it is stamped with settled, so
+    # a witness failure fails the append before the durable write can happen.
+    ('registry-witness-gate-ignored', PUBLISH,
+     '''            match gate.recv_timeout(WITNESS_SETTLE) {
+                Ok(true) => registry.append(&run, &event),
+                _ => Err(RunRegistryError::Invalid(
+                    "Storage stimulus queued witness failed.".into(),
+                )),
+            }''',
+     '''            let _ = gate.recv_timeout(WITNESS_SETTLE);
+            registry.append(&run, &event)''',
      'storage::stimulus_tests::failed_queued_witness_fails_the_append_before_the_worker', '#1370 a failed queued witness never dispatches the durable append'),
     # Production default: an unset entry must stay unarmed.
     ('stimulus-unset-activates', STIMULUS,
