@@ -32,7 +32,6 @@ fn registry_matches_current_methods() {
         "sop_resume",
         "steer_turn",
         "cancel_steer",
-        "abort_turn",
         "hook_async_result",
 >>>>>>> 29c0839c7 (feat(gateway) #1307 A7-W2 S2 steer / cancel / abort + U9 接线)
         "supported_agents",
@@ -122,4 +121,78 @@ async fn registry_management_gate_agrees() {
         .dispose()
         .await
         .expect("#1305 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_rejects_attachments_explicitly() {
+    // Reuse the isolated registry fixture: the handler never reaches project
+    // state for the attachment rejection, and without attachments the ordinary
+    // no-active-turn path must stay intact.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let steer_params = |extra: Option<(&'static str, JsValue)>| {
+        let fields: Vec<(&'static str, JsValue)> = [
+            ("sessionKey", "s".into()),
+            ("runId", "r".into()),
+            ("itemId", "i".into()),
+            ("message", "hello".into()),
+        ]
+        .into_iter()
+        .chain(extra)
+        .collect();
+        crate::metadata::object(fields)
+    };
+    // No attachments (and an explicit empty array): the unchanged path still
+    // reports the ordinary no-active-turn rejection.
+    for params in [
+        steer_params(None),
+        steer_params(Some(("attachments", JsValue::Array(vec![])))),
+    ] {
+        let result = requests
+            .request("steer_turn".into(), params)
+            .await
+            .expect("#1307 no-attachment path stays Ok");
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(false)),
+            "#1307 steer without attachments keeps no_active_turn shape"
+        );
+        negative_assert_eq!(
+            result.get("reason").and_then(JsValue::as_string),
+            Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
+            "#1307 steer without attachments reports no_active_turn"
+        );
+    }
+    // Non-empty attachments on either field: explicit domain error, not a
+    // fake accepted.
+    for field in ["attachments", "uploadedAttachments"] {
+        let params = steer_params(Some((
+            field,
+            JsValue::Array(vec![crate::metadata::object([
+                ("type", "text".into()),
+                ("text", "attachment".into()),
+            ])]),
+        )));
+        let error = requests
+            .request("steer_turn".into(), params)
+            .await
+            .expect_err("#1307 attachments must be rejected");
+        negative_assert_eq!(
+            error.code,
+            "STEER_ATTACHMENTS_UNSUPPORTED",
+            "#1307 attachments rejection uses the domain code"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
 }
