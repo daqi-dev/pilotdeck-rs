@@ -86,6 +86,7 @@ import hashlib
 import json
 import re
 import subprocess
+from collections import Counter
 from pathlib import Path, PurePosixPath
 
 ACCEPT_HASH_LIST = 'hash list differs from generated inventory'
@@ -208,6 +209,12 @@ ROW_BARE = re.compile(r'[0-9a-f]{16,64}  (\S+)')
 ROW_TABLE = re.compile(r'\| `([^`]+)` \| `[0-9a-f]{16,64}[^`]*`.*')
 _ROW_CACHE = {}
 _SOURCE_CACHE = {}
+# Source text of every tree this run parsed, keyed by ``id(tree)`` and holding
+# the tree itself: the bootstrap model compares an entry's own statements, and a
+# tree whose text is gone (or whose id was recycled) must read "cannot tell".
+_TREE_SOURCE = {}
+# ``_bindings_confined`` counts per canonical block, computed once per block.
+_BLOCK_COUNTS = {}
 # The delivery commit, pinned to a SHA before anything else runs.  Reading the
 # symbolic ``HEAD`` throughout would let a HEAD A -> C -> A wobble during the
 # classification window (the child apparatus has already exited) feed every
@@ -557,12 +564,15 @@ def _imported_from(tree, name):
     """
     if _unmodelled_binding(tree, name, imports=False):
         return None
-    for node in ast.walk(tree):
+    # Module scope only: a ``from apparatus import name`` inside a function body
+    # binds nothing at import time, so counting it would report a module-level
+    # name as imported when the interpreter raises NameError instead.
+    for node in _module_scope_nodes(tree):
         if isinstance(node, ast.Name) and node.id == name \
                 and isinstance(node.ctx, ast.Store):
             return None
     module, seen = None, 0
-    for node in ast.walk(tree):
+    for node in _module_scope_nodes(tree):
         # ``import apparatus as name`` / ``import name`` bind a module object and
         # leave no ``Name(Store)`` behind -- the pre-r17 code rejected them
         # explicitly, and dropping that branch made a file with both a plain
@@ -604,11 +614,18 @@ def _function_node(tree, name):
 
 
 def _parse(source):
-    """``ast.parse`` that treats every unparsable shape as "cannot tell"."""
+    """``ast.parse`` that treats every unparsable shape as "cannot tell".
+
+    The text is kept next to the tree: the bootstrap model compares the entry's
+    own statements, so a tree without its source is "cannot tell" rather than a
+    guessed match.  Holding the tree keeps ``id(tree)`` from being reused.
+    """
     try:
-        return ast.parse(source)
+        tree = ast.parse(source)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return None
+    _TREE_SOURCE[id(tree)] = (tree, source)
+    return tree
 
 
 def _parents(tree):
@@ -706,16 +723,276 @@ def _sole_binding(tree, name):
     return None
 
 
-def _file_dir(node):
-    """True for ``Path(__file__).resolve().parent`` and its ``.parent``.
+# The reviewed apparatus bootstrap, statement by statement (fix-r19).
+# ``_bootstrap_ok`` compares the entry's own lines against these tuples, so
+# the model cannot be steered by a shape it recognises but does not pin: a
+# swapped ``_spec`` path, exec source, ``module_from_spec`` receiver or
+# helper import changes a line and the answer becomes "cannot tell".
+# ``test-check-frozen-delivery`` pins both tuples to the real files, so any
+# apparatus change that is not reflected here fails a test instead of
+# silently relaxing the precheck (or blocking every delivery).
+_GATEWAY_BOOTSTRAP_ANCHORS = ('# >>> apparatus bootstrap', '# <<< apparatus bootstrap')
+_UI_BOOTSTRAP_ANCHORS = ('import sys as _boot_sys',
+                         "_boot_namespace['preflight'](_boot_dir)")
 
-    The bootstrap derives the apparatus directory from the running script only,
-    so this chain is what ties ``_apparatus / 'common.py'`` to the file this tool
-    read; any other base path names a different file.
+_GATEWAY_BOOTSTRAP = (
+    'import sys',
+    'if not sys.flags.isolated:',
+    "    raise SystemExit(f'run with -I: python3 -I {__file__}')",
+    "if sys.version_info < (3, 11) or 'os' not in sys.modules:",
+    "    raise SystemExit('os must be preloaded from CPython 3.11+ frozen modules')",
+    'import os',
+    '_boot_dir = os.path.dirname(os.path.realpath(__file__))',
+    "_boot_dir = os.path.dirname(_boot_dir) if os.path.basename(_boot_dir) == 'controls' else _boot_dir",
+    'if any(',
+    '        os.path.isdir(entry or os.curdir)',
+    '        and any(os.path.isdir(root)',
+    '                and os.path.samefile(entry or os.curdir, root)',
+    "                for root in (_boot_dir, os.path.join(_boot_dir, 'controls')))",
+    '        for entry in sys.path):',
+    "    raise SystemExit('apparatus directory on sys.path; run the entry file directly with -I')",
+    'import importlib.util',
+    'from pathlib import Path',
+    'import tempfile',
+    "sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')",
+    'sys.dont_write_bytecode = True',
+    '_apparatus_code = sys._getframe().f_code',
+    '_here = Path(__file__).resolve().parent',
+    "_apparatus = _here.parent if _here.name == 'controls' else _here",
+    "_guard_path = _apparatus / '_guard.py'",
+    "_guard = sys.modules.get('_guard')",
+    "if not (getattr(_guard, '__file__', None)",
+    '        and Path(_guard.__file__).resolve() == _guard_path',
+    "        and isinstance(getattr(_guard, '_apparatus_source', None), bytes)):",
+    "    _spec = importlib.util.spec_from_file_location('_guard', _guard_path)",
+    '    _guard = importlib.util.module_from_spec(_spec)',
+    "    sys.modules['_guard'] = _guard",
+    '    _guard_source = _guard_path.read_bytes()',
+    '    try:',
+    "        exec(compile(_guard_source, str(_guard_path), 'exec'), _guard.__dict__)",
+    '    except BaseException:',
+    "        sys.modules.pop('_guard', None)",
+    '        raise',
+    '    _guard._apparatus_source = _guard_source',
+    'if Path(_guard.__file__).resolve() != _guard_path:',
+    "    raise RuntimeError(f'_guard: loaded {_guard.__file__}, expected {_guard_path}')",
+    '_load = _guard.load',
+    '_has_git_checkout = _guard._has_git_checkout',
+    '_verify_cli_imports = _guard.verify_cli_imports',
+    'run_entry = _guard.run_entry',
+    "common = _load('common', _apparatus / 'common.py')",
+)
+
+_UI_BOOTSTRAP = (
+    'import sys as _boot_sys',
+    'if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment',
+    '        and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):',
+    '    print(\'{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}\')',
+    '    raise SystemExit(1)',
+    "if _boot_sys.version_info < (3, 11) or 'os' not in _boot_sys.modules:",
+    '    print(\'{"verdict":"FAIL","errors":["os must be preloaded from CPython 3.11+ frozen modules"]}\')',
+    '    raise SystemExit(1)',
+    'import os as _boot_os',
+    '_boot_sys.dont_write_bytecode = True',
+    '_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))',
+    'if any(',
+    '        _boot_os.path.isdir(entry or _boot_os.curdir)',
+    '        and any(_boot_os.path.isdir(root)',
+    '                and _boot_os.path.samefile(entry or _boot_os.curdir, root)',
+    "                for root in (_boot_dir, _boot_os.path.join(_boot_dir, 'controls')))",
+    '        for entry in _boot_sys.path):',
+    '    print(\'{"verdict":"FAIL","errors":["apparatus directory on sys.path; run the entry file directly with -I"]}\')',
+    '    raise SystemExit(1)',
+    "_boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')",
+    'if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):',
+    '    print(\'{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}\')',
+    '    raise SystemExit(1)',
+    'import hashlib as _boot_hashlib',
+    'import subprocess as _boot_subprocess',
+    '_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))',
+    "_boot_write = __name__ == '__main__' and '--write' in _boot_sys.argv[1:]",
+    'if _boot_write:',
+    '    _boot_head = _boot_subprocess.check_output(',
+    "        ['git', '-C', _boot_root, 'rev-parse', '--verify', 'HEAD']).decode().strip()",
+    '    _boot_checker = _boot_subprocess.check_output(',
+    "        ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/check_frozen.py'])",
+    '    if _boot_sys._getframe().f_code != compile(',
+    "            _boot_checker, __file__, 'exec', dont_inherit=True, optimize=_boot_sys.flags.optimize):",
+    "        raise SystemExit('#1089 --write executing checker differs from HEAD')",
+    "_boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')",
+    "with open(_boot_source, 'rb') as _boot_file:",
+    '    _boot_bytes = _boot_file.read()',
+    'try:',
+    '    if _boot_write:',
+    '        _boot_trusted = _boot_subprocess.check_output(',
+    "            ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/apparatus.py'])",
+    '        if _boot_bytes != _boot_trusted:',
+    "            raise ValueError('--write apparatus source differs from HEAD')",
+    '    elif _boot_os.path.isfile(_boot_manifest):',
+    '        with open(_boot_manifest) as _boot_file:',
+    '            _boot_pins = [line.split()[0] for line in _boot_file',
+    "                          if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]",
+    '        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:',
+    "            raise ValueError('apparatus bootstrap hash mismatch')",
+    '    else:',
+    '        _boot_trusted = _boot_subprocess.check_output(',
+    "            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])",
+    '        if _boot_bytes != _boot_trusted:',
+    "            raise ValueError('apparatus bootstrap differs from HEAD without manifest')",
+    'except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:',
+    '    print(str(_boot_error), file=_boot_sys.stderr)',
+    '    print(\'{"verdict":"FAIL","errors":["apparatus bootstrap hash admission failed"]}\')',
+    '    raise SystemExit(1)',
+    "_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}",
+    "exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)",
+    'if _boot_write:',
+    '    import types as _boot_types',
+    "    _boot_module = _boot_types.ModuleType('apparatus')",
+    '    _boot_module.__dict__.update(_boot_namespace)',
+    "    _boot_sys.modules['apparatus'] = _boot_module",
+    'else:',
+    "    _boot_namespace['preflight'](_boot_dir)",
+)
+
+
+def _module_stores(tree):
+    """How many times each name is bound at module scope (function bodies out).
+
+    ``def``/``class`` bind their name too: a ``def common(...)`` two lines after
+    the bootstrap shadows the loader result exactly like ``common = other``.
     """
-    if not (isinstance(node, ast.Attribute) and node.attr == 'parent'):
+    counts = Counter()
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            counts[node.id] += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            counts[node.name] += 1
+    return counts
+
+
+def _import_names(tree):
+    """Names bound by module-scope ``import``/``from ... import`` statements."""
+    names = set()
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Import):
+            names.update((alias.asname or alias.name).split('.')[0]
+                         for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+    return names
+
+
+def _import_origin(tree, name, module):
+    """True when every module-scope binding of ``name`` imports it from ``module``.
+
+    The bootstrap trusts its helpers by spelling: ``from evil import Path`` (or
+    ``import evil as sys``) leaves every shape below untouched while the
+    directory it derives comes from somewhere else.  A plain store of the name,
+    a star import, a relative import or an import of another module therefore
+    makes the answer "cannot tell".
+    """
+    seen = 0
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Name) and node.id == name \
+                and isinstance(node.ctx, ast.Store):
+            return False
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if (alias.asname or alias.name).split('.')[0] != name:
+                    continue
+                if alias.name != module:
+                    return False
+                seen += 1
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (alias.asname or alias.name) != name:
+                    continue
+                if alias.name != name or node.level or node.module != module:
+                    return False
+                seen += 1
+    return seen > 0
+
+
+def _bootstrap_lines(source, anchors):
+    """The entry's bootstrap statements between the two unique anchor lines.
+
+    Comments and blank lines are dropped (prose can change); every statement
+    line, indentation included, must match the model verbatim.
+    """
+    start, end = anchors
+    lines = source.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.strip().startswith(start)]
+    ends = [i for i, line in enumerate(lines) if line.strip().startswith(end)]
+    if len(starts) != 1 or len(ends) != 1 or ends[0] <= starts[0]:
+        return None
+    block = []
+    for line in lines[starts[0]:ends[0] + 1]:
+        text = line.strip()
+        if text and not text.startswith('#'):
+            block.append(line.rstrip())
+    return block
+
+
+def _bindings_confined(tree, canonical):
+    """True when no name the bootstrap binds is bound again at module scope.
+
+    ``common = other`` two lines after the block, a second ``_guard`` or
+    ``_apparatus`` assignment, ``sys = None``: the reviewed bootstrap still sits
+    there while the interpreter runs something else.  Every name the block binds
+    itself may occur exactly as often as it does inside the block -- imports
+    excluded, since the same module may legitimately be imported twice.
+    """
+    entry = _BLOCK_COUNTS.get(id(canonical))
+    if entry is None:
+        block = _parse('\n'.join(canonical))
+        if block is None:
+            return False
+        imported = _import_names(block)
+        watched = {name: 0 for name in imported}
+        watched.update({name: count
+                        for name, count in _module_stores(block).items()
+                        if name not in imported})
+        entry = (canonical, watched, imported)
+        _BLOCK_COUNTS[id(canonical)] = entry
+    _, watched, imported = entry
+    actual = _module_stores(tree)
+    if any(actual[name] != count for name, count in watched.items()):
         return False
-    node = node.value  # Path(__file__).resolve()
+    # An ``import ... as common`` binds no ``Name(Store)``: it would slip through
+    # the counts while putting another module behind the loader result.
+    return not (set(watched) & (_import_names(tree) - imported))
+
+
+def _bootstrap_ok(tree, anchors, canonical):
+    """True when the entry's bootstrap is exactly the block this tool models.
+
+    Everything the entry does with ``common``/``_guard``/``_apparatus`` is
+    trusted only while those statements are the reviewed ones: any other path,
+    exec source, receiver or helper import changes a byte of the block and the
+    answer is "cannot tell", never a guessed inventory.  Drift between the model
+    and the real apparatus is a test failure (``test-check-frozen-delivery``),
+    not a silently relaxed check.
+    """
+    entry = _TREE_SOURCE.get(id(tree))
+    if entry is None or entry[0] is not tree:
+        return False
+    if _bootstrap_lines(entry[1], anchors) != list(canonical):
+        return False
+    return _bindings_confined(tree, canonical)
+
+
+def _file_parents(node):
+    """True for ``Path(__file__).resolve().parents[2]``.
+
+    ui-server-parity derives its repo root from the running script only;
+    ``SPEC = ROOT / 'specs/ui-server-parity'`` names the directory this tool
+    reads only while that derivation is the one the entry actually runs.
+    """
+    if not (isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Attribute) and node.value.attr == 'parents'
+            and isinstance(node.slice, ast.Constant) and node.slice.value == 2):
+        return False
+    node = node.value.value  # Path(__file__).resolve()
     return (isinstance(node, ast.Call) and not node.args and not node.keywords
             and isinstance(node.func, ast.Attribute) and node.func.attr == 'resolve'
             and isinstance(node.func.value, ast.Call)
@@ -726,104 +1003,25 @@ def _file_dir(node):
             and node.func.value.func.id == 'Path')
 
 
-def _apparatus_dir_ok(tree):
-    """True when ``_apparatus`` is the bootstrap's ``__file__``-derived directory.
-
-    ``_here = Path(__file__).resolve().parent`` and ``_apparatus = _here`` or
-    ``_here.parent`` (the ``controls`` entry one level down), each bound exactly
-    once.  Anything else -- ``_apparatus = Path('scripts/evil')``, a second
-    binding -- points the loader at a ``common.py`` this tool never read.
-    """
-    if not _file_dir(_sole_binding(tree, '_here')):
-        return False
-    apparatus = _sole_binding(tree, '_apparatus')
-    shapes = []
-    if isinstance(apparatus, ast.IfExp):
-        shapes = [apparatus.body, apparatus.orelse]
-    else:
-        shapes = [apparatus]
-    for shape in shapes:
-        if isinstance(shape, ast.Name):
-            if shape.id != '_here':
-                return False
-        elif not (isinstance(shape, ast.Attribute) and shape.attr == 'parent'
-                  and isinstance(shape.value, ast.Name) and shape.value.id == '_here'):
-            return False
-    return bool(shapes)
-
-
-def _guard_ok(tree):
-    """True when ``_guard`` only ever holds the guard loaded from ``_guard_path``.
-
-    The bootstrap binds it once from ``sys.modules.get('_guard')`` and, in the
-    cold path, once more from ``importlib.util.module_from_spec(_spec)`` before
-    exec'ing ``_guard_path``'s bytes into it; ``_guard_path`` itself must be
-    ``_apparatus / '_guard.py'``.  A ``_guard = evil``, a second import or any
-    other binding form makes ``_load`` a loader this tool cannot vouch for.
-    """
-    if _unmodelled_binding(tree, '_guard'):
-        return False
-    path = _sole_binding(tree, '_guard_path')
-    if not (isinstance(path, ast.BinOp) and isinstance(path.op, ast.Div)
-            and isinstance(path.left, ast.Name) and path.left.id == '_apparatus'
-            and isinstance(path.right, ast.Constant) and path.right.value == '_guard.py'):
-        return False
-    stores, modelled = 0, 0
-    for node in _module_scope_nodes(tree):
-        if isinstance(node, ast.Name) and node.id == '_guard' \
-                and isinstance(node.ctx, ast.Store):
-            stores += 1
-        if not (isinstance(node, ast.Assign) and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id == '_guard'):
-            continue
-        value = node.value
-        if not (isinstance(value, ast.Call) and not value.keywords and len(value.args) == 1
-                and isinstance(value.func, ast.Attribute)):
-            continue
-        if value.func.attr == 'get' and isinstance(value.args[0], ast.Constant) \
-                and value.args[0].value == '_guard' \
-                and isinstance(value.func.value, ast.Attribute) \
-                and value.func.value.attr == 'modules' \
-                and isinstance(value.func.value.value, ast.Name) \
-                and value.func.value.value.id == 'sys':
-            modelled += 1
-        elif value.func.attr == 'module_from_spec':
-            modelled += 1
-    return stores > 0 and stores == modelled
-
-
 def _loaded_through_common(tree):
     """True when ``common`` is the module's own loader result, not something else.
 
     The external value (``common.A2_SCRIPTS``) is only trustworthy while
     ``common`` still names ``scripts/gateway-parity/common.py`` -- the file this
-    tool read.  The bootstrap is modelled literally (fix-r17/r18): ``_here`` and
-    ``_apparatus`` derived from ``__file__``, ``_guard_path = _apparatus /
-    '_guard.py'``, ``_load = _guard.load`` and ``common = _load('common',
-    _apparatus / 'common.py')``, each bound exactly once.  ``import gw_extra as
-    common``, ``common = other``, a walrus/``for``/``with`` target, a second
-    argument that names another file, ``_evil / 'common.py'`` or a rebound
-    ``_load``/``_guard``/``_apparatus`` all make the two disagree, and the answer
-    is "cannot tell".
+    tool read.  The whole bootstrap between its two markers must be the reviewed
+    block (fix-r19): ``__file__``-derived ``_here``/``_apparatus``,
+    ``_guard_path = _apparatus / '_guard.py'``, the warm ``sys.modules.get`` and
+    the cold ``spec_from_file_location``/``module_from_spec``/``exec`` path, and
+    ``common = _load('common', _apparatus / 'common.py')``.  ``_evil /
+    'common.py'``, ``_spec`` from another path, an exec of other bytes, a helper
+    imported from elsewhere or a second binding of any of those names make the
+    two disagree, and the answer is "cannot tell".
     """
-    common = _sole_binding(tree, 'common')
-    if not (isinstance(common, ast.Call)
-            and isinstance(common.func, ast.Name) and common.func.id == '_load'
-            and len(common.args) == 2 and not common.keywords
-            and isinstance(common.args[0], ast.Constant)
-            and common.args[0].value == 'common'):
+    if not _bootstrap_ok(tree, _GATEWAY_BOOTSTRAP_ANCHORS, _GATEWAY_BOOTSTRAP):
         return False
-    path = common.args[1]
-    if not (isinstance(path, ast.BinOp) and isinstance(path.op, ast.Div)
-            and isinstance(path.left, ast.Name) and path.left.id == '_apparatus'
-            and isinstance(path.right, ast.Constant) and path.right.value == 'common.py'):
-        return False
-    load = _sole_binding(tree, '_load')
-    if not (isinstance(load, ast.Attribute) and load.attr == 'load'
-            and isinstance(load.value, ast.Name) and load.value.id == '_guard'):
-        return False
-    return _apparatus_dir_ok(tree) and _guard_ok(tree)
+    return all(_import_origin(tree, name, module) for name, module in (
+        ('sys', 'sys'), ('os', 'os'), ('importlib', 'importlib.util'),
+        ('Path', 'pathlib'), ('tempfile', 'tempfile')))
 
 
 def _external_still_holds(tree, name):
@@ -1215,6 +1413,16 @@ def ui_inventory(root, commit=None):
             spec_dir = _module_path(frozen_tree, 'SPEC')
             exp008_dir = _ui_exp008_dir(frozen_tree)
             required_ok = _ui_required_names(frozen_tree)
+            # The apparatus module itself is loaded by the entry's own bootstrap
+            # (``_boot_dir``/``_boot_source`` from ``__file__``), and ``ROOT``
+            # anchors ``SPEC``; both are trustworthy only as the reviewed block.
+            # A swapped ``_boot_source`` loads other bytes while this tool keeps
+            # modelling the ``apparatus.py`` it read -- the same false READY the
+            # gateway side closes with ``_loaded_through_common``.
+            bootstrap_ok = _bootstrap_ok(frozen_tree, _UI_BOOTSTRAP_ANCHORS,
+                                         _UI_BOOTSTRAP)
+            root_ok = _file_parents(_sole_binding(frozen_tree, 'ROOT'))
+            helpers_ok = _import_origin(frozen_tree, 'Path', 'pathlib')
             # ``required_files`` registers exactly what ``SPEC_FILES``,
             # ``EXP008_FILES`` and ``toolchain_files()`` hold and scans what
             # ``scan()`` is pointed at.  All four must come from the
@@ -1226,6 +1434,7 @@ def ui_inventory(root, commit=None):
             if (paths is not None and specs is not None and toolchain is not None
                     and scan_dirs is not None and spec_dir is not None
                     and required_ok is True and imported_ok
+                    and bootstrap_ok and root_ok and helpers_ok
                     and exp008_dir is not None and exp008_dir in scan_dirs
                     and len(paths) == 3 and all(isinstance(item, str) for item in paths)
                     and all(item.startswith('scripts/') for item in paths[:2])

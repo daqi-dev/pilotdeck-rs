@@ -73,7 +73,11 @@ PARITY_MANIFEST = ("\n\ndef manifest_inventory(root):\n"
 def fake_apparatus(root, kind, payload, source=""):
     if kind == 'parity' and 'manifest_inventory' not in source:
         source += PARITY_MANIFEST
-    body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + source
+    # 夹具只负责吐一份固定报文。真 ui 装置体带着可执行的 bootstrap（临时仓里
+    # 必然哈希准入失败），所以那一种 source 打印完就退出：分析侧读到的字节不变。
+    guard = ("raise SystemExit(0)  # fixture: real bootstrap is analysis-only\n"
+             if 'import sys as _boot_sys' in source else "")
+    body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + guard + source
     write(root, f"scripts/{kind}/check_frozen.py", body)
     # 装置自身在 base 已有清单行：它改字节时走「改已登记文件」的路，不该被当成首登记。
     write(root, f"specs/{kind}/FROZEN.md",
@@ -90,8 +94,14 @@ UI_APPARATUS = ("APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008'
 
 # 真装置的另一半：真实登记范围来自 check_frozen.py 的 SPEC 与 apparatus_files()，
 # 预检会与 apparatus.py 的 APPARATUS_PATHS 交叉核对，两边不一致即「不可判定」。
-UI_FROZEN = ("\nfrom apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_files\n"
-             "\nSPEC = ROOT / 'specs/ui-server-parity'\n"
+# 前缀是真装置的隔离 bootstrap（``apparatus.py`` 就是它自己按 ``__file__`` 装进来
+# 的，换一份字节/换目录即不可判定），``ROOT`` 同理；两者都由真文件钉住。
+UI_BOOTSTRAP = "\n".join(cfd._UI_BOOTSTRAP) + "\n"
+UI_FROZEN = (UI_BOOTSTRAP
+             + "\nfrom apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_files\n"
+             "from pathlib import Path\n"
+             "\nROOT = Path(__file__).resolve().parents[2]\n"
+             "SPEC = ROOT / 'specs/ui-server-parity'\n"
              "REQUIRED = set(SPEC_FILES)\n"
              "\n\ndef apparatus_files(root):\n"
              "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}\n"
@@ -103,15 +113,13 @@ UI_FROZEN = ("\nfrom apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_
              "            | set(toolchain_files(root)))\n")
 
 
-# 真装置的 bootstrap（scripts/gateway-parity/check_frozen.py:45-69）：外部值
-# ``common.A2_SCRIPTS`` 只有在这几条路径都从 ``__file__`` 派生且各自唯一绑定时
-# 才可信，夹具逐行照原样写（``r18_真装置仍含这几行`` 用例钉住真文件）。
-GW_BOOTSTRAP = ("_here = Path(__file__).resolve().parent\n"
-                "_apparatus = _here.parent if _here.name == 'controls' else _here\n"
-                "_guard_path = _apparatus / '_guard.py'\n"
-                "_guard = sys.modules.get('_guard')\n"
-                "_load = _guard.load\n"
-                "common = _load('common', _apparatus / 'common.py')\n")
+# 真装置的 bootstrap（``scripts/gateway-parity/check_frozen.py``：``# >>>`` 到
+# ``# <<<`` 之间，含冷路径的 ``_spec``/``module_from_spec``/``exec``）。外部值
+# ``common.A2_SCRIPTS`` 只有在这整块逐行都是被评审过的那一份时才可信，所以夹具
+# 直接取材于被测模型自己的常量，并由「真文件 == 常量」的正控钉住（fix-r19）。
+GW_BOOTSTRAP = ("# >>> apparatus bootstrap\n"
+                + "\n".join(cfd._GATEWAY_BOOTSTRAP)
+                + "\n# <<< apparatus bootstrap\n")
 
 
 def gw_source(*names):
@@ -584,12 +592,54 @@ def run():
          gw_inventory(GW_BOOTSTRAP.replace(
              "_guard_path = _apparatus / '_guard.py'",
              "_guard_path = _apparatus / '_other.py'") + _gw_tail) is None)
-    # 夹具真实性：上面整组都靠 GW_BOOTSTRAP 与真装置同形。真 bootstrap 一旦
-    # 合法演进（改名 / 换写法），夹具会照旧全绿而 gateway_inventory 对真仓恒
-    # 不可判定，这条把夹具钉在真文件上。
+    # 夹具真实性：上面整组都靠 GW_BOOTSTRAP 与真装置逐行同形。真 bootstrap 一旦
+    # 合法演进（改名 / 换写法 / 多一行绑定），夹具会照旧全绿而 gateway_inventory
+    # 对真仓恒不可判定（假 BLOCK），或反过来漏掉一处新路径（假 READY）。所以这
+    # 里钉的是整块相等，并让真文件本身过一遍模型（冷路径由此真被执行到）。
     _real_gw = (HERE / 'gateway-parity' / 'check_frozen.py').read_text(encoding='utf-8')
-    case("真装置 gateway check_frozen.py 仍逐行含 GW_BOOTSTRAP",
-         all(line in _real_gw for line in GW_BOOTSTRAP.splitlines()))
+    case("真装置 gateway bootstrap 与模型常量整块一致",
+         cfd._bootstrap_lines(_real_gw, cfd._GATEWAY_BOOTSTRAP_ANCHORS)
+         == list(cfd._GATEWAY_BOOTSTRAP))
+    case("模型对真 gateway check_frozen.py 判为可判定（冷路径被执行到）",
+         cfd._bootstrap_ok(cfd._parse(_real_gw), cfd._GATEWAY_BOOTSTRAP_ANCHORS,
+                           cfd._GATEWAY_BOOTSTRAP) is True)
+
+    # ---------------------------------------------------------------- r19 负控
+    # r18 的两处守卫仍只钉「拼写里的文件名」：冷路径真正喂给 loader 的 ``_spec``、
+    # exec 的字节、``module_from_spec`` 的接收者，以及 ``Path``/``sys`` 的来源都
+    # 不在模型里，保留 ``_guard_path`` 当诱饵即可让运行时用另一份文件而预检照旧
+    # 给出确定性清单（假 READY）。r19 改成整块逐行比对，以下每条只改一处。
+    case("gateway _spec 指向别的路径 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace(
+             "_spec = importlib.util.spec_from_file_location('_guard', _guard_path)",
+             "_spec = importlib.util.spec_from_file_location("
+             "'_guard', Path('/tmp/shared/_guard.py'))") + _gw_tail) is None)
+    case("gateway exec 的字节换成别的来源 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace(
+             "exec(compile(_guard_source, str(_guard_path), 'exec'), _guard.__dict__)",
+             "exec(compile(_evil.read_bytes(), str(_guard_path), 'exec'), "
+             "_guard.__dict__)") + _gw_tail) is None)
+    case("gateway module_from_spec 的接收者换成别的对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace(
+             "_guard = importlib.util.module_from_spec(_spec)",
+             "_guard = _evil.module_from_spec(_spec)") + _gw_tail) is None)
+    case("gateway _apparatus 无条件取 _here.parent（controls 变体冒充）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace(
+             "_apparatus = _here.parent if _here.name == 'controls' else _here",
+             "_apparatus = _here.parent") + _gw_tail) is None)
+    case("gateway Path 不是从 pathlib 导入（from evil import Path）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace("from pathlib import Path",
+                                           "from evil import Path") + _gw_tail) is None)
+    case("gateway common 在块外二次绑定 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "common = other\n" + _gw_tail) is None)
+    _real_ui = (HERE / 'ui-server-parity' / 'check_frozen.py').read_text(encoding='utf-8')
+    case("真装置 ui bootstrap 与模型常量整块一致",
+         cfd._bootstrap_lines(_real_ui, cfd._UI_BOOTSTRAP_ANCHORS)
+         == list(cfd._UI_BOOTSTRAP))
+    case("模型对真 ui check_frozen.py 的 bootstrap 与 ROOT 判为可判定",
+         cfd._bootstrap_ok(cfd._parse(_real_ui), cfd._UI_BOOTSTRAP_ANCHORS,
+                           cfd._UI_BOOTSTRAP) is True
+         and cfd._file_parents(cfd._sole_binding(cfd._parse(_real_ui), 'ROOT')))
 
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
@@ -1227,6 +1277,38 @@ def run():
     case("scan 被同名 def 覆盖 → 不可判定",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN + "\ndef scan(paths):\n    return ()\n") is None)
+    case("导入只出现在函数体里（模块级未绑）→ 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN.replace(
+             "from apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_files",
+             "") + "\ndef _later():\n"
+             "    from apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_files\n"
+             "    return scan, SPEC_FILES, EXP008_FILES, toolchain_files\n") is None)
+    case("import scan（无 asname，顶层名即导入名）→ 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN + "\nimport scan\n") is None)
+    case("import pkg.scan（点号形态只绑 pkg）→ 不算 scan 的绑定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN + "\nimport pkg.scan\n") is True)
+
+    # ---------------------------------------------------------------- r19 ui 负控
+    # apparatus.py 是 bootstrap 自己按 ``__file__`` 装进来的那一份，``ROOT`` 是
+    # SPEC 的锚：两者只看拼写就仍能被换成别处（假 PASS/假 FAIL），所以整块比对。
+    case("ui bootstrap 的 _boot_source 指向别处 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN.replace(
+             "_boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')",
+             "_boot_source = _boot_os.path.join('/tmp/shared', 'apparatus.py')")) is None)
+    case("ui bootstrap 的 _boot_dir 换成 cwd → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN.replace(
+             "_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))",
+             "_boot_dir = _boot_os.getcwd()")) is None)
+    case("ui ROOT 不是 __file__ 派生（Path('/evil')）→ 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN.replace(
+             "ROOT = Path(__file__).resolve().parents[2]",
+             "ROOT = Path('/evil')")) is None)
+    case("ui 的 Path 不是从 pathlib 导入（from evil import Path）→ 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN + "\nfrom evil import Path\n") is None)
+    case("ui ROOT 用 parent.parent.parent 等价写法 → 不可判定（只认模型化的 parents[2]）",
+         ui_registrable(UI_APPARATUS, UI_FROZEN.replace(
+             "ROOT = Path(__file__).resolve().parents[2]",
+             "ROOT = Path(__file__).resolve().parent.parent.parent")) is None)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
