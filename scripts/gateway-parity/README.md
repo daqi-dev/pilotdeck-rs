@@ -204,7 +204,9 @@ python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另�
   但当时没有清单行的文件加进装置清单（改装置源码 / 改名进装置目录）时，`--write`
   照样加行，而 diff 里它既不是 `A` 也可能记成 `R`。链的起点因此是清单行：
   merge-base 无该行即从 `-` 起算（与 `check_frozen` 的 `old_hashes.get(name, '-')`
-  一致），有该行才从旧字节起算。
+  一致），有该行才从旧字节起算。终点同理取**新清单**：成员被移出清单、文件仍跟踪
+  （或文件被删）时 `--write` 删行，目标一律是 `-`，只认 `Change: <old> -`；
+  只写 `Change: <old> <new>` 的交付判阻塞——真实闸门在 `--write` 后同样拒绝。
 - 阻塞：其余全部。尤其「改了冻结字节却没有对应事件行」的
   `hash change lacks exact new event chain`、未登记文件、事件文件缺 `Change:`
   行或四字段（`Calibration-Evidence` / `Independent-Reviews` / `Approved-By` /

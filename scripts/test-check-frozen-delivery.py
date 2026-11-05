@@ -429,6 +429,70 @@ def run():
              proc.returncode == 1 and "=== worktree === BLOCKED" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
+    with tempfile.TemporaryDirectory() as td:
+        # 成员被移出清单、文件仍跟踪：--write 会删行、新目标取 '-'（与新清单的
+        # new_hashes.get(name, '-') 一致），不是拿 HEAD 字节当目标。
+        payload = {"status": "FAIL", "failures": [
+            HASH_LIST, "scripts/gateway-parity/fixtures/x.json: hash change lacks "
+                       "exact new event chain"]}
+        common_src = "A2_SCRIPTS = (\n    'check_frozen.py',\n)\n"
+        base_inventory = ("\ndef manifest_inventory(root):\n"
+                          "    paths = ['scripts/gateway-parity/fixtures/x.json']\n"
+                          "    return paths\n")
+        head_inventory = ("\ndef manifest_inventory(root):\n"
+                          "    paths = []\n"
+                          "    return paths\n")
+        base_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + base_inventory
+        head_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + head_inventory
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('{}\n')}  ../../scripts/gateway-parity/fixtures/x.json\n"
+                  f"{sha(common_src)}  ../../scripts/gateway-parity/common.py\n"
+                  f"{sha(base_body)}  ../../scripts/gateway-parity/check_frozen.py\n")
+        proc = delivery(Path(td), "gateway-parity", payload, source=base_inventory,
+                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n"),
+                                    ("scripts/gateway-parity/common.py", common_src),
+                                    ("specs/gateway-parity/FROZEN.md", frozen)],
+                        files=[("scripts/gateway-parity/fixtures/x.json", '{"a": 1}\n'),
+                               ("scripts/gateway-parity/check_frozen.py", head_body)],
+                        events=[("specs/gateway-parity/frozen/20260101-t.md",
+                                 f"Change: {sha('{}\n')} {sha('{\"a\": 1}\n')} "
+                                 "scripts/gateway-parity/fixtures/x.json\n"
+                                 + EVENT_FIELDS)])
+        case("成员移出清单、旧→新链 → BLOCKED（应为 '-'）",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = {"status": "FAIL", "failures": [
+            HASH_LIST, "scripts/gateway-parity/fixtures/x.json: hash change lacks "
+                       "exact new event chain"]}
+        common_src = "A2_SCRIPTS = (\n    'check_frozen.py',\n)\n"
+        base_inventory = ("\ndef manifest_inventory(root):\n"
+                          "    paths = ['scripts/gateway-parity/fixtures/x.json']\n"
+                          "    return paths\n")
+        head_inventory = ("\ndef manifest_inventory(root):\n"
+                          "    paths = []\n"
+                          "    return paths\n")
+        base_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + base_inventory
+        head_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + head_inventory
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('{}\n')}  ../../scripts/gateway-parity/fixtures/x.json\n"
+                  f"{sha(common_src)}  ../../scripts/gateway-parity/common.py\n"
+                  f"{sha(base_body)}  ../../scripts/gateway-parity/check_frozen.py\n")
+        proc = delivery(Path(td), "gateway-parity", payload, source=base_inventory,
+                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n"),
+                                    ("scripts/gateway-parity/common.py", common_src),
+                                    ("specs/gateway-parity/FROZEN.md", frozen)],
+                        files=[("scripts/gateway-parity/fixtures/x.json", '{"a": 1}\n'),
+                               ("scripts/gateway-parity/check_frozen.py", head_body)],
+                        events=[("specs/gateway-parity/frozen/20260101-t.md",
+                                 f"Change: {sha('{}\n')} - "
+                                 "scripts/gateway-parity/fixtures/x.json\n"
+                                 + EVENT_FIELDS)])
+        case("成员移出清单、Change: <old> - 链 → READY",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
     # ------------------------------------------------------- fail-closed
     with tempfile.TemporaryDirectory() as td:
         # 子装置运行期间 HEAD 移动（并发 amend/commit）：证据与目标字节会跨两个
