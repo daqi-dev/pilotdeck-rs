@@ -90,7 +90,8 @@ UI_APPARATUS = ("APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008'
 
 # 真装置的另一半：真实登记范围来自 check_frozen.py 的 SPEC 与 apparatus_files()，
 # 预检会与 apparatus.py 的 APPARATUS_PATHS 交叉核对，两边不一致即「不可判定」。
-UI_FROZEN = ("\nSPEC = ROOT / 'specs/ui-server-parity'\n"
+UI_FROZEN = ("\nfrom apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_files\n"
+             "\nSPEC = ROOT / 'specs/ui-server-parity'\n"
              "REQUIRED = set(SPEC_FILES)\n"
              "\n\ndef apparatus_files(root):\n"
              "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}\n"
@@ -425,6 +426,48 @@ def run():
         commit(root, "base")
         case("gateway 原样 A2_SCRIPTS = common.A2_SCRIPTS → 正常解析",
              cfd.gateway_inventory(root) == {'scripts/gateway-parity/check_frozen.py'})
+
+    with tempfile.TemporaryDirectory() as td:
+        # `common` 被别的来源顶替时，external 的旧元组就不可信了。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "\ncommon = other\n"
+              "A2_SCRIPTS = common.A2_SCRIPTS\n"
+              "\ndef manifest_inventory(root):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    return {name: name for name in paths}\n")
+        commit(root, "base")
+        case("gateway common 另有来源 → 不可判定", cfd.gateway_inventory(root) is None)
+
+    with tempfile.TemporaryDirectory() as td:
+        # 解包目标同样是 Name(Store)，但不是 `X = common.X` 那一条语句。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "\nA2_SCRIPTS, _unused = (common.A2_SCRIPTS, None)\n"
+              "\ndef manifest_inventory(root):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    return {name: name for name in paths}\n")
+        commit(root, "base")
+        case("gateway A2_SCRIPTS 走解包目标 → 不可判定",
+             cfd.gateway_inventory(root) is None)
+
+    with tempfile.TemporaryDirectory() as td:
+        # `from other import *` 能把 A2_SCRIPTS 整个换掉，字面元组看着没动。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", "from other import *\n" + GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "\nA2_SCRIPTS = common.A2_SCRIPTS\n"
+              "\ndef manifest_inventory(root):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    return {name: name for name in paths}\n")
+        commit(root, "base")
+        case("gateway common 里的 import * → 不可判定（清单可能被覆盖）",
+             cfd.gateway_inventory(root) is None)
 
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
@@ -982,6 +1025,16 @@ def run():
     case("check_frozen 里重绑 SPEC_FILES → 不可判定（不是导入的那份）",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN + "\nSPEC_FILES = SPEC_FILES[:-1]\n") is None)
+    case("SPEC_FILES 从别处再导入一次 → 不可判定（来源不再是 apparatus）",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nfrom other import SPEC_FILES\n") is None)
+    case("SPEC_FILES 从别处导入（唯一绑定） → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN.replace("from apparatus import",
+                                          "from elsewhere import")) is None)
+    case("apparatus.py 里 SPEC_FILES 又被导入一次 → 不可判定（字面量不再是全部）",
+         ui_registrable(UI_APPARATUS + "\nfrom other import SPEC_FILES\n",
+                        UI_FROZEN) is None)
     case("scan 调用带额外参数 → 不可判定（形状认不出）",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN.replace("scan(root / 'scripts/exp008')",

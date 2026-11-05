@@ -109,18 +109,11 @@ BYTECODE = re.compile(r'(?:^|/)__pycache__(?:/|$)|\.py[co]$')
 # gateway-parity keeps an explicit inventory in its own source, so a new member
 # there must be named by that source to be registrable.  Either way the list
 # itself lives in the apparatus -- this tool keeps no second copy.
-GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
 # parity's auto-registered directory: every tracked file under it gets a row
-# even when ``manifest_inventory`` never names it.
+# even when ``manifest_inventory`` never names it.  Its spec documents live in
+# the second directory but are rows only when the manifest names them.
 PARITY_AUTO_DIR = 'scripts/parity/'
-# Directories either apparatus scans for files that may be newly registered.
-# One table: the "is this registrable" question and the "what is newly
-# registered" scan must agree, or a spec document added under specs/<kind>/
-# reads as READY.  A manifest name *outside* these directories is still
-# registrable (``--write`` registers it as written); ``unregistered_added``
-# adds exactly those paths to its scan for that reason.
-REGISTRABLE_DIRS = {'parity': (PARITY_AUTO_DIR, 'specs/parity/'),
-                    'gateway-parity': GATEWAY_DIRS + ('specs/gateway-parity/',)}
+PARITY_DIRS = (PARITY_AUTO_DIR, 'specs/parity/')
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 
@@ -501,6 +494,8 @@ def _module_tuple(tree, name):
     reporting a member as registered after the branch removed it -- the same
     false-READY class a comment used to cause.
     """
+    if _unmodelled_binding(tree, name):
+        return None
     stores = [node for node in ast.walk(tree)
               if isinstance(node, ast.Name) and node.id == name
               and isinstance(node.ctx, ast.Store)]
@@ -527,6 +522,8 @@ def _module_tuple(tree, name):
 
 def _module_path(tree, name):
     """Value of ``name = ROOT / '<literal>'``, or None."""
+    if _unmodelled_binding(tree, name):
+        return None
     stores = [node for node in ast.walk(tree)
               if isinstance(node, ast.Name) and node.id == name
               and isinstance(node.ctx, ast.Store)]
@@ -545,6 +542,47 @@ def _module_path(tree, name):
                 return value.right.value
             return None
     return None
+
+
+def _ui_spec_files_source(tree):
+    """Module ``SPEC_FILES`` is bound from, or None when the binding is unmodelled.
+
+    ``required_files`` registers the names ``REQUIRED`` holds, and
+    ``check_frozen.py`` derives ``REQUIRED`` from ``SPEC_FILES``.  Only ``from
+    apparatus import SPEC_FILES`` keeps that list identical to the one this tool
+    reads; a second import, a local assignment, ``import apparatus as
+    SPEC_FILES`` or any other binding form is "cannot tell".
+    """
+    module = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if any(alias.name == '*' for alias in node.names):
+                return None
+            for alias in node.names:
+                if (alias.asname or alias.name) != 'SPEC_FILES':
+                    continue
+                if module is not None:
+                    return None
+                module = node.module
+        elif isinstance(node, ast.Import):
+            if any((alias.asname or alias.name).split('.')[0] == 'SPEC_FILES'
+                   for alias in node.names):
+                return None
+        elif isinstance(node, ast.ExceptHandler) and node.name == 'SPEC_FILES':
+            return None
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == 'SPEC_FILES':
+            return None
+        elif isinstance(node, ast.MatchMapping) and node.rest == 'SPEC_FILES':
+            return None
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                and node.name == 'SPEC_FILES':
+            return None
+        elif isinstance(node, (ast.Global, ast.Nonlocal)) and 'SPEC_FILES' in node.names:
+            return None
+        elif isinstance(node, ast.Name) and node.id == 'SPEC_FILES' \
+                and isinstance(node.ctx, ast.Store):
+            return None
+    return module
 
 
 def _function_node(tree, name):
@@ -575,30 +613,42 @@ def _parents(tree):
     return parents
 
 
-def _other_binding(function, name):
-    """True when ``function`` binds ``name`` without an ``ast.Name`` Store.
+def _unmodelled_binding(node, name):
+    """True when ``name`` is bound in a form that is not ``name = <literal>``.
 
     Parameters (defaults included), ``import ... as``, ``except ... as``,
-    ``match`` captures and ``global``/``nonlocal`` all rebind the name, and none
-    of them produces a ``Name(Store)`` node -- so a value this parser read from
-    elsewhere is not the value the interpreter uses.
+    ``match`` captures, a same-named ``def``/``class``, ``import *`` and
+    ``global``/``nonlocal`` all rebind the name, and none of them produces the
+    plain ``Name(Store)`` the literal readers count -- so a value read from
+    elsewhere is not the value the interpreter uses.  Nested function *bodies*
+    are included (a ``global`` assignment there rebinds the module name), but
+    nested parameter lists are not: a local parameter of the same name shadows
+    only inside that call.
     """
-    arguments = function.args
-    every = (list(arguments.posonlyargs) + list(arguments.args)
-             + list(arguments.kwonlyargs)
-             + [arg for arg in (arguments.vararg, arguments.kwarg) if arg is not None])
-    if any(arg.arg == name for arg in every):
-        return True
-    for node in ast.walk(function):
-        if isinstance(node, ast.alias) and (node.asname or node.name).split('.')[0] == name:
+    arguments = getattr(node, 'args', None)
+    if isinstance(arguments, ast.arguments):
+        every = (list(arguments.posonlyargs) + list(arguments.args)
+                 + list(arguments.kwonlyargs)
+                 + [arg for arg in (arguments.vararg, arguments.kwarg) if arg is not None])
+        if any(arg.arg == name for arg in every):
             return True
-        if isinstance(node, ast.ExceptHandler) and node.name == name:
+    for child in ast.walk(node):
+        if child is node:
+            continue
+        if isinstance(child, ast.alias) and (child.asname or child.name).split('.')[0] == name:
             return True
-        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == name:
+        if isinstance(child, ast.ExceptHandler) and child.name == name:
             return True
-        if isinstance(node, ast.MatchMapping) and node.rest == name:
+        if isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name == name:
             return True
-        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+        if isinstance(child, ast.MatchMapping) and child.rest == name:
+            return True
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                and child.name == name:
+            return True
+        if isinstance(child, ast.ImportFrom) and any(a.name == '*' for a in child.names):
+            return True
+        if isinstance(child, (ast.Global, ast.Nonlocal)) and name in child.names:
             return True
     return False
 
@@ -615,15 +665,13 @@ def _module_scope_nodes(tree):
         stack.extend(ast.iter_child_nodes(node))
 
 
-def _external_still_holds(tree, name):
-    """True when the module does not rebind ``name`` away from ``<mod>.name``.
+def _loaded_through_common(tree):
+    """True when ``common`` is the module's own loader result, not something else.
 
-    The external value comes from another module (gateway's ``common.A2_SCRIPTS``
-    read through ``A2_SCRIPTS = common.A2_SCRIPTS``).  A branch that rebinds it
-    here -- ``A2_SCRIPTS = common.A2_SCRIPTS + ('extra.py',)``, a literal, or
-    ``from common import A2_SCRIPTS`` -- changes the interpreter's value while
-    the external one stays put, so the answer is "cannot tell", not the stale
-    tuple.
+    The external value (``common.A2_SCRIPTS``) is only trustworthy while
+    ``common`` still names ``scripts/gateway-parity/common.py`` -- the file this
+    tool read.  Anything else that binds the name (``import gw_extra as
+    common``, ``common = other``) makes the two disagree.
     """
     for node in _module_scope_nodes(tree):
         if isinstance(node, ast.Assign):
@@ -633,20 +681,53 @@ def _external_still_holds(tree, name):
         else:
             targets, value = [], None
         for target in targets:
-            if isinstance(target, ast.Name) and target.id == name:
-                if not (isinstance(value, ast.Attribute) and value.attr == name
-                        and isinstance(value.value, ast.Name)):
-                    return False
-        if isinstance(node, ast.alias) and (node.asname or node.name).split('.')[0] == name:
+            if not (isinstance(target, ast.Name) and target.id == 'common'):
+                continue
+            if not (isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name) and value.func.id == '_load'
+                    and value.args and isinstance(value.args[0], ast.Constant)
+                    and value.args[0].value == 'common'):
+                return False
+        if isinstance(node, ast.alias) and (node.asname or node.name).split('.')[0] == 'common':
             return False
-        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+        if isinstance(node, ast.ExceptHandler) and node.name == 'common':
             return False
-        if isinstance(node, ast.ExceptHandler) and node.name == name:
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == 'common':
             return False
-        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == name:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                and node.name == 'common':
             return False
-        if isinstance(node, ast.MatchMapping) and node.rest == name:
-            return False
+    return True
+
+
+def _external_still_holds(tree, name):
+    """True when the module does not rebind ``name`` away from ``common.name``.
+
+    The external value comes from another module (gateway's ``common.A2_SCRIPTS``
+    read through ``A2_SCRIPTS = common.A2_SCRIPTS``).  A branch that rebinds it
+    here -- ``A2_SCRIPTS = common.A2_SCRIPTS + ('extra.py',)``, a literal,
+    ``from common import A2_SCRIPTS``, an unpacking target or a module-level
+    walrus -- changes the interpreter's value while the external one stays put,
+    so the answer is "cannot tell", not the stale tuple.
+    """
+    if _unmodelled_binding(tree, name) or not _loaded_through_common(tree):
+        return False
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets, value = [node.target], node.value
+        else:
+            continue
+        for target in targets:
+            bound = {child.id for child in ast.walk(target)
+                     if isinstance(child, ast.Name)}
+            if name not in bound:
+                continue
+            if not (len(targets) == 1 and isinstance(target, ast.Name)
+                    and isinstance(value, ast.Attribute) and value.attr == name
+                    and isinstance(value.value, ast.Name) and value.value.id == 'common'):
+                return False
     return True
 
 
@@ -666,7 +747,7 @@ def _tuple_value(tree, function, name, external=()):
     augments = [node for node in ast.walk(function)
                 if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
                 and node.target.id == name]
-    if augments or len(stores) > 1 or _other_binding(function, name):
+    if augments or len(stores) > 1 or _unmodelled_binding(function, name):
         return None
     found = None
     if stores:
@@ -846,12 +927,13 @@ def _ui_required_names(tree):
     stores = [node for node in ast.walk(tree)
               if isinstance(node, ast.Name) and node.id == 'REQUIRED'
               and isinstance(node.ctx, ast.Store)]
-    if len(stores) != 1:
+    if len(stores) != 1 or _unmodelled_binding(tree, 'REQUIRED'):
         return None
-    # ``SPEC_FILES`` must be the *imported* tuple: a local rebinding
-    # (``SPEC_FILES = SPEC_FILES[:-1]``) puts a second, invisible list back.
-    if any(isinstance(node, ast.Name) and node.id == 'SPEC_FILES'
-           and isinstance(node.ctx, ast.Store) for node in ast.walk(tree)):
+    # ``SPEC_FILES`` must be the tuple imported from ``apparatus`` -- the file
+    # this tool read.  A local rebinding (``SPEC_FILES = SPEC_FILES[:-1]``), a
+    # second import from elsewhere, or any other binding form puts a different,
+    # invisible list behind ``REQUIRED``.
+    if _ui_spec_files_source(tree) != 'apparatus':
         return None
     # ``REQUIRED.discard(...)`` / ``.update(...)`` edit the set in place, so the
     # binding still looks derived while the registered names are not.
@@ -1154,35 +1236,35 @@ def unregistered_added(root, kind, mb):
             known = {inventory['spec'] + name for name in inventory['specs']}
             known |= set(inventory['toolchain'])
             extra = sorted(p for p in known if not p.startswith(prefixes))
+    elif kind == 'gateway-parity':
+        # gateway registers exactly its inventory, wherever a member lives, so
+        # the inventory *is* the scan set -- no directory walk can add to it.
+        prefixes = ()
+        inventory = gateway_inventory(root)
+        if inventory is None:
+            issues.append('cannot tell gateway-parity\'s inventory: cannot tell '
+                          'which files --write registers')
+        else:
+            extra = sorted(inventory)
     else:
-        # ``specs/<kind>/`` belongs to the inventory too: neither apparatus
-        # reports a *new* spec document that has no hash row (parity only skips
-        # them, gateway only says "hash list differs"), so an unscanned spec
+        # parity auto-registers every tracked file under ``scripts/parity/`` and
+        # registers the spec documents its manifest names.  ``specs/parity/``
+        # belongs to the inventory too: the apparatus only says "hash list
+        # differs" for a new spec document that has no row, so an unscanned spec
         # directory is a false READY that ``--write`` turns into a missing chain.
-        prefixes = REGISTRABLE_DIRS.get(kind, ())
-        if kind == 'parity':
-            # ``registrable`` says True for every name in ``manifest_inventory``,
-            # including one that already carries a ``scripts/``/``specs/`` prefix
-            # and therefore lives outside the two scanned directories.  Scanning
-            # only the prefixes would leave such a first registration unseen --
-            # the two questions must agree (see REGISTRABLE_DIRS).
-            specs = parity_spec_names(root)
-            manifest = None if specs is None else _parity_manifest_paths(specs)
-            if manifest is None:
-                issues.append('cannot tell parity\'s manifest_inventory names: cannot tell '
-                              'which files outside the scanned directories --write registers')
-            else:
-                extra = sorted(p for p in manifest if not p.startswith(prefixes))
-        elif kind == 'gateway-parity':
-            # Same question, same answer: a member the inventory names outside
-            # the scanned directories is a row ``--write`` adds, so it has to be
-            # looked at too.
-            inventory = gateway_inventory(root)
-            if inventory is None:
-                issues.append('cannot tell gateway-parity\'s inventory: cannot tell '
-                              'which files outside the scanned directories --write registers')
-            else:
-                extra = sorted(p for p in inventory if not p.startswith(prefixes))
+        prefixes = PARITY_DIRS
+        # ``registrable`` says True for every name in ``manifest_inventory``,
+        # including one that already carries a ``scripts/``/``specs/`` prefix
+        # and therefore lives outside the two scanned directories.  Scanning
+        # only the prefixes would leave such a first registration unseen -- the
+        # two questions must agree.
+        specs = parity_spec_names(root)
+        manifest = None if specs is None else _parity_manifest_paths(specs)
+        if manifest is None:
+            issues.append('cannot tell parity\'s manifest_inventory names: cannot tell '
+                          'which files outside the scanned directories --write registers')
+        else:
+            extra = sorted(p for p in manifest if not p.startswith(prefixes))
     for prefix in prefixes:
         code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
                              pinned_head(), '--', prefix)
