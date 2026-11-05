@@ -198,7 +198,10 @@ python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另�
   （扫描范围必须与「是否可登记」的判定一致，否则首登记漏检）；gateway-parity 是装置
   `manifest_inventory` 的成员
   （`A2_SCRIPTS` + 两个 session fixtures + 五个 a5-19 文件；`A3_SCRIPTS` 与
-  `DATA_FILES` 只在未登记文件白名单里、**没有**哈希行，给它们补链反而是死路）。
+  `DATA_FILES` 只在未登记文件白名单里、**没有**哈希行，给它们补链反而是死路；
+  成员落在三个前缀目录之外时 `--write` 照原样登记，预检同样按原样扫）。
+  ui-server-parity 同理：`SPEC_FILES` 与 `TOOLCHAIN_FILES` 的成员即使不在
+  被扫描的装置目录下也在扫描范围内。
   这些同样要求精确的 `Change: - <sha256> <路径>` 链——否则记为阻塞：`--write`
   登记后 `check_frozen.py --base` 必然拒绝。装置不会登记的新文件（未跟踪草稿、
   清单外文件）一律忽略：真实闸门同样无感，给它补事件行反而会变成未使用的

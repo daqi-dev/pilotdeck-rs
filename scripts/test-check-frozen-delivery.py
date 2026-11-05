@@ -333,6 +333,100 @@ def run():
              f'added={added} issues={issues}')
 
     with tempfile.TemporaryDirectory() as td:
+        # 清单源认不出（names 不是字面量元组）：连「目录外该扫什么」都不可判定，
+        # 必须自己出一条阻塞，而不是只靠每个文件的 registrable=None 兜住。
+        proc = delivery(Path(td), "parity", parity_payload,
+                        source="\nSPEC_NAMES = ('README.md', 'acceptance.md')\n"
+                               "\ndef manifest_inventory(root):\n"
+                               "    names = SPEC_NAMES\n"
+                               "    return {name: name for name in names}\n")
+        case("parity 清单源认不出 → BLOCKED 且报扫描范围不可判定",
+             proc.returncode == 1 and "cannot tell parity's manifest_inventory names"
+             in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # gateway 同源问题：清单成员落在三个扫描目录之外时，--write 照原样登记
+    # （check_frozen.py 的 manifest_path 对任何 '../../' 名都出行），预检也必须看。
+    GW_SHARED = gw_source().replace(
+        "    return {name: name for name in names}\n",
+        "    paths += ['specs/shared/g.md']\n"
+        "    return {name: name for name in names}\n")
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py", GW_SHARED)
+        commit(root, "base")
+        case("gateway 清单成员落在扫描目录之外仍可登记",
+             cfd.registrable(root, "gateway-parity", "specs/shared/g.md") is True)
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = delivery(Path(td), "gateway-parity",
+                        {"status": "FAIL", "failures": [HASH_LIST]},
+                        source=GW_SHARED,
+                        files=[("specs/shared/g.md", "G\n")],
+                        base_files=[("scripts/gateway-parity/common.py", GW_COMMON)])
+        case("gateway 清单指向扫描目录之外的路径、无事件链 → BLOCKED",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = delivery(Path(td), "gateway-parity",
+                        {"status": "FAIL", "failures": [HASH_LIST]},
+                        source=GW_SHARED,
+                        files=[("specs/shared/g.md", "G\n")],
+                        events=[("specs/gateway-parity/frozen/20260101-s.md",
+                                 f"Change: - {sha('G\n')} specs/shared/g.md\n"
+                                 + EVENT_FIELDS)],
+                        base_files=[("scripts/gateway-parity/common.py", GW_COMMON)])
+        case("gateway 清单指向扫描目录之外的路径、有 Change: - <hash> → READY",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 形参默认值不产生 Name(Store)：不回退 external，否则漏掉新成员。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "\ndef manifest_inventory(root, A2_SCRIPTS=('check_frozen.py', 'extra.py')):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    return {name: name for name in paths}\n")
+        commit(root, "base")
+        case("gateway A2_SCRIPTS 走形参默认值 → 不可判定（不回退外部值）",
+             cfd.gateway_inventory(root) is None)
+
+    with tempfile.TemporaryDirectory() as td:
+        # 模块级遮蔽：check_frozen.py 自己 `A2_SCRIPTS = common.A2_SCRIPTS + (...)`
+        # 时解释器用的是本模块扩展后的元组，回退 common 的旧元组就漏判。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "\nA2_SCRIPTS = common.A2_SCRIPTS + ('extra.py',)\n"
+              "\ndef manifest_inventory(root):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    return {name: name for name in paths}\n")
+        commit(root, "base")
+        case("gateway 模块级重绑 A2_SCRIPTS → 不可判定（不取 common 旧值）",
+             cfd.gateway_inventory(root) is None)
+
+    with tempfile.TemporaryDirectory() as td:
+        # 正控：原样的 `A2_SCRIPTS = common.A2_SCRIPTS` 仍按 common 解析。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "\nA2_SCRIPTS = common.A2_SCRIPTS\n"
+              "\ndef manifest_inventory(root):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    return {name: name for name in paths}\n")
+        commit(root, "base")
+        case("gateway 原样 A2_SCRIPTS = common.A2_SCRIPTS → 正常解析",
+             cfd.gateway_inventory(root) == {'scripts/gateway-parity/check_frozen.py'})
+
+    with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
         payload = dict(parity_payload, unregistered_skipped=["scripts/parity/scratch.txt"])
         proc = delivery(Path(td), "parity", payload, dirty=[("scripts/parity/scratch.txt", "x\n")])
@@ -1025,6 +1119,25 @@ def run():
              proc.returncode == 1 and "cannot tell ui-server-parity's inventory"
              in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # SPEC_FILES 的成员住在 specs/ 目录下，也要落在首登记扫描范围里，
+        # 否则 --write 加行、预检不索链。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/ui-server-parity/apparatus.py",
+              UI_APPARATUS.replace("'acceptance.md',)", "'acceptance.md', 'multimodal.md')"))
+        write(root, "scripts/ui-server-parity/check_frozen.py", UI_FROZEN)
+        write(root, "specs/ui-server-parity/multimodal.md", "NEW\n")
+        write(root, "specs/ui-server-parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha('A\n')}  ../../scripts/ui-server-parity/apparatus.py\n"
+              f"{sha('B\n')}  ../../scripts/ui-server-parity/check_frozen.py\n")
+        commit(root, "base")
+        mb = git(root, "rev-parse", "HEAD")
+        added, _ = cfd.unregistered_added(root, "ui-server-parity", mb)
+        case("ui 新增的 SPEC_FILES 成员在扫描范围内（首登记不漏判）",
+             'specs/ui-server-parity/multimodal.md' in added, f'added={added}')
 
     with tempfile.TemporaryDirectory() as td:
         # 注释掉的成员不算登记：按正则抽字面量会把它当「仍在清单」，掉行被漏报。
