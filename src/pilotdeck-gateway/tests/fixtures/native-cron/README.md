@@ -36,7 +36,22 @@ pinned 时钟 `Date.UTC(2026, 0, 1)`（#1216 金样同款）、计数 taskId `ta
   `six_methods_replay_the_ts_gold` 字节级重放、`negative_controls.py`
   （6 变异，绑该重放测试，全 KILLED）。
 - runTaskNow 成功格：结果不含时间戳，即便 TS 侧 runAt 由真实时钟折叠
-  （重放仍字节级相等）；该怪癖已在 RESULT 登记。
+  （重放仍字节级相等）。这是夹具自身观测不到的点，**不是** Rust/TS 差异，
+  不进 `specs/gateway-parity/diffs/`。
+
+## 已知覆盖缺口
+
+- **`unconfigured` 半边是人工转写**：`generate.mts` 直接
+  `new DialogGatewayError('CAPABILITY_UNAVAILABLE', ...)`，不走真实的
+  `requireCron`。负控 `gate-code-swapped` 因此只证明「Rust == 手抄值」，
+  不证明「手抄值 == TS」。错误码有独立旁证：
+  `specs/gateway-coverage/ledger.json` 记录六方法 unconfigured 分支同为
+  `CAPABILITY_UNAVAILABLE`（锚 `InProcessGateway.ts:3017-3022`）；文案字面量
+  目前仍是单源。真断言（在 `generate.mts` 里对基线源码断言该分支的
+  code/message 字面量）前置于下次有基线的金样重生成，登记在 #1645。
+- **`recoverInterruptedRuns` 无 TS 金样**：`oracle.json` 十格无一格触发恢复；
+  `tests/cron_manager_native.rs` 的重启格只断言 Rust 对已提交夹具的行为，
+  属自证。恢复只在 `start()` 路径上跑，而金样重放不 start manager。
 - `#[ignore] native_cron_oracle_regenerates_identically` 再生成守卫需
   Node v22.22.0（`/Users/da/opt/node-v22.22.0-icu78-darwin-arm64/bin`
   置于 PATH 首位）与 `PDRS_BASELINE`；金样重放测试本身不生成 Node。
