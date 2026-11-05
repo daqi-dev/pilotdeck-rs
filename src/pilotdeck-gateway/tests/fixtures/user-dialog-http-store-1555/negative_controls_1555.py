@@ -102,6 +102,15 @@ cases = [
      '        let _ = self.drop_start.take();\n',
      'leading_value_ows_beyond_the_raw_cap_reaches_the_handler',
      '#1555 leading value OWS must reach the handler like Node'),
+    # #1555 fix-r2: a CR inside the value does not close the after-colon window,
+    # so the spaces behind it are dropped and hyper receives the valid empty
+    # value `X:\r\n`; the malformed line reaches the handler instead of 400.
+    ('cr-does-not-close-ows-window', source,
+     '        self.droppable_ows = false;\n'
+     '        self.raw_bytes = self.raw_bytes.saturating_add(1);\n',
+     '        self.raw_bytes = self.raw_bytes.saturating_add(1);\n',
+     'cr_in_value_is_rejected_like_node',
+     '#1555 a CR inside a field value must be rejected like Node'),
 ]
 
 
