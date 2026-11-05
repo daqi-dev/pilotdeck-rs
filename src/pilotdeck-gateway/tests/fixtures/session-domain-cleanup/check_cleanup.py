@@ -64,10 +64,19 @@ from unittest.mock import patch
 # Loading the apparatus by explicit path is still an import: stop bytecode
 # writes before the loader reads the source, otherwise a __pycache__ appears in
 # the frozen apparatus directory and check_frozen (correctly) rejects it.
-# #892 r6: the prefix directory is ours, so clean it up -- a batch of 59 mutants
-# spawns 59 interpreters and used to leave 59 temp dirs behind (MiniMax P2).
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-session-cleanup-pyc-')
-atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+# #892 r6/r9: every bytecode prefix this process creates lives in one private
+# root, so a batch of mutants (one interpreter each) leaves nothing behind.
+# Adopting prefixes one at a time was not enough: the frozen apparatus rewrites
+# the process-global ``sys.pycache_prefix`` at import time in every module it
+# loads (``session_domain.py:44``, ``controls/session_domain.py:35``,
+# ``common.py`` ...), so the earlier directory of each load still leaked
+# (MiniMax P2 r6, MiniMax sibling r7 P2-2).  Pointing ``tempfile`` itself at
+# the root catches them all without ever touching a directory another process
+# owns.
+_PYCACHE_ROOT = tempfile.mkdtemp(prefix='pdrs-session-cleanup-pycroot-')
+tempfile.tempdir = _PYCACHE_ROOT
+sys.pycache_prefix = _PYCACHE_ROOT
+atexit.register(shutil.rmtree, _PYCACHE_ROOT, ignore_errors=True)
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -1086,11 +1095,17 @@ def _calls_aggregate(node):
     return any(_is_shared_call(n) for n in ast.walk(node))
 
 
-# #892 r1: a hard-coded status literal may only be *fail-closed*.  ``'PASS'`` /
-# ``'PASS_WITH_SKIPS'`` written straight into a summary slot claim a clean run
-# without going through the shared map, which is exactly the bypass this check
-# exists to stop (MiniMax boundary P0-2 / DeepSeek boundary P1-2).
-_FAIL_CLOSED_LITERALS = frozenset({'BLOCKED', 'FAIL', 'NOT_RUN'})
+# #892 r1: a hard-coded status literal may only be *fail-closed*.  The clean
+# half written straight into a summary slot claims a run the shared map never
+# produced, which is exactly the bypass this check exists to stop (MiniMax
+# boundary P0-2 / DeepSeek boundary P1-2).  The two halves are complement sets
+# of the product word family (``STATUS_WORDS``, mirroring
+# ``common.BATCH_STATUS_ORDER`` plus the cleanup-verification word), so a new
+# word cannot silently join neither (GLM boundary r7 P2-4 / sibling P3-6 /
+# MiniMax simplify r7 P2-1).
+_CLEAN_STATUS_LITERALS = frozenset({'PASS', 'PASS_WITH_SKIPS',
+                                    'PASS_WITH_CLEANUP_UNVERIFIED'})
+_FAIL_CLOSED_LITERALS = STATUS_WORDS - _CLEAN_STATUS_LITERALS
 
 
 def _relays_status(node, bindings, seen=None):
@@ -1175,6 +1190,11 @@ def _name_bindings(function):
             # proven; without this the subscript path would treat it as a
             # module global and trust it (DeepSeek boundary P1-4).
             _bind_values(node.target, node.iter, bindings, node.lineno)
+        elif isinstance(node, ast.NamedExpr):
+            # ``if (code := int(...)):`` binds before the ``return code`` the
+            # same way an Assign does; without this the name looked unbound and
+            # the computed code was invisible (GLM boundary r7 P1-1).
+            _bind_values(node.target, node.value, bindings, node.lineno)
     return bindings
 
 
@@ -1302,13 +1322,14 @@ def _bound_summary_dicts(function):
 
 
 def _returned_summary_names(value, bound):
-    """Names a return statement hands back that were bound to a summary dict."""
-    names = []
-    if isinstance(value, ast.Name):
-        names.append(value.id)
-    elif isinstance(value, ast.Tuple):
-        names.extend(element.id for element in value.elts if isinstance(element, ast.Name))
-    return [name for name in names if name in bound]
+    """Names a return statement hands back that were bound to a summary dict.
+
+    Reuses ``_returned_names`` so the enumeration layer expands conditional and
+    boolean arms exactly like the slot layer; a second, narrower implementation
+    left ``return payload if cond else report`` half-enumerated (GLM simplify
+    r7 P2-2).
+    """
+    return [name for name in _returned_names(value) if name in bound]
 
 
 def _optimistic_exit(node):
@@ -1380,11 +1401,6 @@ def _exit_code_shaped(node):
     return False
 
 
-# #892 r2: a clean verdict written straight into a ``['status']`` slot claims a
-# run the shared map never produced.
-_CLEAN_STATUS_LITERALS = frozenset({'PASS', 'PASS_WITH_SKIPS'})
-
-
 def _writes_status_slot(target):
     """True when *target* assigns a status slot (#892 r2/r3).
 
@@ -1404,13 +1420,7 @@ def _writes_status_slot(target):
 
 def _status_write_values(target, value, out):
     """Collect the values an assignment writes into a ``['status']`` slot."""
-    if (isinstance(target, (ast.Tuple, ast.List))
-            and isinstance(value, (ast.Tuple, ast.List))
-            and len(target.elts) == len(value.elts)):
-        for element_target, element_value in zip(target.elts, value.elts):
-            _status_write_values(element_target, element_value, out)
-    elif _writes_status_slot(target):
-        out.append(value)
+    _slot_write_values(target, value, out, _writes_status_slot)
 
 
 def _assigns_clean_status(value, bindings, seen=None):
@@ -1465,18 +1475,38 @@ def _name_assigns_clean(name, bindings, seen=None):
 _SENTINEL_POINTS = frozenset({('scripts/gateway-parity/_guard.py', '_failure')})
 
 
+def _slot_write_values(target, value, out, matches):
+    """Pair tuple targets with tuple values, collecting the matching slots."""
+    if (isinstance(target, (ast.Tuple, ast.List))
+            and isinstance(value, (ast.Tuple, ast.List))
+            and len(target.elts) == len(value.elts)):
+        for element_target, element_value in zip(target.elts, value.elts):
+            _slot_write_values(element_target, element_value, out, matches)
+    elif matches(target):
+        out.append(value)
+
+
+def _is_verdict_target(target):
+    return isinstance(target, ast.Name) and target.id == 'verdict'
+
+
 def _bare_verdict_values(node):
     """Values written to a bare ``verdict`` name inside a registered point.
 
     ``verdict = 'PASS'`` (a plain local name, not a dict key) claims the batch
     verdict exactly like ``status = 'PASS'``; the write family accepted only the
     ``status`` spelling, so the other one walked through (MiniMax sibling r6
-    P2-3).  Enumeration keeps its own narrower rule on purpose: a per-case
-    helper's ``verdict`` local must not turn into an aggregation point.
+    P2-3).  Tuple targets pair element-wise for the same reason the status
+    family does: ``verdict, code = 'PASS', 0`` used to hand back the whole tuple,
+    which no clean-status test recognises (GLM boundary r7 P2-3).  Enumeration
+    keeps its own narrower rule on purpose: a per-case helper's ``verdict``
+    local must not turn into an aggregation point.
     """
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-    return [node.value for target in targets for name in _target_names(target)
-            if name == 'verdict']
+    values = []
+    for target in targets:
+        _slot_write_values(target, node.value, values, _is_verdict_target)
+    return values
 
 
 def _summary_slot_violations(summary, bindings, lineno):
@@ -1654,9 +1684,17 @@ def _exit_terminal_bindings(name, bindings, seen=None):
 
 
 def _inline_exit_call(value):
-    """``int(...)`` computes an exit code inline; a plain non-zero int is legal."""
-    return (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-            and value.func.id == 'int')
+    """The spelling of an inline exit-code computation, or None.
+
+    ``int(...)`` and ``bool(...)`` both leave the process with a code the shared
+    map never produced; a plain non-zero int literal stays legal.  The direct
+    return arm already accepted both (``_exit_code_shaped``), while this relay
+    arm knew only ``int``, so ``code = bool(x); return code`` was one source
+    with two verdicts (MiniMax boundary r7 P0-1 / sibling r7 P1-1).
+    """
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+        return value.func.id if value.func.id in ('int', 'bool') else None
+    return None
 
 
 def _container_holds_zero(value, bindings):
@@ -1794,7 +1832,14 @@ def _exit_name_violation(name, bindings, function=None):
     a constant zero (GLM concurrency P1-1 / MiniMax boundary P1-4).
     """
     sites = {}
-    for owner, lineno, value in _exit_terminal_bindings(name, bindings):
+    terminals = _exit_terminal_bindings(name, bindings)
+    if not terminals:
+        # A module-level name or a parameter proves nothing about where the
+        # code came from, and the status side already fails closed on exactly
+        # this shape (``_name_relays`` returns False for an empty binding):
+        # one source may not have two verdicts (GLM boundary r7 P1-1).
+        return 'unbound'
+    for owner, lineno, value in terminals:
         if isinstance(value, (ast.IfExp, ast.BoolOp)) and any(
                 _constant_exit_zero(arm) for arm in _exit_arms(value)):
             return 'conditional'
@@ -1805,8 +1850,9 @@ def _exit_name_violation(name, bindings, function=None):
                 if lineno not in sites[owner]:
                     continue  # an initializer that a later statement overwrites
             return 'literal'
-        if _inline_exit_call(value):
-            return 'int()'
+        spelling = _inline_exit_call(value)
+        if spelling:
+            return spelling + '()'
         if _container_holds_zero(value, bindings):
             return 'subscript'
         if _nested_def_exits_zero(value, function):
@@ -1828,26 +1874,45 @@ def _is_exit_call(call):
             and func.value.id in ('sys', 'os'))
 
 
-def _unproven_expansion(call, bindings):
-    """``report.update(**payload)`` whose payload the function never built.
+def _proven_summary_source(value, bindings):
+    """True when the audit can see which slots *value* carries.
 
-    A keyword expansion carries its keys at runtime; when the value is neither a
-    dict literal nor a name bound to one *in this function*, the audit cannot
-    see which slots it writes, so it fails closed instead of passing silently
-    (GLM r6 boundary P1-2).
+    A dict literal (or an arm of one), a call whose own return path is audited
+    where its function is registered, and a name this function bound to either
+    are visible; a parameter, a module global or an attribute is not.  Reading
+    the slots is what the bypass rule depends on, so an opaque operand must
+    fail closed instead of passing silently (GLM r6 boundary P1-2, r7 P1-2).
+    """
+    if _returned_summary_dicts(value):
+        return True
+    if isinstance(value, ast.Call):
+        return True
+    if isinstance(value, ast.Name):
+        return any(_returned_summary_dicts(item) or isinstance(item, ast.Call)
+                   for _lineno, item in bindings.get(value.id, ()))
+    return False
+
+
+def _unproven_expansion(call, bindings):
+    """``update(x)`` / ``update(**x)`` whose slots the function never built.
+
+    ``update(x)`` carries the same keys as ``update(**x)``; judging only the
+    keyword spelling left the positional one -- the shape the healthy tree
+    itself uses with a helper call -- invisible (GLM boundary r7 P1-2).  Lists
+    and tuples of pairs are read directly by ``_call_written_values``.
     """
     if call.func.attr != 'update':
         return False
+    for argument in call.args:
+        if isinstance(argument, (ast.Dict, ast.List, ast.Tuple)):
+            continue
+        if not _proven_summary_source(argument, bindings):
+            return True
     for keyword in call.keywords:
         if keyword.arg is not None:
             continue
-        value = keyword.value
-        if _returned_summary_dicts(value):
-            continue
-        if isinstance(value, ast.Name) and any(
-                isinstance(item, ast.Dict) for _lineno, item in bindings.get(value.id, ())):
-            continue
-        return True
+        if not _proven_summary_source(keyword.value, bindings):
+            return True
     return False
 
 
@@ -1949,6 +2014,13 @@ def unshared_status_slots(function, point=None, module=None):
                 for summary in _returned_summary_dicts(node.value):
                     written.extend(_status_slot_values(summary))
                 _status_write_values(node.target, node.value, written)
+                if not _proven_summary_source(node.value, bindings):
+                    # ``report |= payload`` writes the same slots as
+                    # ``report.update(payload)`` (GLM boundary r7 P1-2).
+                    violations.append(
+                        f'inline status/exit update {ast.unparse(node)[:60]} '
+                        f'at line {node.lineno}')
+                    continue
             written.extend(_bare_verdict_values(node))
             if any(_assigns_clean_status(item, bindings) for item in written):
                 violations.append(
@@ -2457,6 +2529,37 @@ def aggregation_audit():
         "    if report.get('special'):\n"
         "        return bool(report.get('cells'))\n"
         "    return common.aggregate_status(report['status'])[1]\n"
+        "def _bool_relay_exit(report):\n"
+        "    if report.get('special'):\n"
+        "        code = bool(report.get('cells'))\n"
+        "        return code\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _walrus_exit(report):\n"
+        "    if (code := int(bool(report.get('cells')))):\n"
+        "        return code\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _unbound_exit_name(report):\n"
+        "    if report.get('special'):\n"
+        "        return EXIT_CODE\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _update_positional(report):\n"
+        "    report.update(extra)\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _augassign_update(report):\n"
+        "    report |= extra\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _bound_update(report):\n"
+        "    payload = {'status': 'BLOCKED', 'reason': 'x'}\n"
+        "    report.update(payload)\n"
+        "    report.update({'status': 'BLOCKED'})\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _tuple_verdict(report):\n"
+        "    verdict, code = 'PASS', 0\n"
+        "    print(report, code)\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _cleanup_word(report):\n"
+        "    report['status'] = 'PASS_WITH_CLEANUP_UNVERIFIED'\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
         "def _return_exit_call(report):\n"
         "    if report.get('special'):\n"
         "        return sys.exit(0)\n"
@@ -2648,13 +2751,38 @@ def aggregation_audit():
             ('_bare_verdict', "inline status/exit assignment 'PASS'",
              'a clean status written to a bare ``verdict`` name'),
             ('_bool_exit', 'inline exit code bool(',
-             'an exit code computed with bool()')):
+             'an exit code computed with bool()'),
+            # #892 r9: the relay and write spellings the r7 reviews found.
+            ('_bool_relay_exit', '(bool() relay) code',
+             'a bool() code relayed through a local'),
+            ('_walrus_exit', '(int() relay) code',
+             'a walrus-bound int() code'),
+            ('_unbound_exit_name', '(unbound relay) EXIT_CODE',
+             'an exit-code name with no local binding'),
+            ('_update_positional', 'inline status/exit assignment report.update(extra)',
+             'a positional update() with an invisible payload'),
+            ('_augassign_update', 'inline status/exit update report |= extra',
+             'an augmented |= write with an invisible payload'),
+            ('_tuple_verdict', "inline status/exit assignment ('PASS', 0)",
+             'a tuple-target clean verdict write'),
+            ('_cleanup_word',
+             "inline status/exit assignment 'PASS_WITH_CLEANUP_UNVERIFIED'",
+             'the cleanup-verification word written straight into a slot')):
         probe = next((node for node in probe892.body
                       if getattr(node, 'name', None) == probe_name), None)
         found_slots = unshared_status_slots(probe, None, probe_modules) if probe else []
         if not any(needle in slot for slot in found_slots):
             failures.append(f'#892 aggregation-audit: detector self-test did not flag '
                             f'{message} (found {found_slots!r})')
+    # #892 r9: the fail-closed update rule may not swallow the legal shapes --
+    # a locally built dict and a dict literal carry visible slots.
+    bound_update = next((node for node in probe892.body
+                         if getattr(node, 'name', None) == '_bound_update'), None)
+    bound_slots = unshared_status_slots(bound_update, None, probe_modules) \
+        if bound_update else None
+    if not bound_update or bound_slots:
+        failures.append('#892 aggregation-audit: detector self-test rejected a '
+                        f'visible update() payload (found {bound_slots!r})')
     update_only = probe892_found.get(('<self-test-892>', '_update_only'))
     if (not update_only or 'write-status' not in update_only[0]
             or not unshared_status_slots(update_only[1])):
@@ -2818,6 +2946,18 @@ def batch_aggregation_control(md, output):
         'fail': controls.common.aggregate_status('PASS', 'FAIL')[0],
         'unknown': controls.common.aggregate_status('PASS', 'NOT_A_STATUS')[0],
     }
+    # #892 r9: the exit-code half of the same contract was unpinned -- a
+    # NOT_RUN code of 1 or 2 kept every fixture green while README and the
+    # frozen 20261031-1140-r2 entry register 3 (MiniMax boundary r7 P2-3).
+    exit_codes = {
+        'map': dict(controls.common.BATCH_EXIT_CODES),
+        'pass': controls.common.aggregate_status('PASS', None)[1],
+        'skip': controls.common.aggregate_status('PASS', 'PASS_WITH_SKIPS')[1],
+        'notRun': controls.common.aggregate_status('PASS', 'NOT_RUN')[1],
+        'blocked': controls.common.aggregate_status('PASS', 'BLOCKED')[1],
+        'fail': controls.common.aggregate_status('PASS', 'FAIL')[1],
+        'unknown': controls.common.aggregate_status('PASS', 'NOT_A_STATUS')[1],
+    }
     negative_restored = negative_restored_replays(output)
     observed = {
         'withSkips': replay('with-skips', 'PASS_WITH_SKIPS'),
@@ -2826,6 +2966,7 @@ def batch_aggregation_control(md, output):
         'allPass': replay('all-pass', 'PASS'),
         'caseFailure': replay('case-failure', 'PASS', failing='healthy'),
         'order': order,
+        'exitCodes': exit_codes,
         'negativeRestored': negative_restored,
         'summaries': {
             'allPass': summarize_results([{'passed': True}, {'passed': True}])[0],
@@ -2892,6 +3033,10 @@ def batch_aggregation_control(md, output):
         'order': {'pass': 'PASS', 'skip': 'PASS_WITH_SKIPS',
                   'blocked': 'BLOCKED', 'notRun': 'NOT_RUN',
                   'fail': 'FAIL', 'unknown': 'FAIL'},
+        'exitCodes': {'map': {'PASS': 0, 'PASS_WITH_SKIPS': 1, 'NOT_RUN': 3,
+                              'BLOCKED': 2, 'FAIL': 1},
+                      'pass': 0, 'skip': 1, 'notRun': 3, 'blocked': 2,
+                      'fail': 1, 'unknown': 1},
         'summaries': {'allPass': 'PASS', 'withSkip': 'PASS_WITH_SKIPS',
                       'failure': 'FAIL', 'malformed': 'FAIL',
                       'allSkipped': 'FAIL'},

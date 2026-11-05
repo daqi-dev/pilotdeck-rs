@@ -75,13 +75,17 @@ literal zero (`sys.exit(0 if cond else 1)`) is inline on its own, even though
 the whole argument is not a literal (`fix-r7`).  A returned conditional or
 boolean is expanded into its arms, so ``return {'status': 'PASS'} if cond else
 report`` and ``return payload if cond else report`` are judged slot by slot like
-a plain return, and ``report.update(**name)`` whose expansion this function
-never built writes slots the audit cannot see, so it fails closed (`fix-r7`).  A non-zero exit literal on its own
+a plain return, and ``report.update(**name)`` / ``report.update(name)`` /
+``report |= name`` whose payload this function never built writes slots the
+audit cannot see, so it fails closed (`fix-r7`, extended in `fix-r9`; a dict
+literal, a locally built dict and a helper call stay legal, and the
+`_bound_update` probe pins that side).  An exit-code name with no local binding
+is judged fail-closed on the same reasoning as the status side (`fix-r9`).  A non-zero exit literal on its own
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) is not an optimistic exit and
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests fifty-two probe functions; `probe892` in `check_cleanup.py` is
+(`fix-r6` pins both sides).  The audit self-tests fifty-nine probe functions; `probe892` in `check_cleanup.py` is
 the authoritative list (the four helpers it defines — `_exit_code`, `_exit_a`,
 `_exit_b`, `_decoy_code` — are leaves reached through a probe, not probes
 themselves).  Every rule below has a flagged probe and, where the shape is legal,
@@ -130,8 +134,10 @@ value is a name with no local binding is judged fail-closed, exactly like the
 returned-dict path.  Registered points also
 write their report incrementally instead of returning the dict, so every
 `x['status'] = ...` assignment in a registered point is judged by the same rule:
-a `'PASS'` / `'PASS_WITH_SKIPS'` literal (directly or through a local variable)
-and an inline `all(...passed...)` are flagged; relays, shared calls and
+a `'PASS'` / `'PASS_WITH_SKIPS'` / `'PASS_WITH_CLEANUP_UNVERIFIED'` literal
+(directly or through a local variable) and an inline `all(...passed...)` are
+flagged; the two halves are complement sets of `STATUS_WORDS`, so a new batch
+word cannot join neither side (`fix-r9`); relays, shared calls and
 non-batch labels such as `'PENDING_REVIEW'` stay legal.  That label allowance
 is a *write*-path rule only: a summary dict that is *returned* with a status key
 is judged element-wise, and any value that is neither a shared call nor a relay
@@ -237,9 +243,14 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_
 Run after the coordinator commits the patch. `--baseline` only accepts `HEAD`;
 worktree snapshots and alternate trees must not bypass the pristine-source guard.
 `--only NAME` (repeatable) runs just the named mutants and still runs the
-restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
+restored positive.  The batch holds the host-wide parity lease for its whole
+run, so it keeps that hold inside the apparatus's own 900 s run bound
+(`LEASE_BUDGET_SECONDS`): when the remaining budget can no longer absorb one
+check, the rest of the batch is recorded `INVALID` (which aggregates to
+BLOCKED, never to a kill) and the run says to continue with `--only`
+(`fix-r9`, after MiniMax concurrency r7 P1-1). `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 67 mutants:
+`JUDGES`, keyed by the same names. The current table has 73 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -269,7 +280,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-verdict-dict`, `calibrate-clean-argument`,
 `calibrate-conditional-summary`, `calibrate-update-expansion`,
 `calibrate-exit-conditional`, `calibrate-return-exit-call`,
-`calibrate-ann-rebuilt`, `calibrate-bare-verdict`, `calibrate-bool-exit`.
+`calibrate-ann-rebuilt`, `calibrate-bare-verdict`, `calibrate-bool-exit`,
+`calibrate-bool-relay`, `calibrate-unbound-exit-name`,
+`calibrate-update-positional`, `calibrate-augassign-update`,
+`calibrate-tuple-verdict`, `calibrate-cleanup-word`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -312,10 +326,14 @@ through `setdefault()`; `calibrate-status-update-kwarg` passes the slot as a
 keyword argument to `update()`.  The nine `fix-r5` mutants pin the vectors the
 r4 reviews found.  Six of them are written as an extra bypass branch *in front
 of* the untouched shared exit/rebind in `session_domain.py:main` (`A_EXIT`), so
-the healthy fall-through keeps its shared assignment and only the new path is
-under test (replacing the shared line outright would unmask the `code = 0`
-initializer and pin the wrong rule); the other three replace the summary status
-write (`B_STATUS`) itself, which is the write being pinned there.  All of them
+the healthy fall-through keeps its shared assignment.  Note what that does
+*not* buy: any extra `return` inside the guarded `try` makes the `code = 0`
+initializer above it reachable, so those mutants also trip the initializer rule
+and their judges must name their own rule's message (`calibrate-two-hop-zero`
+originally named the initializer's `code` instead of its own `relay`, corrected
+in `fix-r9` after MiniMax boundary r7 P2-2).  The other three r5 mutants replace
+the summary status write (`B_STATUS`) itself, which is the write being pinned
+there.  All of them
 --- like the `fix-r6` mutants below --- use a synthetic `report.get('special')`
 guard.  Those guards are *static* triggers: no real report carries a `special`
 key, so the mutants prove that the rule fires on the shape, not that the branch
@@ -327,7 +345,7 @@ rebind; `calibrate-two-hop-zero` relays `0` through two locals;
 `calibrate-verdict-write` writes the clean verdict into `report['verdict']`;
 `calibrate-sys-exit-zero` calls `sys.exit(0)`; `calibrate-walrus-status` writes
 `(status := 'PASS')`; `calibrate-rebuilt-summary` rebuilds the summary with
-`{**report, 'status': 'PASS'}`.  The seven `fix-r6` mutants pin what the r5
+`{**report, 'status': 'PASS'}`.  The eight `fix-r6` mutants pin what the r5
 reviews found: `calibrate-boolean-exit` returns `not ok`; `calibrate-sys-exit-relay`
 passes a local dict's zero to `sys.exit(...)`; `calibrate-system-exit-bare` raises
 `SystemExit` with no argument; `calibrate-delegated-chain` delegates the exit code
@@ -339,8 +357,9 @@ clean status into the shared call's *argument* list
 (`common.aggregate_status('PASS', cleanup['status'])`), which no slot can see —
 it is pinned at runtime instead, by the `caseFailure` row of
 `--mode batch-aggregation` (a failing case must reach the batch status).  The first six replace the one shared exit
-line in `controls/session_domain.py:main` (`CT_EXIT`), the last one prepends a
-function to that module.  The
+line in `controls/session_domain.py:main` (`CT_EXIT`); `calibrate-verdict-dict`
+prepends a function to that module, and `calibrate-clean-argument` is pinned at
+runtime instead (see above).  The
 four `fix-r7` mutants pin the return-path shapes the r6 reviews found still
 silent: `calibrate-conditional-summary` returns `{'status': 'PASS'}` from one arm
 of a conditional, `calibrate-update-expansion` passes an unbound name through
@@ -350,7 +369,14 @@ replace the one shared exit line in `controls/session_domain.py:main`
 (`CT_EXIT`).  The three `fix-r8` mutants pin the remaining write/exit spellings:
 `calibrate-ann-rebuilt` rebuilds the summary through an annotated assignment,
 `calibrate-bare-verdict` writes `'PASS'` into a bare `verdict` name, and
-`calibrate-bool-exit` returns `bool(...)`.  The
+`calibrate-bool-exit` returns `bool(...)`.  The six `fix-r9` mutants pin the
+relay and write spellings: `calibrate-bool-relay` relays `bool(...)` through a
+local (the relay arm used to know only `int`), `calibrate-unbound-exit-name`
+returns a name with no local binding, `calibrate-update-positional` passes the
+payload to `update()` positionally, `calibrate-augassign-update` writes it with
+`|=`, `calibrate-tuple-verdict` writes `'PASS'` through a tuple target, and
+`calibrate-cleanup-word` writes the cleanup-verification word into a status
+slot.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
