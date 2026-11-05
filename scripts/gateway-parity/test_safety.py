@@ -2525,7 +2525,8 @@ class RetirementScoring(unittest.TestCase):
         ]
         return self._with_round_faces(self._round_row(outcomes, frames), label)
 
-    def _stream_ok_round_row(self, *, send_frame=True, terminal_frame=True, label='round-01'):
+    def _stream_ok_round_row(self, *, send_frame=True, terminal_frame=True, duplicate_terminal=False,
+                             label='round-01'):
         outcomes = [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'},
                     {'method': 'run_get', 'outcome': 'ok', 'shape': 'request'}]
         frames = []
@@ -2534,6 +2535,10 @@ class RetirementScoring(unittest.TestCase):
                            'frame': {'type': 'request', 'id': 'id-turn', 'method': 'submit_turn'}})
         if terminal_frame:
             frames.append({'seq': 2, 'connection': 1, 'direction': 'receive',
+                           'frame': {'type': 'event', 'id': 'id-turn', 'final': True,
+                                     'event': {'type': 'done'}}})
+        if duplicate_terminal:
+            frames.append({'seq': 5, 'connection': 1, 'direction': 'receive',
                            'frame': {'type': 'event', 'id': 'id-turn', 'final': True,
                                      'event': {'type': 'done'}}})
         frames.append({'seq': 3, 'connection': 1, 'direction': 'send',
@@ -2620,19 +2625,95 @@ class RetirementScoring(unittest.TestCase):
         # frame to downgrade (pre-fix an EvidenceError collapsed the report).
         expected = ['submit_turn', 'run_get']
         cases = (
-            ('no send frame', self._stream_ok_round_row(send_frame=False), 'no recorded send frame'),
-            ('no terminal frame', self._stream_ok_round_row(terminal_frame=False), 'found 0'),
+            # Without the send frame neither wire-stripping class can mutate
+            # anything; the nominal `no terminal frame` round still has the
+            # send frame, so the TS_FALLBACK injection lands and is scored.
+            ('no send frame', self._stream_ok_round_row(send_frame=False),
+             'no recorded send frame', 'NOT_APPLICABLE'),
+            ('no terminal frame', self._stream_ok_round_row(terminal_frame=False),
+             'no terminal final:true event frame', 'PASS'),
         )
-        for tag, row, reason in cases:
+        for tag, row, reason, ts_fallback in cases:
             controls = self.session._retirement_controls(row, expected)
             class6 = next(c for c in controls['classes'] if c['class'] == 'STREAM_OK_NON_FINAL')
             self.assertEqual(class6['status'], 'NOT_APPLICABLE', f'#33 {tag}: {class6}')
-            self.assertIn(reason, class6['reason'], tag)
+            self.assertIn(reason, class6['reason'], f'#33 {tag}')
+            # P1 (#1355 fix-r4b, both families): without a send frame the
+            # wire-stripping classes mutate nothing; pre-fix they recorded PASS
+            # off the round's own `send frame missing` failure.
+            classes = {c['class']: c['status'] for c in controls['classes']}
+            self.assertEqual(classes['TS_FALLBACK'], ts_fallback, f'#33 {tag}: {controls}')
+            self.assertEqual(classes['STREAM_ERROR_NO_FRAME'], 'NOT_APPLICABLE',
+                             f'#33 {tag}: {controls}')
             report = self._assert_full_faces(self._report_for(row, expected), f'#33 {tag}')
             # These rounds carry a real scored FAIL (stream ok with no wire
             # backing / no final:true frame); the report must surface it
             # instead of the pre-fix 5-key NOT_RUN stub.
             self.assertEqual(report['executionStatus'], 'FAIL', tag)
+
+    def test_empty_mutation_is_never_a_control_pass(self):
+        # P1 (#1355 fix-r4b, both families): the control round's *first* ok
+        # method has no send frame while every other method is fully backed.
+        # Pre-fix `_retirement_strip_wire` removed nothing and the round's own
+        # `send frame missing` violation was credited to TS_FALLBACK as PASS —
+        # the control never proved the scorer catches the injected fake.  Same
+        # for the stream-error class when the stream method has no receive
+        # frame under its send frame.
+        expected = ['run_get', 'submit_turn']
+        outcome = {'method': 'run_get', 'outcome': 'ok', 'shape': 'request'}
+        rows = self._round_row(
+            [outcome, {'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
+            [{'seq': 1, 'connection': 1, 'direction': 'send',
+              'frame': {'type': 'request', 'id': 'id-turn', 'method': 'submit_turn'}},
+             {'seq': 2, 'connection': 1, 'direction': 'receive',
+              'frame': {'type': 'event', 'id': 'id-turn', 'final': True,
+                        'event': {'type': 'done'}}}])
+        row = self._with_round_faces(rows, 'round-01')
+        controls = self.session._retirement_controls(row, expected)
+        classes = {c['class']: c for c in controls['classes']}
+        self.assertEqual(classes['TS_FALLBACK']['status'], 'NOT_APPLICABLE', controls)
+        self.assertIn('no wire frame', classes['TS_FALLBACK']['reason'])
+        # The request method's own outcome is already unbacked, so the round
+        # itself fails; the control face must not claim a proof it never ran.
+        self.assertNotEqual(classes['TS_FALLBACK']['status'], 'PASS')
+        # The stream class is still establishable here: its receive frame is
+        # really stripped, so that control keeps its PASS.
+        self.assertEqual(classes['STREAM_ERROR_NO_FRAME']['status'], 'PASS', controls)
+        report = self._assert_full_faces(self._report_for(row, expected), '#34 empty-mutation')
+        self.assertEqual(report['controls']['status'], 'BLOCKED', report['controls'])
+
+    def test_duplicate_terminal_frames_are_scored_not_unavailable(self):
+        # P2a (anthropic boundary #2): a round with two final:true frames under
+        # the same id is a legal round for the scorer.  The downgrade mutation
+        # lands on both frames, so the control is established and must be
+        # scored; marking it unavailable pinned the controls face to BLOCKED
+        # and the total verdict could never reach PASS (false BLOCKED).
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row(duplicate_terminal=True)
+        controls = self.session._retirement_controls(row, expected)
+        class6 = next(c for c in controls['classes'] if c['class'] == 'STREAM_OK_NON_FINAL')
+        self.assertEqual(class6['status'], 'PASS', class6)
+        report = self._report_for(row, expected)
+        for face in self.REPORT_FACES:
+            self.assertIn(face, report, f'#35 report lacks face {face}')
+
+    def test_methodless_outcomes_make_the_controls_unavailable(self):
+        # P2a (anthropic sibling #3 / boundary #3): the `and row.get('method')`
+        # filters must skip nameless rows instead of selecting them; with no
+        # named outcome at all, the three wire-mutation classes are
+        # unavailable — never PASS, never a raised EvidenceError.
+        expected = ['run_get']
+        row = self._with_round_faces(self._round_row(
+            [{'outcome': 'ok', 'shape': 'request'}, {'outcome': 'ok', 'shape': 'stream'}],
+            [{'seq': 1, 'connection': 1, 'direction': 'send',
+              'frame': {'type': 'request', 'id': 'id-get', 'method': 'run_get'}},
+             {'seq': 2, 'connection': 1, 'direction': 'receive',
+              'frame': {'type': 'response', 'id': 'id-get', 'ok': True, 'result': {}}}]), 'round-01')
+        controls = self.session._retirement_controls(row, expected)
+        classes = {c['class']: c['status'] for c in controls['classes']}
+        for name in ('TS_FALLBACK', 'STREAM_ERROR_NO_FRAME', 'STREAM_OK_NON_FINAL'):
+            self.assertEqual(classes[name], 'NOT_APPLICABLE', f'#36 {name}: {controls}')
+        report = self._assert_full_faces(self._report_for(row, expected), '#36 methodless')
 
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for

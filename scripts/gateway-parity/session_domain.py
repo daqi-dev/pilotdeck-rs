@@ -2007,12 +2007,23 @@ def _retirement_controls(round_row, expected):
                     'no ok outcome carrying a method name in the control round: every method '
                     'errored or timed out, so the wire-frame mutation cannot be established')
     else:
+        before = len(mutated['frames'])
         mutated = _retirement_strip_wire(mutated, victim)
-        verdict = score_retirement_round(mutated, expected)
-        record('TS_FALLBACK', f"strip all wire frames of executed method '{victim}' while keeping its ok outcome",
-               'EVIDENCE_BACKING', verdict,
-               {'detail': next((p['detail'] for p in verdict['rules']
-                                if p['rule'] == 'EVIDENCE_BACKING'), None)})
+        if len(mutated['frames']) == before:
+            # P1 (#1355 fix-r4b, both families): the victim has no wire frame
+            # to strip, so the injection is a no-op and the round's own
+            # pre-existing "send frame missing" violation would be credited to
+            # this control as a PASS.  An unestablished control is never PASS.
+            unavailable('TS_FALLBACK', injection, 'EVIDENCE_BACKING',
+                        f"executed method {victim!r} has no wire frame in the control round, "
+                        'so stripping its frames removes nothing and the injection cannot be '
+                        'established')
+        else:
+            verdict = score_retirement_round(mutated, expected)
+            record('TS_FALLBACK', f"strip all wire frames of executed method '{victim}' while keeping its ok outcome",
+                   'EVIDENCE_BACKING', verdict,
+                   {'detail': next((p['detail'] for p in verdict['rules']
+                                    if p['rule'] == 'EVIDENCE_BACKING'), None)})
     # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
     census_verdict = _retirement_census_verdict({'rows': round_row['census']['rows'], 'declared': []})
     record('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
@@ -2053,11 +2064,22 @@ def _retirement_controls(round_row, expected):
         stream_method = stream_row['method']
         stream_row['outcome'] = 'error'
         stream_row.pop('errorCode', None)
+        before = len(mutated['frames'])
         mutated = _retirement_strip_receive(mutated, stream_method)
-        verdict = score_retirement_round(mutated, expected)
-        record('STREAM_ERROR_NO_FRAME', f"stream method '{stream_method}' rewritten to error with every "
-                                       'receive frame stripped while keeping its send frame',
-               'EVIDENCE_BACKING', verdict, {})
+        if len(mutated['frames']) == before:
+            # P1 (#1355 fix-r4b, both families): with no send frame (or no
+            # receive frame under it) nothing is stripped, so the round was
+            # already the failing shape and the PASS would be credited to that
+            # pre-existing violation instead of a landed injection.
+            unavailable('STREAM_ERROR_NO_FRAME', injection, 'EVIDENCE_BACKING',
+                        f"stream method {stream_method!r} has no receive frame under a recorded "
+                        'send frame in the control round, so the error-without-receive-frame '
+                        'mutation cannot be established')
+        else:
+            verdict = score_retirement_round(mutated, expected)
+            record('STREAM_ERROR_NO_FRAME', f"stream method '{stream_method}' rewritten to error with every "
+                                           'receive frame stripped while keeping its send frame',
+                   'EVIDENCE_BACKING', verdict, {})
     # 6. ① (#1355 fix-r3): a stream ok outcome whose terminal event frame was
     # downgraded to final:false (the stream merely ended) must still fail
     # EVIDENCE_BACKING — the pre-fix scorer passed exactly this shape.
@@ -2093,16 +2115,18 @@ def _retirement_controls(round_row, expected):
                         and frame.get('final') is True and frame.get('id') == identifier):
                     frame['final'] = False
                     flipped += 1
-            if flipped != 1:
-                # P1 (#1355 fix-r4): 0 means the round itself is the
-                # "stream ok without a final:true frame" shape the scorer
-                # already FAILs; >=2 means duplicated terminal frames.  Either
-                # way the downgrade mutation is not establishable and must not
-                # collapse the report into the 5-key stub.
+            if flipped == 0:
+                # P1 (#1355 fix-r4): the round itself is the "stream ok
+                # without a final:true frame" shape the scorer already FAILs,
+                # so the downgrade mutation cannot be established and must not
+                # collapse the report into the 5-key stub.  Duplicated terminal
+                # frames (>=2) are all downgraded and scored normally: the
+                # injection does land, and calling it unestablishable would
+                # pin the controls face to BLOCKED on a legal round (P2a,
+                # anthropic boundary #2).
                 unavailable('STREAM_OK_NON_FINAL', injection, 'EVIDENCE_BACKING',
-                            f"expected exactly one terminal final:true event frame for "
-                            f"{stream_method!r}, found {flipped}, so the downgrade mutation "
-                            'cannot be established')
+                            f"no terminal final:true event frame for {stream_method!r} in the "
+                            'control round, so the downgrade mutation cannot be established')
             else:
                 verdict = score_retirement_round(mutated, expected)
                 record('STREAM_OK_NON_FINAL', f"stream method '{stream_method}' keeps its ok outcome while "
