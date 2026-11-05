@@ -106,8 +106,8 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
   | `deadline` | `trace[0]` 有 `model.request`；`durableStopReason="aborted_streaming"`、`resultType="aborted"` 有值 | `model.request` 落到 `trace[2]`（换位）；两个字段均为 `null`；另多一条 `trace[6].durable.status=gateway_submit_failed` | **sidecar 侧**：①只把它记成 "verified 2 declared transport difference(s)"（已声明扩展），②变成 `transport contract mismatch (5 semantic difference(s))` —— 声明对不上 + 多写一条失败态，是 Rust sidecar 的真实可见差 |
   | `sidecar_budget_limit` | `text="Reached Gateway-owned maxBudgetUsd ($0.500000) after spending $1.000000."` | `text="max_budget_reached"` | **宿主侧**（①②同一条差异，与 sidecar 是谁无关），且是基线自带、非本 PR 引入；②另多一条 `context.budget` 换位 |
 
-  其余换位差异在①②两格都出现（同一批事件/字段只是出现位置不同），归因**宿主与 sidecar 的公共排序**，不指向任何一侧；
-  逐条计数见各自 `artifacts/*-pilotdeck.md` 的 semantic difference 行。
+  余下 **25 个换位场景在①②两格都出现**（同一批事件/字段只是出现位置不同），归因**宿主与 sidecar 的公共排序**，
+  不指向任何一侧；只在②出现的 22 个换位场景已列在上面（归 sidecar 侧）。逐条差异见各自 `artifacts/*-pilotdeck.md`。
 
 **这一格的口径边界（必须照写）：** `round.py` 的 `PilotDeck` 比较是「当前 native 宿主 vs 当前 sidecar」，
 **不是** `specs/parity/README.md` 冻结尺子的「Rust sidecar 对 TS sidecar」。run.py 自己也写明
