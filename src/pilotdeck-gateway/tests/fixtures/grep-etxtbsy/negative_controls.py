@@ -85,7 +85,7 @@ test's started-wait caps are one derived constant
 (`started-cap-hardcoded-short`, r4 review P2, bound since fix-r3 to the
 within-cap event-barrier test the fix-r3 review P1-1 asked for — the
 helper parks at an explicit pause the test releases the moment the
-8-second delayed `started` appears, so a derived 11-second cap still
+8-second delayed `started` appears, so a derived 15-second cap still
 records its saw marker while a re-hardcoded 5-second wall clock finds
 its deadline already gone at that same controlled moment), and a
 `started` that appears after the cap is not recorded as seen at all
@@ -494,9 +494,10 @@ cases = [
     # the return path (scan, kill, reap) is inside the measured `took` too.
     # The handshake's event-driven content alone is the probe boot (~15 ms,
     # starvable under load), so the dead-helper test's stranger now holds
-    # `started` back for `DEAD_HELPER_STRANGER_DELAY` (250 ms) — the kill
-    # margin is ~240 ms instead of the boot's own few milliseconds, while
-    # the delay stays 40× inside the 10 s started cap.
+    # `started` back for `DEAD_HELPER_STRANGER_DELAY` (1 s) — the kill
+    # margin is ~1 s instead of the boot's own few milliseconds, comfortably
+    # above the Linux return path's 500 ms write-end grace, while the delay
+    # stays 14× inside the 14 s started cap.
     ('expiry-hoisted-before-spawn', helper,
      '''    spawned(helper_id);
     // #1155 r4 review P2: the expiry starts here, after the handover, so a
@@ -513,7 +514,7 @@ cases = [
     # review P1-1: the mutant is bound to the within-cap event-barrier test,
     # the controlled path the review asked for. That test resumes the helper
     # the moment the stranger's 8-second delayed `started` appears, so the
-    # saw write runs while the derived 11-second cap still has budget and
+    # saw write runs while the derived 15-second cap still has budget and
     # the healthy helper records its `saw` marker; a re-hardcoded 5-second
     # cap has already lost its deadline by that same moment, refuses the saw
     # write, and the saw-exists assertion kills with its dedicated message.
