@@ -34,6 +34,9 @@ CHANNELS = {
     "llm-center": (API, "DEEPSEEK_API_KEY", DEFAULT_MODEL),
 }
 DEFAULT_MAX_TOKENS = 16384  # Messages 协议必填 max_tokens；--max-tokens 可覆盖
+# 请求模型 id → 后端回显的 model 名（llm-center 不回显请求 id）。与 scripts/run-review-roles.py:74 同源；
+# 2026-11-05 真实调用实测：请求 deepseek-v4.1-flash-mb，回显 DeepSeek-V4.1-Flash
+RESP_MODEL = {"deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
 THINKING_BUDGET = 8192  # --thinking enabled 时的 budget_tokens（须小于 max_tokens）
 MAX_INPUT_BYTES = 2 * 1024 * 1024    # 任务书 + 材料合计；超限失败，不静默截断
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -384,8 +387,10 @@ def main() -> int:
         if key in text:
             raise Fail(1, "回复中回显了密钥，拒绝落盘")
         got_model = resp.get("model")
-        if got_model != a.model:  # 防上游静默换模型：换了模型这条回复就不算本谱系的评审结论
-            raise Fail(1, f"响应模型 {got_model!r} 与请求 {a.model} 不一致，结论不计")
+        want_model = RESP_MODEL.get(a.model, a.model)
+        if not isinstance(got_model, str) or got_model.casefold() != want_model.casefold():
+            # 防上游静默换模型：换了模型这条回复就不算本谱系的评审结论
+            raise Fail(1, f"响应模型 {got_model!r} 与请求 {a.model}（回显名 {want_model}）不一致，结论不计")
         if a.require_verdict:
             why = check_verdict(text)
             if why:
