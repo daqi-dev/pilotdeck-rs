@@ -6,19 +6,28 @@
 //! (`isDeepStrictEqual` of the authority and payload), wait staleness,
 //! revision conflict, the handoff pinning check, and the success mutation.
 //!
-//! Two deliberate scope lines, both wiring-lane follow-ups (#1305/#1313):
-//! the TS store persists each state under
+//! One deliberate scope line, a wiring-lane follow-up (#1305/#1313): the TS
+//! store persists each state under
 //! `<stateRoot>/sessions/<base64url(sessionId)>.json` with an atomic
-//! temp-file rename, and its `read` can fail on a corrupted file (invalid
-//! JSON, a wrong `sessionId`, a bad schema) with a plain `Error` the
-//! transport maps to 502 `PUBLIC_APPROVAL_BRIDGE_FAILED`. This port keeps
-//! the same states in memory — seeded as the already-migrated persisted
-//! shape — because no wiring exists yet to give it a state root; the
-//! corruption cells are therefore unreachable here and are not claimed as
-//! covered. The TS per-session promise-chain lock serializes operations on
-//! one session; a mutex over the whole map is strictly stronger and the
-//! observable cells (the ones the transport answers) have no
-//! interleaving-dependent branch.
+//! temp-file rename; this port keeps the same states in memory — seeded as
+//! the already-migrated persisted shape — because no wiring exists yet to
+//! give it a state root. What a corrupted state file reaches is the seed
+//! surface, and #1473 ports the TS `read` rejection (`isPersistedState` +
+//! `parsed.sessionId !== sessionId`): an invalid persisted shape is the
+//! structured `SOP_STATE_INVALID` failure returned before the state lock is
+//! taken, never a panic and never a silent empty-object default. That code
+//! is a Rust-side store-integrity name with no TS wire counterpart — TS
+//! throws a plain `Error`, which the transport catch answers with its 502
+//! default (`PUBLIC_APPROVAL_BRIDGE_FAILED`); the Rust failure carries no
+//! status either, so it flows the same `cause.status ?? 409/502` channel.
+//! No path under the state lock panics either (#1473): a mutex is only
+//! poisoned by a panic while it is held, so the remaining lock-acquisition
+//! `expect`s cannot fire, and the resume success mutation answers a
+//! non-object state (unreachable since the seed gate) with the same
+//! structured error instead of `unreachable!`. The TS per-session
+//! promise-chain lock serializes operations on one session; a mutex over
+//! the whole map is strictly stronger and the observable cells (the ones
+//! the transport answers) have no interleaving-dependent branch.
 //!
 //! The store is a component seam, not a global: the tests construct one and
 //! the later wiring lane will construct the real one.
@@ -83,16 +92,29 @@ impl PendingSopStore {
     }
 
     /// Seed one session's persisted state, the way a state file would load:
-    /// the raw persisted shape, run through the same migration the TS
-    /// `read` applies (revision default, wait validation, receipt filtering).
-    /// Test/fixture surface until the wiring lane owns a real state root.
-    pub(crate) fn seed(&self, project_key: Option<&JsValue>, session_id: &JsString, raw: &JsValue) {
+    /// the raw persisted shape, run through the same shape rejection the TS
+    /// `read` applies (`isPersistedState` + the `sessionId` match) and then
+    /// the same migration (revision default, wait validation, receipt
+    /// filtering). Test/fixture surface until the wiring lane owns a real
+    /// state root. The shape rejection runs before the state lock is taken,
+    /// so an invalid shape can neither panic under the lock nor default to
+    /// an empty state.
+    pub(crate) fn seed(
+        &self,
+        project_key: Option<&JsValue>,
+        session_id: &JsString,
+        raw: &JsValue,
+    ) -> Result<(), ApprovalFailure> {
         let root = (self.profiles)(project_key).expect("#1350 seed under a known profile");
+        if !crate::mutants::on("approvals-seed-validate-off") {
+            validate_persisted_state(session_id, raw)?;
+        }
         let state = migrate_persisted_state(session_id, raw);
         self.states
             .lock()
             .expect("#1350 pending store lock")
             .insert((root, session_id.clone()), state);
+        Ok(())
     }
 
     fn status_locked(&self, input: &StoreStatusInput) -> Result<Option<JsValue>, ApprovalFailure> {
@@ -209,16 +231,20 @@ impl PendingSopStore {
         let state = {
             let mut next = current.state.clone();
             let JsValue::Object(object) = &mut next else {
-                unreachable!("#1350 state is an object")
+                // Unreachable since the seed shape gate (every seeded state
+                // is an object), but a structurally sound store must never
+                // panic under its lock: answer the corruption, do not abort.
+                return Err(state_error("SOP_STATE_INVALID"));
             };
             object.insert("status".into(), JsValue::from("active"));
             object.insert("awaiting_input_json".into(), JsValue::Null);
             let merged = {
                 let mut slots = JsObject::new();
-                if let Some(existing) = current
-                    .state
-                    .get("slots_json")
-                    .filter(|value| value.as_object().is_some())
+                if !crate::mutants::on("approvals-slots-merge-off")
+                    && let Some(existing) = current
+                        .state
+                        .get("slots_json")
+                        .filter(|value| value.as_object().is_some())
                 {
                     spread_into(&mut slots, existing);
                 }
@@ -231,8 +257,15 @@ impl PendingSopStore {
             next
         };
         current.state = state;
-        current.revision = revision;
-        current.wait = None;
+        // The store-side negative-control switches of the success mutation
+        // (#1473): skipping the revision persist, the wait clear or the slots
+        // merge is exactly the regression each switch must be killed for.
+        if !crate::mutants::on("approvals-revision-off") {
+            current.revision = revision;
+        }
+        if !crate::mutants::on("approvals-wait-clear-off") {
+            current.wait = None;
+        }
         current
             .resume_requests
             .insert(input.request_id.clone(), JsValue::Object(receipt));
@@ -483,6 +516,9 @@ fn pinned_approval(value: &PendingState) -> Result<JsValue, PendingFailure> {
             "Pinned SOP is missing or ambiguous.",
         ));
     }
+    // Constructive guarantee: the length check above returned early unless
+    // exactly one match survived, so this expect cannot fire (and cannot
+    // poison a caller's lock).
     let sop = matches.into_iter().next().expect("#1350 the single match");
     let content = match &sop {
         JsValue::Object(_) => sop
@@ -509,6 +545,8 @@ fn pinned_approval(value: &PendingState) -> Result<JsValue, PendingFailure> {
             "Pinned version or node is missing or ambiguous.",
         ));
     }
+    // Constructive guarantee: the length check above returned early unless
+    // exactly one node survived, so this expect cannot fire either.
     let node = nodes.into_iter().next().expect("#1350 the single node");
     let assignee = node.get("assignee_user_id");
     let assignee_ok = matches!(assignee, Some(JsValue::String(text)) if crate::model_catalog::trim(text).len_utf16() > 0);
@@ -610,6 +648,40 @@ fn authority_value(authority: Option<&StoreAuthority>) -> JsValue {
             ]),
         ),
     ])
+}
+
+/// The `read`-time shape rejection of `SopStateStore.ts`:
+/// `isPersistedState` (a record with `schemaVersion` in 1..3, a string
+/// `sessionId`, a record `bundle` with a `sops` array, a record `state`) plus
+/// the `parsed.sessionId !== sessionId` check. TS raises one plain `Error`
+/// for every shape failure, so one code answers all of them here too; the
+/// migration defaults (revision, wait, receipt filtering) apply only after
+/// this gate passes.
+fn validate_persisted_state(session_id: &JsString, raw: &JsValue) -> Result<(), ApprovalFailure> {
+    let Some(object) = raw.as_object() else {
+        return Err(state_error("SOP_STATE_INVALID"));
+    };
+    let version_ok = matches!(
+        object.get("schemaVersion"),
+        Some(JsValue::Number(number)) if *number == 1.0 || *number == 2.0 || *number == 3.0
+    );
+    if !version_ok {
+        return Err(state_error("SOP_STATE_INVALID"));
+    }
+    if !matches!(object.get("sessionId"), Some(JsValue::String(id)) if id == session_id) {
+        return Err(state_error("SOP_STATE_INVALID"));
+    }
+    let bundle_ok = object
+        .get("bundle")
+        .and_then(JsValue::as_object)
+        .is_some_and(|bundle| matches!(bundle.get("sops"), Some(JsValue::Array(_))));
+    if !bundle_ok {
+        return Err(state_error("SOP_STATE_INVALID"));
+    }
+    if !object.get("state").and_then(JsValue::as_object).is_some() {
+        return Err(state_error("SOP_STATE_INVALID"));
+    }
+    Ok(())
 }
 
 /// `migratePersistedState`: the defaults and validation a state load applies

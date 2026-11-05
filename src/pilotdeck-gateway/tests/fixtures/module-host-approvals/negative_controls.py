@@ -4,7 +4,7 @@ positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one module-host approvals transport or store gate and is
 killed by the replay cell that pins that gate's TS bytes or the fix-r1
-component test that pins its code (17 switches). Run one sample in the
+component test that pins its code (21 switches). Run one sample in the
 authoring session; the coordinator runs the complete list after the patch
 is committed.
 """
@@ -67,6 +67,16 @@ switches = [
     # legacy-receipt rejection off: the authorization-less receipt replays
     # as a conflict instead (fix-r1 direct test, fix-r2 store-level).
     ('approvals-legacy-receipt-off', PENDING, 'legacy_receipt_replay_is_rejected', '#1350 the legacy receipt replay must be rejected as the legacy shape'),
+    # seed shape rejection off: an invalid persisted shape is seeded instead
+    # of rejected, so the rejection loop's first case reaches the panic.
+    ('approvals-seed-validate-off', PENDING, 'seed_rejects_invalid_persisted_shapes', '#1473 the invalid persisted shape must be rejected'),
+    # revision persist off: the store stays at the seeded revision after a
+    # successful resume.
+    ('approvals-revision-off', PENDING, 'resume_success_increments_the_revision', '#1473 the resumed store must carry the incremented revision'),
+    # slots merge off: the new state loses the pre-resume slots.
+    ('approvals-slots-merge-off', PENDING, 'resume_success_merges_the_slots', '#1473 the pre-resume slots must survive the merge'),
+    # wait clear off: the session stays waiting after a successful resume.
+    ('approvals-wait-clear-off', PENDING, 'resume_success_clears_the_wait', '#1473 the resumed store must clear the wait'),
 ]
 GUARDED = [SOURCE, PENDING,
     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',

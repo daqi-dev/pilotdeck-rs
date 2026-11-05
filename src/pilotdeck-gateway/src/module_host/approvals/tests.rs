@@ -312,14 +312,38 @@ const BADPIN_WAIT: &str = r#"{"id":"wait-1","kind":"handoff","skillId":"skill-x"
 /// raw persisted shape per session, plus the already-resumed `sess-done`
 /// receipt (pre-resumed through the store's own resume, the WS lane's call
 /// shape, exactly like the recorder).
+/// The fixture profile resolver: the unkeyed default and `proj1` resolve to
+/// one root, everything else has no profile.
+fn root1_resolver() -> super::pending::ProfileResolver {
+    Arc::new(|project_key: Option<&JsValue>| match project_key {
+        None => Some("root1".to_owned()),
+        Some(JsValue::String(key)) if key.equals_str("proj1") => Some("root1".to_owned()),
+        _ => None,
+    })
+}
+
+/// One persisted state over a store, the raw shape a state file would load
+/// (revision, optional wait, state, bundle).
+fn seed_persisted(
+    store: &Arc<PendingSopStore>,
+    session: &str,
+    revision: i64,
+    wait: Option<&str>,
+    state: &str,
+    bundle: &str,
+) {
+    let persisted = format!(
+        r#"{{"schemaVersion":3,"sessionId":{session:?},"bundle":{bundle},"state":{state},"revision":{revision}{},"resumeRequests":{{}},"updatedAt":"2026-01-01T00:00:00.000Z"}}"#,
+        wait.map(|wait| format!(r#","wait":{wait}"#))
+            .unwrap_or_default()
+    );
+    store
+        .seed(None, &JsString::from(session), &json(&persisted))
+        .expect("#1473 the seeded persisted state must be accepted");
+}
+
 async fn seeded_store() -> Arc<PendingSopStore> {
-    let store = Arc::new(PendingSopStore::new(Arc::new(
-        |project_key: Option<&JsValue>| match project_key {
-            None => Some("root1".to_owned()),
-            Some(JsValue::String(key)) if key.equals_str("proj1") => Some("root1".to_owned()),
-            _ => None,
-        },
-    )));
+    let store = Arc::new(PendingSopStore::new(root1_resolver()));
     let seeds: [(&str, i64, Option<&str>, &str, &str); 11] = [
         ("sess-handoff", 1, Some(HANDOFF_WAIT), HANDOFF_STATE, BUNDLE),
         (
@@ -358,25 +382,22 @@ async fn seeded_store() -> Arc<PendingSopStore> {
         ),
     ];
     for (session, revision, wait, state, bundle) in seeds {
-        let persisted = format!(
-            r#"{{"schemaVersion":3,"sessionId":{session:?},"bundle":{bundle},"state":{state},"revision":{revision}{},"resumeRequests":{{}},"updatedAt":"2026-01-01T00:00:00.000Z"}}"#,
-            wait.map(|wait| format!(r#","wait":{wait}"#))
-                .unwrap_or_default()
-        );
-        store.seed(None, &JsString::from(session), &json(&persisted));
+        seed_persisted(&store, session, revision, wait, state, bundle);
     }
     // A pre-migration legacy receipt: a stored resume result without the
     // `authorization` facts (it survives `isResumeResult`), so a human
     // replay of its requestId hits the legacy-receipt rejection. This seed
     // is a Rust-side store-level fixture (no TS generator counterpart —
     // the registered session catalog above stops at the recorder's set).
-    store.seed(
-        None,
-        &JsString::from("sess-legacy"),
-        &json(&format!(
-            r#"{{"schemaVersion":3,"sessionId":"sess-legacy","bundle":{BUNDLE},"state":{HANDOFF_STATE},"revision":1,"wait":{HANDOFF_WAIT},"resumeRequests":{{"req-legacy":{{"accepted":true,"sessionId":"sess-legacy","requestId":"req-legacy","revision":2,"message":"legacy","waitId":"wait-1","source":"human"}}}},"updatedAt":"2026-01-01T00:00:00.000Z"}}"#
-        )),
-    );
+    store
+        .seed(
+            None,
+            &JsString::from("sess-legacy"),
+            &json(&format!(
+                r#"{{"schemaVersion":3,"sessionId":"sess-legacy","bundle":{BUNDLE},"state":{HANDOFF_STATE},"revision":1,"wait":{HANDOFF_WAIT},"resumeRequests":{{"req-legacy":{{"accepted":true,"sessionId":"sess-legacy","requestId":"req-legacy","revision":2,"message":"legacy","waitId":"wait-1","source":"human"}}}},"updatedAt":"2026-01-01T00:00:00.000Z"}}"#
+            )),
+        )
+        .expect("#1473 the legacy seeded persisted state must be accepted");
     let resumed = ApprovalPendingStore::resume(
         &*store,
         &StoreResumeInput {
@@ -1318,17 +1339,8 @@ async fn single_session_store(
     state: &str,
     bundle: &str,
 ) -> Arc<PendingSopStore> {
-    let store = Arc::new(PendingSopStore::new(Arc::new(
-        |project_key: Option<&JsValue>| match project_key {
-            None => Some("root1".to_owned()),
-            Some(JsValue::String(key)) if key.equals_str("proj1") => Some("root1".to_owned()),
-            _ => None,
-        },
-    )));
-    let persisted = format!(
-        r#"{{"schemaVersion":3,"sessionId":{session:?},"bundle":{bundle},"state":{state},"revision":1,"wait":{wait},"resumeRequests":{{}},"updatedAt":"2026-01-01T00:00:00.000Z"}}"#
-    );
-    store.seed(None, &JsString::from(session), &json(&persisted));
+    let store = Arc::new(PendingSopStore::new(root1_resolver()));
+    seed_persisted(&store, session, 1, Some(wait), state, bundle);
     store
 }
 
@@ -1490,5 +1502,225 @@ async fn legacy_receipt_replay_is_rejected() {
         failure_code(&failure),
         "SOP_APPROVAL_LEGACY_RECEIPT",
         "#1350 the legacy receipt replay must be rejected as the legacy shape"
+    );
+}
+
+// ------------------------------------------------- #1473 store integrity
+
+/// #1473: `seed` performs the TS `read` shape rejection (`isPersistedState`
+/// plus the `sessionId` match) — an invalid persisted shape is a structured
+/// `SOP_STATE_INVALID` failure, never a panic and never a silent
+/// empty-object default.
+#[test]
+fn seed_rejects_invalid_persisted_shapes() {
+    let store = PendingSopStore::new(root1_resolver());
+    store
+        .seed(
+            None,
+            &JsString::from("sess-shape"),
+            &json(
+                r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":{"sops":[]},"state":{}}"#,
+            ),
+        )
+        .expect("#1473 the valid persisted shape must seed");
+    let invalid = [
+        // raw not a record
+        "5",
+        "\"text\"",
+        "[1,2]",
+        // state not a record / absent
+        r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":{"sops":[]},"state":5}"#,
+        r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":{"sops":[]}}"#,
+        // schemaVersion outside 1..3 / not a number
+        r#"{"schemaVersion":4,"sessionId":"sess-shape","bundle":{"sops":[]},"state":{}}"#,
+        r#"{"schemaVersion":"3","sessionId":"sess-shape","bundle":{"sops":[]},"state":{}}"#,
+        r#"{"sessionId":"sess-shape","bundle":{"sops":[]},"state":{}}"#,
+        // sessionId not a string / not the seeded one / absent
+        r#"{"schemaVersion":3,"sessionId":5,"bundle":{"sops":[]},"state":{}}"#,
+        r#"{"schemaVersion":3,"sessionId":"sess-other","bundle":{"sops":[]},"state":{}}"#,
+        r#"{"schemaVersion":3,"bundle":{"sops":[]},"state":{}}"#,
+        // bundle not a record / without a sops array / absent
+        r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":5,"state":{}}"#,
+        r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":{},"state":{}}"#,
+        r#"{"schemaVersion":3,"sessionId":"sess-shape","state":{}}"#,
+    ];
+    for raw in invalid {
+        let Err(failure) = store.seed(None, &JsString::from("sess-shape"), &json(raw)) else {
+            panic!("#1473 the invalid persisted shape must be rejected: {raw}");
+        };
+        assert_eq!(
+            failure.status, None,
+            "#1473 the store-integrity failure carries no status of its own: {raw}"
+        );
+        assert_eq!(
+            failure_code(&failure),
+            "SOP_STATE_INVALID",
+            "#1473 the invalid persisted shape must answer SOP_STATE_INVALID: {raw}"
+        );
+    }
+}
+
+/// #1473: a rejected seed must leave the store usable — the shape rejection
+/// runs before the state lock is taken and no resume path panics under it,
+/// so the pre-fix Mutex-poisoning whole-store outage cannot recur.
+#[tokio::test]
+async fn resume_after_a_rejected_seed_still_works() {
+    let store = Arc::new(PendingSopStore::new(root1_resolver()));
+    let bad = json(r#"{"schemaVersion":3,"sessionId":"sess-bad","bundle":{"sops":[]},"state":5}"#);
+    assert!(
+        store.seed(None, &JsString::from("sess-bad"), &bad).is_err(),
+        "#1473 the bad seed must be rejected"
+    );
+    seed_persisted(
+        &store,
+        "sess-bad",
+        1,
+        Some(HANDOFF_WAIT),
+        HANDOFF_STATE,
+        BUNDLE,
+    );
+    let result = store_resume(
+        &store,
+        "sess-bad",
+        "req-after-bad",
+        Some(member_authority("sess-bad")),
+        Some(1.0),
+    )
+    .await
+    .expect("#1473 the resume after a rejected seed must succeed");
+    assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1473 the resume after a rejected seed is accepted"
+    );
+    let snapshot = store_status(&store, "sess-bad").await;
+    assert_eq!(
+        snapshot.get("revision"),
+        Some(&JsValue::Number(2.0)),
+        "#1473 the status after a rejected seed answers the resumed revision"
+    );
+    assert_eq!(
+        snapshot.get("wait"),
+        None,
+        "#1473 the status after a rejected seed answers the cleared wait"
+    );
+}
+
+/// #1473: a successful resume persists the incremented revision — the
+/// `approvals-revision-off` mutant leaves the store at the old revision.
+#[tokio::test]
+async fn resume_success_increments_the_revision() {
+    let store = Arc::new(PendingSopStore::new(root1_resolver()));
+    seed_persisted(
+        &store,
+        "sess-rev1473",
+        7,
+        Some(HANDOFF_WAIT),
+        HANDOFF_STATE,
+        BUNDLE,
+    );
+    store_resume(
+        &store,
+        "sess-rev1473",
+        "req-rev",
+        Some(member_authority("sess-rev1473")),
+        Some(7.0),
+    )
+    .await
+    .expect("#1473 the revision-7 handoff resume must succeed");
+    let snapshot = store_status(&store, "sess-rev1473").await;
+    assert_eq!(
+        snapshot.get("revision"),
+        Some(&JsValue::Number(8.0)),
+        "#1473 the resumed store must carry the incremented revision"
+    );
+}
+
+/// #1473: the success mutation merges `slots_json` — the pre-resume slots
+/// survive the resume's own updates, so the `approvals-slots-merge-off`
+/// mutant that drops them is killed.
+#[tokio::test]
+async fn resume_success_merges_the_slots() {
+    let store = Arc::new(PendingSopStore::new(root1_resolver()));
+    const SLOTTED_STATE: &str = r#"{"status":"handoff","active_skill_id":"skill-1","active_step_id":"step-1","slots_json":{"existing":"1"}}"#;
+    seed_persisted(
+        &store,
+        "sess-slots",
+        1,
+        Some(HANDOFF_WAIT),
+        SLOTTED_STATE,
+        BUNDLE,
+    );
+    let result = ApprovalPendingStore::resume(
+        store.as_ref(),
+        &StoreResumeInput {
+            session_key: JsString::from("sess-slots"),
+            project_key: Some(JsValue::String(JsString::from("proj1"))),
+            request_id: JsString::from("req-slots"),
+            wait_id: JsString::from("wait-1"),
+            message: JsString::from("approved"),
+            expected_revision: Some(1.0),
+            slot_updates: Some(json(r#"{"k":"v"}"#)),
+            source: ResumeSource::Human,
+            authority: Some(member_authority("sess-slots")),
+        },
+    )
+    .await
+    .expect("#1473 the slotted handoff resume must succeed");
+    assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1473 the slotted handoff resume is accepted"
+    );
+    let snapshot = store_status(&store, "sess-slots").await;
+    let slots = snapshot
+        .get("state")
+        .and_then(|state| state.get("slots_json"))
+        .expect("#1473 the resumed state must carry its slots_json");
+    assert_eq!(
+        slots.get("existing"),
+        Some(&JsValue::String(JsString::from("1"))),
+        "#1473 the pre-resume slots must survive the merge"
+    );
+    assert_eq!(
+        slots.get("k"),
+        Some(&JsValue::String(JsString::from("v"))),
+        "#1473 the resume's own slot updates must land in the merge"
+    );
+}
+
+/// #1473: the success mutation clears the wait — the
+/// `approvals-wait-clear-off` mutant leaves the session waiting after a
+/// successful resume.
+#[tokio::test]
+async fn resume_success_clears_the_wait() {
+    let store = Arc::new(PendingSopStore::new(root1_resolver()));
+    seed_persisted(
+        &store,
+        "sess-wait",
+        1,
+        Some(HANDOFF_WAIT),
+        HANDOFF_STATE,
+        BUNDLE,
+    );
+    store_resume(
+        &store,
+        "sess-wait",
+        "req-wait",
+        Some(member_authority("sess-wait")),
+        Some(1.0),
+    )
+    .await
+    .expect("#1473 the waiting handoff resume must succeed");
+    let snapshot = store_status(&store, "sess-wait").await;
+    assert_eq!(
+        snapshot.get("wait"),
+        None,
+        "#1473 the resumed store must clear the wait"
+    );
+    assert_eq!(
+        snapshot.get("state").and_then(|state| state.get("status")),
+        Some(&JsValue::String(JsString::from("active"))),
+        "#1473 the resumed state must be active"
     );
 }
