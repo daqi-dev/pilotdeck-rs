@@ -190,8 +190,26 @@ async fn production_cleanup_matrix() {
         } else {
             &ts["calls"]
         };
+        // #1328: the native host stops its channel assembly before the gateway
+        // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37). The TS
+        // probe (tests/fixtures/native-process/generate.mts) has no observer
+        // for that step, so its `calls` only carry the gateway disposals: the
+        // channels step is pinned here, on the Rust side, and dropped before
+        // the golden comparison. Making the generator emit a synthetic
+        // "channels" entry would turn the fixture into a mirror of this
+        // implementation instead of a reading of the baseline.
         negative_assert_eq!(
-            json!(actual_calls),
+            actual_calls.first().copied(),
+            Some("channels"),
+            "#1328 channel assembly stops before the gateway lifecycle disposal"
+        );
+        let gateway_calls: Vec<&str> = actual_calls
+            .iter()
+            .copied()
+            .filter(|step| *step != "channels")
+            .collect();
+        negative_assert_eq!(
+            json!(gateway_calls),
             *ts_calls,
             "#1071 cleanup order matches TS probe"
         );

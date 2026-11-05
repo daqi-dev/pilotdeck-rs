@@ -25,9 +25,7 @@ fn weixin_channel_committed_oracle_shape() {
     );
 }
 
-/// Re-runs the real TS generator and requires a byte-identical oracle.
-#[test]
-#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules) and Node v22.22.0"]
-fn weixin_channel_fixtures_regenerate_identically_from_ts() {
-    baseline::regenerates_identically("weixin-channel");
-}
+// The TS regeneration guard lives in `tests/generator_provenance.rs`
+// (`weixin_channel_regenerates_identically`), where every fixture's
+// regeneration is registered; this file keeps only the committed-shape guard
+// so the fixture is not registered twice.
