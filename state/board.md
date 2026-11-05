@@ -3164,3 +3164,31 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 下一步：① #1480/#1481 入队合入（合入后核邮箱）→ #1392 PR 收口（/tmp/pr1392.md 插 r3 块）→ #1369 PR edit 插块 → #1417 出块推 9f86cfedf → #1418 净合并链；② #1350 fix-r2 收货 → 闸门重跑 → PR；③ #1355 闸门 → PR；④ 宿主批次回报 → 停摆 PR 逐张收口；⑤ #1473 worker 交付收货。
 
 资源：本机磁盘超限（204.5/200 GiB，优先回收）；worktree 22/40（回收 1 棵）；在审 15/20；cb8 8 车道空、mbp2 3 车道空、macmini 150 GiB 空闲。
+
+### 16:4x（两小时交接）
+
+15:0x 以来（持有人：协调者本会话）：
+
+- **合入收口**：#1470/#1472/#1480/#1481/#1482/#1391 全 MERGED（邮箱核对干净）。#1480 落地后 minimax/deepseek 前缀表进 main，新闸门块 CI 可认。
+- **#1392 → PR #1488 已开**（分支首推 5178da395，deepseek r3 整块替换 opus 分批块）。
+- **#1417 收口**：9f86cfedf 已推（branch -f 修临时分支错位 + 网络 5 次重试），final4 闸门块 + 修复轮上限 3 放行正文已贴，project-mark --impl GLM。
+- **#1350 fix-r2 → PR #1487 已开**（head 4157dd72e，minimax r3 四角色 0 P0/P1，撞 $3 预算改 $8；9 条 P2 分流 #1473/#1486/#1404）；首推 head 不符（fix-r2 未推远端）已补推修复。
+- **#1473 fix-r1 完成**（30f47380e，GLM 署名）：DS 静态评审 0/0/2/2 → 补第 15 例 null state（对位 TS isPlainObject 拒绝）+ `approvals-resume-empty-default-on` 负控开关（复活历史「沉默空对象默认」→ resume 成功 → 测试自己的断言 panic 触发判杀，5/5 KILLED；unreachable! 型变异因 classify 判杀语义不可用，重设计）。全量验证绿（3593 passed、fmt、clippy）。**谱系卡**：基于 ec5937bc3 与 #1487 (4157dd72e) 同基平行，等 #1487 合入后 rebase 上 main 再闸门 + DS 增量复核 → PR。
+- **#1405 闸门收口**（子代理）：minimax 四角色全 PASS 但 P1=1（首头 headersTimeout 锚「连接开始」而非「首字节」）；实测探针（真 GatewayServer、Node v22.22.0、静默 30s 后写不完整头）确认 408 落 connect+120001ms = 首字节+90001ms——Node 首头按 on_message_begin 首字节锚定 + 30s 绝对网格，Rust 连接锚会提前 408，P1 成立（证据 `_tmp/20261105-issue-1405-gate-probe/probe-c1.{mjs,out,err}`）。PR 正文已贴（Draft 待 fix-r2）。
+- **CI 三张挂项诊断（本轮重点，意外矩阵）**：#1417/#1488 rust 挂、#1412 pr-gate 挂。
+  - #1412：`gh run rerun` 无效——复用旧 merge ref，pr-gate 检出的 merge ref 不含 #1480 前缀表，报 minimax 前缀未知。处置：空提交 1c8c53df3 触发新 merge ref，CI 重跑中。
+  - #1417：rust 的 negative-restore 预检里 scanner 冷构建 `cargo build --locked --example workspace_inputs` exit 101。根因线索：scanner 用独立 `_build/cargo-target`（rust-cache 不覆盖）→ 冷构建整个依赖树；负控预检在 nextest 里跑。
+  - #1488：nextest 阶段实际全过（5735 测试全绿），挂的是 smoke probe 步骤 `ld terminated with signal 7 [Bus error]`（ENOSPC 典型签名，icu_locale_data build script 链接时）。
+  - 判定（AI 代批待人复核）：两张均为 runner 磁盘压力假阳性嫌疑——本地 macOS 在 CI 精确 merge SHA（#1417=a009915e）全绿、#1487 同窗口全绿、#1417 更早 ci run（04:32 head 63db78159）全绿、main 全绿；内容差异（merge vs main 仅 +6 文件纯新增 config.rs）不构成编译失败路径。已 `rerun --failed` 实证中；若复挂同签名则升级为内容问题（cb8 Linux 复现）。
+- **#1487 全绿已入队**；合并后触发 #1473 rebase 链。
+- **AI 代批项（待人复核汇总）**：#1327 已知噪音收口；#1350 fix-r2 偏离（sess-legacy 移除，镜像 16=16）；#1369 sibling P1 仲裁降级；#1417 修复轮上限 3 放行（#1485 跟进）；#1405 P1 实测确认；本轮 CI 假阳性判定。
+
+下一步（就绪序）：
+
+1. #1487 queue 出 MERGED（核邮箱）→ #1473 rebase 上新 main → 四角色闸门（通道按 fleet 空闲）+ DS 增量复核 30f47380e → 本地 check-pr-gate → PR（Closes #1473）。
+2. #1417/#1488 rerun：绿 → 入队；复挂 → 深挖（cb8 复现，按内容问题处理）。
+3. #1412 CI 绿（新 merge ref）→ 入队。
+4. #1405 fix-r2 派单（首头改首字节锚定 + 判别 cell + 负控 + concurrency P2#2 一并）。
+5. 批次全落地后按人指令写总管交接段自动交接（新窗口接续：round-start → 读 board → 就绪队列接单）。
+
+资源：本机磁盘 178.9/200 GiB；worktree 31/40；cargo 0/4；在审 4（#1412/#1417/#1487/#1488）+ 队列 1（#1487）。谱系提醒：GLM 作者线评审 = DS + MiniMax/codex/Opus（兜底）。
