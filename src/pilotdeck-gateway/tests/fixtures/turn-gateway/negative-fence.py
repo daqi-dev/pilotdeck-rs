@@ -142,12 +142,12 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
         for control in selected:
             assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
             # 180 s：本机首次碰统一闸要等冷 du（实测 31.8–42.2 s），之后走名额缓存。
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=180)
+            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=300)
             slot_deadline = time.monotonic() + 1800
             while slots.returncode == 1:
                 assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(20)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=180)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=300)
             # 69 = no unified gate on this machine (CI has none): no shared quota.
             assert slots.returncode in (0, 69)
             modified = dict(original)

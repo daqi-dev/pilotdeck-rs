@@ -149,7 +149,7 @@ def slots_note(label):
     proceeds. Exit 69 = there is no unified gate on this machine (CI has none):
     no shared quota to wait for, so it also proceeds. Every other failure is fatal.
     """
-    result = run_owned(['bash', str(root / 'scripts/cargo-slots.sh')], timeout=180)
+    result = run_owned(['bash', str(root / 'scripts/cargo-slots.sh')], timeout=300)
     (out / f'{label}.slots.log').write_text(result.stdout + result.stderr)
     if result.returncode not in (0, 1, 69):
         result.check_returncode()

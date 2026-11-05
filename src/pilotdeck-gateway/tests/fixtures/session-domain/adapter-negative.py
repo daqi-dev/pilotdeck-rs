@@ -32,7 +32,7 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
             path.write_text(text)
 
     def run(name, red):
-        slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], timeout=180, capture_output=True, text=True)
+        slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], timeout=300, capture_output=True, text=True)
         (OUT / f'{name}-slots.log').write_text(slot.stdout + slot.stderr)
         assert slot.returncode in (0, 69), 'no cargo slot; rerun later'
         env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG=os.environ.get('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only'), CARGO_PROFILE_TEST_DEBUG=os.environ.get('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only'))

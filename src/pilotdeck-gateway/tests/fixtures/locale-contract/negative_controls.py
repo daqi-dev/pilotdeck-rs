@@ -13,7 +13,8 @@ import sys
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources, run_owned,
+                              wait_for_slot)
 from negative_suite import Case, classify, passed
 
 source = root / 'src/pilotdeck-gateway/tests/common/oracle_locale.rs'
@@ -127,7 +128,7 @@ def main():
         status, reason = 'INVALID', 'not run'
 
         def run(label, args):
-            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
+            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             (out / f'{name}.{label}.slots.log').write_text(slot.stdout + slot.stderr)
             try:
                 result = run_owned(args, cwd=root, env=env, timeout=300)

@@ -33,7 +33,7 @@ def stop(signum, _frame):
 
 def run(root, name, test, *, red=False):
     slots = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')],
-                           capture_output=True, text=True, timeout=180)
+                           capture_output=True, text=True, timeout=300)
     # 69 = no unified gate on this machine (CI has none); only a full pool (1)
     # blocks. 2 / 3 / 4 / 64 mean the gate itself is broken -> hard error.
     if slots.returncode not in (0, 69):

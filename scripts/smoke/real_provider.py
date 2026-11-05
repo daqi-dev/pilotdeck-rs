@@ -56,9 +56,11 @@ PROBE_SCENARIO_TIMEOUT_SECONDS = 45
 # timeout (environment-or-provider), never product-or-protocol.
 PROBE_TIMEOUT_SECONDS = PROBE_SCENARIO_TIMEOUT_SECONDS + 15
 BUILD_TIMEOUT_SECONDS = 600
-# 180 s：cargo-slots.sh 在本机首次碰统一闸时要等冷 du（实测 38.6 s），
-# 之后走名额缓存是毫秒级。见 scripts/cargo-slots.sh 头注释。
-CARGO_SLOTS_TIMEOUT_SECONDS = 180
+# 300 s ≥ 脚本自身的 bootstrap 预算 240 s（#1556 r5 sibling P1：消费方 deadline 短于脚本
+# 预算时，冷闸上永远是消费方先杀脚本、缓存永远写不进去）。首次碰统一闸要等冷 du
+# （实测 31.8–42.2 s，结构上限是闸自己的 180 s du 超时），之后走名额缓存是毫秒级。
+# 见 scripts/cargo-slots.sh 头注释。
+CARGO_SLOTS_TIMEOUT_SECONDS = 300
 
 # `stream-cancel` aborts on the first content delta. In the Anthropic Messages
 # protocol the `usage` block is emitted at the end of the stream, so an abort
