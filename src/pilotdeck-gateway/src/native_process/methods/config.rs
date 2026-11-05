@@ -98,10 +98,11 @@ fn require_output_style_name(params: &JsValue) -> Result<(), RequestError> {
     match params.get("name") {
         None | Some(JsValue::Null) | Some(JsValue::Undefined) => Ok(()),
         Some(name) => {
-            let blank = name.as_string().is_some_and(|s| {
-                crate::metadata::js_trim(&String::from_utf16_lossy(s.units())).is_empty()
-            });
-            if blank {
+            // Same `?.trim()` as the sessionKey gates (#1455 G7) — an inline
+            // copy here would let the ECMAScript WhiteSpace set drift.
+            if let Some(s) = name.as_string()
+                && !trimmed_string_is_non_empty(s)
+            {
                 return Err(error(
                     "INVALID_OUTPUT_STYLE",
                     "name must be non-empty or null.",
@@ -162,14 +163,18 @@ impl Requests {
                             || m.equals_str("bypassPermissions")
                     });
                     if !mode_ok {
-                        let mode_display = params
-                            .get("mode")
-                            .map(|v| {
-                                String::from_utf16_lossy(
-                                    &crate::js_value::to_string_units(v).unwrap_or_default(),
-                                )
-                            })
-                            .unwrap_or_default();
+                        // TS interpolates `input.mode` into the message, so an
+                        // absent field renders "undefined" (probe1:
+                        // missing-mode → "Unsupported permission mode:
+                        // undefined") while a non-string renders its JS
+                        // ToString form (42 → "42"). A missing key must not
+                        // render as the empty string (#1455 r1).
+                        let mode_display = String::from_utf16_lossy(
+                            &crate::js_value::to_string_units(
+                                params.get("mode").unwrap_or(&JsValue::Undefined),
+                            )
+                            .unwrap_or_default(),
+                        );
                         return Err(error(
                             "INVALID_PERMISSION_MODE",
                             &format!("Unsupported permission mode: {mode_display}"),
@@ -195,9 +200,15 @@ impl Requests {
                 "seed_read_state" => {
                     // sessionKey, path required; mtime must be a non-negative integer;
                     // then busy check (IPG.ts:2423-2442).
-                    if !is_trimmed_non_empty(params.get("sessionKey")) {
-                        return Err(error("INVALID_SESSION_KEY", "sessionKey is required."));
-                    }
+                    // One lookup supplies both the gate and the key the busy
+                    // check needs, so no second `expect` can turn a future
+                    // gate edit into a panic in the request path (#1455 r1).
+                    let session_key = params
+                        .get("sessionKey")
+                        .and_then(JsValue::as_string)
+                        .filter(|s| trimmed_string_is_non_empty(s))
+                        .cloned()
+                        .ok_or_else(|| error("INVALID_SESSION_KEY", "sessionKey is required."))?;
                     if !is_trimmed_non_empty(params.get("path")) {
                         return Err(error("INVALID_FILE_PATH", "path is required."));
                     }
@@ -212,11 +223,6 @@ impl Requests {
                             "mtime must be a non-negative integer in milliseconds.",
                         ));
                     }
-                    let session_key = params
-                        .get("sessionKey")
-                        .and_then(JsValue::as_string)
-                        .cloned()
-                        .expect("#1455 seed_read_state sessionKey present after the gate");
                     if self.owner.has_active_turn(&session_key) {
                         return Err(error(
                             "SESSION_BUSY",
@@ -359,6 +365,54 @@ mod tests {
             err.code.as_str(),
             "INVALID_PERMISSION_MODE",
             "#1310 set_permission_mode invalid mode"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 r1: TS interpolates `input.mode` into the message, so an absent
+    // field renders "undefined" (probe1, missing-mode, all four scenarios)
+    // and never the empty string the Rust port used to produce.
+    #[tokio::test]
+    async fn set_permission_mode_missing_mode_message_matches_ts() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let params = object([("sessionKey", "s1".into())]);
+        let result = r
+            .session_config_request("set_permission_mode".into(), params)
+            .await;
+        let err = result.expect_err("#1455 set_permission_mode missing mode");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "INVALID_PERMISSION_MODE",
+            "#1455 set_permission_mode missing mode"
+        );
+        negative_assert_eq!(
+            err.message
+                .equals_str("Unsupported permission mode: undefined"),
+            true,
+            "#1455 set_permission_mode missing mode renders undefined"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // The same interpolation for a non-string value: JS ToString(42) is "42"
+    // (probe1, nonstring-mode).
+    #[tokio::test]
+    async fn set_permission_mode_nonstring_mode_message_matches_ts() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let params = object([
+            ("sessionKey", "s1".into()),
+            ("mode", pilotdeck_protocol::JsValue::Number(42.0)),
+        ]);
+        let result = r
+            .session_config_request("set_permission_mode".into(), params)
+            .await;
+        let err = result.expect_err("#1455 set_permission_mode non-string mode");
+        negative_assert_eq!(
+            err.message.equals_str("Unsupported permission mode: 42"),
+            true,
+            "#1455 set_permission_mode non-string mode renders its JS ToString form"
         );
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
@@ -673,6 +727,30 @@ mod tests {
         r.project.dispose().await.expect("#1310 dispose");
     }
 
+    // A blank key is rejected by the same `?.trim()` gate the shared helper
+    // supplies; the missing-key case above cannot tell the filter apart from
+    // an absent key (#1455 r1 negative-control binding).
+    #[tokio::test]
+    async fn seed_read_state_rejects_blank_session_key() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let params = object([
+            ("sessionKey", "  ".into()),
+            ("path", "/tmp/a.txt".into()),
+            ("mtime", pilotdeck_protocol::JsValue::Number(0.0)),
+        ]);
+        let result = r
+            .session_config_request("seed_read_state".into(), params)
+            .await;
+        let err = result.expect_err("#1455 seed_read_state rejects the blank key");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1455 seed_read_state rejects the blank key"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
     #[tokio::test]
     async fn seed_read_state_requires_path() {
         let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
@@ -913,6 +991,21 @@ mod tests {
             err.code.as_str(),
             "INVALID_OUTPUT_STYLE",
             "#1310 require_output_style_name blank name"
+        );
+    }
+
+    // U+FEFF is ECMAScript WhiteSpace but not Rust `str::trim` whitespace, so
+    // this case proves the shared `js_trim` helper is actually in the path
+    // (#1455 r1).
+    #[test]
+    fn require_output_style_name_rejects_js_whitespace_name() {
+        let params = object([("name", "\u{feff}".into())]);
+        let err = require_output_style_name(&params)
+            .expect_err("#1455 require_output_style_name rejects the BOM-only name");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "INVALID_OUTPUT_STYLE",
+            "#1455 require_output_style_name rejects the BOM-only name"
         );
     }
 
