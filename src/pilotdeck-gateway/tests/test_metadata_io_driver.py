@@ -732,6 +732,39 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(rows(mutant)), 10,
                          '#1632 dropping a row must change the pinned count')
 
+    def test_slot_guard_case_table_cannot_shrink_silently(self):
+        # #1632 r6 评审（sibling，P1）：`--self-check` 的分支表与变异表是同一类洞——
+        # 删掉 invalid-cap / ps-failed 一格，自检少测一态仍打印通过并 exit 0，
+        # 上面那条 ast 扫描只认 List/Tuple，捞不到这里的 Dict。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+
+        def table(text):
+            for node in ast.walk(ast.parse(text)):
+                if (isinstance(node, ast.Assign)
+                        and isinstance(node.value, ast.Dict)
+                        and any(isinstance(target, ast.Name) and target.id == 'gates'
+                                for target in node.targets)):
+                    return node.value
+            self.fail('#1632 the fixture must define a literal slot-guard case table')
+
+        cases = table(source)
+        self.assertEqual([key.value for key in cases.keys],
+                         ['free', 'busy', 'invalid-cap', 'ps-failed'],
+                         '#1632 the slot guard covers every cargo-slots.sh exit code')
+        lines = source.splitlines(keepends=True)
+
+        def offset(lineno, column):
+            return sum(len(line) for line in lines[:lineno - 1]) + column
+
+        start = offset(cases.keys[-1].lineno, cases.keys[-1].col_offset)
+        end = offset(cases.values[-1].end_lineno, cases.values[-1].end_col_offset)
+        mutant = source[:start] + source[end + 1:]  # 连同分隔逗号一起删掉整格
+        self.assertNotIn("'ps-failed'", mutant, '#1632 the mutant case really left the table')
+        self.assertEqual([key.value for key in table(mutant).keys],
+                         ['free', 'busy', 'invalid-cap'],
+                         '#1632 dropping a case must change the pinned table')
+
     def test_nextest_keeps_workspace_doctests_and_failure_semantics(self):
         jobs = self.ci_jobs(issue='#922')
         steps = {job: self.ci_steps(job, body, issue='#922') for job, body in jobs.items()}
