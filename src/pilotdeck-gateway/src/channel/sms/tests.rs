@@ -433,21 +433,37 @@ async fn ensure_replay_port_free(port: u16) {
     // neither problem: a live listener answers, a lingering `TIME_WAIT` socket
     // refuses.
     //
-    // #1339 fix-r9 (P0, Codex): the IPv4 probe alone could not see a
-    // *v6-only* listener on the same port, and that is the one shape the guard
-    // must catch — measured on this host (`_tmp/20261106-issue-1339-fix-r6/
+    // #1339 fix-r9 (P0, Codex): the IPv4 probe alone could not see an IPv6
+    // occupier on the same port, and that is the shape the guard must catch —
+    // measured on this host (`_tmp/20261106-issue-1339-fix-r6/
     // v6only_probe.log`): with `[::]:P` held by a v6-only listener, a v4
     // connect to `127.0.0.1:P` is refused, our `::` bind gets `EADDRINUSE`,
     // `v4_port_state` reports `Unshared`, and `bind_listener` falls back to
     // `0.0.0.0:P` and serves every IPv4 probe the oracle records. The replay
     // then passes in an environment where the TS baseline cannot start at all,
-    // i.e. a silently weaker check. Probing `::1` closes it: the same v6-only
-    // listener answers there.
+    // i.e. a silently weaker check.
     //
-    // #1339 fix-r9 (P2, four roles): both probes now carry the same shape as
-    // the generator's `portIsFree` — `bounded` caps the wait, `ConnectionRefused`
-    // is the only proof of a free port, and anything else aborts the run
-    // instead of being read as "free".
+    // #1339 fix-r10 (P0, Codex + minimax boundary, two roles independently):
+    // a `::1` *connect* probe was not enough. It misses a socket that is bound
+    // to `[::]:P` but never listens, and on that shape the connect even hangs
+    // instead of refusing (`v6_bind_probe.log` Q2: v4 refused, `::1` timed
+    // out). It also folded "this host has no IPv6" together with "the probe
+    // itself could not run", so a descriptor or permission failure silently
+    // skipped the whole v6 half. The v6 half is therefore a *bind* probe with
+    // `SO_REUSEADDR`, which asks the only question that matters: would the
+    // product's own `bind(("::", port))` fail? Measured on the same host:
+    //   Q1 v6-only listener on `[::]:P`        -> EADDRINUSE
+    //   Q2 socket bound to `[::]:P`, no listen -> EADDRINUSE
+    //   Q3 `TIME_WAIT` from the previous replay -> free
+    //   Q4 third party on `[::1]:P` only        -> free (the product's
+    //      wildcard bind succeeds there too, so it never falls back)
+    // `SO_REUSEADDR` is what keeps Q3 free; an option-free bind — the shape
+    // that broke every fix-r6 run — would collide with the previous replay's
+    // `TIME_WAIT`.
+    //
+    // #1339 fix-r9 (P2, four roles): the IPv4 probe carries the same shape as
+    // the generator's `portIsFree` — `bounded` caps the wait and
+    // `ConnectionRefused` is the only proof of a free port.
     match bounded(
         "port guard 127.0.0.1",
         TcpStream::connect(("127.0.0.1", port)),
@@ -462,24 +478,58 @@ async fn ensure_replay_port_free(port: u16) {
             panic!("#1339 cannot prove port {port} is free on IPv4 ({error}); refusing to replay")
         }
     }
-    if host_has_ipv6_loopback().await {
-        match bounded("port guard [::1]", TcpStream::connect(("::1", port))).await {
-            Ok(_) => panic!(
-                "#1339 port {port} already in use on IPv6; the `::` bind would fail and fall back to IPv4-only"
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
-            Err(error) => panic!(
-                "#1339 cannot prove port {port} is free on IPv6 ({error}); refusing to replay"
-            ),
+    match v6_wildcard_state(port) {
+        V6Port::Free | V6Port::Absent => {}
+        V6Port::Occupied => panic!(
+            "#1339 port {port} already in use on IPv6; the `::` bind would fail and fall back to IPv4-only"
+        ),
+        V6Port::Unknown => {
+            panic!("#1339 cannot prove the IPv6 wildcard port {port} is free; refusing to replay")
         }
     }
 }
 
-/// `true` when this host has an IPv6 loopback to probe at all. A host without
-/// one cannot be contaminated on the v6 side, so the guard skips that half
-/// instead of reporting an unreachable address as an unexpected error.
-async fn host_has_ipv6_loopback() -> bool {
-    TcpListener::bind(("::1", 0)).await.is_ok()
+/// What a `::` bind learned about the IPv6 wildcard.
+///
+/// #1339 fix-r10 (P0): this is a *bind* probe on purpose, and it keeps
+/// `SO_REUSEADDR` on purpose. The question is not "is the address unused" but
+/// "would the product's own `bind(("::", port))` fail", so the probe must have
+/// the same socket shape as `bind_dual_stack`; `std::net::TcpListener::bind`
+/// sets `SO_REUSEADDR`, which also keeps it clear of the previous replay's
+/// `TIME_WAIT` (`v6_bind_probe.log` Q1–Q4). Anything the probe cannot classify
+/// is [`V6Port::Unknown`] and aborts the replay instead of being read as "no
+/// IPv6 here" — the fail-open shape fix-r6 already removed from the v4 half.
+enum V6Port {
+    /// Nothing holds the wildcard; the product will bind it.
+    Free,
+    /// Something already holds `[::]:<port>` — listening or merely bound.
+    Occupied,
+    /// This host has no IPv6 stack at all. Not fail-open: the probe and the
+    /// product issue the same `bind(("::", port))`, so an error the probe
+    /// cannot attribute to a port owner is an error the product hits too and
+    /// falls back to `0.0.0.0` on — exactly like the Node baseline.
+    Absent,
+    /// The probe could not run; the host's posture is unknown.
+    Unknown,
+}
+
+fn v6_wildcard_state(port: u16) -> V6Port {
+    match std::net::TcpListener::bind(("::", port)) {
+        Ok(listener) => {
+            drop(listener);
+            V6Port::Free
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => V6Port::Occupied,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
+            ) =>
+        {
+            V6Port::Absent
+        }
+        Err(_) => V6Port::Unknown,
+    }
 }
 
 /// #1339 fix-r2 (P1): compare the responses recorded so far against the
@@ -1196,24 +1246,36 @@ fn port_busy_preflight_fails_fast() {
     );
 }
 
-/// #1339 fix-r9 (P0): the IPv4 half of the guard cannot see a listener that
-/// only serves IPv6, and that shape makes the replay pass in an environment
-/// where the TS baseline cannot start (`v6only_probe.log`). Removing the `::1`
-/// probe from `ensure_replay_port_free` turns this test red.
+/// #1339 fix-r10 (P0): the IPv4 half of the guard cannot see an occupier that
+/// only holds IPv6, and that shape makes the replay pass in an environment
+/// where the TS baseline cannot start (`v6only_probe.log`). Two shapes have to
+/// be caught, and only a wildcard bind catches both (`v6_bind_probe.log`):
+/// a v6-only *listener* on `[::]:port` (Q1) and a socket bound to `[::]:port`
+/// that never called `listen` (Q2 — connects to `127.0.0.1` and `::1` both
+/// fail, yet the port is taken). Deleting `v6_wildcard_state` from
+/// `ensure_replay_port_free` turns this test red.
 #[test]
 fn port_busy_on_ipv6_preflight_fails_fast() {
-    let Ok(busy) = std::net::TcpListener::bind(("::1", 0)) else {
-        eprintln!("#1339 skipped: host has no IPv6 loopback");
-        return;
+    // Bind the IPv6 wildcard without listening: this is the shape the connect
+    // probes cannot see, and it is exactly what the guard now probes for.
+    let socket = match tokio::net::TcpSocket::new_v6() {
+        Ok(socket) => socket,
+        Err(_) => {
+            eprintln!("#1339 skipped: host has no IPv6");
+            return;
+        }
     };
-    let port = busy.local_addr().expect("#1339 v6 busy local addr").port();
-    // The guard's v4 half must see a free port, otherwise this test would
-    // assert on the wrong panic. `bind` + immediate drop leaves no `TIME_WAIT`.
-    let Ok(v4_free) = std::net::TcpListener::bind(("127.0.0.1", port)) else {
-        eprintln!("#1339 skipped: 127.0.0.1:{port} is taken as well");
+    if socket
+        .bind(std::net::SocketAddr::from(([0u16; 8], 0)))
+        .is_err()
+    {
+        eprintln!("#1339 skipped: cannot bind the IPv6 wildcard");
         return;
-    };
-    drop(v4_free);
+    }
+    let port = socket
+        .local_addr()
+        .expect("#1339 v6 busy local addr")
+        .port();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1237,7 +1299,7 @@ fn port_busy_on_ipv6_preflight_fails_fast() {
         payload.contains(&format!("#1339 port {port} already in use on IPv6")),
         "#1339 v6 port-busy preflight marker: {payload}"
     );
-    drop(busy);
+    drop(socket);
 }
 
 /// #1339 fix-r1 (P2 #15): the mapped Node `listen` error texts (probed on
