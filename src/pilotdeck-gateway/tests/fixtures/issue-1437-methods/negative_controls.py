@@ -24,6 +24,10 @@ from negative_suite import Case, run_cases
 
 USER_DIALOG = root / 'src/pilotdeck-gateway/src/native_process/methods/user_dialog.rs'
 PERMISSION = root / 'src/pilotdeck-gateway/src/native_process/methods/permission.rs'
+# The shared `!input.<key>?.trim()` guard all four user_dialog methods (and
+# permission_list) now route through (#1465); the per-method guards this
+# fixture used to mutate were folded into it.
+METHODS_MOD = root / 'src/pilotdeck-gateway/src/native_process/methods/mod.rs'
 DISPATCH = root / 'src/pilotdeck-gateway/src/dispatch.rs'
 
 TEST = 'native_process::methods::tests::'
@@ -31,8 +35,10 @@ TEST = 'native_process::methods::tests::'
 mutations = [
     # user_dialog_list: sessionKey domain code + dialog projection.
     ('list-domain-message', USER_DIALOG,
-     'domain_error("INVALID_USER_DIALOG_LIST", "sessionKey is required.")',
-     'domain_error("INVALID_USER_DIALOG_LIST", "sessionKey is required!")',
+     '                        "INVALID_USER_DIALOG_LIST",\n'
+     '                        "sessionKey is required.",',
+     '                        "INVALID_USER_DIALOG_LIST",\n'
+     '                        "sessionKey is required!",',
      TEST + 'user_dialog_list_validates_session_key_and_projects_dialogs',
      '#1437 user_dialog_list missing sessionKey message'),
     ('list-projection-empty', USER_DIALOG,
@@ -86,60 +92,43 @@ mutations = [
      '#1437 non-number ttlMs message'),
     # claim/release/respond sessionKey-required domain codes (wired bus).
     ('claim-domain-code', USER_DIALOG,
-     'let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {\n'
-     '                        domain_error(\n'
-     '                            "INVALID_USER_DIALOG_CLAIM",',
-     'let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {\n'
-     '                        domain_error(\n'
-     '                            "UNWIRED_USER_DIALOG_CLAIM",',
+     '                        "sessionKey",\n'
+     '                        "INVALID_USER_DIALOG_CLAIM",',
+     '                        "sessionKey",\n'
+     '                        "UNWIRED_USER_DIALOG_CLAIM",',
      TEST + 'user_dialog_claim_release_domain_codes',
      '#1437 claim missing sessionKey domain code'),
     ('release-domain-code', USER_DIALOG,
-     'let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {\n'
-     '                        domain_error(\n'
-     '                            "INVALID_USER_DIALOG_RELEASE",',
-     'let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {\n'
-     '                        domain_error(\n'
-     '                            "UNWIRED_USER_DIALOG_RELEASE",',
+     '                        "sessionKey",\n'
+     '                        "INVALID_USER_DIALOG_RELEASE",',
+     '                        "sessionKey",\n'
+     '                        "UNWIRED_USER_DIALOG_RELEASE",',
      TEST + 'user_dialog_claim_release_domain_codes',
      '#1437 release missing sessionKey domain code'),
     ('respond-domain-code', USER_DIALOG,
-     'let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {\n'
-     '                        domain_error(\n'
-     '                            "INVALID_USER_DIALOG_RESPONSE",',
-     'let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {\n'
-     '                        domain_error(\n'
-     '                            "UNWIRED_USER_DIALOG_RESPONSE",',
+     '                        "sessionKey",\n'
+     '                        "INVALID_USER_DIALOG_RESPONSE",',
+     '                        "sessionKey",\n'
+     '                        "UNWIRED_USER_DIALOG_RESPONSE",',
      TEST + 'user_dialog_claim_release_domain_codes',
      '#1437 respond missing sessionKey domain code'),
     # release requires leaseId too: missing/null/blank is a domain reject.
     ('release-lease-message', USER_DIALOG,
-     '                        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {\n'
-     '                            return Err(domain_error(\n'
-     '                                "INVALID_USER_DIALOG_RELEASE",\n'
-     '                                "sessionKey, requestId, and leaseId are required.",\n'
-     '                            ));\n'
-     '                        }',
-     '                        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {\n'
-     '                            return Err(domain_error(\n'
-     '                                "INVALID_USER_DIALOG_RELEASE",\n'
-     '                                "sessionKey and requestId are required.",\n'
-     '                            ));\n'
-     '                        }',
+     '                        "leaseId",\n'
+     '                        "INVALID_USER_DIALOG_RELEASE",\n'
+     '                        "sessionKey, requestId, and leaseId are required.",',
+     '                        "leaseId",\n'
+     '                        "INVALID_USER_DIALOG_RELEASE",\n'
+     '                        "sessionKey and requestId are required.",',
      TEST + 'user_dialog_claim_release_domain_codes',
      '#1437 release missing leaseId message'),
-    # the shared nonempty_string trim guard: "   " must not pass as a key.
-    ('user-dialog-blank-trim', USER_DIALOG,
-     '            let text = String::from_utf16_lossy(s.units());\n'
-     '            !crate::metadata::js_trim(&text).is_empty()\n'
-     '        })\n'
-     '        .cloned()\n'
-     '        .ok_or_else(|| request_error(format!("{key} must be a non-empty string.")))',
-     '            let text = String::from_utf16_lossy(s.units());\n'
-     '            true\n'
-     '        })\n'
-     '        .cloned()\n'
-     '        .ok_or_else(|| request_error(format!("{key} must be a non-empty string.")))',
+    # the shared trim guard behind every `require_text` call: "   " must not
+    # pass as a key.
+    ('user-dialog-blank-trim', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
      TEST + 'user_dialog_claim_release_domain_codes',
      # A blank key that passes the guard no longer rejects, so the run dies on
      # `expect_err` before the domain-code assertion.
@@ -221,40 +210,25 @@ mutations = [
      '"supported_agents", "user_dialog_list",',
      TEST + 'permission_user_dialog_methods_stay_outside_local_dispatch',
      '#1437 user_dialog_list must stay outside LOCAL_METHODS'),
-    # permission blank sessionKey keeps the domain rejection.
-    ('permission-blank-trim', PERMISSION,
-     'let text = String::from_utf16_lossy(s.units());\n'
-     '                        !crate::metadata::js_trim(&text).is_empty()\n'
-     '                    })\n'
-     '                    .cloned()\n'
-     '                    .ok_or_else(|| {\n'
-     '                        // TS: DialogGatewayError("INVALID_PERMISSION_LIST",',
-     'let text = String::from_utf16_lossy(s.units());\n'
-     '                        true\n'
-     '                    })\n'
-     '                    .cloned()\n'
-     '                    .ok_or_else(|| {\n'
-     '                        // TS: DialogGatewayError("INVALID_PERMISSION_LIST",',
-     TEST + 'permission_blank_session_key_rejected',
+    # permission_list blank sessionKey keeps the domain rejection and its code.
+    ('permission-list-domain-code', PERMISSION,
+     '                    "sessionKey",\n'
+     '                    "INVALID_PERMISSION_LIST",',
+     '                    "sessionKey",\n'
+     '                    "UNWIRED_PERMISSION_LIST",',
+     TEST + 'permission_blank_session_key_splits_by_surface',
      ['#1437 permission_list rejects a blank sessionKey', '#1437 permission_list blank sessionKey keeps the domain code']),
-    # the grant arm's blank-sessionKey trim guard (same source, other branch).
-    ('grant-blank-trim', PERMISSION,
-     'let text = String::from_utf16_lossy(s.units());\n'
-     '                        !crate::metadata::js_trim(&text).is_empty()\n'
-     '                    })\n'
-     '                    .cloned()\n'
-     '                    .ok_or_else(|| {\n'
-     '                        // TS grantSessionPermission performs no input validation',
-     'let text = String::from_utf16_lossy(s.units());\n'
-     '                        true\n'
-     '                    })\n'
-     '                    .cloned()\n'
-     '                    .ok_or_else(|| {\n'
-     '                        // TS grantSessionPermission performs no input validation',
-     TEST + 'permission_blank_session_key_rejected',
-     # A blank key that passes the guard makes `grant` succeed, so the run dies
-     # on `expect_err` before the domain-code assertion (#1616 r1).
-     ['#1437 grant rejects a blank sessionKey', '#1437 grant blank sessionKey keeps the domain code']),
+    # grant keys the rule map by the raw sessionKey (#1465): only the exact
+    # `""` alias is suppressed, so a whitespace key must land in its own bucket
+    # and must never reach the sessionless rule set.
+    ('grant-whitespace-bucket', PERMISSION,
+     '                    .filter(|value| !value.units().is_empty());',
+     '                    .filter(|value| value.units().is_empty());',
+     TEST + 'permission_blank_session_key_splits_by_surface',
+     # Inverting the filter sends the whitespace key to the sessionless bucket,
+     # so the own-bucket assertion fires before the alias one.
+     ['#1437 grant keeps a whitespace sessionKey in its own bucket',
+      '#1437 grant whitespace sessionKey must not alias the sessionless bucket']),
 ]
 
 

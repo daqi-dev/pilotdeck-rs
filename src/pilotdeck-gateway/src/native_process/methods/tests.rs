@@ -2338,11 +2338,20 @@ fn permission_user_dialog_methods_stay_outside_local_dispatch() {
     }
 }
 
-// #1437: a present-but-blank sessionKey ("  ") is not a missing key; both
-// permission methods trim before the empty check, so it keeps the domain
-// rejection instead of passing the blank key to the bus.
+// #1437: a present-but-blank sessionKey ("  ") is not a missing key, and the
+// two permission methods split on it exactly like TS does:
+//
+// * `permission_list` guards with `!input.sessionKey?.trim()`
+//   (InProcessGateway.ts:2781-2783), so a blank key keeps the domain
+//   rejection;
+// * `grant_session_permission` performs no such guard (`#1465`): the
+//   coordinator keys the grant Map by the raw sessionKey, so a whitespace-only
+//   key is stored in its own bucket. Only the exact `""` string is suppressed,
+//   because the turn side maps a missing/non-string sessionKey onto `""`
+//   (`native_process/assembly.rs:247`) and would otherwise whitelist tools for
+//   unrelated sessionless turns.
 #[tokio::test]
-async fn permission_blank_session_key_rejected() {
+async fn permission_blank_session_key_splits_by_surface() {
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1437 permission blank fixture setup");
     let error = requests
@@ -2362,22 +2371,37 @@ async fn permission_blank_session_key_rejected() {
         "sessionKey is required.",
         "#1437 permission_list blank sessionKey message"
     );
-    let error = requests
+    let granted = requests
         .permission_request(
             "grant_session_permission".into(),
             crate::metadata::object([("sessionKey", "\t".into()), ("entry", "Bash".into())]),
         )
         .await
-        .expect_err("#1437 grant rejects a blank sessionKey");
+        .expect("#1437 grant keeps a whitespace sessionKey");
     negative_assert_eq!(
-        error.code,
-        "INVALID_PERMISSION_GRANT",
-        "#1437 grant blank sessionKey keeps the domain code"
+        granted.get("granted"),
+        Some(&JsValue::Bool(true)),
+        "#1437 grant whitespace sessionKey answers granted:true"
+    );
+    let spaces = pilotdeck_protocol::JsString::from("\t");
+    let empty = pilotdeck_protocol::JsString::from("");
+    negative_assert_eq!(
+        requests
+            .interactions
+            .session_allow_rules(&spaces)
+            .snapshot()
+            .len(),
+        1,
+        "#1437 grant keeps a whitespace sessionKey in its own bucket"
     );
     negative_assert_eq!(
-        message(&error),
-        "sessionKey is required.",
-        "#1437 grant blank sessionKey message"
+        requests
+            .interactions
+            .session_allow_rules(&empty)
+            .snapshot()
+            .len(),
+        0,
+        "#1437 grant whitespace sessionKey must not alias the sessionless bucket"
     );
     requests
         .owner
