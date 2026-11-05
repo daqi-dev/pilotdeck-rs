@@ -503,10 +503,10 @@ def _module_tuple(tree, name):
     """
     if _unmodelled_binding(tree, name):
         return None
-    stores = [node for node in ast.walk(tree)
+    stores = [node for node in _module_scope_nodes(tree)
               if isinstance(node, ast.Name) and node.id == name
               and isinstance(node.ctx, ast.Store)]
-    augments = [node for node in ast.walk(tree)
+    augments = [node for node in _module_scope_nodes(tree)
                 if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
                 and node.target.id == name]
     if len(stores) != 1 or augments:
@@ -531,7 +531,7 @@ def _module_path(tree, name):
     """Value of ``name = ROOT / '<literal>'``, or None."""
     if _unmodelled_binding(tree, name):
         return None
-    stores = [node for node in ast.walk(tree)
+    stores = [node for node in _module_scope_nodes(tree)
               if isinstance(node, ast.Name) and node.id == name
               and isinstance(node.ctx, ast.Store)]
     if len(stores) != 1:
@@ -913,11 +913,11 @@ def _import_origin(tree, name, module):
     return seen > 0
 
 
-def _bootstrap_lines(source, anchors):
-    """The entry's bootstrap statements between the two unique anchor lines.
+def _bootstrap_span(source, anchors):
+    """Line indexes (first, last) of the reviewed block, or None when ambiguous.
 
-    Comments and blank lines are dropped (prose can change); every statement
-    line, indentation included, must match the model verbatim.
+    One occurrence of each anchor, end after start: anything else is "cannot
+    tell" -- a second block, a commented-out anchor or a reordered file.
     """
     start, end = anchors
     lines = source.splitlines()
@@ -925,12 +925,81 @@ def _bootstrap_lines(source, anchors):
     ends = [i for i, line in enumerate(lines) if line.strip().startswith(end)]
     if len(starts) != 1 or len(ends) != 1 or ends[0] <= starts[0]:
         return None
+    return starts[0], ends[0]
+
+
+def _bootstrap_lines(source, anchors):
+    """The entry's bootstrap statements between the two unique anchor lines.
+
+    Comments and blank lines are dropped (prose can change); every statement
+    line, indentation included, must match the model verbatim.
+    """
+    span = _bootstrap_span(source, anchors)
+    if span is None:
+        return None
     block = []
-    for line in lines[starts[0]:ends[0] + 1]:
+    for line in source.splitlines()[span[0]:span[1] + 1]:
         text = line.strip()
         if text and not text.startswith('#'):
             block.append(line.rstrip())
     return block
+
+
+# Every helper the bootstrap imports, with the module it must come from.  The
+# unit suite pins this list against the block's own imports: adding one to the
+# block without adding it here (or dropping one here to relax the check) is a
+# red test, not a silent hole.
+_BOOTSTRAP_HELPERS = (('sys', 'sys'), ('os', 'os'), ('importlib', 'importlib.util'),
+                      ('Path', 'pathlib'), ('tempfile', 'tempfile'))
+
+# Namespace lookups by name: outside the reviewed block they can replace what
+# the block bound without leaving a ``Name(Store)`` behind.
+_REFLECTIVE_CALLS = frozenset({'globals', 'locals', 'vars', 'setattr', 'delattr',
+                               'exec', 'eval', '__import__'})
+# ``sys.modules['apparatus'] = evil`` swaps the module a later ``from apparatus
+# import ...`` picks up; both spellings of the module object stay watched.
+_MODULE_TABLE_ROOTS = frozenset({'sys', '_boot_sys'})
+
+
+def _root_name(node):
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _foreign_writes(tree, watched, span):
+    """True when code outside the block can still rebind what the block bound.
+
+    Pinning the block line by line says what the bootstrap *is*, not that it is
+    the last word: ``global common`` in a later function, ``except ... as
+    common``, ``del common``, ``common.A2_SCRIPTS = (...)`` or
+    ``sys.modules['apparatus'] = evil`` all leave the block byte-identical while
+    the interpreter ends up running something else.
+    """
+    for node in ast.walk(tree):
+        line = getattr(node, 'lineno', None)
+        if line is not None and span[0] + 1 <= line <= span[1] + 1:
+            continue
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and set(node.names) & watched:
+            return True
+        if isinstance(node, ast.ExceptHandler) and node.name in watched:
+            return True
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name in watched:
+            return True
+        if isinstance(node, ast.MatchMapping) and node.rest in watched:
+            return True
+        if isinstance(node, ast.Delete) and any(
+                isinstance(target, ast.Name) and target.id in watched
+                for target in node.targets):
+            return True
+        if isinstance(node, (ast.Attribute, ast.Subscript)) \
+                and isinstance(node.ctx, ast.Store) \
+                and _root_name(node) in watched | _MODULE_TABLE_ROOTS:
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in _REFLECTIVE_CALLS:
+            return True
+    return False
 
 
 def _bindings_confined(tree, canonical):
@@ -976,9 +1045,12 @@ def _bootstrap_ok(tree, anchors, canonical):
     entry = _TREE_SOURCE.get(id(tree))
     if entry is None or entry[0] is not tree:
         return False
-    if _bootstrap_lines(entry[1], anchors) != list(canonical):
+    span = _bootstrap_span(entry[1], anchors)
+    if span is None or _bootstrap_lines(entry[1], anchors) != list(canonical):
         return False
-    return _bindings_confined(tree, canonical)
+    if not _bindings_confined(tree, canonical):
+        return False
+    return not _foreign_writes(tree, set(_BLOCK_COUNTS[id(canonical)][1]), span)
 
 
 def _file_parents(node):
@@ -1019,9 +1091,8 @@ def _loaded_through_common(tree):
     """
     if not _bootstrap_ok(tree, _GATEWAY_BOOTSTRAP_ANCHORS, _GATEWAY_BOOTSTRAP):
         return False
-    return all(_import_origin(tree, name, module) for name, module in (
-        ('sys', 'sys'), ('os', 'os'), ('importlib', 'importlib.util'),
-        ('Path', 'pathlib'), ('tempfile', 'tempfile')))
+    return all(_import_origin(tree, name, module)
+               for name, module in _BOOTSTRAP_HELPERS)
 
 
 def _external_still_holds(tree, name):
@@ -1240,7 +1311,7 @@ def _ui_required_names(tree):
     same class as the copied spec list parity just lost.  Only the derived shape
     is accepted: anything else is "cannot tell" (None) and blocks.
     """
-    stores = [node for node in ast.walk(tree)
+    stores = [node for node in _module_scope_nodes(tree)
               if isinstance(node, ast.Name) and node.id == 'REQUIRED'
               and isinstance(node.ctx, ast.Store)]
     if len(stores) != 1 or _unmodelled_binding(tree, 'REQUIRED'):
