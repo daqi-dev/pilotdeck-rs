@@ -550,6 +550,11 @@ class EnvironmentControls(unittest.TestCase):
             fields = self.ci_step_fields(step, '#1632')
             for key in ('if', 'continue-on-error'):
                 self.assertNotIn(key, fields, '#1632 negative-control steps stay unconditional')
+        # 还原 target 等于还原上一轮的扫描器二进制：`_ensure_workspace_scanner` 见到
+        # 文件存在就复用，摘要冻在二进制里，改过扫描器输入的 PR 会拿到摘要不等的旧
+        # 二进制并被判假红。只允许缓存 cargo 注册表（#1632 评审 P1）。
+        self.assertNotIn('Swatinem/rust-cache', body,
+                         '#1632 a restored target hands back a stale scanner binary')
 
     def test_negative_controls_job_regressions_are_rejected(self):
         workflow = self.ci_workflow_fixture()
@@ -581,6 +586,13 @@ class EnvironmentControls(unittest.TestCase):
         change('target-inside-src', 'CARGO_TARGET_DIR: ${{ github.workspace }}/_build/cargo-target',
                'CARGO_TARGET_DIR: ${{ github.workspace }}/src/target',
                '#1632 the scanner builds into the in-tree _build target')
+        change('target-cache-reintroduced',
+               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n',
+               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n'
+               '      - uses: Swatinem/rust-cache@v2.9.2\n'
+               '        with:\n'
+               '          workspaces: src -> ../_build/cargo-target\n',
+               '#1632 a restored target hands back a stale scanner binary')
         self.check_ci_mutations(cases, 'test_negative_controls_job_runs_the_gateway_fixture', '#1632')
 
     def test_isolation_ci_regressions_are_rejected(self):

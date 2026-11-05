@@ -76,12 +76,12 @@ mutations = [
      '',
      'native_http::tests::user_dialog_store_entry_is_explicitly_not_yet_open',
      '#1316 user-dialog store entry is a 503'),
-    # #1632 P2-1: the wire-up has ten mutation points; four were covered. The
-    # five below cover the rest: both remaining registry entries of the
-    # interaction family, the per-method always-on message, and the two
-    # capability entries the wire-up added next to permission_decide. Each row
-    # names the assertion message the product test already prints, so the kill
-    # is attributable to that one assertion.
+    # #1632 P2-1: the wire-up has ten mutation points - three interaction
+    # registry entries, three always-on per-method messages, two describe
+    # capabilities and the always-on family registration - plus the explicit
+    # HTTP store entry. Four were covered above, so the seven below cover the
+    # rest. Each row names the assertion message the product test already
+    # prints, so the kill is attributable to that one assertion.
     ('registry-drops-elicitation-respond',
      'native_process/methods/interaction.rs',
      '    "elicitation_respond",\n',
@@ -96,14 +96,27 @@ mutations = [
      '#1316 A7 method permission_decide is dispatched'),
     # The three always-on methods share one code path and differ only in the
     # message they return, so the per-method message is the only thing that can
-    # tell them apart. Copying the apply text into abort is exactly the
-    # copy-paste slip this row has to kill.
+    # tell them apart. Copying one neighbour's text into another arm is exactly
+    # the copy-paste slip these three rows have to kill; each arm is mutated in
+    # turn, so a redundant arm cannot hide behind a sibling.
     ('always-on-abort-copies-apply-message',
      'native_process/methods/always_on.rs',
      '                "always_on_abort" => "Always-On abort is not configured on this gateway.",',
      '                "always_on_abort" => "Always-On apply is not configured on this gateway.",',
      'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
      '#1316 always_on_abort message'),
+    ('always-on-rerun-copies-apply-message',
+     'native_process/methods/always_on.rs',
+     '                "always_on_rerun_plan" => "Always-On rerun is not configured on this gateway.",',
+     '                "always_on_rerun_plan" => "Always-On apply is not configured on this gateway.",',
+     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
+     '#1316 always_on_rerun_plan message'),
+    ('always-on-apply-copies-abort-message',
+     'native_process/methods/always_on.rs',
+     '                _ => "Always-On apply is not configured on this gateway.",',
+     '                _ => "Always-On abort is not configured on this gateway.",',
+     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
+     '#1316 always_on_apply message'),
     ('describe-drops-async-hook-result',
      'native_process/requests.rs',
      '                            "async_hook_result",\n'
@@ -151,13 +164,26 @@ def acquire_slot(script=None, timeout=SLOT_TIMEOUT_SECONDS):
         sys.exit(f'cargo slot gate failed with rc={error.returncode}: {error.stderr}')
 
 
+CARGO_TEST_TIMEOUT_SECONDS = 1800
+
+
 def run(full):
     # No -q/--quiet: libtest must print `test <name> ... ok` lines (#273, #978).
-    result = run_owned(
-        ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p',
-         'pilotdeck-gateway', '--lib', full, '--', '--exact'],
-        cwd=root, env=env, timeout=900)
-    return result.returncode, result.stdout + result.stderr
+    # --locked: the gate runs on the committed lockfile, like the shared entry
+    # that builds the scanner (`negative_process.py` uses --locked for the same
+    # reason). A timeout keeps the cargo output it collected: a bare
+    # TimeoutExpired traceback would leave the run red with no evidence at all
+    # (#1632 review). The bound is generous because the first call on a cold CI
+    # target also compiles every dependency.
+    try:
+        result = run_owned(
+            ['cargo', 'test', '--locked', '--manifest-path', 'src/Cargo.toml', '-p',
+             'pilotdeck-gateway', '--lib', full, '--', '--exact'],
+            cwd=root, env=env, timeout=CARGO_TEST_TIMEOUT_SECONDS)
+        return result.returncode, result.stdout + result.stderr
+    except subprocess.TimeoutExpired as error:
+        collected = (error.output or '') + (error.stderr or '')
+        return 124, f'{collected}\nTIMEOUT after {CARGO_TEST_TIMEOUT_SECONDS}s\n'
 
 
 def take_slot(name):
