@@ -2318,7 +2318,16 @@ def aggregation_audit():
         "    return 0\n"
         "def _container_slot(report):\n"
         "    report['status'] = upstream['status']\n"
-        "    return common.aggregate_status(report['status'])[1]\n")
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _plain_nonzero(report):\n"
+        "    if report.get('special'):\n"
+        "        return 2\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _pair_literal(report):\n"
+        "    if report.get('special'):\n"
+        "        return {'status': 'BLOCKED'}, 2\n"
+        "    status, code = common.aggregate_status(report['status'])\n"
+        "    return {'status': status}, code\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -2466,6 +2475,18 @@ def aggregation_audit():
         if not probe or not unshared_status_slots(probe, None, probe_modules):
             failures.append(f'#892 aggregation-audit: detector self-test did not flag '
                             f'{message}')
+    # #892 r6: the README promises a non-zero exit literal is legal, but only on
+    # its own -- a status/exit *pair* with a literal code is a batch computation
+    # and still flagged (MiniMax boundary r5 P2-4).  Both sides are pinned here so
+    # the promise cannot drift from the rule again.
+    plain_nonzero = probe892_found.get(('<self-test-892>', '_plain_nonzero'))
+    if not plain_nonzero or unshared_status_slots(plain_nonzero[1]):
+        failures.append('#892 aggregation-audit: detector self-test rejected a '
+                        'non-zero exit literal')
+    pair_literal = probe892_found.get(('<self-test-892>', '_pair_literal'))
+    if not pair_literal or not unshared_status_slots(pair_literal[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'status/exit pair whose code is a literal')
     verdict_dict = probe892_found.get(('<self-test-892>', '_verdict_dict'))
     if not verdict_dict or 'assign-report-status' not in verdict_dict[0]:
         failures.append('#892 aggregation-audit: detector self-test did not enumerate '
