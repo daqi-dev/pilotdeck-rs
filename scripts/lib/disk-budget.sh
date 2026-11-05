@@ -11,6 +11,7 @@
 #   . scripts/lib/disk-budget.sh
 #   pdrs_disk_used_kib [root]        # 打印 _build+_tmp 的 KiB 求和；测量失败返回 2，不把失败算成 0
 #   pdrs_disk_level_of_kib <kib>     # 打印 ok|warn|hard；纯判定、无 I/O——**生产调用方用这个**
+#                                    # 入参不是非负整数 → 打印 unknown 并返回 2（绝不落到 ok）
 #   pdrs_disk_level [root]           # 测量 + 判档一步到位；失败打印 unknown 并返回 2（不打印空串）
 #   root 不存在按前置错误返回 2（不能与「仓根在但没有 _build/_tmp」的 0 混为一谈）
 #   root 省略时取当前目录；调用方**应显式传入仓根**，不要依赖 cwd。
@@ -37,6 +38,11 @@ PDRS_DISK_WARN_GIB=$(_pdrs_disk_clamp "${PDRS_DISK_WARN_GIB:-}" "$PDRS_DISK_WARN
 # WARN 不得高于 HARD：自测把 HARD 调低时 WARN 跟着降，否则会出现「全 warn 不 hard」的空档
 [ "$PDRS_DISK_WARN_GIB" -le "$PDRS_DISK_HARD_GIB" ] || PDRS_DISK_WARN_GIB=$PDRS_DISK_HARD_GIB
 
+_pdrs_tmo() { # $1=秒，其余为命令；有 GNU timeout 就限时，没有则直跑
+  # 闸门自己不能挂住：`_build` 可能指向一个挂死的外接卷，`cd`/`du` 都会无限阻塞
+  if command -v timeout >/dev/null 2>&1; then timeout "$@"; else shift; "$@"; fi
+}
+
 pdrs_disk_used_kib() {
   local root=${1:-$PWD} d real out sum=0
   # 仓根不存在 = 前置错误（路径拼错 / 仓被搬走），不能与「仓根在但没有 _build/_tmp」混为一谈：
@@ -49,25 +55,30 @@ pdrs_disk_used_kib() {
     [ -e "$d" ] || return 2
     # 命令行操作数是符号链接时 `du -sk` 不跟随（11-05 BSD 实测 0 KiB；本仓 runner 树
     # 有 `_build` 指向外接卷的配置）→ 先 cd + pwd -P 取物理路径再量
-    real=$(cd "$d" 2>/dev/null && pwd -P) || return 2
+    real=$(_pdrs_tmo 10 bash -c 'cd "$1" 2>/dev/null && pwd -P' _ "$d")
+    [ -n "$real" ] || return 2
     # fail-closed：du 非 0 或输出不是数字就返回 2，绝不把「没量到」当 0 放行。
     # 但 `_build` 是 cargo target 树，编译并发删改文件时 du 会以非 0 退出（两家评审均指出），
     # 瞬时竞态不该让整条循环自停 → 失败先重试一次；仍失败则 fail-closed（偏小的部分和绝不采信）
-    if ! out=$(du -sk "$real" 2>/dev/null); then
+    if ! out=$(_pdrs_tmo 180 du -sk "$real" 2>/dev/null); then
       sleep 1
-      if ! out=$(du -sk "$real" 2>/dev/null); then
+      if ! out=$(_pdrs_tmo 180 du -sk "$real" 2>/dev/null); then
         printf 'disk-budget: du 测量失败（已重试一次）：%s\n' "$real" >&2
         return 2
       fi
     fi
-    out=${out%%[!0-9]*}
-    [ -n "$out" ] || return 2
+    # 只认第一字段且必须全是数字：前缀截断会把 "12x345" 读成 12（偏小 = 假 PASS）
+    out=${out%%[ 	]*}
+    case "$out" in '' | *[!0-9]*) return 2 ;; esac
     sum=$((sum + out))
   done
   printf '%s\n' "$sum"
 }
 
 pdrs_disk_level_of_kib() { # $1=KiB 原值；三档判定只有这一处，调用方（pdrs-loop / new-tree）都用它
+  # 入参必须是非负整数：`[ "" -gt N ]` 在 bash 里报错且两个分支都为假 → 落到 else 打印 ok，
+  # 那会让「量失败但漏查 rc」的调用方静默放行（本文件其余路径全是 fail-closed，唯独判档放行）
+  case "${1:-}" in '' | *[!0-9]*) printf 'unknown\n'; return 2 ;; esac
   if [ "$1" -gt "$((PDRS_DISK_HARD_GIB * 1048576))" ]; then printf 'hard\n'
   elif [ "$1" -gt "$((PDRS_DISK_WARN_GIB * 1048576))" ]; then printf 'warn\n'
   else printf 'ok\n'; fi
