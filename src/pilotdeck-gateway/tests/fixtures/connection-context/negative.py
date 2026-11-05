@@ -43,8 +43,10 @@ mutants = [
     ("old-binding-disconnects-current", "binding.rs", 'if bindings.get(owner) != Some(binding) {', 'if false && bindings.get(owner) != Some(binding) {', 1),
     ("submit-clears-interaction-session", "mod.rs", '.retain(|s| s != session);', '.retain(|s| s != session);\n        self.connection.state.lock().unwrap().interactions.retain(|s| s != session);', 1),
     ("ticket-scoped-in-flight", None, None, None, 0),
-    ("null-params-as-object", "mod.rs", 'frame.get("params").cloned().unwrap_or(JsValue::Null)',
-     'frame.get("params").cloned().filter(|value| !matches!(value, JsValue::Null)).unwrap_or_else(|| JsValue::Object(JsObject::new()))', 1),
+    # Missing `params` is `Undefined` in TS (explicit null stays `Null`); the
+    # mutant must swallow both shapes into an empty object.
+    ("null-params-as-object", "mod.rs", 'frame.get("params").cloned().unwrap_or(JsValue::Undefined)',
+     'frame.get("params").cloned().filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined)).unwrap_or_else(|| JsValue::Object(JsObject::new()))', 1),
     ("non-string-session-as-empty", "mod.rs", 'truthy(&session_value).then(|| SessionKey::new(session_value))',
      'session_value.as_string().is_some_and(|session| !session.is_empty()).then(|| SessionKey::new(session_value))', 1),
     ("tampered-source-hash", "oracle.json",

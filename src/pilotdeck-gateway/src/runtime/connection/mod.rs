@@ -257,10 +257,13 @@ impl GatewayConnection {
                         if method.equals_str("permission_decide")
                             && matches!(input, JsValue::Null | JsValue::Undefined)
                         {
-                            let kind = if frame.get("params").is_some() {
-                                "null"
-                            } else {
+                            // Value-based, matching dispatch.rs:141: the wire
+                            // cannot carry an `Undefined` value, so a present
+                            // non-nullish `params` never reaches this arm.
+                            let kind = if input.is_undefined() {
                                 "undefined"
+                            } else {
+                                "null"
                             };
                             Err(RequestError::new(format!(
                                 "Cannot read properties of {kind} (reading 'sessionKey')"
