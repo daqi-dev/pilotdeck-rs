@@ -30,16 +30,19 @@ counted as KILLED).  The top-level status and exit code come from the one
 shared ``common.aggregate_status()``; the restored positive is a child too.
 """
 import argparse
+import atexit
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-session-cleanup-neg-pyc-')
+atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
@@ -1104,6 +1107,11 @@ MUTATIONS = [
      "        if report.get('special'):\n"
      "            status, code = code, status\n"
      "            return {'status': status}, code\n" + CT_EXIT),
+    # #892 fix-r6: the hardcoded clean status can also sit in the shared call's
+    # own argument list (MiniMax concurrency r5 P1-1).
+    ('calibrate-clean-argument', CONTROLS_SOURCE,
+     "        'PASS' if all(r['passed'] for r in results) else 'FAIL',\n",
+     "        'PASS',\n"),
     ('calibrate-verdict-dict', CONTROLS_SOURCE,
      CT_MAIN,
      "def publish(rows):\n"
@@ -1320,6 +1328,14 @@ JUDGES = {
         'aggregation-audit', calibrate_verdict_dict, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
+    'calibrate-clean-argument': (
+        'batch-aggregation',
+        lambda rows: match(rows, 'batch-aggregation', {
+            'caseFailure.status': 'PASS',
+            'caseFailure.returncode': 0,
+        }),
+        False,
+        ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
