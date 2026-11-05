@@ -940,10 +940,16 @@ await mkdir(out, { recursive: true });
 // authoritative guard is the `startOutcome` check after each run, which reads
 // the channel's own logs whatever address family it binds
 // (`empty-webhook-host` binds the dual-stack `::`).
+//
+// #1339 fix-r7 (P2, minimax sibling #3): ask by *connecting*, not by binding.
+// libuv sets `SO_REUSEADDR` on `listen`, and on macOS/BSD such a socket binds a
+// concrete address even while a wildcard listener owns the port — the same
+// blind spot the Rust-side guard dropped in fix-r6. A connect probe answers
+// "occupied" for any live listener and "free" for a `TIME_WAIT` remnant.
 const portIsFree = (port: number) => new Promise<boolean>((done) => {
-  const probe = net.createServer();
-  probe.once('error', () => done(false));
-  probe.listen(port, '127.0.0.1', () => probe.close(() => done(true)));
+  const probe = net.connect(port, '127.0.0.1');
+  probe.once('connect', () => { probe.destroy(); done(false); });
+  probe.once('error', () => { probe.destroy(); done(true); });
 });
 for (const definition of definitions) {
   assert.ok(

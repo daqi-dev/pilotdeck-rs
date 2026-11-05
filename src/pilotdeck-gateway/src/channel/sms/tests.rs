@@ -432,6 +432,12 @@ async fn ensure_replay_port_free(port: u16) {
     // same case leaves behind and fails every later run. A connect probe has
     // neither problem: a live listener answers, a lingering `TIME_WAIT` socket
     // refuses.
+    //
+    // #1339 fix-r7 (P2, Codex): what this probe does *not* see is a socket that
+    // is bound but never listens, or a v6-only listener on the same port. Both
+    // make the replay's own `127.0.0.1` bind fail right after, so they surface
+    // as a bind error rather than as silent oracle corruption; only the
+    // dedicated message is lost.
     if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
         panic!(
             "#1339 port {port} already in use; a concurrent channel-sms replay would corrupt the oracle"
@@ -819,10 +825,21 @@ async fn dual_stack_probe_uses_the_assigned_port() {
                         )
                     });
                     drop(v4);
-                    // Nothing to assert about a host that has no IPv6 at all:
-                    // the product fell back to `0.0.0.0` exactly as designed.
+                    // #1339 fix-r7 (P1, Codex #2): prove the *product* fallback
+                    // on this host, not just that `0.0.0.0` can bind. Going
+                    // through `bind_listener` is what makes deleting the
+                    // fallback fail here instead of passing silently.
+                    let fallback = bind_listener("", 0)
+                        .await
+                        .expect("#1339 IPv4 fallback on a host without IPv6");
+                    let fallback_address = fallback.local_addr().expect("#1339 fallback address");
+                    assert!(
+                        fallback_address.is_ipv4() && fallback_address.ip().is_unspecified(),
+                        "#1339 expected the IPv4 wildcard fallback, got {fallback_address}"
+                    );
                     eprintln!(
-                        "#1339 skipped: host has no IPv6 (`::` bind failed: {control_error})"
+                        "#1339 skipped: host has no IPv6 (`::` bind failed: {control_error}); \
+                         bind_listener fell back to {fallback_address}"
                     );
                     return;
                 }
@@ -849,19 +866,32 @@ async fn dual_stack_probe_uses_the_assigned_port() {
     let address = listener.local_addr().expect("#1339 bound address");
     let port = address.port();
     assert_ne!(port, 0, "#1339 the wildcard must own a real port");
-    // #1339 fix-r5 (P2): the ledger says the address is the *v6 wildcard*, not
-    // merely some v6 address; assert the exact claim. Asking a v6 *loopback*
-    // listener to serve `127.0.0.1` would otherwise pass this test.
+    // #1339 fix-r5 (P2) / fix-r7 (P2, Codex #2): the ledger says the address is
+    // the *v6 wildcard*, not merely some v6 address — `is_unspecified()` alone
+    // would also accept the IPv4 wildcard, so assert the family too.
     assert!(
-        address.ip().is_unspecified(),
+        address.is_ipv6() && address.ip().is_unspecified(),
         "#1339 `::` should bind the v6 wildcard, got {address}"
     );
-    TcpStream::connect(("127.0.0.1", port))
-        .await
-        .expect("#1339 the v4 side of a dual-stack listener must answer");
     TcpStream::connect(("::1", port))
         .await
         .expect("#1339 the v6 side of a dual-stack listener must answer");
+    // #1339 fix-r7 (P1, minimax sibling #2): with IPv6 up but IPv4 switched
+    // off, `new_v4()` fails, the probe answers `Unknown`, the listener is kept
+    // — and this branch is reached. A `.expect` here would turn a supported
+    // host red, the same defect fix-r6 removed from the other branch. Prove
+    // the host really has no IPv4 before skipping.
+    match TcpStream::connect(("127.0.0.1", port)).await {
+        Ok(_) => {}
+        Err(v4_error) => {
+            let v4_bindable = TcpListener::bind(("127.0.0.1", 0)).await.is_ok();
+            assert!(
+                !v4_bindable,
+                "#1339 this host binds IPv4 yet the v4 side of `::` refused: {v4_error}"
+            );
+            eprintln!("#1339 skipped: host has no IPv4 (`127.0.0.1` connect failed: {v4_error})");
+        }
+    }
 }
 
 #[test]
