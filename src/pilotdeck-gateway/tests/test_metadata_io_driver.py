@@ -685,6 +685,24 @@ class EnvironmentControls(unittest.TestCase):
         parts = list(relative.relative_to('src').with_suffix('').parts)
         if parts[-1] == 'mod':
             parts.pop()
+        # fix-r7 (gate6-anthropic boundary#1): the crate root file cannot be
+        # mapped from its path. Measured on this crate (libtest `--list`, the
+        # same names nextest reports) after appending two probes to
+        # `src/lib.rs`: `probe_at_crate_root` (declared at the crate root) and
+        # `tests::probe_inside_tests_module` (declared inside `mod tests`) —
+        # two different shapes out of ONE file. The old code returned
+        # `lib::tests::<leaf>`, a name `test(=…)` never matches, so the guard
+        # would approve a filter entry that silently selects nothing — the
+        # exact silent-green hole this check exists to close. Fail closed and
+        # make the author paste the name nextest really reports.
+        # `src/mod.rs` pops to an empty list and used to raise IndexError here;
+        # it is unmappable for the same reason.
+        if not parts or (len(parts) == 1 and parts[0] in ('lib', 'main')):
+            raise AssertionError(
+                f'#922 cannot derive the nextest-visible name for {leaf} declared in '
+                f'{relative}: a crate-root or bare-`mod` file reports a name that depends '
+                f'on the module nesting, not on the path. Run `cargo nextest list` and '
+                f'paste the exact name nextest prints.')
         if parts[-1] != 'tests':
             parts.append('tests')
         return '::'.join([*parts, leaf])
@@ -713,6 +731,35 @@ class EnvironmentControls(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'is not a plain'):
             self.assert_success_output_filter_names_real_tests(
                 self.nextest_success_output_filter + ' | test(=skills::tests::foo-bar)')
+
+    def test_crate_root_file_is_not_guessed(self):
+        # fix-r7: a test declared in `src/lib.rs` / `src/main.rs` cannot be
+        # named from the path — the same file yields both `probe_at_crate_root`
+        # and `tests::probe_inside_tests_module` (measured with libtest
+        # `--list` on this crate). The old code answered `lib::tests::<leaf>`,
+        # which `test(=…)` never matches, so a future entry would be approved
+        # while selecting nothing. These two calls pin the fail-closed answer.
+        crate = Path(__file__).resolve().parents[1]
+        for crates_root in ('src/lib.rs', 'src/main.rs'):
+            with self.assertRaisesRegex(AssertionError,
+                                        'cannot derive the nextest-visible name'):
+                self.nextest_visible_name(crate, crate / crates_root, 'leaf')
+        # `src/mod.rs` pops to an empty module list; it used to raise
+        # IndexError from `parts[-1]`, which reads like a bug rather than a
+        # refusal. It must now refuse with the same message.
+        with self.assertRaisesRegex(AssertionError,
+                                    'cannot derive the nextest-visible name'):
+            self.nextest_visible_name(crate, crate / 'src/mod.rs', 'leaf')
+        # The fix must not swallow the normal cases.
+        self.assertEqual(
+            self.nextest_visible_name(crate, crate / 'src/skills/tests.rs', 'leaf'),
+            'skills::tests::leaf')
+        self.assertEqual(
+            self.nextest_visible_name(crate, crate / 'src/grep/mod.rs', 'leaf'),
+            'grep::tests::leaf')
+        self.assertEqual(
+            self.nextest_visible_name(crate, crate / 'tests/live_e2e.rs', 'leaf'),
+            'leaf')
 
     def test_ci_rejects_nextest_execution_drift(self):
         workflow = self.ci_workflow_fixture()
