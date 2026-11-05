@@ -192,7 +192,8 @@ case("scope 标记写在注释外", 2, "pdrs-scope: files=16 est_min=300\n# x\n"
 case("scope 注释写法不对（前缀有别的词）", 2, "<!-- note pdrs-scope files=16 -->\n# x\n", must=["写法不对"])
 case("scope 行写坏", 2, "<!-- pdrs-scope: files=很多 -->\n# x\n", must=["不是整数"])
 case("scope 超长数字不崩溃", 2, "<!-- pdrs-scope: files=" + "9" * 40 + " -->\n# x\n", must=["不是整数"])
-case("scope 行缺键", 2, "<!-- pdrs-scope: note=x -->\n# x\n", must=["至少要写"])
+case("scope 行只有未知键", 2, "<!-- pdrs-scope: note=x -->\n# x\n", must=["认不出的键"])
+case("scope 行只有 modules（没阈值键）", 2, "<!-- pdrs-scope: modules=2 -->\n# x\n", must=["至少要写"])
 case("scope 声明未达阈值", 0,
      "<!-- pdrs-scope: files=3 lines=200 est_min=60 -->\n# x\n- `a.rs`\n- `b.rs`\n")
 case("空文件不是「小包」", 2, "   \n\n", must=["空文件"])
@@ -278,6 +279,38 @@ case("列序换了（依赖在前）时空段名照样报", 1,
 - 进度文件：`_tmp/20261105-issue-100/progress.md`
 - 第 N 段失败：从 N+1 继续。
 """, must=["为空"])
+
+
+# ---- fix-r8：第七轮闸门（DeepSeek boundary P0×2 / P1×1，GLM concurrency P1×1）--------------------
+case("scope 键拼错（estmins）算写坏", 2,
+     "<!-- pdrs-scope: files=2 estmins=300 -->\n# x\n", must=["认不出的键"])
+case("scope 键大写 EST_MIN 照认（不许吞阈值）", 1,
+     "<!-- pdrs-scope: files=2 EST_MIN=300 -->\n# x\n", must=["est_min=300"])
+case("scope 键 est-min 连字符照认", 1,
+     "<!-- pdrs-scope: files=2 est-min=300 -->\n# x\n", must=["est_min=300"])
+case("占位符 全角尖括号 ＜待填＞", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "＜待填＞"), must=["占位符"])
+case("占位符 中文方括号【待填】", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "【待填】"), must=["占位符"])
+case("占位符 裸 待填", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "待填"), must=["占位符"])
+case("【重要】这类正文不算占位符（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "`S1-RESULT.md`（【重要】先跑 fmt）"))
+case("续跑 全角占位 _tmp/＜日期＞-issue-＜N＞", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
+                                     "_tmp/＜日期＞-issue-＜N＞/progress.md"),
+     must=["进度文件路径"])
+case("估时 90 min（含 10 min 缓冲）= 90（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 min（含 10 min 缓冲） |"))
+case("估时 100 min（含 10 min 缓冲）= 100", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 100 min（含 10 min 缓冲） |"), must=["100 min > 90 min"])
+case("估时 80 min（2 个文件）= 80（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 80 min（2 个文件） |"))
+case("估时 60 min（S1 和 S2 各 30 min）= 60（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60 min（S1 和 S2 各 30 min） |"))
+case("估时 加法仍求和：40 min + 60 min（含 10 min 缓冲）= 100", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 40 min + 60 min（含 10 min 缓冲） |"),
+     must=["100 min > 90 min"])
 
 
 def run():
@@ -393,15 +426,11 @@ def run():
         fails += 0 if ok else 1
 
         # find_recent 自己的 OSError → ScanError（不是 return 空列表）
-        class _BoomPath:
-            def __init__(self, root):
-                self.root = root
+        def _boom_scandir(path):
+            raise PermissionError(13, "Permission denied", str(path))
 
-            def glob(self, pat):
-                raise OSError("模拟：权限拒绝")
-
-        real_path = ctbs.Path
-        ctbs.Path = _BoomPath
+        real_scandir = os.scandir
+        os.scandir = _boom_scandir
         try:
             try:
                 ctbs.find_recent(td, 24)
@@ -409,7 +438,7 @@ def run():
             except ctbs.ScanError:
                 ok = True
         finally:
-            ctbs.Path = real_path
+            os.scandir = real_scandir
         print(f"{'PASS' if ok else 'FAIL'}  find_recent 遇 OSError 抛 ScanError")
         fails += 0 if ok else 1
 
@@ -428,6 +457,27 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  扫描中断 → rc=2：rc={rc} stderr={err.getvalue().strip()[:40]!r}")
         fails += 0 if ok else 1
 
+        # 真实权限拒绝：chmod 000 的 _tmp 下任务书必须让扫描「中断」而不是静默消失
+        if os.name == "posix":
+            blocked = Path(td) / "_build" / "wt-9998" / "_tmp"
+            blocked.mkdir(parents=True)
+            (blocked / "task.md").write_text(SMALL, encoding="utf-8")
+            os.utime(blocked / "task.md", (time.time() - 3600, time.time() - 3600))
+            os.chmod(blocked, 0o000)
+            try:
+                try:
+                    ctbs.find_recent(td, 24)
+                    ok = False
+                except ctbs.ScanError:
+                    ok = True
+                finally:
+                    os.chmod(blocked, 0o755)
+            except Exception:
+                os.chmod(blocked, 0o755)
+                raise
+            print(f"{'PASS' if ok else 'FAIL'}  真实 chmod 000 的目录 → ScanError（不许静默漏扫）")
+            fails += 0 if ok else 1
+
     # 命令行契约
     for name, argv, expect in (
             ("--print-skeleton 带文件参数", ["x", "--print-skeleton", "task.md"], 3),
@@ -445,7 +495,7 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 22   # 13 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc）+ 9 条命令行契约
+    total = len(CASES) + 23   # 14 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
     print(f"SUMMARY cases={total} failed={fails}")
     return 1 if fails else 0
 
