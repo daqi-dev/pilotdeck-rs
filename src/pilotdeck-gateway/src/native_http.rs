@@ -153,7 +153,8 @@ async fn route<B>(
         .path_and_query()
         .map_or("", |value| value.as_str());
     if !crate::mutants::on("native-http-target-form-off")
-        && (!llhttp_scheme_alpha(request.uri().scheme()) || !llhttp_target_form(target))
+        && (!llhttp_scheme_alpha(request.uri().scheme())
+            || !llhttp_target_form(request.uri().scheme(), target))
     {
         return Ok(parser_bad_request());
     }
@@ -239,10 +240,13 @@ fn llhttp_scheme_alpha(scheme: Option<&hyper::http::uri::Scheme>) -> bool {
 
 /// llhttp's request-target shape rule for the path-and-query: origin-form
 /// (leading `/`) or asterisk (`*`). Absolute-form is admitted by the scheme
-/// check in [`serve`]; anything else — `%2Fhealth`, authority-form without
-/// CONNECT — is a bare parser-level 400 in TS.
-fn llhttp_target_form(target: &str) -> bool {
-    target.starts_with('/') || target == "*"
+/// check in [`serve`] and its path may be empty, so a path-and-query that is
+/// a bare `?query` is served like TS's 404 (fix-r1 probe `probe-p2.out`),
+/// while a bare origin-form `?query` without a scheme stays the bare
+/// parser-level 400 (same probe). Authority-form without CONNECT and
+/// `%2Fhealth` are a bare parser-level 400 in TS too.
+fn llhttp_target_form(scheme: Option<&hyper::http::uri::Scheme>, target: &str) -> bool {
+    target.starts_with('/') || target == "*" || (scheme.is_some() && target.starts_with('?'))
 }
 
 /// The WHATWG path of the request target, exactly what `new URL(request.url,
@@ -280,18 +284,30 @@ fn parser_bad_request() -> hyper::Response<Body> {
 /// value under-counts here, and hyper also strips the fragment from the
 /// parsed URI (both registered residuals in the parity ledger).
 fn tracked_header_bytes<B>(request: &hyper::Request<B>) -> usize {
-    // Node's TrackHeader counts the raw request-line span plus every header
-    // line's name and value bytes. hyper's `uri()` splits the target into
-    // scheme/authority/path-and-query parts; re-rendering via `to_string()`
-    // would allocate a fresh String per request, so the parts are summed in
-    // place instead — for every form llhttp accepts (origin, authority,
-    // absolute, absolute without a path where `Uri` keeps the implicit slash)
-    // the sum renders byte-for-byte like `to_string()`, which is why the
-    // allocation, not the value, is the whole change.
+    // Node's TrackHeader counts the raw request-line target span plus every
+    // header line's name and value bytes. hyper's `uri()` splits the target
+    // into scheme/authority/path-and-query parts; re-rendering via
+    // `to_string()` would allocate a fresh String per request, so the parts
+    // are summed in place instead. For every accepted form but one the sum
+    // renders byte-for-byte like `to_string()`: the exception is the
+    // absolute-form empty-path-with-query target (`GET http://h?x=1`), where
+    // `path_and_query()` keeps the raw `"?x=1"` while `Uri::Display` inserts
+    // the implicit `/` — there the sum is Node's raw span and the re-render
+    // is one byte over it (fix-r1 probe `probe-p2.out`: TS serves the 16383
+    // raw span and 431s the 16384 one; the no-query empty-path target stays
+    // the registered +1 residual either way, pinned by `pin-budget-absolute`).
     let uri = request.uri();
-    uri.scheme().map_or(0, |value| value.as_str().len() + 3)
-        + uri.authority().map_or(0, |value| value.as_str().len())
-        + uri.path_and_query().map_or(0, |value| value.as_str().len())
+    let url_span = if crate::mutants::on("native-http-uri-realloc") {
+        // The restored `to_string()` re-render the negative control kills:
+        // one byte over the raw span on the empty-path+query form, so its
+        // 16383 boundary cell 431s.
+        uri.to_string().len()
+    } else {
+        uri.scheme().map_or(0, |value| value.as_str().len() + 3)
+            + uri.authority().map_or(0, |value| value.as_str().len())
+            + uri.path_and_query().map_or(0, |value| value.as_str().len())
+    };
+    url_span
         + request
             .headers()
             .iter()
