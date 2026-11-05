@@ -24,3 +24,20 @@
 - 一个脚本干一件事，名字说清干什么
 - 能跑就能重复跑：**同样输入同样结果，跑几遍都一样**
 - 报告问题，不擅自修改——要改也另出一个 `fix-*` 脚本，让人决定跑不跑
+
+## check-taskbook-segments.py — 大包任务书必须切段
+
+踩过的坑：**2026-11-05 夜 #1316** 跑满 7200 s 被 kill，16 个文件写完但 RESULT / 负控 / final.patch 全缺，只能靠 WIP 补丁续跑；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
+「每 30 分钟 WIP 提交」只防丢进度，**不防「一整段跑不完」**——所以要在大包派单前就按文件切段。
+
+判据来自最近 10 个超时单与 10 个一次跑完的单：**手写改动文件 ≥ 8 或 手写 diff ≥ 1500 行**（召回 9/10，误报 3/10，且误报的三个分别是 95 min 逼近上限、478k 行生成金样、接续轮）。
+派单前拿不到真实改动量，所以任务书写 `<!-- pdrs-scope: files=N lines=M est_min=K -->` 声明；没写才退回「约 N 人日」与点名 `*.rs` 路径数。
+
+```bash
+python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过 / 1 大包缺分段表 / 2 读不了或 scope 写坏
+python3 -I scripts/check-taskbook-segments.py --print-skeleton
+python3 -I scripts/test-check-taskbook-segments.py        # 14 条正控 / 负控
+```
+
+命中大包的任务书必须含 `## 分段交付`（段名 / 涉及文件 / 交付物 / 预估时长 ≤90 min / 段间依赖，≥2 段）与 `## 续跑`（进度文件 + 第 N 段失败从哪继续）。
+`~/ws/pdrs-ops` 的 `dispatch-issue` / `dispatch-fix` / `fix-assemble` 已强制：不合规不启动 worker；`dispatch-resume` 只告警；`round-start` 9d 段每轮兜底。模板见 `~/ws/pdrs-ops/templates/taskbook-segments.md`。
