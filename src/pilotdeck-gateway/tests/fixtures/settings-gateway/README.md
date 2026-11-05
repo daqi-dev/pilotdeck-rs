@@ -86,8 +86,8 @@ all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle
 | 退出码 | 含义 |
 |---|---|
 | `0` | 本次选中的变异全部 KILLED（`summary.json` 此时 `complete: true`） |
-| `1` | 开跑过但没得到全杀结论。三种形态：① 基线重放不通过——只有 `baseline.json` + `baseline-replay.log`，**没有** `summary.json`；② 有变异 SURVIVED / INVALID——`summary.json` 在，`complete: true`；③ 跑动中被打断或收尾恢复校验失败——`summary.json` 在，`complete: false`（残卷）。此外，任何在本脚本接管之前就抛出的异常（树不干净、领锁超时、`oracle.json` 读不了）也是 `1` 加一段 traceback，此时目录里可能什么都没有 |
-| `2` | 从未真正开跑，**本轮没有写过任何证据**：变异名非法、输出目录已存在、缺 `CARGO_TARGET_DIR`、基线无法解析、marker 不指向真实 oracle 行、表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7` 与冻结名册 `EXPECTED_NAMES`）、`MARKERS` 与变异表不互相覆盖 |
+| `1` | 开跑过但没得到全杀结论。四种形态：① 基线重放不通过——`baseline.json` + `baseline-replay.log`，**没有** `summary.json`；② 有变异 SURVIVED / INVALID——`summary.json` 在，`complete: true`；③ 跑动中被打断或收尾恢复校验失败——`summary.json` 在，`complete: false`（残卷）；④ **基线重放期间**被打断——只有 `baseline-replay.log`（末尾写明 `interrupted before the baseline replay produced output`，或就是被打断那一刻的日志），`baseline.json` / `summary.json` 都不在。此外，任何在本脚本接管之前就抛出的异常（树不干净、领锁超时、`oracle.json` 读不了）也是 `1` 加一段 traceback，此时目录里可能什么都没有 |
+| `2` | 从未真正开跑，**本轮没有写过任何证据**：变异名非法、输出目录已存在、缺 `CARGO_TARGET_DIR`、基线无法解析、marker 不指向真实 oracle 行、某个 marker 值为空 / 不指向单一断言 / 与另一个变异共用（判定是 `marker in evidence`，`'' in evidence` 恒真）、表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7` 与冻结名册 `EXPECTED_NAMES`）、`MARKERS` 与变异表不互相覆盖 |
 | `42` | 全杀但基线不是 HEAD，非宿主证据 |
 
 「输出目录已存在」是唯一会带着**别的运行**留下的文件的 `2`：`runId` 是「基线前缀 + 随机
@@ -108,8 +108,10 @@ nonce」，本轮没有 nonce 可对，所以目录里任何文件都不是本�
 被两家评审推翻——撤回本身可能被第二次信号打断，绿结论就留在脏树上。现在的形态下，
 块返回之前盘上最新的记录永远是 `complete: false`，没有可撤回的东西。
 代价是相反的窗口：树锁释放到发布之间还有几个系统调用，另一个运行可能已开始变异；
-两种顺序不可兼得，这里选「宁晚不假」。**进程退出之后**，「目录里是 `complete: true`」与
-「树已按字节还原」是同一件事；运行期间按目录轮询的读者应以「进程已退出」为前提，
+两种顺序不可兼得，这里选「宁晚不假」。因此这条不变式**只覆盖本轮**：进程退出时，
+「目录里是 `complete: true`」意味着**本轮**在锁内做的恢复 + 逐字节校验已经通过
+（`mutating_sources` 保证），不表示「此刻树上没有任何变异体」——锁释放后并发另一轮
+可能正在变异，那是那一轮自己的责任。运行期间按目录轮询的读者应以「进程已退出」为前提，
 退出码仍是本脚本的第一判据。
 失败收尾只做一件事：把残卷标成 `complete: false`；连这次改写都失败（例如磁盘满）时，
 它会删掉 `summary.json` 并在 stderr 说明。

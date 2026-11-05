@@ -55,7 +55,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_failed, panic_evidence
+from negative_panic import marker_is_scoped, named_test_failed, panic_evidence
 from negative_selection import baseline_passed, select, verdict_exit
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
@@ -191,6 +191,22 @@ if set(MARKERS) != set(REGISTERED_NAMES):
     refuse('#1538 marker table must cover exactly the registered mutations:'
            f' missing={sorted(set(REGISTERED_NAMES) - set(MARKERS))}'
            f' extra={sorted(set(MARKERS) - set(REGISTERED_NAMES))}')
+# #1538 fix-r7 (MiniMax boundary P1): the two-way gate above compares *keys*
+# and the roster compares *row names*; the marker *values* were unchecked.
+# Kill is decided by `marker in evidence`, and `'' in evidence` is true for
+# every log — one blank marker would let a same-named test that failed for an
+# unrelated reason read as KILLED. Two mutations sharing a marker weakens the
+# same binding. Ordinary edits reach both states; neither needs intent.
+# `negative_panic.marker_is_scoped` is the shared judge for "this names one
+# assertion", and every registered marker above passes it.
+for name, marker in MARKERS.items():
+    if not marker_is_scoped(marker):
+        refuse(f'#1538 marker for {name!r} does not name one assertion: {marker!r}')
+duplicated_markers = sorted({marker for marker in MARKERS.values()
+                             if list(MARKERS.values()).count(marker) > 1})
+if duplicated_markers:
+    refuse('#1538 every mutation needs its own marker;'
+           f' shared={duplicated_markers}')
 selected = sys.argv[2:]
 # #1538 fix-r5 (MiniMax sibling P1): the runtime selection lives in `rows`,
 # never back in `mutations`. `anchor_selfcheck.py` only accepts a mutation
@@ -337,11 +353,27 @@ try:
 
         # An unmutated baseline must be green first, or every verdict is INVALID.
         wait_for_slot(slot_script)
-        code, log = run([REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS])
-        atomic_write(out / 'baseline-replay.log', baseline_line + '\n\n' + log)
+        # #1538 fix-r7 (MiniMax boundary P2): `baseline-replay.log` used to be
+        # written after `run()` returned, so an interrupt *during* the baseline
+        # replay left a directory with no `summary.json`, no `baseline.json` and
+        # no log — the README's exit-1 table had no row for that state, and a
+        # host triaging on the documented shapes would read it as "baseline
+        # replay rejected". Write whatever output exists in a `finally`, and
+        # publish `baseline.json` as soon as the baseline passes (below), so the
+        # run's identity is on disk for the whole mutant loop.
+        baseline_code = None
+        baseline_log = ''
+        try:
+            baseline_code, baseline_log = run([REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS])
+        finally:
+            atomic_write(out / 'baseline-replay.log',
+                         baseline_line + '\n\n'
+                         + (baseline_log or '<interrupted before the baseline replay produced output>'))
+        code, log = baseline_code, baseline_log
         if code == 0 and all(baseline_passed(log, test)
                              for test in {REPLAY, UPDATE_DROP, EXTENSIONS_TRUTHINESS}):
             print('baseline replay: PASS', flush=True)
+            publish_baseline()
         else:
             print('baseline replay: INVALID', flush=True)
             # A broken baseline is "ran, no verdict": publish the run's identity
