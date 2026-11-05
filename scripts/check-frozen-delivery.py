@@ -106,6 +106,11 @@ PARITY_SPEC_FILES = ('README.md', 'acceptance.md', 'normalization.md',
                      'accepted-diffs.md', 'multimodal.md')
 GATEWAY_SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md')
 GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
+# ui-server-parity registers everything tracked under these two directories plus
+# ``SPEC_FILES`` (a literal in ``apparatus.py``) and the repo toolchain files.
+UI_DIRS = ('scripts/ui-server-parity/', 'scripts/exp008/')
+UI_SPEC = 'specs/ui-server-parity/'
+UI_TOOLCHAIN = ('rust-toolchain', 'rust-toolchain.toml')
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 
@@ -357,15 +362,18 @@ def chain_backed(root, kind, edges, path, mb):
     # --write would register the path, '-' when it drops or never had the row
     # (a deleted file *and* a member removed from the inventory while the file
     # stays tracked both end at '-', exactly like ``new_hashes.get(name, '-')``).
-    if not registrable(root, kind, path):
+    if not mb:
+        return False
+    registration = registrable(root, kind, path)
+    if registration is None:
+        return False  # cannot tell -> nothing is provable (fail closed)
+    if registration is False:
         target = '-'
     else:
         state, actual = blob_at(root, 'HEAD', path)
         if state is not True or actual is None:
             return False
         target = actual
-    if not mb:
-        return False
     base = base_digest(root, kind, mb, path)
     if base is None or base == target:
         return False
@@ -485,14 +493,40 @@ def gateway_inventory(root, commit='HEAD'):
     return inventory
 
 
-def registrable(root, kind, path):
-    """True when this apparatus's ``--write`` would add a FROZEN row for ``path``.
+def ui_inventory(root, commit='HEAD'):
+    """Paths ui-server-parity's ``--write`` gives a row (``None`` when unknown).
 
-    Only such a path can be a first registration: accepting a chain for anything
-    else blesses a failure ``--write`` cannot clear (parity keeps five fixed
-    spec files and ``git ls-files scripts/parity/``; gateway-parity's inventory
-    is written out in its own source, so a new member is registrable only when
-    that source names it).
+    ``SPEC_FILES`` lives in ``apparatus.py``; the rest of the inventory is
+    everything tracked under the two apparatus directories plus the toolchain
+    files, which the directory membership covers at lookup time.
+    """
+    key = ('ui-inventory', str(root), commit)
+    if key in _SOURCE_CACHE:
+        return _SOURCE_CACHE[key]
+    source = source_text(root, commit, 'scripts/ui-server-parity/apparatus.py')
+    inventory = None
+    if source is not None:
+        match = re.search(r'^SPEC_FILES\s*=\s*\((.*?)\)', source, re.S | re.M)
+        if match:
+            inventory = {UI_SPEC + name for name in re.findall(r"'([^']+)'", match.group(1))}
+            inventory.update(UI_TOOLCHAIN)
+    _SOURCE_CACHE[key] = inventory
+    return inventory
+
+
+def registrable(root, kind, path):
+    """True/False/None -- would ``--write`` give ``path`` a FROZEN row now?
+
+    Only such a path can be a first registration, and only an unregistrable one
+    can have its row dropped: accepting a chain for anything else blesses a
+    failure ``--write`` cannot clear (parity keeps five fixed spec files and
+    ``git ls-files scripts/parity/``; gateway-parity's inventory and
+    ui-server-parity's ``SPEC_FILES`` are written out in their own sources).
+
+    ``None`` means "cannot tell" (git failed, or the inventory source does not
+    have the shape this tool parses).  Callers must fail closed on it: treating
+    an unreadable inventory as "not registrable" would let a delivery be judged
+    against a ``-`` target the real ``--write`` will never produce.
     """
     if kind == 'parity':
         if path in {f'specs/parity/{name}' for name in PARITY_SPEC_FILES}:
@@ -509,24 +543,36 @@ def registrable(root, kind, path):
         if inventory is not None:
             return path in inventory
         name = Path(path).name
+        missing = False
         for source in ('scripts/gateway-parity/common.py',
                        'scripts/gateway-parity/check_frozen.py'):
             text = source_text(root, 'HEAD', source)
-            if text is not None and name in text:
+            if text is None:
+                missing = True
+            elif name in text:
                 return True
-        return False
-    return True  # ui-server-parity names the required files in its own report
+        return None if missing else False
+    if kind == 'ui-server-parity':
+        inventory = ui_inventory(root, 'HEAD')
+        if inventory is None:
+            return None
+        if path in inventory:
+            return True
+        if not path.startswith(UI_DIRS):
+            return False
+        return tracked_at_head(root, path)
+    return True  # unknown apparatus: keep demanding a chain (conservative)
 
 
 def tracked_at_head(root, path):
-    """True when ``path`` is tracked in HEAD's tree (one ls-tree per prefix)."""
+    """True/False/None -- is ``path`` a file committed at HEAD? (one ls-tree per prefix)"""
     prefix = path.split('/', 1)[0] + '/' if '/' in path else path
     key = (str(root), prefix)
     if key not in _SOURCE_CACHE:
         code, out, _ = git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--', prefix)
         _SOURCE_CACHE[key] = set(out.splitlines()) if code == 0 else None
     listing = _SOURCE_CACHE[key]
-    return listing is not None and path in listing
+    return None if listing is None else path in listing
 
 
 def unregistered_added(root, kind, mb):
@@ -562,10 +608,45 @@ def unregistered_added(root, kind, mb):
             if state is None:
                 issues.append(f'{name}: cannot tell whether it had a hash row at the base')
                 continue
-            if state or not registrable(root, kind, name):
+            if state:
+                continue
+            registration = registrable(root, kind, name)
+            if registration is None:
+                issues.append(f'{name}: cannot tell whether --write would register it')
+                continue
+            if not registration:
                 continue
             added.append(name)
     return sorted(set(added)), issues
+
+
+def dropped_rows(root, kind, mb):
+    """Paths that had a hash row at the merge-base but none in the new manifest.
+
+    ``--write`` deletes these rows, so the real gate wants the chain to end at
+    ``-`` (``new_hashes.get(name, '-')``).  The apparatus cannot report this
+    before ``--write``: its ``new_hashes`` comes from the rows that are still
+    there, so an ``old -> new`` chain matching the current bytes looks complete
+    and the only failures left are the reducible ones -- a false READY.  This is
+    the symmetric half of ``unregistered_added``: enumerate the drops here and
+    demand the exact ``Change: <old> -`` chain.
+    """
+    if not mb:
+        return [], []
+    rows = manifest_rows(root, kind, mb)
+    if rows is None:
+        return [], ['cannot read the merge-base manifest rows']
+    dropped, issues = [], []
+    for name in sorted(rows):
+        if BYTECODE.search(name):
+            continue
+        registration = registrable(root, kind, name)
+        if registration is None:
+            issues.append(f'{name}: cannot tell whether --write still registers it')
+            continue
+        if not registration:
+            dropped.append(name)
+    return dropped, issues
 
 
 def classify(ctx, item):
@@ -609,7 +690,10 @@ def classify(ctx, item):
         # never register it.  A member dropped from the inventory is in the old
         # manifest, so deletions still pass.
         in_old = registered_at(root, kind, name, mb) is True
-        if (in_old or registrable(root, kind, name)) \
+        registration = registrable(root, kind, name)
+        if registration is None:
+            return 'block', 'blocking (cannot tell whether --write registers it)', None
+        if (in_old or registration) \
                 and chain_backed(root, kind, edges, name, mb):
             return 'ok', None, None
         return 'block', 'blocking', None
@@ -686,8 +770,13 @@ def run_apparatus(root, kind, entry, base, mb):
     for name in sorted(set(new_files) | set(unregistered)):
         if BYTECODE.search(name) or name in reported:
             continue  # bytecode is already an apparatus error
-        if not registrable(root, kind, name):
+        registration = registrable(root, kind, name)
+        if registration is False:
             continue  # --write ignores it; demanding a chain would be a dead end
+        if registration is None:
+            result['blocking'].append(('blocking', f'{name}: cannot tell whether --write '
+                                                   'would register it (inventory unreadable)', None))
+            continue
         reported.add(name)
         if exists_at(root, 'HEAD', name) is not True:
             result['blocking'].append(('blocking', f'{name}: unregistered file is not '
@@ -697,6 +786,19 @@ def run_apparatus(root, kind, entry, base, mb):
                                                    'exact Change: - <sha256> event chain '
                                                    '(--write would register it and check_frozen '
                                                    '--base would then reject)', None))
+    # Dropped registrations: the apparatus cannot report these before --write
+    # (its new_hashes still comes from the row that is there), so a member taken
+    # out of the inventory -- or a deleted file -- would otherwise read READY.
+    dropped, drop_issues = dropped_rows(root, kind, mb)
+    result['blocking'].extend(('blocking', message, None) for message in drop_issues)
+    reported.update(dropped)  # a dropped row is not also a first registration
+    for name in dropped:
+        if chain_backed(root, kind, edges, name, mb):
+            continue
+        result['blocking'].append(('blocking', f'{name}: row dropped from the new manifest '
+                                               'without an exact Change: <old> - event chain '
+                                               '(--write would delete the row and check_frozen '
+                                               '--base would then reject)', None))
     return result
 
 
