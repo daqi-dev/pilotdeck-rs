@@ -28,8 +28,10 @@
 
 - getupdates 长轮询保持到脚本下一条，且**在响应时刻**才记录（消除 poll 到达与
   派发请求之间的次序竞态）；其余端点到达即记录。
-- 停止类操作（prepare/reload/close）用 settleStop：先应答 held poll 让
-  pollLoop 在顶部检查处退出（TS stop 同步发 abort 后等 pollPromise）。
+- 停止类操作（prepare/reload/close）用 settleStop：只应答**停止开始时已
+  parked** 的 held poll（stop 的 pollPromise park 在它上面；TS stop 同步发
+  abort 后等它）；替换渠道在 stop 期间新发的 poll 是普通长轮询，保持 parked
+  等下一条脚本——否则记录数取决于事件循环粒度（Rust 重放无法复现）。
 - held turn 的 park 标记（`turn-N-held` 合成请求）只在消费方消化完
   `turn_started`（activeRun 登记）后记录；`wait-held` 闸以此固定 `/new`
   abort 的 runId 存在性。

@@ -479,13 +479,13 @@ pub(super) async fn start_observed_with_upload_cleanup(
         };
         Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
-            pilot_home: options.home.clone(),
-            config: Arc::new(
-                config
-                    .get("config")
-                    .cloned()
-                    .unwrap_or_else(|| JsValue::Object(JsObject::new())),
-            ),
+                pilot_home: options.home.clone(),
+                config: Arc::new(
+                    config
+                        .get("config")
+                        .cloned()
+                        .unwrap_or_else(|| JsValue::Object(JsObject::new())),
+                ),
                 weixin: crate::channel::weixin::WeixinChannelOptions::default(),
                 weixin_maker: None,
                 log: None,
@@ -608,10 +608,11 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 cleanup_diagnostic(error);
             }
             let mut outcome = sessions.and(project);
-            for failure in [channel_stop.err(), channel_flush.err()] {
-                if let Some(failure) = failure {
-                    outcome = outcome.and(Err(failure));
-                }
+            for failure in [channel_stop.err(), channel_flush.err()]
+                .into_iter()
+                .flatten()
+            {
+                outcome = outcome.and(Err(failure));
             }
             outcome
         },

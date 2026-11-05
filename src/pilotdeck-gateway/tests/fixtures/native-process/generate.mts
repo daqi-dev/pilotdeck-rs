@@ -114,6 +114,11 @@ const {LocalGatewayLifecycleBundle} = await load(sources[7]);
 observations.productionCleanup=[];
 for (const mode of ['ok','session-error','project-error','both-errors','release','cancel','never']) {
   const gate=deferred(), entered=deferred(); const calls:string[]=[], warnings:any[]=[];
+  // #1328: the native host stops its channel assembly before the gateway
+  // lifecycle disposal — the closeServer/flushChannelState steps run before
+  // the gateway disposes (PilotDeckServerShutdownBundle.ts:33-37). The Rust
+  // channel flush has no observer step, so only the stop lands in `calls`.
+  const channelsStop=async()=>{calls.push('channels');};
   const bundle=new LocalGatewayLifecycleBundle({
     gateway:{},subagentManager:{async dispose(){}},subagentProviders:{async dispose(){}},
     registry:{
@@ -127,10 +132,10 @@ for (const mode of ['ok','session-error','project-error','both-errors','release'
     telemetry:{async dispose(){}},stopConfigWatching(){},stopExtensionWatching(){},
     warn(message:string,error:any){warnings.push({message,error:error.message});},
   });
-  let settled=false; const wait=bundle.dispose().then(()=>{settled=true;});
+  let settled=false; const wait=(async()=>{await channelsStop();await bundle.dispose();})().then(()=>{settled=true;});
   await entered.promise; await Promise.resolve();
   const before={calls:[...calls],settled};
-  if (['release','cancel','never'].includes(mode)) assert.deepEqual(before,{calls:['session'],settled:false},'#1071 cleanup predecessor gate');
+  if (['release','cancel','never'].includes(mode)) assert.deepEqual(before,{calls:['channels','session'],settled:false},'#1071 cleanup predecessor gate');
   if (mode==='never') {observations.productionCleanup.push({mode,before});continue;}
   gate.release(); await wait; observations.productionCleanup.push({mode,before,calls,warnings,settled});
 }

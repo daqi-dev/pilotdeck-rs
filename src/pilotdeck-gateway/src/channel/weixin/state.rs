@@ -56,7 +56,9 @@ impl ChannelStatePersistence {
 
     /// `load` — missing file or invalid JSON yields `None`.
     pub async fn load(&self, channel_key: &JsString) -> Option<JsValue> {
-        let raw = tokio::fs::read_to_string(self.file_path(channel_key)).await.ok()?;
+        let raw = tokio::fs::read_to_string(self.file_path(channel_key))
+            .await
+            .ok()?;
         parse_json(&raw).ok()
     }
 
@@ -126,10 +128,9 @@ impl ChannelStatePersistence {
             if let Some(done) = inner.in_flight.get(channel_key) {
                 Some(done.subscribe())
             } else {
-                inner.in_flight.insert(
-                    channel_key.clone(),
-                    watch::Sender::new(false),
-                );
+                inner
+                    .in_flight
+                    .insert(channel_key.clone(), watch::Sender::new(false));
                 None
             }
         };

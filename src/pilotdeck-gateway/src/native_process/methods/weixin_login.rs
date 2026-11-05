@@ -16,18 +16,16 @@
 //! wiring; until then the field is `None` and the method answers the
 //! unsupported shape instead of `metadata::unavailable`.
 use super::super::requests::Requests;
-use crate::{
-    metadata::object,
-    runtime::connection::RequestError,
-};
+use crate::{metadata::object, runtime::connection::RequestError};
 use pilotdeck_protocol::JsValue;
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::{future::Future, pin::Pin, sync::Arc};
 
 pub(super) const METHODS: &[&str] = &["prepare_weixin_login"];
-pub(super) const HANDLER: super::Handler = super::Handler::BeforeAdmission(
-    |requests, _method, _params| Box::pin(requests.prepare_weixin_login_request()),
-);
+pub(super) const HANDLER: super::Handler =
+    super::Handler::BeforeAdmission(|requests, _method, _params| {
+        Box::pin(requests.prepare_weixin_login_request())
+    });
 
 /// The `InProcessGatewayOptions.prepareWeixinLogin` callback. A rejection
 /// surfaces as the RPC error, like an awaited TS rejection does.

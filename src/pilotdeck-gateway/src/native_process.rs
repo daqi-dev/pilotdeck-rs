@@ -8,7 +8,9 @@ use std::{
     time::Duration,
 };
 mod assembly;
-mod channels;
+// #1328 replay test (channel::weixin::replay_tests) drives the assembly
+// directly, in the channel subtree rather than this one.
+pub(crate) mod channels;
 mod families;
 mod management;
 mod methods;

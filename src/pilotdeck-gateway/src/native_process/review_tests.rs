@@ -131,7 +131,7 @@ async fn production_cleanup_matrix() {
         if ["release", "cancel", "never"].contains(&mode) {
             negative_assert_eq!(
                 calls.lock().expect("#1071 before cleanup calls").clone(),
-                vec!["session"],
+                vec!["channels", "session"],
                 "#1071 production cleanup waits for predecessor"
             );
             if mode != "never" {
@@ -156,9 +156,11 @@ async fn production_cleanup_matrix() {
         negative_assert_eq!(
             actual_calls,
             if mode == "never" {
-                vec!["session"]
+                // #1328: the channel assembly stops before the gateway
+                // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37).
+                vec!["channels", "session"]
             } else {
-                vec!["session", "project"]
+                vec!["channels", "session", "project"]
             },
             "#1071 production cleanup attempts both resources"
         );

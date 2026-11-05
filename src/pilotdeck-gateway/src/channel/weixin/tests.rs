@@ -19,8 +19,8 @@ impl Root {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         loop {
             let n = NEXT.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir()
-                .join(format!("pdrs-weixin-unit-{}-{n}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("pdrs-weixin-unit-{}-{n}", std::process::id()));
             match std::fs::create_dir(&path) {
                 Ok(()) => return Self(path),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -47,8 +47,15 @@ fn mapper_general_session_for_new_chat() {
         "weixin:chat=chat-1:general",
         "#1328 unmapped chat falls back to :general"
     );
-    assert_eq!(text_of(&result.message), "hello", "#1328 message passes through");
-    assert!(result.command.is_none(), "#1328 plain text is not a command");
+    assert_eq!(
+        text_of(&result.message),
+        "hello",
+        "#1328 message passes through"
+    );
+    assert!(
+        result.command.is_none(),
+        "#1328 plain text is not a command"
+    );
     assert!(result.project_key.is_none(), "#1328 no project bound");
 }
 
@@ -65,7 +72,10 @@ fn mapper_new_command_rotates_session() {
         "#1328 /new allocates the s_ session"
     );
     assert!(matches!(rotated.command, Some(WeixinCommand::New)));
-    assert!(rotated.message.units().is_empty(), "#1328 bare /new has no message");
+    assert!(
+        rotated.message.units().is_empty(),
+        "#1328 bare /new has no message"
+    );
 
     let follow_up = mapper.resolve(&js("chat-1"), &js("next"));
     assert_eq!(
@@ -99,10 +109,7 @@ fn mapper_state_round_trip_keeps_snapshot_order() {
     mapper.resolve(&js("chat-a"), &js("/new"));
     mapper.bind_project(&js("chat-a"), &js("proj"));
     let snapshot = mapper.snapshot();
-    let restored = WeixinSessionMapper::from_saved_with_uuid(
-        &snapshot,
-        Arc::new(|| js("u2")),
-    );
+    let restored = WeixinSessionMapper::from_saved_with_uuid(&snapshot, Arc::new(|| js("u2")));
     let after = restored.resolve(&js("chat-a"), &js("text"));
     assert_eq!(
         text_of(&after.session_key),
@@ -138,8 +145,7 @@ fn pretty_json_matches_node_stringify() {
     array.insert("c".into(), JsValue::Object(inner));
     let text = state::stringify_pretty(&JsValue::Object(array));
     assert_eq!(
-        text,
-        "{\n  \"a\": 1,\n  \"b\": [],\n  \"c\": {\n    \"d\": null\n  }\n}",
+        text, "{\n  \"a\": 1,\n  \"b\": [],\n  \"c\": {\n    \"d\": null\n  }\n}",
         "#1328 JSON.stringify(value, null, 2) exact shape"
     );
 }
@@ -155,18 +161,17 @@ async fn persistence_debounces_then_writes_atomically() {
 
     // Before the debounce elapses, only a flush lands the write.
     let file = root.path().join("weixin.state.json");
-    assert!(
-        !file.exists(),
-        "#1328 debounced write has not landed yet"
-    );
+    assert!(!file.exists(), "#1328 debounced write has not landed yet");
     persistence.flush().await.expect("#1328 flush writes");
     let raw = std::fs::read_to_string(&file).expect("#1328 state file");
     assert_eq!(
-        raw,
-        "{\n  \"activeByChatId\": {}\n}",
+        raw, "{\n  \"activeByChatId\": {}\n}",
         "#1328 persisted state matches the TS JSON shape"
     );
-    let loaded = persistence.load(&key).await.expect("#1328 load after flush");
+    let loaded = persistence
+        .load(&key)
+        .await
+        .expect("#1328 load after flush");
     assert!(
         loaded.get("activeByChatId").is_some(),
         "#1328 loaded state round-trips"

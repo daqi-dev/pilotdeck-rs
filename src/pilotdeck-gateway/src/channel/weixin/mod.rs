@@ -18,6 +18,8 @@
 //! also reports its own login states.
 mod client;
 mod mapper;
+#[cfg(test)]
+mod replay_tests;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -32,7 +34,8 @@ pub use state::ChannelStatePersistence;
 pub(crate) use state::stringify_pretty;
 
 use super::protocol::{
-    BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelStartDeps, ChannelLog,
+    BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelLog,
+    ChannelStartDeps,
 };
 use crate::runtime::network::Cancellation;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
@@ -63,7 +66,8 @@ const WEIXIN_CONNECTION_RECOVERED_TEXT: &str = "微信连接已恢复，我会�
 const WEIXIN_CONNECTION_RECOVERED_AFTER_LOSS_TEXT: &str =
     "微信连接刚刚中断过，现在已恢复。我会继续处理当前任务。";
 /// `timeoutFinalText` override WeixinChannel passes to the reply controller.
-const WEIXIN_TIMEOUT_FINAL_TEXT: &str = "处理时间已超过上限，任务已停止。你可以调整需求后重新发送。";
+const WEIXIN_TIMEOUT_FINAL_TEXT: &str =
+    "处理时间已超过上限，任务已停止。你可以调整需求后重新发送。";
 /// `DEFAULT_ABORT_FINAL_TEXT` (weixin passes no `abortFinalText` override).
 const WEIXIN_ABORT_FINAL_TEXT: &str = "处理已中止，请重新发送或稍后重试。";
 const WEIXIN_NEW_SESSION_TEXT: &str = "已创建新会话。";
@@ -186,6 +190,12 @@ pub trait WeixinGatewayPort: Send + Sync {
 /// One `submitTurn` iteration: events until end, or the TS iteration throw.
 pub struct WeixinTurnStream {
     receiver: tokio::sync::mpsc::UnboundedReceiver<WeixinStreamItem>,
+    /// #1328 replay seam: invoked at every `next()` entry — the point the TS
+    /// consumer asks its async generator for the next value, which is after it
+    /// has processed the previous event. The oracle harness uses it to record
+    /// its held-turn marker at exactly that rendezvous.
+    #[cfg(test)]
+    receipt: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 enum WeixinStreamItem {
     Event(JsValue),
@@ -193,6 +203,10 @@ enum WeixinStreamItem {
 }
 impl WeixinTurnStream {
     pub async fn next(&mut self) -> Result<Option<JsValue>, String> {
+        #[cfg(test)]
+        if let Some(hook) = &self.receipt {
+            hook();
+        }
         match self.receiver.recv().await {
             Some(WeixinStreamItem::Event(event)) => Ok(Some(event)),
             Some(WeixinStreamItem::Failed(message)) => Err(message),
@@ -433,10 +447,7 @@ impl WeixinChannel {
 
     fn is_stale_generation(&self, generation: u64) -> bool {
         let inner = self.lock_inner();
-        inner
-            .abort
-            .as_ref()
-            .is_some_and(|abort| abort.is_aborted())
+        inner.abort.as_ref().is_some_and(|abort| abort.is_aborted())
             || inner.generation != generation
     }
 
@@ -537,7 +548,7 @@ impl WeixinChannel {
             if inner.recovery_task.is_some() {
                 return;
             }
-            inner.abort.clone().unwrap_or_else(Cancellation::new)
+            inner.abort.clone().unwrap_or_default()
         };
         self.log(
             "warn",
@@ -548,8 +559,8 @@ impl WeixinChannel {
     }
 
     async fn watch_credentials_for_login_recovery(self, abort: Cancellation) {
-        let deadline = tokio::time::Instant::now()
-            + Duration::from_millis(WEIXIN_LOGIN_RECOVERY_TIMEOUT_MS);
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(WEIXIN_LOGIN_RECOVERY_TIMEOUT_MS);
         loop {
             if abort.is_aborted() || self.lock_inner().poll_task.is_some() {
                 return;
@@ -577,8 +588,10 @@ impl WeixinChannel {
     async fn sleep_login_recovery(&self, abort: &Cancellation) {
         let (fired, mut fired_rx) = tokio::sync::oneshot::channel::<()>();
         let timer = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(WEIXIN_LOGIN_RECOVERY_CHECK_INTERVAL_MS))
-                .await;
+            tokio::time::sleep(Duration::from_millis(
+                WEIXIN_LOGIN_RECOVERY_CHECK_INTERVAL_MS,
+            ))
+            .await;
             let _ = fired.send(());
         });
         self.lock_inner().recovery_timer = Some(timer);
@@ -614,7 +627,30 @@ impl WeixinChannel {
             "info",
             "weixin: no credentials found, starting QR login...".into(),
         );
-        self.report_status(WeixinChannelState::WaitingForLogin, "微信等待扫码登录", |_| {});
+        self.report_status(
+            WeixinChannelState::WaitingForLogin,
+            "微信等待扫码登录",
+            |_| {},
+        );
+        // The TS channel prints its QR banner through console.log
+        // (WeixinChannel.ts:277-280); the adapter logger and the console
+        // share the log sink in the assembly, so both reach the harness.
+        self.log(
+            "info",
+            "\n╔══════════════════════════════════════════════╗".into(),
+        );
+        self.log(
+            "info",
+            "║  微信 iLink 登录 — 请用微信扫描二维码        ║".into(),
+        );
+        self.log(
+            "info",
+            "╚══════════════════════════════════════════════╝\n".into(),
+        );
+        self.log(
+            "info",
+            "[weixin] 等待扫码登录；PilotDeck Web UI 已可继续使用。\n".into(),
+        );
         let task = tokio::spawn(self.clone().run_qr_login(generation));
         self.lock_inner().login_task = Some(task);
     }
@@ -631,6 +667,14 @@ impl WeixinChannel {
                 "微信等待扫码登录",
                 |status| status.qr_url = Some(url.clone()),
             );
+            // WeixinChannel.ts:296 — the QR link banner is a console.log.
+            channel.log(
+                "info",
+                format!(
+                    "[weixin] 扫码登录链接:\n{}\n",
+                    String::from_utf16_lossy(url.units())
+                ),
+            );
         });
         let channel = self.clone();
         let on_status_change = Box::new(move |status: &str| {
@@ -644,6 +688,7 @@ impl WeixinChannel {
                 "refreshing" => "刷新中...",
                 other => other,
             };
+            channel.log("info", format!("[weixin] {labels}"));
             if matches!(status, "waiting" | "scanned" | "refreshing") {
                 let qr_url = channel.lock_inner().current_login_qr_url.clone();
                 channel.report_status(
@@ -669,6 +714,11 @@ impl WeixinChannel {
                     };
                     self.save_credentials(&creds);
                     self.lock_inner().current_login_qr_url = None;
+                    // WeixinChannel.ts:323 — the success banner is a console.log.
+                    self.log(
+                        "info",
+                        format!("[weixin] 登录成功! accountId: {}\n", creds.account_id),
+                    );
                     self.log(
                         "info",
                         format!("weixin: login successful, accountId={}", creds.account_id),
@@ -684,6 +734,9 @@ impl WeixinChannel {
                     let message = error.formatted();
                     self.lock_inner().current_login_qr_url = None;
                     self.log("error", format!("weixin: QR login failed: {error}"));
+                    // WeixinChannel.ts:331 — the failure line is a console.error
+                    // printing the error itself (`${e}`).
+                    self.log("error", format!("[weixin] 登录失败: {error}"));
                     self.report_status(
                         WeixinChannelState::Failed,
                         "weixin: QR login failed",
@@ -770,6 +823,16 @@ impl WeixinChannel {
                 self.log(
                     "error",
                     "weixin: session expired (errcode -14), need re-login".into(),
+                );
+                // WeixinChannel.ts:357-358 — the expiry notice is a
+                // console.error pair carrying the credentials path.
+                self.log(
+                    "error",
+                    "[weixin] Session 过期，请删除凭证文件并重启以重新扫码登录:".into(),
+                );
+                self.log(
+                    "error",
+                    format!("[weixin]   rm {}", self.0.credentials_path.display()),
                 );
                 self.report_status(
                     WeixinChannelState::Expired,
@@ -896,10 +959,7 @@ impl WeixinChannel {
             ),
         );
         let previous_session_key = self.0.mapper.get_session(&from_user);
-        let mapped = self
-            .0
-            .mapper
-            .resolve(&from_user, &JsString::from(text));
+        let mapped = self.0.mapper.resolve(&from_user, &JsString::from(text));
         if mapped.command == Some(WeixinCommand::New) {
             if let Some(on_state_change) = &self.0.on_state_change {
                 on_state_change(&self.0.mapper.snapshot());
@@ -1032,7 +1092,10 @@ impl WeixinChannel {
             typing_channel.send_typing_if_possible(&typing_user).await;
         });
         let mut input = JsObject::new();
-        input.insert("sessionKey".into(), JsValue::String(turn.session_key.clone()));
+        input.insert(
+            "sessionKey".into(),
+            JsValue::String(turn.session_key.clone()),
+        );
         input.insert("channelKey".into(), JsValue::from(CHANNEL_KEY));
         input.insert("message".into(), JsValue::String(turn.message.clone()));
         input.insert("allowPlanModeTools".into(), JsValue::Bool(false));
@@ -1291,17 +1354,14 @@ impl WeixinChannel {
                     break;
                 }
                 let mut inner = self.lock_inner();
-                let drained = inner
-                    .pending_replies
-                    .get_mut(&user)
-                    .is_some_and(|pending| {
-                        if !pending.is_empty() && pending[0] == text {
-                            pending.remove(0);
-                            true
-                        } else {
-                            false
-                        }
-                    });
+                let drained = inner.pending_replies.get_mut(&user).is_some_and(|pending| {
+                    if !pending.is_empty() && pending[0] == text {
+                        pending.remove(0);
+                        true
+                    } else {
+                        false
+                    }
+                });
                 if drained
                     && inner
                         .pending_replies
@@ -1448,8 +1508,8 @@ impl<'a> WeixinReplyBuffer<'a> {
         // visible; `isVisibleFailureStatusDetail` needs `severity === "error"`.
         let visible = detail.get("visible") != Some(&JsValue::Bool(false));
         let severity_error = visible && detail.get("severity") == Some(&JsValue::from("error"));
-        let is_visible_failure = visible
-            && (VISIBLE_FAILURE_STATUS_EVENTS.contains(&name.as_str()) || severity_error);
+        let is_visible_failure =
+            visible && (VISIBLE_FAILURE_STATUS_EVENTS.contains(&name.as_str()) || severity_error);
         if is_visible_failure {
             self.has_visible_failure_status = true;
         }
@@ -1470,10 +1530,10 @@ impl<'a> WeixinReplyBuffer<'a> {
             self.append_str(&format!("\n⚠️ {text}\n"));
             return;
         }
-        if WARNING_STATUS_EVENTS.contains(&name.as_str()) || severity_error {
-            if let Some(message) = detail_message() {
-                self.append_str(&format!("\n⚠️ {message}\n"));
-            }
+        if (WARNING_STATUS_EVENTS.contains(&name.as_str()) || severity_error)
+            && let Some(message) = detail_message()
+        {
+            self.append_str(&format!("\n⚠️ {message}\n"));
         }
         // `subagent_*` activity pulses stay inert in this subset.
     }
@@ -1518,7 +1578,11 @@ impl<'a> WeixinReplyBuffer<'a> {
         let trimmed = crate::metadata::js_trim(&full);
         if !trimmed.is_empty() {
             self.channel
-                .send_reply(&self.user_id, &JsString::from_utf16(self.text.clone()), true)
+                .send_reply(
+                    &self.user_id,
+                    &JsString::from_utf16(self.text.clone()),
+                    true,
+                )
                 .await;
         }
     }
@@ -1540,7 +1604,10 @@ fn format_error(event: &JsValue) -> String {
         if let Some(line) = text_field("provider", "- provider: ") {
             lines.push(line);
         }
-        if let Some(status) = provider.get("status").filter(|status| !status.is_undefined()) {
+        if let Some(status) = provider
+            .get("status")
+            .filter(|status| !status.is_undefined())
+        {
             lines.push(format!("- status: {}", js_template_text(status)));
         }
         if let Some(line) = text_field("code", "- code: ") {
@@ -1664,7 +1731,11 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
             }
             done.send_replace(true);
         });
-        WeixinTurnStream { receiver }
+        WeixinTurnStream {
+            receiver,
+            #[cfg(test)]
+            receipt: None,
+        }
     }
 
     fn abort_turn<'a>(
@@ -1676,10 +1747,7 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
             // TS default reason: `aborted:{runId}` or `aborted`.
             let reason = run_id
                 .map(|run| {
-                    JsString::from(format!(
-                        "aborted:{}",
-                        String::from_utf16_lossy(run.units())
-                    ))
+                    JsString::from(format!("aborted:{}", String::from_utf16_lossy(run.units())))
                 })
                 .unwrap_or_else(|| JsString::from("aborted"));
             self.submitter

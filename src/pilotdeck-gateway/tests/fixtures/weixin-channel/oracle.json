@@ -2404,6 +2404,10 @@
           "count": 1
         },
         {
+          "op": "wait-held",
+          "turn": 0
+        },
+        {
           "op": "script",
           "endpoint": "/ilink/bot/getupdates",
           "items": [
@@ -2521,6 +2525,9 @@
             }
           },
           {
+            "synthetic": "turn-0-held"
+          },
+          {
             "method": "POST",
             "path": "/ilink/bot/getupdates",
             "headers": {
@@ -2535,9 +2542,6 @@
                 "channel_version": "weixin-ilink/0.1.0"
               }
             }
-          },
-          {
-            "synthetic": "turn-0-held"
           },
           {
             "method": "POST",
@@ -3589,6 +3593,22 @@
           },
           {
             "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-8",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-1",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
             "path": "/ilink/bot/getconfig",
             "headers": {
               "content-type": "application/json",
@@ -3695,6 +3715,32 @@
           {
             "channelKey": "weixin",
             "state": "stopped",
+            "message": "weixin: stopped (hot-reload)"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "starting",
+            "message": "weixin: starting in background"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: connected",
+            "accountId": "acct-8"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: started"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
             "message": "weixin: stopped (server-shutdown)"
           }
         ],
@@ -3706,6 +3752,14 @@
           [
             "info",
             "weixin: connected, poll loop started"
+          ],
+          [
+            "info",
+            "weixin: connected, poll loop started"
+          ],
+          [
+            "info",
+            "weixin: loaded saved credentials (account: acct-8)"
           ],
           [
             "info",
@@ -3737,6 +3791,10 @@
           ],
           [
             "info",
+            "weixin: stopping (hot-reload)"
+          ],
+          [
+            "info",
             "weixin: stopping (server-shutdown)"
           ]
         ],
@@ -3755,7 +3813,8 @@
         ],
         "results": [
           {
-            "error": "TypeError: WeixinSessionMapper is not a constructor"
+            "requested": true,
+            "requestedAt": "<now>"
           },
           null
         ],

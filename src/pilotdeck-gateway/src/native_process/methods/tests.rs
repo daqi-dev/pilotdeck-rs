@@ -3070,7 +3070,7 @@ async fn prepare_weixin_login_without_callback_answers_unsupported() {
         .and_then(JsValue::as_string)
         .expect("#1328 unsupported shape carries requestedAt");
     negative_assert!(
-        parse_iso(&requested_at).is_some(),
+        parse_iso(requested_at).is_some(),
         "#1328 requestedAt is a fresh ISO timestamp"
     );
     // A repeat call is not cached: a fresh object with a fresh timestamp each
@@ -3089,7 +3089,7 @@ async fn prepare_weixin_login_without_callback_answers_unsupported() {
         .and_then(JsValue::as_string)
         .expect("#1328 repeat call carries requestedAt");
     negative_assert!(
-        parse_iso(&second_at).is_some(),
+        parse_iso(second_at).is_some(),
         "#1328 repeat call timestamp is ISO"
     );
     requests
