@@ -207,6 +207,11 @@ python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另�
   一致），有该行才从旧字节起算。终点同理取**新清单**：成员被移出清单、文件仍跟踪
   （或文件被删）时 `--write` 删行，目标一律是 `-`，只认 `Change: <old> -`；
   只写 `Change: <old> <new>` 的交付判阻塞——真实闸门在 `--write` 后同样拒绝。
+  **掉行不靠装置报文**：pre-write 时装置的 `new_hashes` 仍取还在的旧行，成员被
+  移出清单只会报可消的 `hash list differs`；预检自己枚举「merge-base 有行、
+  HEAD 已不可登记」的路径逐条查链（与首登记扫描对称）。ui-server-parity 的清单
+  同样从装置源解析（`apparatus.py:SPEC_FILES` + 两个装置目录的跟踪文件）；
+  清单源读不出或形态认不出时按「不可判定」阻塞，不折算成 `-`。
 - 阻塞：其余全部。尤其「改了冻结字节却没有对应事件行」的
   `hash change lacks exact new event chain`、未登记文件、事件文件缺 `Change:`
   行或四字段（`Calibration-Evidence` / `Independent-Reviews` / `Approved-By` /
