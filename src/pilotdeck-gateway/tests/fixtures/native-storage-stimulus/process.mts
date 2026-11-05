@@ -85,10 +85,15 @@ const transcriptOf=async(process:any)=>{
 const writeAtomic=async(path:string,text:string)=>{const temporary=path+'.tmp';await writeFile(temporary,text);await rename(temporary,path);};
 const arm=async(control:string,config:any)=>writeAtomic(join(control,'stimulus.json'),JSON.stringify(config));
 const releaseBarrier=async(control:string,seq:number)=>writeAtomic(join(control,'release.json'),JSON.stringify({seq}));
+// The product publishes each receipt atomically (`<seq>.json.tmp` + rename,
+// stimulus.rs `publish`), so a `.tmp` name is never a finished receipt: a
+// crash can leave one half written, and parsing it would fail an otherwise
+// clean scenario on truncated JSON. Only the renamed `.json` is visible.
+const finishedReceipts=(files:string[])=>files.filter(name=>name.endsWith('.json'));
 const witness=async(control:string,site:string,phase:string,key:string)=>{
   const dir=join(control,'witness');
   for(;;){
-    const files=(await readdir(dir).catch(()=>[]as string[])).sort();
+    const files=finishedReceipts((await readdir(dir).catch(()=>[]as string[])).sort());
     for(const name of files){
       const receipt=JSON.parse(await readFile(join(dir,name),'utf8'));
       if(receipt.site===site&&receipt.phase===phase&&receipt.key===key)return receipt;
@@ -99,7 +104,7 @@ const witness=async(control:string,site:string,phase:string,key:string)=>{
 };
 const witnessCount=async(control:string,site:string,phase:string,key:string)=>{
   const dir=join(control,'witness');
-  const files=(await readdir(dir).catch(()=>[]as string[])).sort();
+  const files=finishedReceipts((await readdir(dir).catch(()=>[]as string[])).sort());
   let count=0;for(const name of files){
     const receipt=JSON.parse(await readFile(join(dir,name),'utf8'));
     if(receipt.site===site&&receipt.phase===phase&&receipt.key===key)count++;
