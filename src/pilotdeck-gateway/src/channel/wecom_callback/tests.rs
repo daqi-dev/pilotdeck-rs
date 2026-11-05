@@ -57,14 +57,19 @@ fn cases(oracle: &Value) -> &Vec<Value> {
     cases
 }
 
-async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
-    timeout(DEADLINE, future).await.expect("#1336 bounded wait")
+async fn bounded<T>(context: &str, future: impl std::future::Future<Output = T>) -> T {
+    timeout(DEADLINE, future)
+        .await
+        .unwrap_or_else(|_| panic!("#1336 {context} matches the TS oracle"))
 }
 
-async fn until(predicate: impl Fn() -> bool) {
+async fn until(context: &str, predicate: impl Fn() -> bool) {
     let started = Instant::now();
     while !predicate() {
-        assert!(started.elapsed() < DEADLINE, "#1336 wait condition timeout");
+        assert!(
+            started.elapsed() < DEADLINE,
+            "#1336 {context} matches the TS oracle"
+        );
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
 }
@@ -525,6 +530,9 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
     let record = Arc::new(Mutex::new(Record::default()));
     qyapi.arm(case, record.clone());
     let gates = Gates::default();
+    // Every blocking step names its case, so a mutation that never converges
+    // fails on the same marker as the cell comparison it stands in for.
+    let context = format!("case {}", case["name"].as_str().expect("#1336 case name"));
 
     for name in [
         "WECOM_CORP_ID",
@@ -626,7 +634,7 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
         match step["op"].as_str().expect("#1336 step op") {
             "start" => {
                 handle = Some(
-                    bounded(channel.start(deps.clone()))
+                    bounded(&context, channel.start(deps.clone()))
                         .await
                         .expect("#1336 start"),
                 );
@@ -643,9 +651,12 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
             }
             "stop" => {
                 let reason = step["reason"].as_str().expect("#1336 stop reason");
-                bounded(handle.as_ref().expect("#1336 started").stop(reason))
-                    .await
-                    .expect("#1336 stop result");
+                bounded(
+                    &context,
+                    handle.as_ref().expect("#1336 started").stop(reason),
+                )
+                .await
+                .expect("#1336 stop result");
                 record
                     .lock()
                     .expect("#1336 record mutex")
@@ -658,10 +669,11 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
                     .expect("#1336 stop reason")
                     .to_owned();
                 let stop = handle.as_ref().expect("#1336 started").clone();
+                let detached = context.clone();
                 pending.insert(
                     step["label"].as_str().expect("#1336 stop label").to_owned(),
                     tokio::spawn(async move {
-                        let _ = bounded(stop.stop(&reason)).await;
+                        let _ = bounded(&detached, stop.stop(&reason)).await;
                     }),
                 );
             }
@@ -739,19 +751,19 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
             "wait" => {
                 if let Some(count) = step["qyapi"].as_u64() {
                     let record = record.clone();
-                    until(move || {
+                    until(&context, move || {
                         record.lock().expect("#1336 record mutex").qyapi.len() >= count as usize
                     })
                     .await;
                 } else if let Some(count) = step["helpers"].as_u64() {
                     let record = record.clone();
-                    until(move || {
+                    until(&context, move || {
                         record.lock().expect("#1336 record mutex").helpers.len() >= count as usize
                     })
                     .await;
                 } else if let Some(count) = step["gateway"].as_u64() {
                     let record = record.clone();
-                    until(move || {
+                    until(&context, move || {
                         record.lock().expect("#1336 record mutex").gateway.len() >= count as usize
                     })
                     .await;
