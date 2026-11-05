@@ -156,12 +156,22 @@ impl Requests {
                     // only when the key is absent or not a string, which no
                     // turn can ever be reserved under, so the observable
                     // outcome matches: no busy, fall through to unavailable.
-                    let mode = params.get("mode").and_then(JsValue::as_string);
-                    let mode_ok = mode.is_some_and(|m| {
-                        m.equals_str("default")
-                            || m.equals_str("plan")
-                            || m.equals_str("bypassPermissions")
-                    });
+                    // The three-mode whitelist has one owner in this crate
+                    // (`runtime::permission::PERMISSION_MODES`, the port of
+                    // `permission/protocol/types.ts`); spelling it out here
+                    // again would let a TS-side change leave this gate on a
+                    // stale list (#1455 r2 review). The test still pins the
+                    // three literals independently, so a change to the
+                    // constant is caught rather than followed.
+                    let mode_ok =
+                        params
+                            .get("mode")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|mode| {
+                                crate::runtime::permission::PERMISSION_MODES
+                                    .iter()
+                                    .any(|allowed| mode.equals_str(allowed))
+                            });
                     if !mode_ok {
                         // TS interpolates `input.mode` into the message, so an
                         // absent field renders "undefined" (probe1:
@@ -356,16 +366,22 @@ mod tests {
     #[tokio::test]
     async fn set_permission_mode_rejects_invalid_mode() {
         let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
-        let params = object([("sessionKey", "s1".into()), ("mode", "admin".into())]);
-        let result = r
-            .session_config_request("set_permission_mode".into(), params)
-            .await;
-        let err = result.expect_err("#1310 set_permission_mode rejects invalid mode");
-        negative_assert_eq!(
-            err.code.as_str(),
-            "INVALID_PERMISSION_MODE",
-            "#1310 set_permission_mode invalid mode"
-        );
+        // "admin" is arbitrary; the rest are neighbouring permission strings
+        // that exist elsewhere in the crate (`acceptEdits` / `dontAsk` /
+        // `auto`). None may sneak into the three-value TS whitelist
+        // (#1455 r2 review).
+        for mode in ["admin", "acceptEdits", "dontAsk", "auto"] {
+            let params = object([("sessionKey", "s1".into()), ("mode", mode.into())]);
+            let result = r
+                .session_config_request("set_permission_mode".into(), params)
+                .await;
+            let err = result.expect_err("#1310 set_permission_mode rejects invalid mode");
+            negative_assert_eq!(
+                err.code.as_str(),
+                "INVALID_PERMISSION_MODE",
+                "#1310 set_permission_mode invalid mode"
+            );
+        }
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }
