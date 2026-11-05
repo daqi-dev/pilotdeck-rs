@@ -379,20 +379,43 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                 }
             }
             if truthy(field(input, "projectKey")) {
-                self.dialog_project_keys.lock().unwrap().insert(
-                    string(field(input, "sessionKey")),
-                    field(input, "projectKey").clone(),
-                );
+                // Same key-domain rule as the interaction binding below: TS
+                // keeps this per raw session key, so folding a non-string key
+                // into the shared `""` bucket would hand `""`'s project to
+                // every non-string session. No reader consumes the map yet
+                // (`dialog_project_key` has no call sites), but the bucket must
+                // not be shared by construction (#1632 r9 concurrency P2).
+                if let Some(session) = field(input, "sessionKey").as_string() {
+                    self.dialog_project_keys
+                        .lock()
+                        .unwrap()
+                        .insert(session.clone(), field(input, "projectKey").clone());
+                }
             }
             if truthy(field(input, "interactionBinding")) {
-                let session = string(field(input, "sessionKey"));
+                let session_value = field(input, "sessionKey");
+                let session = string(session_value);
+                // TS keys the interaction map by the raw `sessionKey`
+                // (SameValueZero), so a non-string key is a key of its own and
+                // never collides with the empty-string owner. The port's key
+                // domain is `JsString`, so a non-string key has no
+                // representable owner: treat it as a fresh owner and do not
+                // bind it. Binding it under `""` used to do exactly that, and
+                // the recorded `session-key-null` scenario shows why it
+                // matters — TS submits under `null` and the following
+                // `reconnect_interaction {"sessionKey":null}` (folded to `""`
+                // by the connection layer) answers `no_pending`, while a `""`
+                // polluted by that submit would answer `reconnected`
+                // (#1632 r8 sibling P1).
+                let unkeyed = session_value.as_string().is_none();
                 let binding = field(input, "interactionBinding");
                 // GatewayInteractionCoordinator.ts:79-82 compares the raw
                 // connectionId before the port validates the binding, so a
                 // differently-bound (even non-string) id is a stale binding,
                 // not a validation failure.
-                let mismatch =
-                    self.options
+                let mismatch = !unkeyed
+                    && self
+                        .options
                         .interactions
                         .get_binding(&session)
                         .is_some_and(|current| {
@@ -406,6 +429,9 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                             String::from_utf16_lossy(message.units()),
                         )
                     })?;
+                    if unkeyed {
+                        return Ok(vec![]);
+                    }
                     let reconnect = self
                         .options
                         .interactions

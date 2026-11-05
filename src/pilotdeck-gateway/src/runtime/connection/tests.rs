@@ -916,6 +916,12 @@ async fn authed_connection() -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConne
 async fn authed_with_mode(
     submit_mode: &str,
 ) -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
+    authed_as_client("ui", submit_mode).await
+}
+async fn authed_as_client(
+    client_name: &str,
+    submit_mode: &str,
+) -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
     let text = Arc::new(MemoryText::default());
     let mut gateway = Gateway::new(false);
     gateway.submit_mode = submit_mode.to_owned();
@@ -927,12 +933,467 @@ async fn authed_with_mode(
         "test".into(),
     ));
     connection
-        .receive(
-            r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
-        )
+        .receive(&format!(
+            r#"{{"type":"hello","protocolVersion":"1.2","clientName":"{client_name}","clientVersion":"test","token":"fixture-token"}}"#
+        ))
         .await
         .unwrap();
     (text, gateway, connection)
+}
+
+// #1632 item 5: the interaction round-trip tests in
+// `native_process::methods::interaction` call `GatewayRequests::request`
+// directly, which skips this layer. These pin that the inputs those tests
+// rely on are reachable over the WebSocket path, and which ones are not:
+//  * a non-string `sessionKey` is forwarded verbatim (never coerced);
+//  * on an SDK-control connection the layer does not overwrite
+//    `interactionBinding`, so a client-supplied (here malformed) binding
+//    reaches the gateway and the in-process miss semantics apply;
+//  * a regular UI connection always overwrites `interactionBinding` with the
+//    connection's own binding, so a client-supplied one is not a reachable
+//    input there.
+/// Positional assertions on the recorded gateway calls are only meaningful
+/// when the position is pinned to a method: a dropped or reordered frame would
+/// slide an assertion onto a sibling call that happens to carry the same
+/// `params` shape.
+fn call_is(call: &JsValue, method: &str) -> bool {
+    call.get("method")
+        .and_then(JsValue::as_string)
+        .is_some_and(|name| name.equals_str(method))
+}
+
+#[tokio::test]
+async fn interaction_inputs_reach_the_gateway_through_the_connection() {
+    // SDK control: `sdkControlConnection` suppresses the injected binding
+    // (runtime/connection/context.rs, permission_decide branch).
+    let (_text, gateway, connection) = authed_as_client("sdk", "").await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"permission_decide","params":{"sessionKey":5,"requestId":"r1","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "describe + permission_decide");
+        assert!(
+            call_is(&calls[1], "permission_decide"),
+            "calls[1] is the permission_decide request"
+        );
+        let params = calls[1].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::Number(5.0)),
+            "a non-string sessionKey reaches the gateway unchanged"
+        );
+        assert!(
+            params
+                .get("interactionBinding")
+                .and_then(|binding| binding.get("connectionId"))
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| id.equals_str("client")),
+            "sdk control leaves the client binding in place"
+        );
+    }
+
+    // The SDK-control exemption has a second value branch:
+    // `session.value().as_string().is_none_or(JsString::is_empty)` is true for
+    // the empty string as well as for non-strings, so `{"sessionKey":""}`
+    // keeps the client binding too (r7 boundary).
+    connection
+        .receive(
+            r#"{"type":"request","id":"2","method":"permission_decide","params":{"sessionKey":"","requestId":"r2","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "describe + 2x permission_decide");
+        assert!(
+            call_is(&calls[2], "permission_decide"),
+            "calls[2] is the empty-session permission_decide request"
+        );
+        let params = calls[2].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::from("")),
+            "the empty sessionKey reaches the gateway as the empty string"
+        );
+        assert!(
+            params
+                .get("interactionBinding")
+                .and_then(|binding| binding.get("connectionId"))
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| id.equals_str("client")),
+            "an empty sessionKey is exempt on sdk control connections as well"
+        );
+    }
+
+    // The exemption is `non-string-or-empty || !tracked`. On a session the
+    // connection has *not* tracked, the second clause alone is enough, so the
+    // two blocks above stay green even if the first clause is wrong. Track the
+    // non-string owner first (reconnect_interaction is what calls
+    // track_interaction), then decide on it: now only the first clause can
+    // exempt, and flipping `is_none_or` to `is_some_and` turns this red
+    // (r9 boundary P1).
+    connection
+        .receive(
+            r#"{"type":"request","id":"3","method":"reconnect_interaction","params":{"sessionKey":5,"nextBinding":{"connectionId":"client","generation":1}}}"#,
+        )
+        .await
+        .unwrap();
+    connection
+        .receive(
+            r#"{"type":"request","id":"4","method":"permission_decide","params":{"sessionKey":5,"requestId":"r4","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            5,
+            "describe + 2x permission_decide + reconnect + permission_decide"
+        );
+        assert!(
+            call_is(&calls[4], "permission_decide"),
+            "calls[4] is the tracked non-string permission_decide request"
+        );
+        let params = calls[4].get("params").unwrap();
+        assert!(
+            params
+                .get("interactionBinding")
+                .and_then(|binding| binding.get("connectionId"))
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| id.equals_str("client")),
+            "a tracked non-string session is still exempt on sdk control connections"
+        );
+    }
+
+    // Every cell above is decided by the first clause
+    // (`non-string-or-empty`). An untracked *string* session can only be
+    // exempt through the third clause, `!self.interactions.contains(&session)`,
+    // so replacing that clause with `false` turns this one red (r13 sibling
+    // P1). Without it the connection would inject its own binding and the
+    // gateway would route permission/elicitation to a foreign connectionId.
+    connection
+        .receive(
+            r#"{"type":"request","id":"5","method":"permission_decide","params":{"sessionKey":"s-untr","requestId":"r5","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            6,
+            "describe + 3x permission_decide + reconnect + permission_decide"
+        );
+        assert!(
+            call_is(&calls[5], "permission_decide"),
+            "calls[5] is the untracked string permission_decide request"
+        );
+        let params = calls[5].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::from("s-untr")),
+            "the untracked string sessionKey reaches the gateway unchanged"
+        );
+        assert!(
+            params
+                .get("interactionBinding")
+                .and_then(|binding| binding.get("connectionId"))
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| id.equals_str("client")),
+            "an untracked string session is exempt on sdk control connections"
+        );
+    }
+
+    // Regular UI connection: the interactionBinding is the connection's own.
+    let (_text, gateway, connection) = authed_connection().await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"permission_decide","params":{"sessionKey":"s1","requestId":"r1","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "describe + permission_decide");
+        assert!(
+            call_is(&calls[1], "permission_decide"),
+            "calls[1] is the permission_decide request"
+        );
+        let params = calls[1].get("params").unwrap();
+        let injected = params
+            .get("interactionBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("the connection injects its own binding");
+        assert!(
+            !injected.equals_str("client"),
+            "the connection overwrites a client-supplied interactionBinding"
+        );
+    }
+
+    // elicitation_respond takes the same unconditional injection branch as
+    // submit_turn, so a client-supplied binding never reaches the gateway.
+    connection
+        .receive(
+            r#"{"type":"request","id":"2","method":"elicitation_respond","params":{"sessionKey":"s1","requestId":"e1","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "describe + permission_decide + elicitation");
+        assert!(
+            call_is(&calls[2], "elicitation_respond"),
+            "calls[2] is the elicitation_respond request"
+        );
+        let params = calls[2].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::from("s1")),
+            "elicitation_respond forwards its sessionKey unchanged"
+        );
+        let injected = params
+            .get("interactionBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("elicitation_respond is injected with the connection binding");
+        assert!(
+            !injected.equals_str("client"),
+            "elicitation_respond overwrites a client-supplied interactionBinding"
+        );
+    }
+
+    // The same forwarding path carries a non-string sessionKey unchanged; the
+    // permission_decide case above is a different method branch, so it does
+    // not cover this one (r4 sibling).
+    connection
+        .receive(
+            r#"{"type":"request","id":"3","method":"elicitation_respond","params":{"sessionKey":5,"requestId":"e1","answer":"a"}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            4,
+            "describe + permission_decide + 2x elicitation"
+        );
+        assert!(
+            call_is(&calls[3], "elicitation_respond"),
+            "calls[3] is the second elicitation_respond request"
+        );
+        let params = calls[3].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::Number(5.0)),
+            "elicitation_respond forwards a non-string sessionKey unchanged"
+        );
+    }
+
+    // submit_turn is the backbone of the A7.8 family: the recording's
+    // `session-key-5` scenario stores a binding under the raw key 5 through
+    // this method, so its forwarding path and the connection-owned binding
+    // need a pin of their own rather than the "same branch as elicitation"
+    // comment (r6 / r7 sibling).
+    connection
+        .receive(
+            r#"{"type":"request","id":"4","method":"submit_turn","params":{"sessionKey":5,"projectKey":"p","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            5,
+            "describe + permission + 2x elicitation + submit"
+        );
+        assert!(
+            call_is(&calls[4], "submit_turn"),
+            "calls[4] is the submit_turn request"
+        );
+        let params = calls[4].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::Number(5.0)),
+            "submit_turn forwards a non-string sessionKey unchanged"
+        );
+        let injected = params
+            .get("interactionBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("submit_turn is injected with the connection binding");
+        assert!(
+            !injected.equals_str("client"),
+            "submit_turn overwrites a client-supplied interactionBinding"
+        );
+    }
+
+    // An sdk control connection whose session the connection already tracks
+    // (a prior reconnect_interaction) is no longer exempt: the injection rule
+    // falls back to the ordinary branch, so the client binding is replaced.
+    let (_text, gateway, connection) = authed_as_client("sdk", "").await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"0","method":"reconnect_interaction","params":{"sessionKey":"s1","nextBinding":{"connectionId":"c0","generation":1}}}"#,
+        )
+        .await
+        .unwrap();
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"permission_decide","params":{"sessionKey":"s1","requestId":"r1","decision":"allow","interactionBinding":{"connectionId":"client"}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "describe + reconnect + permission_decide");
+        assert!(
+            call_is(&calls[2], "permission_decide"),
+            "calls[2] is the permission_decide request"
+        );
+        let params = calls[2].get("params").unwrap();
+        let injected = params
+            .get("interactionBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("a tracked sdk session gets the connection binding");
+        assert!(
+            !injected.equals_str("client"),
+            "a tracked sdk session is not exempt from the binding injection"
+        );
+    }
+
+    // reconnect_interaction forwards a non-string sessionKey verbatim and
+    // replaces the client's nextBinding with the connection's binding.
+    let (_text, gateway, connection) = authed_connection().await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"reconnect_interaction","params":{"sessionKey":5,"nextBinding":{"connectionId":"client","generation":1}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "describe + reconnect_interaction");
+        assert!(
+            call_is(&calls[1], "reconnect_interaction"),
+            "calls[1] is the reconnect_interaction request"
+        );
+        let params = calls[1].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::Number(5.0)),
+            "reconnect forwards a non-string sessionKey unchanged"
+        );
+        let next = params
+            .get("nextBinding")
+            .and_then(|binding| binding.get("connectionId"))
+            .and_then(JsValue::as_string)
+            .expect("the connection injects its own nextBinding");
+        assert!(
+            !next.equals_str("client"),
+            "reconnect replaces the client nextBinding"
+        );
+    }
+    // `params.sessionKey ?? ""`: null is folded to the empty string before the
+    // gateway sees it. The A7.8 range note excludes null/undefined from the
+    // non-string divergence on the strength of this rule (r4 sibling).
+    connection
+        .receive(
+            r#"{"type":"request","id":"2","method":"reconnect_interaction","params":{"sessionKey":null,"nextBinding":{"connectionId":"client","generation":1}}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "describe + two reconnect_interaction");
+        assert!(
+            call_is(&calls[2], "reconnect_interaction"),
+            "calls[2] is the second reconnect_interaction request"
+        );
+        let params = calls[2].get("params").unwrap();
+        assert_eq!(
+            params.get("sessionKey"),
+            Some(&JsValue::from("")),
+            "a null sessionKey is folded to the empty string"
+        );
+    }
+
+    // The `?? ""` fold is reconnect-only: the other forwarding branches hand
+    // the gateway `null` untouched, which is what the recording shows for the
+    // `session-key-null` scenario (`submit_turn {"sessionKey":null,…}` and
+    // `permission_decide {"sessionKey":null,…}` in
+    // `tests/fixtures/connection-context/oracle.json`). Pinning only the
+    // reconnect half would let a "fold everywhere" regression pass.
+    connection
+        .receive(
+            r#"{"type":"request","id":"3","method":"submit_turn","params":{"sessionKey":null,"projectKey":"p"}}"#,
+        )
+        .await
+        .unwrap();
+    connection
+        .receive(
+            r#"{"type":"request","id":"4","method":"permission_decide","params":{"sessionKey":null,"requestId":"control","decision":"allow"}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            5,
+            "describe + 2x reconnect + submit_turn + permission_decide"
+        );
+        assert!(
+            call_is(&calls[3], "submit_turn"),
+            "calls[3] is the submit_turn request"
+        );
+        assert_eq!(
+            calls[3].get("params").unwrap().get("sessionKey"),
+            Some(&JsValue::Null),
+            "submit_turn forwards a null sessionKey as null"
+        );
+        assert!(
+            call_is(&calls[4], "permission_decide"),
+            "calls[4] is the permission_decide request"
+        );
+        assert_eq!(
+            calls[4].get("params").unwrap().get("sessionKey"),
+            Some(&JsValue::Null),
+            "permission_decide forwards a null sessionKey as null"
+        );
+    }
+
+    // `previousBinding` is forwarded whenever the key is present, even when its
+    // value is `null` — the branch keys off presence, not truthiness, and
+    // nothing pinned that (r7 sibling).
+    connection
+        .receive(
+            r#"{"type":"request","id":"5","method":"reconnect_interaction","params":{"sessionKey":"s1","nextBinding":{"connectionId":"client","generation":1},"previousBinding":null}}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let calls = gateway.calls.lock().unwrap();
+        assert_eq!(calls.len(), 6, "describe + five interaction requests");
+        assert!(
+            call_is(&calls[5], "reconnect_interaction"),
+            "calls[5] is the reconnect_interaction with previousBinding"
+        );
+        let params = calls[5].get("params").unwrap();
+        assert_eq!(
+            params.get("previousBinding"),
+            Some(&JsValue::Null),
+            "a null previousBinding is still forwarded"
+        );
+    }
 }
 
 // Ordinary ASCII request: pins the top-level type,id,ok,result insertion order

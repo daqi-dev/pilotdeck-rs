@@ -17,8 +17,18 @@ mod llm_stub;
 mod mutants;
 #[path = "common/permission_faults.rs"]
 mod permission_faults;
+#[allow(dead_code)]
+#[path = "../src/process_group.rs"]
+mod process_group;
 #[path = "common/skip_line.rs"]
 mod skip_line;
+#[allow(dead_code)]
+// Module name matters: `src/test_process.rs` calls
+// `crate::test_exact_receipt::single_pass`, and this crate `#[path]`-includes
+// that file, so the crate root must declare the same module name (the lib
+// declares it from `tests/common/exact_receipt.rs`).
+#[path = "common/exact_receipt.rs"]
+mod test_exact_receipt;
 #[allow(dead_code)]
 #[path = "common/negative_receipt.rs"]
 mod test_negative_receipt;

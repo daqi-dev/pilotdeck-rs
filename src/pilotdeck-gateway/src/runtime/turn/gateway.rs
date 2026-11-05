@@ -249,9 +249,14 @@ impl ConnectionGateway for ConnectionTurnGateway {
     }
     fn abort_on_close(&self, params: JsValue) -> Call<'_, Result<(), RequestError>> {
         Box::pin(async move {
-            // TS uses strict Map keys and run-id equality. Non-string values
-            // cannot match a live session/run; they must not become an
-            // unfiltered session abort when converted to Option<JsString>.
+            // TS looks runs up by Map key and by run-id equality. Rust keys
+            // its run state with `JsString`, so a non-string `sessionKey`
+            // cannot reach a live session here; whether TS misses too is *not*
+            // settled — SameValueZero compares raw values, so a run stored
+            // under `5` does match (same key-domain gap as
+            // A7.8-INTERACTION-NONSTRING-OWNER-001-R1; tracked in #1465). What
+            // must not happen is a non-string key degrading into an
+            // unfiltered session abort, hence the early return.
             let Some(key) = params.get("sessionKey").and_then(JsValue::as_string) else {
                 return Ok(());
             };
