@@ -45,6 +45,7 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
 
 import json
 import math
+import os
 import re
 import stat
 import sys
@@ -65,12 +66,18 @@ FRESH_SEC = 10          # --recent 跳过「刚写几秒」的文件：写方不
 CJK = re.compile(r"[㐀-鿿]")
 ANGLE = re.compile(r"<([^<>\n]{0,200})>")
 BRACE = re.compile(r"\{([^{}\n]{0,80})\}")
+# 全角尖括号（`＜待填＞`）与中文方括号（`【待填】`）：Unicode 归一化不做，直接加同义模式。
+FW_ANGLE = re.compile(r"[＜〈]([^＜＞〈〉\n]{0,200})[＞〉]")
+# 中文方括号里可能是正文（`【重要】`），只认明确的占位词，不套「含中文即占位」
+CJK_BRACKET = re.compile(r"【([^【】\n]{0,80})】")
+PLACEHOLDER_HINT = re.compile(r"待|填写|占位|省略|略|tbd|todo|xxx", re.I)
 PLACEHOLDER_WORDS = {
     "n", "n+1", "n-1", "nn", "tbd", "todo", "xxx", "yyy", "???", "待填", "待补", "空",
     "date", "name", "dir", "path", "head", "sha", "reason", "file", "id", "num", "idx", "x",
 }
 # 裸省略号 / 问号 / 英文占位词（CJK 前后没有 \b，用显式 ASCII 环视）
-BARE_PLACEHOLDER = re.compile(r"\.\.\.|…|。。。|\?\?\?|？？？|(?<![A-Za-z])(?:tbd|todo|xxx)(?![A-Za-z])", re.I)
+BARE_PLACEHOLDER = re.compile(r"\.\.\.|…|。。。|\?\?\?|？？？|待填|待补|待定|"
+                              r"(?<![A-Za-z])(?:tbd|todo|xxx)(?![A-Za-z])", re.I)
 
 
 def _looks_placeholder(content):
@@ -84,6 +91,18 @@ def _looks_placeholder(content):
     return c.lower() in PLACEHOLDER_WORDS
 
 
+def _looks_placeholder_cjk_bracket(content):
+    """`【…】` 里只有明确的占位词才算占位：`【重要】`、`【S1】` 这类正文不误伤。"""
+    c = content.strip()
+    if not c:
+        return True
+    if PLACEHOLDER_HINT.search(c):
+        return True
+    if set(c) <= set(".．。…·"):
+        return True
+    return c.lower() in PLACEHOLDER_WORDS
+
+
 def placeholder_in(text):
     """返回第一个占位符字面量；没有返回 None。"""
     for m in ANGLE.finditer(text):
@@ -92,9 +111,17 @@ def placeholder_in(text):
     for m in BRACE.finditer(text):
         if _looks_placeholder(m.group(1)):
             return m.group(0)
+    for m in FW_ANGLE.finditer(text):
+        if _looks_placeholder(m.group(1)):
+            return m.group(0)
+    for m in CJK_BRACKET.finditer(text):
+        if _looks_placeholder_cjk_bracket(m.group(1)):
+            return m.group(0)
     # 裸占位符前先把尖括号/花括号整段抹掉：`<https://…>`、`Vec<u8>` 里的 `…` 不是占位符
     masked = ANGLE.sub(lambda m: " " * len(m.group(0)), text)
     masked = BRACE.sub(lambda m: " " * len(m.group(0)), masked)
+    masked = FW_ANGLE.sub(lambda m: " " * len(m.group(0)), masked)
+    masked = CJK_BRACKET.sub(lambda m: " " * len(m.group(0)), masked)
     m = BARE_PLACEHOLDER.search(masked)
     return m.group(0) if m else None
 
@@ -153,14 +180,18 @@ def _parse_scope_body(body):
         if "=" not in tok and "＝" not in tok:
             return None, f"scope 行里有无法解析的片段：{tok!r}（应形如 files=16 lines=1124 est_min=180）"
         k, v = re.split(r"[=＝]", tok, maxsplit=1)
-        k, v = k.strip(), v.strip()
+        # 键名大小写不敏感、`-` 等同 `_`（`EST_MIN` / `est-min` 都认）；**认不出的键一律算写坏**：
+        # 旧实现把未知键原样存进 dict，`files=2 estmins=300` 里那个 300 min 的声明被静默吞掉 →
+        # 300 min 的包判成小包 rc 0（假 PASS），与「scope 写坏不许静默」相反。
+        k, v = k.strip().lower().replace("-", "_"), v.strip()
         if k in ("files", "lines", "est_min", "modules"):
             # 位数上限：Python 3.11+ 的 int() 对 >4300 位会抛 ValueError（崩溃冒充 FAIL）
             if not re.fullmatch(r"[0-9]{1,18}", v):
                 return None, f"scope 行 {k}={v[:40]!r} 不是整数（不许留占位符）"
             out[k] = int(v)
         else:
-            out[k] = v
+            return None, (f"scope 行里有认不出的键 {k[:40]!r}（只认 files / lines / est_min / modules，"
+                          "键名大小写与 `-`/`_` 不敏感；写错键等于把阈值吞掉，按「读不了」处理）")
     if not any(k in out for k in ("files", "lines", "est_min")):
         return None, "scope 行至少要写 files= / lines= / est_min= 之一"
     return out, None
@@ -328,6 +359,18 @@ def _header_unit(header_cell):
     return ""
 
 
+def _in_paren(s, pos):
+    """`pos` 是否落在同一行的 `（…）` / `(…)` 里（只看最近的开括号有没有闭合）。"""
+    for o, c in (("（", "）"), ("(", ")")):
+        start = s.rfind(o, 0, pos)
+        if start < 0:
+            continue
+        end = s.find(c, start)
+        if end < 0 or end > pos:
+            return True
+    return False
+
+
 def parse_est(cell, default_unit=""):
     """从「预估时长」单元格取分钟数。
 
@@ -349,12 +392,20 @@ def parse_est(cell, default_unit=""):
                 total += got
                 seen = True
         return total if seen else None
-    toks = [(float(m.group(1)), m.group(2).lower()) for m in EST_TOKEN.finditer(cell)]
+    # 括注里的数字多半是说明（`90 min（含 10 min 缓冲）`、`80 min（2 个文件）`、`（S1 和 S2 各 30 min）`），
+    # 既不是并列也不是区间：`含 / 各 / 其中 / 包括 / 内含 / 外加` 之后的数字不计入，「（…）」里单位不是
+    # 时长数字的跳过而不是整格报「读不出」（旧行为会把 90 min 的合规段判成 100 → 拒派）。
+    toks = []
+    for m in EST_TOKEN.finditer(cell):
+        head = cell[max(0, m.start() - 4):m.start()]
+        if re.search(r"[含各]|其中|包括|内含|外加", head):
+            continue
+        toks.append((float(m.group(1)), m.group(2).lower(), m.start()))
     if not toks:
         return None
     # 无单位的数字：先看它后面最近的显式单位，没有再看前面，最后用表头暗示的单位
     resolved = []
-    for i, (v, u) in enumerate(toks):
+    for i, (v, u, pos) in enumerate(toks):
         if not u:
             after = next((t[1] for t in toks[i + 1:] if t[1]), "")
             before = next((t[1] for t in reversed(toks[:i]) if t[1]), "")
@@ -362,8 +413,12 @@ def parse_est(cell, default_unit=""):
         u = re.sub(r"(?:以内|之内|以下|左右|上下)$", "", u)   # `分钟以内` 的限定词不是单位的一部分
         mins = _unit_minutes(v, u)
         if mins is None:
+            if _in_paren(cell, pos):
+                continue    # `（2 个文件）` 这类括注不是时长，跳过；整格没有时长数字时才报「读不出」
             return None
         resolved.append(mins)
+    if not resolved:
+        return None
     if len(resolved) == 1:
         return resolved[0]
     if RANGE_MARK.search(cell):
@@ -374,7 +429,7 @@ def parse_est(cell, default_unit=""):
 NEGATION = re.compile(r"不要|不用|不必|无需|无须|不许|不能|不会|不需要|别写|勿写")
 RESUME_FAIL_WORDS = ("失败", "继续", "接续", "恢复", "重跑", "resume")
 # 路径允许中文（`…/进度.md`、`…/评审记录/progress.md`）；把 `<>{}}…` 也吃进来，占位形态才能整串识别
-PATH_TOKEN = re.compile(r"[A-Za-z0-9_./㐀-鿿<>{}…-]+\.md")
+PATH_TOKEN = re.compile(r"[A-Za-z0-9_./㐀-鿿<>{}…＜＞｛｝【】〈〉-]+\.md")
 NEG_WINDOW = 30         # 只看路径所在分句（路径前 30 字符里最后一个句读之后）：
                         # 「不需要在这里写 progress.md」命中，「…progress.md（不要提交进 git）」不命中
 
@@ -398,7 +453,7 @@ def resume_problems(resume):
             if not re.search(r"progress|进度", name):
                 continue
             bad = None
-            if any(ch in p for ch in "{}<>…") or "..." in p:
+            if any(ch in p for ch in "{}<>…＜＞｛｝【】〈〉") or "..." in p:
                 bad = "还是占位符"
             elif "/" not in p:
                 bad = "只有文件名、没有目录"
@@ -590,6 +645,37 @@ class ScanError(Exception):
     """扫描根下的递归 glob 抛 OSError：区分「扫描失败」（rc 2）与「扫到 0 个」（rc 0）。"""
 
 
+def _iter_taskbooks(base):
+    """自己走目录找 `_build/wt-*/_tmp/**/task.md`；任何目录级 OSError 都抛 ScanError。
+
+    修前用 `Path.glob("_build/wt-*/_tmp/**/task.md")`：pathlib 对 EACCES / 并发删除**静默跳过**
+    （本机实测：`chmod 000` 的 `_tmp` 下任务书整类消失，`files=1` rc 0），与 README 承诺的
+    「递归扫描中断 → rc 2」相反。这里逐层 `os.scandir` / `os.walk(onerror=...)`，错误不吞。
+    """
+    out = []
+    try:
+        wts = sorted(e.path for e in os.scandir(base) if e.is_dir())
+    except FileNotFoundError:
+        return out          # 没有 _build/：合法空扫描
+    except OSError as e:
+        raise ScanError(f"扫 {base} 中断：{e}") from e
+
+    def onerror(e):
+        # 目录在遍历中被回收（FileNotFoundError）不是任务书的问题，跳过即可；
+        # 权限拒绝 / IO 错误则一律中断——那正是「扫不了却被当成没扫到」的入口。
+        if isinstance(e, FileNotFoundError):
+            return
+        raise ScanError(f"递归扫 {getattr(e, 'filename', base)} 中断：{e}")
+
+    for wt in wts:
+        if not os.path.basename(wt).startswith("wt-"):
+            continue
+        for dirpath, _dirs, files in os.walk(os.path.join(wt, "_tmp"), onerror=onerror):
+            if "task.md" in files:
+                out.append(Path(dirpath) / "task.md")
+    return sorted(out)
+
+
 def find_recent(root, hours):
     """扫最近 N 小时生成的任务书。
 
@@ -607,19 +693,18 @@ def find_recent(root, hours):
     out = []
     # 递归扫：修复 / 续跑 / 重生成轮次的任务书在 _tmp/<单>/fix-rN/、resume*/、regen*/ 下一层，
     # 只认一层会把它们整类漏掉（round-start 9d 兜底轮对这批假 PASS）。
-    try:
-        candidates = sorted(Path(root).glob("_build/wt-*/_tmp/**/task.md"))
-    except OSError as e:
-        # 「扫不了」不能与「扫过且没扫到」同观感：后者是合法空扫描 rc 0，前者要 rc 2（否则兜底轮
-        # 静默变 no-op，等于「未检查」被当成「通过」）。并发回收也走这条——宁可误报一次也不假 PASS。
-        raise ScanError(f"递归扫 {root}/_build/wt-*/_tmp/** 中断：{e}") from e
+    # 不用 pathlib 的 glob：它会**静默吞掉** EACCES / ENOENT（实测 chmod 000 的 `_tmp` 下任务书
+    # 整类消失、rc 0），那样「扫不了」又变回「没扫到」。自己 scandir / walk，每层 OSError 都算中断。
+    candidates = _iter_taskbooks(Path(root) / "_build")
     for p in candidates:
         if _is_dispatch_copy(p):
             continue
         try:
             st = p.stat()
-        except OSError:
-            continue
+        except FileNotFoundError:
+            continue        # 扫描与 stat 之间被回收：那份任务书不在了，不是「读不了」
+        except OSError as e:
+            raise ScanError(f"读 {p} 的 stat 失败：{e}") from e
         # 单边判：只要 mtime 比 `now - FRESH_SEC` 新就跳过（含**未来**的）。旧写法 `0 <= now - mtime`
         # 对扫描开始后才创建的文件（mtime > now）恒为假，半截内容照样被读成「小包」——正是 FRESH_SEC
         # 要挡的窗口。代价：时钟偏移到未来的文件会晚几轮才扫到；宁可漏一轮也不假 PASS。
