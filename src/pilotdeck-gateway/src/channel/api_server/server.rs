@@ -158,9 +158,8 @@ fn parse_number(text: &str) -> f64 {
         Some(rest) => (-1.0, rest),
         None => (1.0, text.strip_prefix('+').unwrap_or(text)),
     };
-    match rest {
-        "Infinity" => return f64::INFINITY * sign,
-        _ => {}
+    if rest == "Infinity" {
+        return f64::INFINITY * sign;
     }
     let (radix, digits) =
         if let Some(digits) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
@@ -560,10 +559,10 @@ fn normalize_content(content: Option<&JsValue>) -> JsString {
                     }
                     _ => Some(JsString::default()),
                 };
-                if let Some(value) = value {
-                    if js_truthy(Some(&JsValue::String(value.clone()))) {
-                        parts.push(value);
-                    }
+                if let Some(value) = value
+                    && js_truthy(Some(&JsValue::String(value.clone())))
+                {
+                    parts.push(value);
                 }
             }
             let mut units = Vec::new();
@@ -855,7 +854,7 @@ fn ack_stream(shared: &Arc<ServerShared>, ack: &str) -> Response<crate::Body> {
     let _ = sender.send(sse_chunk(&shared.model_name, &JsString::from(ack)));
     let _ = sender.send(sse_done(&shared.model_name));
     drop(sender);
-    sse_response(&String::new(), receiver)
+    sse_response("", receiver)
 }
 
 fn sse_response(chat_id: &str, receiver: mpsc::UnboundedReceiver<Bytes>) -> Response<crate::Body> {
@@ -954,15 +953,13 @@ async fn stream_turn(
                 if render::event_type(&event).as_deref() == Some("error") && visible_failure {
                     continue;
                 }
-                if let Some(fragment) = render::render(&event) {
-                    if !fragment.is_empty() {
-                        if sender
-                            .send(sse_chunk(&shared.model_name, &fragment))
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
+                if let Some(fragment) = render::render(&event)
+                    && !fragment.is_empty()
+                    && sender
+                        .send(sse_chunk(&shared.model_name, &fragment))
+                        .is_err()
+                {
+                    break;
                 }
             }
             Ok(None) => {
