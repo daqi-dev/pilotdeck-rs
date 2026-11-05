@@ -571,7 +571,9 @@ case("行首双竖线的空段名不许塌缩（假 PASS）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace(
          "| S2 HTTP 同域 | `src/native_http.rs` | `S2-RESULT.md` + `final.patch` S2 | 60 min | S1 |",
          "|| S2 HTTP 同域 | `src/native_http.rs` | `S2-RESULT.md` + `final.patch` S2 | 60 min | S1 |"),
-     must=["段名」为空"])
+     # GFM 里 `||` 就是「空首格 + 5 格」= 6 格：按列数不符报出来（整行不校验），
+     # 修前 strip("|") 把它塌成 5 格、段名读成次格 → 假 PASS（gate18 GLM P0）。
+     must=["字段数 6"])
 # gate18 MiniMax boundary：`FILE_TOKEN` 交替最左优先，`events.jsonl` 被 `js` 吃成 `events.js`
 # → `.json` 与 `.jsonl` 两个不同文件撞键，合规任务书被判共写（假 FAIL，文件名也是错的）
 case("四处扩展名最左优先：.json 与 .jsonl 分属两段不算共写（正控）", 0,
@@ -711,6 +713,70 @@ case("第一条数据行全是 - 且带占位符也要报（P0 同类）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace(TABLE.splitlines()[2],
                                      "| - | - | - | <待填> | - |"), must=["占位符"])
 
+# ---- fix-r20：gate21（GLM boundary P1×4 P2×3；MiniMax boundary P1×1 P2×1）---------------------
+# 同一节里示例表（五列齐全、≥2 行）排在本包真表前面：修前只看第一张 → 真表整张不校验（假 PASS）
+_EXAMPLE = ("| 段 | 涉及文件 | 交付物 | 预估时长 | 段间依赖 |\n"
+            "|----|---------|--------|---------|---------|\n"
+            "| S1 示例 | `src/example.rs` | `S1-RESULT.md` | 30 min | — |\n"
+            "| S2 示例 | `src/example2.rs` | `S2-RESULT.md` | 30 min | S1 |\n")
+case("示例表在前、真表在后：真表的 300 min 仍要抓（P1 假 PASS）", 1,
+     BIG_SCOPE + "## 分段交付\n\n" + _EXAMPLE + "\n" + TABLE.replace("| 80 min |", "| 300 min |") + RESUME,
+     must=["300 min > 90 min"])
+case("示例表在前、真表在后（合规正控）", 0,
+     BIG_SCOPE + "## 分段交付\n\n" + _EXAMPLE + "\n" + TABLE + RESUME)
+# 多于表头的行：错位后恰好读到一个像估时的格子，真估时 300 min 再没人看（假 PASS）
+case("数据行多一列且错位格像估时（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(
+         TABLE.splitlines()[2],
+         "| S1 交互方法 | `src/interaction.rs` | `S1-RESULT.md` | 60 min | 300 min | — |"),
+     must=["字段数 6"])
+# 漏写竖线的行：GFM 在这里结束表格，该行的 300 min 修前静默不校验
+case("分段表中间漏写竖线（P3 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(
+         "| S2 HTTP 同域 | `src/native_http.rs` | `S2-RESULT.md` + `final.patch` S2 | 60 min | S1 |",
+         "S2 HTTP 同域 `src/native_http.rs` `S2-RESULT.md` 300 min S1"),
+     must=["没有竖线"])
+# 表后紧跟标题（无空行）不算漏写竖线：GFM 里标题本来就结束表格
+case("表后紧跟标题不算漏写竖线（正控）", 0,
+     BIG_SCOPE + "## 分段交付\n\n" + TABLE + RESUME)
+# GFM 转义竖线 `\|` 是格内字面竖线：修前多切一格 → 合规任务书报「读不出」（假 FAIL）
+_ESC = TABLE.replace("| S2 HTTP 同域 |", "| S2 \\| 存储 |")
+case("转义竖线 \\| 不切列（正控）", 0, BIG_SCOPE + "## 分段交付\n\n" + _ESC + RESUME)
+case("转义竖线 \\| 之后 120 min 仍要抓", 1,
+     BIG_SCOPE + "## 分段交付\n\n" + _ESC.replace("| 60 min |", "| 120 min |") + RESUME,
+     must=["120 min > 90 min"])
+# 路径段的裸占位词：修前只认单字母 N/M/K，`xxx` / `NUM` 照当实例路径
+case("续跑路径段 xxx 是占位（P1 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md", "_tmp/xxx/progress.md"),
+     must=["占位"])
+case("续跑路径段 issue-NUM 是占位（P1 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100", "_tmp/issue-NUM"),
+     must=["占位"])
+case("续跑路径段是正常日期目录（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100", "_tmp/20261105-issue-1316"))
+# URL 里的 resume 不是「第 N 段失败从哪继续」的说明
+case("续跑只写含 resume 的 URL（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.split("## 续跑")[0]
+     + "## 续跑\n\n- 进度文件：`_tmp/20261105-issue-100/progress.md`\n- 参考：https://example.com/resume\n",
+     must=["第 N 段失败"])
+# 正文里给词加引号不是 Rust 命名参数
+case("正文 (\"{file}\") 仍算占位（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", '("{file}")'),
+     must=["占位符"])
+case("format!(\"{name}\") 是代码不缺占位（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", 'format!("{name}")'))
+# 列表项 + 空行 + 4 格缩进 scope：CommonMark 里是松散列表项正文，不是「贴的示例」
+case("列表项 + 空行 + 缩进 scope 不许静默忽略（P2 假 PASS）", 2,
+     "- 目标：\n\n    <!-- pdrs-scope: files=6 est_min=300 -->\n\n## 要做\n1. x\n",
+     must=["缩进"])
+case("列表项紧贴缩进 scope 仍是示例（正控）", 0,
+     "- 目标：\n    <!-- pdrs-scope: files=2 est_min=30 -->\n\n## 要做\n1. 改 `src/a.rs`\n")
+# 估时乘法：`4 × 40 min` 是 160，修前读成 44 ≤ 90（假 PASS）
+case("估时乘法 4 × 40 min 不许读成 44（P1 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 4 × 40 min |"), must=["160 min > 90 min"])
+case("估时乘法 2 × 30 min 合规（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 2 × 30 min |"))
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -753,6 +819,10 @@ PARSE_EST = [
     ("2", "h", 120.0),
     ("2", "d", None),
     ("2", None, None),
+    ("4 × 40 min", "", 160.0),      # 乘法连写（gate21 GLM P1）
+    ("2 × 30 min", "", 60.0),
+    ("4x40 min", "", 160.0),
+    ("1h12345m", "", 12405.0),      # 分钟部不再限 4 位（gate21 GLM P3）
 ]
 
 CLI_CASES = [
@@ -774,6 +844,10 @@ CLI_CASES = [
          ["x", "--json", "--explain", "task.md"], 3),
         ("--print-skeleton 与 --json 同用是用法错误（输出不是 JSON）",
          ["x", "--print-skeleton", "--json"], 3),
+        ("--quiet 与 --explain 同用是用法错误（quiet 被静默忽略）",
+         ["x", "--quiet", "--explain", "task.md"], 3),
+        ("--json 与 --quiet 同用是用法错误（SUMMARY 语义不明）",
+         ["x", "--json", "--quiet", "task.md"], 3),
 ]
 
 
@@ -790,6 +864,23 @@ def run():
             print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={r['rc']}（期望 {expect}）{'' if ok else ' ← ' + out}")
             if not ok:
                 fails += 1
+
+        # 独立检查的条数用**实际打印的行数**数，不手写常数：chmod 000（root 下权限位无效）这类
+        # 分支会整块跳过而不打印，常数让 SUMMARY 虚报（gate21 MiniMax boundary P3 实测：root 下
+        # 报 303、实际只跑 302）。
+        import io
+        _manual = {"n": 0}
+        _real_stdout = sys.stdout
+
+        class _CountedOut(io.TextIOBase):
+            def write(self, s):
+                _manual["n"] += s.count("\n")
+                return _real_stdout.write(s)
+
+            def flush(self):
+                _real_stdout.flush()
+
+        sys.stdout = _CountedOut()
 
         # 非 UTF-8 任务书：必须 rc=2（读不了），不许 traceback 成 rc=1 冒充「分段表不合格」
         bad = Path(td) / "gbk.md"
@@ -1153,18 +1244,57 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  _tmp 下符号链接目录 → ScanError（不静默漏）：建链={made_link}")
         fails += 0 if ok else 1
 
+        # 9) 派发副本 / 旧轮次备份**本身**是符号链接：按 _is_dispatch_copy 的口径跳过，不该整轮中断
+        target = Path(td) / "_shared" / "remote-run-target"
+        (target / "stage").mkdir(parents=True, exist_ok=True)
+        (target / "stage" / "task.md").write_text("# t\n", encoding="utf-8")
+        droot = Path(td) / "_build2" / "wt-1" / "_tmp" / "issue-1"
+        droot.mkdir(parents=True, exist_ok=True)
+        ok = True
+        try:
+            os.symlink(target, droot / "remote-run")
+        except (OSError, NotImplementedError):   # 平台不支持符号链接：跳过，不算失败
+            ok = "skip"
+        if ok is True:
+            try:
+                got = [str(p) for p in ctbs._iter_taskbooks(Path(td) / "_build2")]
+                ok = len(got) == 0      # 跳过副本，不报错也不算「扫到」
+            except ctbs.ScanError:
+                ok = False
+        shutil.rmtree(Path(td) / "_build2", ignore_errors=True)
+        print(f"{'SKIP' if ok == 'skip' else ('PASS' if ok else 'FAIL')}"
+              "  remote-run 目录是符号链接时跳过（不中断整轮扫描）")
+        fails += 0 if (ok is True or ok == "skip") else 1
+
+        # 10) 大小写变体 `Task.md`：macOS 默认文件系统上同一个名字，字符串精确比较会整类漏扫
+        croot = Path(td) / "_build3" / "wt-1" / "_tmp" / "issue-1"
+        croot.mkdir(parents=True, exist_ok=True)
+        (croot / "Task.md").write_text("# t\n", encoding="utf-8")
+        got = [p.name for p in ctbs._iter_taskbooks(Path(td) / "_build3")]
+        shutil.rmtree(Path(td) / "_build3", ignore_errors=True)
+        ok = got == ["Task.md"] or got == ["task.md"]   # 大小写不敏感 fs 上写进去读出来可能同名
+        print(f"{'PASS' if ok else 'FAIL'}  Task.md 大小写变体不整类漏扫：{got}")
+        fails += 0 if ok else 1
+
+        # 11) `.preview/` 不是 `.prev-*` 备份目录：裸前缀会把正常目录整段跳掉
+        ok = (not ctbs._is_dispatch_copy(Path("_build/wt-1/_tmp/i/.preview/task.md"))
+              and ctbs._is_dispatch_copy(Path("_build/wt-1/_tmp/i/.prev-r2/task.md"))
+              and ctbs._is_dispatch_copy(Path("_build/wt-1/_tmp/i/remote-run/stage/task.md")))
+        print(f"{'PASS' if ok else 'FAIL'}  .preview 不当备份跳过、.prev-r2 与 remote-run 仍跳过")
+        fails += 0 if ok else 1
+
 
     # 命令行契约
+    sys.stdout = _real_stdout          # 恢复：下面的 CLI 契约与 PARSE_EST 用各自的 len() 计数
     for name, argv, expect in CLI_CASES:
         rc = ctbs.main(argv)
         ok = rc == expect
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    # 命令行契约用 len(CLI_CASES) 数，不再手写常数（加一条契约就 SUMMARY 失真，gate18 GLM P3 同款）。
-    # 剩下的 26 条独立检查仍在 run() 里线性铺开（chmod 000 / symlink 用例在 root / 无符号链接平台
-    # 会整块跳过而不打印——那一处仍是手写常数，见 SEGMENTS.md §6）。
-    total = len(CASES) + 26 + len(CLI_CASES) + len(PARSE_EST)
+    # 命令行契约用 len(CLI_CASES) 数；「线性铺开」的独立检查用实际打印行数（_manual["n"]），
+    # 跳过的分支不计数——手写常数会让 SUMMARY 虚报（gate21 MiniMax boundary P3）。
+    total = len(CASES) + _manual["n"] + len(CLI_CASES) + len(PARSE_EST)
     # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
     for cell, unit, want in PARSE_EST:
         got = ctbs.parse_est(cell, unit)
