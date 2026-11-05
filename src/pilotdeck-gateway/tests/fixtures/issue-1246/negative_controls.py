@@ -2,7 +2,7 @@
 # anchor-selfcheck: unsupported issue-1246 executor: ROWS is not one of anchor_selfcheck's TABLES, so `--check` (below) is the anchor preflight; this script is not wired into CI or a host manifest yet
 """#1246 negative controls: the live-row qualifier of `session_clear_removed_since`.
 
-Three mutations, each bound to one named test that must fail at its own
+Four mutations, each bound to one named test that must fail at its own
 issue-tagged assertion message:
 
 - ``removed-since-ignores-live-row`` drops the "the row still exists" qualifier
@@ -12,7 +12,7 @@ issue-tagged assertion message:
 - ``removed-since-always-false`` makes ``SessionClears::removed_since`` answer
   false unconditionally: a clear that really deleted the listed row no longer
   discards it, so the persist resurrects the cleared session's file.
-  Bound test: ``clear_while_create_note_request_in_flight_discards_persist``.
+  Bound test: ``clear_then_close_discards_candidates_and_fails_closed``.
   The post-clear new-id cell (``turn_captured_after_completed_clear_...``) is
   deliberately not bound: its row never enters the removed record, so
   always-false cannot change its outcome; the discard-family cell carries the
@@ -22,6 +22,12 @@ issue-tagged assertion message:
   the cleared turn's file is written again (review P2: the third error path had
   no bound control).
   Bound test: ``clear_then_close_discards_candidates_and_fails_closed``.
+- ``discard-still-marks-recaptured-id`` restores the unconditional
+  ``processed_ids.push`` the `discarded_for_clear` guard removed (review P2,
+  four roles across two families): a same-id re-capture landing between the
+  discard decision and the batch ``mark_l0_indexed`` is stamped indexed without
+  ever being written, and the turn is lost silently.
+  Bound test: ``discarded_session_does_not_mark_the_recaptured_id_indexed``.
 
 Every mutation runs to completion — compile gate, bound-test run, byte restore,
 restored-pass check — and only the final summary decides the exit status: a
@@ -44,6 +50,7 @@ from negative_process import mutating_sources, run_owned, tree_lock, wait_for_sl
 root = Path(__file__).resolve().parents[5]
 entries_rs = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/entries.rs'
 file_memory_rs = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
+indexer_rs = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/indexer.rs'
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_heartbeat_indexer']
 
@@ -81,6 +88,14 @@ ROWS = [
         'new': '            Err(super::StorageError::Closed) => Ok(false),',
         'test': 'clear_then_close_discards_candidates_and_fails_closed',
         'assertion': "#917 the clear generation must discard the turn even though SQLite is closed",
+    },
+    {
+        'name': 'discard-still-marks-recaptured-id',
+        'path': indexer_rs,
+        'old': '        if !discarded_for_clear {',
+        'new': '        if true {',
+        'test': 'discarded_session_does_not_mark_the_recaptured_id_indexed',
+        'assertion': '#1246 a discarded session must not stamp the re-captured id indexed',
     },
 ]
 

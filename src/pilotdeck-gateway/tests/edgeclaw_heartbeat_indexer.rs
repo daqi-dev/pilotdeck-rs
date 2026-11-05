@@ -3625,3 +3625,159 @@ async fn recapture_with_the_same_id_after_clear_is_not_marked_indexed_unpersiste
         "#1246 classify and createNote must run for the re-captured turn"
     );
 }
+
+// #1246 review P2 (GLM sibling#2 / GLM boundary#1 / DeepSeek concurrency#2 /
+// DeepSeek boundary#1 — four roles, two families). The `discarded_for_clear`
+// guard added in this PR had no test that could observe it. Two simpler shapes
+// do not work and are worth recording:
+//   * clear + same-id re-capture inside the same turn's createNote await — the
+//     live-row qualifier sees the re-captured row and rescues the turn, so the
+//     turn is written and the guard never runs;
+//   * a re-capture from another *session key* — `run_heartbeat` iterates one
+//     session key per round and marks that round's ids before the next key is
+//     touched, so the discarded id is already marked away.
+// The guard's window is inside one session key's round: the discarded row and
+// a row that really is persisted in the same batch, then a same-id re-capture
+// of the discarded row between the discard decision and `mark_l0_indexed`.
+// Without the guard the batch UPDATE stamps the never-written incarnation as
+// indexed and the next run never lists it again — the silent turn loss this PR
+// exists to remove.
+#[tokio::test]
+async fn discarded_session_does_not_mark_the_recaptured_id_indexed() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("discard-then-recapture", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Beta", "Beta description", "## Summary\nBeta body"),
+        ]
+    })
+    .await;
+    // Two rows of the same session key: the earlier one is discarded by the
+    // clear, the later one is persisted, so the round publishes a non-empty
+    // `processed_ids` and `BeforeMarkL0Indexed` fires.
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "turn lost to the clear",
+    );
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:02.000Z",
+        "turn that survives the clear",
+    );
+    let lost_id = {
+        let rows = lab
+            .stores
+            .storage
+            .list_all_l0()
+            .expect("#1246 list l0 rows after the seed captures");
+        assert_eq!(
+            rows.len(),
+            2,
+            "#1246 each seeded turn must insert exactly one row, got {rows:?}"
+        );
+        rows.iter()
+            .find(|row| row.timestamp == "2026-10-22T00:00:01.000Z")
+            .expect("#1246 the first row must be listed")
+            .l0_index_id
+            .clone()
+    };
+    let stores = lab.stores.clone();
+    let capturing = lab.indexer.clone();
+    let create_notes = Arc::new(AtomicU64::new(0));
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#1246 the discard hook must fire on the target session"
+                );
+                match stage {
+                    // The clear deletes both listed rows while the first turn's
+                    // createNote is in flight. Re-capturing the *second* turn
+                    // restores its row byte-for-byte (same id), so the run-wide
+                    // recheck only discards the first one.
+                    HeartbeatStage::BeforeCreateNote
+                        if create_notes.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 =>
+                    {
+                        stores
+                            .clear_session_memory_data("s1")
+                            .expect("#1246 the in-hook clearSession must complete");
+                        capture_user_turn(
+                            &capturing,
+                            "s1",
+                            "2026-10-22T00:00:02.000Z",
+                            "turn that survives the clear",
+                        );
+                    }
+                    // Last seam before the batch mark: the first turn's row is
+                    // gone and its candidates were discarded, but a same-id
+                    // re-capture can still land here.
+                    HeartbeatStage::BeforeMarkL0Indexed => {
+                        capture_user_turn(
+                            &capturing,
+                            "s1",
+                            "2026-10-22T00:00:01.000Z",
+                            "turn lost to the clear",
+                        );
+                    }
+                    _ => {}
+                }
+            }));
+    let stats = hooked
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1246 the heartbeat run over the discarded turn must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (2, 1, 0),
+        "#1246 only the surviving turn may write a file"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1246 list l0 rows after the discard-time recapture");
+    let recaptured = rows
+        .iter()
+        .find(|row| row.l0_index_id == lost_id)
+        .expect("#1246 the re-captured row must reuse the discarded row's id");
+    assert!(
+        !recaptured.indexed,
+        "#1246 a discarded session must not stamp the re-captured id indexed: \
+         its files were never written, so the row has to stay listable for the next run"
+    );
+    let written = rows
+        .iter()
+        .find(|row| row.timestamp == "2026-10-22T00:00:02.000Z")
+        .expect("#1246 the surviving turn's row must be listed");
+    assert!(
+        written.indexed,
+        "#1246 the turn that really wrote its file must still be marked indexed"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1246 the surviving turn's file must be written, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#1246 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        4,
+        "#1246 both turns must run classify and createNote before the discard"
+    );
+}
