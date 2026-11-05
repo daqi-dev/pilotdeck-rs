@@ -65,7 +65,7 @@ To keep the oracle deterministic the generator masks only nondeterminism:
 | `gateway-missing` | no `turn_gateway`: buffered and streaming `503 gateway_unavailable` JSON |
 | `oversized-0..2` | request body > 1,000,000 bytes closes the socket with zero bytes (three runs) |
 | `body-limit-exact` | request body of exactly 1,000,000 bytes is read and rejected as `400 invalid_json` (the cap is exclusive) |
-| `keep-alive` | `Connection: keep-alive`, `Keep-Alive: timeout=5`, two requests on one socket |
+| `keep-alive` | `Connection: keep-alive` request answered with `Connection: keep-alive` / `Keep-Alive: timeout=5` on one recorded request (socket reuse is *not* covered; see Known gaps) |
 
 The Rust replay (`channel::api_server::tests::replays_real_ts_api_server_cells`)
 skips `oversized-*` (it is a separate raw-socket test,
@@ -79,17 +79,31 @@ The placeholder is a fixture protocol with a fail-closed reader
 (`channel::api_server::tests::recorded_body`), so a generator change cannot
 silently degrade a cell into "some short body":
 
-- `N` must be plain decimal. A near miss such as `<1_000_000 bytes>` is a
-  fixture bug and panics the replay instead of being sent verbatim.
+- `N` must be plain decimal — `[0-9]+` only. A near miss such as
+  `<1_000_000 bytes>` is a fixture bug and panics the replay instead of being
+  sent verbatim; so is a signed `<+5 bytes>` (which `usize::from_str` would
+  otherwise accept).
 - `N` is capped at `MAX_REQUEST_BYTES + 1`; a larger count is refused before
   allocation.
 - A `body` field that is present but not a string panics; an absent one means
-  no body (GET/HEAD cells). A header value that is not a string panics too.
+  no body (GET/HEAD cells). A header value that is not a string panics too, and
+  so does a `headers` that is present but not an object (only an absent one
+  means "no headers"). The same rule covers `options.apiKey` / `options.modelName`:
+  absent takes the cell default, present-but-not-a-string panics. Expected
+  (oracle-side) response header values are read the same way.
+- The `oversized-*` cells are never re-sent by the replay, so their recorded
+  response used to be compared by nothing at all. Both ends now pin its shape:
+  the generator refuses to record anything but a zero-byte close, and the
+  replay asserts the recorded `expect[0]` has `bytes: 0`, an `error` string and
+  no `status`. A baseline cap raised above the recorded `OVER_CAP_BYTES` would
+  therefore fail loudly instead of leaving the surface green.
 - `body-limit-exact` must expand to exactly `MAX_REQUEST_BYTES` and
   `oversized-*` to exactly `MAX_REQUEST_BYTES + 1`, asserted on every replay:
   the cap and the fixture must not drift apart.
 - Every cell must record exactly as many `expect` responses as `requests`; a
-  surplus response would never be compared.
+  surplus response would never be compared. A cell must also record at least
+  one request — `0 == 0` would otherwise count as a covered cell that replays
+  nothing.
 - The generator derives each placeholder count from the same constant as the
   body it sends, so the two cannot disagree.
 
@@ -102,6 +116,13 @@ api-server controls run one named test each through
 `negative_suite.run_cases`; a move to the matrix runner (which requires the
 positive suite to stay green) needs the literal re-derived or the mutant
 excluded.
+
+## Known gaps
+
+- `keep-alive` covers the response headers of a single request. Real connection
+  reuse (a second request on the same socket) is not recorded: the generator's
+  `send()` uses `agent: false`, so every request opens a new connection. Tracked
+  as a follow-up; the cell name is about the header contract only.
 
 ## Known divergence
 

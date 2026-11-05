@@ -55,6 +55,13 @@ fn recorded_body(text: &str) -> Vec<u8> {
     else {
         return text.as_bytes().to_vec();
     };
+    // #1606 r4: `usize::from_str` also accepts a leading `+`, so "plain
+    // decimal" was a promise the code did not quite keep. Reject the quirk
+    // instead of documenting it — the placeholder is fixture protocol, so only
+    // the canonical spelling should reach the byte count.
+    if count.is_empty() || !count.bytes().all(|byte| byte.is_ascii_digit()) {
+        panic!("#1333 request placeholder {text:?} is not a plain decimal byte count");
+    }
     let count = count.parse::<usize>().unwrap_or_else(|error| {
         panic!("#1333 request placeholder {text:?} does not expand to a byte count: {error}")
     });
@@ -141,11 +148,40 @@ fn req_spec_refuses_a_non_string_header() {
 }
 
 #[test]
-#[should_panic(expected = "does not expand to a byte count")]
+#[should_panic(expected = "request headers must be an object")]
+fn req_spec_refuses_a_non_object_header_container() {
+    // #1606 r4: r3 caught non-string header *values*; a `headers` that is not
+    // an object at all still slipped through to "no headers", which silently
+    // dropped a recorded `connection: keep-alive`.
+    ReqSpec::from_json(&json!({
+        "method": "GET",
+        "path": "/health",
+        "headers": [],
+    }));
+}
+
+#[test]
+#[should_panic(expected = "is not a plain decimal byte count")]
 fn recorded_body_refuses_a_malformed_placeholder() {
     // A near-miss placeholder must not fall back to replaying 15 literal
     // bytes: that is the fake-PASS shape this cell exists to rule out.
     recorded_body("<1_000_000 bytes>");
+}
+
+#[test]
+#[should_panic(expected = "is not a plain decimal byte count")]
+fn recorded_body_refuses_a_signed_count() {
+    // #1606 r4: `"+5".parse::<usize>()` is `Ok(5)`, so the old reader accepted
+    // a spelling no generator writes.
+    recorded_body("<+5 bytes>");
+}
+
+#[test]
+#[should_panic(expected = "does not expand to a byte count")]
+fn recorded_body_refuses_an_overflowing_count() {
+    // All digits, so it reaches `parse` and fails there — the branch the
+    // strict digit check above does not take.
+    recorded_body("<99999999999999999999999999 bytes>");
 }
 
 #[test]
@@ -172,20 +208,28 @@ impl ReqSpec {
         // `"connection": true`) silently replayed as an empty header and
         // flipped `keep_alive` to false, so the request that reached the
         // server was not the one the oracle recorded.
-        let headers: Vec<(String, String)> = value["headers"]
-            .as_object()
-            .map(|headers| {
-                headers
-                    .iter()
-                    .map(|(name, value)| {
-                        let value = value.as_str().unwrap_or_else(|| {
-                            panic!("#1333 header {name:?} must be a string, found {value:?}")
-                        });
-                        (name.clone(), value.to_owned())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        // #1606 r4 (both families): r3 tightened the header *values* but left
+        // the *container* fail-open — `value["headers"].as_object()` on a
+        // `[]` / `"x"` / `null` returned `None` and `unwrap_or_default()`
+        // silently replayed a request with no headers at all, the same
+        // "the request that reached the server is not the recorded one" shape.
+        // Absent stays legitimate (GET cells may record none); anything else
+        // must be an object of strings.
+        let headers: Vec<(String, String)> = match value.get("headers") {
+            None => Vec::new(),
+            Some(Value::Object(headers)) => headers
+                .iter()
+                .map(|(name, value)| {
+                    let value = value.as_str().unwrap_or_else(|| {
+                        panic!("#1333 header {name:?} must be a string, found {value:?}")
+                    });
+                    (name.clone(), value.to_owned())
+                })
+                .collect(),
+            Some(other) => {
+                panic!("#1333 request headers must be an object, found {other:?}")
+            }
+        };
         // #1606 r2: a missing `body` is legitimate (GET/HEAD cells), but a
         // present non-string one is a fixture bug: `unwrap_or("")` would
         // replay an empty body and a boundary cell would stay green.
@@ -476,10 +520,13 @@ fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResp
         .expect("#1333 oracle headers")
         .iter()
         .map(|(name, value)| {
-            (
-                name.to_ascii_lowercase(),
-                value.as_str().unwrap_or("").to_owned(),
-            )
+            // #1606 r4: the expectation side gets the same fail-closed rule as
+            // the request side. `unwrap_or("")` compared a malformed recorded
+            // header as an empty one, so a drifted oracle could still match.
+            let value = value.as_str().unwrap_or_else(|| {
+                panic!("#1333 oracle header {name:?} must be a string, found {value:?}")
+            });
+            (name.to_ascii_lowercase(), value.to_owned())
         })
         .collect::<BTreeMap<_, _>>();
     assert_eq!(
@@ -648,18 +695,26 @@ fn js_string_array(values: &[Value]) -> JsValue {
     )
 }
 
+/// #1606 r4: the same tri-state rule the request fields follow. A recorded
+/// option that is present but not a string is fixture drift: `unwrap_or`
+/// would quietly start a server with different options than the cell was
+/// captured under, and the cell would still be green (the recorded default
+/// happens to equal the fallback).
+fn case_option(options: &Value, key: &str, fallback: &str) -> String {
+    match options.get(key) {
+        Some(Value::String(text)) => text.to_owned(),
+        Some(other) => panic!("#1333 options.{key} must be a string, found {other:?}"),
+        None => fallback.to_owned(),
+    }
+}
+
 fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
     let options = &case["options"];
     ApiServerOptions {
         port: Some(JsValue::Number(0.0)),
-        api_key: Some(options["apiKey"].as_str().unwrap_or("").to_owned()),
+        api_key: Some(case_option(options, "apiKey", "")),
         host: Some("127.0.0.1".to_owned()),
-        model_name: Some(
-            options["modelName"]
-                .as_str()
-                .unwrap_or("parity-model")
-                .to_owned(),
-        ),
+        model_name: Some(case_option(options, "modelName", "parity-model")),
         cors_origins: options["corsOrigins"]
             .as_array()
             .map(|values| js_string_array(values)),
@@ -767,6 +822,13 @@ async fn replays_real_ts_api_server_cells() {
         // cell stays green. Fewer responses already panics on the index; this
         // closes the other direction for every cell, not just boundary ones.
         let recorded_requests = case["requests"].as_array().expect("#1333 requests");
+        // #1606 r4: the pairing below is 0 == 0 for a cell that records
+        // neither, and such a cell would replay nothing while still counting
+        // as covered.
+        assert!(
+            !recorded_requests.is_empty(),
+            "#1333 {id}: a cell must record at least one request"
+        );
         assert_eq!(
             case["expect"].as_array().map(Vec::len),
             Some(recorded_requests.len()),
@@ -781,6 +843,28 @@ async fn replays_real_ts_api_server_cells() {
             // (ECONNRESET / EPIPE / a clean EOF) depends on write progress.
             // `body-limit-exact` stays in this loop: a body at the cap is read
             // in full and answered, so its response is deterministic.
+            //
+            // #1606 r4 (both families): skipping the replay also skipped the
+            // recorded response, so nothing compared the TS side of these
+            // cells at all. If the baseline cap ever rises above the recorded
+            // `OVER_CAP_BYTES`, the generator would record `400 invalid_json`
+            // here while the placeholder and the Rust cap stay at 1_000_001 —
+            // the whole surface green and the two sides disagreeing. Pin the
+            // shape: a close with zero bytes and no status line.
+            let expected = &case["expect"][0];
+            assert_eq!(
+                expected["bytes"].as_u64(),
+                Some(0),
+                "#1333 {id}: an oversized body must close without delivering bytes, got {expected}"
+            );
+            assert!(
+                expected.get("status").is_none(),
+                "#1333 {id}: an oversized body must not receive a status line, got {expected}"
+            );
+            assert!(
+                expected["error"].is_string(),
+                "#1333 {id}: an oversized body must record the connection error, got {expected}"
+            );
             continue;
         }
         let dropped = Arc::new(AtomicBool::new(false));
@@ -808,7 +892,7 @@ async fn submit_inputs_match_real_ts() {
         let Some(expected) = case.get("submits") else {
             continue;
         };
-        let id = case["id"].as_str().unwrap_or("");
+        let id = case["id"].as_str().expect("#1333 case id");
         let dropped = Arc::new(AtomicBool::new(false));
         let gateway = gateway_from(case, None, dropped);
         let started = start(
