@@ -61,17 +61,18 @@ fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, Requ
 }
 
 /// Validates that `sessionKey` is present and non-blank (TS `?.trim()` check).
+/// The blank check is the family-shared lossy helper: TS accepts a lone
+/// surrogate in the key (`?.trim()` leaves it intact, #1455 probe4), so a
+/// `to_utf8` filter here would reject a key TS accepts. Callers that need
+/// UTF-8 bytes convert lossily at the point of use, like TS's own path
+/// encoding.
 fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
-    let key = params
+    params
         .get("sessionKey")
         .and_then(JsValue::as_string)
-        .filter(|s| {
-            s.to_utf8()
-                .is_ok_and(|u| !crate::metadata::js_trim(&u).is_empty())
-        })
         .cloned()
-        .ok_or_else(|| gateway_error("INVALID_SESSION_KEY", "sessionKey is required."))?;
-    Ok(key)
+        .filter(super::config::trimmed_string_is_non_empty)
+        .ok_or_else(|| gateway_error("INVALID_SESSION_KEY", "sessionKey is required."))
 }
 
 /// Build a transcript adapter for the configured project.
@@ -489,5 +490,53 @@ impl Requests {
         .await
         .unwrap_or(false);
         Ok(object([("recorded", JsValue::Bool(recorded))]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::negative_assert_eq;
+
+    // #1455 G7: the shared `?.trim()` gate accepts a lone-surrogate key the
+    // way TS does (probe4: `{"label":"thinking-lone-surrogate-key",
+    // "value":{"applied":"callback"}}`); the previous `to_utf8` filter
+    // rejected it with INVALID_SESSION_KEY, diverging from TS.
+    #[tokio::test]
+    async fn resume_session_accepts_lone_surrogate_session_key() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let key = JsString::from_utf16(vec![0xd800]);
+        let params = object([("sessionKey", JsValue::String(key.clone()))]);
+        let result = r.session_dir_request("resume_session".into(), params).await;
+        let value = result.expect("#1455 resume_session accepts the surrogate key");
+        let echoed = value
+            .get("sessionKey")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .expect("#1455 resume_session echoes the sessionKey");
+        negative_assert_eq!(
+            echoed.units(),
+            key.units(),
+            "#1455 resume_session passes the lone-surrogate sessionKey through the trim gate"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    #[tokio::test]
+    async fn resume_session_rejects_blank_session_key() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let params = object([("sessionKey", "  ".into())]);
+        let result = r.session_dir_request("resume_session".into(), params).await;
+        let err = result.expect_err("#1455 resume_session rejects the blank key");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1455 resume_session blank sessionKey is rejected"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
     }
 }
