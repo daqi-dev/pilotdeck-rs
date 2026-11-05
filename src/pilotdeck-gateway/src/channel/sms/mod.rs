@@ -549,9 +549,9 @@ async fn bind_listener(host: &str, port: u16) -> std::io::Result<TcpListener> {
         // #1339 fix-r3 (P2): but `TcpListener::bind(("::", port))` honours
         // the host's `net.ipv6.bindv6only`, while Node's `listen` forces
         // `ipv6Only=false`. On a host that sets it the wildcard binds but
-        // serves IPv6 only, the 127.0.0.1 probe is refused and
-        // `empty-webhook-host` fails as a false positive — so build the v6
-        // socket explicitly instead of relying on the default.
+        // serves IPv6 only, a v4 bind to the same port still succeeds, and
+        // `empty-webhook-host` fails as a false positive — so verify the
+        // wildcard instead of relying on the default.
         if crate::mutants::on("sms-empty-host-bind-all") {
             // The switch makes the empty-host mapping fail outright. The
             // pre-fix shape bound the empty host, whose lookup fails on macOS
@@ -576,10 +576,10 @@ async fn bind_listener(host: &str, port: u16) -> std::io::Result<TcpListener> {
 /// #1339 fix-r3 (P2): `::` is dual-stack only while the host keeps
 /// `net.ipv6.bindv6only` at 0 — Rust std does not clear `IPV6_V6ONLY` the way
 /// Node's `listen` does. Verify it instead of assuming: a dual-stack wildcard
-/// already owns the IPv4 port, so a second bind to `127.0.0.1:<assigned port>`
-/// collides. If it succeeds, the wildcard serves IPv6 only, the 127.0.0.1
-/// probe would be refused, and the caller falls back to `0.0.0.0` (a
-/// host-dependent difference recorded in `A8.3-CH-SMS-008.md`).
+/// already owns the IPv4 port, so a v4 bind to `127.0.0.1:<assigned port>`
+/// collides. If it succeeds, the wildcard serves IPv6 only and the caller
+/// falls back to `0.0.0.0` (a host-dependent difference recorded in
+/// `A8.3-CH-SMS-008.md`).
 async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
     let listener = TcpListener::bind(("::", port)).await?;
     // #1339 fix-r4 (P1): probe the port the kernel actually assigned. With
@@ -587,17 +587,29 @@ async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
     // `127.0.0.1:0` would always succeed and every `webhookPort: 0` start
     // would be demoted to the IPv4-only fallback.
     let bound = listener.local_addr()?.port();
-    if v4_port_is_shared(bound).await {
-        return Ok(listener);
+    match v4_port_state(bound) {
+        // #1339 fix-r6 (P1): a probe that could not run says nothing about the
+        // host. Keep the working wildcard instead of demoting it to IPv4-only
+        // and silently dropping IPv6 service on a dual-stack host.
+        V4Port::Shared | V4Port::Unknown => Ok(listener),
+        V4Port::Unshared => Err(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "#1339 `::` is IPv6-only on this host",
+        )),
     }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::AddrInUse,
-        "#1339 `::` is IPv6-only on this host",
-    ))
 }
 
-/// True when `127.0.0.1:<port>` is already taken, i.e. the `::` listener above
-/// really does serve IPv4.
+/// What a bind to `127.0.0.1:<port>` learned about the wildcard above.
+enum V4Port {
+    /// The bind collided: the `::` listener already owns the IPv4 port too.
+    Shared,
+    /// The bind succeeded: nothing serves IPv4 on that port.
+    Unshared,
+    /// The probe itself could not run; the host's posture is unknown.
+    Unknown,
+}
+
+/// Probe `127.0.0.1:<port>` without any socket options.
 ///
 /// #1339 fix-r5 (P1): the probe must not go through `TcpListener::bind`. Rust
 /// std sets `SO_REUSEADDR` on listeners, and on macOS/BSD a socket that sets it
@@ -606,11 +618,21 @@ async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
 /// host and the caller always fell back to `0.0.0.0` (measured: a v4 socket
 /// with `SO_REUSEADDR` binds, without it gets `EADDRINUSE`). `TcpSocket` sets no
 /// socket options, so the collision it reports is real.
-async fn v4_port_is_shared(port: u16) -> bool {
+///
+/// #1339 fix-r6 (P1): only `AddrInUse` means "shared". Any other failure (no
+/// IPv4 stack, descriptor exhaustion, ...) is reported as [`V4Port::Unknown`]
+/// rather than being read as evidence about the host. The probe cannot tell our
+/// wildcard apart from a third party holding the v4 port; that misjudgement is
+/// registered in `A8.3-CH-SMS-008-R2.md`.
+fn v4_port_state(port: u16) -> V4Port {
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    match tokio::net::TcpSocket::new_v4() {
-        Ok(socket) => socket.bind(address).is_err(),
-        Err(_) => false,
+    let Ok(socket) = tokio::net::TcpSocket::new_v4() else {
+        return V4Port::Unknown;
+    };
+    match socket.bind(address) {
+        Ok(()) => V4Port::Unshared,
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => V4Port::Shared,
+        Err(_) => V4Port::Unknown,
     }
 }
 

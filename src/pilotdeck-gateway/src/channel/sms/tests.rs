@@ -424,10 +424,15 @@ async fn ensure_replay_port_free(port: u16) {
     if crate::mutants::on("sms-port-preflight") {
         return;
     }
-    let occupied = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .is_err();
-    if occupied {
+    // #1339 fix-r6 (P2): ask "is something listening?" by *connecting*, not by
+    // binding. `TcpListener::bind` sets `SO_REUSEADDR`, which on macOS/BSD
+    // reports a port still held by a wildcard listener as free — the very
+    // contamination this guard exists to stop — while the option-free bind used
+    // by the product collides with the `TIME_WAIT` the previous replay of the
+    // same case leaves behind and fails every later run. A connect probe has
+    // neither problem: a live listener answers, a lingering `TIME_WAIT` socket
+    // refuses.
+    if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
         panic!(
             "#1339 port {port} already in use; a concurrent channel-sms replay would corrupt the oracle"
         );
@@ -800,9 +805,28 @@ async fn dual_stack_probe_uses_the_assigned_port() {
         Err(error) => {
             // Refusing is only right on a host that keeps `IPV6_V6ONLY` set;
             // prove the host really is IPv6-only before accepting that.
-            let control = TcpListener::bind(("::", 0))
-                .await
-                .expect("#1339 control `::` bind");
+            // #1339 fix-r6 (P1): a host with IPv6 switched off reaches this
+            // branch through the product's own IPv4 fallback, so a control
+            // that panics there would fail the suite on a supported host.
+            // Prove IPv4 still binds, then report the skip explicitly.
+            let control = match TcpListener::bind(("::", 0)).await {
+                Ok(control) => control,
+                Err(control_error) => {
+                    let v4 = TcpListener::bind(("0.0.0.0", 0)).await.unwrap_or_else(|error| {
+                        panic!(
+                            "#1339 neither `::` ({control_error}) nor `0.0.0.0` ({error}) binds; \
+                             the IPv4 fallback this test leans on is unavailable"
+                        )
+                    });
+                    drop(v4);
+                    // Nothing to assert about a host that has no IPv6 at all:
+                    // the product fell back to `0.0.0.0` exactly as designed.
+                    eprintln!(
+                        "#1339 skipped: host has no IPv6 (`::` bind failed: {control_error})"
+                    );
+                    return;
+                }
+            };
             let control_port = control.local_addr().expect("#1339 control address").port();
             // #1339 fix-r5: decide the host type by *connecting*, not by
             // binding. A bind-based control would share the very option that
@@ -825,8 +849,11 @@ async fn dual_stack_probe_uses_the_assigned_port() {
     let address = listener.local_addr().expect("#1339 bound address");
     let port = address.port();
     assert_ne!(port, 0, "#1339 the wildcard must own a real port");
+    // #1339 fix-r5 (P2): the ledger says the address is the *v6 wildcard*, not
+    // merely some v6 address; assert the exact claim. Asking a v6 *loopback*
+    // listener to serve `127.0.0.1` would otherwise pass this test.
     assert!(
-        address.is_ipv6(),
+        address.ip().is_unspecified(),
         "#1339 `::` should bind the v6 wildcard, got {address}"
     );
     TcpStream::connect(("127.0.0.1", port))
