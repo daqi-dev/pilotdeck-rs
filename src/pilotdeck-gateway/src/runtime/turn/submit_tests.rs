@@ -49,6 +49,8 @@ struct Log {
     ended: AtomicBool,
     thrown: Mutex<Option<String>>,
     consumer_hold: Mutex<Option<Arc<Gate>>>,
+    /// Observed terminal-writer counts, recorded by interleaving steps.
+    observations: Mutex<Vec<usize>>,
 }
 impl Log {
     fn host(&self, value: &str) {
@@ -81,6 +83,12 @@ struct Session {
     accepted: Gate,
     terminal: Gate,
     end: Gate,
+    /// Set by `abort`, so a stream can surface the pump error a takeover causes.
+    aborted: AtomicBool,
+    /// Holds the timeout's durable terminal write (#727 interleaving cell 1).
+    failure_gate: Gate,
+    /// Holds the pump error until the fence has completed (#727 cell 2).
+    pump_error_gate: Gate,
 }
 impl LiveSession for Arc<Session> {
     fn snapshot(&self) -> JsValue {
@@ -95,6 +103,7 @@ impl LiveSession for Arc<Session> {
     }
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         self.log.host("session_abort");
+        self.aborted.store(true, Ordering::SeqCst);
         if self.setup["failureGuard"].is_object() {
             self.log
                 .durable
@@ -168,8 +177,22 @@ impl LiveTurn for Stream {
             }
             if self.index >= 2 && session.setup["transcriptFailure"] != true {
                 session.terminal.wait().await;
+                if session.setup["pumpErrorGate"] == true {
+                    session.pump_error_gate.wait().await;
+                }
                 if session.setup["pumpFailure"] == true {
                     return Err(RuntimeError::new("injected pump failure"));
+                }
+                // A live session aborted by the deadline surfaces as a pump
+                // error, exactly like the real sidecar exiting after the
+                // timeout cancel.
+                if session.setup["abortPumpFailure"] == true
+                    && session.aborted.load(Ordering::SeqCst)
+                {
+                    session.log.host("pump_error");
+                    return Err(RuntimeError::new(
+                        "timeout takeover aborted the live session",
+                    ));
                 }
             }
             if let Some(event) = self.native.get(self.index) {
@@ -468,6 +491,10 @@ impl SubmitHostServices for Services {
         status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async {
+            if self.session.setup["failureGate"] == true {
+                self.session.log.host("failure_enter");
+                self.session.failure_gate.wait().await;
+            }
             if self.session.setup["failureGuard"].is_object() {
                 self.session
                     .log
@@ -613,6 +640,52 @@ async fn settle(registry: &Registry) {
         }
     }
 }
+/// Yield until no task can make progress without a gate: the deterministic
+/// barrier used by the #727 interleaving cells. A paused clock means time
+/// never advances here, so only ready tasks run.
+async fn quiesce(log: &Log) {
+    let mut last = usize::MAX;
+    let mut stable = 0;
+    for _ in 0..4096 {
+        tokio::task::yield_now().await;
+        let size = log
+            .host
+            .lock()
+            .expect("#748 submit fixture prerequisite")
+            .len();
+        if size == last {
+            stable += 1;
+            if stable >= 32 {
+                return;
+            }
+        } else {
+            stable = 0;
+            last = size;
+        }
+    }
+    panic!("#727 submit fixture never quiesced");
+}
+fn host_count(log: &Log, call: &str) -> usize {
+    log.host
+        .lock()
+        .expect("#748 submit fixture prerequisite")
+        .iter()
+        .filter(|entry| *entry == call)
+        .count()
+}
+/// A terminal wire frame is the error the gateway publishes for the one
+/// terminal status (`turn_timeout` or `gateway_submit_failed`). Status frames
+/// are not counted twice: they carry the same code as an `agent_status`.
+fn terminal_wire_codes(log: &Log) -> Vec<String> {
+    log.visible
+        .lock()
+        .expect("#748 submit fixture prerequisite")
+        .iter()
+        .filter(|event| event["type"] == "error")
+        .filter_map(|event| event["code"].as_str().map(str::to_string))
+        .filter(|code| code == "turn_timeout" || code == "gateway_submit_failed")
+        .collect()
+}
 async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
     loop {
         match stream.next().await {
@@ -709,6 +782,9 @@ async fn replay_case(case: &Value) {
         accepted: Gate::new(),
         terminal: Gate::new(),
         end: Gate::new(),
+        aborted: AtomicBool::new(false),
+        failure_gate: Gate::new(),
+        pump_error_gate: Gate::new(),
     });
     let factory = Arc::new(Factory {
         session: session.clone(),
@@ -850,6 +926,45 @@ async fn replay_case(case: &Value) {
             "timeout" => {
                 tokio::time::advance(Duration::from_millis(1000)).await;
             }
+            // #727 cell 1: quiesce while the timeout's durable write is still
+            // gated, and record how many terminal writers reached it. The pump
+            // error caused by the abort must not be one of them.
+            "single-terminal-writer" => {
+                // Wait for the takeover-induced pump error to actually surface
+                // first; otherwise the count below could be taken before the
+                // losing writer has had a chance to reach the gate.
+                let mut spins = 0;
+                while host_count(&log, "pump_error") == 0 {
+                    tokio::task::yield_now().await;
+                    spins += 1;
+                    assert!(
+                        spins < 10_000,
+                        "#727 the takeover-induced pump error never surfaced"
+                    );
+                }
+                quiesce(&log).await;
+                log.observations
+                    .lock()
+                    .expect("#748 submit fixture prerequisite")
+                    .push(host_count(&log, "failure_enter"));
+            }
+            "failure-release" => session.failure_gate.open(),
+            // #727 cell 2: hold the pump error until the turn has finished, i.e.
+            // until `run` returned and `cleanup.release()` completed the
+            // completion fence. This is the ordering the TS baseline reaches
+            // naturally (its catch runs after the fence); the takeover must stay
+            // single-terminal here too, without relying on that ordering.
+            "fence-complete" => {
+                // The takeover waits up to `abort_turn_timeout_ms` for the pump
+                // to settle; the paused clock only moves on explicit advances.
+                tokio::time::advance(Duration::from_millis(21)).await;
+                settle(&registry).await;
+                crate::negative_assert!(
+                    log.ended.load(Ordering::SeqCst),
+                    "#727 the turn must complete its fence before the late pump error"
+                );
+            }
+            "pump-error-release" => session.pump_error_gate.open(),
             "abort" => {
                 let owner = owner.clone();
                 abort = Some(tokio::spawn(async move {
@@ -1026,6 +1141,63 @@ async fn replay_case(case: &Value) {
         );
     } else if order_only {
         // Inline lease-order cases carry no frozen durable expectations.
+        // #727: whichever way the deadline/pump race interleaves, the turn
+        // must leave exactly one terminal status and one terminal wire error.
+        if let Some(code) = case["singleTerminal"].as_str() {
+            let wire = terminal_wire_codes(&log);
+            // Registry entries are `{ seq, event }`, so the recorded terminal is
+            // `entry["event"]["event"]` (see `capabilityOnly` above).
+            let durable: Vec<String> = reopened
+                .events(&run, None, None)
+                .expect("#748 submit fixture prerequisite")
+                .iter()
+                .map(json)
+                .filter_map(|entry| entry["event"]["event"].as_str().map(str::to_string))
+                .filter(|code| code == "turn_timeout" || code == "gateway_submit_failed")
+                .collect();
+            let writers = log
+                .observations
+                .lock()
+                .expect("#748 submit fixture prerequisite")
+                .clone();
+            // Every surface that can carry a terminal, for the record.
+            eprintln!("{name}: writers {writers:?} durable {durable:?} wire {wire:?}");
+            // Recorded only by cell 1, while the timeout's durable write was
+            // still gated: exactly one writer may reach it.
+            if case["steps"]
+                .as_array()
+                .expect("#748 submit fixture prerequisite")
+                .iter()
+                .any(|step| step == "single-terminal-writer")
+            {
+                crate::negative_assert_eq!(
+                    writers,
+                    vec![1],
+                    "{name}: only the takeover may reach the gated durable write (durable {durable:?}, wire {wire:?})"
+                );
+            }
+            // Exactly one terminal *kind* on every surface. The takeover owns
+            // `turn_timeout`; a losing pump writer would add
+            // `gateway_submit_failed`, which is the defect this cell pins.
+            // Rows may repeat within a kind (status + error frame both carry
+            // the same code), so uniqueness is over the set of codes.
+            let mut kinds = durable.clone();
+            kinds.sort();
+            kinds.dedup();
+            crate::negative_assert_eq!(
+                kinds,
+                vec![code.to_string()],
+                "{name}: exactly one durable terminal kind (durable {durable:?}, wire {wire:?})"
+            );
+            crate::negative_assert!(
+                wire.iter().all(|seen| seen.as_str() == code),
+                "{name}: no foreign terminal error on the wire (wire {wire:?})"
+            );
+            crate::negative_assert!(
+                wire.len() <= 1,
+                "{name}: at most one terminal error frame on the wire (wire {wire:?})"
+            );
+        }
     } else {
         assert_eq!(
             reopened
@@ -1156,6 +1328,53 @@ async fn lease_release_precedes_after_turn_across_exit_paths() {
     for (name, setup, steps, native) in cases {
         let case = json!({"name": name, "setup": setup, "steps": steps, "native": native,
             "results": [], "orderOnly": true});
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .unwrap_or_else(|_| panic!("{} deadlocked", name));
+    }
+}
+#[tokio::test]
+async fn timeout_takeover_writes_exactly_one_terminal() {
+    let started = vec![
+        json!({"type": "turn_started", "sessionId": "s", "turnId": "r"}),
+        json!({"type": "input_accepted", "sessionId": "s", "turnId": "r",
+         "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]}),
+    ];
+    let mut aborted = started.clone();
+    aborted.push(json!({"type": "turn_completed", "result": {"type": "aborted", "stopReason": "aborted_streaming", "usage": {}}}));
+    // Cell 1: the timer's durable `turn_timeout` write is gated, so the pump
+    // error caused by its abort reaches the catch first (the real ordering that
+    // produced the extra `gateway_submit_failed`).
+    // Cell 2: the pump error is gated until `run` returns, i.e. until after the
+    // completion fence; the catch must still not register a terminal.
+    let cases = [
+        (
+            "timeout-durable-blocked-behind-catch",
+            json!({"input": {"timeoutMs": 100}, "abortPumpFailure": true, "failureGate": true}),
+            json!([
+                "observe",
+                "accept",
+                "timeout",
+                "single-terminal-writer",
+                "failure-release"
+            ]),
+        ),
+        (
+            "catch-after-fence-complete",
+            json!({"input": {"timeoutMs": 100}, "abortPumpFailure": true, "pumpErrorGate": true}),
+            json!([
+                "observe",
+                "accept",
+                "timeout",
+                "fence-complete",
+                "pump-error-release"
+            ]),
+        ),
+    ];
+    for (name, setup, steps) in cases {
+        let case = json!({"name": name, "setup": setup, "steps": steps,
+            "native": aborted.clone(), "results": [], "orderOnly": true,
+            "singleTerminal": "turn_timeout"});
         tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
             .await
             .unwrap_or_else(|_| panic!("{} deadlocked", name));
