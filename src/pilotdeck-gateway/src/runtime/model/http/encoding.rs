@@ -274,13 +274,39 @@ impl Body for DecodedBody {
                 Poll::Ready(None)
             }
             Ok(()) => Poll::Ready(Some(Ok(Frame::data(Bytes::copy_from_slice(buf.filled()))))),
-            Err(_) => {
+            Err(error) => {
                 this.done = true;
-                Poll::Ready(Some(Err(BodyFailure::Terminated)))
+                Poll::Ready(Some(Err(decode_failure(error))))
             }
         }
     }
     fn is_end_stream(&self) -> bool {
         self.done
+    }
+}
+
+/// Split a read failure into undici's shape. A wire failure already carries
+/// its `BodyFailure` through the codec (the shared decoder passes inner
+/// reader errors along untouched, so the payload still downcasts); anything
+/// else is the codec itself rejecting the compressed bytes, which undici
+/// reports as `TypeError: terminated` with the codec's message as `cause`.
+fn decode_failure(error: io::Error) -> BodyFailure {
+    if let Some(failure) = error
+        .get_ref()
+        .and_then(|payload| payload.downcast_ref::<BodyFailure>())
+    {
+        return *failure;
+    }
+    // compression-codecs 0.4.46 reports each rejection class as a fixed
+    // string; Node v22.22.0's zlib/brotli print the matching cause text
+    // (zlib-cause-probe / node-brotli-probe, #1553).
+    match error.to_string().as_str() {
+        "Invalid gzip header" => BodyFailure::Decode("incorrect header check"),
+        "CRC computed does not match" => BodyFailure::Decode("incorrect data check"),
+        "amount of bytes read does not match" => BodyFailure::Decode("incorrect length check"),
+        "brotli error" => BodyFailure::Decode("Decompression failed"),
+        // flate2 reports every zlib/deflate data rejection as one message;
+        // Node's zlib text there is data-dependent, so no cause is claimed.
+        _ => BodyFailure::Terminated,
     }
 }

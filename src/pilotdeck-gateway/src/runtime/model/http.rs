@@ -218,16 +218,21 @@ impl TransportFailure {
 /// A response body read failure. `Terminated` is undici's
 /// `TypeError: terminated` (socket failure or body idle timeout);
 /// `StringTooLong` is the V8 error replay of a drained over-limit shape body
-/// on the last candidate (real TS `response.text()`).
+/// on the last candidate (real TS `response.text()`); `Decode` is the same
+/// `TypeError: terminated` whose `error.cause` holds the content codec's
+/// rejection text (Node zlib: "incorrect header check" for a corrupt gzip
+/// member). The `cause` stays out of `Display` because the corpus records
+/// the error's own message only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BodyFailure {
     Terminated,
     StringTooLong,
+    Decode(&'static str),
 }
 impl std::fmt::Display for BodyFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Terminated => f.write_str("terminated"),
+            Self::Terminated | Self::Decode(_) => f.write_str("terminated"),
             Self::StringTooLong => f.write_str(crate::fetch_redirect::STRING_TOO_LONG),
         }
     }
@@ -2375,8 +2380,11 @@ async fn response_text(
         .await
         {
             Exchange::Aborted => return Err(ModelStreamError::abort()),
+            // A codec rejection reaches `response.text()` the same way: the
+            // corpus' corrupt-gzip cells answer with the bare "terminated"
+            // (the cause text is only kept by the raw stream readers).
             Exchange::Timeout { .. }
-            | Exchange::Response(Some(Err(BodyFailure::Terminated)), _) => {
+            | Exchange::Response(Some(Err(BodyFailure::Terminated | BodyFailure::Decode(_))), _) => {
                 return Err(ModelStreamError::thrown("TypeError", "terminated"));
             }
             // The drained over-limit shape body on the last candidate: real TS
