@@ -24,6 +24,7 @@ mutations = [
     ('omit-active-turn', SOURCE, '    active_turn: active_turn::METHODS,', '    active_turn: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-runs', SOURCE, '    runs: runs::METHODS,', '    runs: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-metadata', SOURCE, '    metadata: metadata::METHODS,', '    metadata: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-sop', SOURCE, '    sop: sop::METHODS,', '    sop: &[],', TEST, '#1305 registry contains every wired method'),
     ('duplicate-method', SOURCE, '    runs: runs::METHODS,', '    runs: &["run_get", "run_events", "run_reattach", "run_get"],', TEST, '#1305 registry contains no duplicate method'),
     ('management-gate-missing', MANAGEMENT, '                | "snapshot_get"', '                | "snapshot_get_removed"', GATE_TEST, '#1305 management gate matches registered family'),
     ('management-gate-extra', MANAGEMENT, '                | "commands_list"', '                | "commands_list" | "run_get"', GATE_TEST, '#1305 management gate matches registered family'),
