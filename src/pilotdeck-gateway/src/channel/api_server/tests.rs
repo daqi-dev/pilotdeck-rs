@@ -1256,3 +1256,38 @@ fn admit_chat_claims_a_chat_id_exactly_once() {
         "#1333 a released chat id is reusable"
     );
 }
+
+#[test]
+fn unconfigured_port_falls_back_to_the_ts_default() {
+    // TS `Number(options.port ?? env.API_SERVER_PORT ?? DEFAULT_PORT)`: a port
+    // always resolves, so an adapter with no configuration still binds 8642.
+    // Resolving to "no port" left the channel silently unbound (#1333 boundary
+    // review: DEFAULT_PORT was declared but never read).
+    let channel = ApiServerChannel::with_env(ApiServerOptions::default(), HashMap::new());
+    assert_eq!(
+        channel.resolve(None).port,
+        DEFAULT_PORT,
+        "#1333 an unconfigured port must default to 8642"
+    );
+
+    let explicit = ApiServerOptions {
+        port: Some(JsValue::Number(0.0)),
+        ..ApiServerOptions::default()
+    };
+    assert_eq!(
+        ApiServerChannel::with_env(explicit, HashMap::new())
+            .resolve(None)
+            .port,
+        0.0,
+        "#1333 an explicit port still wins"
+    );
+
+    let env = HashMap::from([("API_SERVER_PORT".to_owned(), "9100".to_owned())]);
+    assert_eq!(
+        ApiServerChannel::with_env(ApiServerOptions::default(), env)
+            .resolve(None)
+            .port,
+        9100.0,
+        "#1333 the env port wins over the default"
+    );
+}
