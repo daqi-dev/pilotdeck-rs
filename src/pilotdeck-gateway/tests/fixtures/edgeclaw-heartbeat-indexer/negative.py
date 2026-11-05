@@ -643,12 +643,20 @@ cases = [
          test='stale_removed_entry_after_later_clear_keeps_since_semantics',
          assertion='#1207 a row whose deleting clear predates the baseline must not read as cleared-since it'),
     # #1207 fix-2: the baseline comparison dropped from the per-row record —
-    # membership alone answers, so the end-to-end re-captured turn behind the
-    # stale entry is dropped and its row marked indexed (silent loss).
+    # membership alone answers, so a row whose deleting clear predates the
+    # baseline reads as cleared-since it. #1246 rebind: the end-to-end
+    # recapture cell (`recaptured_turn_survives_unrelated_later_clear`) is
+    # now rescued by the live-row qualifier `session_clear_removed_since`
+    # gained in #1246 (the re-captured row still exists in `l0_sessions`, so
+    # the store answers false), so the baseline comparison is proven on the
+    # absent-row incarnation instead: the `stale_removed_entry` cell's
+    # re-captured row is removed by the non-bumping repair, and only the
+    # baseline comparison keeps its stale record entry from reading as
+    # cleared-since the baseline.
     dict(name='removed-since-ignores-baseline',
          changes=[(file_memory, REMOVED_MAP_SINCE, REMOVED_BASELINE_DROPPED)],
-         test='recaptured_turn_survives_unrelated_later_clear',
-         assertion='#1207 the re-captured turn must be persisted, not silently dropped behind the stale removed entry'),
+         test='stale_removed_entry_after_later_clear_keeps_since_semantics',
+         assertion='#1207 a row whose deleting clear predates the baseline must not read as cleared-since it'),
     # #1207 fix-r1 (review P1): the re-arm dropped from the abort path — an
     # indexed row keeps its file deleted forever while its L0 row survives
     # (nothing ever re-lists an indexed row). The bound test's re-arm
