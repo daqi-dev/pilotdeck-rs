@@ -919,13 +919,16 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
         .unwrap(),
     );
     port.accept(&accept_input()).await.unwrap();
+    // The bound must outlive the observation cap: a barrier that self-released
+    // here would leave the second append owing no receipt, and the ordering
+    // assertion would pass without ever exercising the witnessed slot.
     arm(
         &control,
         &config_text(&[barrier_fragment(
             "registry",
             "q1",
             "agent_status:turn_timeout",
-            HELD_BOUND_MS,
+            OUTLIVED_BOUND_MS,
         )]),
     );
     let blocked = {
@@ -946,6 +949,15 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     // job takes the slot right behind the blocked one. The future is kept
     // unpolled on purpose — the slot must not depend on when it is first polled.
     let witnessed = port.append(&run(), &agent_status_event("input_accepted"));
+    // The receipt is written on the entry tick, before the future is polled, so
+    // seeing it proves this append really took the witnessed branch.
+    wait_receipt(
+        &control,
+        "registry",
+        "queued",
+        "agent_status:input_accepted",
+        "#1370 fifo fixture owes the second append a receipt",
+    );
     release(&control, seq_of(&block));
     wait_receipt(
         &control,
@@ -963,10 +975,14 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
         .expect("#1370 fifo blocked append finishes within the observation cap")
         .expect("#1370 fifo blocked append did not panic")
         .expect("#1370 fifo blocked append persists");
-    witnessed
+    tokio::time::timeout(OBSERVE, witnessed)
         .await
+        .expect("#1370 fifo witnessed append finishes within the observation cap")
         .expect("#1370 fifo witnessed append persists after the blocked one");
-    plain.await.expect("#1370 fifo plain append persists");
+    tokio::time::timeout(OBSERVE, plain)
+        .await
+        .expect("#1370 fifo plain append finishes within the observation cap")
+        .expect("#1370 fifo plain append persists");
     let events = port.events(&run()).await.unwrap();
     let names: Vec<String> = events
         .iter()
