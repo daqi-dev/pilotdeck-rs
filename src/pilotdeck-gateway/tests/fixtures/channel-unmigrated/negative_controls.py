@@ -72,6 +72,21 @@ MUTATIONS = [
      '    } else {\n        matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))\n    }',
      'unmigrated_loader_channels_use_js_truthiness',
      '#1386 loader channel uses JS truthiness'),
+    # M9 (#1579 r3 P1): the strict-key constant loses `qq`. Both parity suites
+    # derive their key sets from that constant, so without the membership pin
+    # every test stays green while qq silently moves to the JS-truthiness gate.
+    ('strict-key-dropped', source / 'loader.rs',
+     'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];',
+     'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["wecom"];',
+     'strict_true_channel_keys_are_exactly_qq_and_wecom',
+     '#1386 strict-true channel key set must be exactly qq and wecom'),
+    # M10 (#1579 r3 P1): the constant gains a loader-table key; the same pin
+    # catches it before the truthiness suite can quietly skip `telegram`.
+    ('loader-key-made-strict', source / 'loader.rs',
+     'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];',
+     'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom", "telegram"];',
+     'strict_true_channel_keys_are_exactly_qq_and_wecom',
+     '#1386 strict-true channel key set must be exactly qq and wecom'),
     # M6: iterating the loader table instead of the config-key table misses
     # `qq`/`wecom` (they are outside CHANNEL_LOADER_KEYS in TS too).
     ('loader-table-iteration', source / 'loader.rs',
