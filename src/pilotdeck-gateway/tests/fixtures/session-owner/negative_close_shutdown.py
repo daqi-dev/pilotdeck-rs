@@ -16,9 +16,13 @@ reason, and the shutdown aggregates the failure through the pending drain.
 The whole-shutdown aggregate stays ``shutdown()``'s own answer.
 
 Every mutation below reverts one slice of that mechanism and must be killed
-by the exact assertion named in its markers. Every case is classified
-KILLED / SURVIVED / INVALID, all cases run to completion, and any non-KILLED
-result exits non-zero.
+by the exact assertion named in its markers, except the rows registered in
+``EQUIVALENT``: their single-site deletion provably changes no product
+observable, so no test can kill them. An equivalent row must instead compile
+and leave its bound test green; if it ever starts failing the registry is
+stale and the device refuses the run. Every case is classified
+KILLED / SURVIVED / INVALID / EQUIVALENT, all cases run to completion, and any
+non-KILLED must-kill result exits non-zero.
 
 The source tree must equal ``HEAD`` for the guard to run. In the delivery
 sandbox the patch is uncommitted, so the coordinator runs this after committing:
@@ -52,7 +56,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, run_cases
+from negative_suite import Case, classify, passed, run_cases
 
 root = Path(__file__).resolve().parents[5]
 assert os.environ.get("CARGO_TARGET_DIR"), "caller must set CARGO_TARGET_DIR"
@@ -394,12 +398,18 @@ MUTATIONS = {
             "#1365 the panicked close settles with the completion guard's dropped error",
         ],
     ),
-    # #1365 fix-r1 (P2): the serial ticket's release write is the only thing
-    # a queued same-key waiter can observe. Deleting `done.send_replace(true)`
-    # from `Ticket::drop` parks a close queued behind an in-flight same-key
-    # creation forever — the probe (now recorded after the write) keeps
-    # firing, so the event sequence alone cannot witness the write; the
-    # bound test's bounded drain is what turns red.
+    # #1365 fix-r1 (P2), registered EQUIVALENT: deleting the serial ticket's
+    # release write changes no product observable. The sender is dropped at the
+    # end of `Ticket::drop` either way, and `Ticket::enter`'s
+    # `let _ = previous.wait_for(|done| *done).await` treats `Ok(true)` and the
+    # closed channel's `Err(RecvError)` identically — the queued close wakes
+    # and drains in both cases. The `ticket-released` probe records
+    # unconditionally after the deletion site, so the event sequence cannot
+    # witness the write either. Measured SURVIVED (reviewer round:
+    # `_tmp/20261105-issue-1365/review-r1/negctl.log`; fix-r2 full run:
+    # `_tmp/20261105-issue-1365-fix-r2/negctl/`). The row stays here so the
+    # static anchor preflight still counts it; `EQUIVALENT` below re-measures
+    # that it still survives and fails the run if it ever becomes killable.
     "ticket-release-write-removed": (
         owner,
         """        self.done.send_replace(true);""",
@@ -410,6 +420,34 @@ MUTATIONS = {
         ],
     ),
 }
+
+
+# Registered equivalent mutations: the single-site deletion changes no product
+# observable, so no test can kill it and it must not sit in the must-kill set.
+# Each value is (bound test, measured reason). The row above stays in MUTATIONS
+# so the static anchor preflight still resolves it; this registry re-measures
+# the equivalence at runtime — the mutant must compile and the bound test must
+# still pass (SURVIVED) before and after the guarded restore. If the test ever
+# grows a real witness and kills the row, the run reports INVALID: the entry is
+# stale and the row belongs back in the must-kill set. Registering the reason
+# here (not only in a commit message) keeps the next person from re-adding it.
+EQUIVALENT = {
+    "ticket-release-write-removed": (
+        QUEUED_DRAIN,
+        "the release write is indistinguishable from dropping the sender: "
+        "Ticket::enter's `let _ = previous.wait_for(|done| *done).await` "
+        "ignores the closed-channel Err(RecvError) exactly like it ignores "
+        "Ok(true), and the ticket-released probe records unconditionally after "
+        "the deletion site, so the queued close drains and the event sequence "
+        "stays green; measured SURVIVED in "
+        "_tmp/20261105-issue-1365/review-r1/negctl.log and the fix-r2 full run",
+    ),
+}
+
+
+def must_kill(names):
+    """The selected rows that must be KILLED; equivalents are measured apart."""
+    return [name for name in names if name not in EQUIVALENT]
 
 
 def mutate(original, scope, replacements):
@@ -434,6 +472,79 @@ def cases_for(names):
         for test in tests:
             bound.append(Case(name, source, old, new, test, markers, extra_pairs(name)))
     return bound
+
+
+def run_equivalent_cases(selected, out):
+    """Re-measure every registered equivalent row; a stale claim fails the run.
+
+    An equivalent mutation must compile and leave its bound test green. If the
+    test starts failing, the witness it lacked now exists: report INVALID so
+    the row is promoted back into the must-kill set instead of silently
+    rotting in the registry.
+    """
+    names = [name for name in selected if name in EQUIVALENT]
+    if not names:
+        return 0
+    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+               '-p', 'pilotdeck-gateway', '--lib']
+
+    def run(label, test):
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+        (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
+        result = run_owned(command + [test, '--', '--exact', '--include-ignored'],
+                           cwd=root, env=os.environ.copy(), timeout=1800)
+        (out / f'{label}.log').write_text(result.stdout + result.stderr)
+        return result
+
+    results = []
+    paths = list(dict.fromkeys(MUTATIONS[name][0] for name in names))
+    with mutating_sources(root, paths) as pristine:
+        for name in names:
+            test, reason = EQUIVALENT[name]
+            source, old, new = MUTATIONS[name][:3]
+            case = Case(name, source, old, new, test, MUTATIONS[name][4],
+                        extra_pairs(name))
+            status, detail = 'INVALID', ''
+            try:
+                if not passed(run(f'{name}-positive', test), test):
+                    detail = 'positive control did not pass the bound test'
+                else:
+                    source.write_text(mutate(pristine[source].decode(), case.scope,
+                                             [(old, new)]))
+                    measured, measured_reason = classify(
+                        run(f'{name}-equivalent', test), case)
+                    if measured == 'SURVIVED':
+                        status = 'EQUIVALENT'
+                        detail = f'registered equivalent survives: {reason}'
+                    elif measured == 'KILLED':
+                        detail = ('registered equivalent is now killed by its bound '
+                                  'test; promote it to the must-kill set: '
+                                  + measured_reason)
+                    else:
+                        detail = f'equivalent row not measurable: {measured_reason}'
+            except Exception as error:
+                status, detail = 'INVALID', f'{type(error).__name__}: {error}'
+            finally:
+                # Restore before the restored check, also on timeout or bad anchors.
+                source.write_bytes(pristine[source])
+                if source.read_bytes() != pristine[source]:
+                    raise RuntimeError(f'byte restoration failed: {source}')
+            if status == 'EQUIVALENT':
+                try:
+                    if not passed(run(f'{name}-restored', test), test):
+                        status = 'INVALID'
+                        detail += '; restored bound test did not pass'
+                except Exception as error:
+                    status = 'INVALID'
+                    detail += f'; restored: {type(error).__name__}: {error}'
+            results.append({'mutation': name, 'test': test, 'status': status,
+                            'reason': detail, 'restored': status == 'EQUIVALENT'})
+            print(f'{name}: {status}: {detail}', flush=True)
+    (out / 'equivalent-summary.json').write_text(json.dumps(results, indent=2) + '\n')
+    counts = {state: sum(row['status'] == state for row in results)
+              for state in ('EQUIVALENT', 'INVALID')}
+    print('equivalent summary: ' + ', '.join(f'{key}={value}' for key, value in counts.items()))
+    return int(any(row['status'] != 'EQUIVALENT' for row in results))
 
 
 def check_anchors(selected):
@@ -508,15 +619,21 @@ def main():
     compiled = compile_cases(selected, args.out)
     if args.compile_only:
         return compiled
+    kill = must_kill(selected)
     runtime = run_cases(
         root,
-        cases_for(selected),
+        cases_for(kill),
         args.out,
         os.environ.copy(),
         mutate,
         timeout=1800,
-    )
-    return int(compiled != 0 or runtime != 0)
+    ) if kill else 0
+    try:
+        equivalent = run_equivalent_cases(selected, args.out)
+    except Exception as error:
+        print(f'equivalent guard: {type(error).__name__}: {error}', flush=True)
+        equivalent = 1
+    return int(compiled != 0 or runtime != 0 or equivalent != 0)
 
 
 if __name__ == "__main__":

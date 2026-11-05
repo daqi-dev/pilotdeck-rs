@@ -1582,13 +1582,15 @@ async fn idle_sweep_settles_its_closing_entry_before_releasing_the_ticket() {
     );
 }
 
-/// #1365: the ticket release write is the only thing a queued same-key waiter
-/// can observe — `Ticket::drop` records its probe only after
-/// `done.send_replace(true)`, the same probe-binds-the-write shape as the
-/// closing guard's settle. A close queued behind an in-flight same-key
-/// creation drains only when that creation's ticket actually writes its
-/// release; the recorded order stays queue-head-release, then the queued
-/// close's settle, then its own release.
+/// #1365: a close queued behind an in-flight same-key creation drains only
+/// when the queue head's ticket is released. The release write itself is not
+/// witnessed here: dropping the sender wakes `Ticket::enter`'s `wait_for`
+/// exactly like `done.send_replace(true)` (the receiver returns an error that
+/// `enter` ignores), and the `ticket-released` probe records either way — so
+/// deleting the write is a registered equivalent mutation, not a defect this
+/// test can catch. What the recorded order does pin is the release/settle
+/// sequence: queue-head release, then the queued close's settle, then its own
+/// release.
 #[tokio::test]
 async fn queued_close_drains_through_the_ticket_release_write() {
     let probe = Probe::default();
