@@ -405,6 +405,42 @@ class ProcessControls(unittest.TestCase):
             self.assertEqual(slow.returncode, 0, slow.stdout + slow.stderr)
             self.assertIn("不计入判定", slow.stdout)
 
+    def test_cargo_slots_bootstrap_and_refresh_stamp_sample_time(self):
+        # #1556 r7（两家评审同点）：三条写缓存路径里只有「缓存过期→问闸」按口径取问闸之前的
+        # 时刻；冷启动与 --refresh-cap 仍用答复之后的 date +%s。冷启动正是 du 最冷、耗时最长
+        # 的一次，这样打戳会让一份最长已 240 s 旧的 used 冒充「0s 前取自闸」，并在随后
+        # USED_TTL 内被缓存读者继续当真。两格都断言：慢闸下 used 不参与判定，且 lastok 记的是
+        # 问闸**之前**的时刻。
+        script = Path(__file__).resolve().parents[4] / "scripts" / "cargo-slots.sh"
+        with tempfile.TemporaryDirectory(prefix="pdrs-cargo-slots-boot-") as temp:
+            temp = Path(temp)
+            gate = temp / "gate.sh"
+            gate.write_text("#!/bin/bash\nsleep 4\n"
+                            "echo 'cargo-slot x host=h 名额 999/999  磁盘 1.0 GiB / 190（cache）'\n")
+            gate.chmod(0o755)
+            env = dict(os.environ,
+                       PDRS_CARGO_SLOT_BIN=str(gate),
+                       PDRS_CARGO_SLOTS_CACHE_DIR=str(temp / "cache"),
+                       PDRS_CARGO_SLOTS_USED_TTL="2")
+
+            before = int(time.time())
+            boot = subprocess.run(["bash", str(script)], capture_output=True,
+                                  text=True, timeout=120, env=env)
+            self.assertEqual(boot.returncode, 0, boot.stdout + boot.stderr)
+            self.assertIn("不计入判定", boot.stdout)
+            files = list((temp / "cache").glob("cap-cache.*"))
+            self.assertEqual(len(files), 1, files)
+            lastok = int(files[0].read_text().split()[3])
+            self.assertLessEqual(lastok, before + 1, files[0].read_text())
+
+            # --refresh-cap 是人工恢复路径，写出的 lastok 同样不能是答复时刻。
+            before = int(time.time())
+            refresh = subprocess.run(["bash", str(script), "--refresh-cap"], capture_output=True,
+                                     text=True, timeout=120, env=env)
+            self.assertEqual(refresh.returncode, 0, refresh.stdout + refresh.stderr)
+            lastok = int(files[0].read_text().split()[3])
+            self.assertLessEqual(lastok, before + 1, files[0].read_text())
+
     def test_cargo_slots_rejects_bad_time_knobs(self):
         # 0 / 前导零 / 非数字都必须 fail-closed 4：0 让 MAX_STALE、FAT_REFRESH_AFTER 变成恒真，
         # 前导零在 $(( )) 里按八进制解析（09 非法 → 算术错误退 1 = 「已满」），非数字在 set -u

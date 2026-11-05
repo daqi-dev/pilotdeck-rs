@@ -243,8 +243,12 @@ query_cap_or_die() { # $1 = 限时秒数，$2 = 失败提示
 }
 
 if [ "$REFRESH_ONLY" = 1 ]; then
+  # 取样时刻取问闸**之前**（同判定口径）：闸在磁盘 du 之前就把 used 探完了，用答复时刻打戳
+  # 会把 du 段（冷缓存 31.8–42.2 s，上限 180 s）抹掉，让恢复路径预热出一份「看着新鲜、
+  # 其实已陈旧」的 used，毒化随后 CAP_TTL 内的所有读者（#1556 r7 两家评审同点）。
+  now=$(date +%s)
   query_cap_or_die "$REFRESH_CAP_TIMEOUT" "无法预热名额缓存"
-  write_cap_cache "$CAP" "$USED" "$(date +%s)"
+  write_cap_cache "$CAP" "$USED" "$now"
   echo "cargo-slots: 已缓存统一闸名额 ${USED}/${CAP}（${CACHE_FILE}）"
   exit 0
 fi
@@ -320,10 +324,12 @@ if read_cap_cache; then
     fi
   fi
 else
+  # 同判定口径：冷启动正是 du 最冷、耗时最长的一次，used 的取样时刻必须取问闸之前。
+  now=$(date +%s)
   query_cap_or_die "$BOOTSTRAP_TIMEOUT" "本机还没有名额缓存（可先跑 scripts/cargo-slots.sh --refresh-cap 预热）"
-  write_cap_cache "$CAP" "$USED" "$(date +%s)"
+  write_cap_cache "$CAP" "$USED" "$now"
   CAP_SOURCE="闸冷启动"
-  USED_TS=$(date +%s)
+  USED_TS=$now
 fi
 
 # 一次 ps 取全 pid/ppid/args，再从叶子往上归并：沿父指针上溯，祖先链里已经有 cargo 的不再另计，
