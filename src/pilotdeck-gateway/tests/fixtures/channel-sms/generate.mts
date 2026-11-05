@@ -924,6 +924,11 @@ await mkdir(out, { recursive: true });
 // a taken port becomes an EADDRINUSE start error), and both determinism runs
 // would hit it, so the two-run check cannot catch it. Refuse to record while
 // any case port is taken instead of publishing a corrupted oracle.
+//
+// This probe is a fast path only, and it covers IPv4 loopback alone: the
+// authoritative guard is the listen-failure check after each run, which sees
+// every case whatever address family it binds (`empty-webhook-host` binds the
+// dual-stack `::`).
 const portIsFree = (port: number) => new Promise<boolean>((done) => {
   const probe = net.createServer();
   probe.once('error', () => done(false));
@@ -936,10 +941,31 @@ for (const definition of definitions) {
   );
 }
 const cases: any[] = [];
+// #1339 fix-r3 (P1): the preflight above only proves the port was free at t0;
+// a listener that takes it during the recording run makes `start` fail with
+// EADDRINUSE, which the channel records as an error instead of throwing — the
+// probe requests then reach the occupant and both determinism runs record the
+// same contamination, so `deepEqual` cannot tell it from a good case. A case
+// whose listener never came up cannot describe our channel, so refuse it.
+const LISTEN_FAILURE = 'sms: HTTP server failed:';
 for (const definition of definitions) {
   const first = await run(definition);
   const second = await run(definition);
   assert.deepEqual(second, first, `#1339 case ${definition.name} is not deterministic`);
+  for (const [index, record] of [first, second].entries()) {
+    const failed = record.logs.filter(
+      ([level, text]: [string, string]) => level === 'error' && text.startsWith(LISTEN_FAILURE),
+    );
+    if (definition.blockPort) {
+      // `start-port-busy` exists to record exactly that failure.
+      assert.equal(failed.length, 1, `#1339 case ${definition.name} must record one listen failure (run ${index + 1})`);
+    } else {
+      assert.deepEqual(
+        failed, [],
+        `#1339 case ${definition.name} never bound its port (run ${index + 1}): ${failed.map(([, text]: [string, string]) => text).join('; ')}; refusing to record an oracle the webhook never reached`,
+      );
+    }
+  }
   cases.push({
     name: definition.name,
     port: definition.port,

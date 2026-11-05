@@ -102,8 +102,11 @@ switches = [
     # proceeds and its connect probe no longer matches the oracle.
     ('sms-port-preflight', SMS / 'tests.rs', 'port_busy_preflight_fails_fast',
      '#1339 port-busy preflight marker'),
-    # fix-r1 P2 #14: empty webhookHost binds the literal "" (loopback ::1 on
-    # macOS) — the 127.0.0.1 probe is refused instead of dispatching.
+    # fix-r1 P2 #14, fix-r3 P2: the empty webhookHost is not mapped to the
+    # dual-stack wildcard — the bind fails instead, so the 127.0.0.1 probe is
+    # refused rather than dispatched. The switch returns the failure directly
+    # (it used to bind `::1`): a host without IPv6 fell back to the positive
+    # run's `0.0.0.0` and the mutant SURVIVED.
     ('sms-empty-host-bind-all', SMS / 'mod.rs', 'empty_webhook_host',
      '#1339 sms oracle: empty-webhook-host'),
     # fix-r1 P2 #15: listen errors keep the io::Error text — the
