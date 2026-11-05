@@ -47,8 +47,15 @@ that batch `PASS_WITH_SKIPS` / exit 1, never `PASS` / exit 0.
 `aggregation-audit` statically enumerates every top-level status/exit-code
 computation in the E1 apparatus and fails a registered point that does not call
 `common.aggregate_status()`, an unregistered new point, or a `int(...)` exit
-computation.  The exit mapping is the one registered order:
-`PASS=0`, `PASS_WITH_SKIPS/FAIL=1`, `BLOCKED=2`, `NOT_RUN=3`.
+computation.  #892 adds two layers: a directly returned summary dict (a `status`
+key in the returned dict or a dict element of a returned tuple) marks the
+function as an aggregation point that must be registered, and every registered
+point must route each return path's status slot, status literal, and exit-code
+computation through the shared function instead of computing its own verdict
+inline.  The audit self-tests these probes: a direct `{'status': ...}` return
+that must be caught, an inline `0 if ... else 1` branch that must be flagged,
+and a legal shared pair that must stay clean.  The exit mapping is the one
+registered order: `PASS=0`, `PASS_WITH_SKIPS/FAIL=1`, `BLOCKED=2`, `NOT_RUN=3`.
 Every process mode checks the live process group and the grandchild PID after
 the run.  On non-Darwin the Darwin-only positives (`clean`, `leak`, `ignore`,
 `eperm-live-member`, `runtime-negative`) are recorded as `passed: null` with an
@@ -120,7 +127,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 22 mutants:
+`JUDGES`, keyed by the same names. The current table has 24 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -129,11 +136,17 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `enumeration-failure-empty`, `signal-gate-removed`, `pid-blocked-as-gone`,
 `linux-visible-census-trusted`, `batch-status-relaxed`,
 `fixture-summary-relaxed`, `calibrate-controls-skip-accepted`,
-`aggregation-exit-bypassed`, `restored-skip-accepted`.  The batch-related five
-revert the pessimistic batch aggregation, the fixture skip summary, the
+`aggregation-exit-bypassed`, `summary-dict-bypass`,
+`aggregation-branch-exit-inline`, `restored-skip-accepted`.  The batch-related
+five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
-(drops the restored positive child).  The last one binds
+(drops the restored positive child).  `summary-dict-bypass` replaces the
+`run_all()` shared aggregation with a nested function returning a summary
+dict directly (the #892 enumeration and per-branch audits must catch it);
+`aggregation-branch-exit-inline` rewrites one `main()` exit branch to compute
+its own code while the other still shares (the per-branch slot audit must
+catch it).  The last one binds
 `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
