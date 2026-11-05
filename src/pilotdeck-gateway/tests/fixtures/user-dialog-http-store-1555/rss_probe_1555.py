@@ -77,7 +77,10 @@ def peak_rss(stderr):
     for line in stderr.splitlines():
         if 'maximum resident set size' in line.lower():
             fields = line.replace(':', ' ').split()
-            value = next(field for field in fields if field.isdigit())
+            value = next((field for field in fields if field.isdigit()), None)
+            if value is None:
+                raise ValueError(
+                    'maximum resident set size line has no number: ' + line)
             return int(value) * (1 if DARWIN else 1024)
     raise ValueError('no maximum resident set size line in timing stderr')
 
@@ -147,11 +150,16 @@ def main():
     # kernel `flock` for the whole build+measurement window and refuse a tree
     # that is already dirty instead of recording the bit and continuing.
     #
-    # `starting` is printed before the lock is requested and `provenance` only
-    # after it is held, so a control that holds the lock can tell a blocked
-    # driver from a slow interpreter instead of guessing from a quiet window.
+    # `starting` is printed before the lock is requested, `lock-requested`
+    # immediately before the blocking `flock` call, and `lock-acquired` as the
+    # first statement after it returns. The only code between the last two is
+    # the request itself, so a control that holds the lock can see "asked, not
+    # acquired" as a state proof of blocking instead of inferring it from a
+    # quiet window (the dirty check below is git-heavy on a cold cache).
     print(f'starting {json.dumps({"pid": os.getpid()})}', flush=True)
+    print('lock-requested', flush=True)
     with tree_lock(root, timeout=3600):
+        print('lock-acquired', flush=True)
         dirty = workspace_dirty(root)
         provenance = dict(
             head=_git(root, 'rev-parse', 'HEAD').decode().strip(),

@@ -27,7 +27,12 @@ console.log(JSON.stringify({node: process.version, baseline: 'plain http.createS
 for (const [name, payload] of cases) {
   const r = await once(port, Buffer.from(payload, 'latin1'));
   console.log('\n=== ' + name + ' ===');
-  console.log(JSON.stringify({bytes: r.bytes, why: r.why, hex: r.hex}));
-  process.stdout.write(r.text.replace(/\r\n/g, '\\r\\n\n'));
+  // Date makes a 2xx response differ between runs; print the stable projection
+  // (size, close reason, status line) and keep the full bytes only when the
+  // response carries no Date header, so the file can be re-derived byte for
+  // byte a week later.
+  const dated = /(^|\r\n)Date: /.test(r.text);
+  console.log(JSON.stringify({bytes: r.bytes, why: r.why,
+    head: r.text.split('\r\n')[0], hex: dated ? undefined : r.hex}));
 }
 server.close();
