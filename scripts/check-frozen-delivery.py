@@ -563,16 +563,29 @@ def _imported_from(tree, name):
             return None
     module, seen = None, 0
     for node in ast.walk(tree):
+        # ``import apparatus as name`` / ``import name`` bind a module object and
+        # leave no ``Name(Store)`` behind -- the pre-r17 code rejected them
+        # explicitly, and dropping that branch made a file with both a plain
+        # ``from apparatus import name`` and one of these look trustworthy.
+        if isinstance(node, ast.Import):
+            if any((alias.asname or alias.name).split('.')[0] == name
+                   for alias in node.names):
+                return None
+            continue
         if not isinstance(node, ast.ImportFrom):
             continue
-        if any(alias.name == '*' for alias in node.names):
+        # ``from .apparatus import name`` is not the module this tool read, and a
+        # star import hides an arbitrary set of names behind the module.
+        if any(alias.name == '*' for alias in node.names) or node.level:
             return None
         for alias in node.names:
-            # The bound name must be exactly this name *and* come from this
-            # module: ``from apparatus import EXP008_FILES as SPEC_FILES`` binds
-            # SPEC_FILES to a different tuple.
-            if alias.name != name or (alias.asname or name) != name:
+            # Any alias that *binds* this name counts as a binding, not just the
+            # identical spelling: ``from other import y as name`` puts a
+            # different object behind the name while looking like one import.
+            if (alias.asname or alias.name) != name:
                 continue
+            if alias.name != name:
+                return None
             seen += 1
             module = node.module
     return module if seen == 1 else None
@@ -693,17 +706,106 @@ def _sole_binding(tree, name):
     return None
 
 
+def _file_dir(node):
+    """True for ``Path(__file__).resolve().parent`` and its ``.parent``.
+
+    The bootstrap derives the apparatus directory from the running script only,
+    so this chain is what ties ``_apparatus / 'common.py'`` to the file this tool
+    read; any other base path names a different file.
+    """
+    if not (isinstance(node, ast.Attribute) and node.attr == 'parent'):
+        return False
+    node = node.value  # Path(__file__).resolve()
+    return (isinstance(node, ast.Call) and not node.args and not node.keywords
+            and isinstance(node.func, ast.Attribute) and node.func.attr == 'resolve'
+            and isinstance(node.func.value, ast.Call)
+            and not node.func.value.keywords and len(node.func.value.args) == 1
+            and isinstance(node.func.value.args[0], ast.Name)
+            and node.func.value.args[0].id == '__file__'
+            and isinstance(node.func.value.func, ast.Name)
+            and node.func.value.func.id == 'Path')
+
+
+def _apparatus_dir_ok(tree):
+    """True when ``_apparatus`` is the bootstrap's ``__file__``-derived directory.
+
+    ``_here = Path(__file__).resolve().parent`` and ``_apparatus = _here`` or
+    ``_here.parent`` (the ``controls`` entry one level down), each bound exactly
+    once.  Anything else -- ``_apparatus = Path('scripts/evil')``, a second
+    binding -- points the loader at a ``common.py`` this tool never read.
+    """
+    if not _file_dir(_sole_binding(tree, '_here')):
+        return False
+    apparatus = _sole_binding(tree, '_apparatus')
+    shapes = []
+    if isinstance(apparatus, ast.IfExp):
+        shapes = [apparatus.body, apparatus.orelse]
+    else:
+        shapes = [apparatus]
+    for shape in shapes:
+        if isinstance(shape, ast.Name):
+            if shape.id != '_here':
+                return False
+        elif not (isinstance(shape, ast.Attribute) and shape.attr == 'parent'
+                  and isinstance(shape.value, ast.Name) and shape.value.id == '_here'):
+            return False
+    return bool(shapes)
+
+
+def _guard_ok(tree):
+    """True when ``_guard`` only ever holds the guard loaded from ``_guard_path``.
+
+    The bootstrap binds it once from ``sys.modules.get('_guard')`` and, in the
+    cold path, once more from ``importlib.util.module_from_spec(_spec)`` before
+    exec'ing ``_guard_path``'s bytes into it; ``_guard_path`` itself must be
+    ``_apparatus / '_guard.py'``.  A ``_guard = evil``, a second import or any
+    other binding form makes ``_load`` a loader this tool cannot vouch for.
+    """
+    if _unmodelled_binding(tree, '_guard'):
+        return False
+    path = _sole_binding(tree, '_guard_path')
+    if not (isinstance(path, ast.BinOp) and isinstance(path.op, ast.Div)
+            and isinstance(path.left, ast.Name) and path.left.id == '_apparatus'
+            and isinstance(path.right, ast.Constant) and path.right.value == '_guard.py'):
+        return False
+    stores, modelled = 0, 0
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Name) and node.id == '_guard' \
+                and isinstance(node.ctx, ast.Store):
+            stores += 1
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == '_guard'):
+            continue
+        value = node.value
+        if not (isinstance(value, ast.Call) and not value.keywords and len(value.args) == 1
+                and isinstance(value.func, ast.Attribute)):
+            continue
+        if value.func.attr == 'get' and isinstance(value.args[0], ast.Constant) \
+                and value.args[0].value == '_guard' \
+                and isinstance(value.func.value, ast.Attribute) \
+                and value.func.value.attr == 'modules' \
+                and isinstance(value.func.value.value, ast.Name) \
+                and value.func.value.value.id == 'sys':
+            modelled += 1
+        elif value.func.attr == 'module_from_spec':
+            modelled += 1
+    return stores > 0 and stores == modelled
+
+
 def _loaded_through_common(tree):
     """True when ``common`` is the module's own loader result, not something else.
 
     The external value (``common.A2_SCRIPTS``) is only trustworthy while
     ``common`` still names ``scripts/gateway-parity/common.py`` -- the file this
-    tool read.  The bootstrap is modelled literally (fix-r17): ``_load =
-    _guard.load`` and ``common = _load('common', _apparatus / 'common.py')``,
-    each bound exactly once.  ``import gw_extra as common``, ``common = other``,
-    a walrus/``for``/``with`` target, a second argument that names another file
-    or a rebound ``_load`` all make the two disagree, and the answer is "cannot
-    tell".
+    tool read.  The bootstrap is modelled literally (fix-r17/r18): ``_here`` and
+    ``_apparatus`` derived from ``__file__``, ``_guard_path = _apparatus /
+    '_guard.py'``, ``_load = _guard.load`` and ``common = _load('common',
+    _apparatus / 'common.py')``, each bound exactly once.  ``import gw_extra as
+    common``, ``common = other``, a walrus/``for``/``with`` target, a second
+    argument that names another file, ``_evil / 'common.py'`` or a rebound
+    ``_load``/``_guard``/``_apparatus`` all make the two disagree, and the answer
+    is "cannot tell".
     """
     common = _sole_binding(tree, 'common')
     if not (isinstance(common, ast.Call)
@@ -714,11 +816,14 @@ def _loaded_through_common(tree):
         return False
     path = common.args[1]
     if not (isinstance(path, ast.BinOp) and isinstance(path.op, ast.Div)
+            and isinstance(path.left, ast.Name) and path.left.id == '_apparatus'
             and isinstance(path.right, ast.Constant) and path.right.value == 'common.py'):
         return False
     load = _sole_binding(tree, '_load')
-    return (isinstance(load, ast.Attribute) and load.attr == 'load'
-            and isinstance(load.value, ast.Name) and load.value.id == '_guard')
+    if not (isinstance(load, ast.Attribute) and load.attr == 'load'
+            and isinstance(load.value, ast.Name) and load.value.id == '_guard'):
+        return False
+    return _apparatus_dir_ok(tree) and _guard_ok(tree)
 
 
 def _external_still_holds(tree, name):
@@ -733,28 +838,15 @@ def _external_still_holds(tree, name):
     the *only* module-scope store of the name (walrus / ``for`` / ``with``
     targets are ``Name(Store)`` too and are counted here).
     """
-    if _unmodelled_binding(tree, name) or not _loaded_through_common(tree):
+    if not _loaded_through_common(tree):
         return False
-    stores = [node for node in _module_scope_nodes(tree)
-              if isinstance(node, ast.Name) and node.id == name
-              and isinstance(node.ctx, ast.Store)]
-    # One store only: a module-level walrus, ``for``/``with ... as`` target or a
-    # second assignment picks a value this parser never saw, and the external
-    # tuple would be the stale one.
-    if len(stores) != 1:
-        return False
-    for node in _module_scope_nodes(tree):
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target, value = node.targets[0], node.value
-        elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            target, value = node.target, node.value
-        else:
-            continue
-        if not (isinstance(target, ast.Name) and target.id == name):
-            continue
-        return (isinstance(value, ast.Attribute) and value.attr == name
-                and isinstance(value.value, ast.Name) and value.value.id == 'common')
-    return False
+    # One plain module-scope binding of ``common.<name>`` and nothing else: a
+    # module-level walrus, ``for``/``with ... as`` target or a second assignment
+    # picks a value this parser never saw, and the external tuple would be the
+    # stale one.  ``_sole_binding`` carries exactly that rule.
+    value = _sole_binding(tree, name)
+    return (isinstance(value, ast.Attribute) and value.attr == name
+            and isinstance(value.value, ast.Name) and value.value.id == 'common')
 
 
 def _tuple_value(tree, function, name, external=()):

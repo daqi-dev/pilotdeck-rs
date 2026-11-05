@@ -103,9 +103,14 @@ UI_FROZEN = ("\nfrom apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_
              "            | set(toolchain_files(root)))\n")
 
 
-# 真装置的 bootstrap（scripts/gateway-parity/check_frozen.py:64-68）：外部值
-# ``common.A2_SCRIPTS`` 只有在这两行是唯一绑定时才可信，夹具照原样写。
-GW_BOOTSTRAP = ("_load = _guard.load\n"
+# 真装置的 bootstrap（scripts/gateway-parity/check_frozen.py:45-69）：外部值
+# ``common.A2_SCRIPTS`` 只有在这几条路径都从 ``__file__`` 派生且各自唯一绑定时
+# 才可信，夹具逐行照原样写（``r18_真装置仍含这几行`` 用例钉住真文件）。
+GW_BOOTSTRAP = ("_here = Path(__file__).resolve().parent\n"
+                "_apparatus = _here.parent if _here.name == 'controls' else _here\n"
+                "_guard_path = _apparatus / '_guard.py'\n"
+                "_guard = sys.modules.get('_guard')\n"
+                "_load = _guard.load\n"
                 "common = _load('common', _apparatus / 'common.py')\n")
 
 
@@ -502,7 +507,8 @@ def run():
                       "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
                       "    return {name: name for name in paths}\n") is not None)
     case("gateway A2_SCRIPTS 没有模块级绑定 → 不可判定（不再默认取 common）",
-         gw_inventory("\ndef manifest_inventory(root):\n"
+         gw_inventory(GW_BOOTSTRAP
+                      + "\ndef manifest_inventory(root):\n"
                       "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
                       "    return {name: name for name in paths}\n") is None)
     case("gateway 模块级 walrus 重绑 A2_SCRIPTS → 不可判定",
@@ -546,12 +552,44 @@ def run():
                       "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
                       "    return {name: name for name in paths}\n") is None)
     case("gateway common 由 import 别名绑定 → 不可判定",
-         gw_inventory("_load = _guard.load\n"
-                      "from other import thing as common\n"
+         gw_inventory(GW_BOOTSTRAP
+                      + "from other import thing as common\n"
                       "A2_SCRIPTS = common.A2_SCRIPTS\n"
                       "\ndef manifest_inventory(root):\n"
                       "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
                       "    return {name: name for name in paths}\n") is None)
+
+    # ---------------------------------------------------------------- r18 负控
+    # r17 的两处守卫都只看「拼写」：`/` 的左操作数、`_guard`/`_apparatus` 自身的
+    # 绑定，被解释器换成别的路径仍会给出确定性答案（假 READY）。以下每条都保留
+    # 合法 bootstrap，只替换一处，正控在上面。
+    _gw_tail = ("A2_SCRIPTS = common.A2_SCRIPTS\n"
+                "\ndef manifest_inventory(root):\n"
+                "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                "    return {name: name for name in paths}\n")
+    case("gateway _load 指向别的目录（左操作数不是 _apparatus）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace("_apparatus / 'common.py'",
+                                           "_evil / 'common.py'") + _gw_tail) is None)
+    case("gateway _apparatus 换成别的路径 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace(
+             "_apparatus = _here.parent if _here.name == 'controls' else _here",
+             "_apparatus = Path('scripts/evil')") + _gw_tail) is None)
+    case("gateway _here 不是 __file__ 派生 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace(
+             "_here = Path(__file__).resolve().parent", "_here = Path.cwd()")
+             + _gw_tail) is None)
+    case("gateway _guard 二次绑定成别的对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_guard = other\n" + _gw_tail) is None)
+    case("gateway _guard_path 指向别的文件 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace(
+             "_guard_path = _apparatus / '_guard.py'",
+             "_guard_path = _apparatus / '_other.py'") + _gw_tail) is None)
+    # 夹具真实性：上面整组都靠 GW_BOOTSTRAP 与真装置同形。真 bootstrap 一旦
+    # 合法演进（改名 / 换写法），夹具会照旧全绿而 gateway_inventory 对真仓恒
+    # 不可判定，这条把夹具钉在真文件上。
+    _real_gw = (HERE / 'gateway-parity' / 'check_frozen.py').read_text(encoding='utf-8')
+    case("真装置 gateway check_frozen.py 仍逐行含 GW_BOOTSTRAP",
+         all(line in _real_gw for line in GW_BOOTSTRAP.splitlines()))
 
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
@@ -1154,13 +1192,32 @@ def run():
     case("两侧同形清单 → 可判定为登记范围",
          ui_registrable(UI_APPARATUS, UI_FROZEN) is True)
     # r17：四个名字都必须确实来自 apparatus 的那一份，别名/重定义都不算。
-    case("EXP008_FILES 别名当成 SPEC_FILES 导入 → 不可判定",
+    # r18：夹具保留顶部那条合法导入再叠加一种绑定（旧夹具把合法导入一起换掉，
+    # seen==0 就返回 None，测不出别名识别是否真的生效）。
+    case("EXP008_FILES 改名别名绑到 SPEC_FILES → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN
+                        + "\nfrom apparatus import EXP008_FILES as SPEC_FILES\n") is None)
+    case("只有改名别名一条导入（无同名导入）→ 不可判定",
          ui_registrable(
              UI_APPARATUS,
              UI_FROZEN.replace("from apparatus import scan, SPEC_FILES, EXP008_FILES, "
                                "toolchain_files",
                                "from apparatus import scan, EXP008_FILES as SPEC_FILES, "
                                "EXP008_FILES, toolchain_files")) is None)
+    case("合法导入 + import ... as SPEC_FILES → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nimport other as SPEC_FILES\n") is None)
+    case("合法导入 + import ... as scan → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nimport other as scan\n") is None)
+    case("相对导入 from .apparatus import ... → 不可判定",
+         ui_registrable(
+             UI_APPARATUS,
+             UI_FROZEN.replace("from apparatus import scan, SPEC_FILES, EXP008_FILES, "
+                               "toolchain_files",
+                               "from .apparatus import scan, SPEC_FILES, EXP008_FILES, "
+                               "toolchain_files")) is None)
     case("toolchain_files 从别处再导入一次 → 不可判定",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN + "\nfrom other import toolchain_files\n") is None)
