@@ -9,13 +9,13 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-ga
 
 生成器先断言基线 HEAD，再把无参时钟钉在 `Date.UTC(2026, 0, 1)`（`installFixedClock`，同 `../_shared/generator_guard.mjs`；marker 的 `completedAt`、锁新鲜度判定都由该纪元决定，锁种子的 mtime 也按 `Date.now() - age` 相对该纪元回拨）。输入文件逐场景独占写入（`flag: 'wx'`，目录递归创建），`oracle.json` 独占发布，输出目录必须尚不存在。迁移场景记录一次执行的树，`twice` 场景在无错时用同一 logger 再跑一次并记录第二次的树；警告元数据与错误文案中的场景 home 替换为 `{HOME}`，使 oracle 与输出目录无关（fix-r1 重生成时验证过连续两次输出字节一致）。
 
-矩阵形状固定为 **9 + 10 + 33 + 23**（paths / eventsPaths / store / migration）。`generate.mts` 在发布 `oracle.json` 前、Rust `oracle_matrix_counts_match_generator` 在重放前都精确断言这四个数，增删场景必须同时更新两侧断言及本段。Rust 侧每个 cell 恰好一个具名测试（`src/pilotdeck-gateway/src/runtime/cron/tests.rs`，85 个测试函数：81 直跑（含 fix-r2 的 deleted-cwd 父测试）+ 2 个 locale 门控父测试 + 2 个 `#[ignore]` worker（locale / deleted-cwd）；其中 non-UTF-8 home 守卫 #1289 起 `#[cfg(target_os = "linux")]`，macOS 上少编这一个，见下「非 cell 的守卫测试」），逐 cell 比较记录结果与落盘树（文件 base64 解码后逐字节，目录集合逐一相等）。
+矩阵形状固定为 **9 + 10 + 33 + 23**（paths / eventsPaths / store / migration）。`generate.mts` 在发布 `oracle.json` 前、Rust `oracle_matrix_counts_match_generator` 在重放前都精确断言这四个数，增删场景必须同时更新两侧断言及本段。Rust 侧每个 cell 恰好一个具名测试（`src/pilotdeck-gateway/src/runtime/cron/tests.rs`，87 个测试函数：83 直跑（含 fix-r2 的 deleted-cwd 父测试与 #1258 的 panic / contended tail 守卫）+ 2 个 locale 门控父测试 + 2 个 `#[ignore]` worker（locale / deleted-cwd）；其中 non-UTF-8 home 守卫 #1289 起 `#[cfg(target_os = "linux")]`，macOS 上少编这一个，见下「非 cell 的守卫测试」），逐 cell 比较记录结果与落盘树（文件 base64 解码后逐字节，目录集合逐一相等）。
 
 两个 cell 的字节依赖非 ASCII 文本的 `localeCompare` 排序（`store:put-sort-missing-and-collation`——`ä` 对 `z`/`Z`，`migration:duplicate-runs-dedupe`）：Rust 通过 `crate::test_process::run_cases` 在 `LANG=en_US.UTF-8` 的子进程里重放（env_clear，`--exact --ignored --test-threads=1`，`PDRS_CRON_CASE=section:cell` 分发），与生成器自身的 en-US 断言同一契约；worker `cron_locale_worker` 只被子进程拉起。
 
 ```sh
 cd src
-cargo test -p pilotdeck-gateway --lib runtime::cron          # Linux：83 passed；macOS：82 passed；均 2 ignored
+cargo test -p pilotdeck-gateway --lib runtime::cron::tests  # Linux：85 passed；macOS：84 passed；均 2 ignored
 PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test cron_store -- --ignored
 ```
 
@@ -44,7 +44,7 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test
 
 ## 负控
 
-`negative_controls.py` 复用 `../negative_process.py` 和 `../negative_suite.py`，21 项变异各绑定一个具名测试，判杀证据是该测试自身 panic 载荷携带的 `#1216` 消息；编译失败、正控失败、锚点失配、恢复失败均为 INVALID，任一非 KILLED 即非零退出（#1289 起非 Linux 宿主对 Linux-only 行记 SKIPPED——不计 KILLED 也不计 INVALID，不使整轮失败；但全 SKIPPED、零 KILLED 仍非零退出：什么都没证明）。守卫覆盖 `store.rs`、`migration.rs`、`paths.rs`、`tests.rs`、脚本自身与两个共享裁决依赖，任一脏即拒跑；调用方必须提供 `CARGO_TARGET_DIR`（本树构建目录）。
+`negative_controls.py` 复用 `../negative_process.py` 和 `../negative_suite.py`，22 项变异各绑定一个具名测试，判杀证据是该测试自身 panic 载荷携带的 `#1216` 消息（#1258 起 panic 路径的 tail release 变异绑定 `#1258` 消息）；编译失败、正控失败、锚点失配、恢复失败均为 INVALID，任一非 KILLED 即非零退出（#1289 起非 Linux 宿主对 Linux-only 行记 SKIPPED——不计 KILLED 也不计 INVALID，不使整轮失败；但全 SKIPPED、零 KILLED 仍非零退出：什么都没证明）。守卫覆盖 `store.rs`、`migration.rs`、`paths.rs`、`tests.rs`、脚本自身与两个共享裁决依赖，任一脏即拒跑；调用方必须提供 `CARGO_TARGET_DIR`（本树构建目录）。
 
 | 变异 | 绑定测试 | 对应问题范围 |
 |---|---|---|
@@ -68,6 +68,7 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway --test
 | lock-guard-removed（Drop guard 不再释放锁，panic 后锁滞留 10 分钟） | panicking_migration_body_still_releases_the_lock | fix-r2 P2 |
 | tail-entry-never-removed（完成的 tail 永不从注册表删除，进程级 map 无界增长） | store_tail_entry_removed_after_uncontended_mutation | fix-r2 P3 |
 | tail-release-counts-live-sibling（release 把自己已释放的克隆计作存活持有者，兄弟变异克隆仍在途时即删条目，同文件下一次变异会链接第二条 tail 丢串行） | store_tail_entry_removed_after_contended_mutation_pair | fix-r3 P2 |
+| tail-release-skipped-on-panic（mutate_task_file 退回显式 release 调用，panic 的 mutation 跳过 release，注册表条目永久残留——TS finally 在 throw 时也删，CronTaskStore.ts:168-172） | store_tail_entry_removed_after_panicking_mutation | #1258 第 2 项 |
 
 cwd 相关四行直接绑 `#[ignore]` worker `cron_deleted_cwd_worker`（`--ignored` + `PDRS_CRON_CASE=absolute-home-deleted-cwd`）：父测试的 panic 载荷内嵌 worker 的 libtest 输出，共享裁决在 worker 自身的 FAILED 行截断，`#1216` 标记到不了父测试的 panic 块（fix-r3 P1 改绑）。
 

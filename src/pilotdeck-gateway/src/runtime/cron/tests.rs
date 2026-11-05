@@ -1308,6 +1308,147 @@ fn store_tail_entry_removed_after_contended_mutation_pair() {
     );
 }
 
+/// A CronTask record like `fresh_task` but with a custom message, for #1258's
+/// tail tests (fresh_task itself lives above the tail test region).
+fn fresh_task_with_message(task_id: &str, message: &str) -> JsValue {
+    let raw = format!(
+        r#"{{"schemaVersion":1,"taskId":"{task_id}","message":"{message}","schedule":{{"type":"cron","expression":"* * * * *"}},"status":"scheduled","sessionKey":"s","channelKey":"im","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}}"#
+    );
+    parse_json(&raw)
+        .unwrap_or_else(|error| panic!("#1258 tail store: task {task_id} must parse: {error:?}"))
+}
+
+/// #1258 item 2: a panicking mutation must still drop the registry entry —
+/// the port of CronTaskStore.ts:168-172, whose `finally` deletes the tail
+/// when the awaited `operation` rejects too. The panic also poisons the
+/// per-file mutex, so the follow-up mutation must run over a fresh tail
+/// (the stranded entry removed) rather than block or ride the poisoned one.
+#[test]
+fn store_tail_entry_removed_after_panicking_mutation() {
+    let scratch = Scratch::new("cron-store-tail-panic");
+    let home = scratch.path().join("home");
+    let paths = resolve_cron_paths(&home.to_string_lossy(), "/w/my-project")
+        .unwrap_or_else(|error| panic!("#1258 tail panic: resolveCronPaths failed: {error}"));
+    let tasks_file = paths.tasks_file.clone();
+    let store = CronTaskStore::new(paths);
+    store
+        .put_task(&fresh_task("t-panic"))
+        .unwrap_or_else(|error| panic!("#1258 tail panic: seed putTask: {error}"));
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        store.update_task("t-panic", |_| -> Option<JsValue> {
+            panic!("#1258 tail panic probe: the update callback panics mid-mutation");
+        })
+    }));
+    assert!(
+        caught.is_err(),
+        "#1258 tail panic: the update callback must panic inside the mutation"
+    );
+    assert!(
+        !super::store::task_file_tail_registered(&tasks_file),
+        "#1258 tail panic: a panicking mutation must still drop its finished tail from the registry"
+    );
+    store
+        .put_task(&fresh_task("t-after-panic"))
+        .unwrap_or_else(|error| panic!("#1258 tail panic: follow-up putTask: {error}"));
+    let listed = store
+        .list_tasks()
+        .unwrap_or_else(|error| panic!("#1258 tail panic: follow-up listTasks: {error}"));
+    assert_eq!(
+        listed.len(),
+        2,
+        "#1258 tail panic: the follow-up mutation over the same file must complete and land (seeded task plus follow-up put)"
+    );
+}
+
+/// #1258 item 3: the contended tail lifecycle must hold through
+/// `mutate_task_file` itself, not only through direct `task_file_tail` /
+/// `release_task_file_tail` calls. The holder's mutation body parks at the
+/// barrier with the per-file mutex held; the sibling's mutation call starts
+/// inside that window, so its tail clone (or, under a different schedule,
+/// its own fresh entry) must keep the registry holding an entry until the
+/// last finisher removes it — and both writes must land.
+#[test]
+fn store_tail_entry_removed_after_contended_mutate_task_file_pair() {
+    let scratch = Scratch::new("cron-store-tail-contended-mutate");
+    let home = scratch.path().join("home");
+    let paths =
+        resolve_cron_paths(&home.to_string_lossy(), "/w/my-project").unwrap_or_else(|error| {
+            panic!("#1258 tail contended mutate: resolveCronPaths failed: {error}")
+        });
+    let tasks_file = paths.tasks_file.clone();
+    let store = Arc::new(CronTaskStore::new(paths));
+    for task_id in ["t-a", "t-b"] {
+        store
+            .put_task(&fresh_task(task_id))
+            .unwrap_or_else(|error| {
+                panic!("#1258 tail contended mutate: seed putTask {task_id}: {error}")
+            });
+    }
+    assert!(
+        !super::store::task_file_tail_registered(&tasks_file),
+        "#1258 tail contended mutate: the seed mutations must leave no tail entry"
+    );
+    let overlap = Arc::new(Barrier::new(2));
+    let mut handles = Vec::new();
+    // The holder parks inside its mutation body (mutex held); the sibling
+    // only starts its real mutation call once the holder is provably inside
+    // that body, so the two mutations overlap.
+    {
+        let store = Arc::clone(&store);
+        let overlap = Arc::clone(&overlap);
+        handles.push(thread::spawn(move || {
+            store
+                .update_task("t-a", |_| {
+                    overlap.wait();
+                    Some(fresh_task_with_message("t-a", "mutated-by-holder"))
+                })
+                .unwrap_or_else(|error| {
+                    panic!("#1258 tail contended mutate: holder updateTask: {error}")
+                });
+        }));
+    }
+    {
+        let store = Arc::clone(&store);
+        let overlap = Arc::clone(&overlap);
+        let tasks_file = tasks_file.clone();
+        handles.push(thread::spawn(move || {
+            overlap.wait();
+            store
+                .update_task("t-b", |_| {
+                    assert!(
+                        super::store::task_file_tail_registered(&tasks_file),
+                        "#1258 tail contended mutate: an in-flight mutation must find its file's tail in the registry (a finishing sibling must not remove it while a waiter still holds a clone)"
+                    );
+                    Some(fresh_task_with_message("t-b", "mutated-by-sibling"))
+                })
+                .unwrap_or_else(|error| panic!("#1258 tail contended mutate: sibling updateTask: {error}"));
+        }));
+    }
+    for (index, handle) in handles.into_iter().enumerate() {
+        handle
+            .join()
+            .unwrap_or_else(|_| panic!("#1258 tail contended mutate: worker {index} panicked"));
+    }
+    assert!(
+        !super::store::task_file_tail_registered(&tasks_file),
+        "#1258 tail contended mutate: the last finishing mutation must remove the tail entry"
+    );
+    for (task_id, message) in [("t-a", "mutated-by-holder"), ("t-b", "mutated-by-sibling")] {
+        let task = store
+            .get_task(task_id)
+            .unwrap_or_else(|error| {
+                panic!("#1258 tail contended mutate: getTask {task_id}: {error}")
+            })
+            .unwrap_or_else(|| panic!("#1258 tail contended mutate: task {task_id} must survive"));
+        assert!(
+            task.get("message")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str(message)),
+            "#1258 tail contended mutate: task {task_id} must carry the written message {message}"
+        );
+    }
+}
+
 // --------------------------------------------------------- locale-gated cells
 
 fn run_locale_case(case: &str) {
