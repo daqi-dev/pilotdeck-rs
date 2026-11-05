@@ -578,9 +578,30 @@ async fn replays_real_ts_api_server_cells() {
     );
     assert_eq!(oracle["node"], "v22.22.0", "#1333 Node baseline");
     let cases = oracle["cases"].as_array().expect("#1333 oracle cases");
-    assert!(
-        cases.len() >= 13,
-        "#1333 oracle must keep every surface case"
+    // Exact ids, not a count: a regenerated oracle that renames or swaps one
+    // cell would keep `len == 13` while silently dropping a surface.
+    let ids: Vec<&str> = cases
+        .iter()
+        .map(|case| case["id"].as_str().expect("#1333 case id"))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "method-dispatch",
+            "cors-exact",
+            "cors-star",
+            "auth",
+            "chat-validation",
+            "buffered",
+            "stream",
+            "new-command",
+            "gateway-missing",
+            "oversized-0",
+            "oversized-1",
+            "oversized-2",
+            "keep-alive",
+        ],
+        "#1333 oracle must keep every TS surface cell, in order"
     );
     for case in cases {
         let id = case["id"].as_str().expect("#1333 case id");
@@ -1196,5 +1217,42 @@ fn render_visible_failure_status_names_match_ts() {
         })),
         None,
         "#1333 explicit visible:false still hides a listed name"
+    );
+}
+
+#[test]
+fn admit_chat_claims_a_chat_id_exactly_once() {
+    // A `contains` check followed by a later `insert` lets two requests with the
+    // same chat id both pass; the admission must be one atomic insert, so exactly
+    // one of the racing callers wins (#1333 concurrency review).
+    use std::collections::HashSet;
+    let active = Arc::new(Mutex::new(HashSet::new()));
+    let winners = Arc::new(Mutex::new(0usize));
+    let mut workers = Vec::new();
+    for _ in 0..8 {
+        let active = active.clone();
+        let winners = winners.clone();
+        workers.push(std::thread::spawn(move || {
+            if server::admit_chat(&active, "chat-race") {
+                *winners.lock().expect("#1333 winners") += 1;
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().expect("#1333 admission thread");
+    }
+    assert_eq!(
+        *winners.lock().expect("#1333 winners"),
+        1,
+        "#1333 concurrent duplicates must admit exactly one request"
+    );
+    assert!(
+        !server::admit_chat(&active, "chat-race"),
+        "#1333 an admitted chat stays busy until it is released"
+    );
+    active.lock().expect("#1333 active").remove("chat-race");
+    assert!(
+        server::admit_chat(&active, "chat-race"),
+        "#1333 a released chat id is reusable"
     );
 }
