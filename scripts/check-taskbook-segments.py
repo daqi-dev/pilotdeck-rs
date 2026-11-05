@@ -117,10 +117,13 @@ def placeholder_in(text):
         # 误判会把合规任务书打回（假 FAIL）。
         if not m.group(1).strip() and text.strip() != m.group(0):
             continue
-        # Rust 内联命名参数（`format!("{x}")` / `"{n}"`）：花括号紧贴引号且内容是单个标识符，
-        # 是字符串字面量里的代码，不是「待填」。
+        # Rust 内联命名参数（`format!("{x}")`）：花括号紧贴引号、内容是单个标识符，**且这个引号在
+        # 表达式上下文里**（前一个字符是 `(` `,` `=` `[` `{` `+`）才按代码放行。
+        # 只看「紧贴引号」会把正文里的 `按 "{name}" 填`、`"{file}"`、`"{N}"` 一并当代码跳过——
+        # 这三个词正在占位词表里，交付物格写成引号裹占位词就假 PASS。
         if (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", m.group(1).strip())
-                and m.start() > 0 and text[m.start() - 1] in "\"'"
+                and m.start() > 1 and text[m.start() - 1] in "\"'"
+                and text[m.start() - 2] in "(,=[{+"
                 and m.end() < len(text) and text[m.end()] in "\"'"):
             continue
         if _looks_placeholder(m.group(1)):
@@ -356,17 +359,24 @@ def _iter_comments(text):
         i = b + 3
 
 
-def _line_indent_example(text, pos, nl):
+def _line_indent_example(text, pos):
     """pos 所在行从行首到 pos 全是空白且缩进 ≥ 4 格（或一个 tab）：这是缩进块里的裸示例。
 
     `- scope 写法示例：` 下一行缩进 4 格的 `<!-- pdrs-scope … -->` 修前被当成本包声明，
     一条 files=2 的示例就把后面 9 个 `.rs` 的包短路成小包 rc 0（假 PASS）。声明必须顶格写。
-    `nl` 是预计算的换行偏移表：`text.rfind("\n", 0, pos)` 在无换行的长行上是 O(pos)，
-    每条 scope 调一次就退化成 O(n²)（2 MiB 单行任务书 >10 s）。
+    修前切 `text[行首:pos]` 判空：无换行的长行上 `nl` 为空、行首恒为 0，每条 scope 都拷一遍前缀，
+    单行 2 MiB 任务书退化成 O(n²)（实测 6.5 s，README 承诺 <1 s）。反向逐字符扫到非空白即返回，
+    只在「整段前缀确实全是空白」时才切那一小段，总代价 O(前缀)，全文件线性。
     """
-    k = bisect.bisect_left(nl, pos)
-    seg = text[(nl[k - 1] + 1) if k else 0:pos]
-    return not seg.strip() and len(seg.expandtabs(4)) >= 4
+    i = pos
+    while i > 0:
+        ch = text[i - 1]
+        if ch == "\n":
+            break
+        if not ch.isspace():
+            return False        # 行首到 pos 里有正文：不是缩进示例
+        i -= 1
+    return len(text[i:pos].expandtabs(4)) >= 4
 
 
 def parse_scopes(text):
@@ -383,7 +393,7 @@ def parse_scopes(text):
         if body is None:
             continue            # 没收到 `-->`：交给下面的 SCOPEISH 兜底报错（带行号）
         spans.append((a, b))    # 先登记：缩进示例**在**注释里，不能反被报成「没写进注释」
-        if _line_indent_example(text, a, nl):
+        if _line_indent_example(text, a):
             continue            # 缩进块里的裸示例，不是本包声明
         sm = SCOPE_BODY.match(body)
         if not sm:
@@ -407,7 +417,7 @@ def parse_scopes(text):
         k = bisect.bisect_right(starts, pos) - 1
         if k >= 0 and spans[k][0] <= pos < spans[k][1]:
             continue
-        if _line_indent_example(text, pos, nl):
+        if _line_indent_example(text, pos):
             continue
         line = bisect.bisect_right(nl, pos) + 1
         errors.append(f"第 {line} 行的 scope 标记没写进 `<!-- -->` 注释（或注释没收到 `-->`），"
@@ -508,7 +518,7 @@ EST_TOKEN = re.compile(r"(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z一-�
 # 小时+分钟的连写（`1h40m` / `1h45min` / `1h30`）：直接切 token 时后一个数字会被 lookbehind
 # 挡掉、只读成 60 min。先把「N 小时 M 分」整体改写成两个带单位的 token 再切。
 COMPACT_UNIT = re.compile(
-    r"(?<![0-9.])(?P<h>[0-9]+)\s*(?:hours?|hrs?|h|小时|时)\s*(?P<m>[0-9]{1,4})\s*"
+    r"(?<![0-9.])(?P<h>[0-9]+(?:\.[0-9]+)?)\s*(?:hours?|hrs?|h|小时|时)\s*(?P<m>[0-9]{1,4})\s*"
     r"(?:minutes?|mins?|min|m|分钟|分)?(?!\s*[0-9])", re.I)
 # 区间 / 上限语义取最大值：`80–120 min`、`80/90 min`、`80 min（上限 90 min）`
 RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=\d)\s*-\s*(?=\d)")
@@ -588,7 +598,8 @@ def parse_est(cell, default_unit=""):
         return None
     # 千分位分隔符（半角 / 全角）先去掉：`1,000 min` 会被 EST_TOKEN 拆成 `1`（无单位）与 `000`（单位 min），
     # 后面的单位再借给 `1`、求和成 1 min → 1000 min 的段 rc 0（假 PASS）。
-    cell = re.sub(r"(?<=[0-9])[,，](?=[0-9]{3}(?![0-9]))", "", cell)
+    # 分组宽度认 3 位与 4 位：只认 3 位时 `1,0000 min`（中文万位分组）逗号留着 → 同样读成 1 min（假 PASS）。
+    cell = re.sub(r"(?<=[0-9])[,，](?=[0-9]{3,4}(?![0-9]))", "", cell)
     cell = COMPACT_UNIT.sub(lambda m: f"{m.group('h')} h {m.group('m')} min", cell)
     # 明确加法先切段：`40–50 min + 20 min` 是 max(40,50)+20=70，不是 40+50+20=110。
     # 括注里的 `+` 是列表（`80 min（S1 + S2 各 40 min）`），切开后后半段只剩被跳过的数字 → 整格「读不出」。
@@ -807,7 +818,10 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 
 
 # 分段表「涉及文件」列里的文件路径（按扩展名认，避免把 `S1` 这类段名当文件）
-FILE_TOKEN = re.compile(r"[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.(?:rs|py|ts|tsx|js|mjs|md|json|toml|ya?ml|sh|txt)")
+# 只认代码扩展名时 `Cargo.lock` / `events.proto` / `001.sql` / `a.html` 不算文件 → 两段共写照样放行（假 PASS）。
+FILE_TOKEN = re.compile(
+    r"[A-Za-z0-9_./-]*[A-Za-z0-9_-]\."
+    r"(?:rs|py|ts|tsx|js|mjs|md|json|toml|ya?ml|sh|txt|lock|proto|sql|html|css)")
 
 
 def _clip(text, n=80):
@@ -969,7 +983,15 @@ def _iter_taskbooks(base):
     for wt in wts:
         if not os.path.basename(wt).startswith("wt-"):
             continue
-        for dirpath, _dirs, files in os.walk(os.path.join(wt, "_tmp"), onerror=onerror):
+        for dirpath, dirs, files in os.walk(os.path.join(wt, "_tmp"), onerror=onerror):
+            # `os.walk` 默认 followlinks=False：`_tmp` 之下被换成符号链接的子目录**静默不下降**，
+            # 里面的任务书整类消失且不报错（又变回「扫不了 = 没扫到」，与 fix-r8 同一个失效类）。
+            # 不跟随（防环），也不许静默漏：扫到符号链接目录就中断，让派单侧按 rc 2 处理。
+            for d in dirs:
+                p = os.path.join(dirpath, d)
+                if os.path.islink(p):
+                    raise ScanError(f"递归扫到符号链接目录 {p}：不跟随会静默漏掉里面的任务书，"
+                                    "请换成真实目录或删掉链接")
             if "task.md" in files:
                 out.append(Path(dirpath) / "task.md")
     return sorted(out)
