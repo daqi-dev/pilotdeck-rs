@@ -299,13 +299,7 @@ async fn replay(mode: &str, tag: &'static str, layers_only: bool) {
         assert_eq!(actual, case["result"], "{tag}: {mode}/{name}");
         checked += 1;
     }
-    let expected = if layers_only {
-        3
-    } else if mode == "legacy-start" {
-        11
-    } else {
-        11
-    };
+    let expected = if layers_only { 3 } else { 11 };
     assert_eq!(
         checked, expected,
         "{tag}: every intended golden cell was replayed"
