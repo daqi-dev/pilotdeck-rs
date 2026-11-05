@@ -1450,6 +1450,12 @@ def _assigns_clean_status(value, bindings, seen=None):
             # (GLM boundary P1-2: the write family had no subscript branch at
             # all, so an unproven base walked through).
             return True
+        if isinstance(arm, ast.Call) and not _calls_aggregate(arm) \
+                and _status_literals(arm):
+            # ``report['status'] = report.get('status', 'PASS')`` hides the
+            # clean literal one call deep; the write family treated every call
+            # as a proven source (GLM boundary r9 P2-3).
+            return True
         if isinstance(arm, ast.Name):
             if _name_assigns_clean(arm.id, bindings, seen):
                 return True
@@ -1724,19 +1730,42 @@ def _helper_exits_zero(target, lookup, seen):
     return False
 
 
-def _nested_def_exits_zero(value, function):
+def _callee_names(call, bindings):
+    """Every local name a call's callee can stand for.
+
+    ``f = _exit_code; return f(report)`` reaches the same helper through a
+    binding, and ``helpers.exit_code(report)`` names it as an attribute; the
+    delegation family used to know only the bare ``_exit_code(report)``
+    spelling (GLM boundary r9 P1-2).
+    """
+    func = call.func
+    names = []
+    if isinstance(func, ast.Name):
+        names.append(func.id)
+        for _lineno, bound in bindings.get(func.id, ()):
+            if isinstance(bound, ast.Name):
+                names.append(bound.id)
+    elif isinstance(func, ast.Attribute):
+        names.append(func.attr)
+    return names
+
+
+def _nested_def_exits_zero(value, function, bindings=None):
     """``def _exit(): return 0`` called from a registered point."""
-    if function is None or not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)):
+    if function is None or not (isinstance(value, ast.Call)
+                                and isinstance(value.func, (ast.Name, ast.Attribute))):
         return False
+    bindings = bindings or {}
     lookup = {node.name: node for node in ast.walk(function)
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    target = lookup.get(value.func.id)
+    target = next((lookup[name] for name in _callee_names(value, bindings)
+                   if name in lookup), None)
     if target is None or target is function:
         return False
-    return _helper_exits_zero(target, lookup, {value.func.id})
+    return _helper_exits_zero(target, lookup, set(_callee_names(value, bindings)))
 
 
-def _delegated_exit(value, module, seen=None):
+def _delegated_exit(value, module, seen=None, bindings=None):
     """A registered point returning a same-module helper's own exit code.
 
     ``return _exit_code(report)`` hides the computation one call away: the
@@ -1747,17 +1776,22 @@ def _delegated_exit(value, module, seen=None):
     ``return 0`` beside it, and a helper that delegates again is followed to the
     leaf (GLM concurrency P2-1 / MiniMax boundary P1-2).
     """
-    if module is None or not (isinstance(value, ast.Call)
-                              and isinstance(value.func, ast.Name)):
+    if module is None or not isinstance(value, ast.Call):
+        return False
+    if not isinstance(value.func, (ast.Name, ast.Attribute)):
         return False
     seen = set() if seen is None else seen
-    name = value.func.id
+    names = _callee_names(value, bindings or {})
+    target = next((module[name] for name in names if name in module), None)
+    if target is None:
+        # An attribute callee the module does not define (``helpers.exit_code``)
+        # is not proven to route through the shared map, so it fails closed the
+        # same way an unknown bare name does (GLM boundary r9 P1-2).
+        return True
+    name = target.name
     if name in seen:
         return False  # a delegation cycle proves nothing (fail-closed)
     seen.add(name)
-    target = module.get(name)
-    if target is None:
-        return False
     return _helper_exits_zero(target, module, seen)
 
 
@@ -1840,6 +1874,13 @@ def _exit_name_violation(name, bindings, function=None):
         # one source may not have two verdicts (GLM boundary r7 P1-1).
         return 'unbound'
     for owner, lineno, value in terminals:
+        if isinstance(value, ast.Name):
+            # ``_exit_terminal_bindings`` only falls through to a Name when that
+            # name has no local binding, so the origin is invisible: fail closed
+            # exactly like the direct ``return EXIT_OK`` spelling, which the r9
+            # round already judged ``unbound``.  ``code = EXIT_OK; return code``
+            # used to pass with no violation (MiniMax boundary r9 P0-1).
+            return 'unbound'
         if isinstance(value, (ast.IfExp, ast.BoolOp)) and any(
                 _constant_exit_zero(arm) for arm in _exit_arms(value)):
             return 'conditional'
@@ -2104,7 +2145,9 @@ def unshared_status_slots(function, point=None, module=None):
         for element in elements:
             if any(element is summary for summary in dicts):
                 continue
-            if isinstance(element, ast.Name) and element.id in bound:
+            if isinstance(element, ast.Name) and any(
+                    summary is _nearest_binding(element.id, bindings, node.lineno)
+                    for summary in bound.get(element.id, ())):
                 continue  # its dict is already checked above
             for arm in _exit_arms(element):
                 if (_status_literals(arm) or _has_passed_aggregate(arm)):
@@ -2124,8 +2167,8 @@ def unshared_status_slots(function, point=None, module=None):
                         violations.append(f'inline exit code ({kind} relay) {arm.id} '
                                           f'at line {node.lineno}')
                 elif (_container_holds_zero(arm, bindings)
-                      or _nested_def_exits_zero(arm, function)
-                      or _delegated_exit(arm, module)):
+                      or _nested_def_exits_zero(arm, function, bindings)
+                      or _delegated_exit(arm, module, bindings=bindings)):
                     # A zero read back out of a local dict, or a nested helper
                     # that returns a constant zero (GLM concurrency P1-1 /
                     # MiniMax boundary P1-4).
@@ -2146,7 +2189,42 @@ def unshared_status_slots(function, point=None, module=None):
                                  and (is_pair or isinstance(arm, ast.Call))))):
                     violations.append(f'inline exit code {ast.unparse(arm)[:60]} '
                                       f'at line {node.lineno}')
+    if point is not None and not _has_exit_path(function):
+        # A registered aggregation point that returns nothing (and never exits)
+        # leaves the entry point with ``None`` -- ``SystemExit(None)`` is exit 0
+        # -- while the audit used to pass it vacuously: the per-return rules
+        # have no return to look at (MiniMax boundary r9 P1-2).
+        violations.append('no return or exit path')
     return violations
+
+
+def _unproven_update_on_summary(call, bound, bindings):
+    """``report.update(payload)`` whose slots this function never built.
+
+    On the write side the payload is judged fail-closed by
+    ``_unproven_expansion`` -- but only for a point that is already registered.
+    The enumeration keyed on ``_call_written_values``, which sees nothing in an
+    opaque payload, so an *unregistered* function writing its status this way
+    was never enumerated at all (MiniMax boundary r9 P2-3).
+    """
+    receiver = call.func.value
+    if not isinstance(receiver, ast.Name):
+        return False
+    if receiver.id not in bound:
+        return False
+    return _unproven_expansion(call, bindings)
+
+
+def _has_exit_path(function):
+    """True when *function* can hand a value back or leave the process itself."""
+    for node in _own_nodes(function):
+        if isinstance(node, ast.Return) and node.value is not None:
+            return True
+        if isinstance(node, ast.Raise) and _is_system_exit_raise(node):
+            return True
+        if isinstance(node, ast.Call) and _is_exit_call(node):
+            return True
+    return False
 
 
 def aggregation_markers(function):
@@ -2155,6 +2233,10 @@ def aggregation_markers(function):
     # A summary dict assigned to any name and returned by that name is a
     # summary point, whatever the name is (DeepSeek P1-3).
     bound = _bound_summary_dicts(function)
+    bindings = _name_bindings(function)
+    dict_names = set(bound) | {name for name, items in bindings.items()
+                               if any(isinstance(value, ast.Dict)
+                                      for _lineno, value in items)}
     for node in ast.walk(function):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -2190,7 +2272,9 @@ def aggregation_markers(function):
             markers.add('raise-exit-status')
         elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
               and isinstance(node.value.func, ast.Attribute)
-              and _call_written_values(node.value)):
+              and (_call_written_values(node.value)
+                   or _unproven_update_on_summary(node.value, dict_names,
+                                                  bindings))):
             # ``report.update({'status': ...})`` / ``setdefault`` without any
             # other marker: the only status evidence is the incremental write, so
             # the function must still be enumerated and registered (MiniMax
@@ -2249,6 +2333,17 @@ def aggregation_audit():
     failures = []
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
+    product_words = set(getattr(md.common, 'BATCH_STATUS_ORDER', ()))
+    cleanup_word = getattr(md, 'CLEANUP_UNVERIFIED_STATUS', None)
+    if cleanup_word is not None:
+        product_words.add(cleanup_word)
+    if product_words and product_words != set(STATUS_WORDS):
+        # The copy is only safe while it mirrors the product enum: a word added
+        # on one side would silently leave the other (GLM boundary r9 P2-4 /
+        # MiniMax simplify r9 P2-1).
+        failures.append('#892 aggregation-audit: STATUS_WORDS '
+                        f'{sorted(STATUS_WORDS)} no longer mirrors the product '
+                        f'enumeration {sorted(product_words)}')
     for path in files:
         rel = path.relative_to(ROOT).as_posix()
         try:
@@ -2560,6 +2655,29 @@ def aggregation_audit():
         "def _cleanup_word(report):\n"
         "    report['status'] = 'PASS_WITH_CLEANUP_UNVERIFIED'\n"
         "    return common.aggregate_status(report['status'])[1]\n"
+        "def _unbound_exit_relay(report):\n"
+        "    if report.get('special'):\n"
+        "        code = EXIT_OK\n"
+        "        return code\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _delegated_attribute(report):\n"
+        "    print(report)\n"
+        "    return helpers.exit_code(report)\n"
+        "def _delegated_bound_name(report):\n"
+        "    helper = _exit_code\n"
+        "    print(report)\n"
+        "    return helper(report)\n"
+        "def _call_status_write(report):\n"
+        "    report['status'] = report.get('status', 'PASS')\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _bound_rebinding(report):\n"
+        "    report = {'status': report['status']}\n"
+        "    report = 0\n"
+        "    return report\n"
+        "def _unproven_update_summary(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    report.update(extra)\n"
+        "    return report\n"
         "def _return_exit_call(report):\n"
         "    if report.get('special'):\n"
         "        return sys.exit(0)\n"
@@ -2767,7 +2885,18 @@ def aggregation_audit():
              'a tuple-target clean verdict write'),
             ('_cleanup_word',
              "inline status/exit assignment 'PASS_WITH_CLEANUP_UNVERIFIED'",
-             'the cleanup-verification word written straight into a slot')):
+             'the cleanup-verification word written straight into a slot'),
+            # #892 r10: the r9-round shapes.
+            ('_unbound_exit_relay', '(unbound relay) code',
+             'an unbound exit-code name relayed through a local'),
+            ('_delegated_attribute', 'inline exit code helpers.exit_code(report)',
+             'an exit code delegated through an attribute callee'),
+            ('_delegated_bound_name', 'inline exit code helper(report)',
+             'an exit code delegated through a name bound to the helper'),
+            ('_call_status_write', "inline status/exit assignment report.get(",
+             'a clean status written through a call result'),
+            ('_bound_rebinding', 'inline exit code (literal relay) report',
+             'a summary name rebound to a bare zero before the return')):
         probe = next((node for node in probe892.body
                       if getattr(node, 'name', None) == probe_name), None)
         found_slots = unshared_status_slots(probe, None, probe_modules) if probe else []
@@ -2788,6 +2917,24 @@ def aggregation_audit():
             or not unshared_status_slots(update_only[1])):
         failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
                         'function whose only status evidence is a dict.update() write')
+    # #892 r10: an opaque update() payload on a summary must make the function
+    # enumerable even when the only write the audit can see is that payload.
+    unproven = probe892_found.get(('<self-test-892>', '_unproven_update_summary'))
+    if not unproven or 'write-status' not in unproven[0]:
+        failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
+                        'function whose only status evidence is an opaque update()')
+    # #892 r10: a registered point that never returns and never exits leaves the
+    # entry point with None (exit 0); the per-return rules have nothing to see.
+    no_return_probe = ast.parse(
+        "def _silent(report):\n"
+        "    print(report)\n")
+    silent = next(node for node in no_return_probe.body
+                  if getattr(node, 'name', None) == '_silent')
+    if not any('no return or exit path' in slot
+               for slot in unshared_status_slots(silent, ('probe', '_silent'),
+                                                 probe_modules)):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'registered point with no return or exit path')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,

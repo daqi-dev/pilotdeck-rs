@@ -710,6 +710,72 @@ def calibrate_cleanup_word(rows):
         'aggregation-audit: cleanup-unverified word flagged, passed=False')
 
 
+def calibrate_unbound_exit_relay(rows):
+    """#892 r10: ``code = EXIT_OK; return code`` is the same unbound origin as
+    the direct ``return EXIT_OK`` spelling (MiniMax boundary r9 P0-1)."""
+    return _controls_main_needle(
+        rows, '(unbound relay) code',
+        'aggregation-audit: unbound exit-code relay flagged, passed=False')
+
+
+def calibrate_no_exit_path(rows):
+    """#892 r10: a registered point with no return and no exit leaves the entry
+    point with None -- exit 0 -- and used to pass vacuously (MiniMax boundary
+    r9 P1-2).
+
+    The mutation strips ``run_all`` (``controls-run-all``), the registered
+    point whose whole body is the batch; ``main`` keeps a second, non-anchor
+    return so the same edit there would leave the rule silent.
+    """
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, reason = _point_failure(
+        row, 'scripts/gateway-parity/controls/session_domain.py', 'run_all',
+        'no return or exit path', 'controls-run-all')
+    if not ok:
+        return ok, reason
+    return True, 'aggregation-audit: no return or exit path flagged, passed=False'
+
+
+def calibrate_delegated_attribute(rows):
+    """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
+    an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
+    return _controls_main_needle(
+        rows, 'inline exit code helpers.exit_code(report)',
+        'aggregation-audit: attribute delegation flagged, passed=False')
+
+
+def calibrate_update_unregistered(rows):
+    """#892 r10: an unregistered function whose only status evidence is an
+    opaque ``update()`` payload must still be enumerated (MiniMax boundary r9
+    P2-3)."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('unregistered aggregation point' in failure
+               and failure.rstrip().endswith(':publish markers=[\'write-status\']')
+               for failure in failures):
+        return False, (f'failures={failures!r}, want an unregistered point named '
+                       'publish carrying the write-status marker')
+    return True, 'aggregation-audit: opaque update enumeration flagged, passed=False'
+
+
+def calibrate_walrus_exit(rows):
+    """#892 r10: the walrus exit-code relay the r9 round proved only with an
+    in-file probe (MiniMax sibling r9 P2-2)."""
+    return _controls_main_needle(
+        rows, '(int() relay) code',
+        'aggregation-audit: walrus exit code flagged, passed=False')
+
+
 def calibrate_early_return_branch(rows):
     """#892 r5: a zero branch that returns before the shared rebind is inline
     even though a later sibling overwrites the name (MiniMax boundary P0-1)."""
@@ -1288,6 +1354,32 @@ MUTATIONS = [
      CT_EXIT,
      "        if report.get('special'):\n"
      "            report['status'] = 'PASS_WITH_CLEANUP_UNVERIFIED'\n" + CT_EXIT),
+    # #892 fix-r10: the r9-round P0/P1 shapes.
+    ('calibrate-unbound-exit-relay', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            code = EXIT_OK\n"
+     "            return code\n" + CT_EXIT),
+    ('calibrate-no-exit-path', CONTROLS_SOURCE,
+     "    save(output / 'results.json', report)\n"
+     "    return report\n",
+     "    save(output / 'results.json', report)\n"
+     "    print(json.dumps(report, ensure_ascii=False))\n"),
+    ('calibrate-delegated-attribute', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            return helpers.exit_code(report)\n" + CT_EXIT),
+    ('calibrate-update-unregistered', CONTROLS_SOURCE,
+     "def run_all(output, source=None):",
+     "def publish(rows):\n"
+     "    report = {'cases': rows}\n"
+     "    report.update(extra)\n"
+     "    return report\n"
+     "def run_all(output, source=None):"),
+    ('calibrate-walrus-exit', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if (code := int(bool(report.get('cells')))):\n"
+     "            return code\n" + CT_EXIT),
     ('calibrate-status-update-kwarg', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update(status='PASS')\n"),
@@ -1522,6 +1614,16 @@ JUDGES = {
         'aggregation-audit', calibrate_tuple_verdict, False, ()),
     'calibrate-cleanup-word': (
         'aggregation-audit', calibrate_cleanup_word, False, ()),
+    'calibrate-unbound-exit-relay': (
+        'aggregation-audit', calibrate_unbound_exit_relay, False, ()),
+    'calibrate-no-exit-path': (
+        'aggregation-audit', calibrate_no_exit_path, False, ()),
+    'calibrate-delegated-attribute': (
+        'aggregation-audit', calibrate_delegated_attribute, False, ()),
+    'calibrate-update-unregistered': (
+        'aggregation-audit', calibrate_update_unregistered, False, ()),
+    'calibrate-walrus-exit': (
+        'aggregation-audit', calibrate_walrus_exit, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
     'calibrate-clean-argument': (
@@ -1567,18 +1669,32 @@ def read_summary(case):
 
 # The batch holds the host-wide parity lease (``mutating_sources`` takes it for
 # any ``scripts/gateway-parity`` source) from the first mutation to the restored
-# positive.  ``common.parity_lock`` bounds its own runs to 900 s, comfortably
-# below the 2400 s stale-lease age; a 67-mutant batch at the per-check ceiling
-# had no such bound, so another gateway suite would wait out its 30 s lease
-# timeout (a false FAIL) and a parity round would wait without any bound
-# (MiniMax concurrency r7 P1-1).  Measured full batch: 159 s.
+# positive.  Before ``fix-r9`` that hold had no bound at all: a 78-mutant batch
+# at the per-check ceiling is 78 * 180 s, far past the 2400 s stale-lease age,
+# so a second apparatus could take the lease over and rewrite the same sources
+# and a parity round could wait without any bound (MiniMax concurrency r7 P1-1).
+# The budget below bounds the *whole* hold, restored positive and the kill
+# grace included.  It does not remove the pre-existing race with a concurrent
+# suite that is already running: such a suite asks for the lease with its own
+# 30 s deadline and still times out while the batch holds it.  That needs the
+# lease to shrink to the source-rewrite window -- a shared
+# ``negative_process.mutating_sources`` change, tracked in #1719.
+# Measured full batch: 160 s.
 LEASE_BUDGET_SECONDS = 900
 CHECK_TIMEOUT_SECONDS = 180
+KILL_GRACE_SECONDS = 10  # negative_process.KILL_TIMEOUT
 
 
 def lease_budget_left(started, now):
-    """Seconds the batch may still spend inside the lease, per-check bound deducted."""
-    return LEASE_BUDGET_SECONDS - (now - started) - CHECK_TIMEOUT_SECONDS
+    """Seconds the mutation loop may still spend before the reserved tail.
+
+    Two checks' worth stay reserved: the one that is about to start and the
+    restored positive that always runs at the end.  Without that reserve the
+    last mutation could start at the edge of the budget and push the hold past
+    ``LEASE_BUDGET_SECONDS`` (GLM boundary r9 P1-1).
+    """
+    reserve = 2 * (CHECK_TIMEOUT_SECONDS + KILL_GRACE_SECONDS)
+    return LEASE_BUDGET_SECONDS - (now - started) - reserve
 
 
 def run_check(case, mode, timeout=CHECK_TIMEOUT_SECONDS):
@@ -1663,7 +1779,8 @@ def main():
     survived = []
     sources = sorted({COMMON_SOURCE, *(Path(row[1]) for row in MUTATIONS)}, key=str)
     try:
-        with mutating_sources(ROOT, sources, baseline=args.baseline) as originals:
+        with mutating_sources(ROOT, sources, baseline=args.baseline,
+                              lock_timeout=LEASE_BUDGET_SECONDS) as originals:
             # Import only after every source, including the verdict table, is pristine.
             common = load_pristine_common()
             # INVALID remains BLOCKED, never a killed mutant or a passing batch.
@@ -1685,7 +1802,8 @@ def main():
                         # kill.  INVALID aggregates to BLOCKED, never to PASS.
                         entry = {'mutation': name, 'mode': mode, 'verdict': 'INVALID',
                                  'detail': (f'batch spent the {LEASE_BUDGET_SECONDS}s parity '
-                                            'lease budget before this mutation; re-run the '
+                                            'lease budget before this mutation (two checks '
+                                            'stay reserved for the tail); re-run the '
                                             'remainder with --only'),
                                  'returncode': None,
                                  'source': Path(source).relative_to(ROOT).as_posix()}

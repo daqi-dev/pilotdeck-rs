@@ -80,12 +80,19 @@ a plain return, and ``report.update(**name)`` / ``report.update(name)`` /
 audit cannot see, so it fails closed (`fix-r7`, extended in `fix-r9`; a dict
 literal, a locally built dict and a helper call stay legal, and the
 `_bound_update` probe pins that side).  An exit-code name with no local binding
-is judged fail-closed on the same reasoning as the status side (`fix-r9`).  A non-zero exit literal on its own
+is judged fail-closed on the same reasoning as the status side, and so is a
+local relayed from it (`code = EXIT_OK; return code`, `fix-r10`), while an
+exit-code delegation through an attribute callee or through a name bound to the
+helper is followed instead of skipped (`fix-r10`).  A clean status written
+through a call result (`report['status'] = report.get('status', 'PASS')`) is
+flagged like the literal it hides (`fix-r10`), and a registered point that
+neither returns nor exits at all is flagged `no return or exit path`
+(`fix-r10`).  A non-zero exit literal on its own
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) is not an optimistic exit and
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests fifty-nine probe functions; `probe892` in `check_cleanup.py` is
+(`fix-r6` pins both sides).  The audit self-tests sixty-six probe functions; `probe892` in `check_cleanup.py` is
 the authoritative list (the four helpers it defines — `_exit_code`, `_exit_a`,
 `_exit_b`, `_decoy_code` — are leaves reached through a probe, not probes
 themselves).  Every rule below has a flagged probe and, where the shape is legal,
@@ -245,12 +252,16 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive.  The batch holds the host-wide parity lease for its whole
 run, so it keeps that hold inside the apparatus's own 900 s run bound
-(`LEASE_BUDGET_SECONDS`): when the remaining budget can no longer absorb one
-check, the rest of the batch is recorded `INVALID` (which aggregates to
-BLOCKED, never to a kill) and the run says to continue with `--only`
-(`fix-r9`, after MiniMax concurrency r7 P1-1). `MUTATIONS` is a literal `(name, source, old, new)` table
+(`LEASE_BUDGET_SECONDS`), restored positive and kill grace included: when the
+remaining budget can no longer absorb one check plus that tail, the rest of the
+batch is recorded `INVALID` (which aggregates to BLOCKED, never to a kill) and
+the run says to continue with `--only` (`fix-r9`, tightened in `fix-r10` after
+MiniMax concurrency r7 P1-1 / GLM boundary r9 P1-1).  The bound does not remove
+the pre-existing race with a suite that is already waiting on the same lease
+with its own 30 s deadline; shrinking the lease to the rewrite window needs the
+shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 73 mutants:
+`JUDGES`, keyed by the same names. The current table has 78 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -376,7 +387,13 @@ returns a name with no local binding, `calibrate-update-positional` passes the
 payload to `update()` positionally, `calibrate-augassign-update` writes it with
 `|=`, `calibrate-tuple-verdict` writes `'PASS'` through a tuple target, and
 `calibrate-cleanup-word` writes the cleanup-verification word into a status
-slot.  The
+slot.  The five `fix-r10` mutants pin the r9-round gaps: `calibrate-unbound-exit-relay`
+relays an unbound `EXIT_OK` through a local, `calibrate-no-exit-path` drops the
+return *and* keeps a shared call so the point is registered but never exits,
+`calibrate-delegated-attribute` delegates to `helpers.exit_code(report)`,
+`calibrate-update-unregistered` gives an unregistered function an opaque
+`update()` payload, and `calibrate-walrus-exit` relays a walrus-bound `int()`
+code (the r9 round proved that spelling only with an in-file probe).  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
