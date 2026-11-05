@@ -259,7 +259,11 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _, 
         content = original.decode()
         try:
             # A stale anchor must abort as INVALID, never count as SURVIVED.
-            assert content.count(old) == 1, (name, content.count(old))
+            # Explicit raise, not an assert: `python3 -O` strips asserts, and the
+            # replace below would then change nothing and be recorded as
+            # SURVIVED. Same class as the slot deadline (#1632 P2-2).
+            if content.count(old) != 1:
+                raise ValueError(f'{name}: anchor matches {content.count(old)} times')
             changed = content.replace(old, new, 1)
             (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True),
@@ -290,7 +294,12 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _, 
             failures.append(name)
         finally:
             path.write_bytes(original)
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+            # A restore that does not verify must fail loudly; an assert here is
+            # stripped by `python3 -O` (#1632 P2-2). `mutating_sources` re-checks
+            # the whole guarded set on exit, this is the per-mutant check.
+            restored = hashlib.sha256(path.read_bytes()).hexdigest()
+            if restored != before:
+                raise SystemExit(f'{name}: restore left {restored} != {before}')
 # The guarded window closed here: `mutating_sources` restored and re-verified
 # every source on context exit. Only now publish the single summary, atomically
 # (temp + rename, #166 r8), so no reader can see a completed-looking KILLED
