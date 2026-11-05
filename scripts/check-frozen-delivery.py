@@ -608,7 +608,7 @@ def _function_node(tree, name):
     that takes the first would model the wrong inventory -- so a redefinition is
     "cannot tell", not "use the first one".
     """
-    found = [node for node in ast.walk(tree)
+    found = [node for node in _module_scope_nodes(tree)
              if isinstance(node, ast.FunctionDef) and node.name == name]
     return found[0] if len(found) == 1 else None
 
@@ -681,16 +681,39 @@ def _unmodelled_binding(node, name, imports=True):
     return False
 
 
-def _module_scope_nodes(tree):
-    """Module-level statements and their children, function/class bodies excluded."""
-    stack = list(tree.body)
+def _header_nodes(node):
+    """Children a ``def``/``class`` evaluates in the *enclosing* scope.
+
+    Decorators, default values, annotations and base expressions run when the
+    statement executes; only the body waits for a call.  A walrus in a default
+    (``def f(a=(x := 2))``) therefore binds ``x`` at module scope, and skipping
+    the whole statement would miss it.  A lambda's ``body`` is call-scoped for
+    the same reason its defaults are not.
+    """
+    # ``Lambda.body`` is one expression, not a statement list.
+    body = node.body if isinstance(node.body, list) else [node.body]
+    for child in ast.iter_child_nodes(node):
+        if any(child is item for item in body):
+            continue
+        yield child
+
+
+def _scope_nodes(body):
+    """Nodes evaluated in one scope: ``body`` and its children, nested scopes out."""
+    stack = list(body)
     while stack:
         node = stack.pop()
         yield node
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
                              ast.ClassDef)):
+            stack.extend(_header_nodes(node))
             continue
         stack.extend(ast.iter_child_nodes(node))
+
+
+def _module_scope_nodes(tree):
+    """Module-level statements and their children, function/class bodies excluded."""
+    return _scope_nodes(tree.body)
 
 
 def _sole_binding(tree, name):
@@ -913,6 +936,23 @@ def _import_origin(tree, name, module):
     return seen > 0
 
 
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
+
+
+def _source_lines(source):
+    """The file's lines split the way ``ast`` counts them: universal newlines.
+
+    ``str.splitlines`` also breaks on ``\\f``, ``\\x1c``-``\\x1e``, ``\\x85``,
+    ``\\u2028`` and ``\\u2029``, none of which starts a new line for the
+    tokenizer; a form feed inside the block would shift every index after it, so
+    the text comparison and the ``lineno`` window would disagree.  Splitting on
+    ``\\n`` alone is wrong the other way: the tokenizer also ends a line at a
+    lone ``\\r``.  Both directions are a wrong answer -- false PASS or a delivery
+    blocked for nothing -- so match the tokenizer exactly.
+    """
+    return _LINE_BREAK.split(source)
+
+
 def _bootstrap_span(source, anchors):
     """Line indexes (first, last) of the reviewed block, or None when ambiguous.
 
@@ -920,7 +960,7 @@ def _bootstrap_span(source, anchors):
     tell" -- a second block, a commented-out anchor or a reordered file.
     """
     start, end = anchors
-    lines = source.splitlines()
+    lines = _source_lines(source)
     starts = [i for i, line in enumerate(lines) if line.strip().startswith(start)]
     ends = [i for i, line in enumerate(lines) if line.strip().startswith(end)]
     if len(starts) != 1 or len(ends) != 1 or ends[0] <= starts[0]:
@@ -938,11 +978,51 @@ def _bootstrap_lines(source, anchors):
     if span is None:
         return None
     block = []
-    for line in source.splitlines()[span[0]:span[1] + 1]:
+    for line in _source_lines(source)[span[0]:span[1] + 1]:
         text = line.strip()
         if text and not text.startswith('#'):
             block.append(line.rstrip())
     return block
+
+
+def _block_is_code(tree, span, anchors, canonical):
+    """True when the reviewed lines are statements, not text that looks like them.
+
+    Line equality alone also holds for the block pasted into a triple-quoted
+    string or a string-valued constant: the entry then runs the reviewed
+    *text* and none of the reviewed behaviour.  Two shapes are refused -- a
+    string spanning the anchor lines, and a statement count that does not
+    match parsing the canonical block with its anchors -- so the answer is
+    "cannot tell" instead of a read of an apparatus that never ran.
+    """
+    low, high = span[0] + 1, span[1] + 1
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and (node.end_lineno or node.lineno) > node.lineno \
+                and node.lineno <= high and (node.end_lineno or node.lineno) >= low:
+            return False
+    # The ui block's anchors are its first and last *statements* (the gateway's
+    # are comments), so only add the ones the canonical tuple does not already
+    # start/end with.
+    text = list(canonical)
+    if not text or text[0].strip() != anchors[0]:
+        text.insert(0, anchors[0])
+    if not text or text[-1].strip() != anchors[1]:
+        text.append(anchors[1])
+    model = _parse('\n'.join(text))
+    if model is None:
+        return False
+
+    def located(nodes):
+        # Context/operator nodes (``Load``, ``Store``, ``Div`` …) carry no line,
+        # so counting them would compare a filter against a non-filter.
+        return [node for node in nodes
+                if isinstance(getattr(node, 'lineno', None), int)]
+
+    inside = located(node for node in _module_scope_nodes(tree)
+                     if isinstance(getattr(node, 'lineno', None), int)
+                     and low <= node.lineno <= high)
+    return len(inside) == len(located(_module_scope_nodes(model)))
 
 
 # Every helper the bootstrap imports, with the module it must come from.  The
@@ -951,20 +1031,64 @@ def _bootstrap_lines(source, anchors):
 # red test, not a silent hole.
 _BOOTSTRAP_HELPERS = (('sys', 'sys'), ('os', 'os'), ('importlib', 'importlib.util'),
                       ('Path', 'pathlib'), ('tempfile', 'tempfile'))
+# The same rule for the ui-server-parity block, whose five helpers are all
+# aliased: ``import types as _boot_types`` two lines after the block would swap
+# the module object ``_boot_module`` is built from.  ``Path`` is imported
+# outside the block (``ROOT``), so it is checked separately in ``ui_inventory``.
+_UI_BOOTSTRAP_HELPERS = (('_boot_sys', 'sys'), ('_boot_os', 'os'),
+                         ('_boot_hashlib', 'hashlib'),
+                         ('_boot_subprocess', 'subprocess'),
+                         ('_boot_types', 'types'))
 
 # Namespace lookups by name: outside the reviewed block they can replace what
 # the block bound without leaving a ``Name(Store)`` behind.
 _REFLECTIVE_CALLS = frozenset({'globals', 'locals', 'vars', 'setattr', 'delattr',
                                'exec', 'eval', '__import__'})
 # ``sys.modules['apparatus'] = evil`` swaps the module a later ``from apparatus
-# import ...`` picks up; both spellings of the module object stay watched.
+# import ...`` picks up; both spellings of the module object stay watched, and
+# ``_sys_roots`` adds whatever else the entry imports ``sys`` (or ``sys.modules``
+# /``sys.path``) as.
 _MODULE_TABLE_ROOTS = frozenset({'sys', '_boot_sys'})
+# Attributes that reach the namespace behind a name.  ``common.__dict__.update()``
+# or ``vars(common).update()`` rebind what the block bound while every
+# ``Name(Store)`` count stays put, so the spellings are matched by attribute
+# name rather than by the root they hang from (``object.__setattr__`` has no
+# watched root at all).
+_NAMESPACE_ATTRS = frozenset({'__dict__', '__class__', '__globals__', '__builtins__'})
+_DUNDER_MUTATORS = frozenset({'__setattr__', '__delattr__', '__setitem__',
+                              '__delitem__', '__getattribute__'})
+# Calls that mutate the object they hang from.  Only counted when the receiver
+# is a watched name -- ``failures.append(...)`` two hundred lines down is the
+# apparatus doing its job, not a write to the bootstrap.
+_MUTATOR_ATTRS = frozenset({'update', 'setdefault', 'pop', 'popitem', 'clear',
+                            'insert', 'append', 'extend', 'add', 'discard',
+                            'remove', '__setitem__', '__delitem__'})
 
 
 def _root_name(node):
     while isinstance(node, (ast.Attribute, ast.Subscript)):
         node = node.value
     return node.id if isinstance(node, ast.Name) else None
+
+
+def _sys_roots(tree):
+    """Names at module scope that still refer to ``sys`` or one of its tables.
+
+    ``import sys as _s; _s.modules['apparatus'] = ...`` and
+    ``from sys import modules as _m; _m['apparatus'] = ...`` put another module
+    behind a later ``from apparatus import ...`` without touching ``sys``.
+    """
+    roots = set(_MODULE_TABLE_ROOTS)
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == 'sys':
+                    roots.add(alias.asname or 'sys')
+        elif isinstance(node, ast.ImportFrom) and node.module == 'sys' and not node.level:
+            for alias in node.names:
+                if alias.name in ('modules', 'path'):
+                    roots.add(alias.asname or alias.name)
+    return roots
 
 
 def _foreign_writes(tree, watched, span):
@@ -974,8 +1098,12 @@ def _foreign_writes(tree, watched, span):
     the last word: ``global common`` in a later function, ``except ... as
     common``, ``del common``, ``common.A2_SCRIPTS = (...)`` or
     ``sys.modules['apparatus'] = evil`` all leave the block byte-identical while
-    the interpreter ends up running something else.
+    the interpreter ends up running something else.  The spellings that reach a
+    binding without naming it are matched by attribute name (``__dict__``,
+    ``modules``, ``__setattr__``) and by receiver, so ``import sys as _s`` or
+    ``builtins.setattr(...)`` do not walk around the check.
     """
+    roots = watched | _sys_roots(tree)
     for node in ast.walk(tree):
         line = getattr(node, 'lineno', None)
         if line is not None and span[0] + 1 <= line <= span[1] + 1:
@@ -989,15 +1117,25 @@ def _foreign_writes(tree, watched, span):
         if isinstance(node, ast.MatchMapping) and node.rest in watched:
             return True
         if isinstance(node, ast.Delete) and any(
-                isinstance(target, ast.Name) and target.id in watched
-                for target in node.targets):
+                _root_name(target) in roots for target in node.targets):
+            return True
+        if isinstance(node, ast.Attribute) and node.attr in _NAMESPACE_ATTRS:
             return True
         if isinstance(node, (ast.Attribute, ast.Subscript)) \
                 and isinstance(node.ctx, ast.Store) \
-                and _root_name(node) in watched | _MODULE_TABLE_ROOTS:
+                and _root_name(node) in roots:
             return True
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                and node.func.id in _REFLECTIVE_CALLS:
+        if isinstance(node, ast.Call):
+            func = node.func
+            if _call_name(func) in _REFLECTIVE_CALLS:
+                return True  # setattr(...) and builtins.setattr(...)
+            if isinstance(func, ast.Attribute) and func.attr in _DUNDER_MUTATORS:
+                return True  # object.__setattr__(common, ...)
+            if isinstance(func, ast.Attribute) and func.attr in _MUTATOR_ATTRS \
+                    and _root_name(func) in roots:
+                return True  # sys.modules.update(...), common.__dict__ ...
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and node.value in _NAMESPACE_ATTRS:
             return True
     return False
 
@@ -1047,6 +1185,8 @@ def _bootstrap_ok(tree, anchors, canonical):
         return False
     span = _bootstrap_span(entry[1], anchors)
     if span is None or _bootstrap_lines(entry[1], anchors) != list(canonical):
+        return False
+    if not _block_is_code(tree, span, anchors, canonical):
         return False
     if not _bindings_confined(tree, canonical):
         return False
@@ -1128,17 +1268,18 @@ def _tuple_value(tree, function, name, external=()):
     member the branch removed -- the same false-READY class ``_module_tuple``
     already guards against.
     """
-    stores = [node for node in ast.walk(function)
+    scope = list(_scope_nodes(function.body))
+    stores = [node for node in scope
               if isinstance(node, ast.Name) and node.id == name
               and isinstance(node.ctx, ast.Store)]
-    augments = [node for node in ast.walk(function)
+    augments = [node for node in scope
                 if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
                 and node.target.id == name]
     if augments or len(stores) > 1 or _unmodelled_binding(function, name):
         return None
     found = None
     if stores:
-        for node in ast.walk(function):
+        for node in scope:
             targets, value = [], None
             if isinstance(node, ast.Assign):
                 targets, value = node.targets, node.value
@@ -1493,7 +1634,9 @@ def ui_inventory(root, commit=None):
             bootstrap_ok = _bootstrap_ok(frozen_tree, _UI_BOOTSTRAP_ANCHORS,
                                          _UI_BOOTSTRAP)
             root_ok = _file_parents(_sole_binding(frozen_tree, 'ROOT'))
-            helpers_ok = _import_origin(frozen_tree, 'Path', 'pathlib')
+            helpers_ok = _import_origin(frozen_tree, 'Path', 'pathlib') and all(
+                _import_origin(frozen_tree, name, module)
+                for name, module in _UI_BOOTSTRAP_HELPERS)
             # ``required_files`` registers exactly what ``SPEC_FILES``,
             # ``EXP008_FILES`` and ``toolchain_files()`` hold and scans what
             # ``scan()`` is pointed at.  All four must come from the
