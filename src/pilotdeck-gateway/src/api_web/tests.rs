@@ -769,6 +769,244 @@ fn read_limit_is_exclusive_at_one_mib() {
     );
 }
 
+// --------------------------------------------- #1675 boundary escape probes
+
+/// #1675 probe (symlink): a directory symlink planted inside the root must
+/// not carry a write outside the workspace. The lexical write resolve never
+/// looks at the link, so today this escapes deterministically.
+#[cfg(unix)]
+#[test]
+fn write_rejects_a_symlink_that_leaves_the_root() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    std::os::unix::fs::symlink(&outside, root.join("out-link"))
+        .expect("#1675 link the outside directory into the root");
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "out-link/escaped.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    let leaked = fs::read_to_string(outside.join("escaped.txt"));
+    assert!(
+        leaked.is_err(),
+        "#1675 mutated: a symlink carried the write out of the workspace: {leaked:?}"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "out-link/escaped.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => {
+            panic!("#1675 a symlink leaving the root answers workspace_boundary, not a write error")
+        }
+        Ok(()) => panic!("#1675 a write through a symlink leaving the root must be rejected"),
+    }
+}
+
+/// #1675 probe (`..`): a dot-dot path is rejected by the lexical gate before
+/// any syscall, so the parent file must keep its baseline bytes.
+#[test]
+fn write_rejects_dotdot_that_leaves_the_root() {
+    let (parent, root) = fixture();
+    let outside = parent.join("dotdot.txt");
+    fs::write(&outside, b"before\n").expect("#1675 write the file above the root");
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "../dotdot.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    assert_eq!(
+        fs::read(&outside).expect("#1675 read the file above the root"),
+        b"before\n",
+        "#1675 a `..` write must not reach the file above the root"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "../dotdot.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a `..` path answers workspace_boundary, not a write error"),
+        Ok(()) => panic!("#1675 a `..` write must be rejected"),
+    }
+}
+
+/// #1675 probe (absolute): an absolute path is rejected by the lexical gate,
+/// so the target file is never created.
+#[test]
+fn write_rejects_an_absolute_path() {
+    let (_parent, root) = fixture();
+    let outside = std::env::temp_dir().join(format!("pdrs-1675-{}", uuid::Uuid::new_v4()));
+    let raw = outside
+        .to_str()
+        .expect("#1675 the temp path is UTF-8")
+        .to_owned();
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.write_file(&raw, &pilotdeck_protocol::JsString::from("pwned\n"), false);
+    assert!(
+        !outside.exists(),
+        "#1675 an absolute write must not create a file outside the root"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw: reported }) => assert_eq!(
+            reported, raw,
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 an absolute path answers workspace_boundary, not a write error"),
+        Ok(()) => panic!("#1675 an absolute write must be rejected"),
+    }
+}
+
+/// #1675 probe (write race window): the component is swapped for a symlink
+/// after the lexical check and before the write, inside the hook the file
+/// service exposes for exactly this assertion.
+#[cfg(unix)]
+#[test]
+fn write_rejects_a_component_swapped_inside_the_window() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(root.join("swap")).expect("#1675 create the in-root directory");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    let link_root = root.clone();
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "write" {
+            fs::remove_dir(link_root.join("swap")).expect("#1675 remove the in-root directory");
+            std::os::unix::fs::symlink(&link_target, link_root.join("swap"))
+                .expect("#1675 install the racing symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "swap/raced.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    let leaked = fs::read_to_string(outside.join("raced.txt"));
+    assert!(
+        leaked.is_err(),
+        "#1675 mutated: the race window carried the write out of the workspace: {leaked:?}"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "swap/raced.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a raced component answers workspace_boundary, not a write error"),
+        Ok(()) => panic!("#1675 a write through a raced component must be rejected"),
+    }
+}
+
+/// #1675 probe (read race window): the checked file is swapped for a symlink
+/// after the realpath/stat checks and before the content read.
+#[cfg(unix)]
+#[test]
+fn read_rejects_a_file_swapped_inside_the_window() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    fs::write(outside.join("secret.txt"), b"top secret\n")
+        .expect("#1675 write the file outside the root");
+    fs::write(root.join("race.txt"), b"inside\n").expect("#1675 write the in-root file");
+    let link_root = root.clone();
+    let link_target = outside.join("secret.txt");
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "read" {
+            fs::remove_file(link_root.join("race.txt")).expect("#1675 remove the in-root file");
+            std::os::unix::fs::symlink(&link_target, link_root.join("race.txt"))
+                .expect("#1675 install the racing symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.read_file("race.txt");
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "race.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a raced read answers workspace_boundary, not a read error"),
+        Ok(value) => panic!(
+            "#1675 mutated: a raced read served content from outside the workspace: {}",
+            json_of(&value)
+        ),
+    }
+}
+
+// --------------------------------- #1675 in-root links keep the TS behavior
+
+/// #1675 counter-probe (file link): TS `resolveSafeWriting` never realpaths, so
+/// `writeFileSync` follows a link that stays inside the root. The hardening
+/// must keep that write-through; only a link that leaves the root is refused.
+#[cfg(unix)]
+#[test]
+fn write_follows_a_link_that_stays_inside_the_root() {
+    let (_parent, root) = fixture();
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    service
+        .write_file(
+            "inside-link",
+            &pilotdeck_protocol::JsString::from("through the link\n"),
+            false,
+        )
+        .map_err(|error| match error {
+            files::FilesError::Workspace { raw } => {
+                format!("#1675 an in-root link was refused as a boundary escape: {raw}")
+            }
+            files::FilesError::Message(text) => format!("#1675 the in-root write failed: {text}"),
+        })
+        .expect("#1675 an in-root link keeps TS's write-through");
+    assert_eq!(
+        fs::read(root.join("aaa.txt")).expect("#1675 read the link target"),
+        b"through the link\n",
+        "#1675 the bytes land on the link target"
+    );
+    assert!(
+        fs::symlink_metadata(root.join("inside-link"))
+            .expect("#1675 lstat the link")
+            .file_type()
+            .is_symlink(),
+        "#1675 the write does not replace the link with a regular file"
+    );
+}
+
+/// #1675 counter-probe (directory link): a directory link inside the root still
+/// receives a new file below it, like TS recursive `mkdir` + `writeFile`.
+#[cfg(unix)]
+#[test]
+fn write_creates_below_a_directory_link_that_stays_inside_the_root() {
+    let (_parent, root) = fixture();
+    std::os::unix::fs::symlink(root.join("sub"), root.join("sub-link"))
+        .expect("#1675 link the in-root directory");
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    service
+        .write_file(
+            "sub-link/linked.txt",
+            &pilotdeck_protocol::JsString::from("inside the root\n"),
+            false,
+        )
+        .map_err(|error| match error {
+            files::FilesError::Workspace { raw } => {
+                format!("#1675 an in-root directory link was refused as a boundary escape: {raw}")
+            }
+            files::FilesError::Message(text) => format!("#1675 the in-root write failed: {text}"),
+        })
+        .expect("#1675 an in-root directory link keeps TS's behavior");
+    assert_eq!(
+        fs::read(root.join("sub/linked.txt")).expect("#1675 read the created file"),
+        b"inside the root\n",
+        "#1675 the file appears below the link target"
+    );
+}
+
 // ----------------------------------------------------------------- normalize
 
 /// The bytes both sides are compared in, the #1209 rules — the Date value
