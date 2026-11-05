@@ -2468,6 +2468,25 @@ class RetirementScoring(unittest.TestCase):
             self.assertTrue(health['status'] == 'HIT', f'#20 all-answer rounds aggregate HIT: {health}')
             self.assertNotIn('/health', merged['unhit'])
 
+    REPORT_FACES = ('expected', 'executed', 'rounds', 'methodCoverage', 'entryInventory',
+                    'hostAudit', 'controls', 'coldRestartRollback', 'topology', 'portAudit',
+                    'processAudit', 'cleanupAudit', 'baseline', 'reason', 'executionStatus',
+                    'acceptanceStatus')
+
+    def _with_round_faces(self, row, label):
+        # The audit faces every legal round carries; _round_row covers the
+        # scoring inputs only.
+        row.update({
+            'label': label,
+            'ports': {'mock': 28761, 'gateway': 28762},
+            'census': {'rows': [{'pid': 7}], 'declared': [7], 'declaredAlive': True},
+            'connections': {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}],
+                            'commandStatus': 'ok'},
+            'listeners': {'pid': 7, 'addresses': ['127.0.0.1:28762'], 'loopbackOnly': True},
+            'audit': {'allStopped': True},
+        })
+        return row
+
     def _degraded_round_row(self, label='round-01'):
         # A legal degraded round: the only stream method answered with an
         # error (backed by a receive frame) instead of ok, while a request
@@ -2489,16 +2508,64 @@ class RetirementScoring(unittest.TestCase):
             {'seq': 4, 'connection': 1, 'direction': 'receive',
              'frame': {'type': 'response', 'id': 'id-get', 'ok': True, 'result': {}}},
         ]
-        return {'label': label, 'driverExitCode': 0, 'outcomes': outcomes, 'frames': frames,
-                'http': [{'path': '/health', 'status': 200}],
-                'processes': [{'pid': 7}],
-                'ports': {'mock': 28761, 'gateway': 28762},
-                'runtime': {'pilotHome': '/nonexistent-home'},
-                'census': {'rows': [{'pid': 7}], 'declared': [7], 'declaredAlive': True},
-                'connections': {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}],
-                                'commandStatus': 'ok'},
-                'listeners': {'pid': 7, 'addresses': ['127.0.0.1:28762'], 'loopbackOnly': True},
-                'audit': {'allStopped': True}}
+        return self._with_round_faces(self._round_row(outcomes, frames), label)
+
+    def _all_error_round_row(self, label='round-01'):
+        # Provider fully unavailable: every method answered with an error, so
+        # there is no ok outcome (control 1) and no stream outcome (controls 5
+        # and 6) to mutate.
+        outcomes = [{'method': 'run_get', 'outcome': 'error',
+                     'errorCode': 'PROVIDER_UNAVAILABLE', 'shape': 'request'}]
+        frames = [
+            {'seq': 1, 'connection': 1, 'direction': 'send',
+             'frame': {'type': 'request', 'id': 'id-get', 'method': 'run_get'}},
+            {'seq': 2, 'connection': 1, 'direction': 'receive',
+             'frame': {'type': 'response', 'id': 'id-get', 'ok': False,
+                       'error': {'code': 'PROVIDER_UNAVAILABLE', 'message': 'controlled'}}},
+        ]
+        return self._with_round_faces(self._round_row(outcomes, frames), label)
+
+    def _stream_ok_round_row(self, *, send_frame=True, terminal_frame=True, label='round-01'):
+        outcomes = [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'},
+                    {'method': 'run_get', 'outcome': 'ok', 'shape': 'request'}]
+        frames = []
+        if send_frame:
+            frames.append({'seq': 1, 'connection': 1, 'direction': 'send',
+                           'frame': {'type': 'request', 'id': 'id-turn', 'method': 'submit_turn'}})
+        if terminal_frame:
+            frames.append({'seq': 2, 'connection': 1, 'direction': 'receive',
+                           'frame': {'type': 'event', 'id': 'id-turn', 'final': True,
+                                     'event': {'type': 'done'}}})
+        frames.append({'seq': 3, 'connection': 1, 'direction': 'send',
+                       'frame': {'type': 'request', 'id': 'id-get', 'method': 'run_get'}})
+        frames.append({'seq': 4, 'connection': 1, 'direction': 'receive',
+                       'frame': {'type': 'response', 'id': 'id-get', 'ok': True, 'result': {}}})
+        return self._with_round_faces(self._round_row(outcomes, frames), label)
+
+    def _report_for(self, row, expected):
+        # Assemble the real report around one synthetic round: only the round
+        # inputs and the baseline-only faces are patched, so the controls run
+        # against the real scorer/aggregator.
+        with patch.object(self.session, '_retirement_expected', return_value=(expected, [])), \
+                patch.object(self.session, '_retirement_baseline_revision', return_value='deadbeef'), \
+                patch.object(self.session, '_retirement_ports_available', return_value=True), \
+                patch.object(self.session, '_retirement_round', return_value=row), \
+                patch.object(self.session, '_retirement_entry_inventory',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_entry_inventory_aggregate',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_js_host_census',
+                             return_value={'status': 'PASS'}):
+            return self.session.retirement_report(Path('out'), Path('baseline'))
+
+    def _assert_full_faces(self, report, tag):
+        for face in self.REPORT_FACES:
+            self.assertIn(face, report, f'{tag} report lacks face {face}')
+        # coldRestartRollback is BLOCKED until #1354, so the total verdict is
+        # always at least BLOCKED; the controls face is asserted separately.
+        self.assertEqual(report['controls']['status'], 'BLOCKED', report['controls'])
+        self.assertNotEqual(report['executionStatus'], 'NOT_RUN')
+        return report
 
     def test_degraded_round_keeps_full_report_and_marks_control_unavailable(self):
         # P1 (#1355 fix-r4): when round-01 has no ok stream outcome (a legal
@@ -2519,29 +2586,53 @@ class RetirementScoring(unittest.TestCase):
                           ('STREAM_OK_NON_FINAL', 'NOT_APPLICABLE')])
         unavailable = next(c for c in controls['classes'] if c['class'] == 'STREAM_OK_NON_FINAL')
         self.assertIn('no ok stream outcome', unavailable['reason'])
-        # The report keeps every scoring face: patch the round/baseline inputs
-        # so the degraded round is the only round and call the real wrapper.
-        with patch.object(self.session, '_retirement_expected', return_value=(expected, [])), \
-                patch.object(self.session, '_retirement_baseline_revision', return_value='deadbeef'), \
-                patch.object(self.session, '_retirement_ports_available', return_value=True), \
-                patch.object(self.session, '_retirement_round', return_value=row), \
-                patch.object(self.session, '_retirement_entry_inventory',
-                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
-                patch.object(self.session, '_retirement_entry_inventory_aggregate',
-                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
-                patch.object(self.session, '_retirement_js_host_census',
-                             return_value={'status': 'PASS'}):
-            report = self.session.retirement_report(Path('out'), Path('baseline'))
-        for face in ('expected', 'executed', 'rounds', 'methodCoverage', 'entryInventory',
-                     'hostAudit', 'controls', 'coldRestartRollback', 'topology', 'portAudit',
-                     'processAudit', 'cleanupAudit', 'baseline', 'reason', 'executionStatus',
-                     'acceptanceStatus'):
-            self.assertIn(face, report, f'#31 degraded-round report lacks face {face}')
-        self.assertEqual(report['controls']['status'], 'BLOCKED', report['controls'])
+        report = self._assert_full_faces(self._report_for(row, expected), '#31 degraded-round')
         self.assertTrue(report['controls']['reason'].startswith('positive mutation control(s)'),
                         report['controls'].get('reason'))
+
+    def test_unestablishable_controls_keep_the_full_report(self):
+        # P1 (#1355 fix-r4, second round): the same "cannot establish" rule
+        # holds for every control class, not just the stream-ok one.  An
+        # all-error round (a legal degraded round: provider fully unavailable)
+        # has no ok outcome for TS_FALLBACK and no stream outcome for
+        # STREAM_ERROR_NO_FRAME / STREAM_OK_NON_FINAL.  Pre-fix the first
+        # `require` raised and the report collapsed to the 5-key stub.
+        expected = ['run_get']
+        controls = self.session._retirement_controls(self._all_error_round_row(), expected)
+        self.assertEqual([(c['class'], c['status']) for c in controls['classes']],
+                         [('TS_FALLBACK', 'NOT_APPLICABLE'), ('TS_HOST', 'PASS'),
+                          ('UNIFORM_UNAVAILABLE', 'PASS'), ('FORWARDING_MISLABELED', 'PASS'),
+                          ('STREAM_ERROR_NO_FRAME', 'NOT_APPLICABLE'),
+                          ('STREAM_OK_NON_FINAL', 'NOT_APPLICABLE')])
+        reasons = {c['class']: c.get('reason', '') for c in controls['classes']}
+        self.assertIn('no ok outcome', reasons['TS_FALLBACK'])
+        self.assertIn('no stream outcome', reasons['STREAM_ERROR_NO_FRAME'])
+        report = self._assert_full_faces(self._report_for(self._all_error_round_row(), expected),
+                                         '#32 all-error-round')
+        # The round itself is still scored: the controls face is what turned
+        # BLOCKED, never a silent PASS.
         self.assertEqual(report['executionStatus'], 'BLOCKED', report['executionStatus'])
-        self.assertNotEqual(report['executionStatus'], 'NOT_RUN')
+
+    def test_stream_ok_control_unavailable_without_send_frame_or_single_terminal(self):
+        # P1 (#1355 fix-r4): the two remaining unestablishable shapes of the
+        # STREAM_OK_NON_FINAL control — no send frame to locate the terminal
+        # event (pre-fix a KeyError escaped to main) and no single final:true
+        # frame to downgrade (pre-fix an EvidenceError collapsed the report).
+        expected = ['submit_turn', 'run_get']
+        cases = (
+            ('no send frame', self._stream_ok_round_row(send_frame=False), 'no recorded send frame'),
+            ('no terminal frame', self._stream_ok_round_row(terminal_frame=False), 'found 0'),
+        )
+        for tag, row, reason in cases:
+            controls = self.session._retirement_controls(row, expected)
+            class6 = next(c for c in controls['classes'] if c['class'] == 'STREAM_OK_NON_FINAL')
+            self.assertEqual(class6['status'], 'NOT_APPLICABLE', f'#33 {tag}: {class6}')
+            self.assertIn(reason, class6['reason'], tag)
+            report = self._assert_full_faces(self._report_for(row, expected), f'#33 {tag}')
+            # These rounds carry a real scored FAIL (stream ok with no wire
+            # backing / no final:true frame); the report must surface it
+            # instead of the pre-fix 5-key NOT_RUN stub.
+            self.assertEqual(report['executionStatus'], 'FAIL', tag)
 
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for

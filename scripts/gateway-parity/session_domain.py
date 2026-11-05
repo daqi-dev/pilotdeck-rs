@@ -1995,14 +1995,24 @@ def _retirement_controls(round_row, expected):
 
     # 1. 故意偷偷回退 TS / 假 local 实透传: an executed method with no wire frame.
     mutated = json.loads(json.dumps(round_row))
-    victim = next((row['method'] for row in mutated['outcomes'] if row.get('outcome') == 'ok'), None)
-    require(victim is not None, 'CONTROL_SETUP', 'no ok outcome to mutate')
-    mutated = _retirement_strip_wire(mutated, victim)
-    verdict = score_retirement_round(mutated, expected)
-    record('TS_FALLBACK', f"strip all wire frames of executed method '{victim}' while keeping its ok outcome",
-           'EVIDENCE_BACKING', verdict,
-           {'detail': next((p['detail'] for p in verdict['rules']
-                            if p['rule'] == 'EVIDENCE_BACKING'), None)})
+    victim = next((row.get('method') for row in mutated['outcomes']
+                   if row.get('outcome') == 'ok' and row.get('method')), None)
+    injection = 'executed method with every wire frame stripped while its ok outcome is kept'
+    if victim is None:
+        # P1 (#1355 fix-r4): same unestablishable-control rule as class 6 — a
+        # legal degraded round (every method errored/timed out, or the ok rows
+        # carry no method name) leaves nothing to strip.  Raising here also
+        # collapsed the whole 16-face report into the 5-key stub.
+        unavailable('TS_FALLBACK', injection, 'EVIDENCE_BACKING',
+                    'no ok outcome carrying a method name in the control round: every method '
+                    'errored or timed out, so the wire-frame mutation cannot be established')
+    else:
+        mutated = _retirement_strip_wire(mutated, victim)
+        verdict = score_retirement_round(mutated, expected)
+        record('TS_FALLBACK', f"strip all wire frames of executed method '{victim}' while keeping its ok outcome",
+               'EVIDENCE_BACKING', verdict,
+               {'detail': next((p['detail'] for p in verdict['rules']
+                                if p['rule'] == 'EVIDENCE_BACKING'), None)})
     # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
     census_verdict = _retirement_census_verdict({'rows': round_row['census']['rows'], 'declared': []})
     record('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
@@ -2030,21 +2040,31 @@ def _retirement_controls(round_row, expected):
     # every receive frame stripped (send kept) must still fail EVIDENCE_BACKING
     # — the pre-fix scorer passed exactly this shape.
     mutated = json.loads(json.dumps(round_row))
-    stream_row = next((row for row in mutated['outcomes'] if row.get('shape') == 'stream'), None)
-    require(stream_row is not None, 'CONTROL_SETUP', 'no stream outcome to mutate')
-    stream_row['outcome'] = 'error'
-    stream_row.pop('errorCode', None)
-    mutated = _retirement_strip_receive(mutated, stream_row['method'])
-    verdict = score_retirement_round(mutated, expected)
-    record('STREAM_ERROR_NO_FRAME', f"stream method '{stream_row['method']}' rewritten to error with every "
-                                   'receive frame stripped while keeping its send frame',
-           'EVIDENCE_BACKING', verdict, {})
+    stream_row = next((row for row in mutated['outcomes']
+                       if row.get('shape') == 'stream' and row.get('method')), None)
+    injection = ('stream method rewritten to error with every receive frame stripped while '
+                 'keeping its send frame')
+    if stream_row is None:
+        # P1 (#1355 fix-r4): an unestablishable class is reported, never raised.
+        unavailable('STREAM_ERROR_NO_FRAME', injection, 'EVIDENCE_BACKING',
+                    'no stream outcome carrying a method name in the control round, so the '
+                    'error-without-receive-frame mutation cannot be established')
+    else:
+        stream_method = stream_row['method']
+        stream_row['outcome'] = 'error'
+        stream_row.pop('errorCode', None)
+        mutated = _retirement_strip_receive(mutated, stream_method)
+        verdict = score_retirement_round(mutated, expected)
+        record('STREAM_ERROR_NO_FRAME', f"stream method '{stream_method}' rewritten to error with every "
+                                       'receive frame stripped while keeping its send frame',
+               'EVIDENCE_BACKING', verdict, {})
     # 6. ① (#1355 fix-r3): a stream ok outcome whose terminal event frame was
     # downgraded to final:false (the stream merely ended) must still fail
     # EVIDENCE_BACKING — the pre-fix scorer passed exactly this shape.
     mutated = json.loads(json.dumps(round_row))
     stream_ok = next((row for row in mutated['outcomes']
-                      if row.get('shape') == 'stream' and row.get('outcome') == 'ok'), None)
+                      if row.get('shape') == 'stream' and row.get('outcome') == 'ok'
+                      and row.get('method')), None)
     injection = 'stream ok outcome whose terminal event frame is downgraded to final:false'
     if stream_ok is None:
         # P1 (#1355 fix-r4): a legal degraded round (the only stream method
@@ -2055,14 +2075,15 @@ def _retirement_controls(round_row, expected):
                     'no ok stream outcome in the control round: the stream method errored or '
                     'timed out, so the terminal-frame mutation cannot be established')
     else:
+        stream_method = stream_ok['method']
         sends, _responses, _events, _finals = _retirement_wire_backing(mutated['frames'])
-        identifier = sends.get(stream_ok['method'])
+        identifier = sends.get(stream_method)
         if identifier is None:
             # Same P1: without the send frame there is no id to locate the
             # terminal event; a KeyError here escaped even retirement_report's
             # EvidenceError handler and fell through to main's stub.
             unavailable('STREAM_OK_NON_FINAL', injection, 'EVIDENCE_BACKING',
-                        f"stream ok method {stream_ok['method']!r} has no recorded send frame, "
+                        f"stream ok method {stream_method!r} has no recorded send frame, "
                         'so its terminal event frame cannot be located')
         else:
             flipped = 0
@@ -2072,12 +2093,21 @@ def _retirement_controls(round_row, expected):
                         and frame.get('final') is True and frame.get('id') == identifier):
                     frame['final'] = False
                     flipped += 1
-            require(flipped == 1, 'CONTROL_SETUP',
-                    f'expected exactly one terminal event frame for {stream_ok["method"]}, flipped {flipped}')
-            verdict = score_retirement_round(mutated, expected)
-            record('STREAM_OK_NON_FINAL', f"stream method '{stream_ok['method']}' keeps its ok outcome while "
-                                          'its terminal event frame is downgraded to final:false',
-                   'EVIDENCE_BACKING', verdict, {})
+            if flipped != 1:
+                # P1 (#1355 fix-r4): 0 means the round itself is the
+                # "stream ok without a final:true frame" shape the scorer
+                # already FAILs; >=2 means duplicated terminal frames.  Either
+                # way the downgrade mutation is not establishable and must not
+                # collapse the report into the 5-key stub.
+                unavailable('STREAM_OK_NON_FINAL', injection, 'EVIDENCE_BACKING',
+                            f"expected exactly one terminal final:true event frame for "
+                            f"{stream_method!r}, found {flipped}, so the downgrade mutation "
+                            'cannot be established')
+            else:
+                verdict = score_retirement_round(mutated, expected)
+                record('STREAM_OK_NON_FINAL', f"stream method '{stream_method}' keeps its ok outcome while "
+                                              'its terminal event frame is downgraded to final:false',
+                       'EVIDENCE_BACKING', verdict, {})
     # The face status is a batch summary; it is computed by the registered
     # caller (_retirement_report) with the shared aggregator, never here.
     return {'classes': controls}
