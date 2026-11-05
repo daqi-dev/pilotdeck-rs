@@ -40,9 +40,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-session-cleanup-neg-pyc-')
-atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+# Same private bytecode root as check_cleanup.py: the apparatus modules this
+# process loads each install their own ``sys.pycache_prefix`` directory, and
+# only a root that owns them all can clean them all (MiniMax sibling r7 P2-2).
+_PYCACHE_ROOT = tempfile.mkdtemp(prefix='pdrs-session-cleanup-neg-pycroot-')
+tempfile.tempdir = _PYCACHE_ROOT
+sys.pycache_prefix = _PYCACHE_ROOT
+atexit.register(shutil.rmtree, _PYCACHE_ROOT, ignore_errors=True)
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
@@ -655,6 +661,55 @@ def calibrate_bool_exit(rows):
         'aggregation-audit: bool exit code flagged, passed=False')
 
 
+def calibrate_bool_relay(rows):
+    """#892 r9: ``code = bool(x); return code`` computes the code inline exactly
+    like the ``int(...)`` relay (MiniMax boundary r7 P0-1 / sibling r7 P1-1)."""
+    return _controls_main_needle(
+        rows, '(bool() relay) code',
+        'aggregation-audit: bool relay exit flagged, passed=False')
+
+
+def calibrate_unbound_exit_name(rows):
+    """#892 r9: an exit-code name with no local binding fails closed, the same
+    verdict the status side gives it (GLM boundary r7 P1-1)."""
+    return _controls_main_needle(
+        rows, '(unbound relay) EXIT_CODE',
+        'aggregation-audit: unbound exit-code name flagged, passed=False')
+
+
+def calibrate_update_positional(rows):
+    """#892 r9: ``report.update(x)`` writes the same slots as
+    ``update(**x)``; only the keyword spelling was judged (GLM boundary r7 P1-2)."""
+    return _controls_main_needle(
+        rows, 'inline status/exit assignment report.update(extra)',
+        'aggregation-audit: positional update flagged, passed=False')
+
+
+def calibrate_augassign_update(rows):
+    """#892 r9: ``report |= x`` is the in-place spelling of the same write
+    (GLM boundary r7 P1-2)."""
+    return _controls_main_needle(
+        rows, 'inline status/exit update report |= extra',
+        'aggregation-audit: augmented update flagged, passed=False')
+
+
+def calibrate_tuple_verdict(rows):
+    """#892 r9: a tuple target pairs element-wise, so ``verdict, code =
+    'PASS', 0`` claims the verdict (GLM boundary r7 P2-3)."""
+    return _controls_main_needle(
+        rows, "inline status/exit assignment ('PASS', 0)",
+        'aggregation-audit: tuple-target verdict write flagged, passed=False')
+
+
+def calibrate_cleanup_word(rows):
+    """#892 r9: the cleanup-verification word is on the clean side of the word
+    family, so writing it into a slot is a bypass like ``'PASS'``
+    (GLM boundary r7 P2-4)."""
+    return _controls_main_needle(
+        rows, "inline status/exit assignment 'PASS_WITH_CLEANUP_UNVERIFIED'",
+        'aggregation-audit: cleanup-unverified word flagged, passed=False')
+
+
 def calibrate_early_return_branch(rows):
     """#892 r5: a zero branch that returns before the shared rebind is inline
     even though a later sibling overwrites the name (MiniMax boundary P0-1)."""
@@ -1206,6 +1261,33 @@ MUTATIONS = [
      CT_EXIT,
      "        if report.get('special'):\n"
      "            return bool(report.get('cells'))\n" + CT_EXIT),
+    # #892 fix-r9: the relay and write spellings the r7 reviews found.
+    ('calibrate-bool-relay', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            code = bool(report.get('cells'))\n"
+     "            return code\n" + CT_EXIT),
+    ('calibrate-unbound-exit-name', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            return EXIT_CODE\n" + CT_EXIT),
+    ('calibrate-update-positional', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            report.update(extra)\n" + CT_EXIT),
+    ('calibrate-augassign-update', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            report |= extra\n" + CT_EXIT),
+    ('calibrate-tuple-verdict', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            verdict, code = 'PASS', 0\n"
+     "            print(code)\n" + CT_EXIT),
+    ('calibrate-cleanup-word', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            report['status'] = 'PASS_WITH_CLEANUP_UNVERIFIED'\n" + CT_EXIT),
     ('calibrate-status-update-kwarg', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update(status='PASS')\n"),
@@ -1428,6 +1510,18 @@ JUDGES = {
         'aggregation-audit', calibrate_bare_verdict, False, ()),
     'calibrate-bool-exit': (
         'aggregation-audit', calibrate_bool_exit, False, ()),
+    'calibrate-bool-relay': (
+        'aggregation-audit', calibrate_bool_relay, False, ()),
+    'calibrate-unbound-exit-name': (
+        'aggregation-audit', calibrate_unbound_exit_name, False, ()),
+    'calibrate-update-positional': (
+        'aggregation-audit', calibrate_update_positional, False, ()),
+    'calibrate-augassign-update': (
+        'aggregation-audit', calibrate_augassign_update, False, ()),
+    'calibrate-tuple-verdict': (
+        'aggregation-audit', calibrate_tuple_verdict, False, ()),
+    'calibrate-cleanup-word': (
+        'aggregation-audit', calibrate_cleanup_word, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
     'calibrate-clean-argument': (
@@ -1471,7 +1565,23 @@ def read_summary(case):
         return None, f'summary.json unreadable: {type(error).__name__}: {error}'
 
 
-def run_check(case, mode, timeout=180):
+# The batch holds the host-wide parity lease (``mutating_sources`` takes it for
+# any ``scripts/gateway-parity`` source) from the first mutation to the restored
+# positive.  ``common.parity_lock`` bounds its own runs to 900 s, comfortably
+# below the 2400 s stale-lease age; a 67-mutant batch at the per-check ceiling
+# had no such bound, so another gateway suite would wait out its 30 s lease
+# timeout (a false FAIL) and a parity round would wait without any bound
+# (MiniMax concurrency r7 P1-1).  Measured full batch: 159 s.
+LEASE_BUDGET_SECONDS = 900
+CHECK_TIMEOUT_SECONDS = 180
+
+
+def lease_budget_left(started, now):
+    """Seconds the batch may still spend inside the lease, per-check bound deducted."""
+    return LEASE_BUDGET_SECONDS - (now - started) - CHECK_TIMEOUT_SECONDS
+
+
+def run_check(case, mode, timeout=CHECK_TIMEOUT_SECONDS):
     return run_owned([sys.executable, '-I', str(CHECK), '--output', str(case),
                       '--mode', mode], cwd=ROOT, env=dict(os.environ), timeout=timeout)
 
@@ -1561,6 +1671,7 @@ def main():
             digests = {source: hashlib.sha256(originals[source]).hexdigest()
                        for source in sources}
             contents = {source: originals[source].decode() for source in sources}
+            started = time.monotonic()
             try:
                 for mutation in selected:
                     name, source, old, new = mutation
@@ -1568,6 +1679,20 @@ def main():
                     judge_spec = JUDGES[name]
                     mode = judge_spec[0]
                     case = output / name  # check_cleanup.py owns/creates this directory
+                    if lease_budget_left(started, time.monotonic()) <= 0:
+                        # The lease is host-wide: stop before the batch can
+                        # outlive it, and never count an unrun mutation as a
+                        # kill.  INVALID aggregates to BLOCKED, never to PASS.
+                        entry = {'mutation': name, 'mode': mode, 'verdict': 'INVALID',
+                                 'detail': (f'batch spent the {LEASE_BUDGET_SECONDS}s parity '
+                                            'lease budget before this mutation; re-run the '
+                                            'remainder with --only'),
+                                 'returncode': None,
+                                 'source': Path(source).relative_to(ROOT).as_posix()}
+                        summary.append(entry)
+                        invalid.append(entry)
+                        print(f'{name}: INVALID {entry["detail"]}', flush=True)
+                        continue
                     returncode = None
                     try:
                         require_single_anchor(contents[source], old, name)
