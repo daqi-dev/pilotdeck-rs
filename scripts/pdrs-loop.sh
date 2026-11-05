@@ -26,18 +26,10 @@ if [ -n "${PDRS_LOOP_LOCK:-}${PDRS_LOOP_STOP:-}" ]; then
   LOCK_DIR="${PDRS_LOOP_LOCK:-$LOCK_DIR}"; STOP_FILE="${PDRS_LOOP_STOP:-$STOP_FILE}"
 fi
 # 磁盘闸量的是**主仓**：从 worktree 里跑循环时本树没有 _build/_tmp，量自己会恒判 ok（闸门静默失效）。
-# 解析失败一律 fail-closed：绝不回落到 worktree 根把闸门关掉（两家评审 r5 的 P1）。
-# 管道写法照 scripts/lib/worktree-count.sh：先收全量输出再判 rc，别让 `head` 吞掉 git 的退出码。
-DISK_ROOT="$ROOT"
-if [ -e "$ROOT/.git" ]; then   # 没有 .git 的是隔离测试 fixture，量它自己（用例里 du 桩按 root 返回）
-  if ! _wt_out="$(git -C "$ROOT" worktree list --porcelain)"; then
-    echo "pdrs-loop: git worktree list 失败，无法确定主仓根（磁盘闸 fail-closed）" >&2; exit 1
-  fi
-  _main_root="$(printf '%s\n' "$_wt_out" | sed -n 's/^worktree //p' | head -n 1)" || _main_root=""
-  if [ -z "$_main_root" ]; then
-    echo "pdrs-loop: 主仓根解析为空（磁盘闸 fail-closed）" >&2; exit 1
-  fi
-  DISK_ROOT="$_main_root"
+# 「量哪个根」的策略唯一实现在 lib 的 pdrs_disk_main_root（pdrs-loop / new-tree / 直接执行块共用）；
+# 解析失败、裸主仓、主仓根不可用一律 fail-closed，绝不回落到本树把闸门关掉（两家评审 r5 的 P1）。
+if ! DISK_ROOT="$(pdrs_disk_main_root "$ROOT")"; then
+  echo "pdrs-loop: git worktree list 失败或主仓根不可用，无法确定主仓根（磁盘闸 fail-closed）" >&2; exit 1
 fi
 RUNNER=opencode
 MAX_ITER=50
