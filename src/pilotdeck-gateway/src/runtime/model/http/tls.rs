@@ -26,8 +26,12 @@ enum CaMode {
     /// roots): every explicit env source is trusted on top of bundled roots.
     Default,
     /// `--use-openssl-ca`: OpenSSL's explicit file and hash directory sources
-    /// (`ssl-unflagged` / `openssl-dir` / `openssl-plain` probes). Native
-    /// default paths stay out of scope, so this keeps the bundled roots.
+    /// (`ssl-unflagged` / `openssl-dir` / `openssl-plain` probes). Node
+    /// replaces the bundled roots with the OpenSSL store in this mode; native
+    /// stores stay out of scope here, so the bundled roots are kept and the
+    /// trust set is a superset of Node's. Recorded as a residual difference in
+    /// `A6.4-TLS-CA-SOURCES-001-R1`. It shares `Default`'s branch: the two only
+    /// diverge once the native store is read.
     Openssl,
     /// `--use-bundled-ca`, also with `--use-system-ca`: Node stops reading
     /// `SSL_CERT_FILE` / `SSL_CERT_DIR` entirely (forced-bundled /
@@ -75,8 +79,11 @@ fn roots_from(
         if let Some(file) = explicit(cert_file) {
             load_pem(&mut roots, Path::new(file));
         }
-        if let Some(dir) = explicit(cert_dir) {
-            load_hash_dir(&mut roots, Path::new(dir));
+        if let Some(dirs) = explicit(cert_dir) {
+            // OpenSSL reads `SSL_CERT_DIR` as a list of hash directories.
+            for dir in std::env::split_paths(dirs).filter(|dir| !dir.as_os_str().is_empty()) {
+                load_hash_dir(&mut roots, &dir);
+            }
         }
     }
     // Like Node, `NODE_EXTRA_CA_CERTS` augments every mode.
@@ -91,15 +98,9 @@ fn explicit(value: Option<&OsStr>) -> Option<&OsStr> {
 }
 
 fn load_pem(roots: &mut rustls::RootCertStore, path: &Path) {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            eprintln!(
-                "Warning: could not load CA file {}: {error}",
-                path.display()
-            );
-            return;
-        }
+    let bytes = match read_ca_file(path) {
+        Some(bytes) => bytes,
+        None => return,
     };
     // Like Node/OpenSSL, keep the valid prefix but stop at the first malformed
     // certificate. PEM decoding alone does not validate the X.509 DER.
@@ -117,10 +118,47 @@ fn load_pem(roots: &mut rustls::RootCertStore, path: &Path) {
     }
 }
 
+/// A CA bundle is small. FIFOs, devices and oversized files are refused: the
+/// snapshot runs inside `OnceLock::get_or_init`, so a blocking read here would
+/// wedge TLS for the whole process.
+const MAX_CA_FILE_BYTES: u64 = 8 << 20;
+
+fn read_ca_file(path: &Path) -> Option<Vec<u8>> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_CA_FILE_BYTES => {}
+        Ok(metadata) => {
+            eprintln!(
+                "Warning: skipping CA file {}: {} bytes and not a regular file within {} bytes",
+                path.display(),
+                metadata.len(),
+                MAX_CA_FILE_BYTES
+            );
+            return None;
+        }
+        Err(error) => {
+            eprintln!(
+                "Warning: could not load CA file {}: {error}",
+                path.display()
+            );
+            return None;
+        }
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            eprintln!(
+                "Warning: could not load CA file {}: {error}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
 /// OpenSSL's `X509_LOOKUP_hash_dir` layout: only entries named
-/// `<subject hash>.<index>` (eight lowercase hex digits, then digits, as
-/// written by `c rehash`) are certificates; a plain PEM directory is not
-/// an OpenSSL CA source.
+/// `<subject hash>.<index>` (eight lowercase hex digits, then one index digit
+/// — `X509_LOOKUP_hash_dir` probes `.0`..`.9`, as written by `c rehash`) are
+/// certificates; a plain PEM directory is not an OpenSSL CA source.
 fn load_hash_dir(roots: &mut rustls::RootCertStore, dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -154,7 +192,7 @@ fn is_hash_entry(name: &OsStr) -> bool {
         && hash
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        && !index.is_empty()
+        && index.len() == 1
         && index.bytes().all(|byte| byte.is_ascii_digit())
 }
 
@@ -320,7 +358,7 @@ jenPvKuS2DWn64nN+FQXsa0/wFoUqRVU0Mb2oFPws0U/XhR5wq9qRQYM/0h8
 
     #[test]
     fn hash_entry_names() {
-        for name in ["3b8f0bda.0", "00000000.12", "ffffffff.0"] {
+        for name in ["3b8f0bda.0", "00000000.9", "ffffffff.0"] {
             crate::negative_assert!(
                 is_hash_entry(OsStr::new(name)),
                 "#1552 hash entry name accepted: {name}"
@@ -338,6 +376,8 @@ jenPvKuS2DWn64nN+FQXsa0/wFoUqRVU0Mb2oFPws0U/XhR5wq9qRQYM/0h8
             "3b8f0bda.0.pem",
             "3b8f0bda.0x",
             "3b8f0bda.-1",
+            "3b8f0bda.10",
+            "00000000.12",
             ".0",
             "readme",
             "3b8f0bda.0 ",
@@ -347,5 +387,37 @@ jenPvKuS2DWn64nN+FQXsa0/wFoUqRVU0Mb2oFPws0U/XhR5wq9qRQYM/0h8
                 "#1552 non-hash entry name rejected: {name}"
             );
         }
+    }
+
+    #[test]
+    fn ssl_cert_dir_accepts_an_openssl_list() {
+        let scratch = crate::test_scratch::Scratch::new("tls-ca-dir-list");
+        let first = scratch.path().join("first-dir");
+        let second = scratch.path().join("second-dir");
+        fs::create_dir(&first).expect("#1552 create first hash dir");
+        fs::create_dir(&second).expect("#1552 create second hash dir");
+        write_cert(&second.join("3b8f0bda.0"));
+        let list = std::env::join_paths([first.as_os_str(), second.as_os_str()])
+            .expect("#1552 join a two-entry SSL_CERT_DIR");
+        let roots = roots_from(CaMode::Default, None, Some(list.as_os_str()), None);
+        crate::negative_assert_eq!(
+            roots.roots.len(),
+            webpki_roots::TLS_SERVER_ROOTS.len() + 1,
+            "#1552 SSL_CERT_DIR is read as a list of hash directories"
+        );
+    }
+
+    #[test]
+    fn non_regular_hash_entries_are_skipped() {
+        let scratch = crate::test_scratch::Scratch::new("tls-ca-hash-dir-entry");
+        let dir = scratch.path().join("cert-dir");
+        fs::create_dir(&dir).expect("#1552 create hash dir");
+        fs::create_dir(dir.join("3b8f0bda.0")).expect("#1552 hash-named directory");
+        let roots = roots_from(CaMode::Default, None, Some(dir.as_os_str()), None);
+        crate::negative_assert_eq!(
+            roots.roots.len(),
+            webpki_roots::TLS_SERVER_ROOTS.len(),
+            "#1552 hash-named non-regular entries are skipped"
+        );
     }
 }

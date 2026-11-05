@@ -74,6 +74,13 @@ try {
     if (mode.startsWith('proxy-')) env.PILOTDECK_PROXY = mismatch ? server.badProxy : server.proxy;
     if (['forced-bundled', 'bundled-system', 'dir-unflagged', 'dir-plain'].includes(mode)) { env.SSL_CERT_FILE = ca; env.SSL_CERT_DIR = join(work, 'empty-dir'); }
     if (mode.startsWith('dir-')) { env.SSL_CERT_FILE = join(work, 'empty.pem'); env.SSL_CERT_DIR = join(work, mode === 'dir-plain' ? 'plain-dir' : 'cert-dir'); }
+    // #1552: `--use-openssl-ca` cells mirror tests/private_ca.rs, which can only
+    // carry the mode through NODE_OPTIONS (a non-Node process sees no CLI).
+    if (mode.startsWith('openssl-')) {
+      env.NODE_OPTIONS = '--use-openssl-ca';
+      env.SSL_CERT_FILE = mode === 'openssl-file' ? ca : join(work, 'empty.pem');
+      env.SSL_CERT_DIR = join(work, mode === 'openssl-dir' ? 'cert-dir' : mode === 'openssl-plain' ? 'plain-dir' : 'empty-dir');
+    }
     if (mode === 'early-file') fs.writeFileSync(ca, '');
     const input = join(work, `${mode}-${mismatch}.json`); fs.writeFileSync(input, JSON.stringify(spec));
     const args = [...(mode === 'system-flag' ? ['--use-system-ca'] : mode === 'bundled-system' ? ['--use-bundled-ca', '--use-system-ca'] : mode === 'forced-bundled' ? ['--use-bundled-ca'] : []), '--import', join(baseline, 'node_modules/tsx/dist/loader.mjs'), script, '--worker', input];
