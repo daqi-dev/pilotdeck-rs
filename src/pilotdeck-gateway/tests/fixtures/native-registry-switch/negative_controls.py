@@ -65,16 +65,15 @@ mutations = [
      '_ => Ok(None),',
      'native_process::tests::run_registry_switch_matrix', '#1369 invalid registry switch value rejected'),
     # TS InProcessGateway.ts:2093-2095: without a registry, describeServer
-    # drops the run capabilities.
+    # drops the run capabilities. #1321 在 `.into_iter()` 与守卫 filter 之间插入
+    # upload 能力的 `.chain([...])`；锚点改从守卫 filter 起算，变异字节不变。
     ('registry-capabilities-ungated', REQUESTS,
-     '''.into_iter()
-                        .filter(|capability| {
+     '''.filter(|capability| {
                             self.runs.is_some()
                                 || !matches!(*capability, "run_get" | "run_events" | "run_reattach")
                         })
                         .filter(|capability| {''',
-     '''.into_iter()
-                        .filter(|capability| {''',
+     '''.filter(|capability| {''',
      'native_process::tests::requests_registry_switch_gates_run_reads', '#1369 describe_server gates run capabilities'),
     # TS InProcessGateway.ts:2525-2544: a configured registry still serves
     # run reads; the reader must not be forced to None.
