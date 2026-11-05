@@ -129,6 +129,7 @@ pub struct WatchOptions {
     pub debounce: Duration,
     /// How often watched paths are checked; stands in for `fs.watch` events.
     /// Kept well below `debounce` so the sampling merge window stays small.
+    /// Sub-floor values are clamped to a 10 ms floor in the watcher (#1650).
     pub poll_interval: Duration,
 }
 
@@ -139,6 +140,32 @@ impl Default for WatchOptions {
             poll_interval: Duration::from_millis(20),
         }
     }
+}
+
+/// The floor [`watch_loop`] clamps `poll_interval` to (#1650).
+///
+/// `tokio::time::interval` panics on a zero period, and that panic happens
+/// inside the detached watcher task: `WatchHandle::stop` swallows the
+/// `JoinError` and `Drop` only aborts, so a zero `poll_interval` would stop
+/// config hot reload without a trace.
+///
+/// Half the 20 ms default rather than the 1 ms floors elsewhere in the tree:
+/// every tick re-reads and hashes the watched paths (`fingerprint`, up to 2
+/// MiB), so the floor is also the worst-case sampling bill a typo can buy.
+/// `upload`'s `MIN_CLEANUP_INTERVAL` is a full second for the same reason,
+/// while `user_dialog::channel`'s 1 ms is an in-memory map lookup that costs
+/// nothing — neither precedent transfers to a file-hashing poll loop. At this
+/// floor a mistyped period costs at most twice the default cadence.
+const MIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// The period the watcher actually ticks at: every sub-floor value — `ZERO`
+/// included — lands on [`MIN_POLL_INTERVAL`] (#1650).
+///
+/// Split out from `watch_loop` so the tests can pin the floor itself: a test
+/// that only proves "a zero interval still samples" also passes a regression
+/// that special-cases zero and lets any other sub-floor period through.
+fn effective_poll_interval(options: &WatchOptions) -> Duration {
+    options.poll_interval.max(MIN_POLL_INTERVAL)
 }
 
 struct State {
@@ -648,7 +675,9 @@ async fn watch_loop(
     options: WatchOptions,
     mut changes: mpsc::UnboundedReceiver<()>,
 ) {
-    let mut ticker = tokio::time::interval(options.poll_interval);
+    // #1650: a zero/sub-floor period would panic this detached task and stop
+    // hot reload silently; see [`MIN_POLL_INTERVAL`].
+    let mut ticker = tokio::time::interval(effective_poll_interval(&options));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     ticker.tick().await;
     let mut deadline: Option<Instant> = None;

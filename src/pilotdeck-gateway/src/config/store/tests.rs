@@ -329,6 +329,68 @@ async fn polling_detects_file_changes_and_swallows_failures() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn zero_poll_interval_is_clamped_instead_of_panicking() {
+    // #1650: `tokio::time::interval(Duration::ZERO)` panics, and the panic
+    // inside the detached watcher task is invisible: the handle looks alive
+    // while hot reload is already dead. The floor must keep the loop sampling.
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    let watch = store
+        .start_watching(WatchOptions {
+            poll_interval: Duration::ZERO,
+            ..WatchOptions::default()
+        })
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    root.write(&other_model());
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    // Liveness first: a watcher that panicked on construction is the mechanism
+    // under test, and the load count below would report it as a mere "no
+    // reload" instead.
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1650 watcher task")
+            .is_finished(),
+        "#1650 the clamped watcher keeps running (a zero interval would panic the task)"
+    );
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        2,
+        "#1650 a zero poll interval is clamped and still samples the change"
+    );
+    watch.stop().await;
+    // The behaviour above is what fails in production, so it runs first; these
+    // pin the floor itself, after it. Kept last on purpose: a pure
+    // `effective_poll_interval` assertion ahead of the watcher would turn the
+    // negative control into "the clamp is gone" instead of "hot reload dies".
+    assert_eq!(MIN_POLL_INTERVAL, Duration::from_millis(10));
+    // The floor is a clamp, not a zero special case: every sub-floor value
+    // lands on it, and the default is untouched.
+    for sub_floor in [
+        Duration::ZERO,
+        Duration::from_micros(500),
+        Duration::from_millis(9),
+    ] {
+        assert_eq!(
+            effective_poll_interval(&WatchOptions {
+                poll_interval: sub_floor,
+                ..WatchOptions::default()
+            }),
+            MIN_POLL_INTERVAL,
+            "#1650 {sub_floor:?} must land on the floor, not pass through"
+        );
+    }
+    assert_eq!(
+        effective_poll_interval(&WatchOptions::default()),
+        Duration::from_millis(20),
+        "#1650 the default cadence is not clamped"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn stop_cancels_pending_reload_and_leaves_no_task() {
     let root = Root::new();
     root.write(BASE);
