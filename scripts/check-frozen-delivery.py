@@ -78,6 +78,7 @@ if sys.version_info < (3, 11):  # the frozen entries require CPython 3.11+
 sys.dont_write_bytecode = True
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -89,6 +90,7 @@ BLOCK_MARKERS = ('lacks exact new event chain', 'missing', 'unregistered', 'cann
 LACKS_CHAIN = re.compile(r'(.+?): hash change lacks exact new event chain')
 A2_MISSING = re.compile(r'A2 apparatus missing FROZEN hash: (.+)')
 UNREGISTERED = re.compile(r'unregistered/missing file: (.+)')
+UNEXPECTED_REGISTERED = re.compile(r'unexpected registered file: (.+)')
 PENDING_PREFIX = 'Pending:'
 PENDING_FAMILY_MSG = ('Independent-Reviews requires two distinct families '
                       'and references separated by ;')
@@ -106,11 +108,6 @@ PARITY_SPEC_FILES = ('README.md', 'acceptance.md', 'normalization.md',
                      'accepted-diffs.md', 'multimodal.md')
 GATEWAY_SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md')
 GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
-# ui-server-parity registers everything tracked under these two directories plus
-# ``SPEC_FILES`` (a literal in ``apparatus.py``) and the repo toolchain files.
-UI_DIRS = ('scripts/ui-server-parity/', 'scripts/exp008/')
-UI_SPEC = 'specs/ui-server-parity/'
-UI_TOOLCHAIN = ('rust-toolchain', 'rust-toolchain.toml')
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 
@@ -408,6 +405,18 @@ def strip_reported(name):
     return name
 
 
+def repo_relative(root, name):
+    """Reported path -> repo-relative; absolute paths must be inside the tree."""
+    name = name.strip()
+    candidate = Path(name)
+    if not candidate.is_absolute():
+        return strip_reported(name)
+    try:
+        return candidate.resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
 def spec_path(root, kind, name):
     """Resolve a manifest name the way the apparatus reports it, or None."""
     relative = strip_reported(name)
@@ -455,6 +464,38 @@ def source_text(root, commit, path):
     return value
 
 
+def _module_tuple(tree, name):
+    """Value of a module-level ``name = (...tuple...)``, or None.
+
+    Parsed with ``ast`` rather than a regex: a commented-out member
+    (``# 'observer.py',``) must not count, and a ``)`` inside a comment must not
+    truncate the tuple.
+    """
+    for node in tree.body:
+        targets, value = [], None
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == name:
+                try:
+                    parsed = ast.literal_eval(value)
+                except (ValueError, SyntaxError):
+                    return None
+                return parsed if isinstance(parsed, tuple) else None
+    return None
+
+
+def _function_strings(tree, name):
+    """String constants inside ``def name(...)``, or None when it is absent."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return [child.value for child in ast.walk(node)
+                    if isinstance(child, ast.Constant) and isinstance(child.value, str)]
+    return None
+
+
 def gateway_inventory(root, commit='HEAD'):
     """Paths gateway-parity's ``--write`` would give a FROZEN row.
 
@@ -463,8 +504,10 @@ def gateway_inventory(root, commit='HEAD'):
     every file the source mentions: ``A3_SCRIPTS`` and ``DATA_FILES`` are part of
     the unregistered-file whitelist but get no hash row, so a basename match
     over the sources demands chains for files ``--write`` never registers (a
-    dead end).  ``None`` means the shape was not recognised; callers fall back
-    to the coarse match, which errs towards blocking.
+    dead end).  ``None`` means "cannot tell" -- an unreadable source or a shape
+    this parser does not recognise.  There is deliberately no coarse fallback:
+    "registrable" now also decides *drops*, so guessing True there would hide a
+    removed member (false READY) instead of erring towards blocking.
     """
     key = ('gateway-inventory', str(root), commit)
     if key in _SOURCE_CACHE:
@@ -473,10 +516,12 @@ def gateway_inventory(root, commit='HEAD'):
     common = source_text(root, commit, 'scripts/gateway-parity/common.py')
     frozen = source_text(root, commit, 'scripts/gateway-parity/check_frozen.py')
     if common is not None and frozen is not None:
-        scripts = re.search(r'^A2_SCRIPTS\s*=\s*\((.*?)\)', common, re.S | re.M)
-        body = re.search(r'^def manifest_inventory\(.*?(?=^def |\Z)', frozen, re.S | re.M)
-        if scripts and body:
-            literals = re.findall(r"'([^']+)'", body.group(0))
+        try:
+            scripts = _module_tuple(ast.parse(common), 'A2_SCRIPTS')
+            literals = _function_strings(ast.parse(frozen), 'manifest_inventory')
+        except SyntaxError:
+            scripts, literals = None, None
+        if scripts is not None and literals is not None:
             # ``f'scripts/a5-19/{name}'`` is the template form: the directory is
             # the prefix even though the literal does not end in '/'.
             prefixes = {item for item in literals if item.endswith('/')}
@@ -486,30 +531,52 @@ def gateway_inventory(root, commit='HEAD'):
             bare = {item for item in literals if '/' not in item and '.' in item}
             inventory = set(full)
             inventory.update(f'specs/gateway-parity/{name}' for name in bare)
-            inventory.update(f'scripts/gateway-parity/{name}'
-                             for name in re.findall(r"'([^']+)'", scripts.group(1)))
+            inventory.update(f'scripts/gateway-parity/{name}' for name in scripts)
             inventory.update(prefix + name for prefix in prefixes for name in bare)
     _SOURCE_CACHE[key] = inventory
     return inventory
 
 
 def ui_inventory(root, commit='HEAD'):
-    """Paths ui-server-parity's ``--write`` gives a row (``None`` when unknown).
+    """ui-server-parity's registrable model, or ``None`` when source is unreadable.
 
-    ``SPEC_FILES`` lives in ``apparatus.py``; the rest of the inventory is
-    everything tracked under the two apparatus directories plus the toolchain
-    files, which the directory membership covers at lookup time.
+    ``APPARATUS_PATHS`` (two scanned directories + the spec directory),
+    ``SPEC_FILES`` and ``TOOLCHAIN_FILES`` are literals in ``apparatus.py``;
+    copying them here would silently drift when the apparatus changes them.  The
+    toolchain entries count only when the file exists -- ``toolchain_files()``
+    is presence-based, so a deleted one loses its row.
     """
     key = ('ui-inventory', str(root), commit)
     if key in _SOURCE_CACHE:
         return _SOURCE_CACHE[key]
-    source = source_text(root, commit, 'scripts/ui-server-parity/apparatus.py')
     inventory = None
+    source = source_text(root, commit, 'scripts/ui-server-parity/apparatus.py')
     if source is not None:
-        match = re.search(r'^SPEC_FILES\s*=\s*\((.*?)\)', source, re.S | re.M)
-        if match:
-            inventory = {UI_SPEC + name for name in re.findall(r"'([^']+)'", match.group(1))}
-            inventory.update(UI_TOOLCHAIN)
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            tree = None
+        if tree is not None:
+            paths = _module_tuple(tree, 'APPARATUS_PATHS')
+            specs = _module_tuple(tree, 'SPEC_FILES')
+            toolchain = _module_tuple(tree, 'TOOLCHAIN_FILES')
+            if (paths is not None and specs is not None and toolchain is not None
+                    and len(paths) >= 3):
+                known, present = True, set()
+                for name in toolchain:
+                    state = exists_at(root, commit, name)
+                    if state is None:
+                        known = False
+                        break
+                    if state:
+                        present.add(name)
+                if known:
+                    inventory = {
+                        'dirs': tuple(item.rstrip('/') + '/' for item in paths[:2]),
+                        'spec': paths[2].rstrip('/') + '/',
+                        'specs': set(specs),
+                        'toolchain': present,
+                    }
     _SOURCE_CACHE[key] = inventory
     return inventory
 
@@ -540,25 +607,18 @@ def registrable(root, kind, path):
         if not path.startswith(GATEWAY_DIRS):
             return False
         inventory = gateway_inventory(root, 'HEAD')
-        if inventory is not None:
-            return path in inventory
-        name = Path(path).name
-        missing = False
-        for source in ('scripts/gateway-parity/common.py',
-                       'scripts/gateway-parity/check_frozen.py'):
-            text = source_text(root, 'HEAD', source)
-            if text is None:
-                missing = True
-            elif name in text:
-                return True
-        return None if missing else False
+        if inventory is None:
+            return None  # shape not recognised: never guess in either direction
+        return path in inventory
     if kind == 'ui-server-parity':
         inventory = ui_inventory(root, 'HEAD')
         if inventory is None:
             return None
-        if path in inventory:
+        if path in inventory['toolchain']:
             return True
-        if not path.startswith(UI_DIRS):
+        if path.startswith(inventory['spec']):
+            return path[len(inventory['spec']):] in inventory['specs']
+        if not path.startswith(inventory['dirs']):
             return False
         return tracked_at_head(root, path)
     return True  # unknown apparatus: keep demanding a chain (conservative)
@@ -593,8 +653,12 @@ def unregistered_added(root, kind, mb):
     if not mb:
         return [], []
     added, issues = [], []
-    prefixes = {'parity': ('scripts/parity/',),
-                'gateway-parity': GATEWAY_DIRS}.get(kind, ())
+    if kind == 'ui-server-parity':
+        inventory = ui_inventory(root, 'HEAD')
+        prefixes = () if inventory is None else inventory['dirs']
+    else:
+        prefixes = {'parity': ('scripts/parity/',),
+                    'gateway-parity': GATEWAY_DIRS}.get(kind, ())
     for prefix in prefixes:
         code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
                              'HEAD', '--', prefix)
@@ -679,6 +743,16 @@ def classify(ctx, item):
     if match:
         relative = strip_reported(match.group(1))
         if relative and chain_backed(root, kind, edges, relative, mb):
+            return 'ok', None, None
+        return 'block', 'blocking', None
+    # ui-server-parity reports a row whose file is no longer required as
+    # "unexpected registered file: <absolute path>" -- the shape a member taken
+    # out of ``SPEC_FILES`` leaves behind before ``--write``.
+    match = UNEXPECTED_REGISTERED.fullmatch(item)
+    if match:
+        relative = repo_relative(root, match.group(1))
+        if (relative and registered_at(root, kind, relative, mb) is True
+                and chain_backed(root, kind, edges, relative, mb)):
             return 'ok', None, None
         return 'block', 'blocking', None
     match = LACKS_CHAIN.match(item)
