@@ -86,13 +86,19 @@ all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle
 | 退出码 | 含义 |
 |---|---|
 | `0` | 本次选中的变异全部 KILLED（`summary.json` 此时 `complete: true`） |
-| `1` | 开跑过但有变异 SURVIVED / INVALID，或恢复校验失败；证据已先落盘（`complete: false` 表示跑动中被中断的残卷） |
-| `2` | 从未真正开跑，目录里没有 `summary.json`：变异名非法、输出目录已存在、缺 `CARGO_TARGET_DIR`、基线无法解析、marker 不指向真实 oracle 行、表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7` 与冻结名册 `EXPECTED_NAMES`）、`MARKERS` 与变异表不互相覆盖、基线重放不通过（后两种会留下 `baseline.json` 与 `baseline-replay.log`） |
+| `1` | 开跑过但没得到全杀结论。三种形态：① 基线重放不通过——只有 `baseline.json` + `baseline-replay.log`，**没有** `summary.json`；② 有变异 SURVIVED / INVALID——`summary.json` 在，`complete: true`；③ 跑动中被打断或收尾恢复校验失败——`summary.json` 在，`complete: false`（残卷）。此外，任何在本脚本接管之前就抛出的异常（树不干净、领锁超时、`oracle.json` 读不了）也是 `1` 加一段 traceback，此时目录里可能什么都没有 |
+| `2` | 从未真正开跑，**本轮没有写过任何证据**：变异名非法、输出目录已存在、缺 `CARGO_TARGET_DIR`、基线无法解析、marker 不指向真实 oracle 行、表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7` 与冻结名册 `EXPECTED_NAMES`）、`MARKERS` 与变异表不互相覆盖 |
 | `42` | 全杀但基线不是 HEAD，非宿主证据 |
+
+「输出目录已存在」是唯一会带着**上一轮**文件的 `2`：`runId` 是「基线前缀 + 随机 nonce」，
+本轮没有 nonce 可对，所以目录里任何文件都不是本轮的，别拿它当结论。其余 `2` 都在第一
+次写盘之前返回，目录是空的。
 
 `summary.json` 是对象：`runId`（与 `baseline.json` 同代）、`registeredTotal`、
 `selectedTotal`、`complete`、`counts`、`results`；跑动中每轮都会原子重写一次且
-`complete: false`，轮询读者必须看到 `complete: true` 才算一份完整结论。
+`complete: false`，轮询读者必须看到 `complete: true` 才算一份完整结论。收尾的恢复校验
+失败时本脚本会把已发布的 `complete: true` 降回 `false` 再抛出，所以「目录里是
+`complete: true`」与「树已按字节还原」是同一件事。
 `baseline.json` 记同一 `runId`、基线 SHA 与来源、`registeredTotal` /
 `selectedTotal` / `selected`（子集运行不再与全量同形）。
 所有证据文件（`summary.json` / `baseline.json` / `baseline-replay.log` / 逐变异 `.patch` / `.log`）

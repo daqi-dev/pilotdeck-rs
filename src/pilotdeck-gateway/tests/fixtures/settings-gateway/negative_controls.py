@@ -92,7 +92,13 @@ out = Path(sys.argv[1]).resolve()
 try:
     out.mkdir(parents=True, exist_ok=False)
 except FileExistsError:
-    refuse(f'#1538 output directory already exists: {out}')
+    # #1538 fix-r4 (concurrency P1): this is the only exit-2 branch that can
+    # sit next to files. A doomed re-run into a finished directory used to look
+    # like "never ran" while `summary.json` from the *previous* run (complete,
+    # all KILLED, a different `runId`) was still there for a host to read as
+    # this run's verdict. Say so in the message.
+    refuse(f'#1538 output directory already exists: {out}'
+           ' (this run wrote nothing; any files inside belong to an earlier run)')
 source = root / 'src/pilotdeck-gateway/src/runtime/settings'
 REPLAY = 'runtime::settings::tests::settings_gateway_replays_the_real_ts_oracle'
 UPDATE_DROP = ('runtime::settings::tests::'
@@ -278,8 +284,46 @@ def publish_baseline():
     }, ensure_ascii=False, indent=2) + '\n')
 
 
-with mutating_sources(root, sorted({source / filename for _, filename, *_ in mutations}),
-                      baseline=baseline_sha) as snapshots:
+class demote_on_restore_failure:
+    """#1538 fix-r4 (boundary P1): never leave a green verdict on a dirty tree.
+
+    fix-r3 moved the final `publish_summary(complete=True)` inside the
+    `mutating_sources` block so it lands while the tree lock is still held —
+    right, but it then lands *before* that block's own `finally` does the last
+    restore + byte-verify. If that verification fails (write error, unreadable
+    git object, bytes differ) the process dies with a traceback while
+    `summary.json` still says the run finished all-KILLED: a reader that only
+    polls the directory reads a clean verdict for a run that never restored the
+    source. Demote the flag on the way out and let the original error through.
+
+    `SystemExit` from a completed-but-failed run is not caught here: that run
+    really did finish, and its `complete: true` is the truth.
+    """
+
+    def __init__(self, manager):
+        self.manager = manager
+
+    def __enter__(self):
+        return self.manager.__enter__()
+
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            return self.manager.__exit__(exc_type, exc, traceback)
+        except Exception:
+            # Only a run that actually produced rows can have published a
+            # `complete: true` to demote; a failure before the first mutant
+            # leaves no `summary.json` at all, which the README promises.
+            if summary:
+                try:
+                    publish_summary(complete=False)
+                except OSError:
+                    pass
+            raise
+
+
+with demote_on_restore_failure(
+        mutating_sources(root, sorted({source / filename for _, filename, *_ in mutations}),
+                         baseline=baseline_sha)) as snapshots:
     def run(tests):
         # libtest takes several full-name filters after `--` (one positional
         # TESTNAME per cargo invocation); `--exact` keeps them literal.
