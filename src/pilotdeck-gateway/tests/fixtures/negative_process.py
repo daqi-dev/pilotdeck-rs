@@ -780,10 +780,11 @@ def wait_for_slot(script, *, timeout=900, interval=30):
         result = run_owned(command, timeout=remaining)
         stdout.append(result.stdout)
         stderr.append(result.stderr)
-        if result.returncode in (0, 2):
-            # 0 = slot free. 2 = cargo-slots.sh cannot read the unified gate
-            # (a CI runner has no ~/ws/pdrs-ops): no shared quota exists to
-            # wait for, so proceed. Only 1 (pool full) means retry.
+        if result.returncode in (0, 69):
+            # 0 = slot free. 69 (EX_UNAVAILABLE) = cargo-slots.sh found no
+            # unified gate (a CI runner has no ~/ws/pdrs-ops): no shared quota
+            # exists to wait for, so proceed. Only 1 (pool full) means retry;
+            # 2 / 3 / 4 / 64 mean the gate itself is broken -> hard error.
             return subprocess.CompletedProcess(command, 0, "".join(stdout), "".join(stderr))
         if result.returncode != 1:
             result.check_returncode()

@@ -129,8 +129,8 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         full = f'runtime::interaction::tests::{test}'
         slot_deadline = time.monotonic() + 1800
         while True:
-            slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=10)
-            if slots.returncode in (0, 2):
+            slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=180)
+            if slots.returncode in (0, 69):
                 break
             assert slots.returncode == 1, slots.stdout + slots.stderr
             assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
@@ -160,9 +160,9 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
             # guarantee if the sandbox denies ps. Its raw output is retained.
             slot_deadline = time.monotonic() + 1800
             while True:
-                slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=10)
+                slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=180)
                 (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-                if slots.returncode in (0, 2):
+                if slots.returncode in (0, 69):
                     break
                 assert slots.returncode == 1, slots.stdout + slots.stderr
                 assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'

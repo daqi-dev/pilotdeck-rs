@@ -151,8 +151,8 @@ with mutating_sources(root, [registry, family, memory_mod]) as snapshots:
                 raise RuntimeError(f'{name}: mutation anchor count {original.count(before)}')
             slot_deadline = time.monotonic() + 1800
             while True:
-                slot = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, timeout=10)
-                if slot.returncode in (0, 2):
+                slot = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, timeout=180)
+                if slot.returncode in (0, 69):
                     break
                 if slot.returncode != 1:
                     raise RuntimeError('cargo slot preflight failed')

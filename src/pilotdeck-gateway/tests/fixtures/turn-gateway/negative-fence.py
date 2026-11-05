@@ -146,9 +146,9 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
             while slots.returncode == 1:
                 assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(20)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=10)
-            # 2 = unified gate unavailable (CI has none): no shared quota.
-            assert slots.returncode in (0, 2)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=180)
+            # 69 = no unified gate on this machine (CI has none): no shared quota.
+            assert slots.returncode in (0, 69)
             modified = dict(original)
             if 'path' in control:
                 modified[control['path']] = control['modified']

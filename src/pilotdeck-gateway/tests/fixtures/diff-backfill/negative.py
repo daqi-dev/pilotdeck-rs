@@ -60,11 +60,11 @@ def main():
             saved = snapshots[path]
             text = saved.decode()
             assert text.count(before) == 1, (label, 'mutation anchor')
-            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], cwd=ROOT, capture_output=True, text=True, timeout=10)
+            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], cwd=ROOT, capture_output=True, text=True, timeout=180)
             # Exit 1 means no slot. Do not mutate or launch cargo while full.
-            # Exit 2 means the unified gate is unavailable (CI has none), so
-            # there is no shared quota to respect.
-            assert slots.returncode in (0, 2), slots.stdout + slots.stderr
+            # Exit 69 (EX_UNAVAILABLE) means there is no unified gate on this
+            # machine (CI has none), so there is no shared quota to respect.
+            assert slots.returncode in (0, 69), slots.stdout + slots.stderr
             try:
                 path.write_text(text.replace(before, after))
                 suite = ['--test', 'diff_backfill'] if label.endswith('-syntax') else ['--lib']

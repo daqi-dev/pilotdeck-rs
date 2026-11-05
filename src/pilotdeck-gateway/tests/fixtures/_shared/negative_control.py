@@ -65,12 +65,14 @@ def run(name, command, env, cwd=SRC, diagnostic=None):
     if command[0] == 'cargo':
         deadline = time.monotonic() + 120
         while True:
+            # timeout 放宽到 180 s：cargo-slots.sh 首次在本机碰统一闸时要等冷
+            # du（实测 38.6 s），之后走名额缓存是毫秒级。见 scripts/cargo-slots.sh 头注释。
             slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')],
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=180)
             print(slot.stdout + slot.stderr, end='', flush=True)
-            if slot.returncode in (0, 2):
-                # 2 = unified gate unavailable (a CI runner has none): there is
-                # no shared quota to wait for, so reserve nothing and proceed.
+            if slot.returncode in (0, 69):
+                # 69 (EX_UNAVAILABLE) = 本机没有统一闸（CI 就没有）：没有共享名额可等，
+                # 直接继续。2/3/4/64 = 闸坏了，必须硬失败，不得当成有名额。
                 break
             assert slot.returncode == 1 and time.monotonic() < deadline, 'cargo slots full'
             time.sleep(10)

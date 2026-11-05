@@ -146,12 +146,12 @@ def slots_note(label):
 
     The host runbook says the slot script counts the host chain too and the
     PATH gate wrapper queues builds itself, so exit 1 is recorded and the run
-    proceeds. Exit 2 = the unified gate is unavailable (CI has none): no shared
-    quota to wait for, so it also proceeds. Every other failure is fatal.
+    proceeds. Exit 69 = there is no unified gate on this machine (CI has none):
+    no shared quota to wait for, so it also proceeds. Every other failure is fatal.
     """
-    result = run_owned(['bash', str(root / 'scripts/cargo-slots.sh')], timeout=60)
+    result = run_owned(['bash', str(root / 'scripts/cargo-slots.sh')], timeout=180)
     (out / f'{label}.slots.log').write_text(result.stdout + result.stderr)
-    if result.returncode not in (0, 1, 2):
+    if result.returncode not in (0, 1, 69):
         result.check_returncode()
     return result.returncode
 
