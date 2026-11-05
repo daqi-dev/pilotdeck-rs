@@ -82,7 +82,8 @@ const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
 /// bytes, with no `content-length` / `date` (probed against a real
 /// `node:http` server; fixture
 /// `tests/fixtures/user-dialog-http-store/header-lifecycle/node-408.bin`).
-const NODE_408_RESPONSE: &[u8] = b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+pub(crate) const NODE_408_RESPONSE: &[u8] =
+    b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
 /// Node v22.22.0 `requestHeaderFieldsTooLargeResponse`, same shape as
 /// [`NODE_408_RESPONSE`] (fixture `node-431.bin`).
 const NODE_431_RESPONSE: &[u8] =

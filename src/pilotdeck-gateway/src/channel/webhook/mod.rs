@@ -15,23 +15,30 @@
 //! literal `null` keeps hanging the connection forever, reproducing the TS
 //! baseline where the voided rejection never writes a response (#1557).
 //!
-//! Known channel-specific residuals, *not yet registered* in the
-//! gateway-parity diff ledger — there is no `A8.3-CH-WEBHOOK-*` entry, and
-//! adding one needs human approval and two non-author reviews, so these stay
-//! pending until then: the failed-start error log carries the Rust bind error
-//! where TS prints Node's (`Error: listen EADDRINUSE ...`), the message
-//! pipeline carries reply texts as Rust `String`s (lone surrogates become
-//! U+FFFD; truncation stays UTF-16-unit based), body text is Node
-//! `toString("utf8")` semantics, header values are Latin-1 decoded like
-//! Node's parser, an invalid port is rejected up front where Node throws
-//! inside `listen`, the 408 above fires at exactly its deadline where Node
-//! lands request timeouts on the 30 s connections-checker grid (the same
-//! residual class the A8.4-NATIVE-HTTP-002-R2 entry registered for the
-//! native lane's headersTimeout), and hyper frames that 408's unknown-length
-//! empty body as `Transfer-Encoding: chunked` + `0\r\n\r\n` where Node's raw
-//! `_http_server.js` `requestTimeoutResponse` is 51 unframed bytes — the
-//! same hyper-public-API presentation-diff class the A8.4-NATIVE-HTTP-001
-//! entry registered for the native lane.
+//! The 408's frame-level presentation is registered as the draft (unapproved)
+//! ledger entry `A8.3-CH-WEBHOOK-001` (`specs/gateway-parity/diffs/`): hyper
+//! frames that 408's unknown-length empty body as `Transfer-Encoding:
+//! chunked` + `0\r\n\r\n` where Node's raw `_http_server.js`
+//! `requestTimeoutResponse` is 51 unframed bytes
+//! (`crate::user_dialog::NODE_408_RESPONSE`) — the same hyper-public-API
+//! presentation-diff class the A8.4-NATIVE-HTTP-001 entry registered for the
+//! native lane. That entry states 「未批准，非已接受差异」: it is a record of
+//! the pinned bytes, **not** an accepted diff, and it confers no grading
+//! exemption until a human approves it after two non-author reviews.
+//!
+//! The remaining channel-specific residuals are *not registered* in the
+//! gateway-parity diff ledger — adding an accepted entry needs human approval
+//! and two non-author reviews, so these stay pending until then: the
+//! failed-start error log carries the Rust bind error where TS prints Node's
+//! (`Error: listen EADDRINUSE ...`), the message pipeline carries reply texts
+//! as Rust `String`s (lone surrogates become U+FFFD; truncation stays
+//! UTF-16-unit based), body text is Node `toString("utf8")` semantics, header
+//! values are Latin-1 decoded like Node's parser, an invalid port is rejected
+//! up front where Node throws inside `listen`, and the 408 above fires at
+//! exactly its deadline where Node lands request timeouts on the 30 s
+//! connections-checker grid (the same residual class the
+//! A8.4-NATIVE-HTTP-002-R2 entry registered for the native lane's
+//! headersTimeout).
 mod hmac;
 mod mapper;
 mod render;
@@ -701,7 +708,23 @@ async fn handle_webhook(
 
     // `extractText` dereferences `body` on its first line; a JSON body of
     // literal `null` throws there, the voided rejection goes unhandled, and
-    // no response is ever written.
+    // no response is ever written. The socket then hangs indefinitely, and
+    // so does `stop()`: Node's `requestTimeout` (300 s) only covers a body
+    // that never completes, and this four-byte body is already complete, so
+    // TS `server.close()` waits on the same socket this future waits on
+    // (issue #1557).
+    //
+    // Measured on the fixed TS baseline (cc7c4e6, Node v22.22.0) through the
+    // real `WebhookChannel.start()`: no response at 20 s, no keep-alive close
+    // at 7 s, `handle.stop()` still pending 18 s in, process alive with the
+    // listening port already refused (evidence
+    // `_tmp/20261105-issue-1534/ts-probe/probeB-app-shutdown.mjs`,
+    // `probeC-channel-isolated.mjs`, `probeD-long.mjs`). This is a replicated
+    // baseline defect, not a Rust deviation, so the pending future stays:
+    // replacing it with a response would diverge from TS. The
+    // `webhook-null-body-responds` mutant exists only so the negative control
+    // can turn the hang into a 400 and watch the `noResponse` oracle cell go
+    // red; it never runs in the shipped path.
     let text = if nullish(&body) {
         if crate::mutants::on("webhook-null-body-responds") {
             return Ok(json_response(
