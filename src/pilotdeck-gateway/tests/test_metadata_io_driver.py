@@ -862,6 +862,13 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(loops), 1, '#1632 --self-check iterates the gate table')
         self.assertEqual(len(loops[0].target.elts), 2,
                          '#1632 each gate case yields a name and its (script, rc, needle)')
+        # 表再全，`--self-check` 不接它也是空转（#1632 r12 MiniMax boundary P1）：删掉这条分发行，
+        # CI 的自检命令会落到主路径——把 `--self-check` 当成输出目录、跑完整 11 条扫描后 exit 0，
+        # 步骤照样绿，而「`-O` 下仍有界」这条不变性再无人验证。同族的 `--slot-guard-probe`
+        # 分支有天然负控（删掉后子进程未知变异名 → rc=1 → self_check 红），这条没有。
+        self.assertEqual(
+            source.count("if sys.argv[1:] == ['--self-check']:\n    sys.exit(self_check())\n"), 1,
+            '#1632 --self-check really dispatches to self_check()')
         return cases
 
     def test_slot_guard_case_table_cannot_shrink_silently(self):
@@ -901,6 +908,14 @@ class EnvironmentControls(unittest.TestCase):
                                msg='#1632 dropping the empty-sample guard must be caught'):
             self.slot_guard_cases(source, script.replace(empty_guard, '', 1))
         print('#1632 slot-guard mutant script-drops-empty-output-guard: KILLED', flush=True)
+        # 分发行负控（r12 评审 P1）：删掉 `--self-check` 的分发后 CI 步骤仍绿，只有这条能杀。
+        dispatch = "if sys.argv[1:] == ['--self-check']:\n    sys.exit(self_check())\n"
+        self.assertEqual(source.count(dispatch), 1,
+                         '#1632 unique anchor: the --self-check dispatch')
+        with self.assertRaises(AssertionError,
+                               msg='#1632 dropping the --self-check dispatch must be caught'):
+            self.slot_guard_cases(source.replace(dispatch, '', 1), script)
+        print('#1632 slot-guard mutant script-drops-self-check-dispatch: KILLED', flush=True)
         # ast 的 col_offset 是 UTF-8 字节偏移，跨行累加也要按字节算，否则表里出现中文
         # （'ps 取样失败'）时切片会错位（GLM r7 boundary P3）。
         data = source.encode()
