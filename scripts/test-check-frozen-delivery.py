@@ -77,7 +77,7 @@ EVENT_FIELDS = ("Calibration-Evidence: test fixture\n"
 
 
 def delivery(root, kind, payload, files=(), events=(), source="", dirty=None,
-             base_files=(), moves=()):
+             base_files=(), moves=(), removes=()):
     """base 提交（含两侧装置）→ 交付提交（files/events/moves）→ 可选工作树脏改动。"""
     init_repo(root)
     fake_apparatus(root, kind, payload, source)
@@ -87,6 +87,8 @@ def delivery(root, kind, payload, files=(), events=(), source="", dirty=None,
     git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
     for old, new in moves:
         git(root, "mv", old, new)
+    for name in removes:
+        git(root, "rm", "-q", name)
     for name, text in files:
         write(root, name, text)
     for name, text in events:
@@ -361,6 +363,71 @@ def run():
                              "scripts/gateway-parity/README.md") is False
              and cfd.registrable(root, "gateway-parity",
                                  "scripts/gateway-parity/check_schema.py") is False)
+
+    # ------------------------------------------- a5-19 模板臂 / 删除链 / 运行中脏树
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py",
+              "A2_SCRIPTS = ('alpha.py',)\n")
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "def manifest_inventory(root):\n"
+              "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "    paths += [f'scripts/a5-19/{name}' for name in ('run.py', 'six_cells.mts')]\n"
+              "    return paths\n\n"
+              "def something_else():\n    return 1\n")
+        commit(root, "base")
+        case("a5-19 模板臂（f'.../{name}'）算首登记（第六轮 P0）",
+             cfd.registrable(root, "gateway-parity", "scripts/a5-19/run.py") is True)
+
+    with tempfile.TemporaryDirectory() as td:
+        # 分支把清单成员删掉：--write 删行，链收在 '-'（旧实现假 BLOCKED）。
+        payload = dict(parity_payload,
+                       errors=[HASH_LIST,
+                               "scripts/parity/gone.py: hash change lacks exact "
+                               "new event chain"])
+        proc = delivery(Path(td), "parity", payload,
+                        base_files=[("scripts/parity/gone.py", "OLD\n")],
+                        removes=["scripts/parity/gone.py"])
+        case("删除已登记成员、无删除链 → BLOCKED",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = dict(parity_payload,
+                       errors=[HASH_LIST,
+                               "scripts/parity/gone.py: hash change lacks exact "
+                               "new event chain"])
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
+        proc = delivery(Path(td), "parity", payload,
+                        base_files=[("scripts/parity/gone.py", "OLD\n"),
+                                    ("specs/parity/FROZEN.md",
+                                     "# fake FROZEN\n\n"
+                                     f"{sha('OLD\n')}  ../../scripts/parity/gone.py\n"
+                                     f"{sha(body)}  ../../scripts/parity/check_frozen.py\n")],
+                        removes=["scripts/parity/gone.py"],
+                        events=[("specs/parity/frozen/20260101-x.md",
+                                 f"Change: {sha('OLD\n')} - scripts/parity/gone.py\n"
+                                 + EVENT_FIELDS)])
+        case("删除已登记成员、Change: <old> - 链 → READY（旧实现假 BLOCKED）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 运行期间工作树被改：两次 status 采样之间落盘的改动同样要阻塞。
+        touch = ("open('scripts/gateway-parity/fixtures/touched.json', 'w').write('x')\n")
+        gw = {"status": "PASS", "failures": []}
+        body = "import json\nprint(json.dumps(" + repr(gw) + "))\n" + touch
+        proc = delivery(Path(td), "gateway-parity", gw,
+                        base_files=[("scripts/gateway-parity/fixtures/touched.json", "{}\n"),
+                                    ("specs/gateway-parity/FROZEN.md",
+                                     "# fake FROZEN\n\n"
+                                     f"{sha('{}\n')}  ../../scripts/gateway-parity/fixtures/touched.json\n"
+                                     f"{sha(body)}  ../../scripts/gateway-parity/check_frozen.py\n")],
+                        source=touch)
+        case("运行期间工作树被改 → BLOCKED",
+             proc.returncode == 1 and "=== worktree === BLOCKED" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
 
     # ------------------------------------------------------- fail-closed
     with tempfile.TemporaryDirectory() as td:
