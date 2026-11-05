@@ -15,6 +15,16 @@ mod baseline;
 mod llm_stub;
 #[path = "../src/mutants.rs"]
 mod mutants;
+#[path = "common/skip_line.rs"]
+mod skip_line;
+#[allow(dead_code)]
+#[path = "common/negative_receipt.rs"]
+mod test_negative_receipt;
+#[allow(dead_code)]
+#[path = "../src/test_process.rs"]
+mod test_process;
+#[path = "common/scratch.rs"]
+mod test_scratch;
 
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
@@ -67,14 +77,15 @@ const DIVERGED_CASES: [&str; 6] = [
 
 // -- oracle access ---------------------------------------------------------
 
-// #1263 skip lines must reach default `cargo test` output: libtest captures
-// the eprintln! macro for a passing test, so the line is written through the
-// stderr handle directly (the #448 unsafe_boundary precedent, probed there on
-// rustc 1.99.1: handle writes bypass the capture; the macro's output does not).
-fn stderr_skip_line(text: &str) {
-    use std::io::Write;
-    let _ = std::io::stderr().write_all(text.as_bytes());
-    let _ = std::io::stderr().flush();
+// #1525: CI and formal hosts set PDRS_REQUIRE_PERMISSION_FAULTS=1 so that a
+// permission-fault probe which succeeds on a privileged host (root /
+// CAP_DAC_OVERRIDE bypasses the mode bits) is a loud failure instead of the
+// #1263 skip line, and the re-arm contract cannot pass unexercised.
+fn require_permission_faults() -> bool {
+    matches!(
+        std::env::var("PDRS_REQUIRE_PERMISSION_FAULTS").as_deref(),
+        Ok("1" | "true")
+    )
 }
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -3033,6 +3044,9 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
         manifest.is_file(),
         "#1207 the workspace manifest must exist before it is made read-only, got {manifest:?}"
     );
+    let original_permissions = fs::metadata(&manifest)
+        .expect("#1207 read the workspace manifest's original mode")
+        .permissions();
     fs::set_permissions(&manifest, fs::Permissions::from_mode(0o444))
         .expect("#1207 make the workspace manifest read-only");
     // #1263: 0444 only stops an unprivileged writer. Under a root container
@@ -3041,8 +3055,15 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     // reported as broken when it was never exercised — so probe natively
     // first and skip with a recognizable line when the mode does not bite.
     if fs::OpenOptions::new().write(true).open(&manifest).is_ok() {
-        let _ = fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644));
-        stderr_skip_line(
+        let _ = fs::set_permissions(&manifest, original_permissions);
+        if require_permission_faults() {
+            panic!(
+                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
+                 succeeds (root or CAP_DAC_OVERRIDE); the mid-deletion clear-failure \
+                 contract needs an unprivileged host (需要非特权宿主)"
+            );
+        }
+        skip_line::stderr_skip_line(
             "#1263 skip: 0444 does not block this caller (root or CAP_DAC_OVERRIDE); \
              the mid-deletion clear-failure contract needs an unprivileged host\n",
         );
@@ -3095,7 +3116,7 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     );
     // The next heartbeat's own manifest repair needs the manifest writable
     // again; the failure face under test is only the clear's mid-deletion one.
-    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644))
+    fs::set_permissions(&manifest, original_permissions)
         .expect("#1207 make the workspace manifest writable again");
     let stats = lab
         .indexer
@@ -3779,5 +3800,60 @@ async fn discarded_session_does_not_mark_the_recaptured_id_indexed() {
         requests.len(),
         4,
         "#1246 both turns must run classify and createNote before the discard"
+    );
+}
+
+// #1525: the PDRS_REQUIRE_PERMISSION_FAULTS parsing matrix runs in child
+// processes (edition 2024 forbids unsafe process-wide set_var in tests), one
+// child per state, through the shared bounded worker machinery.
+#[test]
+#[ignore = "#1525 driven by require_permission_faults_env_matrix"]
+fn require_permission_faults_env_child() {
+    let expected =
+        std::env::var("PDRS_EXPECT_PERMISSION_FAULTS").expect("#1525 expectation") == "true";
+    let case = std::env::var("PDRS_CASE_ID").expect("#1525 case id");
+    let value = std::env::var("PDRS_REQUIRE_PERMISSION_FAULTS");
+    assert_eq!(
+        require_permission_faults(),
+        expected,
+        "#1525 PDRS_REQUIRE_PERMISSION_FAULTS={value:?} must parse as {expected}"
+    );
+    test_process::receipt(&case);
+}
+
+#[test]
+fn require_permission_faults_env_matrix() {
+    let cases = [
+        ("one", Some("1"), true),
+        ("true", Some("true"), true),
+        ("zero", Some("0"), false),
+        ("unset", None, false),
+    ];
+    test_process::run_cases(
+        "require_permission_faults_env_child",
+        cases
+            .iter()
+            .map(|(case, value, expected)| {
+                (
+                    (*case).to_owned(),
+                    value
+                        .map(|value| {
+                            (
+                                "PDRS_REQUIRE_PERMISSION_FAULTS".to_owned(),
+                                value.to_owned(),
+                            )
+                        })
+                        .into_iter()
+                        .chain([
+                            (
+                                "PDRS_EXPECT_PERMISSION_FAULTS".to_owned(),
+                                expected.to_string(),
+                            ),
+                            ("PDRS_CASE_ID".to_owned(), (*case).to_owned()),
+                        ])
+                        .collect(),
+                )
+            })
+            .collect(),
     );
 }

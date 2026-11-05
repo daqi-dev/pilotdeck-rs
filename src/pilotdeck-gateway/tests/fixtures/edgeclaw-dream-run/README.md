@@ -97,6 +97,6 @@ python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-dream-run/negative.py \
 未变异基线（见上节），这种宿主上一律 `BASELINE FAILED` 拒跑（rc=1，
 fail-closed），不会出现假 KILLED 或假 SURVIVED。修法（照
 `edgeclaw-heartbeat-indexer` 的 #1263：注入前原生写探针 + 识别行 + `SKIPPED`
-档 + `negative_selection.verdict_exit` 退出码）登记为 P2-跟进（编号待开单
-回填），前置于本装置下次需要在 root 宿主上全量跑之前。`edgeclaw-dream-runner`
+档 + `negative_selection.verdict_exit` 退出码）登记为 P2-跟进 #1496，前置于本装置下次
+需要在 root 宿主上全量跑之前。`edgeclaw-dream-runner`
 的目标测试无权限故障用例，不受影响。

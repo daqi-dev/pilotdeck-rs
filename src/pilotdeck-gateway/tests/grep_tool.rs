@@ -19,6 +19,8 @@ mod baseline;
 mod child_signals;
 #[path = "common/scratch.rs"]
 mod scratch;
+#[path = "common/skip_line.rs"]
+mod skip_line;
 
 use pilotdeck_gateway::{
     host::modules::{
@@ -176,7 +178,8 @@ fn grep_outputs_match_real_ts() {
         if !ripgrep_skip_allowed() {
             panic!("{message}");
         }
-        eprintln!("SKIPPED (PDRS_ALLOW_NO_RG): {message}");
+        // #1263: the skip line must reach default `cargo test` output.
+        skip_line::stderr_skip_line(&format!("SKIPPED (PDRS_ALLOW_NO_RG): {message}\n"));
         return;
     }
     let mut calls = 0;
