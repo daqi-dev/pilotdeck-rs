@@ -5,6 +5,8 @@
 # 自足：在临时目录自建仓库，不读写真实工作树。
 
 set -u
+# 环境里残留 PDRS_WORKTREE_CAP 会让下面「默认 40」等用例假失败：先清掉，本脚本自设自清。
+unset PDRS_WORKTREE_CAP
 LIB="$(cd "$(dirname "$0")" && pwd -P)/lib/worktree-count.sh"
 [ -r "$LIB" ] || { echo "缺 $LIB" >&2; exit 2; }
 
@@ -42,6 +44,19 @@ eq "加第 2 棵" "$(pdrs_worktree_count "$T/repo")" 2
 # 3. 删树 → −1
 git -C "$T/repo" worktree remove --force "$T/wt1" || exit 2
 eq "删 1 棵后" "$(pdrs_worktree_count "$T/repo")" 1
+
+# 3b. 明细必须是「除主仓之外的那几棵」：行数与集合都对，主仓路径不得出现
+#     （只砍首条 / 少砍一条都会在这里露馅，计数相同但集合不同）
+pl=$(pdrs_worktree_paths "$T/repo")
+eq "明细行数" "$(printf '%s\n' "$pl" | awk 'END { print NR + 0 }')" 1
+case "$pl" in
+  */wt2) ok "明细是 wt2" ;;
+  *) bad "明细是 wt2：实得 [$pl]" ;;
+esac
+case "$pl" in
+  *"$T/repo") bad "明细混进主仓 [$pl]" ;;
+  *) ok "明细不含主仓" ;;
+esac
 
 # 4. 不依赖调用者 cwd：在别的仓库里、在仓外，传参都必须数对
 cq=$(cd "$T/other" && pdrs_worktree_count "$T/repo")
