@@ -739,7 +739,7 @@ class R11Tests(unittest.TestCase):
 
     BAD_EXPECTATION_SHAPES = ('empty', 'duplicate', 'drift', 'missing-side', 'missing-frames',
                               'missing-registry', 'bad-applicable', 'non-string-status',
-                              'unparsable')
+                              'bad-frame-element', 'unparsable')
 
     def bad_expectation_root(self, name):
         """Materialise a mutated copy of the frozen fixture and return its root."""
@@ -760,6 +760,8 @@ class R11Tests(unittest.TestCase):
             body['cases'][0]['rust']['registry']['applicable'] = 0
         elif name == 'non-string-status':
             body['cases'][0]['ts']['durableStatus'].append(1)
+        elif name == 'bad-frame-element':
+            body['cases'][0]['rust']['frames'].append(1)
         elif name != 'unparsable':
             body['cases'][0]['rust']['durableStatus'] = ['turn_cancelled']
         fixture = Path(self.temp.name) / ('exp-' + name) / 'scripts/gateway-parity/fixtures'
