@@ -64,7 +64,11 @@ pub(super) fn verify_hmac(body: &str, secret: &str, signature: &str) -> bool {
     if signature.is_empty() {
         return false;
     }
-    let digest = signature.strip_prefix("sha256=").unwrap_or(signature);
+    let digest = if crate::mutants::on("webhook-hmac-prefix-off") {
+        signature
+    } else {
+        signature.strip_prefix("sha256=").unwrap_or(signature)
+    };
     let expected = hmac_sha256_hex(secret, body);
     let provided = node_hex_decode(digest);
     provided.len() == expected.len() && constant_time_equal(&provided, &expected)

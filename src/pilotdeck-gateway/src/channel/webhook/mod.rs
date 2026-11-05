@@ -176,6 +176,10 @@ impl WebhookChannel {
             .unwrap_or_else(|| "no reason".to_owned());
         Box::pin(async move {
             log(&ctx, "info", &format!("webhook: stopping ({reason})"));
+            if crate::mutants::on("webhook-stop-keeps-listener") {
+                // The stop still resolves, but the listener keeps serving.
+                return Ok(());
+            }
             let slot = {
                 let mut state = ctx.state.lock().expect("#1334 webhook state mutex");
                 state.bound = None;
@@ -432,7 +436,8 @@ async fn handle_request(
     if let Some(route_name) = path
         .strip_prefix("/webhooks/")
         .filter(|name| !name.is_empty() && !name.contains('/'))
-        && request.method() == hyper::Method::POST
+        && (request.method() == hyper::Method::POST
+            || crate::mutants::on("webhook-route-method-off"))
     {
         let route_name = route_name.to_owned();
         return handle_webhook(ctx, request, route_name, keep_alive).await;
@@ -452,7 +457,7 @@ fn json_response(
     keep_alive: bool,
 ) -> hyper::Response<Body> {
     let text = stringify_json(body).ok().flatten().unwrap_or_default();
-    native_http::handler_response(status, "application/json", text, keep_alive)
+    native_http::handler_response_with_length(status, "application/json", text, keep_alive)
 }
 
 /// `createWebhookErrorBody` with the webhook defaults (`scope: "http"`,
@@ -465,11 +470,16 @@ fn webhook_http_error_body(
     type_name: Option<&str>,
     user_hint: &str,
 ) -> JsValue {
+    let code = if crate::mutants::on("webhook-error-body-code") {
+        format!("mutant_{code}")
+    } else {
+        code.to_owned()
+    };
     status::create_agent_status_http_error_body(status::HttpErrorBodyInput {
         event: event.into(),
         event_name: event.into(),
         message: message.into(),
-        code: Some(code.into()),
+        code: Some(JsValue::String(code.into())),
         status: Some(status),
         r#type: type_name.map(JsValue::from),
         user_hint: Some(user_hint.into()),
@@ -532,7 +542,7 @@ async fn handle_webhook(
     }
 
     let now = (ctx.now)();
-    if !check_rate_limit(&ctx, &route_name, now) {
+    if !crate::mutants::on("webhook-rate-limit-off") && !check_rate_limit(&ctx, &route_name, now) {
         return Ok(json_response(
             hyper::StatusCode::TOO_MANY_REQUESTS,
             &webhook_http_error_body(
@@ -591,10 +601,18 @@ async fn handle_webhook(
 
     let delivery_id = header_string(&headers, "x-delivery-id")
         .or_else(|| header_string(&headers, "x-github-delivery"))
-        .unwrap_or_else(|| format!("{route_name}-{}", number_to_string(now)));
+        .unwrap_or_else(|| {
+            if crate::mutants::on("webhook-delivery-id-fallback") {
+                route_name.clone()
+            } else {
+                format!("{route_name}-{}", number_to_string(now))
+            }
+        });
     let duplicate = {
         let mut state = ctx.state.lock().expect("#1334 webhook state mutex");
-        if state.seen_deliveries.contains_key(&delivery_id) {
+        if state.seen_deliveries.contains_key(&delivery_id)
+            && !crate::mutants::on("webhook-dedup-off")
+        {
             true
         } else {
             state.seen_deliveries.insert(delivery_id.clone(), now);
@@ -617,6 +635,13 @@ async fn handle_webhook(
     // literal `null` throws there, the voided rejection goes unhandled, and
     // no response is ever written.
     let text = if nullish(&body) {
+        if crate::mutants::on("webhook-null-body-responds") {
+            return Ok(json_response(
+                hyper::StatusCode::BAD_REQUEST,
+                &JsValue::Null,
+                keep_alive,
+            ));
+        }
         return std::future::pending().await;
     } else {
         extract_text(&body)
@@ -702,7 +727,12 @@ fn unknown_route_response(route_name: &str, keep_alive: bool) -> hyper::Response
 
 /// `extractText`, in the TS statement order.
 fn extract_text(body: &JsValue) -> Option<String> {
-    for field in ["text", "message", "content", "body"] {
+    let fields: &[&str] = if crate::mutants::on("webhook-extract-order") {
+        &["message", "content", "body"]
+    } else {
+        &["text", "message", "content", "body"]
+    };
+    for field in fields {
         if let Some(text) = body.get(field).and_then(JsValue::as_string) {
             return Some(String::from_utf16_lossy(text.units()));
         }
@@ -772,7 +802,11 @@ fn check_rate_limit(ctx: &Ctx, route_name: &str, now: f64) -> bool {
         .get(route_name)
         .cloned()
         .unwrap_or_default();
-    timestamps.retain(|&stamp| stamp > now - RATE_LIMIT_WINDOW);
+    if crate::mutants::on("webhook-rate-window") {
+        timestamps.retain(|&stamp| stamp >= now - RATE_LIMIT_WINDOW);
+    } else {
+        timestamps.retain(|&stamp| stamp > now - RATE_LIMIT_WINDOW);
+    }
     if timestamps.len() as f64 >= ctx.rate_limit {
         return false;
     }
@@ -783,7 +817,11 @@ fn check_rate_limit(ctx: &Ctx, route_name: &str, now: f64) -> bool {
 
 fn prune_seen_deliveries(state: &mut State, now: f64) {
     let cutoff = now - PRUNE_CUTOFF;
-    state.seen_deliveries.retain(|_, stamp| *stamp >= cutoff);
+    if crate::mutants::on("webhook-prune-boundary") {
+        state.seen_deliveries.retain(|_, stamp| *stamp > cutoff);
+    } else {
+        state.seen_deliveries.retain(|_, stamp| *stamp >= cutoff);
+    }
 }
 
 fn prune_delivery_info(state: &mut State, now: f64) {
@@ -820,7 +858,12 @@ async fn handle_incoming(ctx: &Ctx, chat_id: &str, text: String) -> Result<(), C
         .expect("#1334 mapper mutex")
         .resolve(chat_id, &text);
     if mapped.command == Some(WebhookCommand::New) && mapped.message.is_empty() {
-        deliver_reply(ctx, chat_id, "已创建新会话。").await;
+        let message = if crate::mutants::on("webhook-new-session-message") {
+            "会话已重置。"
+        } else {
+            "已创建新会话。"
+        };
+        deliver_reply(ctx, chat_id, message).await;
         return Ok(());
     }
     if mapped.message.is_empty() {
@@ -851,11 +894,16 @@ async fn process_message(
         state.gateway.clone()
     };
     let Some(gateway) = gateway else {
+        let message = if crate::mutants::on("webhook-gateway-missing-hint") {
+            "Gateway absent"
+        } else {
+            "Gateway not ready"
+        };
         deliver_status_reply(
             ctx,
             chat_id,
             "gateway_unavailable",
-            "Gateway not ready",
+            message,
             "gateway_unavailable",
             "preflight",
             "Start or reconnect the PilotDeck gateway, then retry.",
@@ -997,7 +1045,14 @@ async fn deliver_reply(ctx: &Ctx, chat_id: &str, text: &str) -> bool {
             "info",
             &format!(
                 "webhook: response for {chat_id}: {}",
-                js_slice_prefix(text, 200)
+                js_slice_prefix(
+                    text,
+                    if crate::mutants::on("webhook-log-truncation-200") {
+                        250
+                    } else {
+                        200
+                    }
+                )
             ),
         );
         true
@@ -1007,7 +1062,14 @@ async fn deliver_reply(ctx: &Ctx, chat_id: &str, text: &str) -> bool {
             "info",
             &format!(
                 "webhook: deliver type '{deliver_type}' for {chat_id}: {}",
-                js_slice_prefix(text, 100)
+                js_slice_prefix(
+                    text,
+                    if crate::mutants::on("webhook-log-truncation-100") {
+                        150
+                    } else {
+                        100
+                    }
+                )
             ),
         );
         false
