@@ -142,6 +142,10 @@ MARKER_PATTERN = re.compile(r'^#\s*anchor-selfcheck:\s*unsupported(?:\s+(.*))?$'
 # neither a new filename nor a reason alone can hide a source mutation table.
 UNSUPPORTED_SIGNALS = {
     'native-witness/test_witness.py': set(),  # #1140 in-memory/raw-trace controls, no source mutation table
+    # #1363: the expectations-shape controls corrupt an in-memory JSON copy
+    # through a local `mutate` lambda. No product source table is involved, and
+    # pinning the call signal still rejects a new table or a `mutation()` call.
+    'native-witness/test_r11.py': {'call:mutate'},
     # #1107: standalone M6 helpers; only test_contract declares a case table.
     '_negkit/contract.py': set(),
     '_negkit/test_contract.py': {'table:cases'},
