@@ -1214,7 +1214,7 @@ fn rejects_unmigrated_wecom() {
 // on the Rust side would abort startup where TS does not.
 #[test]
 fn unmigrated_bundle_channels_require_strict_boolean_true() {
-    for key in ["qq", "wecom"] {
+    for key in STRICT_TRUE_CHANNEL_KEYS {
         for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
             let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{truthy}}}}}"));
             crate::negative_assert!(
@@ -1232,7 +1232,7 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
 #[test]
 fn unmigrated_loader_channels_use_js_truthiness() {
     for key in UNMIGRATED_CHANNEL_KEYS {
-        if matches!(*key, "qq" | "wecom") {
+        if STRICT_TRUE_CHANNEL_KEYS.contains(key) {
             continue;
         }
         for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {

@@ -1294,6 +1294,25 @@ class MatrixRunnerTests(unittest.TestCase):
             self.assertEqual(set(row), set(suite.RESULT_ROW_FIELDS))
 
 
+class PublishJsonTests(unittest.TestCase):
+    def test_publish_is_atomic_and_refuses_to_overwrite_evidence(self):
+        # #1579 r2 P2: `summary.json` is a cross-process contract; publishing
+        # it must never expose a half-written document nor clobber a previous
+        # run's evidence (the OUT directory is already exclusive, this keeps
+        # the old `open('x')` refusal alongside the temp-and-rename).
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            target = out / 'summary.json'
+            payload = {'controls': [], 'counts': {'KILLED': 0}}
+            suite._publish_json(target, payload)
+            self.assertEqual(json.loads(target.read_text()), payload)
+            self.assertFalse((out / 'summary.json.tmp').exists(), 'temp file must not linger')
+            with self.assertRaises(FileExistsError):
+                suite._publish_json(target, {'controls': ['rewritten']})
+            self.assertEqual(json.loads(target.read_text()), payload,
+                             'refused publish must leave the old evidence intact')
+
+
 class ResultRowSchemaTests(unittest.TestCase):
     """#1579 P1: `matrix_main` rows must stay inside the registered schema.
 

@@ -65,11 +65,16 @@ pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
 /// `{"enabled": 1}` or `{"enabled": "true"}` builds nothing and the TS
 /// gateway starts normally. The other eleven keys are consumed by
 /// `loadEnabledChannels`'s `if (!cfg?.enabled) continue`, i.e. JS truthiness.
-/// Measured on the frozen baseline `cc7c4e65`: see
-/// `specs/gateway-parity/diffs/A8.3-CHANNEL-QQ-001.md`, which records the
-/// probe that drove `createStartupAdapters` over `true` / `1` / `"true"` /
-/// `"1"` / falsy / absent for every key of this table.
-const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];
+/// Measured on the frozen baseline `cc7c4e65` over `true` / `1` / `"true"` /
+/// `"1"` / `[]` / `{}` / falsy / absent: `specs/gateway-parity/diffs/
+/// A8.3-CHANNEL-QQ-001.md` records the probe for the two keys above
+/// (`createStartupAdapters`) and its sibling run for the eleven loader keys
+/// (`loadEnabledChannels`). Note the seam takes the *raw* config object; the
+/// config snapshot layer (`config/snapshot.rs`) already coerces every
+/// `enabled` to a strict bool, so whichever object the assembly unit feeds
+/// decides whether the two gates can be told apart at all — recorded in that
+/// ledger entry's caveat.
+pub(crate) const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];
 
 /// The TS `enabled` gate for one key: strict `=== true` for the
 /// `ChannelAdapterBundle` keys, JS truthiness (`js_truthy`) for the loader

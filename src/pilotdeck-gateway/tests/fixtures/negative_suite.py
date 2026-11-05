@@ -399,6 +399,22 @@ def _write_new(path, text):
         stream.write(text)
 
 
+def _publish_json(path, payload):
+    """Publish one JSON evidence file atomically (temp-and-rename).
+
+    `_write_new` creates the file empty and then writes, so a reader that
+    tails the evidence directory can observe a half-written document. The
+    summary is a cross-process contract (`_negkit/compare_verdicts.py` reads
+    it directly), so the final write matches `publish_summary`'s temp-and-
+    rename (#166 r8).
+    """
+    if path.exists():
+        raise FileExistsError(f'refusing to overwrite evidence: {path}')
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(json.dumps(payload, indent=2) + '\n')
+    temporary.replace(path)
+
+
 # The `controls[]` row schema published to `_negkit/compare_verdicts.py`
 # (#1579 P1). Its `normalize` rejects any key outside the registered whitelist
 # and exits 2, so a summary that grows a field becomes un-comparable — a false
@@ -588,7 +604,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         _write_new(out / f'{name}.result.json', json.dumps(item, indent=2) + '\n')
         print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
     counts = pending.counts(results, ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
-    _write_new(out / 'summary.json', json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n')
+    _publish_json(out / 'summary.json', {'controls': results, 'counts': counts})
     print(json.dumps(counts), flush=True)
     success = 'COMPILED' if compile_only else 'KILLED'
     return int(any(row['status'] != success for row in results))
