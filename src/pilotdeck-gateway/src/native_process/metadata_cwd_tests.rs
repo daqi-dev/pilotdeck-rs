@@ -176,6 +176,12 @@ async fn observe(name: &str) -> (Value, Value) {
         interactions: Arc::default(),
         mcp: requests::Requests::stub_mcp(&owner),
         async_hook_registry: None,
+        user_dialog_bus: Arc::new(std::sync::Mutex::new(
+            crate::user_dialog::GatewayUserDialogBus::new(
+                crate::user_dialog::DialogRuntime::default(),
+                None,
+            ),
+        )),
     };
     let services = services::Services {
         options: options.clone(),
@@ -522,6 +528,12 @@ async fn observe_archive(name: &str) {
         interactions: Arc::default(),
         mcp: requests::Requests::stub_mcp(&owner),
         async_hook_registry: None,
+        user_dialog_bus: Arc::new(std::sync::Mutex::new(
+            crate::user_dialog::GatewayUserDialogBus::new(
+                crate::user_dialog::DialogRuntime::default(),
+                None,
+            ),
+        )),
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

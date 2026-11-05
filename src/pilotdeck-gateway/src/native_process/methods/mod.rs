@@ -8,11 +8,13 @@ mod history;
 mod management;
 mod mcp;
 mod metadata;
+mod permission;
 mod runs;
 mod session_dir;
 mod sop;
 mod steer;
 mod tools;
+mod user_dialog;
 
 type Response = Result<JsValue, RequestError>;
 type RequestHandler = for<'a> fn(&'a Requests, String, JsValue) -> Call<'a, Response>;
@@ -49,6 +51,8 @@ register_families! {
     tools: tools::METHODS,
     session_dir: session_dir::METHODS,
     steer: steer::METHODS,
+    permission: permission::METHODS,
+    user_dialog: user_dialog::METHODS,
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.

@@ -14,9 +14,10 @@ use crate::{
             coordinator::TurnEventCoordinator, gateway::GatewayRequests, publish::FileRegistry,
         },
     },
+    user_dialog::GatewayUserDialogBus,
 };
 use pilotdeck_protocol::{JsString, JsValue};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct Requests {
@@ -38,6 +39,8 @@ pub struct Requests {
     /// Gateway-level async hook registry for `hook_async_result`.
     /// `None` when the project has no `InteractionSteer` resource (no steer wired).
     pub async_hook_registry: Option<Arc<AsyncHookRegistry>>,
+    /// Gateway user-dialog bus backing the `user_dialog` / `respond` methods.
+    pub user_dialog_bus: Arc<Mutex<GatewayUserDialogBus>>,
 }
 
 #[cfg(test)]
@@ -149,6 +152,14 @@ impl GatewayRequests for Requests {
                             "set_mcp_permission_mode_override",
                             "memory_list",
                             "memory_wipe",
+                            // TS advertises both in every config state
+                            // (oracle.json:2801-2802, 2855-2856, 2956-2957).
+                            // permission_list is fully wired; user_dialog_list
+                            // is wired, with runtime availability still gated
+                            // on the bus being connected (on_change wiring is
+                            // the #1445 staging).
+                            "user_dialog_list",
+                            "permission_list",
                         ]
                         .into_iter()
                         .filter(|capability| {
