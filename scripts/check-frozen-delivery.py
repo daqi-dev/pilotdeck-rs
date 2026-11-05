@@ -106,7 +106,6 @@ BYTECODE = re.compile(r'(?:^|/)__pycache__(?:/|$)|\.py[co]$')
 # source, so a new member there must be named by that source to be registrable.
 PARITY_SPEC_FILES = ('README.md', 'acceptance.md', 'normalization.md',
                      'accepted-diffs.md', 'multimodal.md')
-GATEWAY_SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md')
 GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
@@ -335,7 +334,7 @@ def event_evidence(root, kind, mb):
             continue
         # Content also comes from HEAD: a working-tree edit that adds a Change
         # row must not complete a chain the delivered branch does not contain.
-        code, data, _ = git_bytes(root, 'cat-file', 'blob', f'HEAD:{relative}')
+        code, data, _ = git_bytes(root, 'cat-file', 'blob', f'{pinned_head()}:{relative}')
         if code:
             issues.append(f'{relative}: cannot read from HEAD')
             continue
@@ -641,17 +640,17 @@ def _gateway_manifest(tree, external=()):
     its bytes: members come from ``f'scripts/.../{name}'`` templates expanded
     over the tuple that actually feeds them, full path literals are taken
     verbatim, and the bare tuple used as manifest keys becomes the
-    ``specs/gateway-parity/`` names.  Anything else -- a template whose tuple
-    cannot be resolved, no template at all, no spec name -- is "cannot tell"
-    (None) instead of a guessed inventory: a wrong True hides a dropped member
-    (false READY) and a wrong False demands chains ``--write`` never needs.
+    ``specs/gateway-parity/`` names.  A template whose tuple cannot be resolved,
+    or a function with no literals at all, is "cannot tell" (None) instead of a
+    guessed inventory: a wrong True hides a dropped member (false READY) and a
+    wrong False demands chains ``--write`` never needs.
     """
     function = _function_node(tree, 'manifest_inventory')
     if function is None:
         return None
     parents = _parents(function)
     inventory, consumed, specs = set(), set(), set()
-    template_parts, templates = set(), 0
+    template_parts = set()
     for node in ast.walk(function):
         if not isinstance(node, ast.JoinedStr):
             continue
@@ -666,7 +665,6 @@ def _gateway_manifest(tree, external=()):
             inventory.add(prefix + member + suffix)
             consumed.add(member)
         template_parts.update(id(part) for part in node.values)
-        templates += 1
     for node in ast.walk(function):
         if not isinstance(node, ast.Constant) or id(node) in template_parts:
             continue
@@ -686,6 +684,40 @@ def _gateway_manifest(tree, external=()):
     return inventory | specs
 
 
+def _call_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _ui_exp008_dir(tree):
+    """Directory ``required_files`` registers ``EXP008_FILES`` under, or None."""
+    function = _function_node(tree, 'required_files')
+    if function is None:
+        return None
+    found = set()
+    for node in ast.walk(function):
+        if not isinstance(node, (ast.SetComp, ast.ListComp, ast.GeneratorExp)):
+            continue
+        for generator in node.generators:
+            if not (isinstance(generator.iter, ast.Name)
+                    and generator.iter.id == 'EXP008_FILES'):
+                continue
+            element = node.elt
+            if not (isinstance(element, ast.BinOp) and isinstance(element.op, ast.Div)):
+                return None
+            inner = element.left
+            if (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Div)
+                    and isinstance(inner.right, ast.Constant)
+                    and isinstance(inner.right.value, str)):
+                found.add(inner.right.value)
+            else:
+                return None
+    return found.pop() if len(found) == 1 else None
+
+
 def _ui_scan_dirs(tree):
     """The ``scan(root / '<dir>')`` directories in ``apparatus_files``, or None."""
     function = _function_node(tree, 'apparatus_files')
@@ -695,6 +727,8 @@ def _ui_scan_dirs(tree):
     for node in ast.walk(function):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == 'scan' and len(node.args) == 1):
+            if isinstance(node, ast.Call) and _call_name(node.func) == 'scan':
+                return None  # a scan shape this model cannot read
             continue
         argument = node.args[0]
         if (isinstance(argument, ast.BinOp) and isinstance(argument.op, ast.Div)
@@ -704,6 +738,31 @@ def _ui_scan_dirs(tree):
         else:
             return None
     return found or None
+
+
+def parity_spec_names(root, commit=None):
+    """Spec-document names parity's ``manifest_inventory`` registers, or None.
+
+    Derived from the apparatus's own ``names`` tuple so a changed list shows up
+    as a disagreement instead of a stale copy.  ``None`` means the source could
+    not be read or did not have the shape this model parses; the caller then
+    falls back to the literal and only blocks when a *derived* list disagrees.
+    """
+    commit = commit or pinned_head()
+    key = ('parity-spec-names', str(root), commit)
+    if key in _SOURCE_CACHE:
+        return _SOURCE_CACHE[key]
+    names = None
+    source = source_text(root, commit, 'scripts/parity/check_frozen.py')
+    tree = _parse(source) if source is not None else None
+    if tree is not None:
+        function = _function_node(tree, 'manifest_inventory')
+        if function is not None:
+            value = _tuple_value(tree, function, 'names')
+            if value is not None:
+                names = set(value)
+    _SOURCE_CACHE[key] = names
+    return names
 
 
 def gateway_inventory(root, commit=None):
@@ -730,8 +789,7 @@ def gateway_inventory(root, commit=None):
         common_tree, frozen_tree = _parse(common), _parse(frozen)
         if common_tree is not None and frozen_tree is not None:
             scripts = _module_tuple(common_tree, 'A2_SCRIPTS')
-            manifest = _gateway_manifest(frozen_tree,
-                                         {'A2_SCRIPTS': scripts} if scripts else {})
+            manifest = _gateway_manifest(frozen_tree, {'A2_SCRIPTS': scripts})
             if scripts is not None and manifest is not None:
                 inventory = set(manifest) | {f'scripts/gateway-parity/{name}' for name in scripts}
     _SOURCE_CACHE[key] = inventory
@@ -766,8 +824,10 @@ def ui_inventory(root, commit=None):
             toolchain = _module_tuple(tree, 'TOOLCHAIN_FILES')
             scan_dirs = _ui_scan_dirs(frozen_tree)
             spec_dir = _module_path(frozen_tree, 'SPEC')
+            exp008_dir = _ui_exp008_dir(frozen_tree)
             if (paths is not None and specs is not None and toolchain is not None
                     and scan_dirs is not None and spec_dir is not None
+                    and exp008_dir is not None and exp008_dir in scan_dirs
                     and len(paths) == 3 and all(isinstance(item, str) for item in paths)
                     and all(item.startswith('scripts/') for item in paths[:2])
                     and paths[2].startswith('specs/')
@@ -807,15 +867,16 @@ def registrable(root, kind, path):
     against a ``-`` target the real ``--write`` will never produce.
     """
     if kind == 'parity':
+        derived = parity_spec_names(root)
+        if derived is not None and derived != set(PARITY_SPEC_FILES):
+            return None  # the copied list and the apparatus source disagree
         if path in {f'specs/parity/{name}' for name in PARITY_SPEC_FILES}:
             return True
         if not path.startswith('scripts/parity/'):
             return False
         return tracked_at_head(root, path)
     if kind == 'gateway-parity':
-        if path in {f'specs/gateway-parity/{name}' for name in GATEWAY_SPEC_FILES}:
-            return True
-        if not path.startswith(GATEWAY_DIRS):
+        if not path.startswith(GATEWAY_DIRS + ('specs/gateway-parity/',)):
             return False
         inventory = gateway_inventory(root)
         if inventory is None:
@@ -838,7 +899,7 @@ def registrable(root, kind, path):
 def tracked_at_head(root, path):
     """True/False/None -- is ``path`` a file committed at HEAD? (one ls-tree per prefix)"""
     prefix = path.split('/', 1)[0] + '/' if '/' in path else path
-    key = (str(root), prefix)
+    key = (str(root), prefix, pinned_head())
     if key not in _SOURCE_CACHE:
         code, out, _ = git(root, 'ls-tree', '-r', '--name-only', pinned_head(), '--', prefix)
         _SOURCE_CACHE[key] = set(out.splitlines()) if code == 0 else None
@@ -1109,7 +1170,7 @@ def event_chain_issues(root, base, kinds, mb=None):
         kind = match.group(1)
         added.append((kind, path))
         # Read the committed bytes, not the working tree: the delivery is HEAD.
-        code, data, err = git_bytes(root, 'cat-file', 'blob', f'HEAD:{path}')
+        code, data, err = git_bytes(root, 'cat-file', 'blob', f'{pinned_head()}:{path}')
         if code:
             issues.append((kind, f'{path}: cannot read from HEAD: {err.decode(errors="replace").strip()}'))
             continue
