@@ -29,9 +29,22 @@ Two checks, one per half of the fix:
    pass for a killed mutation. The marker is undone by the *driver*, still
    inside the lock, before it returns (`negctl_restore` in
    `rss_probe_1555.py`): a restore issued here after the driver exits would
-   race every runner queued behind it, and the winner would see a marked
-   source and record a false `src/ is dirty` (fix-r5 review, concurrency P1).
-   The fallback here only covers a driver that never reached the dirty branch.
+   leave the mark on disk while other runners queue for the lock, and the
+   winner would see a marked source and record a false `src/ is dirty`
+   (fix-r5 review, concurrency P1). The fallback here only covers a driver that
+   never reached the dirty branch.
+
+   The seam is **narrowed, not eliminated** (fix-r5 review, concurrency P1 on
+   the first version of this text, which claimed the marker exists only while
+   the driver holds the lock). The marker is on disk from the moment the
+   control writes it until the driver takes the lock, and the handoff is not
+   atomic: `tree_lock` is a `LOCK_NB` + 50 ms poll with no kernel queue, so a
+   sibling runner that polls in the same instant can win the lock first, see
+   the marker and record a false `src/ is dirty`. Closing that would need an
+   atomic handoff (a blocking `flock` with FIFO wakeups, a second lock every
+   runner takes first, or a marker that is not a tracked source), all of which
+   change the shared `negative_process.tree_lock` used by ~199 fixtures; it is
+   tracked as a follow-up rather than widened here.
 
 The lock check does not trust the driver's own markers alone (fix-r5). A mutant
 that deletes the whole `with tree_lock(...)` block *including* the
@@ -73,7 +86,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import _head_bytes, run_owned, tree_lock
+from negative_process import _head_bytes, _kill_group, run_owned, tree_lock
 
 root = Path(__file__).resolve().parents[5]
 RELATIVE = 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
@@ -129,11 +142,13 @@ def requested_clock(text):
     """Return the driver's own monotonic timestamp from its `lock-requested` line.
 
     Stamping the request with the control's read time biases the measured wait
-    *late*: the control polls every 50 ms and `read_log` can be delayed further
-    on a cold cache, so a slow start can read as a proven wait (fix-r5 boundary
-    P2). The driver prints `time.monotonic()` on the same line and both
-    processes read the host's monotonic clock, so the difference is the real
-    wait. `None` when the line carries no parseable number -- an older driver,
+    *late*, which makes it come out **shorter** than the real one: the control
+    polls every 50 ms and `read_log` can be delayed further on a cold cache, so
+    a genuinely blocked driver can land under the proof threshold and be
+    reported INVALID (fail-closed -- the bias is never towards a false pass;
+    fix-r5 boundary P2). The driver prints `time.monotonic()` on the same line
+    and both processes read the host's monotonic clock, so the difference is
+    the real wait. `None` when the line carries no parseable number -- an older driver,
     or a driver whose marker line was rewritten -- and the caller falls back to
     its read time, which is the pre-fix behaviour and never turns a wait into a
     pass on its own.
@@ -185,7 +200,11 @@ def settle(process, log):
     try:
         process.wait(timeout=WATCHDOG)
     except subprocess.TimeoutExpired:
-        process.kill()
+        # `launch` puts the driver in its own session, so killing the leader
+        # alone would leave cargo / rustc / the timing tool running in the
+        # shared target directory -- and in the `dirty-src` leg they are
+        # compiling the marked source (fix-r5 review, concurrency P2).
+        _kill_group(process)
         process.wait(timeout=60)
         raise
     finally:
@@ -298,14 +317,22 @@ def lock_check(out, env):
             if requested_at is not None:
                 blocked = released - requested_at
             # A driver that is not blocked builds while the control still holds
-            # the lock; those files are created only after the acquisition.
+            # the lock, and both files are written only after the acquisition.
+            # This is a *fast path*, not the state proof: `build.log` lands when
+            # the build ends and `summary.json` when the measurement ends, so a
+            # cold target directory can keep both absent for the whole hold and
+            # leave this False on a mutant (fix-r5 review, concurrency P2). The
+            # verdict does not rest on it -- the decisive check is the absence of
+            # `lock-acquired` in the driver's full output, which is independent
+            # of build duration and is evaluated before the rc / status branches
+            # below so a mutant whose build also fails still reads SURVIVED.
             progressed = ((out / 'probe-lock' / 'build.log').exists()
                           or (out / 'probe-lock' / 'summary.json').exists())
         returncode = settle(process, log)
     except (subprocess.TimeoutExpired, OSError) as error:
         reason = f'{type(error).__name__}: {error}'
         if process is not None and process.poll() is None:
-            process.kill()
+            _kill_group(process)
             process.wait(timeout=60)
         log.close()
         returncode = None
@@ -322,6 +349,11 @@ def lock_check(out, env):
         status = 'SURVIVED'
         reason = ('the driver built while the control held the lock '
                   '(build.log or summary.json appeared during the hold)')
+    elif reason:
+        # A control-side failure (lock timeout, launch error) dominates: it
+        # says nothing about the driver's locking, so the row must not be read
+        # as evidence either way.
+        status = 'INVALID'
     elif not positive_ok:
         status = 'INVALID'
         reason = (f'clean-tree positive control failed: {positive_error} '
@@ -332,22 +364,27 @@ def lock_check(out, env):
         status = 'INVALID'
         reason = (f'the driver never asked for the lock during the hold '
                   f'(early={early.strip()[:200]!r}, early_exit={exited_early})')
+    elif not acquired:
+        # Decisive and independent of the timing band below: the driver asked
+        # for the lock and never printed `lock-acquired`, so it never took it.
+        # Checked before the rc / status branches on purpose -- a no-lock
+        # mutant whose build also fails is still a survivor, and reporting it
+        # as INVALID would hide the mutation behind a build error (fix-r5
+        # review, concurrency P2).
+        status = 'SURVIVED'
+        reason = ('the driver asked for the shared lock and never acquired it '
+                  '(no lock-acquired anywhere in its output; '
+                  f'rc={returncode} status={summary.get("status")!r})')
     elif blocked < MIN_BLOCK_SECONDS:
         status = 'INVALID'
         reason = (f'the request appeared {blocked:.2f}s before the release, '
                   f'shorter than the {MIN_BLOCK_SECONDS}s needed to prove a wait')
-    elif reason:
-        status = 'INVALID'
     elif returncode != 0:
         status = 'INVALID'
         reason = f'driver exit {returncode} after the release'
     elif summary.get('status') != 'OK':
         status = 'INVALID'
         reason = f'driver status {summary.get("status")!r} after the release'
-    elif not acquired:
-        status = 'SURVIVED'
-        reason = ('the driver finished without ever taking the shared lock '
-                  '(no lock-acquired anywhere in its output)')
     return dict(control='lock-held-during-driver', status=status,
                 held_seconds=round(held, 3), blocked_seconds=round(blocked, 3),
                 progressed_under_hold=progressed, acquired_after_release=acquired,
@@ -391,7 +428,7 @@ def dirty_check(out, env, original):
     except (subprocess.TimeoutExpired, OSError, RuntimeError) as error:
         reason = f'{type(error).__name__}: {error}'
         if process is not None and process.poll() is None:
-            process.kill()
+            _kill_group(process)
             process.wait(timeout=60)
         log.close()
         returncode = None

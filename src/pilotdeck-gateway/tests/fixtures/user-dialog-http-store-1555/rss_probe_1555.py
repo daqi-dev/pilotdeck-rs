@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import stat
 import sys
 import time
 
@@ -123,15 +124,23 @@ def negctl_restore():
     spec = os.environ.get('PDRS_NEGCTL_RESTORE')
     if not spec:
         return None
+    temp = root / f'.negctl-{os.getpid()}-probe-restore'
     try:
         relative, original_path, marked_path = spec.split('\x1f')
         target = root / relative
         if target.read_bytes() != Path(marked_path).read_bytes():
             return 'left untouched: the bytes are not this control\'s marker'
-        temp = root / f'.negctl-{os.getpid()}-probe-restore'
         temp.write_bytes(Path(original_path).read_bytes())
+        # `os.replace` swaps in the temp file's inode, so without this the
+        # tracked source would come back with the umask's mode instead of its
+        # own. This path runs on every control, not only on failures.
+        os.chmod(temp, stat.S_IMODE(target.stat().st_mode))
         os.replace(temp, target)
     except (OSError, ValueError) as error:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
         return f'{type(error).__name__}: {error}'
     return 'restored under the tree lock'
 
@@ -193,9 +202,10 @@ def main():
     print(f'starting {json.dumps({"pid": os.getpid()})}', flush=True)
     # The timestamp is this process's own monotonic clock, not the control's
     # read time: a control that polls the log every 50 ms -- and may be slow to
-    # read it at all on a cold cache -- always stamps the request *late*, which
-    # inflates the measured wait. Both processes read the same host clock, so
-    # the control can subtract this value directly (fix-r5 boundary P2).
+    # read it at all on a cold cache -- stamps the request *late*, which
+    # *shrinks* the measured wait (biased towards INVALID, never towards a
+    # false pass). Both processes read the same host clock, so the control can
+    # subtract this value directly (fix-r5 boundary P2).
     print(f'lock-requested {time.monotonic():.6f}', flush=True)
     with tree_lock(root, timeout=3600):
         print('lock-acquired', flush=True)
