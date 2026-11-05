@@ -139,20 +139,30 @@ async fn private_ca_matrix() {
     let ca = scratch.path().join("ca.pem");
     let ca_bytes = std::fs::read(&ca).expect("#1552 generated CA bytes");
     let mut failures = Vec::new();
-    // A6.4-TLS-CA-SOURCES-001 r1: `--use-openssl-ca` has no cells in the
-    // frozen Homebrew oracle. Expected values come from #1552's recorded
-    // evidence (`tls-flags.log`: openssl-dir success, openssl-plain
-    // non_blocking_error) and scenario 4, which re-verified the hook client
-    // only; mcp / model / count are inferred from the shared default CA
-    // sources, not measured.
-    const OPENSSL_CASES: [(&str, bool); 3] = [
-        ("openssl-dir", true),
-        ("openssl-file", true),
-        ("openssl-plain", false),
-    ];
-    let mut cases: Vec<(String, bool, Value)> = oracle["cases"]
+    let mut aligned = 0usize;
+    let mut diverged = 0usize;
+    let mut skipped = 0usize;
+    // A6.4-TLS-CA-SOURCES-001-R1: `--use-openssl-ca` has no cells in the
+    // frozen Homebrew oracle. These six cells were measured on the pinned
+    // baseline (cc7c4e65 / Node v22.22.0 / linux) by `generate.mts` with
+    // `PDRS_MODES=openssl-dir,openssl-file,openssl-plain`. The cells and their
+    // provenance live in `fixtures/private-ca/openssl-cases.json`.
+    let openssl: Value =
+        serde_json::from_str(include_str!("fixtures/private-ca/openssl-cases.json"))
+            .expect("#1552 openssl cases JSON");
+    let openssl_cases = openssl["cases"]
         .as_array()
-        .expect("#1552 oracle cases array")
+        .expect("#1552 openssl cases array");
+    assert_eq!(
+        openssl_cases.len(),
+        6,
+        "#1552 measured --use-openssl-ca cell count"
+    );
+    let oracle_cases = oracle["cases"]
+        .as_array()
+        .expect("#1552 oracle cases array");
+    assert_eq!(oracle_cases.len(), 56, "#1552 frozen oracle cell count");
+    let mut cases: Vec<(String, bool, Value)> = oracle_cases
         .iter()
         .map(|case| {
             (
@@ -162,20 +172,23 @@ async fn private_ca_matrix() {
             )
         })
         .collect();
-    for (mode, good_hostname) in OPENSSL_CASES {
-        for mismatch in [false, true] {
-            cases.push((
-                mode.to_owned(),
-                mismatch,
-                json!({"mcp": good_hostname && !mismatch, "hook": good_hostname && !mismatch,
-                    "model": good_hostname && !mismatch, "count": good_hostname && !mismatch}),
-            ));
-        }
+    for case in openssl_cases {
+        cases.push((
+            case["mode"]
+                .as_str()
+                .expect("#1552 openssl case mode")
+                .to_owned(),
+            case["mismatch"]
+                .as_bool()
+                .expect("#1552 openssl case mismatch"),
+            case["expected"].clone(),
+        ));
     }
     for (mode, mismatch, mut expected) in cases {
         // Node-only in-process environment mutation cannot be performed safely
         // in Rust 2024. Startup timing difference is recorded in the ledger.
         if mode == "late-env" {
+            skipped += 1;
             continue;
         }
         std::fs::write(&ca, &ca_bytes).expect("#1552 reset generated CA");
@@ -281,8 +294,17 @@ async fn private_ca_matrix() {
         if mode.starts_with("system-") && mode != "system-off" {
             command.env("NODE_USE_SYSTEM_CA", "1");
         }
-        if ["forced-bundled", "bundled-system"].contains(&mode.as_str()) {
+        if mode == "forced-bundled" {
             command.env("NODE_OPTIONS", "--use-bundled-ca");
+        }
+        if mode == "bundled-system" {
+            command.env("NODE_OPTIONS", "--use-bundled-ca --use-system-ca");
+        }
+        // The oracle generated `system-options` with
+        // `NODE_OPTIONS=--use-system-ca`; replay the same carrier.
+        // `system-flag` passes a CLI flag, which a non-Node process cannot see.
+        if mode == "system-options" {
+            command.env("NODE_OPTIONS", "--use-system-ca");
         }
         if mode == "openssl-file" {
             command
@@ -322,13 +344,14 @@ async fn private_ca_matrix() {
             &std::fs::read_to_string(result_path).expect("#1552 result cell readable"),
         )
         .expect("#1552 result cell JSON");
-        // A6.4-TLS-CA-SOURCES-001 r1 closed the source and mode differences
-        // (system-dir / dir-unflagged / forced-bundled / bundled-system now
-        // match the frozen oracle). Only the snapshot-timing difference
-        // remains: the Homebrew Node reads NODE_EXTRA_CA_CERTS at process
-        // startup, Rust at the first default connector.
-        let difference = mode == "early-file";
-        let ts = expected.clone();
+        // A6.4-TLS-CA-SOURCES-001-R1 / issue #1640: the frozen Homebrew oracle
+        // and the project baseline (Node v22.22.0 source build, cc7c4e65)
+        // disagree on these cells and the口径 is not decided yet. Rust follows
+        // the frozen oracle for `dir-unflagged` / `system-dir` and the source
+        // build for `early-file`; none of them is counted as parity.
+        // `forced-bundled` / `bundled-system` do match both readings.
+        let difference = ["dir-unflagged", "system-dir", "early-file"].contains(&mode.as_str());
+        let ts_oracle = expected.clone();
         if difference && !mismatch {
             for value in expected
                 .as_object_mut()
@@ -338,8 +361,14 @@ async fn private_ca_matrix() {
                 *value = json!(true);
             }
         }
+        if difference {
+            diverged += 1;
+        } else {
+            aligned += 1;
+        }
         println!(
-            "{mode} mismatch={mismatch} actual={actual} TS={ts} registered_difference={difference}"
+            "{mode} mismatch={mismatch} actual={actual} TS_oracle={ts_oracle} \
+             registered_difference={difference}"
         );
         if actual != expected {
             failures.push(format!(
@@ -352,6 +381,17 @@ async fn private_ca_matrix() {
         .await
         .expect("#1552 bounded server shutdown")
         .expect("#1552 node fixture server exits");
+    // The matrix proves how many cells actually ran: an empty or truncated
+    // `cases` array must not pass silently.
+    assert_eq!(skipped, 2, "#1552 only the two late-env cells are skipped");
+    assert_eq!(
+        diverged, 6,
+        "#1552 registered differences are three modes x two hostnames"
+    );
+    assert_eq!(
+        aligned, 54,
+        "#1552 aligned cells: 56 frozen - 2 late-env - 6 registered differences + 6 openssl"
+    );
     assert!(
         failures.is_empty(),
         "#1552 private CA source matrix diverges:\n{}",
