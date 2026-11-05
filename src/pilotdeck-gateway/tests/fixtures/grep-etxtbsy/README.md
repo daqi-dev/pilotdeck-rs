@@ -60,9 +60,14 @@ paused_poll`）；fdinfo
 → 以「`end` ≤ 收据观测时刻 + cap」证同一截止已越过 → 才发布 `resume`，
 saw 写入时 started 必在、截止必过，不再有任何睡眠时序赌注。共享 helper 改形
 后 dead-helper / panic 两用例同步屏障化（钩子在 started 后发布 resume；panic
-用例故意不发，由 ReapGuard 收割挂起的 helper）。
+用例故意不发，由 ReapGuard 收割挂起的 helper）。#1392（#1155 r4 评审 P1 →
+P2b 跟进）：屏障自身的 30s 安全超时是失败而非静默通过——循环后强制复查
+`resume`（循环条件与退出之间的竞态由复查兜住），未收到即 `exit 3`；saw 写入
+仍先行执行，超时路径继续走截止复检，删复检的变异在该路径照样可杀；新增
+「屏障超时」交错用例（测试侧故意不发 `resume`，断言 helper 非零退出、退出码
+3、park 实跑 ~30s、saw 不写）。
 
-变异体（23 个；绑定测试如无说明均在 `--test scratch_publication`）：
+变异体（25 个；绑定测试如无说明均在 `--test scratch_publication`）：
 
 - `script-direct-write`（`--lib`）：`Scratch::script` 退回修前 `fs::write` +
   chmod（进程内直写被 exec 的路径）——须在 Linux 压测下以 `#1125 etxtbsy`
@@ -136,6 +141,19 @@ saw 写入时 started 必在、截止必过，不再有任何睡眠时序赌注�
   迟到 started 被记成 seen，`#1155 a started past the helper's cap
   must not be recorded as seen after a paused poll` 判杀（任意 unix 确定性，
   无调度时序赌注）；
+- `barrier-timeout-exit-removed`（#1392 新增，#1155 r4 评审 P1 → P2b 跟进）：
+  屏障循环后的强制 resume 复查被删——30s 安全超时不再 `exit 3`，helper 照常
+  干净退出；新用例 `a_barrier_timeout_without_a_resume_fails_the_helper`
+  故意不发 `resume` 让 park 自行跑完，`#1392 a barrier timed out without a
+  resume must fail the helper, not exit cleanly` 判杀（r4 评审的双双饥饿 > 30s
+  交错由此堵死：测试线程与 stranger 同时被饿过 park 时，helper 不可能再以
+  `exit 0` 溜过 `exited.success()` 断言；任意 unix 确定性）；
+- `saw-write-skips-the-cap-barrier-timeout`（#1392 新增）：同一「截止复检被删」
+  变异改绑屏障超时用例（与守卫 kill 删除的两个绑定同形，一变异两绑定）——该
+  用例等 `paused`、2s 延迟的 `started` 后永不发 `resume`，超时时刻 started 必
+  在（早 ~28s 发布）、1s 场景 cap 的 `end` 必过，被删复检的 saw 写入成为超时
+  路径上唯一的差异，`#1392 a started past the helper's cap must not be
+  recorded as seen across a timed-out barrier` 判杀（任意 unix 确定性）；
 - `boundary-write-end-filter-removed`（#1155 r3 评审 P2-1；fix-r1 改绑，
   DeepSeek P2-2）：扫描去掉 O_WRONLY/O_RDWR 访问模式过滤——健康路径上陌生
   进程的读端（同为 `pipe:[inode]` fd）误报为存活写端，扫描错误进 dead-helper
@@ -187,7 +205,7 @@ etxtbsy` 标记，其他 exec 错误（如 EAGAIN）发 `#1125 exec-error`，在
 
 ```sh
 CARGO_TARGET_DIR=<绝对路径> python3 -I negative_controls.py NEW_OUT_DIR
-# 锚点新鲜度预检（须打印 `23 anchors: ok` 后退出 0）
+# 锚点新鲜度预检（须打印 `25 anchors: ok` 后退出 0）
 python3 -I negative_controls.py --check-anchors
 ```
 
@@ -203,6 +221,6 @@ Linux 宿主（cb8 / CI）上成立；`boundary-write-end-filter-removed` /
 `stranger-reap-removed` / `stranger-pid-kill-removed` 依赖 `/proc` 与
 `PR_SET_CHILD_SUBREAPER`（后两个中前者绑定 cfg linux 的单元测试、后者绑定
 pid_mode 专属件），同为 **Linux 契约**（非 Linux 内核上扫描与收割
-被 cfg 掉，宿主预期 SURVIVED）；其余 14 个变异体在任意 unix 宿主上确定性
+被 cfg 掉，宿主预期 SURVIVED）；其余 16 个变异体在任意 unix 宿主上确定性
 判杀（unix 平台无关，非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
