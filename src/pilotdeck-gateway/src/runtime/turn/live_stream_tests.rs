@@ -3466,6 +3466,7 @@ struct RecordingStore {
     kind: &'static str,
     fail: usize,
     completes: AtomicUsize,
+    order_violations: AtomicUsize,
     attempts: AtomicUsize,
     gate: Mutex<Option<(oneshot::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
 }
@@ -3560,6 +3561,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         kind: ["turn_started", "accepted_input", "turn_result"][phase],
         fail: usize::from(action == "failure"),
         completes: AtomicUsize::new(0),
+        order_violations: AtomicUsize::new(0),
         attempts: AtomicUsize::new(0),
         gate: Mutex::new(Some((entered, wait))),
     });
@@ -4746,6 +4748,7 @@ async fn wire_durable_messages_match_ts_yield_before_callback() {
                     kind: row_kind,
                     fail: usize::from(fail),
                     completes: AtomicUsize::new(0),
+                    order_violations: AtomicUsize::new(0),
                     attempts: AtomicUsize::new(0),
                     gate: Mutex::new(None),
                 }),

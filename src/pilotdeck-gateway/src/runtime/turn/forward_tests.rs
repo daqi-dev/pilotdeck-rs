@@ -66,6 +66,12 @@ struct OrderedStore(Arc<RecordingStore>, Arc<Handler>);
 impl TranscriptStore for OrderedStore {
     fn append(&self, key: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
         if entry.get("type") == Some(&"turn_result".into()) {
+            // The append runs inside the production `spawn_blocking` worker. A
+            // panic there lands in a JoinHandle nobody awaits, so record the
+            // ordering violation where the owning test can see it (#1219).
+            if self.1.disposed.load(Ordering::SeqCst) != 1 {
+                self.0.order_violations.fetch_add(1, Ordering::SeqCst);
+            }
             assert_eq!(
                 self.1.disposed.load(Ordering::SeqCst),
                 1,
@@ -166,6 +172,7 @@ impl Fixture {
             kind,
             fail: usize::from(!kind.is_empty() && row.get("noFail") != Some(&JsValue::Bool(true))),
             completes: AtomicUsize::new(0),
+            order_violations: AtomicUsize::new(0),
             attempts: AtomicUsize::new(0),
             gate: Mutex::new(None),
         });
@@ -842,6 +849,11 @@ async fn forward_status_fail_drop() {
         0,
         "#1219 [status-fail-drop]: no durable turn_result without a consumer"
     );
+    assert_eq!(
+        f.store.order_violations.load(Ordering::SeqCst),
+        0,
+        "#1219 [status-fail-drop]: no out-of-order turn_result from the failed worker"
+    );
 }
 
 case!(forward_malformed_null_first,);
@@ -1042,6 +1054,7 @@ async fn forward_real_status_write_error() {
         kind: "agent_status_message",
         fail: 1,
         completes: AtomicUsize::new(0),
+        order_violations: AtomicUsize::new(0),
         attempts: AtomicUsize::new(0),
         gate: Mutex::new(None),
     });
