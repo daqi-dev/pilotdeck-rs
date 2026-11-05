@@ -660,6 +660,37 @@ fn guidance_audio_form_names_project_local_path() {
 }
 
 #[test]
+fn missing_audio_is_skipped_without_diagnostic() {
+    let scratch = Scratch::new();
+    // Gate r6 boundary P1 (TS probe, `_tmp/20261105-issue-1321-merge/audio-probe`):
+    // TS `collectRegisteredAttachmentReadFiles` stats audio and swallows a
+    // failure (ENOENT -> allowedReadFiles empty, agentInput is the bare
+    // message) while the resolver is never called. Rust must mirror that: a
+    // missing audio path is skipped silently — no diagnostic, no turn failure.
+    let missing = scratch.lease("gone.mp3");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&missing, "audio/mpeg")],
+    )
+    .expect("#1321 a missing audio path must not fail the turn");
+    // No block, no note and no diagnostic leaves the plain text turn
+    // (composer :67-72), exactly the TS probe's `{"type":"text","text":"hi"}`.
+    negative_assert!(
+        result.get("type") == Some(&"text".into()) && result.get("text") == Some(&message("hello")),
+        "#1321 a missing audio must fall back to the plain text turn"
+    );
+    negative_assert!(
+        result.get("content").is_none(),
+        "#1321 a missing audio must not produce blocks (including diagnostics)"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1321 a missing audio must not register allowedReadFiles"
+    );
+}
+
+#[test]
 fn content_attachments_inline_before_path_checks() {
     let scratch = Scratch::new();
     // TS GatewayAttachmentTurnComposer.ts:212-227 — content blocks are
