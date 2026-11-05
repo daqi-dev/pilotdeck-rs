@@ -40,10 +40,15 @@ Node v22.22.0 (macOS arm64) raw-socket captures for issue #699.
   counts; a single long value lands on the same 16,383/16,384 boundary; an
   unterminated line is charged as it arrives (the 16,384-raw-byte
   completed-field + 16,368-byte incomplete-line shape still gets Node's 67-byte
-  431); 90,000 uncounted leading value whitespace bytes are accepted by Node
-  (the Rust raw cap answers earlier, a registered difference); 4,097 tiny
-  fields are accepted by Node (hyper's 4,096-slot `max_headers` backstop is a
-  registered difference).
+  431); 90,000 uncounted leading value whitespace bytes are accepted by Node,
+  and since #1555 Rust drops those bytes from the stream too instead of
+  charging them to its raw cap; 4,097 tiny fields are accepted by Node, and
+  since #1555 `max_headers` is sized from Node's counted budget so the same
+  head reaches the Rust handler. Both cells are aligned, not registered
+  differences — see
+  `specs/gateway-parity/diffs/A7.4-HTTPSTORE-431-408-SHAPE-001-R6.md`; the
+  guard's raw cap now only bounds whitespace it still forwards (obsolete line
+  folding), which stays the unapproved difference registered in R3.
 
 Key timing facts (do not normalize away):
 
