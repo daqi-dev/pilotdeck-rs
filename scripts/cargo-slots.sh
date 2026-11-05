@@ -1,19 +1,37 @@
 #!/usr/bin/env bash
-# cargo-slots.sh — 开编译/测试前看一眼：同时在跑的 cargo 进程是否已到人定上限（CLAUDE.md「资源上限」：≤ 4）。
-# 计数口径：命令以 cargo 可执行文件开头的进程（含 build/test/check/clippy/run/bench/doc，及 cargo-clippy 等子命令二进制），
-# 不数 rustc（它是 cargo 的子进程，数了会重复）。
+# cargo-slots.sh — 开编译/测试前看一眼：在跑的 cargo 进程是否已到统一闸的名额。
+# 名额唯一来源：统一闸 `cargo-slot --status` 输出里的「名额 used/N」分母（cap 配置在
+# ~/ws/pdrs-ops/scripts/cargo-slot/cargo_gate.py 的 SLOT_DEFAULTS，按主机：本机 2 / cb8 4 /
+# macmini 2 / mbp2 2，11-05 21:4x 人定）。本脚本不再自带数字——旧默认 4 与真闸 2 是两套口径，
+# 人照着跑会把「满」看成「有空位」，放行到超名额后白排队。
+# 拿不到闸或其名额行就 fail-closed（打印原因、退出 2），绝不悄悄退回某个默认值。
+# 可用 PDRS_CARGO_SLOT_BIN 指定闸的位置（默认 ~/ws/pdrs-ops/bin/cargo-slot），供换机 / 负控使用。
+# 计数口径：命令以 cargo 可执行文件开头的进程（含 build/test/check/clippy/run/bench/doc，及
+# cargo-clippy 等子命令二进制），不数 rustc（它是 cargo 的子进程，数了会重复）。
 # 同一进程树只算一次：`cargo clippy` 会派生 `cargo-clippy`，其下再派生 `cargo check`，三层首词都匹配 cargo(-xxx)，
 # 逐个 grep 会把一次 clippy 记成 2–3 次（11-05 巡检据此误判「7–8 棵树绕过闸门」，实际一条都没绕过；
 # fleet.py 已按祖先去重，本脚本对齐）。
-# 用法：scripts/cargo-slots.sh [上限]   退出码：0 有空位 · 1 已满（调用方应等待后重试）· 2 上限非法 · 3 无法取样
-# 上限取值：命令行参数优先，其次环境变量 PDRS_CARGO_SLOTS，默认 4。
-# 来由：宿主链按主机核数配置名额（cb8 10、macmini 6、mbp2 4、本机仍 4），见决策卡
-# decisions-20261101-host-throughput.md（_tmp/20261101-1140-speedup/）。
+# 用法：scripts/cargo-slots.sh（不再接受上限参数：名额由统一闸决定）
+# 退出码：0 有空位 · 1 已满（调用方应等待后重试）· 2 拿不到统一闸的名额（fail-closed，不得当成「有名额」）· 3 无法取样
 set -uo pipefail
-CAP="${1:-${PDRS_CARGO_SLOTS:-4}}"
+GATE=${PDRS_CARGO_SLOT_BIN:-$HOME/ws/pdrs-ops/bin/cargo-slot}
+if [ $# -gt 0 ]; then
+  echo "cargo-slots: 不再接受上限参数（收到「${1}」）；名额以统一闸 ${GATE} --status 为准" >&2
+  exit 2
+fi
+if [ ! -x "$GATE" ]; then
+  echo "cargo-slots: 统一闸不可用（${GATE} 不存在或不可执行）→ 无法确定名额，fail-closed" >&2
+  exit 2
+fi
+status=$("$GATE" --status 2>&1) || { rc=$?; echo "cargo-slots: 统一闸 ${GATE} --status 失败（rc=${rc}）：${status}" >&2; exit 2; }
+pair=$(printf '%s\n' "$status" | sed -n 's/.*名额[[:space:]]*\([0-9][0-9]*\)\/\([0-9][0-9]*\).*/\1 \2/p' | head -1)
+CAP=${pair#* }
 # 只接受正整数（去掉首尾空白）；0、负数、非数字一律报错退出 2，不静默变成「永远满」（#1287 r1 P2-1）
 CAP="${CAP//[[:space:]]/}"
-case "$CAP" in ''|*[!0-9]*|0*) echo "cargo-slots: 上限必须是正整数（参数或 PDRS_CARGO_SLOTS），实际「${CAP}」" >&2; exit 2;; esac
+case "$CAP" in
+  ''|*[!0-9]*|0*) echo "cargo-slots: 解不出统一闸的名额（${GATE} --status 输出：${status}）→ fail-closed" >&2; exit 2;;
+esac
+used=${pair%% *}
 # 一次 ps 取全 pid/ppid/args，再从叶子往上归并：沿父指针上溯，祖先链里已经有 cargo 的不再另计，
 # 只剩「祖先里没有 cargo」的 cargo 作为每棵进程树的根，数根即数并发槽位。按整条祖先链而不是只看直接父进程，
 # 是为了覆盖 cargo → rustc → build-script → cargo（build.rs 里再起 cargo）这类中间夹了非 cargo 进程的同一条树。
@@ -35,5 +53,5 @@ n=$(printf '%s\n' "$snap" | awk '
           if (!(q in isc)) c++
         }
         print c+0 }')
-echo "cargo-slots: 在跑 $n / 上限 $CAP"
+echo "cargo-slots: 在跑 ${n} / 上限 ${CAP}（名额来自统一闸 cargo-slot，闸内已占 ${used}）"
 [ "$n" -lt "$CAP" ]

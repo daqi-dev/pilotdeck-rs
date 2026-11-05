@@ -1137,10 +1137,14 @@ def test_probe_rust_tests() -> None:
 
     The probe is its own workspace, so the product `cargo test --all` /
     clippy / fmt jobs never touch it. CI runs this Python suite, which now
-    runs the Rust tests too. `cargo-slots.sh` is checked first (the repo cap
-    is four concurrent cargo processes); a missing cargo or a full slot set
-    is a hard failure here, not a silent skip, so a green suite cannot hide
-    unexecuted probe tests.
+    runs the Rust tests too. `cargo-slots.sh` is checked first: a full slot
+    set is a hard failure here, not a silent skip, so a green suite cannot
+    hide unexecuted probe tests.
+
+    11-05：`cargo-slots.sh` 的名额只来自统一闸（`~/ws/pdrs-ops/bin/cargo-slot`，
+    按主机 2 / 4 / 2 / 2）。CI 与普通开发机没有这把闸，脚本按设计 fail-closed
+    退出 2——那说明本机没有共享名额可等，不是「槽位已满」，继续跑 probe 测试；
+    退出 1（真的满）仍然是硬失败。
     """
     repo = SCRIPT.resolve().parents[2]
     cargo = shutil.which("cargo")
@@ -1153,7 +1157,10 @@ def test_probe_rust_tests() -> None:
         os.environ.copy(),
         60,
     )
-    if slots["timedOut"] or slots["exit"] != 0:
+    if slots["exit"] == 2 and not slots["timedOut"]:
+        # 统一闸不可用（fail-closed）：本机没有共享名额，跑就是了。
+        print("note: 统一 cargo 闸不可用（cargo-slots.sh exit 2），本机无共享名额可等，继续")
+    elif slots["timedOut"] or slots["exit"] != 0:
         check("probe Rust tests: cargo slot is available", False,
               (slots["stdout"] + slots["stderr"]).strip()[-300:])
         return
