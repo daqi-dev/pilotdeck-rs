@@ -74,6 +74,13 @@ jobs:
                         src/pilotdeck-cli/tests/fixtures/sdk-stdin/negative_controls.py; do
             python3 -I "$script" --self-check
           done
+      # #1595 / #1594：`.gitleaks.toml` 的值级放行必须是 regexTarget="secret" + ^…$ 锚定
+      # （原来 7 条哈希类用 match 是子串语义，Secret 里含该哈希的更长值会被顺带放行）。
+      # 这里只跑不需要 gitleaks 的静态口径 + 检查器自身的变异负控；行为负控（真跑 gitleaks
+      # 造「恰等于 / 含但不等于」样本）在有 gitleaks 的机器上由 `--static` 之外的模式执行，
+      # CI runner 不带 gitleaks（红线：不下载预编译二进制）。
+      - name: gitleaks 放行口径静态检查（#1595/#1594，含变异负控）
+        run: python3 -I scripts/check-gitleaks-allowlist.py --static --self-check
 
   # #1632：session-assembly-1316 负控夹具此前只在本机与宿主链跑，CI 里没有任何闸门——
   # 锚点过期（源码改了、变异表没跟）或某条变异不再被杀，都没有 CI 步骤会红。先做静态
