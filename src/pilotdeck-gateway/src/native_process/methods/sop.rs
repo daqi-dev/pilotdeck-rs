@@ -1,5 +1,4 @@
 use super::super::requests::Requests;
-use super::string;
 use crate::runtime::connection::{Call, RequestError};
 use pilotdeck_protocol::JsValue;
 
@@ -25,9 +24,7 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
-            // sessionKey is required for both methods (GatewaySopStatusInput).
-            let _session_key = string(&params, "sessionKey")?;
-            let _ = method;
+            let _ = (method, params);
 
             // The isolated native process never attaches an SOP runtime, so
             // both methods return CAPABILITY_UNAVAILABLE. For sop_resume the
@@ -39,6 +36,16 @@ impl Requests {
             // CAPABILITY_UNAVAILABLE, like a TS gateway whose resumeSop
             // callback is absent. The busy and override guards return
             // together with a wired SOP runtime (#1313 and follow-ups).
+            //
+            // The capability gate also precedes every params guard, including
+            // the required sessionKey: the TS connection layer has no runtime
+            // schema parsing for params (GatewayWsConnection.ts:630-637
+            // isRequestFrame validates only type/id/method and dispatch passes
+            // `frame.params as never`), and the InProcessGateway.ts:636/:640
+            // capability check is the first statement of sopStatus/resumeSop,
+            // so the callback's schema parse is never reached. A frame missing
+            // sessionKey — or any other required field — therefore answers
+            // CAPABILITY_UNAVAILABLE, not a validation error.
             Err(unavailable(
                 "StaffDeck SOP is not configured on this isolated native process.",
             ))
@@ -51,17 +58,20 @@ mod tests {
     use crate::native_process::management_tests::setup;
     use crate::negative_assert_eq;
 
-    // sop_status: sessionKey missing → validation error, not CAPABILITY_UNAVAILABLE.
+    // sop_status: sessionKey missing → CAPABILITY_UNAVAILABLE, not a validation
+    // error. In TS the capability gate is the first statement of sopStatus
+    // (InProcessGateway.ts:636) and the connection layer never schema-parses
+    // params, so the required-field check is unreachable.
     #[tokio::test]
-    async fn sop_status_requires_session_key() {
+    async fn sop_status_missing_session_key_hits_capability_gate_first() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
         let params = pilotdeck_protocol::JsValue::Object(Default::default());
         let result = requests.sop_request("sop_status".into(), params).await;
         negative_assert_eq!(
             result.unwrap_err().code.as_str(),
-            "gateway_request_failed",
-            "#1312 sop_status missing sessionKey"
+            "CAPABILITY_UNAVAILABLE",
+            "#1312 sop_status missing sessionKey hits capability gate first"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
