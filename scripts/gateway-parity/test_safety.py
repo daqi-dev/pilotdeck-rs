@@ -2468,6 +2468,81 @@ class RetirementScoring(unittest.TestCase):
             self.assertTrue(health['status'] == 'HIT', f'#20 all-answer rounds aggregate HIT: {health}')
             self.assertNotIn('/health', merged['unhit'])
 
+    def _degraded_round_row(self, label='round-01'):
+        # A legal degraded round: the only stream method answered with an
+        # error (backed by a receive frame) instead of ok, while a request
+        # method still answered ok.  Round-01 therefore has no ok stream
+        # outcome for the STREAM_OK_NON_FINAL control to mutate.
+        outcomes = [
+            {'method': 'submit_turn', 'outcome': 'error', 'errorCode': 'PROVIDER_UNAVAILABLE',
+             'shape': 'stream'},
+            {'method': 'run_get', 'outcome': 'ok', 'shape': 'request'},
+        ]
+        frames = [
+            {'seq': 1, 'connection': 1, 'direction': 'send',
+             'frame': {'type': 'request', 'id': 'id-turn', 'method': 'submit_turn'}},
+            {'seq': 2, 'connection': 1, 'direction': 'receive',
+             'frame': {'type': 'event', 'id': 'id-turn', 'final': True,
+                       'event': {'type': 'error', 'code': 'PROVIDER_UNAVAILABLE'}}},
+            {'seq': 3, 'connection': 1, 'direction': 'send',
+             'frame': {'type': 'request', 'id': 'id-get', 'method': 'run_get'}},
+            {'seq': 4, 'connection': 1, 'direction': 'receive',
+             'frame': {'type': 'response', 'id': 'id-get', 'ok': True, 'result': {}}},
+        ]
+        return {'label': label, 'driverExitCode': 0, 'outcomes': outcomes, 'frames': frames,
+                'http': [{'path': '/health', 'status': 200}],
+                'processes': [{'pid': 7}],
+                'ports': {'mock': 28761, 'gateway': 28762},
+                'runtime': {'pilotHome': '/nonexistent-home'},
+                'census': {'rows': [{'pid': 7}], 'declared': [7], 'declaredAlive': True},
+                'connections': {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}],
+                                'commandStatus': 'ok'},
+                'listeners': {'pid': 7, 'addresses': ['127.0.0.1:28762'], 'loopbackOnly': True},
+                'audit': {'allStopped': True}}
+
+    def test_degraded_round_keeps_full_report_and_marks_control_unavailable(self):
+        # P1 (#1355 fix-r4): when round-01 has no ok stream outcome (a legal
+        # degraded round), the STREAM_OK_NON_FINAL control cannot be mutated.
+        # Pre-fix it raised EvidenceError and retirement_report returned a
+        # 5-key BLOCKED stub with all 16 scoring faces missing.  The control is
+        # now NOT_APPLICABLE (+reason), the controls face is BLOCKED (never
+        # PASS / NOT_RUN), and the full report is still assembled.
+        expected = ['submit_turn', 'run_get']
+        row = self._degraded_round_row()
+        controls = self.session._retirement_controls(row, expected)
+        # Every class is still evaluated on the same round; only the
+        # unestablishable one is marked unavailable (never PASS).
+        self.assertEqual([(c['class'], c['status']) for c in controls['classes']],
+                         [('TS_FALLBACK', 'PASS'), ('TS_HOST', 'PASS'),
+                          ('UNIFORM_UNAVAILABLE', 'PASS'), ('FORWARDING_MISLABELED', 'PASS'),
+                          ('STREAM_ERROR_NO_FRAME', 'PASS'),
+                          ('STREAM_OK_NON_FINAL', 'NOT_APPLICABLE')])
+        unavailable = next(c for c in controls['classes'] if c['class'] == 'STREAM_OK_NON_FINAL')
+        self.assertIn('no ok stream outcome', unavailable['reason'])
+        # The report keeps every scoring face: patch the round/baseline inputs
+        # so the degraded round is the only round and call the real wrapper.
+        with patch.object(self.session, '_retirement_expected', return_value=(expected, [])), \
+                patch.object(self.session, '_retirement_baseline_revision', return_value='deadbeef'), \
+                patch.object(self.session, '_retirement_ports_available', return_value=True), \
+                patch.object(self.session, '_retirement_round', return_value=row), \
+                patch.object(self.session, '_retirement_entry_inventory',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_entry_inventory_aggregate',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_js_host_census',
+                             return_value={'status': 'PASS'}):
+            report = self.session.retirement_report(Path('out'), Path('baseline'))
+        for face in ('expected', 'executed', 'rounds', 'methodCoverage', 'entryInventory',
+                     'hostAudit', 'controls', 'coldRestartRollback', 'topology', 'portAudit',
+                     'processAudit', 'cleanupAudit', 'baseline', 'reason', 'executionStatus',
+                     'acceptanceStatus'):
+            self.assertIn(face, report, f'#31 degraded-round report lacks face {face}')
+        self.assertEqual(report['controls']['status'], 'BLOCKED', report['controls'])
+        self.assertTrue(report['controls']['reason'].startswith('positive mutation control(s)'),
+                        report['controls'].get('reason'))
+        self.assertEqual(report['executionStatus'], 'BLOCKED', report['executionStatus'])
+        self.assertNotEqual(report['executionStatus'], 'NOT_RUN')
+
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for
         # COVERAGE and is itself an EVIDENCE_BACKING violation.
