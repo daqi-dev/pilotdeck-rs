@@ -36,7 +36,7 @@
 ```bash
 python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过 / 1 大包缺分段表 / 2 读不了或 scope 写坏
 python3 -I scripts/check-taskbook-segments.py --print-skeleton
-python3 -I scripts/test-check-taskbook-segments.py        # 14 条正控 / 负控
+python3 -I scripts/test-check-taskbook-segments.py        # 26 条正控 / 负控（负控钉死具体报错文案）
 ```
 
 命中大包的任务书必须含 `## 分段交付`（段名 / 涉及文件 / 交付物 / 预估时长 ≤90 min / 段间依赖，≥2 段）与 `## 续跑`（进度文件 + 第 N 段失败从哪继续）。
