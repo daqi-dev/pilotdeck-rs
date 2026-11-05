@@ -34,18 +34,249 @@ fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
 }
 
+/// TS AttachmentResolver.ts:36 — `DEFAULT_MAX_FILE_BYTES = 1_000_000` (1 MB):
+/// larger file attachments are skipped with an `Attachment … skipped`
+/// diagnostic instead of being resolved inline.
+const MAX_INLINE_FILE_BYTES: u64 = 1_000_000;
+/// TS AttachmentResolver.ts:37 — `DEFAULT_MAX_IMAGE_BYTES = 5_242_880` (5 MiB):
+/// larger images are skipped with an `Image … skipped` diagnostic instead of
+/// being base64-inlined (verified against the TS source by the
+/// `_tmp/20261105-issue-1321-fix-r1/ts-probe/` probe).
+const MAX_INLINE_IMAGE_BYTES: u64 = 5_242_880;
+
+/// Per-attachment inline byte cap, mirroring TS AttachmentResolver
+/// (AttachmentResolver.ts:36-37): 5 MiB for images, 1 MB for other files.
+fn inline_byte_limit(mime: &str) -> u64 {
+    if mime.starts_with("image/") {
+        MAX_INLINE_IMAGE_BYTES
+    } else {
+        MAX_INLINE_FILE_BYTES
+    }
+}
+
 /// Returns true only if `path` is an absolute path strictly under
-/// `<project>/.tmp/chat-upload-leases/` with no `..` components.
-/// Guards P1-1: only hard-linked lease files may be inlined or added
-/// to allowedReadFiles; arbitrary client-supplied paths are rejected.
-fn is_safe_lease_path(path: &str, project: &Path) -> bool {
+/// `lease_root` (the canonical `<project>/.tmp/chat-upload-leases/`) with no
+/// `..` components, and `path` itself canonicalizes — symlinks followed — to
+/// a location still under `lease_root`. Guards P1-1: only hard-linked lease
+/// files may be inlined or added to allowedReadFiles; arbitrary
+/// client-supplied paths, including a lease-directory symlink that escapes
+/// the project, are rejected here before they can reach allowedReadFiles or
+/// fs::read (same shape as `read_at`'s PROJECT_PATH_FORBIDDEN symlink check
+/// in upload/mod.rs). Paths that cannot be resolved at all (missing file,
+/// dangling symlink) are rejected too: the guard must not pass a path it
+/// could not verify.
+fn is_safe_lease_path(path: &str, lease_root: &Path) -> bool {
     let p = Path::new(path);
     if p.components().any(|c| c == Component::ParentDir) {
         return false;
     }
-    let project_canon = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    fs::canonicalize(p).is_ok_and(|resolved| resolved.starts_with(lease_root))
+}
+
+/// `Image attachment not found: ${absolute} (${error}).` — the missing-file
+/// diagnostic of TS AttachmentResolver (AttachmentResolver.ts:189-199). A
+/// read failure here (lease TTL cleanup, permissions, a directory swap)
+/// uses the same channel so the attachment is never silently dropped.
+fn image_not_found(path: &str, error: &std::io::Error) -> String {
+    format!("Image attachment not found: {path} ({error}).")
+}
+
+/// `Attachment not found: ${absolute} (${error}).` — the missing-file
+/// diagnostic of TS AttachmentResolver for non-image files
+/// (AttachmentResolver.ts:131-143).
+fn file_not_found(path: &str, error: &std::io::Error) -> String {
+    format!("Attachment not found: {path} ({error}).")
+}
+
+/// Composes the blocks-type agent input for a turn with attachments,
+/// mirroring TS GatewayAttachmentTurnComposer: a text block for the message,
+/// base64 image blocks for inlined images, an `[Attachment diagnostics]`
+/// text block for skipped or unreadable attachments
+/// (GatewayAttachmentTurnComposer.ts:270-274, verified by the
+/// `_tmp/20261105-issue-1321-fix-r1/ts-probe/` probe), and the
+/// registered-path note. Extracted from `prepare_attachment_turn` so the
+/// lease guard and the size caps are unit-testable without the full native
+/// assembly; runs entirely on a blocking thread.
+pub(super) fn compose_attachment_turn(
+    project_dir: &Path,
+    message: &JsValue,
+    attachments: &[JsValue],
+) -> Result<JsValue, SubmitError> {
+    let mut blocks: Vec<JsValue> = Vec::new();
+    if let JsValue::String(text) = message
+        && !text.is_empty()
+    {
+        blocks.push(object([("type", "text".into()), ("text", message.clone())]));
+    }
+    struct AttachEntry {
+        path: String,
+        name: String,
+        mime: String,
+        declared_bytes: Option<f64>,
+    }
+    let mut entries: Vec<AttachEntry> = Vec::new();
+    for attachment in attachments {
+        // TS drops attachments without a usable path silently instead of
+        // rejecting them (GatewayAttachmentTurnComposer.ts:102
+        // `if (!attachment.path) continue;` and :229): missing, empty, and
+        // non-UTF-8 paths are skipped the same way here.
+        let path = attachment
+            .get("path")
+            .and_then(JsValue::as_string)
+            .and_then(|s| s.to_utf8().ok())
+            .unwrap_or_default();
+        if path.is_empty() {
+            continue;
+        }
+        let name = attachment
+            .get("name")
+            .and_then(JsValue::as_string)
+            .and_then(|s| s.to_utf8().ok())
+            .unwrap_or_else(|| {
+                Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "attachment".into())
+            });
+        let mime = attachment
+            .get("mimeType")
+            .and_then(JsValue::as_string)
+            .and_then(|s| s.to_utf8().ok())
+            .unwrap_or_default();
+        // Lease attachments carry the upload manifest's verified `bytes`;
+        // client-supplied attachments may declare any number.
+        let declared_bytes = attachment.get("bytes").and_then(JsValue::as_number);
+        entries.push(AttachEntry {
+            path,
+            name,
+            mime,
+            declared_bytes,
+        });
+    }
+    // P1-1: the canonical lease root is computed once per prepare (simplify#2)
+    // and every attachment path must canonicalize inside it before it can
+    // reach allowedReadFiles or fs::read.
+    let project_canon = fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
     let lease_root = project_canon.join(".tmp").join("chat-upload-leases");
-    p.starts_with(&lease_root)
+    let mut allowed_paths: Vec<JsValue> = Vec::new();
+    let mut note_lines: Vec<String> = Vec::new();
+    let mut diagnostics: Vec<String> = Vec::new();
+    let mut image_blocks: Vec<JsValue> = Vec::new();
+    for entry in &entries {
+        if !is_safe_lease_path(&entry.path, &lease_root) {
+            return Err(failure(
+                "Attachment path is outside the permitted lease directory.",
+            ));
+        }
+        allowed_paths.push(JsValue::from(entry.path.as_str()));
+        note_lines.push(format!("- {}: {}", entry.name, entry.path));
+        let image = entry.mime.starts_with("image/");
+        let limit = inline_byte_limit(&entry.mime);
+        // P1-2: check the byte count before reading so an oversized
+        // attachment is never pulled into memory (TS stat cap,
+        // AttachmentResolver.ts:164-175 and :202-212). Prefer the
+        // manifest-declared `bytes`; `fs::metadata` is authoritative whenever
+        // it disagrees, so a small declared size cannot smuggle an oversized
+        // file past the stat.
+        let oversize = if let Some(bytes) =
+            entry.declared_bytes.filter(|b| b.is_finite() && *b >= 0.0)
+            && bytes > limit as f64
+        {
+            Some(bytes)
+        } else {
+            match fs::metadata(&entry.path) {
+                Ok(info) if info.len() > limit => Some(info.len() as f64),
+                Ok(_) => None,
+                Err(error) => {
+                    diagnostics.push(if image {
+                        image_not_found(&entry.path, &error)
+                    } else {
+                        file_not_found(&entry.path, &error)
+                    });
+                    continue;
+                }
+            }
+        };
+        if let Some(bytes) = oversize {
+            diagnostics.push(if image {
+                // AttachmentResolver.ts:202-212
+                format!(
+                    "Image {path} is {bytes} bytes (limit {limit}); skipped \
+                     (PilotDeck does not resize, intentional_difference §4.5).",
+                    path = entry.path
+                )
+            } else {
+                // AttachmentResolver.ts:164-175
+                format!(
+                    "Attachment {path} is {bytes} bytes (limit {limit}); skipped.",
+                    path = entry.path
+                )
+            });
+            continue;
+        }
+        if !image {
+            // Non-image attachments stay registered path references (the note
+            // above); only images are read for inlining.
+            continue;
+        }
+        // P2a-1: a read failure must not silently drop the attachment —
+        // lease TTL cleanup, permissions, or a directory in place of the
+        // file surfaces as a TS-shaped diagnostic instead.
+        match fs::read(&entry.path) {
+            Ok(bytes) => {
+                let encoded = base64_encode(&bytes);
+                image_blocks.push(object([
+                    ("type", "image".into()),
+                    (
+                        "source",
+                        object([
+                            ("type", "base64".into()),
+                            ("media_type", JsValue::from(entry.mime.as_str())),
+                            ("data", JsValue::from(encoded.as_str())),
+                        ]),
+                    ),
+                ]));
+            }
+            Err(error) => diagnostics.push(image_not_found(&entry.path, &error)),
+        }
+    }
+    blocks.extend(image_blocks);
+    if !diagnostics.is_empty() {
+        // GatewayAttachmentTurnComposer.ts:270-274
+        let note = format!(
+            "[Attachment diagnostics]\n{}",
+            diagnostics
+                .iter()
+                .map(|message| format!("- {message}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        blocks.push(object([
+            ("type", "text".into()),
+            ("text", JsValue::from(note.as_str())),
+        ]));
+    }
+    if !note_lines.is_empty() {
+        let header = "[Registered attachment files in this session:]";
+        let note = format!(
+            "{header}\n{lines}\nThese are path references for reuse.",
+            lines = note_lines.join("\n")
+        );
+        blocks.push(object([
+            ("type", "text".into()),
+            ("text", JsValue::from(note.as_str())),
+        ]));
+    }
+    let mut result = object([
+        ("type", "blocks".into()),
+        ("content", JsValue::Array(blocks)),
+    ]);
+    if !allowed_paths.is_empty()
+        && let JsValue::Object(ref mut o) = result
+    {
+        o.insert("allowedReadFiles".into(), JsValue::Array(allowed_paths));
+    }
+    Ok(result)
 }
 
 fn failure(message: impl Into<String>) -> SubmitError {
@@ -292,109 +523,17 @@ impl SubmitHostServices for Services {
             if attachments.is_empty() {
                 return Ok(object([("type", "text".into()), ("text", message.clone())]));
             }
-            // Build a blocks-type agent input mirroring TS GatewayAttachmentTurnComposer.
-            // For each lease attachment we emit a `file` or `image` block using the
-            // leased path (hard-linked, stable for the duration of the turn).
-            let mut blocks: Vec<JsValue> = Vec::new();
-            if let JsValue::String(text) = message
-                && !text.is_empty()
-            {
-                blocks.push(object([("type", "text".into()), ("text", message.clone())]));
-            }
-            // Build the attachment path note so the agent can use read_file.
-            // P1-1: Only paths under the project's lease directory are permitted.
-            // Bare absolute paths and any path with '..' are rejected here before
-            // they can reach allowedReadFiles or fs::read.
             let project_dir = self.options.project.clone();
-            let mut allowed_paths: Vec<JsValue> = Vec::new();
-            let mut note_lines: Vec<String> = Vec::new();
-            // P1-3: Collect (path, mime, name) for lease-validated attachments,
-            // then read files in a blocking task so the async executor is not blocked.
-            struct AttachEntry {
-                path: String,
-                mime: String,
-            }
-            let mut entries: Vec<AttachEntry> = Vec::new();
-            for attachment in &attachments {
-                let path = attachment
-                    .get("path")
-                    .and_then(JsValue::as_string)
-                    .and_then(|s| s.to_utf8().ok())
-                    .unwrap_or_default();
-                let name = attachment
-                    .get("name")
-                    .and_then(JsValue::as_string)
-                    .and_then(|s| s.to_utf8().ok())
-                    .unwrap_or_else(|| {
-                        std::path::Path::new(&path)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "attachment".into())
-                    });
-                let mime = attachment
-                    .get("mimeType")
-                    .and_then(JsValue::as_string)
-                    .and_then(|s| s.to_utf8().ok())
-                    .unwrap_or_default();
-                if !path.is_empty() {
-                    // P1-1: Reject any path that is not under the lease directory.
-                    if !is_safe_lease_path(&path, &project_dir) {
-                        return Err(failure(
-                            "Attachment path is outside the permitted lease directory.",
-                        ));
-                    }
-                    allowed_paths.push(JsValue::from(path.as_str()));
-                    note_lines.push(format!("- {name}: {path}"));
-                    entries.push(AttachEntry { path, mime });
-                }
-            }
-            // P1-3: Read image bytes on a blocking thread (mirrors resolve_attachments).
-            let image_blocks: Vec<JsValue> = tokio::task::spawn_blocking(move || {
-                let mut out = Vec::new();
-                for entry in &entries {
-                    if entry.mime.starts_with("image/")
-                        && let Ok(bytes) = std::fs::read(&entry.path)
-                    {
-                        let encoded = base64_encode(&bytes);
-                        out.push(object([
-                            ("type", "image".into()),
-                            (
-                                "source",
-                                object([
-                                    ("type", "base64".into()),
-                                    ("media_type", JsValue::from(entry.mime.as_str())),
-                                    ("data", JsValue::from(encoded.as_str())),
-                                ]),
-                            ),
-                        ]));
-                    }
-                }
-                out
+            let message = message.clone();
+            // P1-3/concurrency#5: the whole composition — the once-per-prepare
+            // lease-root canonicalize (simplify#2), the per-attachment stat and
+            // read — runs on a blocking thread so the async executor is not
+            // blocked.
+            tokio::task::spawn_blocking(move || {
+                compose_attachment_turn(&project_dir, &message, &attachments)
             })
             .await
-            .map_err(|e| failure(e.to_string()))?;
-            blocks.extend(image_blocks);
-            if !note_lines.is_empty() {
-                let header = "[Registered attachment files in this session:]";
-                let note = format!(
-                    "{header}\n{lines}\nThese are path references for reuse.",
-                    lines = note_lines.join("\n")
-                );
-                blocks.push(object([
-                    ("type", "text".into()),
-                    ("text", JsValue::from(note.as_str())),
-                ]));
-            }
-            let mut result = object([
-                ("type", "blocks".into()),
-                ("content", JsValue::Array(blocks)),
-            ]);
-            if !allowed_paths.is_empty()
-                && let JsValue::Object(ref mut o) = result
-            {
-                o.insert("allowedReadFiles".into(), JsValue::Array(allowed_paths));
-            }
-            Ok(result)
+            .map_err(|e| failure(e.to_string()))?
         })
     }
     fn resolve_model_selection<'a>(

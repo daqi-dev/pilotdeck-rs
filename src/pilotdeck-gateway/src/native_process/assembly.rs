@@ -581,21 +581,19 @@ pub(super) async fn start_observed(
         let upload_store = Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 move |key: &pilotdeck_protocol::JsString| {
-                    let path = std::path::PathBuf::from(key.to_utf8().map_err(|_| {
-                        crate::upload::UploadError::dialog(
-                            "PROJECT_NOT_FOUND",
-                            "projectKey is not valid UTF-8.",
-                        )
-                    })?);
+                    // Shared helper `Unknown projectKey: <raw UTF-16>`
+                    // (UploadStore.ts:63, #865 frozen behavior): the other
+                    // 15+ call sites already report the exact UTF-16 units.
+                    let path = match key.to_utf8() {
+                        Ok(utf8) => std::path::PathBuf::from(utf8),
+                        Err(_) => return Err(crate::upload::unknown_project_key(key)),
+                    };
                     // Accept both the canonical path and the logical path.
                     let canonical = std::fs::canonicalize(&upload_project)
                         .unwrap_or_else(|_| upload_project.clone());
                     let requested = std::fs::canonicalize(&path).unwrap_or(path.clone());
                     if requested != canonical && path != upload_project {
-                        return Err(crate::upload::UploadError::dialog(
-                            "PROJECT_NOT_FOUND",
-                            format!("Unknown projectKey: {}", path.display()),
-                        ));
+                        return Err(crate::upload::unknown_project_key(key));
                     }
                     Ok(upload_project.clone())
                 },
