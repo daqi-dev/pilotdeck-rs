@@ -48,8 +48,10 @@ def build(env, out):
             row = json.loads(line)
         except ValueError:
             continue
+        # cargo names the lib target after the crate (`pilotdeck_gateway`), not
+        # the package (`pilotdeck-gateway`); accept either spelling.
         if (row.get('reason') == 'compiler-artifact'
-                and row.get('target', {}).get('name') == 'pilotdeck-gateway'
+                and row.get('target', {}).get('name', '').replace('-', '_') == 'pilotdeck_gateway'
                 and row['target'].get('kind') == ['lib']
                 and row.get('executable')):
             executables.add(row['executable'])
