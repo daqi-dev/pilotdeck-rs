@@ -587,14 +587,31 @@ async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
     // `127.0.0.1:0` would always succeed and every `webhookPort: 0` start
     // would be demoted to the IPv4-only fallback.
     let bound = listener.local_addr()?.port();
-    let shared_with_v4 = TcpListener::bind(("127.0.0.1", bound)).await.is_err();
-    if shared_with_v4 {
+    if v4_port_is_shared(bound).await {
         return Ok(listener);
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::AddrInUse,
         "#1339 `::` is IPv6-only on this host",
     ))
+}
+
+/// True when `127.0.0.1:<port>` is already taken, i.e. the `::` listener above
+/// really does serve IPv4.
+///
+/// #1339 fix-r5 (P1): the probe must not go through `TcpListener::bind`. Rust
+/// std sets `SO_REUSEADDR` on listeners, and on macOS/BSD a socket that sets it
+/// may bind a specific address while a wildcard owns the port — so
+/// `TcpListener::bind(("127.0.0.1", port))` succeeds on a *dual-stack* macOS
+/// host and the caller always fell back to `0.0.0.0` (measured: a v4 socket
+/// with `SO_REUSEADDR` binds, without it gets `EADDRINUSE`). `TcpSocket` sets no
+/// socket options, so the collision it reports is real.
+async fn v4_port_is_shared(port: u16) -> bool {
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    match tokio::net::TcpSocket::new_v4() {
+        Ok(socket) => socket.bind(address).is_err(),
+        Err(_) => false,
+    }
 }
 
 /// Node's `Error: listen <CODE>: <message> <host>:<port>` line for the bind
