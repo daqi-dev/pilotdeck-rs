@@ -235,12 +235,21 @@ fn js_object(fields: Vec<(&str, JsValue)>) -> JsValue {
 
 /// The scripted gateway stub the fixture recorded against: one fixed project
 /// (the fixture root) and a `describeProject` that throws for `boom`.
+/// `list_fails` is the rejecting `listProjects` of residual #2 in
+/// `specs/gateway-parity/diffs/A8.4-API-WEB-001.md` — the fixture never
+/// recorded that path, so the pin test is the only thing that holds it.
 struct ScriptedCatalog {
     root: String,
+    list_fails: bool,
 }
 
 impl ProjectCatalog for ScriptedCatalog {
     fn list_projects(&self) -> Pin<Box<dyn Future<Output = io::Result<JsValue>> + Send + '_>> {
+        if self.list_fails {
+            return Box::pin(std::future::ready(Err(io::Error::other(
+                "catalog exploded",
+            ))));
+        }
         let root = self.root.clone();
         Box::pin(async move {
             let project = js_object(vec![
@@ -380,6 +389,7 @@ fn replay_config(root: &str) -> Config {
         token: "fixture-token".to_owned(),
         catalog: Arc::new(ScriptedCatalog {
             root: root.to_owned(),
+            list_fails: false,
         }),
     }
 }
@@ -633,6 +643,129 @@ async fn project_key_malformed_percent_is_500() {
     assert!(
         !closed,
         "#1348 pin malformed project key: the connection does not hang"
+    );
+}
+
+/// #1348 residual #2 (`specs/gateway-parity/diffs/A8.4-API-WEB-001.md`): TS
+/// `httpRouter.ts:39-43` awaits `gateway.listProjects()` with no try/catch and
+/// `GatewayServer.ts:64-65` discards the handler promise, so a rejection never
+/// reaches the response. Measured on `node v22.22.0` with the same handler
+/// shape (`_tmp/20261106-issue-1348/ts-probe3/`, raw logs kept there): zero
+/// response bytes in all three configurations — connection held open while the
+/// process lives under a swallowing listener, closed within ~5 ms under Node's
+/// default throw mode and under the CLI's `shutdownAndExit(1)` listener. Rust
+/// answers the generic 500 instead of reproducing either.
+#[tokio::test]
+async fn catalog_list_failure_is_500() {
+    let config = Config {
+        token: "fixture-token".to_owned(),
+        catalog: Arc::new(ScriptedCatalog {
+            root: "unused".to_owned(),
+            list_fails: true,
+        }),
+    };
+    let request = b"GET /api/web/projects HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n";
+    let (raw, closed) = exchange(config, native_config(), request, "list-failure").await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 500"),
+        "#1348 pin listProjects rejection: a rejecting catalog answers the mapped 500, not the TS zero-byte rejection: {response:?}"
+    );
+    assert!(
+        response
+            .contains("{\"error\":{\"code\":\"internal_error\",\"message\":\"catalog exploded\"}}"),
+        "#1348 pin listProjects rejection: the 500 carries the catalog error text: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1348 pin listProjects rejection: the connection stays usable after the 500"
+    );
+}
+
+// ------------------------------------------------- file service boundary pins
+
+/// `JSON.stringify` of a service value, for the pins below.
+fn json_of(value: &JsValue) -> String {
+    stringify_json(value)
+        .expect("#1348 stringify a file service value")
+        .expect("#1348 a file service value is never undefined")
+}
+
+/// #1348 boundary audit P2: the component header claims `resolveSafe` rejects
+/// symlinks that point outside the project root, but neither the fixture
+/// (its only link, `inside-link`, points inside) nor any negative control
+/// exercises that branch — the `api-web-boundary-off` switch turns all three
+/// gates off at once, so dropping just the realpath gate stays green. Pin it
+/// directly.
+#[cfg(unix)]
+#[test]
+fn read_rejects_a_symlink_that_leaves_the_root() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1348 create the directory outside the root");
+    fs::write(outside.join("secret.txt"), b"outside the root\n")
+        .expect("#1348 write the file outside the root");
+    std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("escape.txt"))
+        .expect("#1348 link the outside file into the root");
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1348 the fixture root is UTF-8"));
+    match service.read_file("escape.txt") {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "escape.txt",
+            "#1348 boundary pin: the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!(
+            "#1348 boundary pin: a symlink leaving the root answers workspace_boundary, not a read error"
+        ),
+        Ok(_) => panic!("#1348 boundary pin: a symlink leaving the root must not be readable"),
+    }
+}
+
+/// #1348 boundary audit P2: `readFile` serves content while
+/// `stats.size > maxReadBytes` (TS `projectFiles.ts:162` uses `>` as well), so
+/// a file of exactly 1 MiB still returns its content and one byte more does
+/// not. The fixture only has `big.bin` = 1 MiB + 1, which cannot tell `>` from
+/// `>=`; pin the boundary.
+#[test]
+fn read_limit_is_exclusive_at_one_mib() {
+    let (_parent, root) = fixture();
+    fs::write(root.join("exact.txt"), vec![b'a'; 1024 * 1024])
+        .expect("#1348 write the file at the read limit");
+    fs::write(root.join("over.txt"), vec![b'b'; 1024 * 1024 + 1])
+        .expect("#1348 write the file one byte over the read limit");
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1348 the fixture root is UTF-8"));
+
+    let exact = json_of(
+        &service
+            .read_file("exact.txt")
+            .unwrap_or_else(|_| panic!("#1348 read the file at the limit")),
+    );
+    assert!(
+        exact.contains("\"size\":1048576"),
+        "#1348 boundary pin: the exact-limit file reports its size: {exact}"
+    );
+    assert!(
+        exact.contains("\"content\":\"aaaa"),
+        "#1348 boundary pin: a file of exactly maxReadBytes still returns its content (the check is `>`): {exact}"
+    );
+
+    let over = json_of(
+        &service
+            .read_file("over.txt")
+            .unwrap_or_else(|_| panic!("#1348 read the file over the limit")),
+    );
+    assert!(
+        over.contains("\"size\":1048577"),
+        "#1348 boundary pin: the over-limit file reports its size: {over}"
+    );
+    assert!(
+        !over.contains("\"content\""),
+        "#1348 boundary pin: one byte over maxReadBytes answers metadata only: {over}"
+    );
+    assert!(
+        over.contains("\"binary\":false"),
+        "#1348 boundary pin: the over-limit text file keeps its text encoding: {over}"
     );
 }
 

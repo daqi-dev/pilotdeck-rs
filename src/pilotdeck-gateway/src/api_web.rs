@@ -126,8 +126,11 @@ pub(crate) async fn serve(
         && (request.method() == hyper::Method::GET
             || crate::mutants::on("api-web-projects-method-off"))
     {
-        // No try/catch around listProjects in TS: the task book maps the
-        // rejection to the generic 500.
+        // Residual #2 of specs/gateway-parity/diffs/A8.4-API-WEB-001.md: TS
+        // awaits `listProjects()` with no try/catch, so a rejection writes no
+        // response at all (measured: zero bytes, connection either held open
+        // or closed, depending on the host's unhandled-rejection listener).
+        // Rust answers the generic 500 instead of reproducing the hang.
         return Some(Ok(finalize(
             match config.catalog.list_projects().await {
                 Ok(projects) => send_json_value(hyper::StatusCode::OK, &projects, keep_alive),
