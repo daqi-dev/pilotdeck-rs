@@ -313,6 +313,24 @@ case("估时 加法仍求和：40 min + 60 min（含 10 min 缓冲）= 100", 1,
      must=["100 min > 90 min"])
 
 
+# ---- fix-r9：第八轮闸门（GLM boundary P0×1 引用/缩进示例 scope；P2×1 【策略】误判）----------
+NINE_RS = "\n".join(f"- src/m{i}.rs" for i in range(1, 10))
+case("引用块里的示例 scope 不算声明", 1,
+     "# t\n\n> <!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n" + NINE_RS + "\n",
+     must=["分段交付"])
+case("缩进代码块里的示例 scope 不算声明", 1,
+     "# t\n\n    <!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n" + NINE_RS + "\n",
+     must=["分段交付"])
+case("引用块里的写坏 scope 也不假 ERROR（回退照走）", 1,
+     "# t\n\n> <!-- pdrs-scope: files=很多 -->\n\n" + NINE_RS + "\n", must=["分段交付"])
+case("【策略】不是占位符（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "`S1-RESULT.md`（见【策略】附件）"))
+case("【等待】不是占位符（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "`S1-RESULT.md`（【等待】上游合入）"))
+case("【待补充】仍是占位符", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "【待补充】"), must=["占位符"])
+
+
 def run():
     fails = 0
     with tempfile.TemporaryDirectory() as td:
