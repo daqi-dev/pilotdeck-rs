@@ -80,7 +80,9 @@ fn roots_from(
             load_pem(&mut roots, Path::new(file));
         }
         if let Some(dirs) = explicit(cert_dir) {
-            // OpenSSL reads `SSL_CERT_DIR` as a list of hash directories.
+            // This project reads `SSL_CERT_DIR` as a path list. OpenSSL's own
+            // list semantics were not measured against the baseline, so the
+            // choice is recorded in `A6.4-TLS-CA-SOURCES-001-R1` residuals.
             for dir in std::env::split_paths(dirs).filter(|dir| !dir.as_os_str().is_empty()) {
                 load_hash_dir(&mut roots, &dir);
             }
@@ -118,23 +120,36 @@ fn load_pem(roots: &mut rustls::RootCertStore, path: &Path) {
     }
 }
 
-/// A CA bundle is small. FIFOs, devices and oversized files are refused: the
-/// snapshot runs inside `OnceLock::get_or_init`, so a blocking read here would
-/// wedge TLS for the whole process.
+/// A CA bundle is small, and the snapshot runs inside `OnceLock::get_or_init`:
+/// a blocking read here would wedge TLS for the whole process, and an unbounded
+/// one would allocate on that shared path. The bound is this project's own —
+/// Node applies no equivalent limit — so a larger bundle is skipped with a
+/// warning and the trust set is *smaller* than Node's (`-R1` residuals).
 const MAX_CA_FILE_BYTES: u64 = 8 << 20;
 
+/// Opens the bundle so that a FIFO cannot block, then judges and reads the same
+/// handle. Checking the path and then re-reading it by name left a window where
+/// a swapped-in FIFO blocked the process-wide snapshot.
+fn open_ca_file(path: &Path) -> std::io::Result<std::fs::File> {
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A FIFO with no writer fails with ENXIO instead of waiting forever.
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)?
+    };
+    #[cfg(not(unix))]
+    let file = std::fs::File::open(path)?;
+    Ok(file)
+}
+
 fn read_ca_file(path: &Path) -> Option<Vec<u8>> {
-    match std::fs::metadata(path) {
-        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_CA_FILE_BYTES => {}
-        Ok(metadata) => {
-            eprintln!(
-                "Warning: skipping CA file {}: {} bytes and not a regular file within {} bytes",
-                path.display(),
-                metadata.len(),
-                MAX_CA_FILE_BYTES
-            );
-            return None;
-        }
+    use std::io::Read as _;
+
+    let file = match open_ca_file(path) {
+        Ok(file) => file,
         Err(error) => {
             eprintln!(
                 "Warning: could not load CA file {}: {error}",
@@ -142,9 +157,45 @@ fn read_ca_file(path: &Path) -> Option<Vec<u8>> {
             );
             return None;
         }
+    };
+    let metadata = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            eprintln!(
+                "Warning: could not load CA file {}: {error}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    if !metadata.is_file() {
+        eprintln!(
+            "Warning: skipping CA file {}: not a regular file",
+            path.display()
+        );
+        return None;
     }
-    match std::fs::read(path) {
-        Ok(bytes) => Some(bytes),
+    if metadata.len() > MAX_CA_FILE_BYTES {
+        eprintln!(
+            "Warning: skipping CA file {}: {} bytes is larger than the {} byte limit",
+            path.display(),
+            metadata.len(),
+            MAX_CA_FILE_BYTES
+        );
+        return None;
+    }
+    let mut bytes = Vec::new();
+    // Bound the read too: the file may have grown since `metadata()`.
+    match (&file).take(MAX_CA_FILE_BYTES + 1).read_to_end(&mut bytes) {
+        Ok(_) if bytes.len() as u64 <= MAX_CA_FILE_BYTES => Some(bytes),
+        Ok(_) => {
+            eprintln!(
+                "Warning: skipping CA file {}: grew past the {} byte limit while reading",
+                path.display(),
+                MAX_CA_FILE_BYTES
+            );
+            None
+        }
         Err(error) => {
             eprintln!(
                 "Warning: could not load CA file {}: {error}",
@@ -418,6 +469,23 @@ jenPvKuS2DWn64nN+FQXsa0/wFoUqRVU0Mb2oFPws0U/XhR5wq9qRQYM/0h8
             roots.roots.len(),
             webpki_roots::TLS_SERVER_ROOTS.len(),
             "#1552 hash-named non-regular entries are skipped"
+        );
+    }
+
+    #[test]
+    fn oversized_ca_files_are_skipped() {
+        let scratch = crate::test_scratch::Scratch::new("tls-ca-oversized");
+        let bundle = scratch.path().join("bundle.pem");
+        let mut bytes = TEST_CA_PEM.as_bytes().to_vec();
+        // A valid certificate followed by filler: without the size limit the
+        // loader would trust it, so the control below is killable.
+        bytes.resize((MAX_CA_FILE_BYTES + 1) as usize, b'#');
+        fs::write(&bundle, &bytes).expect("#1552 write an oversized CA bundle");
+        let roots = roots_from(CaMode::Default, Some(bundle.as_os_str()), None, None);
+        crate::negative_assert_eq!(
+            roots.roots.len(),
+            webpki_roots::TLS_SERVER_ROOTS.len(),
+            "#1552 CA bundles above the size limit are skipped"
         );
     }
 }

@@ -26,7 +26,7 @@ cases = [
     ('hash-name-length-relaxed', tls, '    hash.len() == 8', '    true', scope+'hash_entry_names', '#1552 non-hash entry name rejected: 3b8f0bd.0'),
     ('ssl-cert-file-ignored', tls, '        if let Some(file) = explicit(cert_file) {', '        if let Some(file) = explicit(cert_file).filter(|_| false) {', scope+'ssl_cert_file_is_trusted_by_default', '#1552 default mode trusts SSL_CERT_FILE'),
     ('ssl-cert-dir-list-truncated', tls, '            for dir in std::env::split_paths(dirs).filter(|dir| !dir.as_os_str().is_empty()) {', '            for dir in std::env::split_paths(dirs).filter(|dir| !dir.as_os_str().is_empty()).take(1) {', scope+'ssl_cert_dir_accepts_an_openssl_list', '#1552 SSL_CERT_DIR is read as a list of hash directories'),
-    ('non-regular-hash-entry-trusted', tls, '        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_CA_FILE_BYTES => {}', '        Ok(metadata) if metadata.len() <= MAX_CA_FILE_BYTES => {}', scope+'non_regular_hash_entries_are_skipped', '#1552 hash-named non-regular entries are skipped'),
+    ('ca-file-size-limit-removed', tls, 'const MAX_CA_FILE_BYTES: u64 = 8 << 20;', 'const MAX_CA_FILE_BYTES: u64 = u64::MAX;', scope+'oversized_ca_files_are_skipped', '#1552 CA bundles above the size limit are skipped'),
     ('extra-skipped-in-bundled-mode', tls, '    if let Some(path) = explicit(extra) {', '    if let Some(path) = explicit(extra).filter(|_| mode == CaMode::Default) {', scope+'extra_ca_certs_still_apply_in_bundled_mode', '#1552 NODE_EXTRA_CA_CERTS still applies in bundled mode'),
 ]
 if __name__ == '__main__':

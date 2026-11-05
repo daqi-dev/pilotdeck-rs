@@ -1,7 +1,9 @@
 {
-  "note": "Measured with the pinned baseline generator (tests/fixtures/private-ca/generate.mts, PDRS_MODES=openssl-dir,openssl-file,openssl-plain). Not part of the frozen oracle.",
+  "note": "Measured with the pinned baseline generator (tests/fixtures/private-ca/generate.mts, PDRS_MODES=openssl-dir,openssl-file,openssl-plain) against the baseline sources at sourceCommit. TS sources come from the pinned checkout; the Node binary is the project's v22.22.0 linux build, not the macOS Homebrew build the frozen oracle used. Not part of the frozen oracle.",
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "nodeVersion": "v22.22.0",
+  "opensslVersion": "3.5.4",
+  "nodeBuild": "linux arm64, modules 127",
   "platform": "linux",
   "sourceSha256": {
     "src/adapters/web/httpRouter.ts": "f9fc0f180559a557fe704573392b5f4602a670dfb7df704de4caa0e288349d0d",
