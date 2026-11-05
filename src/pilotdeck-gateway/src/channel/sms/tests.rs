@@ -513,6 +513,30 @@ enum V6Port {
     Unknown,
 }
 
+/// Does this error mean "this host has no IPv6 address family"?
+///
+/// #1339 fix-r11 (P1, Codex): `EAFNOSUPPORT` — the error a kernel without
+/// IPv6 returns from `socket(AF_INET6)` — is **not** `ErrorKind::Unsupported`.
+/// Measured, not assumed (`_tmp/20261106-issue-1339-fix-r6/errno-kind.log`):
+///
+/// ```text
+/// macOS  errno  47 -> kind Uncategorized  (Address family not supported by protocol family)
+/// Linux  errno  97 -> kind Uncategorized  (Address family not supported by protocol)
+/// macOS  errno  49 -> kind AddrNotAvailable
+/// Linux  errno  99 -> kind AddrNotAvailable
+/// ```
+///
+/// Relying on `ErrorKind` alone would push an IPv4-only host into
+/// [`V6Port::Unknown`] and abort a replay the product would run fine (it falls
+/// back to `0.0.0.0`). `libc` is already a dependency of this crate
+/// (`src/node_io/generated.rs` uses `libc::EAFNOSUPPORT`).
+fn means_no_ipv6(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
+    ) || error.raw_os_error() == Some(libc::EAFNOSUPPORT)
+}
+
 fn v6_wildcard_state(port: u16) -> V6Port {
     match std::net::TcpListener::bind(("::", port)) {
         Ok(listener) => {
@@ -520,14 +544,7 @@ fn v6_wildcard_state(port: u16) -> V6Port {
             V6Port::Free
         }
         Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => V6Port::Occupied,
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
-            ) =>
-        {
-            V6Port::Absent
-        }
+        Err(error) if means_no_ipv6(&error) => V6Port::Absent,
         Err(_) => V6Port::Unknown,
     }
 }
@@ -1258,19 +1275,26 @@ fn port_busy_preflight_fails_fast() {
 fn port_busy_on_ipv6_preflight_fails_fast() {
     // Bind the IPv6 wildcard without listening: this is the shape the connect
     // probes cannot see, and it is exactly what the guard now probes for.
+    //
+    // #1339 fix-r11 (P2, Codex): skipping is only allowed for an error that
+    // *proves* this host has no IPv6 (same `means_no_ipv6` the guard uses).
+    // Any other failure — descriptor exhaustion, permissions, a sandbox — used
+    // to return `skipped` and quietly delete the IPv6 coverage, which is the
+    // same fail-open shape the guard itself was fixed for.
     let socket = match tokio::net::TcpSocket::new_v6() {
         Ok(socket) => socket,
-        Err(_) => {
-            eprintln!("#1339 skipped: host has no IPv6");
+        Err(error) if means_no_ipv6(&error) => {
+            eprintln!("#1339 skipped: host has no IPv6 ({error})");
             return;
         }
+        Err(error) => panic!("#1339 cannot create an IPv6 socket to set up the busy port: {error}"),
     };
-    if socket
-        .bind(std::net::SocketAddr::from(([0u16; 8], 0)))
-        .is_err()
-    {
-        eprintln!("#1339 skipped: cannot bind the IPv6 wildcard");
-        return;
+    if let Err(error) = socket.bind(std::net::SocketAddr::from(([0u16; 8], 0))) {
+        if means_no_ipv6(&error) {
+            eprintln!("#1339 skipped: host has no IPv6 wildcard ({error})");
+            return;
+        }
+        panic!("#1339 cannot bind the IPv6 wildcard to set up the busy port: {error}");
     }
     let port = socket
         .local_addr()
