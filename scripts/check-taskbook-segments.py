@@ -43,6 +43,7 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
 （多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
 """
 
+import bisect
 import json
 import math
 import os
@@ -112,6 +113,10 @@ def placeholder_in(text):
         if _looks_placeholder(m.group(1)):
             return m.group(0)
     for m in BRACE.finditer(text):
+        # 空花括号只在**整格就是 `{}`** 时算占位：`format!("{}", x)` 里的 `{}` 是代码，
+        # 误判会把合规任务书打回（假 FAIL）。
+        if not m.group(1).strip() and text.strip() != m.group(0):
+            continue
         if _looks_placeholder(m.group(1)):
             return m.group(0)
     for m in FW_ANGLE.finditer(text):
@@ -134,22 +139,52 @@ def placeholder_in(text):
 DASHES = r"[\s_\-－—‐‑]"
 SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
 COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
-# 行内代码（`` `…` ``）是第四种「贴示例」形态：示例 scope 写在反引号里同样不是本包声明。
+# 行内代码（`` `…` `` / ``` ``…`` ```）是第四种「贴示例」形态：示例 scope 写在反引号里同样不是本包声明。
 # 只对 scope 解析屏蔽（人日 / `.rs` 回退、续跑路径仍看原文——反引号里常是真实路径）。
-INLINE_CODE = re.compile(r"`[^`\n]*`")
+# 反引号串长度必须配对（CommonMark）：修前只认单反引号，``` ``…`` ``` 里的示例 scope 照样被当前置声明。
 
 
 def mask_inline_code(text):
-    return INLINE_CODE.sub(lambda m: " " * len(m.group(0)), text)
+    """把行内代码整段抹成空格（换行保留）。没有配对串的反引号按字面量处理。"""
+    n, out, i = len(text), list(text), 0
+    while i < n:
+        a = text.find("`", i)
+        if a < 0:
+            break
+        j = a
+        while j < n and text[j] == "`":
+            j += 1
+        run, k, close = j - a, j, -1
+        while True:                       # 找**恰好** run 个反引号的闭合串
+            k = text.find("`", k)
+            if k < 0:
+                break
+            e = k
+            while e < n and text[e] == "`":
+                e += 1
+            if e - k == run:
+                close = k
+                break
+            k = e
+        if close < 0:                     # 没有闭合：这串反引号是字面量，继续往后找
+            i = j
+            continue
+        for x in range(a, close + run):
+            if out[x] != "\n":
+                out[x] = " "
+        i = close + run
+    return "".join(out)
 SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
 # 关键字与数字之间允许标点（`工作量：3 人日` / `预计,2 人日`）；「估计」要单列（裸「估」后跟「计」不匹配）。
 PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|估算|估|工作量|共计|合计|总计|共)\s*[:：,，]?\s*"
-                        r"([0-9]+(?:\.[0-9]+)?)\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
+                        r"([0-9]+(?:\.[0-9]+)?)\s*(?:个)?\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
 # URL 只吃 ASCII URL 字符：中文顿号/逗号/分号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
 RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
-# 代码围栏：整段（含内容）抹成空行，行数不变
-FENCE = re.compile(r"(?ms)^[ \t]*(?P<f>```+|~~~+)[^\n]*\n.*?(?:^[ \t]*(?P=f)[ \t]*$|\Z)")
+# 代码围栏（CommonMark）：闭合行须同字符、长度 **≥** 开栏、独占一行（只许前后空白）。
+# 逐行扫（FENCE_OPEN + _fence_spans），正则写不干净：修前要求闭合串与开栏串**完全相等**，
+# ```` ``` ```` 开、```` ```` ```` 收的标准写法被判「围栏没有闭合」→ 整份任务书 rc 2（假 ERROR）。
+FENCE_OPEN = re.compile(r"[ \t]*(?P<f>`{3,}|~{3,})(?P<info>.*)$")
 # 引用块与缩进代码块是 Markdown 的另两种「贴示例」形态：里面出现的 scope 同样是示例，不是本包声明。
 # 只抹成空格（行数、偏移不变），人日 / `.rs` 回退仍看原文（宁可判大）。
 QUOTED = re.compile(r"(?m)^[ \t]*>.*$")
@@ -182,6 +217,38 @@ WANT_COLS = {
 COL_NAMES = {"seg": "段名", "files": "涉及文件", "deliver": "交付物", "est": "预估时长", "dep": "段间依赖"}
 
 
+def _fence_spans(text):
+    """返回代码围栏跨度 [(start, end, closed)]，按出现顺序。
+
+    闭合行 = 同字符、长度 ≥ 开栏串、独占一行（只许前后空白）。没有闭合行的一直吃到文件尾，
+    `closed=False`（调用方据此判「围栏没有闭合」，不能静默把后半段抹掉）。
+    """
+    lines = text.split("\n")
+    starts, pos = [], 0
+    for ln in lines:
+        starts.append(pos)
+        pos += len(ln) + 1
+    spans, i = [], 0
+    while i < len(lines):
+        m = FENCE_OPEN.match(lines[i])
+        # 反引号围栏的 info string 里不许再出现反引号（CommonMark），否则这行是行内代码不是围栏
+        if not m or (m.group("f")[0] == "`" and "`" in m.group("info")):
+            i += 1
+            continue
+        ch, n = m.group("f")[0], len(m.group("f"))
+        close = re.compile(r"[ \t]*" + re.escape(ch) + "{" + str(n) + r",}[ \t]*")
+        j = i + 1
+        while j < len(lines) and not close.fullmatch(lines[j]):
+            j += 1
+        if j < len(lines):
+            spans.append((starts[i], starts[j] + len(lines[j]), True))
+            i = j + 1
+        else:
+            spans.append((starts[i], len(text), False))
+            break
+    return spans
+
+
 def strip_fences(text):
     """抹掉代码围栏 / 引用块 / 缩进代码块里的内容（保留行数与偏移）。
 
@@ -189,22 +256,17 @@ def strip_fences(text):
     是另外两种贴示例的标准写法——修前它们里的示例 scope 会被当成本包声明，把 9 个 `.rs` 的包
     短路成小包 rc 0（与 fix-r6 的围栏示例同一条失效类）。
     """
+    for a, b, _closed in reversed(_fence_spans(text)):
+        seg = text[a:b]
+        text = text[:a] + "".join("\n" if ch == "\n" else " " for ch in seg) + text[b:]
     blank = lambda m: " " * len(m.group(0))   # noqa: E731 —— 行内不换行，行数不变
-    out = FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
-    out = QUOTED.sub(blank, out)
+    out = QUOTED.sub(blank, text)
     return _blank_indented(out)
 
 
 def fence_unclosed(text):
-    """有开栏但没有闭合行（FENCE 匹配到了文件尾）：此时围栏后的正文会被整段抹掉，不能静默判小包。"""
-    for m in FENCE.finditer(text):
-        lines = m.group(0).rstrip("\n").splitlines()
-        if len(lines) < 2:
-            return True
-        last = lines[-1]
-        if not re.fullmatch(r"[ \t]*" + re.escape(m.group("f")) + r"+[ \t]*", last):
-            return True          # 结尾不是「同串围栏独占一行」：` ``` x ` 不算闭合
-    return False
+    """有开栏但没有闭合行（一直吃到文件尾）：此时围栏后的正文会被整段抹掉，不能静默判小包。"""
+    return any(not closed for _a, _b, closed in _fence_spans(text))
 
 
 def _parse_scope_body(body):
@@ -238,6 +300,38 @@ def _parse_scope_body(body):
     return out, None
 
 
+def _iter_comments(text):
+    """线性扫 `<!-- … -->`，产出 (start, end, body)。body=None 表示没收到 `-->`。
+
+    修前用 `COMMENT`（非贪婪 `.*?` + DOTALL）：每个 `<!--` 都要往后找到 `-->` 或文件尾，
+    50 万个未闭合 `<!--`（2 MiB）就是 O(n²)，闸门挂死。
+    """
+    i = 0
+    while True:
+        a = text.find("<!--", i)
+        if a < 0:
+            return
+        b = text.find("-->", a + 4)
+        if b < 0:
+            yield a, len(text), None
+            return
+        yield a, b + 3, text[a + 4:b]
+        i = b + 3
+
+
+def _line_indent_example(text, pos, nl):
+    """pos 所在行从行首到 pos 全是空白且缩进 ≥ 4 格（或一个 tab）：这是缩进块里的裸示例。
+
+    `- scope 写法示例：` 下一行缩进 4 格的 `<!-- pdrs-scope … -->` 修前被当成本包声明，
+    一条 files=2 的示例就把后面 9 个 `.rs` 的包短路成小包 rc 0（假 PASS）。声明必须顶格写。
+    `nl` 是预计算的换行偏移表：`text.rfind("\n", 0, pos)` 在无换行的长行上是 O(pos)，
+    每条 scope 调一次就退化成 O(n²)（2 MiB 单行任务书 >10 s）。
+    """
+    k = bisect.bisect_left(nl, pos)
+    seg = text[(nl[k - 1] + 1) if k else 0:pos]
+    return not seg.strip() and len(seg.expandtabs(4)) >= 4
+
+
 def parse_scopes(text):
     """返回 (scopes, errors)。多条 scope 行全部解析；任一条写坏都要报出来。
 
@@ -247,9 +341,13 @@ def parse_scopes(text):
     """
     errors, scopes = [], []
     spans = []
-    for m in COMMENT.finditer(text):
-        spans.append(m.span())
-        body = m.group("body")
+    nl = [i for i, ch in enumerate(text) if ch == "\n"]
+    for a, b, body in _iter_comments(text):
+        if body is None:
+            continue            # 没收到 `-->`：交给下面的 SCOPEISH 兜底报错（带行号）
+        spans.append((a, b))    # 先登记：缩进示例**在**注释里，不能反被报成「没写进注释」
+        if _line_indent_example(text, a, nl):
+            continue            # 缩进块里的裸示例，不是本包声明
         sm = SCOPE_BODY.match(body)
         if not sm:
             if SCOPEISH.search(body):
@@ -263,12 +361,20 @@ def parse_scopes(text):
             errors.append(err)
         else:
             scopes.append(s)
-    # 注释外的 scope 字样（含没收到 --> 的半截注释）
+    # 注释外的 scope 字样（含没收到 --> 的半截注释）。归属判定用二分，不逐条扫 spans：
+    # 修前 `any(a <= pos < b for a, b in spans)` 在 N 条注释 × M 条 scope 时是 O(N·M)，
+    # 2 MiB 的病态任务书能把派单闸门挂死（实测 >120 s 不返回）。
+    starts = [a for a, _b in spans]
     for m in SCOPEISH.finditer(text):
-        if not any(a <= m.start() < b for a, b in spans):
-            line = text.count("\n", 0, m.start()) + 1
-            errors.append(f"第 {line} 行的 scope 标记没写进 `<!-- -->` 注释（或注释没收到 `-->`），"
-                          "不能静默忽略——写坏了按「读不了」处理")
+        pos = m.start()
+        k = bisect.bisect_right(starts, pos) - 1
+        if k >= 0 and spans[k][0] <= pos < spans[k][1]:
+            continue
+        if _line_indent_example(text, pos, nl):
+            continue
+        line = bisect.bisect_right(nl, pos) + 1
+        errors.append(f"第 {line} 行的 scope 标记没写进 `<!-- -->` 注释（或注释没收到 `-->`），"
+                      "不能静默忽略——写坏了按「读不了」处理")
     return scopes, errors
 
 
@@ -630,39 +736,72 @@ def _err(path, detail):
 
 def check_file(path, ignore_missing=False):
     p = Path(path)
+    # 先解析成字面路径：任务书本身可以是符号链接，但 open 时不再跟随末级链接。
     try:
-        st1 = p.stat()
+        real = Path(os.path.realpath(p, strict=True))
     except FileNotFoundError:
         if ignore_missing:      # --recent 扫描期间树被回收：跳过，不报 ERROR
             return None
         return _err(path, f"读不了：找不到 {path}")
     except OSError as e:
         return _err(path, f"读不了：{e}")
-    if not stat.S_ISREG(st1.st_mode):
-        # FIFO / 设备文件在这里 open("rb") 会无限阻塞（没有写端），派单闸门会整条挂住。
-        return _err(path, "不是普通文件（FIFO / 设备文件），不读")
-    if st1.st_size > MAX_BYTES:
-        return _err(path, f"任务书 {st1.st_size} 字节超过 {MAX_BYTES}（不整文件读进内存；先删生成物）")
-    # 限长读：stat 与 read 之间文件继续增长时不至于把几百 MB 读进内存（TOCTOU）
     try:
-        with p.open("rb") as f:
-            data = f.read(MAX_BYTES + 1)
+        st1 = real.stat()
     except FileNotFoundError:
         if ignore_missing:
             return None
         return _err(path, f"读不了：找不到 {path}")
     except OSError as e:
         return _err(path, f"读不了：{e}")
+    if not stat.S_ISREG(st1.st_mode):
+        # FIFO / 设备文件在这里 open 会无限阻塞（没有写端），派单闸门会整条挂住。
+        return _err(path, "不是普通文件（FIFO / 设备文件），不读")
+    if st1.st_size > MAX_BYTES:
+        return _err(path, f"任务书 {st1.st_size} 字节超过 {MAX_BYTES}（不整文件读进内存；先删生成物）")
+    # 用 fd 复核，不再 stat 路径：stat 与 open 之间路径被换成 FIFO 会永久阻塞（闸门挂死），
+    # 同 size/mtime 的 rename 换入又会让「读后复核」失效。O_NONBLOCK 让换入的 FIFO 能 open 成功、
+    # 由 fstat 判类型拒掉；O_NOFOLLOW 拒绝末级再被换成符号链接。做法与 scripts/cli-parity/common.py 的 open_plain 一致。
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(real, flags)
+    except FileNotFoundError:
+        if ignore_missing:
+            return None
+        return _err(path, f"读不了：找不到 {path}")
+    except OSError as e:
+        return _err(path, f"读不了：{e}")
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            return _err(path, "不是普通文件（FIFO / 设备文件），不读")
+        if (fst.st_dev, fst.st_ino) != (st1.st_dev, st1.st_ino):
+            return _err(path, "任务书在检查过程中被替换（inode 变了），稍后重跑")
+        if fst.st_size > MAX_BYTES:
+            return _err(path, f"任务书超过 {MAX_BYTES} 字节（不整文件读进内存；先删生成物）")
+        # 限长读：打开后文件继续增长时不至于把几百 MB 读进内存
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(MAX_BYTES + 1)
+        fst2 = os.fstat(fd)
+    except OSError as e:
+        return _err(path, f"读不了：{e}")
+    finally:
+        os.close(fd)
     if len(data) > MAX_BYTES:
         return _err(path, f"任务书超过 {MAX_BYTES} 字节（不整文件读进内存；先删生成物）")
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as e:
         return _err(path, f"读不了：{e}")
-    # 读后复核：挡住 stat→read→stat 之间发生的写入（写方正在写的瞬间）。
+    # 换行归一到 \n：CRLF 任务书的闭合围栏行尾有 \r，`[ \t]*$` 匹配不上 → 围栏判「没闭合」/ 判「已闭合」
+    # 全看哪条正则先撞上，同一份文件两套结论。归一后行数不变，偏移只在 \r 处缩短（后续不再用旧偏移）。
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # 读后复核：挡住 open→read 之间发生的写入（写方正在写的瞬间），以及读完路径上又被换掉的替换。
     # 写方停顿 > FRESH_SEC 后再续写的半截任务书挡不住（窗口内没有新写），见 find_recent 的说明。
+    if fst2.st_size != fst.st_size or fst2.st_mtime != fst.st_mtime:
+        # 不静默跳过：跳过等于「本轮没检查也算过」（fail-open）。写方补完后重跑即可。
+        return _err(path, "任务书在读取过程中被改写（可能还在写），稍后重跑")
     try:
-        st2 = p.stat()
+        st2 = real.stat()
     except OSError:
         st2 = None
     if st2 is None:
@@ -670,9 +809,9 @@ def check_file(path, ignore_missing=False):
         if ignore_missing:
             return None
         return _err(path, f"读不了：读到一半文件被删了（{path}），稍后重跑")
-    if st2.st_size != st1.st_size or st2.st_mtime != st1.st_mtime:
-        # 不静默跳过：跳过等于「本轮没检查也算过」（fail-open）。写方补完后重跑即可。
-        return _err(path, "任务书在读取过程中被改写（可能还在写），稍后重跑")
+    if (st2.st_dev, st2.st_ino) != (fst.st_dev, fst.st_ino) or st2.st_size != fst.st_size \
+            or st2.st_mtime != fst.st_mtime:
+        return _err(path, "任务书在读取过程中被替换 / 改写（路径上的文件已不是读到的那个），稍后重跑")
     if all(ch.isspace() or ch in "﻿\x00" for ch in text):
         return _err(path, "任务书是空文件（不是「小包」）")
     if fence_unclosed(text):
@@ -718,11 +857,22 @@ def _iter_taskbooks(base):
     """
     out = []
     try:
-        wts = sorted(e.path for e in os.scandir(base) if e.is_dir())
+        with os.scandir(base) as it:
+            entries = list(it)
     except FileNotFoundError:
         return out          # 没有 _build/：合法空扫描
     except OSError as e:
         raise ScanError(f"扫 {base} 中断：{e}") from e
+    wts = []
+    for e in entries:       # is_dir() 自己也会抛 OSError（目录刚被回收 / 权限）：不能崩成 traceback（rc 1）
+        try:
+            if e.is_dir():
+                wts.append(e.path)
+        except FileNotFoundError:
+            continue
+        except OSError as err:
+            raise ScanError(f"扫 {e.path} 中断：{err}") from err
+    wts.sort()
 
     def onerror(e):
         # 目录在遍历中被回收（FileNotFoundError）不是任务书的问题，跳过即可；
@@ -843,7 +993,7 @@ def main(argv):
                   file=sys.stderr)
             if as_json:
                 print("[]")        # 按行解析 JSON 的调用方不能收到一行文本 SUMMARY
-            elif not quiet:        # --quiet 只压正文；SUMMARY 照打，「没扫到」与「都通过」要能分辨
+            elif not quiet and not explain:   # --quiet 只压正文；SUMMARY 照打，「没扫到」与「都通过」要能分辨
                 print("SUMMARY files=0 ok=0 fail=0 error=0")
             return 0
         return usage()
