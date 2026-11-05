@@ -66,7 +66,7 @@ and element-wise tuple targets.  Every return arm is judged on its own, so
 call in the other arm.  A bare `return`, a literal `0`, and `raise
 SystemExit(0)` are optimistic exits and are flagged; a non-zero exit literal
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) stays legal because it cannot
-claim a clean run.  The audit self-tests twenty-two probes: a direct `{'status': ...}`
+claim a clean run.  The audit self-tests thirty-five probes: a direct `{'status': ...}`
 return, an inline `0 if ... else 1` branch, a legal shared pair, a summary dict
 returned through a local name, a bare `return 0`, an optimistic conditional arm,
 a bare `return`, a summary dict returned under an arbitrary name, a status slot
@@ -77,12 +77,28 @@ variable, a status slot filled from a local dict subscript, a local
 `aggregate_status` lookalike, a `report.update({'status': 'PASS'})` write, a
 duplicate `status` key, a nested `def main`, a zero branch beside a shared
 branch (must be flagged), and a zero initializer every following path
-overwrites (must stay legal).  A `code = 0` initializer is therefore judged by
+overwrites (must stay legal).  The `fix-r5` probes add: a zero branch that
+returns *before* the shared rebind, an exit code relayed through two local
+names, an exit code computed with `int(...)` into a local, a zero read back out
+of a local dict, a nested helper that returns a constant zero, a clean verdict
+written into `report['verdict']`, an alias cycle feeding the status slot, a
+`sys.exit(0)`, a walrus write into the status slot, an unresolvable name
+(module constant or parameter) written into the slot, an exit code delegated to
+a same-module helper that never touches the map, a summary rebuilt from an
+existing one with a clean literal, and a function whose only status evidence is
+a `report.update(...)` write.
+A `code = 0` initializer is therefore judged by
 reachability, not by the presence of a shared assignment somewhere else in the
 function: only a later statement that rebinds the name from the shared call on
 every fall-through path (same block, both `if` arms, a `with` body, or a `try`
 body whose handlers also rebind) makes it an initializer rather than an
-optimistic exit.  Registered points also
+optimistic exit, and a `return` / `SystemExit` between the two ends that
+reachability proof (`fix-r5`), so an early exit out of a zero branch is flagged
+even when a shared rebind follows it.  A delegated exit code is followed one
+call deep: a return arm that calls a same-module function which never touches
+the shared map and can return a zero arm is inline.  An incremental write whose
+value is a name with no local binding is judged fail-closed, exactly like the
+returned-dict path.  Registered points also
 write their report incrementally instead of returning the dict, so every
 `x['status'] = ...` assignment in a registered point is judged by the same rule:
 a `'PASS'` / `'PASS_WITH_SKIPS'` literal (directly or through a local variable)
@@ -95,8 +111,18 @@ a duplicate `status` key inside one summary dict is judged by every value, a
 `{**literal}` expansion is walked, and a `status` / `verdict` key nested inside
 another dict is read where the summary is returned or passed on.  Known
 boundaries, not covered by this check: the module-level `raise
-SystemExit(main())` that no function contains, and a status key built by
-`dict(**kwargs)` or a comprehension.  The exit-code reachability judgement errs
+SystemExit(main())` that no function contains, a status key built by
+`dict(**kwargs)` or a comprehension, and one assignment shape that a static
+check cannot separate from healthy code — a *fresh* dict literal written into a
+name that also feeds the shared call (`result = {'status': 'PASS'}; return
+common.aggregate_status(result['status'])[1]`).  That is exactly the healthy
+per-case verdict in `scripts/gateway-parity/controls/session_domain.py:main`,
+and the identical shape with a batch summary is a hardcoded PASS; the audit
+therefore judges every other write (subscript, `update`, `|`, walrus,
+unresolvable name, a dict rebuilt with `{**name}`) but exempts the fresh literal
+for such a name.  The batch status of both registered `main` points is instead
+pinned at runtime: the published status must equal what the one shared
+aggregation returns for the observed cell statuses.  The exit-code reachability judgement errs
 strict: an overwrite that can be skipped (`for` / `while` bodies, `match` cases)
 does not count, so an initializer overwritten only inside a loop is still
 flagged — a false FAIL on unusual code, never a false PASS.  The
@@ -173,7 +199,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 43 mutants:
+`JUDGES`, keyed by the same names. The current table has 52 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -192,7 +218,11 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `controls-aggregate-lookalike`, `calibrate-status-update`,
 `retirement-duplicate-status-key`, `controls-nested-same-name`,
 `calibrate-shared-excuse`, `calibrate-status-setdefault`,
-`calibrate-status-update-kwarg`.  The batch-related
+`calibrate-status-update-kwarg`, `calibrate-early-return-branch`,
+`calibrate-two-hop-zero`, `calibrate-int-call-code`,
+`calibrate-dict-code-zero`, `calibrate-nested-def-zero`,
+`calibrate-verdict-write`, `calibrate-sys-exit-zero`,
+`calibrate-walrus-status`, `calibrate-rebuilt-summary`.  The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
@@ -231,7 +261,20 @@ required to stay separate: `calibrate-shared-excuse` writes `code = 0` into one
 shared function (the reachability rule must flag it, and the zero initializer
 above the `try` must stay legal); `calibrate-status-setdefault` writes the slot
 through `setdefault()`; `calibrate-status-update-kwarg` passes the slot as a
-keyword argument to `update()`.  The
+keyword argument to `update()`.  The nine `fix-r5` mutants pin the vectors the
+r4 reviews found, each written as an extra bypass branch *in front of* the
+untouched shared rebind in `session_domain.py:main`, so the healthy fall-through
+keeps its shared assignment and only the new path is under test (replacing the
+shared line outright would unmask the `code = 0` initializer and pin the wrong
+rule): `calibrate-early-return-branch` returns the zero code before the shared
+rebind; `calibrate-two-hop-zero` relays `0` through two locals;
+`calibrate-int-call-code` computes the code with `int(...)` into a local;
+`calibrate-dict-code-zero` reads a zero back out of a local dict;
+`calibrate-nested-def-zero` returns a nested helper's constant zero;
+`calibrate-verdict-write` writes the clean verdict into `report['verdict']`;
+`calibrate-sys-exit-zero` calls `sys.exit(0)`; `calibrate-walrus-status` writes
+`(status := 'PASS')`; `calibrate-rebuilt-summary` rebuilds the summary with
+`{**report, 'status': 'PASS'}`.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s

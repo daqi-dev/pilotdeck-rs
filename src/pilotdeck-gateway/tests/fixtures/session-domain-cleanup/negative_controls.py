@@ -47,6 +47,14 @@ from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'scripts/gateway-parity/session_domain.py'
+# #892 fix-r5: the one shared exit rebind in ``session_domain.py:main``.
+# Every mutant below adds its own bypass path *in front of* this line so the
+# healthy fall-through keeps its shared rebind and only the new path is under
+# test; replacing the shared line outright would unmask the ``code = 0``
+# initializer and pin the wrong rule.
+A_EXIT = "                    _, code = common.aggregate_status(report['status'])\n"
+B_STATUS = ("                report['status'] = 'BLOCKED' if "
+            "isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n")
 CONTROLS_SOURCE = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
@@ -502,6 +510,163 @@ def calibrate_status_setdefault(rows):
                   'passed=False')
 
 
+def calibrate_early_return_branch(rows):
+    """#892 r5: a zero branch that returns before the shared rebind is inline
+    even though a later sibling overwrites the name (MiniMax boundary P0-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline exit code (literal relay) code', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: early return inside a zero branch flagged, '
+                  'passed=False')
+
+
+def calibrate_two_hop_zero(rows):
+    """#892 r5: ``rc = 0; relay = rc; return relay`` is still an optimistic exit
+    (GLM concurrency P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline exit code (literal relay) code', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: two-hop exit code relay flagged, passed=False'
+
+
+def calibrate_int_call_code(rows):
+    """#892 r5: ``code = int(all(...)); return code`` computes the code inline
+    (GLM concurrency P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline exit code (int() relay) code', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: int() exit code in a local flagged, passed=False'
+
+
+def calibrate_dict_code_zero(rows):
+    """#892 r5: ``holder = {'code': 0}; return holder['code']`` reads a zero back
+    out of a local dict (GLM concurrency P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline exit code (subscript relay) code', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: zero read back from a local dict flagged, '
+                  'passed=False')
+
+
+def calibrate_nested_def_zero(rows):
+    """#892 r5: a nested helper that returns a constant zero is an optimistic
+    exit (MiniMax boundary P1-4)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline exit code (nested def relay) code', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: nested zero helper flagged, passed=False'
+
+
+def calibrate_sys_exit_zero(rows):
+    """#892 r5: ``sys.exit(0)`` is the same optimistic exit as
+    ``raise SystemExit(0)`` (MiniMax sibling P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline optimistic exit (sys.exit(0))', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: sys.exit(0) flagged, passed=False'
+
+
+def calibrate_walrus_status(rows):
+    """#892 r5: a walrus write carries the clean literal like any other value
+    (MiniMax sibling P1-2)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "inline status/exit assignment (status := 'PASS')", 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: walrus status write flagged, passed=False'
+
+
+def calibrate_rebuilt_summary(rows):
+    """#892 r5: a summary rebuilt from an existing one is not a leaf verdict, so
+    its clean literal is judged even though the name feeds the shared call
+    (GLM boundary P1-3)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "inline status/exit assignment {**report, 'status': 'PASS'}",
+        'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: rebuilt summary flagged, passed=False'
+
+
+def calibrate_verdict_write(rows):
+    """#892 r5: ``report['verdict'] = 'PASS'`` is the same status key family as
+    ``report['status']`` (MiniMax boundary P1-3)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "inline status/exit assignment 'PASS'", 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: verdict status write flagged, passed=False'
+
+
 def calibrate_status_update_kwarg(rows):
     """#892 r4: ``report.update(status='PASS')`` passes the slot as a keyword
     argument (DeepSeek boundary P0-2)."""
@@ -780,6 +945,48 @@ MUTATIONS = [
     ('calibrate-status-setdefault', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.setdefault('status', 'PASS')\n"),
+    ('calibrate-early-return-branch', SOURCE,
+     A_EXIT,
+     "                    if report.get('special'):\n"
+     "                        code = 0\n"
+     "                        return code\n" + A_EXIT),
+    ('calibrate-two-hop-zero', SOURCE,
+     A_EXIT,
+     "                    if report.get('special'):\n"
+     "                        rc = 0\n"
+     "                        relay = rc\n"
+     "                        return relay\n" + A_EXIT),
+    ('calibrate-int-call-code', SOURCE,
+     A_EXIT,
+     "                    if report.get('special'):\n"
+     "                        code = int(all(bool(row.get('passed')) "
+     "for row in report.get('cells') or ()))\n"
+     "                        return code\n" + A_EXIT),
+    ('calibrate-dict-code-zero', SOURCE,
+     A_EXIT,
+     "                    if report.get('special'):\n"
+     "                        holder = {'code': 0}\n"
+     "                        return holder['code']\n" + A_EXIT),
+    ('calibrate-nested-def-zero', SOURCE,
+     A_EXIT,
+     "                    if report.get('special'):\n"
+     "                        def _exit_code():\n"
+     "                            return 0\n"
+     "                        return _exit_code()\n" + A_EXIT),
+    ('calibrate-verdict-write', SOURCE,
+     "                report['status'] = 'BLOCKED' if isinstance(error, "
+     "BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
+     "                report['verdict'] = 'PASS'\n"),
+    ('calibrate-sys-exit-zero', SOURCE,
+     A_EXIT,
+     "                    if report.get('special'):\n"
+     "                        sys.exit(0)\n" + A_EXIT),
+    ('calibrate-walrus-status', SOURCE,
+     B_STATUS,
+     "                report['status'] = (status := 'PASS')\n"),
+    ('calibrate-rebuilt-summary', SOURCE,
+     B_STATUS,
+     "                report = {**report, 'status': 'PASS'}\n"),
     ('calibrate-status-update-kwarg', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update(status='PASS')\n"),
@@ -956,6 +1163,24 @@ JUDGES = {
         'aggregation-audit', calibrate_shared_excuse, False, ()),
     'calibrate-status-setdefault': (
         'aggregation-audit', calibrate_status_setdefault, False, ()),
+    'calibrate-early-return-branch': (
+        'aggregation-audit', calibrate_early_return_branch, False, ()),
+    'calibrate-two-hop-zero': (
+        'aggregation-audit', calibrate_two_hop_zero, False, ()),
+    'calibrate-int-call-code': (
+        'aggregation-audit', calibrate_int_call_code, False, ()),
+    'calibrate-dict-code-zero': (
+        'aggregation-audit', calibrate_dict_code_zero, False, ()),
+    'calibrate-nested-def-zero': (
+        'aggregation-audit', calibrate_nested_def_zero, False, ()),
+    'calibrate-sys-exit-zero': (
+        'aggregation-audit', calibrate_sys_exit_zero, False, ()),
+    'calibrate-walrus-status': (
+        'aggregation-audit', calibrate_walrus_status, False, ()),
+    'calibrate-rebuilt-summary': (
+        'aggregation-audit', calibrate_rebuilt_summary, False, ()),
+    'calibrate-verdict-write': (
+        'aggregation-audit', calibrate_verdict_write, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
     'restored-skip-accepted': (
