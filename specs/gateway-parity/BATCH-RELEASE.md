@@ -25,7 +25,7 @@
 
 ## 2. 名词与产物
 
-- **车次（train）**：一次冻结登记周期。产物 = 一条集成分支 `frozen/train-<YYYYMMDD>-<n>`（落为一个到 main 的 PR），含 N 个已收敛单的装置改动 + N 个初始事件文件（修复时另有 `-r<n>` 修订事件）+ 一次 `--write` 后的 `FROZEN.md` + 一次车次复算（失败处置会追加事件并重跑 `--write` / 复算，见 §5）。
+- **车次（train）**：一次冻结登记周期。产物 = 一条集成分支 `chore/train-<YYYYMMDD>-<n>`（落为一个到 main 的 PR；owner 用 `chore` 是因为 `scripts/check-naming.py` 的分支白名单只认 `codex|docs|dev|chore|fix`，新增 owner 属改工具语义），含 N 个已收敛单的装置改动 + N 个初始事件文件（修复时另有 `-r<n>` 修订事件）+ 一次 `--write` 后的 `FROZEN.md` + 一次车次复算（失败处置会追加事件并重跑 `--write` / 复算，见 §5）。
 - **单元（unit）**：一张单在车次内的增量（代码提交 + 事件文件 + 复算切片）。
 - **车长**：协调者。负责组车、`--write`、复算、出车与失败处置，不承担单的实现。
 - **冻结窗口**：从步骤 8 的登记提交（事件 + `FROZEN.md`）落地起，到合并完成、车次分支 HEAD 不再变化的时间段。步骤 3 固定的 HEAD 指**装置输入字节**（各单元代码提交），不是最终 PR HEAD；登记提交落地后不得再改装置输入字节或已写入的事件，任何变化按 §5 追加事件并重跑。
@@ -49,7 +49,7 @@
 
 ## 4. 组车步骤（车长按序执行）
 
-1. **起车**：先占号再动作——在 §9 车次记录表提交一行占位（车次号 / 日期 / 状态=起车），**并把该占位提交推到共享远端 ref** 确认未撞号（多车长可能在不同 worktree / 仓外 clone 里工作，只提交在本地互相看不见）；随后 `mkdir _tmp/<YYYYMMDD>-frozen-train-<n>/` 原子占位证据目录（已存在即换号），再从 `origin/main` 建 `frozen/train-<YYYYMMDD>-<n>`。占位先到共享 ref 者得号。
+1. **起车**：先占号再动作——在 §9 车次记录表提交一行占位（车次号 / 日期 / 状态=起车），**并把该占位提交推到共享远端 ref** 确认未撞号（多车长可能在不同 worktree / 仓外 clone 里工作，只提交在本地互相看不见）；随后 `mkdir _tmp/<YYYYMMDD>-frozen-train-<n>/` 原子占位证据目录，再从 `origin/main` 建 `chore/train-<YYYYMMDD>-<n>`。占位先到共享 ref 者得号；**mkdir 撞目录即该号烧毁**——自己的 ref 也要一起撤（或改名），换号后把 push → mkdir 整个循环重走，不能只换一半。
 2. **上车**：按 A2 的文件面分组顺序把各单元分支的增量提交 `cherry-pick`/rebase 到车次分支；同一文件面的单元严格顺序，后一单元在前一单元落地后重放。
 3. **固定 HEAD**：所有单元代码已提交、工作树干净（`git status --porcelain` 为空）。`--write` 要求登记文件的工作树字节等于 HEAD 字节，所以这一步不能省。
 4. **写事件**：每单元一个 `frozen/<YYYYMMDD>-<单号>.md`（模板见 `frozen/README.md`）。`Change:` 的 old/new 分两种情况：**单一变化**（该文件在本车次只有一个单元改）old 取 `merge-base(origin/main)` 的 blob 完整 SHA256、new 取当前树；**同文件多单元**按落地顺序形成 `a→b→c` 唯一链——链首单元 old 取 merge-base 的 blob，后续单元 old 取前一单元落地后的树摘要（即前一单元 new）、new 取本单元落地后的树。新增文件 old 用 `-`，删除用 new `-`。两条边共用同一个 old 会被机器判重复边而 FAIL。
