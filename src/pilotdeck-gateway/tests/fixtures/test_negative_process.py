@@ -364,36 +364,46 @@ class ProcessControls(unittest.TestCase):
                                  f"{name}: " + result.stdout + result.stderr)
                 self.assertIn("闸内", result.stdout)
 
-    def test_cargo_slots_stamps_used_after_gate_answers(self):
-        # #1556 r5 boundary P1：闸刷新分支原先用「问闸**之前**」取的 now 当 lastok / USED_TS，
-        # 于是 used_age ≈ 闸本次应答耗时——闸慢过 USED_TTL 时，刚拿到的 used 立刻被判陈旧弃用，
-        # 等于白问一次。这里用一把睡 4 s 的闸 + USED_TTL=2 再现：修好后 used_age≈0 参与判定
-        # （闸报 999/999 → 1）；旧实现 used_age≈4 > 2 只按 ps 判（本机无 cargo → 0）。
+    def test_cargo_slots_slow_gate_sample_is_not_trusted(self):
+        # #1556 r6 concurrency P1：闸的 --status 是「先探 slot 算 used → 再做磁盘 du（冷缓存
+        # 31.8–42.2 s）→ 最后才打印」，所以 used 的测量时刻最早是这次调用的起点。时间戳必须取
+        # 问闸**之前**的时刻——用答复时刻会把整段 du 抹掉，让陈旧的 used 冒充「0s 前取自闸」，
+        # 而 du 期间正是「shim 刚占走最后一个槽、ps 还看不到 cargo」的假放行窗口。
+        # 两格：闸秒答 → used 新鲜、参与判定（判满 1）；闸睡 4 s 而 USED_TTL=2 → used 年龄 ≥4 s，
+        # 当未知、只按 ps 判（本机无 cargo → 0），输出里写明「不计入判定」。
         script = Path(__file__).resolve().parents[4] / "scripts" / "cargo-slots.sh"
-        now = int(time.time())
         with tempfile.TemporaryDirectory(prefix="pdrs-cargo-slots-stamp-") as temp:
             temp = Path(temp)
             gate = temp / "gate.sh"
-            gate.write_text("#!/bin/bash\necho 'cargo-slot x host=h 名额 0/999  磁盘 1.0 GiB / 190（cache）'\n")
-            gate.chmod(0o755)
             cache = temp / "cache"
             env = dict(os.environ,
                        PDRS_CARGO_SLOT_BIN=str(gate),
                        PDRS_CARGO_SLOTS_CACHE_DIR=str(cache),
                        PDRS_CARGO_SLOTS_REFRESH_TIMEOUT="20",
                        PDRS_CARGO_SLOTS_USED_TTL="2")
-            # 先跑一次让脚本写出缓存（键是 cksum，不猜文件名）。
-            subprocess.run(["bash", str(script)], capture_output=True, text=True,
-                           timeout=60, env=env, check=False)
-            files = list(cache.glob("cap-cache.*"))
-            self.assertEqual(len(files), 1, f"第一次调用应写出缓存：{files}")
-            # 缓存过期（age > CAP_TTL 300）但 lastok 仍在 FAT_REFRESH_AFTER 内 → 走 5 s 刷新分支。
-            files[0].write_text(f"999 0 {now - 600} {now - 600}\n")
-            gate.write_text("#!/bin/bash\nsleep 4\necho 'cargo-slot x host=h 名额 999/999  磁盘 1.0 GiB / 190（cache）'\n")
-            result = subprocess.run(["bash", str(script)], capture_output=True,
-                                    text=True, timeout=120, env=env)
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("前取自闸", result.stdout)
+
+            def seed_and_run(body):
+                gate.write_text("#!/bin/bash\n" + body +
+                                "echo 'cargo-slot x host=h 名额 999/999  磁盘 1.0 GiB / 190（cache）'\n")
+                gate.chmod(0o755)
+                # 先跑一次让脚本写出缓存（键是 cksum，不猜文件名），再把它改成「已过期」，
+                # 强制走限时刷新分支。
+                subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                               timeout=60, env=env, check=False)
+                files = list(cache.glob("cap-cache.*"))
+                self.assertEqual(len(files), 1, f"第一次调用应写出缓存：{files}")
+                now = int(time.time())
+                files[0].write_text(f"999 0 {now - 600} {now - 600}\n")
+                return subprocess.run(["bash", str(script)], capture_output=True,
+                                      text=True, timeout=120, env=env)
+
+            fast = seed_and_run("")
+            self.assertEqual(fast.returncode, 1, fast.stdout + fast.stderr)
+            self.assertIn("前取自闸", fast.stdout)
+
+            slow = seed_and_run("sleep 4\n")
+            self.assertEqual(slow.returncode, 0, slow.stdout + slow.stderr)
+            self.assertIn("不计入判定", slow.stdout)
 
     def test_cargo_slots_rejects_bad_time_knobs(self):
         # 0 / 前导零 / 非数字都必须 fail-closed 4：0 让 MAX_STALE、FAT_REFRESH_AFTER 变成恒真，

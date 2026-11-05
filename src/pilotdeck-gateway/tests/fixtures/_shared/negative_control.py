@@ -63,16 +63,23 @@ def environment(root):
 
 def run(name, command, env, cwd=SRC, diagnostic=None):
     if command[0] == 'cargo':
-        # 等待预算 300 s：单次调用上限 300 s（≥ 脚本 bootstrap 240 s，覆盖闸的冷 du + 收尾），
-        # 若预算仍按 120 s，冷缓存 + 名额已满时第一次调用就会把预算吃光并
-        # 直接 assert 失败（#1556 r2）。改前单次 10 s、预算 120 s，够轮 12 次。
-        deadline = time.monotonic() + 300
+        # 等待预算 600 s、单次调用上限 300 s（≥ 脚本 bootstrap 240 s）：
+        # 预算若只够一次冷调用，冷缓存 + 名额已满时第一次调用就把预算吃光，
+        # 后面直接 assert 失败（#1556 r2）；两者相等（300/300）同样没有重试余地，
+        # 且 assert 硬崩会被记成假 FAIL 而不是「环境未取得判定」（#1556 r6 sibling P1）。
+        # 与 negative_process.wait_for_slot 同口径：单次超时只算一次机会，预算内重试。
+        deadline = time.monotonic() + 600
         while True:
             # timeout 300 s ≥ 脚本自身的 bootstrap 预算 240 s（#1556 r5 sibling P1）：
             # 首次碰统一闸要等冷 du（实测 31.8–42.2 s，结构上限是闸自己的 180 s du 超时），
             # 之后走名额缓存是毫秒级。见 scripts/cargo-slots.sh 头注释。
-            slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')],
-                                  capture_output=True, text=True, timeout=300)
+            try:
+                slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')],
+                                      capture_output=True, text=True, timeout=300)
+            except subprocess.TimeoutExpired:
+                if time.monotonic() >= deadline:
+                    raise
+                continue
             print(slot.stdout + slot.stderr, end='', flush=True)
             if slot.returncode in (0, 69):
                 # 69 (EX_UNAVAILABLE) = 本机没有统一闸（CI 就没有）：没有共享名额可等，
