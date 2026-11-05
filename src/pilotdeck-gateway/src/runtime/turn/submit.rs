@@ -708,13 +708,15 @@ impl TurnSubmitter {
                         // client with a silent end. Let its worker finish, but
                         // never wait forever: a worker stuck in a host future
                         // must not keep the turn (and its admission and fence)
-                        // alive, so a detached backstop closes delivery once the
-                        // abort budget runs out.
+                        // alive. `close_live` is immediate and idempotent, and
+                        // the backstop fires when the worker reports flushing
+                        // *or* dies first (a dropped sender resolves the wait),
+                        // so a panicked worker cannot leave delivery open.
                         let publisher = publisher.clone();
-                        let budget = Duration::from_millis(self.host.abort_turn_timeout_ms());
+                        let budget = Duration::from_millis(self.host.abort_turn_timeout_ms().max(1_000));
                         tokio::spawn(async move {
-                            if tokio::time::timeout(budget, flush_wait).await.is_err() {
-                                publisher.finish().await;
+                            if !matches!(tokio::time::timeout(budget, flush_wait).await, Ok(Ok(()))) {
+                                publisher.close_live();
                             }
                         });
                     }
