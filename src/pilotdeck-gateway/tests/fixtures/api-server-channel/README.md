@@ -84,10 +84,24 @@ silently degrade a cell into "some short body":
 - `N` is capped at `MAX_REQUEST_BYTES + 1`; a larger count is refused before
   allocation.
 - A `body` field that is present but not a string panics; an absent one means
-  no body (GET/HEAD cells).
+  no body (GET/HEAD cells). A header value that is not a string panics too.
 - `body-limit-exact` must expand to exactly `MAX_REQUEST_BYTES` and
   `oversized-*` to exactly `MAX_REQUEST_BYTES + 1`, asserted on every replay:
   the cap and the fixture must not drift apart.
+- Every cell must record exactly as many `expect` responses as `requests`; a
+  surplus response would never be compared.
+- The generator derives each placeholder count from the same constant as the
+  body it sends, so the two cannot disagree.
+
+One coupling to keep in mind when adding a negative control: the replay budget
+(`REPLAY_BODY_BUDGET`) is derived from `MAX_REQUEST_BYTES` on purpose, so a
+mutation that *raises* the cap also raises the budget past
+`recorded_body_refuses_an_unbounded_count`'s literal (`<9000000 bytes>`). That
+guard would stop panicking under such a mutant. It is harmless today because
+api-server controls run one named test each through
+`negative_suite.run_cases`; a move to the matrix runner (which requires the
+positive suite to stay green) needs the literal re-derived or the mutant
+excluded.
 
 ## Known divergence
 
