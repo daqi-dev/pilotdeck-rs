@@ -831,15 +831,17 @@ async fn permission_errors_carry_domain_codes() {
         .expect("#1309 permission fixture project shutdown");
 }
 
-/// #1465 / #1593 gate: a grant whose `sessionKey` is not a non-blank string
-/// must not land in the `""` rule set. TS keys `permissionGrants` by the raw
-/// value, so `5` and `undefined` are entries of their own and never alias a
-/// real session. This registry is keyed by the lossy string form instead and a
-/// turn sent without a `sessionKey` acquires `""`
-/// (`runtime/turn/submit.rs:330` → `native_process/assembly.rs:247`), so
+/// #1465 / #1593 gate: a grant whose `sessionKey` is not a string, or is
+/// exactly `""`, must not land in the `""` rule set. TS keys
+/// `permissionGrants` by the raw value, so `5` and `undefined` are entries of
+/// their own and never alias a real session. This registry is keyed by the
+/// lossy string form instead and a turn sent without a `sessionKey` acquires
+/// `""` (`runtime/turn/submit.rs:330` → `native_process/assembly.rs:247`), so
 /// writing there would let malformed input whitelist tools for unrelated
 /// sessionless turns (measured before the fix: the `""` allow list grew by one
-/// entry per malformed grant).
+/// entry per malformed grant). `""` is the only *string* key with that problem;
+/// a whitespace-only key is a bucket of its own on both the grant and the turn
+/// side, so it must still be written.
 #[tokio::test]
 async fn malformed_grant_does_not_reach_the_sessionless_bucket() {
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
@@ -859,6 +861,7 @@ async fn malformed_grant_does_not_reach_the_sessionless_bucket() {
         ("number", JsValue::Number(5.0)),
         ("undefined", JsValue::Undefined),
         ("bool", JsValue::Bool(true)),
+        ("empty string", JsValue::String(empty.clone())),
     ] {
         let granted = requests
             .permission_request(
@@ -881,6 +884,44 @@ async fn malformed_grant_does_not_reach_the_sessionless_bucket() {
             .len(),
         0,
         "#1465 malformed grants must not reach the sessionless rule set"
+    );
+
+    // A whitespace-only key is NOT the sessionless alias: the turn side keeps
+    // it verbatim (`runtime/turn/submit.rs:330`), so TS and Rust both store and
+    // read it under its own key. Dropping it would be an over-narrowing.
+    let spaces = pilotdeck_protocol::JsString::from("   ");
+    let spaced = requests
+        .permission_request(
+            "grant_session_permission".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(spaces.clone())),
+                ("entry", "Bash".into()),
+            ]),
+        )
+        .await
+        .expect("#1465 whitespace sessionKey grant answers");
+    negative_assert_eq!(
+        spaced.get("granted"),
+        Some(&JsValue::Bool(true)),
+        "#1465 whitespace sessionKey still answers granted:true"
+    );
+    negative_assert_eq!(
+        requests
+            .interactions
+            .session_allow_rules(&spaces)
+            .snapshot()
+            .len(),
+        1,
+        "#1465 whitespace sessionKey keeps its own bucket"
+    );
+    negative_assert_eq!(
+        requests
+            .interactions
+            .session_allow_rules(&empty)
+            .snapshot()
+            .len(),
+        0,
+        "#1465 whitespace grant must not alias the sessionless bucket"
     );
 
     // Blank entry is the `granted:false` arm (TS probe output.txt req-26).

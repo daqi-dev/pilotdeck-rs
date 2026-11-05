@@ -230,38 +230,23 @@ impl Requests {
                     )?;
                     // TS release has NO typeof short-circuit on leaseId
                     // (InProcessGateway.ts:2766-2769, unlike claim :2738 /
-                    // respond :2655): `!input.leaseId?.trim()` only guards
+                    // respond :2655): `!input.leaseId?.trim()` guards only
                     // null/undefined through optional chaining, so any other
                     // non-string leaseId calls `.trim` on the raw value and
-                    // throws a TypeError. GatewayWsConnection.ts:488 forwards
-                    // the wire params with no schema interception, and the
-                    // request boundary's generic catch serializes that
-                    // TypeError as the transport failure. Wire probe
-                    // (_tmp/20261105-issue-1309-fix-r7/ts-probe/): number,
-                    // object, array, and boolean leaseIds all yield the
-                    // identical frame {code:"gateway_request_failed",
+                    // throws the boundary TypeError — exactly `require_text`'s
+                    // three-way split. The nullish-`params` arm differs on
+                    // paper (property-read TypeError vs domain error) but is
+                    // unreachable: the `sessionKey` guard above runs first.
+                    // Wire probe (_tmp/20261105-issue-1309-fix-r7/ts-probe/):
+                    // number, object, array, and boolean leaseIds all yield
+                    // {code:"gateway_request_failed",
                     // message:"input.leaseId?.trim is not a function"}.
-                    let lease_id = match params.get("leaseId") {
-                        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {
-                            return Err(domain_error(
-                                "INVALID_USER_DIALOG_RELEASE",
-                                "sessionKey, requestId, and leaseId are required.",
-                            ));
-                        }
-                        Some(JsValue::String(s)) => {
-                            let text = String::from_utf16_lossy(s.units());
-                            if crate::metadata::js_trim(&text).is_empty() {
-                                return Err(domain_error(
-                                    "INVALID_USER_DIALOG_RELEASE",
-                                    "sessionKey, requestId, and leaseId are required.",
-                                ));
-                            }
-                            s.clone()
-                        }
-                        _ => {
-                            return Err(request_error("input.leaseId?.trim is not a function"));
-                        }
-                    };
+                    let lease_id = super::require_text(
+                        &params,
+                        "leaseId",
+                        "INVALID_USER_DIALOG_RELEASE",
+                        "sessionKey, requestId, and leaseId are required.",
+                    )?;
                     // TS passes `input.leaseId.trim()` into the bus
                     // (InProcessGateway.ts:2769) — sessionKey/requestId stay
                     // raw because TS forwards them untrimmed.

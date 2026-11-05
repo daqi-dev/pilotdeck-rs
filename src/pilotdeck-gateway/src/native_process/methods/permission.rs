@@ -91,20 +91,22 @@ impl Requests {
                     Some(JsValue::String(value)) => value.clone(),
                     Some(_) => return Err(RequestError::new("entry.trim is not a function")),
                 };
-                // TS keys the grant Map by the raw sessionKey, so a malformed
-                // value (`5`, `{}`, `true`, missing) is its own entry and can
-                // never reach a real session. This registry is keyed by the
-                // lossy string form and a sessionless turn acquires the `""`
-                // entry, so only a non-blank string owner may store the rule;
-                // everything else keeps the TS response without writing
-                // (`coordinator.rs:grant_session_permission`).
+                // TS keys the grant Map by the raw sessionKey, so a non-string
+                // value (`5`, `{}`, `true`, missing) is an entry of its own
+                // that no turn can ever look up — Rust turns always carry a
+                // string key (`runtime/turn/submit.rs:330`). Only one *string*
+                // key is lossy here: `""`, because that same `string()` maps a
+                // missing or non-string turn sessionKey to `""`
+                // (`native_process/assembly.rs:247` acquires by that key), so a
+                // grant stored under `""` would whitelist tools for unrelated
+                // sessionless turns. Skip exactly those two cases; every other
+                // string — including a whitespace-only `"   "`, which the turn
+                // side preserves verbatim — is written to its own bucket
+                // exactly like TS (`coordinator.rs:grant_session_permission`).
                 let owner = params
                     .get("sessionKey")
                     .and_then(JsValue::as_string)
-                    .filter(|value| {
-                        !crate::metadata::js_trim(&String::from_utf16_lossy(value.units()))
-                            .is_empty()
-                    });
+                    .filter(|value| !value.units().is_empty());
                 Ok(self.interactions.grant_session_permission(owner, &entry))
             }
         })
