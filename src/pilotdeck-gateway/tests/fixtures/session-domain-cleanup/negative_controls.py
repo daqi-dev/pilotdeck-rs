@@ -169,7 +169,10 @@ def branch_exit_inline(rows):
     if not any(failure.startswith(
             '#892 aggregation-audit: '
             'scripts/gateway-parity/controls/session_domain.py:main ')
-            and 'inline status/exit' in failure
+            # r2 judges each conditional arm on its own, so a non-pair inline
+            # code reports ``inline exit code ...`` instead of the pair wording
+            # ``inline status/exit ...``; both are this rule.
+            and ('inline status/exit' in failure or 'inline exit code' in failure)
             for failure in failures):
         return False, f'failures={failures!r}, want the #892 main inline status/exit failure'
     slots = (row.get('points', {}).get('controls-main', {}) or {}).get('unsharedSlots')
@@ -249,7 +252,10 @@ def status_slot_relayed(rows):
     row, error = _audit_row(rows)
     if row is None:
         return False, error
-    ok, detail = _main_failure(row, "status slot 'status'", 'controls-run-all')
+    # The slot here is the local variable ``status`` (an ``ast.Name``), which
+    # unparses without quotes — unlike the ``'PASS'`` constant that
+    # ``summary-name-bypass`` pins.
+    ok, detail = _main_failure(row, 'status slot status at line', 'controls-run-all')
     if not ok:
         return ok, detail
     return True, 'aggregation-audit: locally computed status slot flagged, passed=False'
