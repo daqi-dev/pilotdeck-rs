@@ -71,6 +71,9 @@ ANGLE = re.compile(r"<([^<>\n]*)>")
 BRACE = re.compile(r"\{([^{}\n]*)\}")
 # 全角尖括号（`＜待填＞`）与中文方括号（`【待填】`）：Unicode 归一化不做，直接加同义模式。
 FW_ANGLE = re.compile(r"[＜〈]([^＜＞〈〉\n]*)[＞〉]")
+# 全角花括号（`｛待填｝`）：`## 续跑` 的路径侧早就把 `｛｝` 当占位，分段表侧没有同义模式 →
+# `｛请填写本段涉及的文件｝` 整格判不出占位（两家 boundary 各自独立报到，fail-open）。
+FW_BRACE = re.compile(r"｛([^｛｝\n]*)｝")
 # 中文方括号里可能是正文（`【重要】`），只认明确的占位词，不套「含中文即占位」
 CJK_BRACKET = re.compile(r"【([^【】\n]*)】")
 # 只认明确的占位词：单字「待」「略」会把 `【策略】` / `【等待】` / `【忽略】` 这类正文判成占位符。
@@ -134,6 +137,9 @@ def placeholder_in(text):
     for m in FW_ANGLE.finditer(text):
         if _looks_placeholder(m.group(1)):
             return m.group(0)
+    for m in FW_BRACE.finditer(text):
+        if _looks_placeholder(m.group(1)):
+            return m.group(0)
     for m in CJK_BRACKET.finditer(text):
         if _looks_placeholder_cjk_bracket(m.group(1)):
             return m.group(0)
@@ -141,6 +147,7 @@ def placeholder_in(text):
     masked = ANGLE.sub(lambda m: " " * len(m.group(0)), text)
     masked = BRACE.sub(lambda m: " " * len(m.group(0)), masked)
     masked = FW_ANGLE.sub(lambda m: " " * len(m.group(0)), masked)
+    masked = FW_BRACE.sub(lambda m: " " * len(m.group(0)), masked)
     masked = CJK_BRACKET.sub(lambda m: " " * len(m.group(0)), masked)
     m = BARE_PLACEHOLDER.search(masked)
     return m.group(0) if m else None
@@ -392,7 +399,15 @@ def _indent_kind(text, pos):
     # 往回找上一个非空行，看它是不是列表项
     j, budget = i - 1, 4096
     while j > 0 and budget > 0:
-        a = text.rfind("\n", max(0, j - budget), j) + 1
+        lo = max(0, j - budget)
+        nl_at = text.rfind("\n", lo, j)
+        if nl_at < 0:
+            # 回看窗口里连一个换行都没有：上一行本身比窗口还长，看不到行首就判不出
+            # 「列表项 / 正文」。**必须按判不准处理**——取 `a = nl_at + 1 = 0` 会把文档开头
+            # 整段当「上一个非空行」，文档以 `- ` 开头时返回 example，长正文后面的缩进 scope
+            # 被静默丢掉（gate15 DeepSeek P0 实测：4503 字符正文 → scopes=[] rc 0 假 PASS）。
+            return "prose"
+        a = nl_at + 1
         if text[a:j].strip():
             return "example" if LIST_ITEM.match(text[a:j]) else "prose"
         budget -= j - a + 1
@@ -563,6 +578,25 @@ RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=
 # 裸「加」是「增加 / 加班」的子串（`60–80 min（增加 20 min 联调）`），不当加法。
 ADD_MARK = re.compile(r"\+|＋|另加|再加|再补")
 BREAK_CHARS = "（(，,；;"     # 回看窗口的边界：括注开头 / 句读
+# 括注里「包含」类说明词：它们后面的数字不计入主估时。**否定式不算包含**——否定词在词前 3 字符内
+# （`不含` / `不包含` / `未包含` / `不需要包括` / `除…含`）时那段时间必须计入。
+INCLUDE_WORDS = re.compile(r"含|各|其中|包括|内含|外加")
+INCLUDE_NEG = re.compile(r"[不未无除需没]")
+EXCLUDE_WORDS = re.compile(r"不计入|不算")
+
+
+def _skips_number(text, lo, hi):
+    """`text[lo:hi]` 这段说明文字是否让紧跟着的数字不计入主估时。
+
+    用 pos/endpos 在原文上搜、不切前缀：切前缀是 O(len) × token 数，64 KiB 的单格会退化成平方。
+    """
+    if EXCLUDE_WORDS.search(text, lo, hi):     # `（不计入 30 min 缓冲）` 是明确的排除说明
+        return True
+    for m in INCLUDE_WORDS.finditer(text, lo, hi):
+        if not INCLUDE_NEG.search(text[max(lo, m.start() - 3):m.start()]):
+            return True
+    return False
+
 MAX_EST_CELL = 65536        # 单个估时格子 64 KiB 上限：正常格子 < 100 字符
 UNIT_MIN = ("", "min", "mins", "minute", "minutes", "m", "分", "分钟")
 UNIT_HOUR = ("h", "hr", "hrs", "hour", "hours", "时", "小时", "个小时")
@@ -670,10 +704,12 @@ def parse_est(cell, default_unit=""):
         # 回看窗口到「最近的括注开头 / 句读」为止，不再固定 4 字符：`90 min（含双段联调 10 min）` 里
         # `含` 与 `10` 隔 6 字符，旧窗口看不到 → 10 被计入求和 → 100 > 90 → 合规段被拒（假 FAIL）。
         k = bisect.bisect_left(breaks, m.start())
-        head = cell[(breaks[k - 1] if k else -1) + 1:m.start()]
-        # `不含 / 未含 / 无含 / 除…含` 是**排除**：那段时间不在主估时里，必须计入（`90 min（不含 30 min 测试）`
-        # 真值 120）；写成裸 `[含各]` 会把否定句也跳过 → 边界上的段假 PASS。
-        if re.search(r"(?<![不未无除])含|各|其中|包括|内含|外加", head):
+        lo = (breaks[k - 1] if k else -1) + 1
+        # `不含 / 不包含 / 未包含 / 不包括 / 除…含` 是**排除**：那段时间不在主估时里，必须计入
+        # （`90 min（不含 30 min 测试）` 真值 120）；写成裸 `[含各]` 会把否定句也跳过 → 边界上的段假 PASS。
+        # 否定判定要覆盖 2–3 字的写法：只写 `(?<![不未无除])含` 时 `不包含` 的 `含` 前一字符是 `包`，
+        # 仍被当成包含（gate15 DeepSeek P1 实测：`不包含` / `不包括` / `未包含` 三种都读成 90，真值 120）。
+        if _skips_number(cell, lo, m.start()):
             continue
         toks.append((float(m.group(1)), m.group(2).lower(), m.start()))
     if not toks:
