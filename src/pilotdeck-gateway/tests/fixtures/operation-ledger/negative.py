@@ -145,7 +145,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
 
     def run(label, arguments):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=120)
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
         try:
             result = run_owned(command + arguments, cwd=root, env=env, timeout=600)

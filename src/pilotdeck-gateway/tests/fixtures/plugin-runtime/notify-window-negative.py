@@ -38,7 +38,7 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     mutated = before.replace(old, new)
     assert mutated != before
     started = time.monotonic()
-    slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=120)
+    slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=180)
     (OUT / 'slots.log').write_text(slot.stdout + slot.stderr)
     command = [
         'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),

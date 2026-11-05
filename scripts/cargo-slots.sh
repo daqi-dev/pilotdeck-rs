@@ -19,38 +19,86 @@
 #   1   已满（调用方等待后重试）
 #   2   保留：本脚本从不主动使用。bash 自身语法错误会返回 2，调用方见到就是「脚本坏了」，不得放行。
 #   3   取样失败（ps 失败 / 输出为空），无法判断名额
-#   4   统一闸存在但给不出名额（--status 非 0 / 输出解不出名额 / 冷启动超时且本机无名额缓存）→ fail-closed
+#   4   统一闸存在但给不出名额（--status 非 0 / 输出解不出名额 / 冷启动超时且本机无名额缓存 /
+#       HOME 未设导致闸路径无法确定 / 本机有 pdrs-ops 或共享池迹象但闸不可执行 / 名额缓存超过 24 h 未从闸刷新）→ fail-closed
 #   64  用法错误（传了旧的上限参数）
-#   69  本机没有统一闸（EX_UNAVAILABLE：CI / 普通开发机）→ 无共享名额可等，可以继续
+#   69  本机确实没有统一闸（EX_UNAVAILABLE：CI / 普通开发机：$HOME 下既无 pdrs-ops 也无共享池目录），
+#       或调用方用 PDRS_CARGO_SLOT_BIN 显式声明「本机不用共享名额」→ 无共享名额可等，可以继续
 #
 # 为什么要有名额缓存（11-06，#1556 r1 P1-2）：`cargo-slot --status` 除名额行外还会算磁盘余量，
-# 闸内 disk.cache（TTL 300 s）过期时会起 8 路 du 扫 _build+_tmp。本机实测冷缓存 38.6 s、
+# 闸内 disk.cache（TTL 300 s）过期时会起 8 路 du 扫 _build+_tmp。本机实测冷缓存 31.8–38.6 s、
 # 结构上限是闸自己的单次 du 超时 180 s；而消费方单次调用只给 10 s → 冷路径必超时。
-# 名额是「按主机静态配置」，磁盘余量与本脚本的判定无关，所以把解析出的名额按 TTL 缓存：
+# 名额是「按主机静态配置」，磁盘余量与本脚本的判定无关，所以把解析出的名额按 TTL 缓存（行格式
+# `cap used ts lastok`，lastok = 最近一次真的从闸拿到名额的时间，只有成功刷新才推进）：
 #   · 缓存新鲜（≤ PDRS_CARGO_SLOTS_CAP_TTL，默认 300 s）→ 直接读，毫秒级，不碰闸；
-#   · 缓存过期 → 限时（默认 5 s）问一次闸：答了就用新值；闸非 0 / 输出不可解析 → 退出 4（错误必须暴露）；
-#     只是慢（限时内没答完，典型就是冷 du）→ 沿用旧缓存并盖时间戳，不再每次都白等；
+#   · 缓存过期 → 限时（默认 5 s；若 lastok 已超过 900 s 则改用冷启动预算，让慢闸有机会答完）问一次闸：
+#     答了就用新值并推进 lastok；闸非 0 / 输出不可解析 → 退出 4（错误必须暴露）；
+#     只是慢（限时内没答完，典型就是冷 du）→ 沿用旧缓存并盖 ts、**不推进 lastok**（#1556 r2：旧实现
+#     无条件连时间戳一起回写，既能把 lastok 推进到「永远不用再问闸」，也能覆盖并发方刚刷到的新值）；
+#   · lastok 超过 24 h → 退出 4（名额缓存陈旧到不可信，fail-closed，跑 --refresh-cap 恢复）；
 #   · 本机没有缓存（首次）→ 给足冷启动预算（默认 120 s）问一次闸。
+# 慢路径回写前重读缓存做 CAS：读到的那一行变了（别的进程刚刷新过）就不再回写，本次直接用它的新值。
 # 缓存键含闸路径 / 主机名 / 名额相关环境变量，负控用桩闸时不会互相污染。
 set -uo pipefail
-# HOME 未设（env -u HOME / 极简 CI 容器）时不能让 set -u 把脚本打成 1——那和「已满」同码，
-# 调用方会空等到 deadline。这里退化成 /ws/... 找不到闸 → 69（本机没有统一闸），语义正确。
-GATE=${PDRS_CARGO_SLOT_BIN:-${HOME:-}/ws/pdrs-ops/bin/cargo-slot}
 CAP_TTL=${PDRS_CARGO_SLOTS_CAP_TTL:-300}
 REFRESH_TIMEOUT=${PDRS_CARGO_SLOTS_REFRESH_TIMEOUT:-5}
 BOOTSTRAP_TIMEOUT=${PDRS_CARGO_SLOTS_BOOTSTRAP_TIMEOUT:-120}
+# lastok 超过这个岁数就不再问 5 s，改用冷启动预算（#1556 r2：慢闸永远答不进 5 s 时，
+# 靠这条把「永久冻结在首次 bootstrap 值」变成「15 min 后会有一次真的刷新」）。
+FAT_REFRESH_AFTER=${PDRS_CARGO_SLOTS_FAT_REFRESH_AFTER:-900}
+MAX_STALE=${PDRS_CARGO_SLOTS_MAX_STALE:-86400}
 REFRESH_ONLY=0
 if [ "${1:-}" = "--refresh-cap" ]; then
   REFRESH_ONLY=1
   shift
 fi
 if [ $# -gt 0 ]; then
-  echo "cargo-slots: 不再接受上限参数（收到「${1}」）；名额以统一闸 ${GATE} --status 为准" >&2
+  echo "cargo-slots: 不再接受上限参数（收到「${1}」）；名额以统一闸 --status 为准" >&2
   exit 64
 fi
-if [ ! -x "$GATE" ]; then
-  echo "cargo-slots: 本机没有统一闸（${GATE} 不存在或不可执行）→ 无共享名额可等" >&2
-  exit 69
+# 时间参数只接受正整数（#1556 r2 P2）：非数字会让 `$((secs * 10))` 把 "abc" 当变量名，
+# `set -u` 下脚本以 1（=已满）退出，调用方会空等到 deadline；REFRESH_TIMEOUT=0 则让刷新
+# 恒判超时、永远取不到新值。一律 fail-closed 到 4，别伪装成「已满」。
+for knob in "$CAP_TTL" "$REFRESH_TIMEOUT" "$BOOTSTRAP_TIMEOUT" "$FAT_REFRESH_AFTER" "$MAX_STALE"; do
+  case "$knob" in
+    ''|*[!0-9]*)
+      echo "cargo-slots: 时间参数必须是正整数（收到「${knob}」）→ fail-closed" >&2
+      exit 4
+      ;;
+  esac
+done
+if [ "$REFRESH_TIMEOUT" -lt 1 ]; then
+  echo "cargo-slots: PDRS_CARGO_SLOTS_REFRESH_TIMEOUT 必须 ≥1（0 会让刷新恒判超时）→ fail-closed" >&2
+  exit 4
+fi
+# 闸定位（#1556 r2 P1）：别把「闸路径解析不出来」当成「本机没有闸」——那会让 env -u HOME、
+# 服务账号 HOME、掉 +x 的闸都静默放行到超名额。三分：
+#   · PDRS_CARGO_SLOT_BIN 显式指定 = 调用方声明闸在哪（负控桩闸 / 换机）；不可执行按「显式 opt-in
+#     的不用共享名额」处理 → 69（沿用 r1 契约）。
+#   · 未指定且 HOME 未设 → 无法定位，fail-closed 4。
+#   · 未指定、HOME 有但闸不可执行 → 本机有 pdrs-ops 目录或共享池目录就是「装了但坏了」→ 4；
+#     两者都没有才是真的没有闸 → 69。
+if [ -n "${PDRS_CARGO_SLOT_BIN:-}" ]; then
+  GATE=$PDRS_CARGO_SLOT_BIN
+  if [ ! -x "$GATE" ]; then
+    echo "cargo-slots: PDRS_CARGO_SLOT_BIN=${GATE} 不可执行 → 按显式声明「本机不用共享名额」继续" >&2
+    exit 69
+  fi
+elif [ -z "${HOME:-}" ]; then
+  echo "cargo-slots: HOME 未设，无法定位统一闸（\$HOME/ws/pdrs-ops/bin/cargo-slot）→ fail-closed" >&2
+  exit 4
+else
+  GATE=$HOME/ws/pdrs-ops/bin/cargo-slot
+  if [ ! -x "$GATE" ]; then
+    POOL_DIR=/private/tmp/pdrs-cargo-gate
+    [ "$(uname -s)" = Darwin ] || POOL_DIR=/tmp/pdrs-cargo-gate
+    if [ -d "$HOME/ws/pdrs-ops" ] || [ -d "$POOL_DIR" ]; then
+      echo "cargo-slots: 本机有 pdrs-ops 或共享池（${POOL_DIR}）迹象，但闸 ${GATE} 不可执行 → fail-closed" >&2
+      exit 4
+    fi
+    echo "cargo-slots: 本机没有统一闸（${GATE} 不存在，$HOME 下也无 pdrs-ops / 共享池）→ 无共享名额可等" >&2
+    exit 69
+  fi
 fi
 if [ -n "${PDRS_CARGO_SLOTS_CACHE_DIR:-}" ]; then
   CACHE_DIR=$PDRS_CARGO_SLOTS_CACHE_DIR
@@ -80,31 +128,44 @@ parse_cap() {
   return 0
 }
 
-# 读缓存；命中且格式正确返回 0（CAP_CACHE_CAP/_USED/_TS）。
+# 读缓存；命中且格式正确返回 0（CAP_CACHE_CAP/_USED/_TS/_LASTOK）。
+# 行格式 `cap used ts lastok`；旧的三字段文件把 lastok 当成 ts（下限保护，不会因此永久免刷新）。
 read_cap_cache() {
-  CAP_CACHE_CAP=; CAP_CACHE_USED=; CAP_CACHE_TS=
+  CAP_CACHE_CAP=; CAP_CACHE_USED=; CAP_CACHE_TS=; CAP_CACHE_LASTOK=
   [ -f "$CACHE_FILE" ] || return 1
-  { read -r c u t _ <"$CACHE_FILE"; } 2>/dev/null || return 1
+  { read -r c u t k _ <"$CACHE_FILE"; } 2>/dev/null || return 1
   case "${c:-}" in ''|*[!0-9]*|0*) return 1;; esac
   CAP_CACHE_CAP=$c
   CAP_CACHE_USED=${u:-0}
   { case "${CAP_CACHE_USED:-}" in ''|*[!0-9]*) CAP_CACHE_USED=0;; esac; }
   CAP_CACHE_TS=${t:-0}
   { case "${CAP_CACHE_TS:-}" in ''|*[!0-9]*) CAP_CACHE_TS=0;; esac; }
+  CAP_CACHE_LASTOK=${k:-$CAP_CACHE_TS}
+  { case "${CAP_CACHE_LASTOK:-}" in ''|*[!0-9]*) CAP_CACHE_LASTOK=$CAP_CACHE_TS;; esac; }
   return 0
 }
 
 # 原子写缓存（memory「signal-file-atomic」：tmp + rename，读者不会读到半行）。
+# $3 = lastok：只有「真的从闸拿到名额」才推进它；沿用旧值时不推进（#1556 r2）。
 write_cap_cache() {
-  local tmp
+  local tmp lastok
+  lastok=${3:-$(date +%s)}
   mkdir -p "$CACHE_DIR" 2>/dev/null || return 0
   tmp=$CACHE_FILE.$$
-  if printf '%s %s %s\n' "$1" "${2:-0}" "$(date +%s)" >"$tmp" 2>/dev/null; then
+  if printf '%s %s %s %s\n' "$1" "${2:-0}" "$(date +%s)" "$lastok" >"$tmp" 2>/dev/null; then
     mv -f "$tmp" "$CACHE_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null
   else
     rm -f "$tmp" 2>/dev/null
   fi
   return 0
+}
+
+# 重新读缓存，判断「我读到的那一行」是否还是文件里的那一行（CAS）。
+# 返回 0 = 没变（可以回写）；1 = 变了（别的进程刚刷新过，别覆盖）。
+cache_unchanged() { # $1=cap $2=used $3=ts $4=lastok
+  read_cap_cache || return 1
+  [ "$CAP_CACHE_CAP" = "$1" ] && [ "$CAP_CACHE_USED" = "$2" ] \
+    && [ "$CAP_CACHE_TS" = "$3" ] && [ "$CAP_CACHE_LASTOK" = "$4" ]
 }
 
 # 限时跑一次闸：结果在 GATE_OUT / GATE_RC；超时返回 1（并把闸连同它的 du 孙进程整组杀掉，
@@ -160,7 +221,7 @@ query_cap_or_die() { # $1 = 限时秒数，$2 = 失败提示
 
 if [ "$REFRESH_ONLY" = 1 ]; then
   query_cap_or_die "$BOOTSTRAP_TIMEOUT" "无法预热名额缓存"
-  write_cap_cache "$CAP" "$USED"
+  write_cap_cache "$CAP" "$USED" "$(date +%s)"
   echo "cargo-slots: 已缓存统一闸名额 ${USED}/${CAP}（${CACHE_FILE}）"
   exit 0
 fi
@@ -169,13 +230,25 @@ CAP_SOURCE=
 if read_cap_cache; then
   now=$(date +%s)
   age=$((now - CAP_CACHE_TS))
-  [ "$age" -ge 0 ] 2>/dev/null || age=0
+  # 时钟回拨 / 未来时间戳不能夹成 0——那会把这份缓存无限期当成「刚写的」，闸再也不被问（#1556 r2）。
+  [ "$age" -ge 0 ] 2>/dev/null || age=$((CAP_TTL + 1))
+  stale=$((now - CAP_CACHE_LASTOK))
+  [ "$stale" -ge 0 ] 2>/dev/null || stale=0
+  if [ "$stale" -gt "$MAX_STALE" ]; then
+    echo "cargo-slots: 名额缓存已 ${stale}s 未从统一闸刷新（上限 ${MAX_STALE}s）→ fail-closed；跑 scripts/cargo-slots.sh --refresh-cap 恢复" >&2
+    exit 4
+  fi
   if [ "$age" -le "$CAP_TTL" ]; then
     CAP=$CAP_CACHE_CAP
     USED=$CAP_CACHE_USED
-    CAP_SOURCE="缓存 ${age}s"
+    CAP_SOURCE="缓存 ${age}s（闸内 ${stale}s 前刷新）"
   else
-    if run_gate "$REFRESH_TIMEOUT"; then
+    # lastok 太久没推进说明闸每次都答不进 5 s（典型：每次都在跑冷 du），改用冷启动预算问一次。
+    budget=$REFRESH_TIMEOUT
+    [ "$stale" -le "$FAT_REFRESH_AFTER" ] || budget=$BOOTSTRAP_TIMEOUT
+    old_cap=$CAP_CACHE_CAP; old_used=$CAP_CACHE_USED
+    old_ts=$CAP_CACHE_TS; old_lastok=$CAP_CACHE_LASTOK
+    if run_gate "$budget"; then
       if [ "$GATE_RC" -ne 0 ]; then
         echo "cargo-slots: 统一闸 ${GATE} --status 失败（rc=${GATE_RC}）：${GATE_OUT} → fail-closed" >&2
         exit 4
@@ -184,19 +257,26 @@ if read_cap_cache; then
         echo "cargo-slots: 解不出统一闸的名额（${GATE} --status 输出：${GATE_OUT}）→ fail-closed" >&2
         exit 4
       fi
-      write_cap_cache "$CAP" "$USED"
+      write_cap_cache "$CAP" "$USED" "$now"
       CAP_SOURCE="闸刷新"
     else
-      # 闸只是慢（典型是冷 du）：名额是主机静态配置，沿用旧缓存并盖时间戳，避免每次预检都白等。
-      CAP=$CAP_CACHE_CAP
-      USED=$CAP_CACHE_USED
-      CAP_SOURCE="闸 ${REFRESH_TIMEOUT}s 内无答复，沿用 ${age}s 前的缓存名额"
-      write_cap_cache "$CAP" "$USED"
+      # 闸只是慢（典型是冷 du）：沿用旧名额继续本次判定，但 lastok 不推进，并且回写前做 CAS——
+      # 别的进程若刚刷新过，就直接用它的新值，绝不把旧 cap 盖回去（#1556 r2 concurrency P2）。
+      CAP=$old_cap
+      USED=$old_used
+      if cache_unchanged "$old_cap" "$old_used" "$old_ts" "$old_lastok"; then
+        write_cap_cache "$old_cap" "$old_used" "$old_lastok"
+        CAP_SOURCE="闸 ${budget}s 内无答复，沿用 ${age}s 前的缓存名额（闸内 ${stale}s 前刷新）"
+      else
+        CAP=$CAP_CACHE_CAP
+        USED=$CAP_CACHE_USED
+        CAP_SOURCE="闸 ${budget}s 内无答复，改用并发方刚刷新的名额（闸内 $((now - CAP_CACHE_LASTOK))s 前刷新）"
+      fi
     fi
   fi
 else
   query_cap_or_die "$BOOTSTRAP_TIMEOUT" "本机还没有名额缓存（可先跑 scripts/cargo-slots.sh --refresh-cap 预热）"
-  write_cap_cache "$CAP" "$USED"
+  write_cap_cache "$CAP" "$USED" "$(date +%s)"
   CAP_SOURCE="闸冷启动"
 fi
 

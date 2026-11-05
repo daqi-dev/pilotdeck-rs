@@ -292,6 +292,23 @@ class ProcessControls(unittest.TestCase):
                     wait_for_slot(script, timeout=2)
 
 
+    def test_cargo_slots_gate_resolution(self):
+        # #1556 r2 P1：把「闸路径解析不出来」当成「本机没有闸」会让名额检查静默消失。
+        # HOME 未设 = 无法定位 → 必须 fail-closed 4，不能是 69（放行）。
+        script = Path(__file__).resolve().parents[4] / "scripts" / "cargo-slots.sh"
+        env = {k: v for k, v in os.environ.items() if k != "PDRS_CARGO_SLOT_BIN"}
+        env.pop("HOME", None)
+        result = subprocess.run(["bash", str(script)], capture_output=True,
+                                text=True, timeout=60, env=env)
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        # 显式 PDRS_CARGO_SLOT_BIN 指向不存在的闸 = 调用方声明「本机不用共享名额」→ 69。
+        env = dict(os.environ, PDRS_CARGO_SLOT_BIN=str(
+            Path(tempfile.gettempdir()) / "no-such-gate-1556"))
+        env.pop("HOME", None)
+        result = subprocess.run(["bash", str(script)], capture_output=True,
+                                text=True, timeout=60, env=env)
+        self.assertEqual(result.returncode, 69, result.stdout + result.stderr)
+
     @staticmethod
     def wait_path(path, timeout=15):
         deadline = time.monotonic() + timeout

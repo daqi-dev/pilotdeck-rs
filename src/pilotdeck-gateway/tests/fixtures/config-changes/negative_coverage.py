@@ -102,7 +102,7 @@ def main():
     results = []
 
     def run(label, args):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=120)
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
         result = run_owned(command + ['--test', target] + args, cwd=root, env=env, timeout=900)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
