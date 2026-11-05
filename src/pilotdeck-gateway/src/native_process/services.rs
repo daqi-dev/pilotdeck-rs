@@ -606,7 +606,14 @@ pub(super) fn compose_attachment_turn(
     // what resolved paths are held against. A root that does not exist (no
     // uploads yet) simply leaves every lease path unresolved.
     let project_canon = fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
-    let lease_lexical = project_canon.join(".tmp").join("chat-upload-leases");
+    // #1618 r1: the lease paths handed to the client are built from the
+    // project's *logical* spelling (`projectKey` keeps Node's path.resolve
+    // identity, symlinks included — native_process.rs). Comparing them against
+    // a canonicalized root dropped every lease attachment of a symlinked
+    // project into the not-found branch, so the lexical pre-filter uses the
+    // same spelling the client echoes. The canonical comparison below still
+    // decides containment.
+    let lease_lexical = project_dir.join(".tmp").join("chat-upload-leases");
     // P0-a (codex): a lease root that resolved outside the canonical project
     // (a symlink swap) is no valid root at all — nothing under it may
     // resolve, be read, or be registered. #1459: a root that fails to
