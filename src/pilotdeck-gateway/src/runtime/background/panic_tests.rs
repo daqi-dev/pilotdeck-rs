@@ -203,6 +203,19 @@ async fn snapshot_case(family: &str, n: usize, timing: &str, mode: &str) {
         );
     }
     drop(release); // The storage predecessor never succeeds; cancellation releases it.
+    // #1233: settle on the watch value, never on a wakeup. A mutant that stores
+    // the outcome without notifying leaves `wait_for` asleep, so waiting through
+    // `dispose()` would blow the 2 s deadline and hide which assertion broke.
+    bounded(async {
+        while runtime.inner.disposed.borrow().is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        wakeups.iter().all(|w| w.0.load(Ordering::SeqCst)),
+        "{id}: every observer notified"
+    );
     let outcome = bounded(runtime.dispose()).await;
     assert_eq!(
         *runtime.inner.disposed.borrow(),
@@ -222,10 +235,6 @@ async fn snapshot_case(family: &str, n: usize, timing: &str, mode: &str) {
         runtime.inner.state.lock().unwrap().phase.as_str(),
         case["phase"].as_str().unwrap_or_default(),
         "{id}: terminal phase"
-    );
-    assert!(
-        wakeups.iter().all(|w| w.0.load(Ordering::SeqCst)),
-        "{id}: every observer notified"
     );
     if timing == "after" {
         observers.extend((0..n).map(|_| Box::pin(runtime.dispose())));
