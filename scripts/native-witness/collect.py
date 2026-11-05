@@ -213,6 +213,11 @@ SESSION_SETTLE_INTERVAL_SECONDS = 0.05
 # RunRegistry.append permits failed -> completed; failed needs the final
 # error frame as well as a persisted error result (see wait_observation).
 SESSION_TERMINAL_STATES = frozenset(('completed', 'aborted', 'interrupted'))
+# #1363 (#7): durable terminal labels for inapplicable-registry cases. This set
+# is asserted equal to the frozen fixture's registered durableStatus label
+# family in session_expectations(); a fixture that grows a label fails closed
+# instead of silently stranding those cases at NOT_RUN.
+SESSION_TERMINAL_DURABLE_EVENTS = frozenset(('turn_timeout', 'turn_failed', 'gateway_submit_failed'))
 SESSION_ORDERING_VARIANTS = stimuli.ORDERS  # legacy transport timing only
 
 
@@ -228,8 +233,30 @@ def session_manifest():
 
 
 def session_expectations():
+    """The registered per-case rust expectations, validated before use.
+
+    #1363 (#7, #10): the fixture is read as UTF-8, must be a non-empty table of
+    unique string case keys with a ts/rust durableStatus list, and its durable
+    label family must equal SESSION_TERMINAL_DURABLE_EVENTS. A fixture that
+    drifts fails closed here instead of silently collapsing duplicate keys,
+    crashing on an unknown manifest case, or stranding inapplicable-registry
+    cases at NOT_RUN.
+    """
     path = Path(__file__).resolve().parents[1] / 'gateway-parity/fixtures/session-expectations.json'
-    return {row['case']: row['rust'] for row in json.loads(path.read_text())['cases']}
+    document = json.loads(path.read_text(encoding='utf-8'))
+    rows = document.get('cases') if isinstance(document, dict) else None
+    w.need(isinstance(rows, list) and bool(rows), 'session expectations is empty or malformed')
+    keys = [row.get('case') if isinstance(row, dict) else None for row in rows]
+    w.need(all(isinstance(key, str) for key in keys), 'session expectations case key must be a string')
+    w.need(len(set(keys)) == len(keys), 'session expectations has duplicate cases')
+    w.need(all(isinstance(row.get(side), dict) and isinstance(row[side].get('durableStatus'), list)
+               for row in rows for side in ('ts', 'rust')),
+           'session expectations row is missing ts/rust durableStatus')
+    labels = {event for row in rows for side in ('ts', 'rust')
+              for event in row[side]['durableStatus']}
+    w.need(labels == SESSION_TERMINAL_DURABLE_EVENTS,
+           'session expectation durable label family drifted: ' + repr(sorted(labels)))
+    return {row['case']: row['rust'] for row in rows}
 
 
 session_key = w.native.session_key
@@ -302,8 +329,11 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
     Cancellation propagates to capture's existing owned-process cleanup.
     """
     end = min(deadline, time.monotonic() + SESSION_SETTLE_LIMIT_SECONDS)
-    previous, stable, last = None, 0, None
-    while time.monotonic() < end:
+    previous, stable, last, last_error = None, 0, None, None
+    # #1363 (#5): read at least once even when the settle window is already
+    # zero-length. A caller whose deadline elapsed must observe the actual
+    # files instead of claiming nothing was readable without a single read.
+    while True:
         try:
             result = read_observation(home, project, session, run_id, received, request_id, retain=True)
             observation, identity, source = result
@@ -332,8 +362,13 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
                 # transcript status (or a registered empty status surface) and
                 # this request's final frame suffice. Do not compare status
                 # values with the oracle: stable product differences must score.
-                terminal = (not expectation['durableStatus'] or any(
-                    entry.get('event') in ('turn_timeout', 'turn_failed', 'gateway_submit_failed')
+                # #1363 (#9): this only *adds* a terminal signal; a terminal
+                # registry the product did write must not be overwritten into
+                # an honest FAIL degrading to NOT_RUN. The request's final frame
+                # is still required: without it the turn is not delimited and
+                # the case must not settle (test_settle_inapplicable_transcript_pending).
+                terminal = (terminal or not expectation['durableStatus'] or any(
+                    entry.get('event') in SESSION_TERMINAL_DURABLE_EVENTS
                     for entry in observation['durableStatus']['entries']) or any(
                         json.loads(line).get('type') == 'turn_result'
                         for line in w.native.jsonl_lines(source['transcriptText']) if line.strip())) and any(
@@ -345,13 +380,21 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
                     return result
             else:
                 previous, stable = None, 0
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            # #1363 (#4): keep the last cause. Incomplete (a ValueError) covers
+            # both transient partial writes and structural contract violations;
+            # a blind retry used to end in a bare "落盘未完成" that erased which.
+            last_error = error
             previous, stable = None, 0
+        if time.monotonic() >= end:
+            break
         time.sleep(min(SESSION_SETTLE_INTERVAL_SECONDS, max(0, end - time.monotonic())))
     if last is None:
-        raise Blocked('#1140 落盘未完成: no readable transcript/registry before deadline')
+        detail = '' if last_error is None else f'; last error: {last_error!r}'
+        raise Blocked('#1140 落盘未完成: no readable transcript/registry before deadline' + detail)
     _, identity, source = last
-    return None, identity, dict(source, collectionError='落盘未完成')
+    detail = '' if last_error is None else f' (last error: {last_error!r})'
+    return None, identity, dict(source, collectionError='落盘未完成' + detail)
 
 
 def publish_session_domain(output, observer, rows, requests, endpoint, driver, sources=None):
@@ -538,9 +581,15 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
                             received.append(frame)
                             if frame.get('id') == request_id and frame.get('final'):
                                 break
+                        # #1363 (#10): a manifest case absent from the frozen
+                        # expectations is a structural drift, not a bare KeyError
+                        # that aborts the whole batch without a rule.
+                        expectation = expectations.get(case)
+                        w.need(expectation is not None,
+                               'session expectations missing manifest case: ' + case)
                         observation, identity, source = wait_observation(
                             home, str(project), key, run_id, received, request_id, deadline,
-                            expectation=expectations[case])
+                            expectation=expectation)
                         row = session_row(case, identity, observation, source)
                         rows.append(row)
                         driver_hello['identities'].append(identity)
