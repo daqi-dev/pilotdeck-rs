@@ -141,7 +141,8 @@ enum LeaseGuard {
 }
 
 /// The per-attachment lease guard. Guards P1-1: only files inside the lease
-/// root (the canonical `<project>/.tmp/chat-upload-leases/`, computed once
+/// root (`<project>/.tmp/chat-upload-leases/`, spelled either logically or
+/// canonically — both name the same directory, #1618), computed once
 /// per prepare) may be inlined or added to allowedReadFiles; arbitrary
 /// client-supplied paths never reach allowedReadFiles or any read (same
 /// shape as `read_at`'s PROJECT_PATH_FORBIDDEN symlink check in
@@ -155,11 +156,18 @@ enum LeaseGuard {
 /// under a valid root (P2) still rejects the turn.
 fn lease_guard(
     path: &str,
-    lexical_root: &Path,
+    lexical_roots: &[PathBuf],
     canonical_root: Option<&Path>,
 ) -> Result<LeaseGuard, SubmitError> {
     let p = Path::new(path);
-    if p.components().any(|c| c == Component::ParentDir) || !p.starts_with(lexical_root) {
+    // #1618 r2: the root is matched against both spellings of the same
+    // directory — the project's logical spelling (`projectKey` keeps Node's
+    // path.resolve identity, symlinks included) and its canonical one (the
+    // resolved upload record and a client that re-canonicalized before
+    // echoing). Either spelling is the same lease directory; the canonical
+    // containment check below still decides what may be read.
+    let lexically_inside = lexical_roots.iter().any(|root| p.starts_with(root));
+    if p.components().any(|c| c == Component::ParentDir) || !lexically_inside {
         // #1464: not lexically inside the lease root — a per-attachment
         // not-found diagnostic, not a whole-turn rejection. No read, no
         // registration.
@@ -609,11 +617,18 @@ pub(super) fn compose_attachment_turn(
     // #1618 r1: the lease paths handed to the client are built from the
     // project's *logical* spelling (`projectKey` keeps Node's path.resolve
     // identity, symlinks included — native_process.rs). Comparing them against
-    // a canonicalized root dropped every lease attachment of a symlinked
-    // project into the not-found branch, so the lexical pre-filter uses the
-    // same spelling the client echoes. The canonical comparison below still
+    // a canonicalized root alone dropped every lease attachment of a
+    // symlinked project into the not-found branch, so the lexical pre-filter
+    // also accepts the logical spelling. The canonical comparison below still
     // decides containment.
     let lease_lexical = project_dir.join(".tmp").join("chat-upload-leases");
+    // #1618 r2: the same directory spelled physically. The client may echo
+    // either spelling (a lease path built from `projectKey` keeps the logical
+    // one; a record or caller that resolved the project first hands back the
+    // canonical one), so the lexical pre-filter accepts both and the
+    // canonical containment check below remains the only authority.
+    let lease_lexical_canon = project_canon.join(".tmp").join("chat-upload-leases");
+    let lease_lexical_roots = [lease_lexical.clone(), lease_lexical_canon];
     // P0-a (codex): a lease root that resolved outside the canonical project
     // (a symlink swap) is no valid root at all — nothing under it may
     // resolve, be read, or be registered. #1459: a root that fails to
@@ -686,7 +701,8 @@ pub(super) fn compose_attachment_turn(
         // Mirror that on every path-inspection failure below while leaving
         // the success path's open-first revalidation order unchanged.
         let audio = is_audio_attachment(entry);
-        let resolved = match lease_guard(&entry.path, &lease_lexical, lease_canon.as_deref()) {
+        let resolved = match lease_guard(&entry.path, &lease_lexical_roots, lease_canon.as_deref())
+        {
             Ok(LeaseGuard::Resolved(resolved)) => resolved,
             Ok(LeaseGuard::Unresolved(error)) => {
                 if audio {
