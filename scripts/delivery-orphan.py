@@ -87,20 +87,29 @@ UNCLAIMED_GRACE_MIN = env_number("PDRS_ORPHAN_UNCLAIMED_MIN", 15, int)
 STALLED_MIN = env_number("PDRS_ORPHAN_STALLED_MIN", 45, int)
 # 5 min：同一分支的 PR 查询缓存（每分支一次 gh 调用，28 棵树冷启动约 20 s，热启动 0 次）。
 PR_CACHE_TTL = env_number("PDRS_ORPHAN_PR_TTL", 300, int)
+LEDGER_TTL = env_number("PDRS_ORPHAN_LEDGER_TTL", 5, int)
 # 72 h：A 类只看「还看得住」的交付。三天前的交付要么已被 board / 守望处理过，要么应显式标 parked；
 # 全量翻旧账（例如 10-26 那批老树）用 --max-age-hours 0。B 类不看年龄（那是仓库状态，不是流水）。
 MAX_AGE_HOURS = env_number("PDRS_ORPHAN_MAX_AGE_HOURS", 72.0, float)
+# 刚提交过的树不判 DEAD：进程签名靠命令行里的树名，worker 收尾时常只剩 `git push -u origin wip/issue-N-…`。
+FRESH_MIN = env_number("PDRS_ORPHAN_FRESH_MIN", 15, int)
 
 GH_TIMEOUT = env_number("PDRS_ORPHAN_GH_TIMEOUT", 60, int, minimum=1)
 GIT_TIMEOUT = env_number("PDRS_ORPHAN_GIT_TIMEOUT", 60, int, minimum=1)
 SSH_TIMEOUT = env_number("PDRS_ORPHAN_SSH_TIMEOUT", 12, int, minimum=1)
 # 远端 worker 主机清单：运维加机器时用 PDRS_ORPHAN_HOSTS（逗号分隔）改，不必动仓里的代码；
 # 漏改会把新机上正在跑的单判成 ORPHAN-DEAD（最高优先级误报）。
-REMOTE_HOSTS = tuple(
-    h.strip()
-    for h in os.environ.get("PDRS_ORPHAN_HOSTS", "cb8,mbp2,macmini-01").split(",")
-    if h.strip()
-)
+DEFAULT_HOSTS = "cb8,mbp2,macmini-01"
+
+
+def parse_hosts(raw):
+    """空串 / 全逗号 / 全空白都回退默认表：`PDRS_ORPHAN_HOSTS=` 是 shell 里「恢复默认」的常见写法，
+    静默变成空表会让 remote_activity 零次循环、unchecked 为空 → 每棵 B 类命中的树直接判 DEAD。"""
+    names = tuple(h.strip() for h in (raw or "").split(",") if h.strip())
+    return names or tuple(h.strip() for h in DEFAULT_HOSTS.split(",") if h.strip())
+
+
+REMOTE_HOSTS = parse_hosts(os.environ.get("PDRS_ORPHAN_HOSTS"))
 
 MARKERS = ("glm.exit", "glm.status", "dsh.exit", "codex.exit")
 # 与守望 watch-deliveries10.sh 的排除口径一致：归档 / 污染 / 证据转存 / 非交付目录不算交付。
@@ -244,6 +253,38 @@ def ledger_index(root, rows):
     for key, ts, who, status in rows:
         idx[norm_key(root, key_to_abs(root, key))] = (ts, who, status)
     return idx
+
+
+class Ledger:
+    """认领表快照，超过 LEDGER_TTL 秒自动重读。
+
+    巡检要跑几分钟（30 棵树 × git/gh/ssh），期间别人正在用 --claim 写表——正是「有人在响应告警」的时刻。
+    只读一次会把刚认领的单继续报成 ORPHAN/STALLED（假告警），所以按 key 取用时允许刷新。
+    """
+
+    def __init__(self, root, path, ttl=LEDGER_TTL):
+        self.root, self.path, self.ttl = root, path, ttl
+        self.idx = {}
+        self.loaded_at = None
+
+    def _refresh(self):
+        now = time.time()
+        if self.loaded_at is not None and now - self.loaded_at < self.ttl:
+            return
+        self.idx = ledger_index(self.root, load_ledger(self.path))
+        self.loaded_at = now
+
+    def get(self, key):
+        self._refresh()
+        return self.idx.get(key)
+
+    def items(self):
+        self._refresh()
+        return self.idx.items()
+
+    def __len__(self):
+        self._refresh()
+        return len(self.idx)
 
 
 def save_ledger(path, rows):
@@ -466,10 +507,17 @@ def issue_of(text):
 
 
 def pgrep_lines(pattern):
+    """返回 (lines, ok)。ok=False 表示「没核成」（超时 / pgrep 不存在 / 语法或权限错）。
+
+    rc=1 是「没匹配到」，与「没核成」语义完全不同：前者可以据此说「本机没人」，后者不能
+    —— 高载下 pgrep 超时返回 124，若当成「没匹配」，三台远端恰好正常时会误报 ORPHAN-DEAD。
+    """
     rc, out, _ = run(["pgrep", "-fl", "--", pattern], timeout=20)
-    if rc != 0:  # 1 = 没匹配到
-        return []
-    return [l for l in out.splitlines() if l.strip()]
+    if rc == 1:
+        return [], True
+    if rc != 0:
+        return [], False
+    return [l for l in out.splitlines() if l.strip()], True
 
 
 def is_alive(pid_path):
@@ -493,8 +541,13 @@ SCAN_RE = re.compile(
 
 
 def signature_of(line):
-    """把一行 ps 输出归到一个短标签；没有 runner 签名返回 None（扫描类进程不算有人）。"""
-    if SCAN_RE.search(line):
+    """把一行 pgrep/ps 输出归到一个短标签；没有 runner 签名返回 None（扫描类进程不算有人）。
+
+    `pgrep -fl` 的行是「PID 命令」，行首有 PID —— 不剥掉的话 `^` 锚定的 SCAN_RE 永不命中，
+    「find/grep 提到树名不算有人」这条就不成立（11-05 闸门实测：输出 133 /bin/zsh -c …）。
+    """
+    cmd = re.sub(r"^\s*\d+\s+", "", line)
+    if SCAN_RE.search(cmd):
         return None
     for label, rx in ACTIVE_SIGS:
         if rx.search(line):
@@ -505,16 +558,22 @@ def signature_of(line):
 def local_activity(name, tag, wt_path):
     """本机有没有 runner 在处理这棵树 / 这单：签名匹配的进程、remote-wait 在等它、waiter.pid 活着。
 
+    返回 (hits, ok)：ok=False 表示本机探测没核成（pgrep 超时 / 不可用），上层不许据此判 DEAD。
     树名用 ERE `wt-<名>([/ ]|$)`：既命中 `…/wt-1333/`、`…/wt-1333/src`，也不会把 wt-13330 算进来。
     """
     hits = []
+    ok = True
     tree_re = r"%s([/ ]|$)" % re.escape(name)
-    for line in pgrep_lines(tree_re):
+    lines, ok_tree = pgrep_lines(tree_re)
+    ok = ok and ok_tree
+    for line in lines:
         label = signature_of(line)
         if label:
             hits.append("%s:%s" % (label, line.strip()[:70]))
     # 远端 worker：本机一定有一个 remote-wait 在轮询（远端会话自己不会回来收尾）
-    for line in pgrep_lines("remote-wait"):
+    lines, ok_wait = pgrep_lines("remote-wait")
+    ok = ok and ok_wait
+    for line in lines:
         if re.search(tree_re, line) or ("issue-" + tag) in line:
             hits.append("remote-wait:%s" % line.strip()[:70])
     for dirpath, dirnames, filenames in os.walk(os.path.join(wt_path, "_tmp")):
@@ -524,7 +583,7 @@ def local_activity(name, tag, wt_path):
             p = os.path.join(dirpath, "waiter.pid")
             if is_alive(p):
                 hits.append("waiter.pid:%s" % p)
-    return hits
+    return hits, ok
 
 
 def remote_activity(tag, hosts=REMOTE_HOSTS):
@@ -535,6 +594,9 @@ def remote_activity(tag, hosts=REMOTE_HOSTS):
     """
     # 远端侧 pgrep 的模式不能把自己算进去：`sh -c "pgrep -f '<模式>'"` 这条 shell 的命令行里就带模式原文，
     # 会把计数恒判 ≥1（11-05 自测踩到：每个 fixture 都报 remote:cb8）。末位字符写成字符类 [3] 断开自匹配。
+    if not hosts:
+        # 空表时「没查到」≠「没有」——返回未核而不是把每棵树判成 DEAD。
+        return [], ["未配置远端主机"]
     if not tag.isdigit():
         # 定不出远端树名（issue-<N>）就核不了 —— 把主机全记成「未核」，让上层只报 NO-PR，绝不判 DEAD。
         return [], list(hosts)
@@ -542,18 +604,25 @@ def remote_activity(tag, hosts=REMOTE_HOSTS):
     pat = "issue-%s([^0-9]|$)" % (body[:-1] + "[%s]" % body[-1])
     hits, unchecked = [], []
     for host in hosts:
+        # pgrep 的退出码必须自己出头：写成 `pgrep … | wc -l` 时管线退出码是 wc 的 0，
+        # 远端 pgrep 缺失(127)/报错(2) 会打印 0 并被当成「核过且没人」，三台都这样就是假 DEAD。
         rc, out, _ = run(
             ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host,
-             "pgrep -f '%s' | wc -l" % pat],
+             "pgrep -f '%s' >/dev/null 2>&1; echo rc=$?" % pat],
             timeout=SSH_TIMEOUT,
         )
         if rc != 0:
             unchecked.append(host)
             continue
-        try:
-            if int((out or "0").strip() or 0) > 0:
-                hits.append("remote:%s" % host)
-        except ValueError:
+        found = re.findall(r"^rc=(\d+)$", (out or "").strip(), re.M)
+        if not found:  # 输出不成形（登录横幅 / 被截断）与 rc 异常同办：不猜
+            unchecked.append(host)
+            continue
+        prc = int(found[-1])
+        if prc == 0:
+            hits.append("remote:%s" % host)
+        elif prc != 1:
+            # 1 = 没匹配到；其余（127 没装 pgrep / 2 语法或权限错 / 其他）= 没核成。
             unchecked.append(host)
     return hits, unchecked
 
@@ -561,15 +630,31 @@ def remote_activity(tag, hosts=REMOTE_HOSTS):
 # ---------------------------------------------------------------- 主流程
 
 
+def fresh_commit(now, head_ct):
+    """这棵树的最后一次提交是不是刚发生（分钟级）——是就别判「没人会再来处理它」。"""
+    return head_ct is not None and (now - head_ct) / 60.0 <= FRESH_MIN
+
+
+def claim_covers_branch(num, name, key, status):
+    """这条认领记录能不能替这棵树静默 B 类（有提交无 PR）。
+
+    有单号的树按单号对（`pr-opened`/`merged`）；没有单号的树（wt-tools-main / wt-frozen-batch
+    这类工具树）按树名归属对，并允许 `parked` —— 否则它们永远报 ORPHAN-NO-PR、退出码 1 恒成立。
+    """
+    if num is not None:
+        return status in ("pr-opened", "merged") and issue_of(key) == num
+    return status in DONE_STATUSES and ("/_build/%s/" % name) in ("/" + key.strip("/") + "/")
+
+
 def collect(root, check_remote, max_age_hours, commit_check=True):
     cache_path = os.path.join(root, CACHE_REL)
     cache = load_cache(cache_path)
-    ledger = ledger_index(root, load_ledger(ledger_path(root)))
+    ledger = Ledger(root, ledger_path(root))
     now = time.time()
     max_age = max_age_hours * 3600.0
 
     findings = []      # (kind, tree, subject, detail)
-    stats = {"trees": 0, "deliveries": 0, "claims": len(ledger), "received": 0}
+    stats = {"trees": 0, "deliveries": 0, "claims": len(ledger), "received": 0, "skipped": 0}
     pr_notes = []
 
     for name, path, tag in worktrees(root):
@@ -619,11 +704,18 @@ def collect(root, check_remote, max_age_hours, commit_check=True):
                 ))
 
         # ---- B 类：有提交无 PR
-        if branch in (None, "", "HEAD", "main"):
+        if branch in (None, ""):
+            # 取不到分支名（git 不可用 / 超时 / .git 被 prune）是「没核成」，不是「无需核」：
+            # 与 HEAD/main 的合法跳过分开计，否则全仓 git 挂掉时也退出 0「无孤儿」。
+            warn("%s 取分支名失败，跳过 B/C 类" % name)
+            stats["skipped"] += 1
+            continue
+        if branch in ("HEAD", "main"):
             continue
         ahead = git_ahead(path)
         if ahead is None:
             warn("%s 取 origin/main..HEAD 提交数失败，跳过 B 类" % name)
+            stats["skipped"] += 1
             continue
         if ahead <= 0:
             continue
@@ -631,7 +723,7 @@ def collect(root, check_remote, max_age_hours, commit_check=True):
         num = issue_of(branch) or (tag if tag.isdigit() else None)
         claimed_done = None
         for key, (ts, who, status) in ledger.items():
-            if status in ("pr-opened", "merged") and num and issue_of(key) == num:
+            if claim_covers_branch(num, name, key, status):
                 claimed_done = (key, who, status)
                 break
         if claimed_done:
@@ -639,17 +731,19 @@ def collect(root, check_remote, max_age_hours, commit_check=True):
         st = pr_state(root, branch, cache, cache_path, PR_CACHE_TTL)
         if st is None:
             pr_notes.append("%s（%s）PR 状态未知，B/C 类跳过" % (name, branch))
+            stats["skipped"] += 1
             continue
         if st["open"] or st["merged"]:
             continue
         pr_note = ""
         if st["closed"]:
             pr_note = "，PR %s 已关闭未合并" % ",".join("#%s" % n for n in st["closed"])
-        act = local_activity(name, tag, path)
-        unchecked = []
+        act, local_ok = local_activity(name, tag, path)
+        unchecked = [] if local_ok else ["本机"]
         if check_remote and not act:
-            remote_hits, unchecked = remote_activity(num or tag)
+            remote_hits, unchecked_remote = remote_activity(num or tag)
             act += remote_hits
+            unchecked += unchecked_remote
         if act:
             findings.append((
                 "ORPHAN-NO-PR", name, branch,
@@ -657,11 +751,20 @@ def collect(root, check_remote, max_age_hours, commit_check=True):
                 % (ahead, head[:9], pr_note, act[0][:120]),
             ))
         elif unchecked:
-            # 远端没核过就不判「没人会再来处理它」——只说没 PR
+            # 没核成就不判「没人会再来处理它」——只说没 PR
             findings.append((
                 "ORPHAN-NO-PR", name, branch,
-                "%d 个提交未进 main，head=%s，无 open PR%s；本机无 runner，远端未核（%s）"
+                "%d 个提交未进 main，head=%s，无 open PR%s；探测未核成（%s），不判无人接手"
                 % (ahead, head[:9], pr_note, "/".join(unchecked)),
+            ))
+        elif fresh_commit(now, head_ct):
+            # 进程签名靠命令行里的树名，worker 收尾时往往只剩 `git push -u origin wip/issue-N-…`
+            # 这种不带树名的进程（11-05 实测：wt-1495 正在推 WIP 分支，被判 DEAD）。
+            # 刚提交过的树一律不判 DEAD，降级 NO-PR；真死了下一轮（超过 FRESH_MIN 分钟后）照样报。
+            findings.append((
+                "ORPHAN-NO-PR", name, branch,
+                "%d 个提交未进 main，head=%s，无 open PR%s；%d 分钟前刚提交，按正在推进处理"
+                % (ahead, head[:9], pr_note, mins(now - head_ct)),
             ))
         else:
             findings.append((
@@ -731,6 +834,11 @@ def main(argv):
         "、".join("%s %d" % (k, counts[k]) for k in sorted(counts, key=lambda x: KIND_ORDER.get(x, 9)))
         or "无",
     ))
+    if not findings and stats["skipped"]:
+        # 「没扫成」不等于「没孤儿」：gh/git 探测整体失效时上面全是跳过，退出 0 会被 round-start
+        # 当成干净。按自身出错（2）返回，让调用方区分「无孤儿」与「没核成」。
+        warn("有 %d 棵树没核成（见上面告警），不能判「无孤儿」——退出 2" % stats["skipped"])
+        return 2
     return 1 if findings else 0
 
 
