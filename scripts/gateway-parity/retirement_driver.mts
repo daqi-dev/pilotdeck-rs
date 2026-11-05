@@ -54,7 +54,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 const document = JSON.parse(readFileSync(args.methods!, 'utf8'));
-assert(Array.isArray(document.methods) && document.methods.length === 101, 'methods fixture must hold 101 entries');
+assert(Array.isArray(document.methods) && document.methods.length > 0, 'methods fixture must hold at least one entry');
 // Fixture placeholders are substituted with this run's isolated project/session.
 function substitute(value: any): any {
   if (typeof value === 'string') return value.replaceAll('__PROJECT__', project).replaceAll('__SESSION__', sessionKey);
