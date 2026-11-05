@@ -560,9 +560,16 @@ impl Recorder {
     /// Unlike bare `writer.restoreState`, this also replays the turn/step
     /// domain projection (what a resumed `SessionRuntime` keeps), so a reused
     /// turn id still reports `duplicate_turn_start`.
+    /// #297: a snapshot the writer refused (it is older than what the shared
+    /// writer already committed) is not installed, so this recorder keeps its
+    /// own projection too. Clearing it would leave the writer's domain knowing
+    /// a turn that the recorder answers "has not started" for — the two halves
+    /// would disagree and the live turn could never record again.
     pub fn restore(&self, entries: &[JsValue]) -> RecorderResult<()> {
         let mut inner = self.lock();
-        self.writer.restore_recorder_entries(entries)?;
+        if !self.writer.restore_recorder_entries(entries)? {
+            return Ok(());
+        }
         inner.turns.clear();
         inner.compactions.clear();
         inner.completed_turn_id = None;

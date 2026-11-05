@@ -587,7 +587,12 @@ impl TranscriptWriter {
         });
         Self::new(base, key.transcript_path, SubagentLayout::Default)
     }
-    pub(super) fn restore_recorder_entries(&self, entries: &[JsValue]) -> RecorderResult<()> {
+    /// #297: `true` when the snapshot was installed, `false` when the writer
+    /// kept a further-committed position (or the same sequence) because the
+    /// caller's snapshot is stale. The caller must not re-seed its own
+    /// projection on `false`, or the two halves disagree about which turns are
+    /// live (review: `Recorder::restore` used to clear its turns anyway).
+    pub(super) fn restore_recorder_entries(&self, entries: &[JsValue]) -> RecorderResult<bool> {
         let mut inner = self.lock();
         let entries = entries
             .iter()
@@ -607,15 +612,14 @@ impl TranscriptWriter {
         // what this writer already holds (a differing last_entry_id at the same
         // sequence is a foreign chain and must not fork the parent link). The
         // entry ids merge either way, so a stale id stays a duplicate.
-        if state.sequence > inner.sequence {
+        let installed = state.sequence > inner.sequence;
+        if installed {
             inner.sequence = state.sequence;
             inner.last_entry_id = state.last_entry_id;
             inner.recorder_domain = domain;
         }
-        for id in ids {
-            inner.entry_ids.insert(id);
-        }
-        Ok(())
+        inner.entry_ids.extend(ids);
+        Ok(installed)
     }
     pub(super) fn append_recorder_event(
         &self,
@@ -650,6 +654,13 @@ impl TranscriptWriter {
     }
     /// SessionRuntime.restoreState via validateSessionEventStoreState. Entry ids
     /// already committed are kept, as in TS.
+    /// #297 review (sibling, simplify): this entry point rewinds
+    /// sequence/last_entry_id/domain unconditionally, unlike
+    /// [`Self::restore_recorder_entries`]. That is deliberate and stays: it is
+    /// the TS `restoreState` twin (`tests/fixtures/transcript-adapter`
+    /// `restore-state` oracle pins the rewind) and has no production caller —
+    /// only adapter tests and the session-factory negative-control injection
+    /// reach it. Do not "fix" it without an oracle change and a ledger entry.
     pub fn restore_state(&self, max_sequence: f64, last_entry_id: &JsValue) -> AdapterResult<()> {
         if !is_safe_integer(max_sequence) || max_sequence < 0.0 {
             return Err(validation(
@@ -675,6 +686,12 @@ impl TranscriptWriter {
         inner.recorder_domain = DomainState::default();
         Ok(())
     }
+    /// #297 review (simplify): no stale-snapshot guard here, on purpose — the
+    /// only caller (`SessionStorage::restore`) reads the log and installs it
+    /// while holding the same `WriterInner` lock, so no append can land in
+    /// between and the snapshot cannot be stale. Adding a guard would change
+    /// nothing observable; the sibling `restore_recorder_entries` needs one
+    /// because its caller reads outside this writer's lock.
     fn restore_entries(
         &self,
         entries: &[JsValue],

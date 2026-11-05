@@ -12,12 +12,14 @@ further-committed writer position when a caller restores an older snapshot:
   control must FAIL, proving the guarded code path is load-bearing.
 
 Run every selected control, then summarize; any non-KILLED control exits
-non-zero. Anchors that no longer match the committed source are INVALID (an
-expired anchor never counts as SURVIVED). Requires the caller's
+non-zero (1). A guard failure while restoring the sources revokes every
+recorded row through `negative_suite.invalidate_completed` and exits 2
+("restore unverified") instead — a possibly dirty tree must never publish an
+all-green summary (#979). Anchors that no longer match the committed source are
+INVALID (an expired anchor never counts as SURVIVED). Requires the caller's
 CARGO_TARGET_DIR; cargo always runs through wait_for_slot + run_owned, never
 quiet.
 """
-import json
 import os
 import sys
 from pathlib import Path
@@ -26,7 +28,13 @@ root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import (
+    Case,
+    classify,
+    invalidate_completed,
+    passed,
+    publish_summary,
+)
 from _negative_common import mutate
 
 source = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
@@ -78,6 +86,7 @@ def main():
         return result
 
     results = []
+    guard_failure = None
     try:
         with mutating_sources(root, [source]) as originals:
             for name, _path, old, new, test, assertion in chosen:
@@ -106,24 +115,33 @@ def main():
                                reason=row['reason'] + '; restored test failed')
                 results.append(row)
                 print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
-    except Exception as error:
-        # A failed pristine/restore guard invalidates every unreported row;
-        # it must surface as an error exit, never as SURVIVED.
+    except BaseException as error:
+        # #297 review P0 (GLM boundary #1 and concurrency #1, DeepSeek
+        # sibling #1: three roles, two families). `mutating_sources` restores
+        # and re-verifies the source on context exit; when it raises there,
+        # the tree may not be restored and every row already recorded as
+        # KILLED is untrustworthy. Voiding only the unreported rows would
+        # publish an all-green summary and exit 0 from a possibly mutated tree
+        # — the #979 false pass `negative_suite.invalidate_completed` is
+        # written for. Exit 2 marks "restore unverified", distinct from 1
+        # ("some control did not kill").
+        guard_failure = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, guard_failure)
         recorded = {row['mutation'] for row in results}
         for name, _path, _old, _new, test, assertion in chosen:
             if name not in recorded:
                 results.append(dict(mutation=name, test=test, assertion=assertion,
                                     status='INVALID', compiled=False,
-                                    reason=f'guard: {error}'))
+                                    reason=guard_failure))
 
-    counts = {status: sum(row['status'] == status for row in results)
+    counts = {status: sum(1 for row in results if row['status'] == status)
               for status in ('KILLED', 'SURVIVED', 'INVALID')}
-    with (out / 'summary.json').open('x') as summary:
-        json.dump(dict(controls=results, counts=counts), summary, indent=2)
-        summary.write('\n')
+    publish_summary(out, results)
     print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
           f'INVALID={counts["INVALID"]}', flush=True)
-    raise SystemExit(int(any(row['status'] != 'KILLED' for row in results)))
+    if guard_failure is not None:
+        raise SystemExit(2)
+    raise SystemExit(int(not results or any(row['status'] != 'KILLED' for row in results)))
 
 
 if __name__ == '__main__':
