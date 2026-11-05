@@ -1099,7 +1099,14 @@ def unregistered_added(root, kind, mb):
         for name in filter(None, out.split('\0')):
             consider(name)
     for name in extra:
-        consider(name)
+        # A manifest name that is not in the tree at HEAD is the apparatus's own
+        # problem (``--write`` cannot hash it); a first registration is about a
+        # file that exists, so only tracked names are considered.
+        present = tracked_at_head(root, name)
+        if present is None:
+            issues.append(f'{name}: cannot tell whether it exists at HEAD')
+        elif present:
+            consider(name)
     return sorted(set(added)), issues
 
 

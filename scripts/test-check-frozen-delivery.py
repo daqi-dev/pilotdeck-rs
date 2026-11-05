@@ -318,6 +318,21 @@ def run():
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
+        # 清单里有、树里没有的名字是装置自己的错（--write 连哈希都取不到），
+        # 预检不能替它编一条「首登记」链去要求。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/parity/check_frozen.py",
+              PARITY_MANIFEST.replace("'multimodal.md')",
+                                      "'multimodal.md', 'specs/shared/absent.md')"))
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        added, issues = cfd.unregistered_added(root, "parity", base)
+        case("清单里不存在的文件不算首登记",
+             added == [] and not any('absent.md' in issue for issue in issues),
+             f'added={added} issues={issues}')
+
+    with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
         payload = dict(parity_payload, unregistered_skipped=["scripts/parity/scratch.txt"])
         proc = delivery(Path(td), "parity", payload, dirty=[("scripts/parity/scratch.txt", "x\n")])
