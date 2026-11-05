@@ -735,12 +735,39 @@ async fn run_case(case: &Value) -> Value {
 /// default clock is quantized to milliseconds.
 #[test]
 fn fallback_delivery_id_carries_millisecond_resolution() {
-    let text = number_to_string(default_now());
-    let decimals = text.split('.').nth(1).map(str::len).unwrap_or(0);
-    negative_assert!(
-        decimals <= 3,
-        "#1334 the fallback delivery id keeps TS millisecond resolution, got {text}"
+    // Fixed instants, not a wall-clock sample: the contract is about what the
+    // quantizer does to a given instant, so a single `default_now()` reading
+    // could pass by luck (a sample landing on a whole millisecond) and would
+    // never see the sub-millisecond bits at all.
+    let same_ms_early =
+        seconds_from_duration(std::time::Duration::from_nanos(1_700_000_000_123_000_000));
+    // Same millisecond, 999_999 ns later. `Date.now()` cannot tell these apart,
+    // so neither may the fallback id, or two deliveries in one millisecond
+    // would stop deduping. A sub-millisecond-preserving quantizer
+    // (`as_secs_f64()`) fails here.
+    let same_ms_late =
+        seconds_from_duration(std::time::Duration::from_nanos(1_700_000_000_123_999_999));
+    negative_assert_eq!(
+        number_to_string(same_ms_early),
+        number_to_string(same_ms_late),
+        "#1334 deliveries inside one millisecond share the fallback id"
     );
+    // The next millisecond must differ, so millisecond resolution survives. A
+    // whole-second quantizer (`as_secs()`) fails here.
+    let next_ms = seconds_from_duration(std::time::Duration::from_nanos(1_700_000_000_124_000_000));
+    negative_assert!(
+        number_to_string(same_ms_early) != number_to_string(next_ms),
+        "#1334 adjacent milliseconds give different fallback ids"
+    );
+    // And the serialized form keeps TS's at-most-three-decimals shape.
+    for value in [same_ms_early, same_ms_late, next_ms] {
+        let text = number_to_string(value);
+        let decimals = text.split('.').nth(1).map(str::len).unwrap_or(0);
+        negative_assert!(
+            decimals <= 3,
+            "#1334 the fallback delivery id keeps TS millisecond resolution, got {text}"
+        );
+    }
 }
 
 /// The recorder must keep "the peer closed without a byte" apart from "the

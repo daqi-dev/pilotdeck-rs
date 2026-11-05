@@ -98,15 +98,22 @@ const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 pub type Now = Arc<dyn Fn() -> f64 + Send + Sync>;
 
 fn default_now() -> f64 {
-    // `Date.now()` is integer milliseconds, so `Date.now() / 1000` carries
-    // millisecond precision and nothing finer: two deliveries that arrive
-    // inside the same millisecond share a fallback id and therefore a dedup
-    // key. `as_secs_f64()` would keep sub-millisecond bits and let those two
-    // requests produce different keys, so quantize to the TS resolution.
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_millis() as f64 / 1000.0)
+        .map(seconds_from_duration)
         .unwrap_or_default()
+}
+
+/// `Date.now() / 1000`, evaluated on an explicit instant so the precision
+/// contract can be asserted on fixed inputs.
+///
+/// `Date.now()` is integer milliseconds, so the quotient carries millisecond
+/// precision and nothing finer: two deliveries that arrive inside the same
+/// millisecond share a fallback id and therefore a dedup key. `as_secs_f64()`
+/// would keep sub-millisecond bits and let those two requests produce
+/// different keys, so quantize to the TS resolution.
+fn seconds_from_duration(since: std::time::Duration) -> f64 {
+    since.as_millis() as f64 / 1000.0
 }
 
 /// `WebhookChannelOptions`, the constructor's input after the TS `??` and
