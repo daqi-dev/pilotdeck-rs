@@ -105,18 +105,17 @@ pub(crate) fn unmeasured_errnos(method: &str) -> Vec<i32> {
 /// The OS errno behind an fs error, looking through a [`Stage`] wrapper (the
 /// outer error of a staged failure is a custom error with no raw errno).
 pub(crate) fn os_errno(error: &io::Error) -> Option<i32> {
+    if let Some(mkdir) = error
+        .get_ref()
+        .and_then(|e| e.downcast_ref::<mkdir::MkdirError>())
+    {
+        return mkdir.source.raw_os_error();
+    }
     stage(error).map_or_else(|| error.raw_os_error(), |e| e.source.raw_os_error())
 }
 
 pub(crate) fn lookup(error: &io::Error) -> Option<(&'static str, &'static str)> {
-    let errno = if let Some(mkdir) = error
-        .get_ref()
-        .and_then(|e| e.downcast_ref::<mkdir::MkdirError>())
-    {
-        mkdir.source.raw_os_error()
-    } else {
-        os_errno(error)
-    }?;
+    let errno = os_errno(error)?;
     generated::ERRORS
         .iter()
         .find(|(number, _, _)| *number == errno)
@@ -271,6 +270,9 @@ pub(crate) fn path_error(
     )
 }
 pub(crate) fn descriptor_error(source: io::Error, syscall: &'static str) -> io::Error {
+    if stage(&source).is_some() {
+        return source;
+    }
     io::Error::new(
         source.kind(),
         Stage {

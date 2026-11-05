@@ -266,7 +266,9 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
         .create_session("s".into(), Some(path.clone()))
         .unwrap();
     // Opening a writer now creates its lock parent. Keep that lock inode
-    // while temporarily making the transcript parent inaccessible.
+    // while temporarily making the transcript parent inaccessible. The lock
+    // canonicalizes, so this is the path the diagnostic must name.
+    let canonical_parent = path.parent().unwrap().canonicalize().unwrap();
     fs::rename(path.parent().unwrap(), scratch.0.join("initial-parent")).unwrap();
     fs::write(path.parent().unwrap(), "blocker").unwrap();
     let error = session
@@ -293,11 +295,18 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
     );
     assert_eq!(syscall, "mkdir");
     let blocker = blocked_path.expect("mkdir diagnostic names its path");
-    assert!(blocker.ends_with("parent"), "unexpected path {blocker:?}");
+    assert_eq!(
+        blocker,
+        canonical_parent.to_string_lossy(),
+        "the diagnostic must name the canonical path the lock resolved"
+    );
     // Node's fs error message, byte for byte: code, description, syscall, path.
     assert_eq!(
         error.to_string(),
-        format!("EEXIST: file already exists, mkdir '{blocker}'")
+        format!(
+            "EEXIST: file already exists, mkdir '{}'",
+            canonical_parent.display()
+        )
     );
     assert_eq!(session.recorder.snapshot_state(), (0, None));
     assert_eq!(oracle()["events"]["stateAfterFailure"]["sequence"], 0);
@@ -316,6 +325,26 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
         "cell 2 first-retry: error=None state={}",
         state_text(&session.recorder.snapshot_state())
     );
+    // The retry really committed one entry, and the state's last id is that
+    // entry's id rather than merely "some id".
+    let (retry_sequence, retry_id) = session.recorder.snapshot_state();
+    assert_eq!(retry_sequence, 1);
+    let retry_id = retry_id
+        .expect("a committed entry carries an id")
+        .to_utf8()
+        .expect("entry ids are UTF-8");
+    assert_eq!(
+        session
+            .read()
+            .unwrap()
+            .entries
+            .last()
+            .unwrap()
+            .get("entryId")
+            .and_then(|value| value.as_string())
+            .map(|id| id.to_utf8().expect("entry ids are UTF-8")),
+        Some(retry_id)
+    );
     let before = fs::read(&path).unwrap();
     // Actual mid-session IO failure after a successful write, with recoverable evidence.
     fs::rename(path.parent().unwrap(), scratch.0.join("saved")).unwrap();
@@ -330,10 +359,13 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
         crate::node_io::staged_fields(mid_source).expect("the mkdir call site labels its failure");
     assert_eq!(mid_syscall, "mkdir");
     let mid_path = mid_path.expect("mkdir diagnostic names its path");
-    assert!(mid_path.ends_with("parent"), "unexpected path {mid_path:?}");
+    assert_eq!(mid_path, canonical_parent.to_string_lossy());
     assert_eq!(
         mid.to_string(),
-        format!("EEXIST: file already exists, mkdir '{mid_path}'")
+        format!(
+            "EEXIST: file already exists, mkdir '{}'",
+            canonical_parent.display()
+        )
     );
     assert_eq!(
         session.recorder.snapshot_state().0,
@@ -359,6 +391,24 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
         oracle()["events"]["retrySequence"].as_u64().unwrap()
     );
     assert_eq!(session.read().unwrap().entries.len(), 2);
+    let (final_sequence, final_id) = session.recorder.snapshot_state();
+    assert_eq!(final_sequence, 2);
+    let final_id = final_id
+        .expect("the last committed entry carries an id")
+        .to_utf8()
+        .expect("entry ids are UTF-8");
+    assert_eq!(
+        session
+            .read()
+            .unwrap()
+            .entries
+            .last()
+            .unwrap()
+            .get("entryId")
+            .and_then(|value| value.as_string())
+            .map(|id| id.to_utf8().expect("entry ids are UTF-8")),
+        Some(final_id)
+    );
     eprintln!(
         "cell 4 read-after-retry: state={} entries={}",
         state_text(&session.recorder.snapshot_state()),
