@@ -101,6 +101,13 @@ mutations.append(('snapshot-restore-file-empty', STORAGE, 'write_file(Path::new(
 
 # fix-r2: exact wired set and independently disabled missing/empty roots.
 mutations.append(('capability-add-upload_create', REQUESTS, '"commands_list",', '"commands_list", "upload_create",', HOST, '#1231 exact wired capability set'))
+# #1440: rename-to-unwired controls for the upload_* family, matching the
+# snapshot_*/manager_* family rows above.
+mutations.append(('capability-upload_create', REQUESTS, '"upload_create",', '"unwired_upload_create",', HOST, '#1231 exact wired capability set'))
+mutations.append(('capability-upload_get', REQUESTS, '"upload_get",', '"unwired_upload_get",', HOST, '#1231 exact wired capability set'))
+mutations.append(('capability-upload_part', REQUESTS, '"upload_part",', '"unwired_upload_part",', HOST, '#1231 exact wired capability set'))
+mutations.append(('capability-upload_complete', REQUESTS, '"upload_complete",', '"unwired_upload_complete",', HOST, '#1231 exact wired capability set'))
+mutations.append(('capability-upload_cancel', REQUESTS, '"upload_cancel",', '"unwired_upload_cancel",', HOST, '#1231 exact wired capability set'))
 mutations.append(('capability-duplicate-run_get', REQUESTS, '                            "run_get",', '                            "run_get", "run_get",', HOST, '#1231 exact wired capability set'))
 mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
