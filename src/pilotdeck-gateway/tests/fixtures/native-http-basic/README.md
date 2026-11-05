@@ -22,7 +22,8 @@ index.html 等 11 个固定文件）、`b`（127.0.0.1，静态根仅 only.txt�
   `probe-macos.out`，登记 `specs/gateway-parity/diffs/`
   `A8.4-NATIVE-HTTP-003.md`）。回放按运行时探测夹具根选期望，不写死
   cfg；其余 cell 的请求路径要么与夹具文件精确匹配、要么无大小写变体
-  可碰撞，`/HEALTH` 等路由比较在内存中进行，不涉文件系统；
+  可碰撞，路由比较不涉文件系统；其静态回退仍走 index（`/HEALTH` 未命中
+  `/health` 后仍会 stat 静态根并回退 `index.html`）；
 - 穿越：URL 规范化中和后落到 index 回退或目标文件
   （`/%2e%2e/app.js`、`/sub\..\app.js` 服务 app.js 本身）；
 - 解析层：FOO/get/GETX 裸 400 关连接、非 ASCII 路径/查询 400、无 Host 400、

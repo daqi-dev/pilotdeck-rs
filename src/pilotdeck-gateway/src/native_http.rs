@@ -586,10 +586,17 @@ async fn is_file(path: &Path) -> bool {
 fn content_type_for(file_path: &Path) -> &'static str {
     let name = file_path.to_string_lossy();
     let extension = name.rfind('.').map_or("", |at| &name[at..]);
-    CONTENT_TYPES
-        .iter()
-        .find(|(known, _)| *known == extension)
-        .map_or("application/octet-stream", |(_, kind)| kind)
+    if crate::mutants::on("native-http-content-type-txt") && extension == ".txt" {
+        // #1383: simulates the mapping gaining a `.txt` entry, which would
+        // break the premise `expected_response` borrows the `static-upper`
+        // golden under — the pinned test fails at its own assertion.
+        "text/plain; charset=utf-8"
+    } else {
+        CONTENT_TYPES
+            .iter()
+            .find(|(known, _)| *known == extension)
+            .map_or("application/octet-stream", |(_, kind)| kind)
+    }
 }
 
 /// `JSON.stringify` for one string value: quote, backslash, and the C0
