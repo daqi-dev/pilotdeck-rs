@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-05 13:0x · by Claude Code 协调者（READY 行更新：#1309/#1310/#1321/#1350 + 12:00 版存量行）
+updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合入收口、#1417 最终闸门重跑、#1350 评审收口派 fix-r1、#1392/#1355 并行线、#1473 跟进）
 - #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：PR #1387 决策卡已合入；当前无待人项（磁盘本轮 231.2 GiB 超限一次、回收后回 190.0 GiB；远端三台 ssh 不可达由协调者自决处理，宿主负控走本机 host-local 备用通道）
 - #1323 | impl | doing | U3 snapshot 生产接线：PR #1426 已合入（邮箱已核）；收尾等跟进 #1427 #1431
 - #1242 | coord | doing | 次链总单：s1 #1368 已合入（PR #1380），s2 #1369 在 rebase，s3–s5 #1370–#1372 顺次；跟进 #1402 #1408 前置于本单关单
@@ -13,8 +13,8 @@ updated: 2026-11-05 13:0x · by Claude Code 协调者（READY 行更新：#1309/
 - #1324 | review | doing | A8.3-pr1b cron 调度 + 时区：PR #1375 r2 cb8 全绿，只差 mbp2 macOS 与收口；合入解锁 #1325
 - #1318 | review | doing | A8.1-pr5 U7 settings 写与重载组件：PR #1384 r3 opus / DeepSeek 均 0/0，批量收口（_tmp/20261102-closeout-1318/）；下游 #1320 #1397
 - #1327 | review | doing | A8.3-ch0 channel 协议核心 + loadEnabledChannels：PR #1391 r3 cb8 全绿、DeepSeek 0/0，待 opus 分批块与 mbp2 macOS；挡 #1328 #1329 #1333 #1334 #1336 #1339 #1386
-- #1309 | impl | doing | A7-W4 S4 权限 + user_dialog：PR #1419 净合并 f80bf76c0（#1425/#1426 并集）闸门 r10 全 PASS、CI 6 项全绿、已入 merge queue 等待器在守；跟进 #1453 #1442 #1437 #1467
-- #1310 | impl | doing | A7-W5 S5 会话配置 7 方法：PR #1417 净合并 63db78159 已推（3507/0、fmt/clippy/frozen 过、安全推送 force-with-lease）；串行合并链 #1419→#1417→#1418，#1419 合入后 wt-1310 再净合并+最终闸门+正文插块；跟进 #1455 #1457
+- #1309 | impl | doing | A7-W4 S4 权限 + user_dialog：PR #1419 已合入（892cc015e，邮箱 noreply 全核）、wt-1309 已回收（0 文件，证据主仓 _tmp）；跟进 #1453 #1442 #1437 #1467 待清后关单
+- #1310 | impl | doing | A7-W5 S5 会话配置 7 方法：PR #1417 吸收 #1419 后再净合并 9f86cfedf（mod.rs union、tests.rs union；lib 3514/0、fmt/clippy/frozen 过，未推）；最终闸门 boundary PASS、sibling/concurrency/simplify 1200s 慢滴流 TIMEOUT → 2400s 重跑中（gate-final2），出块后推分支+插块入队；跟进 #1455 #1457
 - #1321 | impl | doing | A8 接线 U1 upload + 附件 lease：PR #1418 fix-r4 head 99c1c2a02（lib 3499/0、负控 9/9 KILLED）；DS 复核 0/0/0/4、Opus 复核 P1→#1468、闸门 r5 P1=6/P2=5 全部分流，正文已重写 check-pr-gate PASS；等串行链 #1417 合入后净合并+闸门 r6；跟进 #1458–#1463 #1468 #1469
 - #1365 | impl | doing | #1245 ClosingGuard settle 写入无判据（P1-跟进）+ panic 路径先结算再放票：PR #1413 草稿 CLEAN 待闸门；改 owner.rs，与 #996 不并行
 - #1233 | review | doing | PR #1257 宿主复跑 / 收口（A6.5）；合入解锁 #1276（#1311 已先合入）
@@ -24,11 +24,11 @@ updated: 2026-11-05 13:0x · by Claude Code 协调者（READY 行更新：#1309/
 - #1279 | review | doing | P2 批次 2：PR #1364 现 CLEAN（11-05 复核）待入队；前置于 #590
 - #1263 | review | doing | P2 批次 2：PR #1364（同 #1279）；A6.6 收尾
 - #1204 | review | doing | P2 批次 2：PR #1364（同 #1279）；A7.2 收尾
-- #1350 | impl | doing | A8.4-pr4 module-host approvals status / resume：实现 agent 在跑（任务书 _tmp/20261105-issue-1350/task.md）；完成后收货核验+评审链
-- #1355 | impl | ready | E1 --suite retirement（#1301 B 已授权，走冻结程序，先只跑 TS 定标）：前置 PR #1374（#1221）已合入解锁；cold-restart / rollback 部分等 #1354；与 #1363 同改 session_domain.py 串行
+- #1350 | impl | doing | A8.4-pr4 module-host approvals status / resume：收货核验过（树净 head 6a0a543c3、8 文件 +4788）；DS 复核 P1×1（{"code":} 非法 JSON）P2×2、Opus 复核 P1×1（重复 Authorization 头 Node 只留首值 vs Rust 拼接）P2×3（原件 _tmp/20261105-issue-1350-review/）；fix-r1 已派（任务书 task-fix-r1.md，修 P1 轮两家复核）；跟进 #1473
+- #1355 | impl | doing | E1 --suite retirement（#1301 B 已授权，走冻结程序，先只跑 TS 定标）：实现 agent 在跑（wt-1355，任务书 _tmp/20261105-issue-1355/task.md）；cold-restart / rollback 部分等 #1354；与 #1363 同改 session_domain.py 串行
 - #1363 | impl | ready | #1140 收口剩余 P2（第 13 条由 #1367 承接）：改冻结装置，前置 PR #1374 已合入解锁；与 #1355 同改 session_domain.py 串行
 - #1398 | impl | ready | A5 冻结装置跟进同类取消处理与 memory_run 去重（#1374 c 类 P2）：前置 PR #1374 已合入解锁；冻结件走冻结程序，_shared 部分经 M6 车道 #1099；前置于 #590
-- #1392 | impl | ready | #1155 scratch_publication 屏障超时 exit 0（P2b，读码推断）：前置 #1155（PR #1272）已合入解锁；前置于 A8.6 收尾，与 #1409 同树串行
+- #1392 | impl | doing | #1155 scratch_publication 屏障超时 exit 0（P2b，读码推断）：实现 agent 在跑（wt-1392，任务书 _tmp/20261105-issue-1392/task.md）；前置于 A8.6 收尾，与 #1409 同树串行
 - #1162 | research | ready | 剩余 6 个需修差异族先 TS 实测、逐族开单（A6.2×2 / A6.4-TLS / A6.5-MCP / A6.9-PERSISTENCE-IO）
 - #892 | impl | ready | session-domain 清理装置汇总枚举测试（A5.4 收尾）；PR #1374 已合入不再冲突，触冻结件走冻结程序
 - #91 | impl | ready | 账本 detail 子码 / stopReason，连同 #120 第 3 条账本已越 1.5 MB；改冻结账本走冻结程序
@@ -60,6 +60,7 @@ updated: 2026-11-05 13:0x · by Claude Code 协调者（READY 行更新：#1309/
 - #1454 | impl | blocked | P2-跟进 #1425（#1307）：hook_async_result 缺 connection 层错误传播配对 fixture；前置于 A7-W2 steer 收口节点
 - #1455 | impl | blocked | P2-跟进 #1417（#1310）：config 方法族验证门/负控/busy 覆盖缺口（gate-head 7 条 P2 汇总）；前置于 A7-W5 会话配置收口节点
 - #1457 | impl | blocked | 实现 #1310 session config 7 方法真实能力（当前 stub CAPABILITY_UNAVAILABLE，TS native 功能可用）；前置于 A7-W5 收口节点
+- #1473 | impl | blocked | P2-跟进 #1350：pending store seed 形状校验缺失 + unreachable! 持锁 panic 中毒（Opus 评审 P2）；前置于 #1305 接线
 - #1432 | impl | blocked | P1-跟进 #1319：mcp_server_status 无条件空列表、未接入共享 config（status 丢失 SDK 配置）；前置于 A8.1 MCP 读写验收及 A8 gateway 退役
 - #1433 | impl | blocked | P1-跟进 #1319：会话 MCP server 配置未进入 turn 工具组合（工具静默缺失）；前置于 A7 会话域完成与 A8 gateway 退役
 - #1409 | impl | blocked | P2-跟进 #1155 r5：返回边界扫描读失败静默跳过（按 P1）+ 负控 / README 五项；前置于 A8.6 收尾，与 #1392 同树串行
@@ -3095,3 +3096,25 @@ updated: 2026-11-05 13:0x · by Claude Code 协调者（READY 行更新：#1309/
 3. #1418：#1417 合入后同流程（净合并 22 提交 7 文件交叠 → 闸门 r6 → /tmp/pr1418-new.md 换块）→ 回收 wt-1321。
 4. #1350 收货核验 + 评审链（GLM 作者线：DS + anthropic）。
 5. 决策卡 PR（host-negctl-batching）随本轮开出后走全量 CI；#1470 CI 绿后收口合入；CLAUDE.md 合并闸门段「默认 DeepSeek 官方通道」字样待人确认后改（人定协作文件，先记不擅改）。
+
+### 13:4x（两小时交接）
+
+13:0x 以来做了什么（持有人：协调者本会话）：
+
+- **#1419（#1309）MERGED**（892cc015e，邮箱 noreply 全核）；wt-1309 已回收（0 文件，证据在主仓 _tmp）；**#1471 board PR MERGED**（c526c9d03）。
+- **#1470（DS 官方通道清理）走完评审链入队**：DS r1 PASS → Opus r1 P2×2（run() 不剔残留 PDRS_DEEPSEEK_CHANNEL + CLAUDE.md「官方通道」字样过时）→ fix-r1 e1d748385（env 剔除 + 残留 official 值新用例 + CLAUDE.md 单行，人令范围内）→ DS r2 增量 PASS → 正文更新 check-pr-gate 过 → **已入 merge queue（CLEAN）**。**#1472**（宿主负控三层口径决策卡 d3c42a5e3）同批入队。
+- **#1417（#1310）**：吸收 #1419 后再净合并 **9f86cfedf**——`methods/mod.rs` register_families! 尾部 union（config + user_dialog/permission 双家族注册行都保留）、`methods/tests.rs` expected 数组 union；diff vs origin/main 6 文件 +748 纯新增；lib 3514/0（136.66s）、fmt/clippy/frozen（28 entries）过，未推（等闸门全 PASS）。最终闸门 boundary PASS（P2=5 P3=1），sibling/concurrency/simplify 1200s TIMEOUT——事件率分析（847/898/864 事件，末 5 分钟各 11–14 条）判为慢滴流非卡死（memory「opus-timeout-stream-starvation」），已用 `--roles sibling,concurrency,simplify --timeout 2400` 重跑（gate-final2）。
+- **#1350（A8.4-pr4 approvals）评审收口**：收货核验（树净 head 6a0a543c3、8 文件 +4788、负控 12 KILLED）；DS 复核 P1×1 P2×2、Opus 复核 P1×1 P2×3（两家原件 `_tmp/20261105-issue-1350-review/`；P1=重复 Authorization 头 Node 只留首值 vs Rust `", "` 拼接 → TS 放行 Rust 401，Opus Node v22.22.0 实测复现；P1=`approvals-failure-default-off` 路径 `{"code":}` 非法 JSON）→ 合并清单派 **fix-r1**（任务书 `_tmp/20261105-issue-1350/task-fix-r1.md`：两 P1 必修 + 两 P2-a 当轮修 + 原型链条目登记 + 4 条组件直测；seed 校验不在轮）；**P2-跟进 #1473 已开**（seed 形状校验 + 持锁 panic，前置于 #1305）。
+- **并行线（人批）**：人令「派子智能体分析给方案之后决定是否采纳」→ 分析子代理出案 → 采纳 #1392（屏障超时修复）+ #1355（E1 TS 定标切片）两条实现线（wt-1392 / wt-1355 在跑），#892 备胎。
+- 人三问已答复（最终闸门与双谱系关系及效果 / 各环节耗时与并行可行性）。
+
+下一步（就绪序）：
+
+1. #1417 闸门 gate-final2 出块全 PASS → safe-push --force-with-lease 推分支 9f86cfedf → /tmp/pr1417-new.md 插最终块 → check-pr-gate → gh pr edit → 入队 → MERGED 核邮箱 → project-mark --impl GLM → 回收 wt-1310（约 46 GiB）。
+2. #1418：#1417 合入后 wt-1321 净合并（22 提交 7 文件交叠）→ 测试 → 闸门 r6 → /tmp/pr1418-new.md 换块 → 入队 → 回收 wt-1321（约 30 GiB）。
+3. #1350 fix-r1 收货核验 → DS + anthropic 两家复核（修 P1 轮）→ 无 P0/P1 开 PR。
+4. #1392 / #1355 收货核验 → 各自评审链（冻结件收货 --write）。
+5. #1470 / #1472 queue MERGED 后核邮箱；#1470 合入后回收 wt-ds-official-cleanup。
+6. 挂起：scripts/review-minimax.py 单独 PR；远端三台 ssh 不可达（需人处理，最大提速项）。
+
+资源：磁盘约 171 GiB / 200；worktree 23/40；cargo 1/4（fix-r1 agent 在用）；在审 2（#1470/#1472 queue 中）。谱系提醒：#1350/#1310/#1321 作者线 GLM，评审 = DS + anthropic（codex 后端实为 GLM 只作补充）。
