@@ -1462,5 +1462,10 @@ fn string_value(value: &str) -> JsValue {
     JsValue::String(JsString::from(value))
 }
 
+/// The approvals transport (#1350), a sibling component this module's caller
+/// composes in front of it — TS mounts `handlePublicApprovalHttpRequest`
+/// before `handlePublicHostHttpRequest` (GatewayServer.ts:96).
+pub(crate) mod approvals;
+
 #[cfg(test)]
 mod tests;
