@@ -12,6 +12,12 @@
 //! instead; and the hyper HTTP/1.0 status line of the A8.4-NATIVE-HTTP-001
 //! entry applies to the `http10` cell. Byte-level header/chunk-case effects
 //! of the hyper codec are the same entry's and are normalized by the replay.
+//!
+//! One security divergence (#1675, `specs/gateway-parity/diffs/A8.4-API-WEB-002.md`):
+//! the file service reads, writes and enumerates through the
+//! A4-FILE-TOCTOU-001 NOFOLLOW descriptor walk, so a component swapped after
+//! the workspace gate fails closed with 403 `workspace_boundary` where TS
+//! follows it out of the root.
 #![cfg_attr(not(test), allow(dead_code))]
 mod files;
 #[cfg(test)]
