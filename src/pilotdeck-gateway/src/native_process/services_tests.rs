@@ -8,7 +8,7 @@
 //! diagnostics, stat-authoritative oversize gate and the EISDIR turn
 //! failure).
 
-use super::services::{attachment_identity_matches, compose_attachment_turn};
+use super::services::{attachment_identity_matches, compose_attachment_turn, swap_test_hook};
 use crate::{metadata::object, negative_assert};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -860,6 +860,252 @@ fn lease_root_swapped_outside_project_disables_resolution() {
     negative_assert!(
         note_block(&blocks).is_empty(),
         "#1321 P0-a: a swapped lease root must never produce a note line"
+    );
+    std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// fix-r4 A/B/C positive control: the identical fixture with no swap
+/// installed passes the open-first revalidation unchanged — the original
+/// lease bytes are still inlined and registered.
+#[cfg(unix)]
+#[test]
+fn open_first_sequence_without_swap_keeps_inline_control() {
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1321 lease control fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1321 the control composes the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        !diagnostics_block(&blocks).contains("not found"),
+        "#1321 fix-r4 control: no swap must not produce a not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks.iter().any(|block| {
+            block.get("type") == Some(&"image".into())
+                && block.get("data")
+                    == Some(&JsValue::from(
+                        BASE64_STANDARD.encode(b"lease-bytes").as_str(),
+                    ))
+        }),
+        "#1321 fix-r4 control: no swap must still inline the original lease bytes"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_some(),
+        "#1321 fix-r4 control: no swap must still register allowedReadFiles"
+    );
+}
+
+/// fix-r4 window 1: the leaf is swapped for an outside symlink between
+/// `File::open` and the post-open canonicalize revalidation — step 2's
+/// containment check must catch it: not-found, no read, no registration.
+/// The fired flag is asserted so an unfired hook (a silent test) fails.
+#[cfg(unix)]
+#[test]
+fn leaf_swapped_between_open_and_revalidation_is_not_found() {
+    use std::cell::Cell;
+    use std::os::unix::fs::symlink;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1321 lease fixture");
+    let outside_root = scratch.0.with_file_name(format!(
+        "{}-outside-leaf",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1321")
+    ));
+    std::fs::create_dir_all(&outside_root).expect("#1321 outside leaf fixture dir");
+    std::fs::write(outside_root.join("outside.png"), b"outside-bytes")
+        .expect("#1321 outside leaf fixture");
+    let fired = Rc::new(Cell::new(false));
+    let hook_fired = Rc::clone(&fired);
+    let leaf = path.clone();
+    let outside_link = outside_root.join("outside.png");
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, move |_| {
+        std::fs::remove_file(&leaf).expect("#1321 remove leaf inside window");
+        symlink(&outside_link, &leaf).expect("#1321 swap leaf inside window");
+        hook_fired.set(true);
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1321 a mid-window leaf swap must not fail the turn");
+    drop(_guard);
+    negative_assert!(
+        fired.get(),
+        "#1321 fix-r4 window 1: the swap hook must fire inside the production sequence"
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (attachment resolved outside the lease root \
+             after open)."
+        )),
+        "#1321 fix-r4: a leaf swapped after the open must be diagnosed not-found, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1321 fix-r4: a leaf swapped after the open must never inline outside bytes"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1321 fix-r4: a leaf swapped after the open must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1321 fix-r4: a leaf swapped after the open must never produce a note line"
+    );
+    std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// fix-r4 window 1 (ancestor): the lease `u1` directory is swapped for an
+/// outside symlink between the open and the revalidation — the canonical
+/// spelling escapes the lease root, step 2 must treat it as not-found.
+#[cfg(unix)]
+#[test]
+fn ancestor_swapped_between_open_and_revalidation_is_not_found() {
+    use std::cell::Cell;
+    use std::os::unix::fs::symlink;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1321 lease fixture");
+    let outside_root = scratch.0.with_file_name(format!(
+        "{}-outside-ancestor",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1321")
+    ));
+    std::fs::create_dir_all(&outside_root).expect("#1321 outside ancestor fixture");
+    std::fs::write(outside_root.join("target.png"), b"outside-bytes")
+        .expect("#1321 outside ancestor file");
+    let fired = Rc::new(Cell::new(false));
+    let hook_fired = Rc::clone(&fired);
+    let u1 = scratch.0.join(".tmp").join("chat-upload-leases").join("u1");
+    let outside_link = outside_root.clone();
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, move |_| {
+        std::fs::remove_dir_all(&u1).expect("#1321 remove ancestor inside window");
+        symlink(&outside_link, &u1).expect("#1321 swap ancestor inside window");
+        hook_fired.set(true);
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1321 a mid-window ancestor swap must not fail the turn");
+    drop(_guard);
+    negative_assert!(
+        fired.get(),
+        "#1321 fix-r4 window 1: the ancestor swap hook must fire inside the production sequence"
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (attachment resolved outside the lease root \
+             after open)."
+        )),
+        "#1321 fix-r4: an ancestor swapped after the open must be diagnosed not-found, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1321 fix-r4: an ancestor swapped after the open must never inline outside bytes"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1321 fix-r4: an ancestor swapped after the open must never register allowedReadFiles"
+    );
+    std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// fix-r4 window 2: the leaf is swapped AFTER the revalidation — the
+/// revalidated path stat and the opened handle's fstat disagree on
+/// (dev, inode), step 3 must treat it as not-found.
+#[cfg(unix)]
+#[test]
+fn leaf_swapped_after_revalidation_fails_identity() {
+    use std::cell::Cell;
+    use std::os::unix::fs::symlink;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1321 lease fixture");
+    let outside_root = scratch.0.with_file_name(format!(
+        "{}-outside-late",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1321")
+    ));
+    std::fs::create_dir_all(&outside_root).expect("#1321 outside late fixture dir");
+    std::fs::write(outside_root.join("outside.png"), b"outside-bytes")
+        .expect("#1321 outside late fixture");
+    let fired = Rc::new(Cell::new(false));
+    let hook_fired = Rc::clone(&fired);
+    let leaf = path.clone();
+    let outside_link = outside_root.join("outside.png");
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::AfterRevalidate, move |_| {
+        std::fs::remove_file(&leaf).expect("#1321 remove leaf after revalidation");
+        symlink(&outside_link, &leaf).expect("#1321 swap leaf after revalidation");
+        hook_fired.set(true);
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1321 a post-revalidation leaf swap must not fail the turn");
+    drop(_guard);
+    negative_assert!(
+        fired.get(),
+        "#1321 fix-r4 window 2: the swap hook must fire inside the production sequence"
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (attachment resolved to a different file \
+             between revalidation and read)."
+        )),
+        "#1321 fix-r4: a leaf swapped after the revalidation must be diagnosed not-found, \
+         got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1321 fix-r4: a leaf swapped after the revalidation must never inline outside bytes"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1321 fix-r4: a leaf swapped after the revalidation must never register \
+         allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1321 fix-r4: a leaf swapped after the revalidation must never produce a note line"
     );
     std::fs::remove_dir_all(&outside_root).ok();
 }
