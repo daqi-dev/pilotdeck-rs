@@ -14,16 +14,18 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时（memo
 
 判定（阈值依据见 _tmp/20261105-taskbook-segments/SEGMENTS.md 的对照表）：
   大包 = 任一条成立
-    1) 任务书声明 `<!-- pdrs-scope: files=N lines=M est_min=K -->` 且 files ≥ 8 或 lines ≥ 1500 或 est_min > 90；
-    2) 没有 scope 行时，正文出现「约/估 … 人日」→ 人日 × 480 min > 90（历史任务书的回退信号）；
+    1) 任务书声明 `<!-- pdrs-scope: files=N lines=M est_min=K -->`（可多条，任一条达阈值即大包）
+       且 files ≥ 8 或 lines ≥ 1500 或 est_min > 90；
+    2) 没有可解析的 scope 行时，正文出现「约/估 … 人日」→ 人日 × 480 min > 90（历史任务书的回退信号）；
     3) 仍判不出时，正文点名的 `*.rs` 路径 ≥ 8 个（回退启发式）。
-  命中大包却缺分段表 / 表不全 / 有占位符 / 段时长 > 90 min / 缺续跑说明 → 退出 1 并逐项列出缺什么。
+  scope 行写坏（占位符 / 非整数 / 没写阈值键 / 没收到 `-->`）→ 退出 2，不静默退回启发式。
 
 分段表要求（`## 分段交付` 一节里的 markdown 表，≥2 段）：
-  列：段名 / 涉及文件 / 交付物（含该段自己的 RESULT 片段）/ 预估时长 / 段间依赖
-  每段预估 ≤ 90 min；另需 `## 续跑` 一节，写明进度文件路径与「第 N 段失败从哪继续」。
+  列：段名 / 涉及文件 / 交付物（含该段自己的 RESULT 片段）/ 预估时长 / 段间依赖（列序不限，按表头定位）
+  每段预估 ≤ 90 min，单位只认 min/分钟/m/h/小时，区间取最大值，不认的单位按「读不出」报错；
+  另需 `## 续跑` 一节，写明具体的进度文件路径（`…progress.md` / `…进度.md`，不许留 `<…>`）与「第 N 段失败从哪继续」。
 
-退出码：0 通过（含「小包，无需分段」）· 1 命中大包但分段表缺失/不全 · 2 任务书读不了或 scope 行写坏 · 3 用法错误
+退出码：0 通过（含「小包，无需分段」）· 1 命中大包但分段表缺失/不全 · 2 任务书读不了、为空或 scope 行写坏 · 3 用法错误
 """
 
 import json
@@ -34,14 +36,20 @@ from pathlib import Path
 
 SCOPE_FILES = 8
 SCOPE_LINES = 1500
-SCOPE_MIN = 90          # 单段 / 单包允许的最大预估时长（min）
+SCOPE_MIN = 90          # 单包允许的最大预估时长（min）
 SEGMENT_MAX_MIN = 90
 FALLBACK_RS_PATHS = 8
 PERSON_DAY_MIN = 480    # 1 人日 ≈ 8 h；只用于把历史任务书里「约 N 人日」换算成分钟
-PLACEHOLDER = re.compile(r"<待填>|<TODO>|\bTBD\b|\bTODO\b|xxx|\?\?\?")
 
-SCOPE_LINE = re.compile(r"<!--\s*pdrs-scope:\s*(?P<body>[^>]*?)-->")
+# 占位符：`<待填>` 类尖括号、裸 `...`、英文 TBD/TODO/xxx/???。
+# 注意 Python 的 \b 把 CJK 当词字符，「见TBD」里 TBD 前没有边界 → 用显式 ASCII 环视。
+PLACEHOLDER = re.compile(r"<[^<>\n]{1,20}>|\.\.\.|(?<![A-Za-z])(?:TBD|TODO)(?![A-Za-z])|xxx|\?\?\?")
+PLACEHOLDER_WORDS = re.compile(r"<[^<>\n]{1,20}>|\.\.\.|(?<![A-Za-z])(?:TBD|TODO)(?![A-Za-z])|xxx|\?\?\?")
+
+SCOPE_OPEN = re.compile(r"<!--\s*pdrs-scope:")
+SCOPE_FULL = re.compile(r"<!--\s*pdrs-scope:(?P<body>[^\n]*?)-->")
 PERSON_DAY = re.compile(r"(?:约|估|预计|预计约)\s*([0-9]+(?:\.[0-9]+)?)\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
+URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
 RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
 
 SECTION = re.compile(r"^(#{2,3})\s+(.*)$")
@@ -52,14 +60,14 @@ WANT_COLS = {
     "est": ("预估", "预计", "时长"),
     "dep": ("依赖",),
 }
+COL_NAMES = {"seg": "段名", "files": "涉及文件", "deliver": "交付物", "est": "预估时长", "dep": "段间依赖"}
 
 
-def parse_scope(text):
-    """返回 (scope_dict|None, error|None)。"""
-    m = SCOPE_LINE.search(text)
-    if not m:
-        return None, None
-    body = m.group("body").strip()
+def _parse_scope_body(body):
+    """解析一条 scope 行；返回 (dict, error)。"""
+    body = body.strip()
+    if not body:
+        return None, "scope 行为空（应形如 files=16 lines=1124 est_min=180）"
     out = {}
     for tok in re.split(r"[\s,;]+", body):
         if not tok:
@@ -69,7 +77,7 @@ def parse_scope(text):
         k, v = tok.split("=", 1)
         if k in ("files", "lines", "est_min", "modules"):
             if not re.fullmatch(r"[0-9]+", v):
-                return None, f"scope 行 {k}={v!r} 不是整数"
+                return None, f"scope 行 {k}={v!r} 不是整数（不许留占位符）"
             out[k] = int(v)
         else:
             out[k] = v
@@ -78,25 +86,45 @@ def parse_scope(text):
     return out, None
 
 
+def parse_scopes(text):
+    """返回 (scopes, errors)。多条 scope 行全部解析；任一条写坏都要报出来。"""
+    opens = len(SCOPE_OPEN.findall(text))
+    bodies = [m.group("body") for m in SCOPE_FULL.finditer(text)]
+    if opens > len(bodies):
+        return [], [f"有 {opens - len(bodies)} 条 scope 行没有收口 `-->`（写坏，不能静默忽略）"]
+    scopes, errors = [], []
+    for body in bodies:
+        s, err = _parse_scope_body(body)
+        if err:
+            errors.append(err)
+        else:
+            scopes.append(s)
+    return scopes, errors
+
+
 def rs_paths(text):
-    return {p for p in RS_PATH.findall(text) if not p.startswith("http")}
+    text = URL.sub(" ", text)  # URL 里的 .rs 不算任务目标
+    return {p for p in RS_PATH.findall(text) if not p.startswith("//") and "://" not in p}
 
 
 def classify(text):
-    """返回 dict：big / reason / metrics。"""
-    scope, err = parse_scope(text)
-    metrics = {"scope": scope, "scope_error": err, "rs_paths": len(rs_paths(text))}
-    if err:
-        return {"big": None, "reason": err, "metrics": metrics}
-    if scope:
+    """返回 dict：big(True/False/None) / reason / metrics。"""
+    scopes, errors = parse_scopes(text)
+    metrics = {"scopes": scopes, "scope_errors": errors, "rs_paths": len(rs_paths(text))}
+    if errors:
+        return {"big": None, "reason": "；".join(errors), "metrics": metrics}
+    if scopes:
         triggers = []
-        if scope.get("files", 0) >= SCOPE_FILES:
-            triggers.append(f"files={scope['files']} ≥ {SCOPE_FILES}")
-        if scope.get("lines", 0) >= SCOPE_LINES:
-            triggers.append(f"lines={scope['lines']} ≥ {SCOPE_LINES}")
-        if scope.get("est_min", 0) > SCOPE_MIN:
-            triggers.append(f"est_min={scope['est_min']} > {SCOPE_MIN}")
-        return {"big": bool(triggers), "reason": "；".join(triggers) or "scope 声明未达阈值", "metrics": metrics}
+        for s in scopes:
+            if s.get("files", 0) >= SCOPE_FILES:
+                triggers.append(f"files={s['files']} ≥ {SCOPE_FILES}")
+            if s.get("lines", 0) >= SCOPE_LINES:
+                triggers.append(f"lines={s['lines']} ≥ {SCOPE_LINES}")
+            if s.get("est_min", 0) > SCOPE_MIN:
+                triggers.append(f"est_min={s['est_min']} > {SCOPE_MIN}")
+        if triggers:
+            return {"big": True, "reason": "；".join(dict.fromkeys(triggers)), "metrics": metrics}
+        return {"big": False, "reason": "scope 声明未达阈值", "metrics": metrics}
     m = PERSON_DAY.search(text)
     if m:
         val = max(float(m.group(1)), float(m.group(2)) if m.group(2) else 0.0)
@@ -113,10 +141,9 @@ def classify(text):
 
 
 def section_text(text, keyword):
-    """取以 keyword 开头的 ## 一级小节的正文（到下一个 ## 为止）。"""
-    lines = text.splitlines()
+    """取以 keyword 开头的 ## 一级小节的正文（到下一个同级或更高级标题为止）。"""
     out, grab, level = [], False, 0
-    for line in lines:
+    for line in text.splitlines():
         m = SECTION.match(line)
         if m:
             if grab and len(m.group(1)) <= level:
@@ -133,62 +160,88 @@ def cells(row):
     row = row.strip()
     if not row.startswith("|"):
         return None
-    parts = [c.strip() for c in row.strip("|").split("|")]
-    return parts
+    return [c.strip() for c in row.strip("|").split("|")]
+
+
+EST_TOKEN = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z一-鿿]*)")
 
 
 def parse_est(cell):
-    m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*(min|分钟|m\b|h\b|小时)?", cell)
-    if not m:
+    """从「预估时长」单元格取分钟数；区间取最大值，不认识单位返回 None（不许默默当 min）。"""
+    nums, unit = [], None
+    for m in EST_TOKEN.finditer(cell):
+        nums.append(float(m.group(1)))
+        u = m.group(2).lower()
+        if u:
+            if unit is None:
+                unit = u
+            elif u != unit:
+                return None
+    if not nums:
         return None
-    v = float(m.group(1))
-    unit = (m.group(2) or "min").strip()
-    if unit.startswith("h") or unit == "小时":
-        v *= 60
-    return v
+    v = max(nums)
+    if unit in (None, "", "min", "mins", "分钟", "分", "m"):
+        return v
+    if unit in ("h", "hr", "hrs", "小时", "时"):
+        return v * 60
+    return None  # 「天 / 日 / d」等未支持单位：宁可报「读不出」，也不许当 min 放行
 
 
 def check_segments(text):
-    """返回问题列表（空 = 通过）。"""
+    """返回问题列表（空 = 通过）。缺表与缺续跑要一起报，免得派单人改两遍。"""
     problems = []
     body = section_text(text, "分段交付")
     if body is None:
-        return ["缺 `## 分段交付` 一节（大包必须按文件切段，模板见 ~/ws/pdrs-ops/templates/taskbook-segments.md）"]
-    if PLACEHOLDER.search(body):
-        problems.append("分段表里还有占位符（<待填> / TBD / TODO 等），须填实现值")
-    rows = [cells(l) for l in body.splitlines()]
+        problems.append("缺 `## 分段交付` 一节（大包必须按文件切段，模板见 ~/ws/pdrs-ops/templates/taskbook-segments.md）")
+        body = ""
+    rows = [cells(line) for line in body.splitlines()]
     rows = [r for r in rows if r]
     if not rows:
-        return problems + ["`## 分段交付` 里没有表格（需 markdown 表：段名 / 涉及文件 / 交付物 / 预估时长 / 段间依赖）"]
+        problems.append("`## 分段交付` 里没有表格（需 markdown 表：段名 / 涉及文件 / 交付物 / 预估时长 / 段间依赖）")
+        rows = [["段", "涉及文件", "交付物", "预估时长", "段间依赖"]]
     header, data = rows[0], []
     for r in rows[1:]:
         if all(re.fullmatch(r":?-{2,}:?", c) for c in r if c):
             continue
         data.append(r)
     joined = " ".join(header)
-    missing_cols = [k for k, alts in WANT_COLS.items() if not any(a in joined for a in alts)]
+    col = {}
+    for key, alts in WANT_COLS.items():
+        for i, h in enumerate(header):
+            if any(a in h for a in alts):
+                col[key] = i
+                break
+    missing_cols = [COL_NAMES[k] for k in COL_NAMES if k not in col]
     if missing_cols:
-        problems.append("分段表缺列：" + "、".join({"seg": "段名", "files": "涉及文件", "deliver": "交付物",
-                                                     "est": "预估时长", "dep": "段间依赖"}[k] for k in missing_cols))
+        problems.append("分段表缺列：" + "、".join(missing_cols))
     if len(data) < 2:
         problems.append(f"分段表只有 {len(data)} 段；大包至少要切成 2 段（每段可独立收货）")
     for i, r in enumerate(data, 1):
         if len(r) < len(header):
             problems.append(f"第 {i} 行字段数 {len(r)} < 表头 {len(header)}")
-        est_cell = r[3] if len(r) > 3 else ""
-        est = parse_est(est_cell)
-        if est is None:
-            problems.append(f"第 {i} 段预估时长读不出（{est_cell!r}）")
-        elif est > SEGMENT_MAX_MIN:
-            problems.append(f"第 {i} 段预估 {est:g} min > {SEGMENT_MAX_MIN} min（切成更小的段）")
-        for j, c in enumerate(r):
-            if not c and j < len(header):
-                problems.append(f"第 {i} 段「{header[j]}」为空")
+        for key, idx in col.items():
+            cell = r[idx] if idx < len(r) else ""
+            if not cell:
+                problems.append(f"第 {i} 段「{COL_NAMES[key]}」为空")
+            elif PLACEHOLDER_WORDS.search(cell):
+                problems.append(f"第 {i} 段「{COL_NAMES[key]}」还是占位符：{cell!r}")
+        if "est" in col:
+            est_cell = r[col["est"]] if col["est"] < len(r) else ""
+            est = parse_est(est_cell)
+            if est is None:
+                problems.append(f"第 {i} 段预估时长读不出（{est_cell!r}；只认 min / 分钟 / h / 小时）")
+            elif est > SEGMENT_MAX_MIN:
+                problems.append(f"第 {i} 段预估 {est:g} min > {SEGMENT_MAX_MIN} min（切成更小的段）")
+    if PLACEHOLDER.search(body) and not any("占位符" in p for p in problems):
+        problems.append("分段表里还有占位符（<…> / ... / TBD / TODO），须填实现值")
     resume = section_text(text, "续跑")
     if resume is None:
         problems.append("缺 `## 续跑` 一节（写清进度文件路径 + 第 N 段失败从哪继续）")
-    elif not re.search(r"进度|progress", resume):
-        problems.append("`## 续跑` 里没写进度文件路径（用 `_tmp/<日期>-issue-<N>/progress.md`）")
+    else:
+        path = re.search(r"(?<![A-Za-z0-9_./-])([A-Za-z0-9_./一-鿿]*(?:progress|进度)[A-Za-z0-9_./一-鿿-]*\.md)", resume)
+        if PLACEHOLDER.search(resume) or not path:
+            problems.append("`## 续跑` 里没写具体的进度文件路径（用 `_tmp/<日期>-issue-<N>/progress.md` 的实例值，"
+                            "不许留 <…> 占位符，也不许写「无需进度文件」）")
     return problems
 
 
@@ -210,11 +263,13 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 """
 
 
-def check_file(path, as_json=False):
+def check_file(path):
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as e:
         return {"file": str(path), "rc": 2, "verdict": "ERROR", "problems": [f"读不了：{e}"], "class": None}
+    if not text.strip():
+        return {"file": str(path), "rc": 2, "verdict": "ERROR", "problems": ["任务书是空文件（不是「小包」）"], "class": None}
     cls = classify(text)
     if cls["big"] is None:
         return {"file": str(path), "rc": 2, "verdict": "ERROR", "problems": [cls["reason"]], "class": cls}
@@ -243,7 +298,11 @@ def main(argv):
     as_json = "--json" in args
     explain = "--explain" in args
     quiet = "--quiet" in args
+    files = [a for a in args if not a.startswith("--")]
     if "--print-skeleton" in args:
+        if files:
+            print("用法：--print-skeleton 不能与任务书参数同用（会让人误以为文件被检查过）", file=sys.stderr)
+            return 3
         print(SKELETON, end="")
         return 0
     hours = None
@@ -254,7 +313,8 @@ def main(argv):
         except (IndexError, ValueError):
             print("用法：--recent <小时数>", file=sys.stderr)
             return 3
-        del args[i:i + 2]
+        args = args[:i] + args[i + 2:]
+        files = [a for a in args if not a.startswith("--")]
     root = "."
     if "--root" in args:
         i = args.index("--root")
@@ -263,16 +323,15 @@ def main(argv):
         except IndexError:
             print("用法：--root <主仓>", file=sys.stderr)
             return 3
-        del args[i:i + 2]
-    files = [a for a in args if not a.startswith("--")]
+        args = args[:i] + args[i + 2:]
+        files = [a for a in args if not a.startswith("--")]
     if hours is not None:
         files = [str(p) for p in find_recent(root, hours)] + files
     if not files:
-        print(__doc__.strip().splitlines()[0], file=sys.stderr)
         print("用法：check-taskbook-segments.py [--json] [--explain] [--recent N [--root DIR]] <任务书>...", file=sys.stderr)
         return 3
 
-    results = [check_file(f, as_json) for f in files]
+    results = [check_file(f) for f in files]
     if as_json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     elif explain:
