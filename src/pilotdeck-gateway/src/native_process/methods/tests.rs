@@ -865,25 +865,26 @@ async fn permission_errors_carry_domain_codes() {
         "#1309 permission_list message has no code prefix"
     );
 
-    // grant_session_permission — schema-required sessionKey/entry; TS has no
-    // input validation (GatewayInteractionCoordinator.ts:128), so these are the
-    // Rust-side contract rejects and keep their own domain code.
-    let error = requests
+    // grant_session_permission has NO input validation in TS
+    // (GatewayInteractionCoordinator.ts:128-134): a missing sessionKey still
+    // grants, and a non-string entry throws `entry.trim is not a function`
+    // at the boundary (#1465 TS probes).
+    let granted = requests
         .permission_request(
             "grant_session_permission".into(),
             crate::metadata::object([("entry", "Bash".into())]),
         )
         .await
-        .expect_err("#1309 grant rejects missing sessionKey");
+        .expect("#1465 grant accepts a missing sessionKey");
     negative_assert_eq!(
-        error.code,
-        "INVALID_PERMISSION_GRANT",
-        "#1309 grant error code is the domain code"
+        granted.get("granted"),
+        Some(&JsValue::Bool(true)),
+        "#1465 grant without sessionKey still grants"
     );
     negative_assert_eq!(
-        message(&error),
-        "sessionKey is required.",
-        "#1309 grant sessionKey message has no code prefix"
+        granted.get("entry"),
+        Some(&JsValue::from("Bash")),
+        "#1465 grant echoes the entry"
     );
 
     let error = requests
@@ -895,16 +896,16 @@ async fn permission_errors_carry_domain_codes() {
             ]),
         )
         .await
-        .expect_err("#1309 grant rejects non-string entry");
+        .expect_err("#1465 grant rejects non-string entry");
     negative_assert_eq!(
         error.code,
-        "INVALID_PERMISSION_GRANT",
-        "#1309 grant non-string entry code is the domain code"
+        "gateway_request_failed",
+        "#1465 grant non-string entry is a transport failure"
     );
     negative_assert_eq!(
         message(&error),
-        "entry must be a string.",
-        "#1309 grant entry message has no code prefix"
+        "entry.trim is not a function",
+        "#1465 grant non-string entry message matches TS"
     );
     requests
         .owner
@@ -916,6 +917,221 @@ async fn permission_errors_carry_domain_codes() {
         .dispose()
         .await
         .expect("#1309 permission fixture project shutdown");
+}
+
+/// #1465: every non-canonical input shape below is a verbatim TS probe frame
+/// (`_tmp/20261106-issue-1465/ts-probe/output.txt` and `output-2.txt`).
+/// `input.<key>?.trim()` has three outcomes: a nullish `params` object throws
+/// while reading the property, a nullish/blank string is the domain error, and
+/// any other non-string makes `.trim` throw at the boundary.
+#[tokio::test]
+async fn noncanonical_input_forms_match_ts_probes() {
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1465 non-canonical fixture setup");
+    *requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = crate::user_dialog::GatewayUserDialogBus::connected(
+        crate::user_dialog::DialogRuntime::default(),
+    );
+
+    async fn expect_failure(
+        requests: &super::super::requests::Requests,
+        method: &str,
+        params: JsValue,
+        code: &str,
+        text: &str,
+    ) {
+        let error = match method {
+            "permission_list" | "grant_session_permission" => {
+                requests.permission_request(method.into(), params).await
+            }
+            _ => requests.user_dialog_request(method.into(), params).await,
+        }
+        .expect_err("#1465 non-canonical input must fail");
+        negative_assert_eq!(
+            error.code,
+            code,
+            "#1465 {method} error code matches the TS probe"
+        );
+        negative_assert_eq!(
+            message(&error),
+            text,
+            "#1465 {method} error message matches the TS probe"
+        );
+    }
+
+    // list — non-string sessionKey throws; nullish params throws while
+    // reading the property; a non-object params yields `undefined`.
+    expect_failure(
+        &requests,
+        "user_dialog_list",
+        crate::metadata::object([("sessionKey", JsValue::Number(5.0))]),
+        "gateway_request_failed",
+        "input.sessionKey?.trim is not a function",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "user_dialog_list",
+        JsValue::Undefined,
+        "gateway_request_failed",
+        "Cannot read properties of undefined (reading 'sessionKey')",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "user_dialog_list",
+        JsValue::Null,
+        "gateway_request_failed",
+        "Cannot read properties of null (reading 'sessionKey')",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "user_dialog_list",
+        JsValue::Number(5.0),
+        "INVALID_USER_DIALOG_LIST",
+        "sessionKey is required.",
+    )
+    .await;
+
+    // claim — the guard evaluates sessionKey before requestId.
+    expect_failure(
+        &requests,
+        "user_dialog_claim",
+        crate::metadata::object([
+            ("sessionKey", JsValue::Number(5.0)),
+            ("requestId", JsValue::from("r")),
+        ]),
+        "gateway_request_failed",
+        "input.sessionKey?.trim is not a function",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "user_dialog_claim",
+        crate::metadata::object([
+            ("sessionKey", JsValue::from("s")),
+            ("requestId", JsValue::Number(5.0)),
+        ]),
+        "gateway_request_failed",
+        "input.requestId?.trim is not a function",
+    )
+    .await;
+
+    // respond — same guard order; the bus is not gated for respond.
+    expect_failure(
+        &requests,
+        "user_dialog_respond",
+        crate::metadata::object([
+            ("sessionKey", JsValue::Number(5.0)),
+            ("requestId", JsValue::from("r")),
+            (
+                "result",
+                crate::metadata::object([("behavior", JsValue::from("cancelled"))]),
+            ),
+        ]),
+        "gateway_request_failed",
+        "input.sessionKey?.trim is not a function",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "user_dialog_respond",
+        crate::metadata::object([
+            ("sessionKey", JsValue::from("s")),
+            ("requestId", JsValue::Number(5.0)),
+            (
+                "result",
+                crate::metadata::object([("behavior", JsValue::from("cancelled"))]),
+            ),
+        ]),
+        "gateway_request_failed",
+        "input.requestId?.trim is not a function",
+    )
+    .await;
+
+    // permission_list — same guard as list.
+    expect_failure(
+        &requests,
+        "permission_list",
+        crate::metadata::object([("sessionKey", JsValue::Number(5.0))]),
+        "gateway_request_failed",
+        "input.sessionKey?.trim is not a function",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "permission_list",
+        JsValue::Undefined,
+        "gateway_request_failed",
+        "Cannot read properties of undefined (reading 'sessionKey')",
+    )
+    .await;
+
+    // grant — no sessionKey validation; entry is read (and trimmed) first.
+    for session_key in [
+        JsValue::Number(5.0),
+        crate::metadata::object([]),
+        JsValue::from(""),
+    ] {
+        let granted = requests
+            .permission_request(
+                "grant_session_permission".into(),
+                crate::metadata::object([
+                    ("sessionKey", session_key),
+                    ("entry", JsValue::from("Bash")),
+                ]),
+            )
+            .await
+            .expect("#1465 grant accepts a non-canonical sessionKey");
+        negative_assert_eq!(
+            granted.get("granted"),
+            Some(&JsValue::Bool(true)),
+            "#1465 grant ignores the sessionKey shape"
+        );
+        negative_assert_eq!(
+            granted.get("entry"),
+            Some(&JsValue::from("Bash")),
+            "#1465 grant echoes the entry"
+        );
+    }
+    expect_failure(
+        &requests,
+        "grant_session_permission",
+        crate::metadata::object([("sessionKey", JsValue::from("s"))]),
+        "gateway_request_failed",
+        "Cannot read properties of undefined (reading 'trim')",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "grant_session_permission",
+        crate::metadata::object([("sessionKey", JsValue::from("s")), ("entry", JsValue::Null)]),
+        "gateway_request_failed",
+        "Cannot read properties of null (reading 'trim')",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "grant_session_permission",
+        JsValue::Undefined,
+        "gateway_request_failed",
+        "Cannot read properties of undefined (reading 'entry')",
+    )
+    .await;
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1465 non-canonical fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1465 non-canonical fixture project shutdown");
 }
 
 #[tokio::test]

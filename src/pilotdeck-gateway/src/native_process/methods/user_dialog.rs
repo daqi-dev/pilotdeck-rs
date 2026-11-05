@@ -43,18 +43,6 @@ fn domain_error(code: &str, message: impl Into<pilotdeck_protocol::JsString>) ->
     }
 }
 
-fn nonempty_string(params: &JsValue, key: &str) -> Result<JsString, RequestError> {
-    params
-        .get(key)
-        .and_then(JsValue::as_string)
-        .filter(|s| {
-            let text = String::from_utf16_lossy(s.units());
-            !crate::metadata::js_trim(&text).is_empty()
-        })
-        .cloned()
-        .ok_or_else(|| request_error(format!("{key} must be a non-empty string.")))
-}
-
 /// Optional non-empty string (used for `leaseId` on claim/respond). TS rejects
 /// an explicit null here, so it must NOT fold into the missing-key default:
 /// the guard is `input.leaseId !== undefined && (typeof input.leaseId !==
@@ -120,9 +108,12 @@ impl Requests {
                     // TS: listUserDialogs — CAPABILITY_UNAVAILABLE when bus is not wired
                     // (native process mode; GatewayWsConnection.ts:481).
                     self.require_user_dialog_bus()?;
-                    let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {
-                        domain_error("INVALID_USER_DIALOG_LIST", "sessionKey is required.")
-                    })?;
+                    let session_key = super::require_text(
+                        &params,
+                        "sessionKey",
+                        "INVALID_USER_DIALOG_LIST",
+                        "sessionKey is required.",
+                    )?;
                     let dialogs = self
                         .user_dialog_bus
                         .lock()
@@ -138,18 +129,23 @@ impl Requests {
                     // TS: claimUserDialog — CAPABILITY_UNAVAILABLE when bus is not wired
                     // (native process mode; GatewayWsConnection.ts:481).
                     self.require_user_dialog_bus()?;
-                    let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {
-                        domain_error(
-                            "INVALID_USER_DIALOG_CLAIM",
-                            "sessionKey and requestId are required.",
-                        )
-                    })?;
-                    let request_id = nonempty_string(&params, "requestId").map_err(|_| {
-                        domain_error(
-                            "INVALID_USER_DIALOG_CLAIM",
-                            "sessionKey and requestId are required.",
-                        )
-                    })?;
+                    // TS evaluates `!input.sessionKey?.trim() ||
+                    // !input.requestId?.trim()` left to right
+                    // (InProcessGateway.ts:2735-2737): a non-string
+                    // sessionKey throws before requestId is read, and a
+                    // missing sessionKey short-circuits the whole guard.
+                    let session_key = super::require_text(
+                        &params,
+                        "sessionKey",
+                        "INVALID_USER_DIALOG_CLAIM",
+                        "sessionKey and requestId are required.",
+                    )?;
+                    let request_id = super::require_text(
+                        &params,
+                        "requestId",
+                        "INVALID_USER_DIALOG_CLAIM",
+                        "sessionKey and requestId are required.",
+                    )?;
                     let lease_id = optional_nonempty_string(&params, "leaseId").map_err(|_| {
                         domain_error(
                             "INVALID_USER_DIALOG_CLAIM",
@@ -220,18 +216,18 @@ impl Requests {
                     // TS: releaseUserDialog — CAPABILITY_UNAVAILABLE when bus is not wired
                     // (native process mode; GatewayWsConnection.ts:481).
                     self.require_user_dialog_bus()?;
-                    let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {
-                        domain_error(
-                            "INVALID_USER_DIALOG_RELEASE",
-                            "sessionKey, requestId, and leaseId are required.",
-                        )
-                    })?;
-                    let request_id = nonempty_string(&params, "requestId").map_err(|_| {
-                        domain_error(
-                            "INVALID_USER_DIALOG_RELEASE",
-                            "sessionKey, requestId, and leaseId are required.",
-                        )
-                    })?;
+                    let session_key = super::require_text(
+                        &params,
+                        "sessionKey",
+                        "INVALID_USER_DIALOG_RELEASE",
+                        "sessionKey, requestId, and leaseId are required.",
+                    )?;
+                    let request_id = super::require_text(
+                        &params,
+                        "requestId",
+                        "INVALID_USER_DIALOG_RELEASE",
+                        "sessionKey, requestId, and leaseId are required.",
+                    )?;
                     // TS release has NO typeof short-circuit on leaseId
                     // (InProcessGateway.ts:2766-2769, unlike claim :2738 /
                     // respond :2655): `!input.leaseId?.trim()` only guards
@@ -286,18 +282,18 @@ impl Requests {
                     // TS: respondUserDialog — unconfigured bus has no pending entries;
                     // consume_for_response returns NotPending → {delivered:false} (ledger:7177/7178).
                     // TS: respondUserDialog — sessionKey, requestId required; result.behavior + value/reason; optional leaseId
-                    let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {
-                        domain_error(
-                            "INVALID_USER_DIALOG_RESPONSE",
-                            "sessionKey and requestId are required.",
-                        )
-                    })?;
-                    let request_id = nonempty_string(&params, "requestId").map_err(|_| {
-                        domain_error(
-                            "INVALID_USER_DIALOG_RESPONSE",
-                            "sessionKey and requestId are required.",
-                        )
-                    })?;
+                    let session_key = super::require_text(
+                        &params,
+                        "sessionKey",
+                        "INVALID_USER_DIALOG_RESPONSE",
+                        "sessionKey and requestId are required.",
+                    )?;
+                    let request_id = super::require_text(
+                        &params,
+                        "requestId",
+                        "INVALID_USER_DIALOG_RESPONSE",
+                        "sessionKey and requestId are required.",
+                    )?;
                     let result_val = params.get("result").ok_or_else(|| {
                         domain_error(
                             "INVALID_USER_DIALOG_RESPONSE",

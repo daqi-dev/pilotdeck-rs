@@ -6,22 +6,18 @@ pub(super) const METHODS: &[&str] = &["permission_list", "grant_session_permissi
 pub(super) const HANDLER: super::Handler =
     super::Handler::AfterAdmission(Requests::permission_request);
 
-/// Domain errors carry their code in `RequestError::code` (like the
-/// user_dialog family), not embedded in the message: clients that branch on
-/// `error.code` must see the domain code, not the generic
-/// `gateway_request_failed` default.
-fn permission_error(code: &str, message: &str) -> RequestError {
-    RequestError {
-        code: code.into(),
-        message: message.into(),
-        details: None,
-        validation: None,
-    }
-}
-
-/// TS listPermissions projection (InProcessGateway.ts:2784-2789): the three
-/// id fields fall back to `""` when the snapshot row lacks them (`?? ""`), and
-/// `payload` is omitted when undefined. A present null payload is forwarded.
+/// TS listPermissions projection (InProcessGateway.ts:2784-2790).
+///
+/// The TS object literal treats the three id fields differently:
+/// `toolCallId ?? ""` and `toolName ?? ""` fold only null/undefined to `""`,
+/// while `requestId` has no fallback — a row without it drops the key from the
+/// serialized frame. Rust fills all three with `""`. That difference is
+/// unreachable on the wired path: permission-bus snapshot rows always carry
+/// string `requestId` / `toolCallId` / `toolName`
+/// (`runtime/interaction/reconnect.rs:194-206` builds all three with
+/// `JsValue::String`), so a missing or non-string id cannot occur here (#1465).
+///
+/// `payload` is omitted when undefined; a present null payload is forwarded.
 pub(super) fn project_permission_entry(entry: &JsValue) -> JsValue {
     let mut obj = JsObject::new();
     for key in ["requestId", "toolCallId", "toolName"] {
@@ -49,20 +45,16 @@ impl Requests {
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
             if method == "permission_list" {
-                // TS: listPermissions — sessionKey required
-                let session_key = params
-                    .get("sessionKey")
-                    .and_then(JsValue::as_string)
-                    .filter(|s| {
-                        let text = String::from_utf16_lossy(s.units());
-                        !crate::metadata::js_trim(&text).is_empty()
-                    })
-                    .cloned()
-                    .ok_or_else(|| {
-                        // TS: DialogGatewayError("INVALID_PERMISSION_LIST",
-                        // "sessionKey is required.") — InProcessGateway.ts:2782.
-                        permission_error("INVALID_PERMISSION_LIST", "sessionKey is required.")
-                    })?;
+                // TS: `if (!input.sessionKey?.trim())` — a nullish params
+                // object or a non-string sessionKey throws at the boundary
+                // (gateway_request_failed), while null/undefined/blank is the
+                // domain error (InProcessGateway.ts:2781-2783).
+                let session_key = super::require_text(
+                    &params,
+                    "sessionKey",
+                    "INVALID_PERMISSION_LIST",
+                    "sessionKey is required.",
+                )?;
 
                 // permission_bus snapshot → project to { requestId, toolCallId, toolName, payload? }
                 let raw = self.interactions.permission_bus().snapshot(&session_key);
@@ -77,29 +69,36 @@ impl Requests {
             } else {
                 // grant_session_permission
                 // TS: grantSessionPermission(input) → coordinator.grantSessionPermission(input)
-                // input has sessionKey (owner) and entry (permission rule string)
-                let owner = params
-                    .get("sessionKey")
-                    .and_then(JsValue::as_string)
-                    .filter(|s| {
-                        let text = String::from_utf16_lossy(s.units());
-                        !crate::metadata::js_trim(&text).is_empty()
-                    })
-                    .cloned()
-                    .ok_or_else(|| {
-                        // TS grantSessionPermission performs no input validation
-                        // (GatewayInteractionCoordinator.ts:128); these rejects
-                        // enforce the schema's required sessionKey/entry with a
-                        // domain code instead of the generic transport code.
-                        permission_error("INVALID_PERMISSION_GRANT", "sessionKey is required.")
-                    })?;
-                let entry = params
-                    .get("entry")
-                    .and_then(JsValue::as_string)
-                    .cloned()
-                    .ok_or_else(|| {
-                        permission_error("INVALID_PERMISSION_GRANT", "entry must be a string.")
-                    })?;
+                // (InProcessGateway.ts:2837, GatewayInteractionCoordinator.ts:128).
+                // The coordinator performs NO input validation:
+                // `permissionEntryToRule(input.entry, ...)` reads `entry` first,
+                // so a nullish params object throws on 'entry' (not
+                // 'sessionKey'), and `entry.trim()` throws its own TypeError
+                // for nullish / non-string entries. Only after that does
+                // `permissionGrants.grant(input.sessionKey, rule)` accept any
+                // sessionKey value as a Map key (#1465 TS probes).
+                let entry = match super::input_property(&params, "entry")?.as_ref() {
+                    None | Some(JsValue::Undefined) => {
+                        return Err(RequestError::new(
+                            "Cannot read properties of undefined (reading 'trim')",
+                        ));
+                    }
+                    Some(JsValue::Null) => {
+                        return Err(RequestError::new(
+                            "Cannot read properties of null (reading 'trim')",
+                        ));
+                    }
+                    Some(JsValue::String(value)) => value.clone(),
+                    Some(_) => return Err(RequestError::new("entry.trim is not a function")),
+                };
+                // TS keys the grant Map by the raw sessionKey. A non-string key
+                // can never be reached again through the string-keyed
+                // permission RPCs, so it collapses to the empty owner here and
+                // the observable response matches `{granted:true, entry}`.
+                let owner = match params.get("sessionKey") {
+                    Some(JsValue::String(value)) => value.clone(),
+                    _ => JsString::from(""),
+                };
                 Ok(self.interactions.grant_session_permission(&owner, &entry))
             }
         })
