@@ -768,11 +768,19 @@ async fn upload_cleanup_runs_on_the_assembly_schedule() {
     seed("upload-live", "2100-01-01T00:00:00.000Z");
     let expired_upload = uploads.join("upload-expired");
     let expired_lease = leases.join("upload-expired").join("lease-1");
+    // The t≈100 ms probe below only means "the first sweep waits one interval"
+    // while the clamp leaves this period alone; a raised floor would push the
+    // first sweep past the probe and make it vacuous.
+    let cleanup_period = std::time::Duration::from_secs(2);
+    assert!(
+        cleanup_period >= crate::upload::MIN_CLEANUP_INTERVAL,
+        "this test relies on spawn_cleanup honouring its period verbatim"
+    );
     let host = crate::test_negative_receipt::expect_ok(
         assembly::start_observed_with_upload_cleanup(
             options.clone(),
             options.environment(Env::new()),
-            std::time::Duration::from_secs(2),
+            cleanup_period,
             Arc::new(|_, result| Box::pin(async move { result })),
             Arc::new(|error| eprintln!("native project cleanup: {error}")),
         )

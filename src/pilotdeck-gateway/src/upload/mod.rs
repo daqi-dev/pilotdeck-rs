@@ -842,9 +842,10 @@ impl UploadStore {
 /// TS `ui/server/routes/uploads.js:73-76`: `15 * 60 * 1000`.
 pub const CLEANUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-/// Lower bound [`spawn_cleanup`] clamps its period to. Exported so callers and
-/// tests cannot silently pick a period that the clamp would rewrite.
-pub const MIN_CLEANUP_INTERVAL: Duration = Duration::from_secs(1);
+/// Lower bound [`spawn_cleanup`] clamps its period to. Exported inside the crate
+/// so callers and tests can check a period against it instead of hard-coding the
+/// value; the clamp still rewrites anything below it.
+pub(crate) const MIN_CLEANUP_INTERVAL: Duration = Duration::from_secs(1);
 
 /// TS `ui/server/routes/uploads.js:73-76`: detached `setInterval` that calls
 /// [`UploadStore::cleanup_expired`] and only logs failures. `Weak` follows
