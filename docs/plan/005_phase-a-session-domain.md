@@ -5,12 +5,17 @@ date: 2026-10-14
 title: 阶段 A 深水区：Rust 宿主、会话权威与 TS gateway 退役
 tags: [phase-a, gateway, session-domain, sidecar, deadline]
 status: draft
-related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/gap, research/008_phase-a-session-domain/decision, experiments/exp006-gateway-parity-ruler]
+related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/gap, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/four-cell-matrix, experiments/exp006-gateway-parity-ruler]
 ---
 
 # 阶段 A 深水区计划（A5 起）
 
 > **现行决策（2026-10-16 接续校正）**：D4→B、D5→A 均已有人批准，依据见[决策记录](../../state/decisions-20261014.md)。下文起草时的“D4/D5 待批／未决”不再是等待条件。D4 仍须在 A5.4 登记 A19-HOST 逐格期望、评审冻结，再由 A7 实现与验证；D5 以 A8「gateway退役验证完成（不含UI自动恢复）」满足 B3 的 A 侧前置，完整 UI 恢复由 B 后续真实验收闭合。批准不等于实施或验收已经完成，A8 全套技术证据与 B1/B2 前置均保留。
+
+> **现行决策（2026-11-06 校正，正本 `state/decisions-20261102-a-stage-scope.md`「#1301 → B」节）**：本文件下方的三处完成口径已被 #1301 选项 B 改写，原文不回写，以本段为准——
+> **① A6 完成口径**：E1 `--suite host` 改为 **#590 的一次性四格账本**（TS/TS、TS/Rust、Rust/TS、Rust/Rust 分别报告，见[four-cell-matrix](../research/008_phase-a-session-domain/four-cell-matrix.md)）；**之后的 PR 没有四格回归闸门**，#1314（host suite）与 #1315（session suite）已按 not planned 关单。A6.9 行末的「四格矩阵相同 fixture 下语义一致」是起草时的验收愿景，降级后**不再成立**，本账本也没说语义已经一致。
+> **② A7 完成口径**：「50 项作为一个 PASS/FAIL 交付」改由 **#1317 的人工对账表**承担（逐项列证据，漏 1 项即不交付），无回归闸门；A7 的 E1 只剩 `--suite deadline`（既有）。A7「怎么算做完」里的 `--suite session` / `--suite host` 现已不存在，照抄会报错。
+> **③ A8.6**：E1 `--suite retirement` 不变（#1355，#1301 B 授权，走冻结程序）。
 
 ## Context
 
