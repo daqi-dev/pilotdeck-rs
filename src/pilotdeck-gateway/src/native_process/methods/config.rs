@@ -396,6 +396,28 @@ mod tests {
         r.project.dispose().await.expect("#1310 dispose");
     }
 
+    // #1455 r2: the whitelist itself is a parity surface — dropping
+    // `default` or `bypassPermissions` would silently reject a mode the TS
+    // baseline accepts, and only `plan` / a rejected value had coverage.
+    #[tokio::test]
+    async fn set_permission_mode_accepts_every_ts_mode() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        for mode in ["default", "plan", "bypassPermissions"] {
+            let params = object([("sessionKey", "s1".into()), ("mode", mode.into())]);
+            let result = r
+                .session_config_request("set_permission_mode".into(), params)
+                .await;
+            let err = result.expect_err("#1455 set_permission_mode must not reject a TS mode");
+            negative_assert_eq!(
+                err.code.as_str(),
+                "CAPABILITY_UNAVAILABLE",
+                "#1455 set_permission_mode accepts every TS mode"
+            );
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
     // The same interpolation for a non-string value: JS ToString(42) is "42"
     // (probe1, nonstring-mode).
     #[tokio::test]

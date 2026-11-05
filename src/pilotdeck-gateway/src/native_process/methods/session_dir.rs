@@ -498,6 +498,28 @@ mod tests {
     use super::*;
     use crate::negative_assert_eq;
 
+    // #1455 r1: the same gate serves resume / close / delete / rename / tag;
+    // a guard-level case pins the predicate once for all five callers instead
+    // of relying on the single resume-level request test.
+    #[test]
+    fn require_session_key_keeps_lone_surrogates_and_rejects_blank() {
+        let surrogate = JsString::from_utf16(vec![0xd800]);
+        let accepted = object([("sessionKey", JsValue::String(surrogate))]);
+        negative_assert_eq!(
+            require_session_key(&accepted).is_ok(),
+            true,
+            "#1455 require_session_key keeps the lone-surrogate key for every caller"
+        );
+        let blank = object([("sessionKey", "  ".into())]);
+        let err = require_session_key(&blank)
+            .expect_err("#1455 require_session_key rejects the blank key for every caller");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1455 require_session_key rejects the blank key for every caller"
+        );
+    }
+
     // #1455 G7: the shared `?.trim()` gate accepts a lone-surrogate key the
     // way TS does (probe4: `{"label":"thinking-lone-surrogate-key",
     // "value":{"applied":"callback"}}`); the previous `to_utf8` filter
