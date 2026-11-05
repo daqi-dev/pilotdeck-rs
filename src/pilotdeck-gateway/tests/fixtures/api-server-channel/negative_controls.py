@@ -103,8 +103,8 @@ mutations = [
     (
         "active-chat-guard",
         SERVER,
-        "        .contains(&chat_id)\n    {",
-        "        .contains(&String::new())\n    {",
+        "    if !admit_chat(&shared.active, &chat_id) {",
+        "    if false && !admit_chat(&shared.active, &chat_id) {",
         DUPLICATE,
         "#1333 duplicate chat is rejected",
     ),

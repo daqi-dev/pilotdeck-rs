@@ -63,6 +63,17 @@ impl ServerShared {
     }
 }
 
+/// Single authoritative admission for a chat id. `HashSet::insert` reports
+/// whether the id was absent, so the check and the claim happen under one lock
+/// acquisition; a `contains`-then-insert pair would let two requests with the
+/// same id both pass before either claims it.
+pub(super) fn admit_chat(active: &Mutex<HashSet<String>>, chat_id: &str) -> bool {
+    active
+        .lock()
+        .expect("api_server active chats")
+        .insert(chat_id.to_owned())
+}
+
 pub(crate) async fn accept_loop(
     listener: TcpListener,
     shared: Arc<ServerShared>,
@@ -480,6 +491,18 @@ fn error_response(
     )
 }
 
+fn session_busy_response() -> Response<crate::Body> {
+    error_response(
+        StatusCode::TOO_MANY_REQUESTS,
+        "session_busy",
+        "Session already processing a request",
+        "session_busy",
+        Some("rate_limit_error"),
+        "Wait for the current request to finish or start a new session.",
+        "session",
+    )
+}
+
 fn gateway_unavailable() -> Response<crate::Body> {
     error_response(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -702,15 +725,7 @@ async fn chat_completions(
             "info",
             &format!("api-server: chat {chat_id} already active, rejecting"),
         );
-        return Ok(error_response(
-            StatusCode::TOO_MANY_REQUESTS,
-            "session_busy",
-            "Session already processing a request",
-            "session_busy",
-            Some("rate_limit_error"),
-            "Wait for the current request to finish or start a new session.",
-            "session",
-        ));
+        return Ok(session_busy_response());
     }
 
     let user_text_utf8 = user_text
@@ -745,11 +760,17 @@ async fn chat_completions(
     let session_key = JsString::from(mapped.session_key);
     let message = JsString::from(mapped.message);
 
-    shared
-        .active
-        .lock()
-        .expect("api_server active chats")
-        .insert(chat_id.clone());
+    // The `contains` check above is an advisory fast path: two requests with
+    // the same chat id can both pass it before either admits. `admit_chat` is
+    // the single authoritative admission, so a rejected duplicate never
+    // reaches the gateway (#1333 concurrency review).
+    if !admit_chat(&shared.active, &chat_id) {
+        shared.log(
+            "info",
+            &format!("api-server: chat {chat_id} already active, rejecting"),
+        );
+        return Ok(session_busy_response());
+    }
     let guard = ActiveChat {
         active: shared.active.clone(),
         chat_id: chat_id.clone(),
