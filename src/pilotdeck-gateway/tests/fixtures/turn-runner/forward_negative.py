@@ -145,6 +145,11 @@ cases = [
      'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);',
      'drop(lease);\n            let result = write(&recorder, &session, &turn);\n            drop(owner);',
      None, test_prefix + 'forward_status_fail_drop', '#1219 dropped owner leaves the failing worker its lease'),
+    # #1219 / A7.2-LIVE-DROP-COMPLETION-001-R2: likewise for the session slot.
+    ('status-fail-slot-early', base / 'runner.rs',
+     'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);\n            result',
+     'drop(owner);\n            let result = write(&recorder, &session, &turn);\n            drop(lease);\n            result',
+     None, test_prefix + 'forward_status_fail_drop', '#1219 dropped owner leaves the failing worker its slot'),
 ]
 
 def audit():
