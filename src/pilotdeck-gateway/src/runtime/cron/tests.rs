@@ -1066,26 +1066,47 @@ fn store_concurrent_puts_across_threads_keep_every_task() {
 /// string would key the same physical directory twice and the later empty
 /// bucket would overwrite the migrated tasks (the `/w/same` projectKey
 /// targets its own source directory).
-// #1289: Linux-only. APFS / HFS+ reject non-UTF-8 filenames outright (the
-// `create_dir_all` below fails with EILSEQ, os error 92), so the fixture
-// cannot be created on macOS at all — and no real macOS user can have a
-// non-UTF-8 home either: the scenario needs a byte-path filesystem (the
-// same macOS blind spot as `project_files::tests::linux_dirent`, #133).
-// Linux hosts and Linux CI still run this guard unchanged. Deliberately a
-// compile-time gate, not a "skip when create_dir_all fails" branch: that
-// would swallow a genuine Linux-side fixture failure and pass silently.
-#[cfg(target_os = "linux")]
+// #1289 → #1400: the fixture needs a filesystem that accepts non-UTF-8
+// filenames. APFS / HFS+ reject the bytes outright (EILSEQ, os error 92),
+// so #1289 compile-gated the test to Linux — which also meant a macOS run
+// of the suite carried no evidence of this guard at all: an absent test
+// and a passing one read exactly the same in the `test result` line.
+// #1400 replaces the compile-time gate with a runtime probe of the
+// fixture's own directory (`non_utf8_names_writable` below): where the
+// bytes are rejected the test skips itself with a printed skip line —
+// never a silent pass — and where they are accepted (Linux ext4 and
+// friends) the original assertions run unchanged. The probe writes a
+// file of its own name before anything else, so a genuine Linux-side
+// fixture failure (EACCES, ENOSPC, …) still fails the test hard instead
+// of being swallowed by the skip — the exact concern that made #1289
+// prefer the compile-time gate over "skip when create_dir_all fails".
+#[cfg(unix)]
 #[test]
 fn migration_non_utf8_home_keeps_one_physical_key() {
     use std::os::unix::ffi::OsStrExt;
     let scratch = Scratch::new("cron-migration-non-utf8");
+    if !non_utf8_names_writable(scratch.path()) {
+        // #1400: the explicit skip. Printed, so a rejecting filesystem
+        // shows up in the log as a skip, not as an indistinguishable pass.
+        // Written straight to the stderr handle, not with `eprintln!`: the
+        // print-family macros are captured by the test harness, and a
+        // passing (skipping) test's captured output never reaches the log
+        // (measured: plain `--exact` runs showed nothing until this write
+        // bypassed the capture) — which would make the skip exactly as
+        // silent as the pass it must distinguish itself from.
+        let _ = std::io::stderr().write_all(
+            b"migration_non_utf8_home_keeps_one_physical_key: skipped, \
+              filesystem rejects non-UTF-8 file names\n",
+        );
+        return;
+    }
     let home = scratch
         .path()
         .join(std::ffi::OsStr::from_bytes(b"home-\xff"));
     let project = home.join("cron/projects/w-same");
     fs::create_dir_all(&project).unwrap_or_else(|error| {
         panic!(
-            "#1216 non-UTF-8 home: create {}: {error}",
+            "#1400 non-UTF-8 home: the probe accepted the name but creating {} failed: {error}",
             project.display()
         )
     });
@@ -1107,6 +1128,31 @@ fn migration_non_utf8_home_keeps_one_physical_key() {
         home.join("cron/store-migration-v1.json").is_file(),
         "#1216 non-UTF-8 home: the migration marker must be written"
     );
+}
+
+/// #1400: whether `dir`'s filesystem accepts the byte paths the fixture
+/// above needs. The probe performs the fixture's own operations, in its
+/// order, at throwaway names: a mkdir of a non-UTF-8-named directory, then
+/// a file write whose path runs through that directory. #1400 r2: the
+/// shapes cannot be a cheaper stand-in — a host whose filesystem accepted
+/// the old file-leaf write (`fs::write` of `probe-\xff` directly under
+/// `dir`) but rejected the fixture's mkdir (EILSEQ) turned the skip into a
+/// deterministic failure there (32/32 full-suite copies on macmini-01,
+/// load 16–22, `_tmp/20261026-issue-1495/fix-1297/single-lib-*.log`), while
+/// hosts rejecting both shapes hid the divergence behind the skip. The
+/// integration-side `tests/workspace_snapshot.rs::non_utf8_names_writable`
+/// keeps its file-leaf write: that fixture creates non-UTF-8-named *files*
+/// and never mkdirs a non-UTF-8-named directory, so there the file write
+/// is the same-shape probe.
+#[cfg(unix)]
+fn non_utf8_names_writable(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let probe_dir = dir.join(std::ffi::OsStr::from_bytes(b"probe-\xff"));
+    let writable = fs::create_dir(&probe_dir)
+        .and_then(|()| fs::write(probe_dir.join("probe"), b""))
+        .is_ok();
+    let _ = fs::remove_dir_all(&probe_dir);
+    writable
 }
 
 /// fix-r2 P2 + fix-r3 P2: an absolute pilot home and an absolute projectKey

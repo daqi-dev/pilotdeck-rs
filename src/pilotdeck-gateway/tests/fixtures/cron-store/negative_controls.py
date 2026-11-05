@@ -20,12 +20,15 @@ because a parent test's panic payload embeds the worker's libtest output,
 which the shared verdict truncates at the worker's own FAILED line — the
 marker never reaches the parent's panic block (fix-r3 P1).
 
-The raw-bytes home row is Linux-only (#1289): its bound test is
-`#[cfg(target_os = "linux")]` because APFS / HFS+ reject non-UTF-8 filenames
-(EILSEQ), so macOS can neither build the fixture nor host a non-UTF-8 home.
-Non-Linux hosts record that row SKIPPED — neither KILLED nor INVALID — and the
-drop does not fail the run (same accounting as exact-rerun-receipt's
-DARWIN_ONLY rows).
+The raw-bytes home row is Linux-only as a kill (#1289 → #1400): its bound
+test now exists on every unix but skips itself wherever the filesystem
+rejects non-UTF-8 filenames (APFS / HFS+ EILSEQ, #1400's runtime probe), so
+off Linux the mutated migration is never reached and the row can only be
+SKIPPED. The #1400 probe row is the mirror: it kills exactly on those
+rejecting filesystems (a forced-true probe walks the test into the EILSEQ
+fixture-create panic) and is SKIPPED on Linux, where the probe already
+returns true and forcing it changes nothing. Neither drop fails the run
+(same accounting as exact-rerun-receipt's DARWIN_ONLY rows).
 """
 from pathlib import Path
 import json
@@ -47,14 +50,20 @@ TREE = 'once: replayed file tree differs from the TS oracle'
 # `--ignored` plus the listed environment, binding the worker's own panic
 # block instead of a parent that only relays it.
 DELETED_CWD_WORKER = {'ignored': True, 'env': {'PDRS_CRON_CASE': 'absolute-home-deleted-cwd'}}
-# #1289: entry-lossy-home's bound test is #[cfg(target_os = "linux")]-gated
-# (APFS / HFS+ reject non-UTF-8 filenames with EILSEQ, so macOS can neither
-# build the fixture nor host a non-UTF-8 home): elsewhere the test does not
-# exist, its positive control can never pass, and the row would be INVALID
-# by construction. Non-Linux hosts record the row SKIPPED — neither KILLED
-# nor INVALID — so a default full run does not fail on a structurally absent
-# control (same accounting as exact-rerun-receipt's DARWIN_ONLY rows).
+# #1289 → #1400: entry-lossy-home's bound test is #[cfg(unix)] with a runtime
+# probe (#1400): where the filesystem rejects non-UTF-8 filenames (APFS /
+# HFS+, EILSEQ) the test skips itself, so off Linux the mutated migration is
+# never reached — the kill cannot exist there. Non-Linux hosts record the row
+# SKIPPED — neither KILLED nor INVALID — so a default full run does not fail
+# on a structurally absent control (same accounting as exact-rerun-receipt's
+# DARWIN_ONLY rows).
 LINUX_ONLY = {'entry-lossy-home'}
+# #1400: the probe mutant is the mirror image — killable only where the
+# filesystem rejects the names (forcing the probe true walks the test into
+# the EILSEQ fixture-create panic); on Linux the probe already returns true,
+# so forcing it changes no behavior and the row would be SURVIVED by
+# construction. Linux hosts record it SKIPPED instead.
+NOT_ON_LINUX = {'skip-probe-forced-writable'}
 mutations = [
     # Migration routing removed: projectKey-routed tasks stay in their source
     # directory, so the recorded move never happens (issue scope 3, 迁移跳过).
@@ -218,6 +227,27 @@ mutations = [
      '    );',
      'runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key',
      '#1216 non-UTF-8 home: the same-directory projectKey must keep one physical key'),
+    # #1400: the skip probe lies — claims a rejecting filesystem accepts
+    # non-UTF-8 names — so the fixture creation runs where the bytes are
+    # EILSEQ-rejected and dies at the #1400 create panic instead of skipping.
+    # The mirror of entry-lossy-home: killable only off Linux (see
+    # NOT_ON_LINUX above).
+    ('skip-probe-forced-writable', tests,
+     'fn non_utf8_names_writable(dir: &Path) -> bool {\n'
+     '    use std::os::unix::ffi::OsStrExt;\n'
+     '    let probe_dir = dir.join(std::ffi::OsStr::from_bytes(b"probe-\\xff"));\n'
+     '    let writable = fs::create_dir(&probe_dir)\n'
+     '        .and_then(|()| fs::write(probe_dir.join("probe"), b""))\n'
+     '        .is_ok();\n'
+     '    let _ = fs::remove_dir_all(&probe_dir);\n'
+     '    writable\n'
+     '}',
+     'fn non_utf8_names_writable(dir: &Path) -> bool {\n'
+     '    let _ = dir;\n'
+     '    true\n'
+     '}',
+     'runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key',
+     '#1400 non-UTF-8 home: the probe accepted the name but creating'),
     # fix-r2 P2 / fix-r3 P1: the entry consults the process cwd unconditionally
     # again, so a deleted cwd fails an absolute-home migration. Bound to the
     # worker itself, whose panic block carries the marker (the parent's
@@ -345,17 +375,34 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     summary = []
     if sys.platform != 'linux':
-        # LINUX_ONLY rows cannot run here (the bound test is not compiled on
-        # this platform): record SKIPPED — neither KILLED nor INVALID — so a
-        # default full run does not fail on a structurally absent control.
-        # Default runs record the drop for the evidence directory.
+        # LINUX_ONLY rows cannot kill here (the bound test skips itself on
+        # this platform, so the mutated migration is never reached): record
+        # SKIPPED — neither KILLED nor INVALID — so a default full run does
+        # not fail on a structurally absent control. Default runs record the
+        # drop for the evidence directory.
         for row in [row for row in selected if row[0] in LINUX_ONLY]:
             summary.append(dict(name=row[0], test=row[4], assertion=row[5],
                                 status='SKIPPED', compiled=False,
-                                reason='bound test compiles only on Linux '
-                                        '(#[cfg(target_os = "linux")], #1289)'))
-            print(f'{row[0]}: SKIPPED: Linux-only bound test', flush=True)
+                                reason='bound test skips itself off Linux '
+                                        '(#1400 runtime probe: filesystem '
+                                        'rejects non-UTF-8 names), so the '
+                                        'mutated migration is never reached'))
+            print(f'{row[0]}: SKIPPED: Linux-only kill, test skips off Linux',
+                  flush=True)
         selected = [row for row in selected if row[0] not in LINUX_ONLY]
+    if sys.platform == 'linux':
+        # NOT_ON_LINUX rows cannot kill here: #1400's probe already returns
+        # true on Linux, so forcing it changes no behavior and the mutant is
+        # indistinguishable from the original. Record SKIPPED — neither
+        # KILLED nor INVALID — mirroring the LINUX_ONLY block above.
+        for row in [row for row in selected if row[0] in NOT_ON_LINUX]:
+            summary.append(dict(name=row[0], test=row[4], assertion=row[5],
+                                status='SKIPPED', compiled=False,
+                                reason='bound probe already reports writable '
+                                        'on Linux (#1400): no behavior to '
+                                        'kill'))
+            print(f'{row[0]}: SKIPPED: not-on-Linux bound probe', flush=True)
+        selected = [row for row in selected if row[0] not in NOT_ON_LINUX]
     guarded = list(dict.fromkeys([source, migration, paths_rs, tests, Path(__file__).resolve(),
         Path(__file__).resolve().parents[1] / 'negative_process.py',
         Path(__file__).resolve().parents[1] / 'negative_suite.py']))
