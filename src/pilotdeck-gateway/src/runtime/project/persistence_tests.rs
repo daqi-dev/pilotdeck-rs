@@ -831,7 +831,14 @@ async fn stale_snapshot_restore_must_not_corrupt_the_transcript_chain() {
     };
     assert_eq!(
         reopened.restored.entries.len(),
-        4,
+        // #297 review fix-r2: the stale restore is refused, so the writer
+        // keeps t1..t3 and the session keeps recording — t2's model request
+        // opens a step (`step_started`) and appends its `model_request`, and
+        // t4's `turn_started` follows. 4 × turn_started + step_started +
+        // model_request. The count was 4 while the desynchronised recorder
+        // refused to record t2 at all; asserting it now also pins that the
+        // stale restore neither dropped nor duplicated an entry.
+        6,
         "#297 every appended turn must survive a stale restore"
     );
     drop((reopened, handle, lease));
