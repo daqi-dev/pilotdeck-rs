@@ -53,7 +53,7 @@ cases = [
     ('expectations-accept-missing-frames', collector, "    w.need(all(isinstance(side.get('frames'), list) for side in sides),", "    w.need(True,", 'test_expectations_reject_bad_fixtures'),
     ('expectations-accept-frames-elements', collector, "    w.need(all(isinstance(item, str) and bool(item)\n               for side in sides for item in side['frames']),", "    w.need(True,", 'test_expectations_reject_bad_fixtures'),
     ('expectations-accept-bad-applicable', collector, "               and isinstance(side['registry'].get('applicable'), bool) for side in sides),", "               and True for side in sides),", 'test_expectations_reject_bad_fixtures'),
-    ('expectations-accept-unparsable', collector, "        raise w.Incomplete('#1140 session expectations is not readable JSON: ' + repr(error)) from error", "        document = None", 'test_expectations_reject_bad_fixtures'),
+    ('expectations-accept-unparsable', collector, "        raise w.Incomplete('#1140 session expectations is not readable JSON: ' + repr(error)) from error", "        raise", 'test_expectations_reject_bad_fixtures'),
     ('gateway-accept-duplicates', gateway, "    if len(set(keys)) != len(keys):\n        raise ValueError('#1140 session expectations has duplicate cases')", "    if False:\n        raise ValueError('#1140 session expectations has duplicate cases')", 'test_expectations_mirror_mock_gateway'),
     ('settle-missing-registry-raises', collector, 'except FileNotFoundError:\n            signatures.append(None)', 'except FileNotFoundError:\n            raise', 'test_settle_missing_registry_file'),
     ('settle-missing-signature-constant', collector, 'signatures.append(None)', 'signatures.append((0, 0))', 'test_settle_missing_signature_transitions'),
