@@ -240,7 +240,11 @@ def manifest_inventory(root):
     inventory = {name: manifest_path(name) for name in names}
     paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]
     paths += ['scripts/gateway-parity/fixtures/session-calibration.json',
-              'scripts/gateway-parity/fixtures/session-expectations.json']
+              'scripts/gateway-parity/fixtures/session-expectations.json',
+              # R2 (#1355 fix-r2): the retirement fixture drives the E1
+              # retirement rounds; without a hash row an in-flight params
+              # edit is invisible to the frozen check.
+              'scripts/gateway-parity/fixtures/retirement-methods.json']
     paths += [f'scripts/a5-19/{name}' for name in
               ('observation_rules.mjs', 'run.py', 'six_cells.mts', 'append-observer.mjs', 'cleanup-observer.mjs')]
     inventory.update({'../../' + name: name for name in paths})

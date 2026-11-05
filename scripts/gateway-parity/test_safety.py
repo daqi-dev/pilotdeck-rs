@@ -2287,5 +2287,215 @@ class ApparatusInputs(unittest.TestCase):
         self.assertEqual(cargo_config_problems(self.root, environ), [])
 
 
+class RetirementScoring(unittest.TestCase):
+    """#1355 fix-r2: E1 retirement scoring rules (R1/R3/R6/R7/R9 + timeout).
+
+    Bounded offline regressions on the frozen scoring helpers: each rule gets
+    a positive control (real-shaped evidence passes) and a negative control
+    (the mutation the rule exists to catch fails).  They never substitute for
+    a real TS round (memory ruler-real-data).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.session = _load('session_domain', common.SCRIPT / 'session_domain.py')
+
+    @staticmethod
+    def _frames(send_only=False):
+        # One stream method: a send frame plus (unless stripped) one receive
+        # event frame under the same id — the minimal real-shaped wire record.
+        frames = [{'seq': 1, 'connection': 1, 'direction': 'send',
+                   'frame': {'type': 'request', 'id': 'id-1', 'method': 'submit_turn'}}]
+        if not send_only:
+            frames.append({'seq': 2, 'connection': 1, 'direction': 'receive',
+                           'frame': {'type': 'event', 'id': 'id-1', 'final': False,
+                                     'event': {'type': 'turn_started'}}})
+        return frames
+
+    def _round_row(self, outcomes, frames, http=None):
+        return {'label': 'round-test', 'driverExitCode': 0, 'outcomes': outcomes,
+                'frames': frames, 'http': http or [{'path': '/health', 'status': 200}],
+                'processes': [{'pid': 7}],
+                'runtime': {'pilotHome': '/nonexistent-home'}}
+
+    def test_stream_outcomes_need_a_receive_frame(self):
+        # R1: pre-fix, a stream error outcome with zero received frames still
+        # counted as executed and passed the round.
+        expected = ['submit_turn']
+        for status in ('ok', 'error'):
+            outcome = {'method': 'submit_turn', 'outcome': status, 'shape': 'stream'}
+            verdict = self.session.score_retirement_round(
+                self._round_row([outcome], self._frames(send_only=True)), expected)
+            self.assertEqual(verdict['status'], 'FAIL', status)
+            violation = next(p for p in verdict['rules'] if p['rule'] == 'EVIDENCE_BACKING')['detail']
+            self.assertEqual(violation, [{'method': 'submit_turn',
+                                          'problem': f'stream {status} without any receive frame'}])
+            self.assertIn('submit_turn', verdict['executed'], status)
+            verdict = self.session.score_retirement_round(
+                self._round_row([outcome], self._frames()), expected)
+            self.assertEqual([p['rule'] for p in verdict['rules']], [], status)
+            self.assertEqual(verdict['executed'], ['submit_turn'], status)
+
+    def test_timeout_outcome_is_never_executed_and_fails_closed(self):
+        # fix-r1 rule kept intact by the R1 edit: a timeout is missing for
+        # COVERAGE and is itself an EVIDENCE_BACKING violation.
+        outcome = {'method': 'submit_turn', 'outcome': 'timeout', 'shape': 'stream'}
+        verdict = self.session.score_retirement_round(self._round_row([outcome], self._frames()), ['submit_turn'])
+        rules = [p['rule'] for p in verdict['rules']]
+        self.assertIn('EVIDENCE_BACKING', rules)
+        self.assertIn('COVERAGE', rules)
+        self.assertEqual(verdict['executed'], [])
+        self.assertEqual(verdict['status'], 'FAIL')
+
+    def test_host_census_fails_closed_on_empty_or_dead_samples(self):
+        # R3: an unobservable census is not an empty host set.
+        verdict = self.session._retirement_census_verdict({'rows': [], 'declared': [99999]})
+        self.assertEqual(verdict['status'], 'FAIL')
+        self.assertIn('absent from the census rows', verdict['problems'][0])
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': 99999, 'argvText': 'node pilotdeck.js server'}],
+             'declared': [99999], 'declaredAlive': False})
+        self.assertEqual(verdict['status'], 'FAIL')
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': 7, 'argvText': 'node pilotdeck.js server'}], 'declared': [7],
+             'declaredAlive': True})
+        self.assertEqual(verdict['status'], 'PASS')
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': 7, 'argvText': 'node pilotdeck.js server'}], 'declared': [8]})
+        self.assertEqual(verdict['status'], 'FAIL')
+
+    def test_network_verdict_fails_closed_on_empty_unparsed_or_failed_samples(self):
+        # R3: an empty, unparsed or failed lsof sample cannot prove loopback.
+        for connections, expected_status in (
+                ({'rows': []}, 'BLOCKED'),
+                ({'rows': [{'peer': None, 'raw': 'unparsed lsof line'}]}, 'BLOCKED'),
+                ({'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'}, 'BLOCKED'),
+                ({'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}]}, 'FAIL'),
+                ({'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}]}, 'PASS')):
+            verdict = self.session._retirement_network_verdict(connections)
+            self.assertEqual(verdict['status'], expected_status, connections)
+            self.assertEqual(verdict['rule'], 'NETWORK_FALLBACK')
+
+    def test_lsof_failure_is_not_an_empty_connection_set(self):
+        dead = subprocess.Popen(['true'])
+        dead.wait()
+        connections = self.session._retirement_connections(dead.pid)
+        self.assertEqual(connections['commandStatus'], 'failed')
+        self.assertNotEqual(self.session._retirement_network_verdict(connections)['status'], 'PASS')
+
+    def test_listener_exposure_is_judged_not_only_recorded(self):
+        # R9: a non-loopback or inconsistent listener binding is a FAIL that
+        # participates in the host audit aggregation.
+        verdict = self.session._retirement_listener_verdict(
+            {'pid': 7, 'addresses': ['127.0.0.1:28762'], 'loopbackOnly': True}, 28762)
+        self.assertEqual(verdict['status'], 'PASS')
+        for listeners in ({'pid': 7, 'addresses': ['*:28762'], 'loopbackOnly': False},
+                          {'pid': 7, 'addresses': [], 'loopbackOnly': False},
+                          {'pid': 7, 'addresses': ['127.0.0.1:28762'], 'loopbackOnly': False},
+                          {'pid': 7, 'addresses': ['127.0.0.1:28799'], 'loopbackOnly': True}):
+            verdict = self.session._retirement_listener_verdict(listeners, 28762)
+            self.assertEqual(verdict['status'], 'FAIL', listeners)
+            self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE')
+
+    def _fake_baseline(self, root, break_route=False, drop_listener=False):
+        """Synthetic baseline whose parse reproduces the real 13/4 entry set."""
+        gateway = root / 'src/gateway/server/GatewayServer.ts'
+        gateway.parent.mkdir(parents=True, exist_ok=True)
+        health = '/healthy' if break_route else '/health'
+        gateway.write_text('\n'.join([
+            f'if (url.pathname === "{health}") {{}}',
+            'if (url.pathname === "/auth/local-token") {}',
+            'if (url.pathname === "/feishu/webhook" && options.feishuWebhook) {}',
+            'if (url.pathname.startsWith("/api/web/")) {}',
+            'if (url.pathname === "/ws") {}']) + '\n')
+        router = root / 'src/adapters/web/httpRouter.ts'
+        router.parent.mkdir(parents=True, exist_ok=True)
+        router.write_text('\n'.join([
+            'if (url.pathname === "/api/web/projects" && request.method === "GET") {}',
+            'if (subPath === "/files/tree") {}',
+            'if (subPath === "/files/read") {}',
+            'if (subPath === "/files/write") {}']) + '\n')
+        host = root / 'src/composition/publicHostHttpTransport.ts'
+        host.parent.mkdir(parents=True, exist_ok=True)
+        host.write_text("if (path !== '/api/module-host/describe' && "
+                        "path !== '/api/module-host/call') {}\n")
+        approval = root / 'src/composition/publicApprovalHttpTransport.ts'
+        approval.write_text("if (path !== '/api/module-host/approvals/status' && "
+                            "path !== '/api/module-host/approvals/resume') {}\n")
+        channel = root / 'src/adapters/channel'
+        names = ['api-server/ApiServerChannel.ts', 'sms/SmsChannel.ts', 'webhook/WebhookChannel.ts']
+        if not drop_listener:
+            names.append('wecom-callback/WeComCallbackChannel.ts')
+        for name in names:
+            path = channel / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('const server = createServer(handler);\n')
+        return root
+
+    def test_http_route_parse_has_a_completeness_floor(self):
+        # R6: a parse that stops finding a registered route is BLOCKED, not a
+        # silently shrunken denominator that still passes.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = self._fake_baseline(Path(tmp))
+            routes = self.session._retirement_http_routes(baseline)
+            self.assertEqual(sorted((r['route'], r['kind']) for r in routes),
+                            sorted(self.session.RETIREMENT_REQUIRED_ROUTES))
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = self._fake_baseline(Path(tmp), break_route=True)
+            with self.assertRaises(self.session.EvidenceError) as raised:
+                self.session._retirement_http_routes(baseline)
+            self.assertEqual(raised.exception.rule, 'ENTRY_SOURCE')
+
+    def test_channel_listeners_keep_subdir_provenance_and_a_floor(self):
+        # A5: provenance is the baseline-relative path, not path.name (which
+        # dropped the adapter subdirectory); R6: the four registered
+        # listeners are a floor.
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = self._fake_baseline(Path(tmp))
+            entries = self.session._retirement_channel_listeners(baseline)
+            self.assertEqual(sorted(e['file'].rsplit(':', 1)[0] for e in entries),
+                            sorted(self.session.RETIREMENT_REQUIRED_LISTENERS))
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = self._fake_baseline(Path(tmp), drop_listener=True)
+            with self.assertRaises(self.session.EvidenceError) as raised:
+                self.session._retirement_channel_listeners(baseline)
+            self.assertEqual(raised.exception.rule, 'ENTRY_SOURCE')
+
+    def test_entry_inventory_gates_credential_gated_entries_and_counts_only_answered_methods(self):
+        # R7: a credential-gated entry is GATED (visible, face stays
+        # non-PASS) when the gate evidence holds, and NO_HIT when it does not;
+        # A2: a never-answered (timeout) method does not satisfy an entry.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = self._fake_baseline(root)
+            home = root / 'home'
+            home.mkdir()
+            (home / 'pilotdeck.yaml').write_text('schemaVersion: 1\n')
+            row = {'label': 'round-test', 'http': [{'path': '/health', 'status': 200},
+                                                   {'path': '/feishu/webhook', 'status': 404}],
+                   'frames': self._frames(),
+                   'outcomes': [{'method': 'cron_tick', 'outcome': 'timeout', 'shape': 'request'}],
+                   'runtime': {'pilotHome': str(home)}}
+            table = dict(self.session.RETIREMENT_GATED_ENTRIES)
+            try:
+                self.session.RETIREMENT_GATED_ENTRIES = {
+                    '/feishu/webhook': {**table['/feishu/webhook'],
+                                        'source': 'src/gateway/server/GatewayServer.ts:3'}}
+                gated = self.session._retirement_entry_inventory(baseline, row)
+            finally:
+                self.session.RETIREMENT_GATED_ENTRIES = table
+            self.assertEqual(gated['gated'], ['/feishu/webhook'])
+            self.assertNotIn('/feishu/webhook', gated['unhit'])
+            self.assertEqual(gated['status'], 'BLOCKED')
+            self.assertIn('cron', gated['unhit'])  # timeout is not executed (A2)
+            # The round config grows the credential key: the gate no longer
+            # holds, so the 404 is an ordinary NO_HIT.
+            (home / 'pilotdeck.yaml').write_text('feishu:\n  appId: x\n')
+            ungated = self.session._retirement_entry_inventory(baseline, row)
+            self.assertEqual(ungated['gated'], [])
+            self.assertIn('/feishu/webhook', ungated['unhit'])
+            self.assertEqual(ungated['status'], 'BLOCKED')
+
+
 if __name__ == '__main__':
     unittest.main()
