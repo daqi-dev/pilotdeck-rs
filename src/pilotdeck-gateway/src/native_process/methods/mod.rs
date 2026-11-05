@@ -94,6 +94,72 @@ pub(super) fn request(requests: &Requests, method: String, params: JsValue) -> C
     }
 }
 
+/// `input.<key>` read at the top of a TS method body. The wire `params` reach
+/// the method untouched, so only a nullish `params` throws; every other shape
+/// yields the property or `undefined` (#1465 TS probes:
+/// `_tmp/20261106-issue-1465/ts-probe/output*.txt`).
+pub(super) fn input_property(params: &JsValue, key: &str) -> Result<Option<JsValue>, RequestError> {
+    match params {
+        JsValue::Null => Err(RequestError::new(format!(
+            "Cannot read properties of null (reading '{key}')"
+        ))),
+        JsValue::Undefined => Err(RequestError::new(format!(
+            "Cannot read properties of undefined (reading '{key}')"
+        ))),
+        _ => Ok(params.get(key).cloned()),
+    }
+}
+
+/// Outcome of the `!input.<key>?.trim()` guard used across the TS methods.
+pub(super) enum TrimGuard {
+    /// A non-empty string: the guard passes.
+    Value(JsString),
+    /// null / undefined / empty / blank: the guard fails with a domain error.
+    Missing,
+    /// Any other non-nullish value: optional chaining does not short-circuit,
+    /// `.trim` is not a function, and the boundary serializes the TypeError.
+    NotAString,
+}
+
+pub(super) fn trim_guard(params: &JsValue, key: &str) -> Result<TrimGuard, RequestError> {
+    match input_property(params, key)?.as_ref() {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => Ok(TrimGuard::Missing),
+        Some(JsValue::String(value)) => {
+            let text = String::from_utf16_lossy(value.units());
+            if crate::metadata::js_trim(&text).is_empty() {
+                Ok(TrimGuard::Missing)
+            } else {
+                Ok(TrimGuard::Value(value.clone()))
+            }
+        }
+        Some(_) => Ok(TrimGuard::NotAString),
+    }
+}
+
+/// `!input.<key>?.trim()` collapsed to the two failure shapes the TS method
+/// bodies produce: a domain error for a missing/blank string, and the
+/// boundary's `gateway_request_failed` TypeError for a non-string
+/// (`input.<key>?.trim is not a function`).
+pub(super) fn require_text(
+    params: &JsValue,
+    key: &str,
+    code: &str,
+    message: &str,
+) -> Result<JsString, RequestError> {
+    match trim_guard(params, key)? {
+        TrimGuard::Value(value) => Ok(value),
+        TrimGuard::Missing => Err(RequestError {
+            code: code.into(),
+            message: message.into(),
+            details: None,
+            validation: None,
+        }),
+        TrimGuard::NotAString => Err(RequestError::new(format!(
+            "input.{key}?.trim is not a function"
+        ))),
+    }
+}
+
 fn string(value: &JsValue, name: &str) -> Result<JsString, RequestError> {
     value
         .get(name)

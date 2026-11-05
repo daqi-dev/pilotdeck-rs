@@ -224,7 +224,11 @@ impl GatewayConnection {
             .and_then(JsValue::as_string)
             .cloned()
             .unwrap();
-        let input = frame.get("params").cloned().unwrap_or(JsValue::Null);
+        // A missing `params` is `undefined` in TS, not `null`: method bodies
+        // that read `input.<key>` unguarded must serialize
+        // "Cannot read properties of undefined (reading '<key>')" (#1465 TS
+        // probes). An explicit `"params": null` stays `Null`.
+        let input = frame.get("params").cloned().unwrap_or(JsValue::Undefined);
         let session_value = input.get("sessionKey").cloned().unwrap_or(JsValue::Null);
         let session = truthy(&session_value).then(|| SessionKey::new(session_value));
         let is_submit = method.equals_str("submit_turn");
@@ -250,7 +254,8 @@ impl GatewayConnection {
                     .and_then(|result| {
                         // TS reads the original params only after dispatch succeeds.
                         // Null/undefined throw here even though dispatch saw an object.
-                        if method.equals_str("permission_decide") && matches!(input, JsValue::Null)
+                        if method.equals_str("permission_decide")
+                            && matches!(input, JsValue::Null | JsValue::Undefined)
                         {
                             let kind = if frame.get("params").is_some() {
                                 "null"
