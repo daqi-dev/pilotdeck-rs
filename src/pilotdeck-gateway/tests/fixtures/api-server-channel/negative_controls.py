@@ -33,6 +33,7 @@ RENDER = ROOT / "src/pilotdeck-gateway/src/channel/api_server/render.rs"
 REPLAY = "channel::api_server::tests::replays_real_ts_api_server_cells"
 DUPLICATE = "channel::api_server::tests::duplicate_chat_is_busy_then_free"
 OVERSIZED = "channel::api_server::tests::oversized_body_closes_without_response"
+RENDER_VISIBLE = "channel::api_server::tests::render_visible_failure_status_names_match_ts"
 
 mutations = [
     (
@@ -49,7 +50,7 @@ mutations = [
         '} else if path == "/v1/models" {',
         '} else if path == "/v1/model" {',
         REPLAY,
-        "#1333 method-dispatch request 2: status differs",
+        "#1333 method-dispatch request 3: status differs",
     ),
     (
         "auth-bypass",
@@ -81,15 +82,15 @@ mutations = [
         "        headers.insert(SESSION_HEADER, header_value(chat_id));\n",
         "        let _ = chat_id; // mutant: drop X-Hermes-Session-Id\n",
         REPLAY,
-        "#1333 buffered request 0: headers differ",
+        "#1333 stream request 0: headers differ",
     ),
     (
         "visible-failure-name",
         RENDER,
         '    "turn_failed",',
         '    "turn_failed_x",',
-        REPLAY,
-        "#1333 stream request 0: body differs",
+        RENDER_VISIBLE,
+        "#1333 a listed status name is visible without an error severity",
     ),
     (
         "gateway-503",
@@ -97,7 +98,7 @@ mutations = [
         "        StatusCode::SERVICE_UNAVAILABLE,",
         "        StatusCode::BAD_GATEWAY,",
         REPLAY,
-        "#1333 gateway-missing request 0: status differs",
+        "#1333 auth request 2: status differs",
     ),
     (
         "active-chat-guard",
@@ -127,18 +128,22 @@ def mutate(text, scope, replacements):
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         raise SystemExit(
-            "usage: negative_controls.py <new-output-directory>"
+            "usage: negative_controls.py <new-output-directory> [mutation ...]"
         )
     target = Path(sys.argv[1]).resolve()
+    wanted = set(sys.argv[2:])
+    unknown = wanted - {row[0] for row in mutations}
+    if unknown:
+        raise SystemExit(f"#1333 unknown mutation(s): {', '.join(sorted(unknown))}")
     environment = dict(os.environ)
     if not environment.get("CARGO_TARGET_DIR"):
         raise SystemExit("#1333 CARGO_TARGET_DIR must be set (owned build target)")
     environment.setdefault("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
     environment.setdefault("CARGO_PROFILE_TEST_DEBUG", "line-tables-only")
 
-    selected = [Case(*row) for row in mutations]
+    selected = [Case(*row) for row in mutations if not wanted or row[0] in wanted]
     for case in selected:
         path = ROOT / case.path
         occurrences = path.read_text().count(case.old)

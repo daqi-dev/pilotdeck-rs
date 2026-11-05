@@ -1157,3 +1157,44 @@ async fn buffered_timeout_only_warns_and_keeps_turn() {
     );
     started.handle.stop("done").await.unwrap();
 }
+
+#[test]
+fn render_visible_failure_status_names_match_ts() {
+    // `isVisibleFailureAgentStatusEvent` (api-server-render.ts cc7c4e6) treats a
+    // listed `VISIBLE_FAILURE_STATUS_EVENTS` name as visible even when its
+    // `detail` is not error-severity. Every `agent_status` detail the oracle
+    // streams is error-severity, so `replays_real_ts_api_server_cells` would
+    // stay green if the name list were emptied; this pins the name branch.
+    fn render_json(value: Value) -> Option<String> {
+        let event = pilotdeck_protocol::parse_json(&value.to_string()).expect("#1333 event JSON");
+        render::render(&event).map(|text| text.to_utf8().expect("#1333 rendered text"))
+    }
+
+    assert_eq!(
+        render_json(json!({
+            "type": "agent_status",
+            "event": "turn_failed",
+            "detail": {"message": "boom"}
+        })),
+        Some("\nError: boom\n".to_owned()),
+        "#1333 a listed status name is visible without an error severity"
+    );
+    assert_eq!(
+        render_json(json!({
+            "type": "agent_status",
+            "event": "some_other_event",
+            "detail": {"message": "boom"}
+        })),
+        None,
+        "#1333 an unlisted status name stays hidden"
+    );
+    assert_eq!(
+        render_json(json!({
+            "type": "agent_status",
+            "event": "turn_failed",
+            "detail": {"visible": false}
+        })),
+        None,
+        "#1333 explicit visible:false still hides a listed name"
+    );
+}
