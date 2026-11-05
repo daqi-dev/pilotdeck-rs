@@ -820,27 +820,29 @@ async fn project_path_boundaries_worker() {
 #[tokio::test]
 async fn session_writes_have_no_ts_writers() {
     if std::env::var_os("PDRS_NATIVE_SESSION_AUDIT_CHILD").is_none() {
-        let output = std::process::Command::new(
-            std::env::current_exe().expect("#1316 the audit rerun binary"),
-        )
-        .args([
-            "--exact",
+        // #1632: bounded, file-backed, own process group. `Command::output()`
+        // waited for the pipe write ends, so the very regression this audit
+        // detects (a long-lived child inheriting stdout) blocked the parent
+        // until the CI job timed out and the failure evidence was lost.
+        let rerun = crate::test_process::rerun_exact(
             "native_process::tests::review::session_writes_have_no_ts_writers",
-            "--nocapture",
-            "--test-threads=2",
-        ])
-        .env("PDRS_NATIVE_SESSION_AUDIT_CHILD", "1")
-        .output()
-        .expect("#1316 run the audit in an owned process");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+            &[("PDRS_NATIVE_SESSION_AUDIT_CHILD", "1")],
+            crate::test_process::RERUN_LIMIT,
+        );
+        assert!(
+            !rerun.timed_out,
+            "#1316 the audit rerun exceeded its deadline:\n{}\n{}",
+            rerun.stdout, rerun.stderr
+        );
         assert!(
             crate::test_exact_receipt::single_pass(
-                &output.status,
+                &rerun.status,
                 "native_process::tests::review::session_writes_have_no_ts_writers",
-                &stdout
+                &rerun.stdout
             ),
-            "#1316 the audit rerun matched no test:\n{stdout}\n{stderr}"
+            "#1316 the audit rerun matched no test:\n{}\n{}",
+            rerun.stdout,
+            rerun.stderr
         );
         return;
     }
@@ -863,8 +865,10 @@ async fn session_writes_have_no_ts_writers() {
     // Sample `/proc` for the whole write window, not only before and after it:
     // a child or fd holder that appears and exits between two snapshots would
     // otherwise leave the audit green (false PASS).
-    let audit = TransientAudit::start(root);
-    let children_before = child_processes();
+    // The before-set is the sampler's first sweep, taken when the window
+    // opens; a snapshot after `start` would miss a pre-window child that exits
+    // in the gap and report it as transient (#1632).
+    let (audit, children_before) = TransientAudit::start(root);
     let status = crate::runtime::turn::gateway::GatewayRequests::request(
         &requests,
         "record_agent_status_message".into(),
@@ -919,7 +923,9 @@ async fn session_writes_have_no_ts_writers() {
             "#1316 the transcript carries {marker}"
         );
     }
-    let children_after = child_processes();
+    // Both sides in the sweep's map form so they are directly comparable; the
+    // sweep set is pid-sorted like `child_processes()`.
+    let children_after: TransientChildren = child_processes().into_iter().collect();
     negative_assert_eq!(
         children_after,
         children_before,
@@ -968,6 +974,70 @@ async fn session_writes_have_no_ts_writers() {
 #[test]
 fn session_writer_audit_is_linux_only() {
     eprintln!("SKIP: #1316 the session-writer audit reads Linux /proc");
+}
+
+/// #1632: a child that was already alive when the write window opened must not
+/// be reported as transient just because it exited before the old post-`start`
+/// snapshot. The pre-fix ordering (`start`, then `child_processes()`) made that
+/// a false FAIL; the window's before-set is now the first sweep itself.
+#[cfg(target_os = "linux")]
+#[test]
+fn transient_audit_before_set_opens_with_the_window() {
+    let scratch = crate::test_scratch::Scratch::new("1632-audit");
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("#1632 the pre-window child starts");
+    let pid = child.id() as i32;
+    let (audit, children_before) = TransientAudit::start(scratch.path().to_path_buf());
+    negative_assert!(
+        children_before.contains_key(&pid),
+        "#1632 the window's before-set carries the child alive when it opened"
+    );
+    // The pre-window child exits right after the window opens. The old code
+    // took its "before" snapshot here, so the sampler had the child but the
+    // snapshot did not.
+    child.kill().expect("#1632 stop the pre-window child");
+    child.wait().expect("#1632 reap the pre-window child");
+    negative_assert!(
+        !child_processes()
+            .iter()
+            .any(|(observed, _)| *observed == pid),
+        "#1632 the child is gone before the old post-start snapshot would run"
+    );
+    // The pre-fix ordering snapshotted the children here, i.e. without the
+    // already-exited pre-window child, while the sampler still had it: that
+    // before-set reports the child as transient, the false FAIL this guards.
+    let old_before: TransientChildren = child_processes().into_iter().collect();
+    let (children_seen, _holders) = audit.finish();
+    let old_transient: Vec<i32> = children_seen
+        .iter()
+        .filter(|(observed, _)| !old_before.contains_key(observed))
+        .map(|(observed, _)| *observed)
+        .collect();
+    negative_assert!(
+        old_transient.contains(&pid),
+        "#1632 the pre-fix before-set reports the pre-window child ({old_transient:?})"
+    );
+    println!(
+        "PDRS_AUDIT_WINDOW pid={pid} before={} old_before_has_pid={} old_transient={old_transient:?}",
+        children_before.len(),
+        old_before.contains_key(&pid)
+    );
+    // With the window's own before-set the same observation is not transient.
+    // Other tests of this binary spawn children concurrently, so only this
+    // test's own pre-window child is asserted on.
+    let transient: Vec<String> = children_seen
+        .iter()
+        .filter(|(observed, _)| !children_before.contains_key(observed))
+        .map(|(observed, exe)| format!("{observed}:{exe:?}"))
+        .collect();
+    negative_assert!(
+        !transient
+            .iter()
+            .any(|entry| entry.starts_with(&format!("{pid}:"))),
+        "#1632 the pre-window child is not transient ({transient:?})"
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -1039,10 +1109,11 @@ fn foreign_data_dir_holders(root: &std::path::Path) -> Vec<i32> {
 /// the `JoinHandle` field and the `finish` return type under
 /// `clippy::type_complexity` (CI runs clippy with `-D warnings`).
 #[cfg(target_os = "linux")]
-type TransientObservations = (
-    std::collections::BTreeMap<i32, Option<std::path::PathBuf>>,
-    std::collections::BTreeSet<i32>,
-);
+type TransientObservations = (TransientChildren, std::collections::BTreeSet<i32>);
+
+/// The child set of one `/proc` sweep, keyed by pid.
+#[cfg(target_os = "linux")]
+type TransientChildren = std::collections::BTreeMap<i32, Option<std::path::PathBuf>>;
 
 /// Poll `/proc` for the whole audited write window.
 ///
@@ -1053,7 +1124,9 @@ type TransientObservations = (
 /// ever observes; the assertions then judge the accumulated sets.
 ///
 /// Coverage is bracketed on both ends, not assumed: `start` returns only after
-/// the first full sweep has completed, and `finish` sets the stop flag *before*
+/// the first full sweep has completed, together with that sweep's child set
+/// (the window's "before" snapshot, see [`TransientAudit::start`]), and
+/// `finish` sets the stop flag *before*
 /// the worker takes its last sweep (`done` is read at the top of the cycle, so a
 /// stop request during a sweep still buys one more), which means the worker
 /// always sweeps once after the last write. The residual blind spot is the gap
@@ -1068,7 +1141,17 @@ struct TransientAudit {
 
 #[cfg(target_os = "linux")]
 impl TransientAudit {
-    fn start(root: std::path::PathBuf) -> Self {
+    /// Open the sampling window and return the first sweep's child set.
+    ///
+    /// The "before" snapshot and the opening of the window must be the same
+    /// observation. Taking `child_processes()` *after* `start` returns leaves a
+    /// gap in which a child that already existed when the window opened can
+    /// exit; the sampler has it in `children_seen` but the late snapshot does
+    /// not, so the audit reports it as a transient writer and fails a run in
+    /// which nothing regressed (#1632). Returning the first sweep removes that
+    /// gap: the returned set is exactly what the sampler saw when the window
+    /// opened.
+    fn start(root: std::path::PathBuf) -> (Self, TransientChildren) {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
         // `start` must not hand control back before the first sweep has run:
@@ -1076,7 +1159,7 @@ impl TransientAudit {
         // and the opening of the window would be unsampled.
         let (swept, first_sweep) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
-            let mut children = std::collections::BTreeMap::new();
+            let mut children = TransientChildren::new();
             let mut holders = std::collections::BTreeSet::new();
             let mut announced = false;
             loop {
@@ -1091,9 +1174,10 @@ impl TransientAudit {
                 }
                 if !announced {
                     announced = true;
-                    // A closed receiver only means `start` was abandoned; keep
+                    // The first sweep is the window's opening snapshot. A
+                    // closed receiver only means `start` was abandoned; keep
                     // sampling, `Drop` still stops this thread.
-                    let _ = swept.send(());
+                    let _ = swept.send(children.clone());
                 }
                 if done {
                     break;
@@ -1102,13 +1186,16 @@ impl TransientAudit {
             }
             (children, holders)
         });
-        first_sweep
+        let children_before = first_sweep
             .recv()
             .expect("#1316 the audit sampler completes its first sweep");
-        Self {
-            stop,
-            worker: Some(worker),
-        }
+        (
+            Self {
+                stop,
+                worker: Some(worker),
+            },
+            children_before,
+        )
     }
 
     fn finish(mut self) -> TransientObservations {

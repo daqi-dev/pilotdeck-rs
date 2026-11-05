@@ -1189,27 +1189,28 @@ fn child_processes() -> Vec<(i32, Option<PathBuf>)> {
 #[tokio::test]
 async fn describe_and_call_spawn_no_children() {
     if std::env::var_os("PDRS_MODULE_HOST_AUDIT_CHILD").is_none() {
-        let output = std::process::Command::new(
-            std::env::current_exe().expect("#1349 the audit rerun binary"),
-        )
-        .args([
-            "--exact",
+        // #1632: same bounded/file-backed/group-owned rerun as the #1316
+        // session-writer audit; `Command::output()` blocked on any descendant
+        // that inherited the pipe write ends.
+        let rerun = crate::test_process::rerun_exact(
             "module_host::tests::describe_and_call_spawn_no_children",
-            "--nocapture",
-            "--test-threads=2",
-        ])
-        .env("PDRS_MODULE_HOST_AUDIT_CHILD", "1")
-        .output()
-        .expect("#1349 run the audit in an owned process");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+            &[("PDRS_MODULE_HOST_AUDIT_CHILD", "1")],
+            crate::test_process::RERUN_LIMIT,
+        );
+        assert!(
+            !rerun.timed_out,
+            "#1349 the audit rerun exceeded its deadline:\n{}\n{}",
+            rerun.stdout, rerun.stderr
+        );
         assert!(
             crate::test_exact_receipt::single_pass(
-                &output.status,
+                &rerun.status,
                 "module_host::tests::describe_and_call_spawn_no_children",
-                &stdout
+                &rerun.stdout
             ),
-            "#1349 the audit rerun matched no test:\n{stdout}\n{stderr}"
+            "#1349 the audit rerun matched no test:\n{}\n{}",
+            rerun.stdout,
+            rerun.stderr
         );
         return;
     }
