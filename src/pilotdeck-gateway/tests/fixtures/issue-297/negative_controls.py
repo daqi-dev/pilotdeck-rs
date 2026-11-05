@@ -39,7 +39,13 @@ from _negative_common import mutate
 
 source = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 prefix = 'runtime::project::factory::tests::persistence_tests::'
-guard = 'if state.sequence > inner.sequence {'
+# fix-r1 re-anchor: the guard moved from `if state.sequence > inner.sequence {`
+# to a named `installed` flag (`Recorder::restore` must not re-seed its own
+# projection when the writer refused the snapshot, so the helper has to hand
+# the decision back). The mutants are unchanged in meaning — `if true {` is
+# still the pre-fix unconditional install and `if false {` still never
+# installs — only the anchor text follows the code.
+guard = 'if installed {'
 cases = [
     ('restore-rewinds-stale-writer', source, guard, 'if true {', None,
      prefix + 'stale_snapshot_restore_must_not_corrupt_the_transcript_chain',
