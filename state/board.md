@@ -3192,3 +3192,28 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 5. 批次全落地后按人指令写总管交接段自动交接（新窗口接续：round-start → 读 board → 就绪队列接单）。
 
 资源：本机磁盘 178.9/200 GiB；worktree 31/40；cargo 0/4；在审 4（#1412/#1417/#1487/#1488）+ 队列 1（#1487）。谱系提醒：GLM 作者线评审 = DS + MiniMax/codex/Opus（兜底）。
+
+### 17:1x（总管交接 → 新窗口）
+
+16:4x 以来（持有人：协调者本会话；**本段为总管交接段，本会话协调角色终止，新窗口从本段接续**）：
+
+- **人令（17:0x，最高优先，已记卡 PR #1490 / `state/decisions-20261105-parallel-speedup.md`）**：交接立即执行（不等批次落地）；尽量高并发高并行；放松人为限制、允许 token 浪费；评审等环节串行改并行；一切以实际物理和逻辑约束为准。放开：在审 ≤8 解除、双谱系两家并行、闸门预算 $3→$6–8、独立单批量并行派。保留：merge queue 串行、同模块/同文件串行、冻结程序、双谱系门槛、全量对拍每主机各 1、本机 cargo ≤4 / 磁盘 200 GiB / worktree ≤40、全部红线。
+- **批次落地确认**：#1487（#1350）MERGED、#1489（board 16:4x）MERGED，邮箱全核 noreply 干净；#1417 rerun **全绿**（磁盘压力假阳性判定实证成立）、#1488 rerun 全绿、#1412（空提交 1c8c53df3 换 merge ref）全绿——**三张均已入队**（"already queued to merge" 逐张核实）。#1417 合入解锁 #1321（#1418 fix-r4 净合并+闸门 r6）；#1412 合入解锁 #1370；#1488 合入关 #1392 主项（跟进单另核）。
+- **#1355 四角色闸门出块**（deepseek，P0=0 P1=2 P2=7，boundary 600s TIMEOUT，原件 `_tmp/20261105-issue-1355-gate/`）：
+  - P1-1（sibling，尺子级）：`fixtures/retirement-methods.json` 只进 `common.DATA_FILES`，未进 `manifest_inventory()` 与 `hashes()` 两处同源清单 → check_frozen 对该 fixture 字节永不校验、APPARATUS_CHANGED 不触发（改 params 可引偏方法执行而尺子仍 PASS）。修法 = 加入两清单 + 收货 `--write` + FROZEN 登记新行（冻结程序）。
+  - P1-2（concurrency）：`HOST_CENSUS` 在声明 pid 消失于普查时判 PASS（空集即过，第 2–5 轮无兜底），对照 process_tree「不可达普查不是空树」缺 fail-closed。修法 = require 声明 pid 在 rows（os.kill 证活）+ 空 census 单测。
+  - P2×7 见原件；boundary 补跑已在跑（双通道并行：DS 1200s + MiniMax，`_tmp/20261105-issue-1355-gate2-boundary-{ds,mm}/`）。→ fix-r1 派单（GLM 作者线；非作者 DS+MiniMax/codex；尺子级 P1 不适用修复轮上限 3 放行）。
+- **#1292 fix-r2 在 cb8 跑**（remote pid 3704096，树 83dd009a5）：waiter `_build/wt-1292/_tmp/20261026-issue-1292/fix-r2/remote-run/waiter.log`，交付写 `glm.exit` + auto-receive。收货 → 增量评审（DS r2 块已有 + probe-c1 首头锚定对位）→ 更新 PR #1405 正文 → ready。
+- **新窗口就绪序（按并行人令）**：
+  1. merge queue 三张（#1412/#1417/#1488）+ PR #1490（决策卡，全量 CI）出结果：逐张 MERGED 核邮箱 → project-mark；
+  2. **channel 7 单并行派**（#1327 已合解锁）：#1328 #1333 #1334 #1336 #1339 #1386 互相独立可并行；#1329 与 #1292（PR #1405）同改 native_http 须串行（排 fix-r2 合入后）；派单走 remote-worker 默认 cb8>mbp2>macmini，先跑 `~/ws/pdrs-ops/bin/fleet`；
+  3. #1473 链：wt-1473（30f47380e）rebase 新 main → 四角色闸门 + DS 增量复核 → check-pr-gate → PR（Closes #1473）；
+  4. #1355 fix-r1（boundary 双通道出块后，P2 三分一并）；
+  5. #1292 fix-r2 收货链（glm.exit 出现后）；
+  6. #1321（#1418）等 #1417 MERGED 后净合并 + 闸门 r6。
+- 挂起不变：#1235 需 rebase 合 main；`scripts/review-minimax.py`（主仓根，未跟踪）归户 PR 未处理；#1475–#1478 等 #1313 人批（核心 agent 优先口径下 #1313 家族暂缓）；CI 磁盘压力跟进单建议开（scanner `_build/cargo-target` 冷构建 + smoke probe target 叠加致假阳性，已实证，做 CI 缓解）。
+- 本轮 AI 代批项（待人复核）：CI 假阳性判定已被 rerun 实证转「已验证」；#1355 闸门 P1 按尺子级挡合并处理。
+
+资源：本机磁盘 178.9/200 GiB；worktree 31/40；cargo 0/4；fleet cb8 链 1/8（#1365）、mbp2 1/3（#1220）——派单前重跑 fleet；在审上限已随人令解除。
+
+新窗口接续协议：round-start → 读本段 + `state/decisions-20261105-parallel-speedup.md` → 重挂守望（queue 三张 + #1490 / #1292 waiter / #1355 boundary 双通道）→ 按就绪序 1–6 并行推进。
