@@ -15,7 +15,9 @@ mod value;
 
 pub use bus::{GatewayElicitationBus, GatewayPermissionBus, PendingEntry, Registration};
 pub use coordinator::{GatewayInteractionCoordinator, InteractionOptions, PermissionDecision};
-pub use reconnect::{InteractionBinding, InteractionKind, InteractionReconnectPort};
+pub use reconnect::{
+    InteractionBinding, InteractionKind, InteractionReconnectPort, result as reconnect_result,
+};
 pub use value::{ProducerValue, ReplayValueError, to_interaction_replay_value};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue};

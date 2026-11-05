@@ -198,6 +198,18 @@ async fn route<B>(
         }
         return Ok(not_found(keep_alive));
     }
+    // A7.4's user-dialog HTTP store entry is not yet open on this listener: TS
+    // never mounts HttpGatewayUserDialogStore on the gateway port either, but
+    // #1316 makes the same-domain entry explicit instead of a generic 404 so
+    // clients can tell "not yet open" from an unknown path.
+    if path.starts_with(crate::user_dialog::http_store::STORE_PATH_PREFIX) {
+        return Ok(handler_response(
+            hyper::StatusCode::SERVICE_UNAVAILABLE,
+            "application/json",
+            "{\"error\":\"not_yet_open\",\"store\":\"gateway-user-dialog-store\"}".to_owned(),
+            keep_alive,
+        ));
+    }
     let static_root = config.static_root.as_deref().map(|root| {
         if crate::mutants::on("native-http-root-normalize-off") {
             root.to_path_buf()

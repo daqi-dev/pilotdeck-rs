@@ -667,6 +667,10 @@ async fn production_host_management_and_restart() {
             "upload_part",
             "upload_complete",
             "upload_cancel",
+            // #1316: served for real and TS-advertised (oracle.json).
+            "permission_decide",
+            "async_hook_result",
+            "delete_session",
         ];
         expected.sort_unstable();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
@@ -1080,6 +1084,10 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             "upload_part",
             "upload_complete",
             "upload_cancel",
+            // #1316: served for real and TS-advertised (oracle.json).
+            "permission_decide",
+            "async_hook_result",
+            "delete_session",
         ];
         expected.sort_unstable();
         negative_assert_eq!(
@@ -1242,6 +1250,10 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     "upload_part",
                     "upload_complete",
                     "upload_cancel",
+                    // #1316: served for real and TS-advertised (oracle.json).
+                    "permission_decide",
+                    "async_hook_result",
+                    "delete_session",
                 ];
                 expected.sort_unstable();
                 negative_assert_eq!(
@@ -1461,6 +1473,10 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         "upload_part",
         "upload_complete",
         "upload_cancel",
+        // #1316: served for real and TS-advertised (oracle.json).
+        "permission_decide",
+        "async_hook_result",
+        "delete_session",
     ];
     expected.sort_unstable();
     negative_assert_eq!(

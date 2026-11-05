@@ -15,7 +15,10 @@ pub struct InteractionOptions {
 }
 pub struct PermissionDecision {
     pub request_id: JsString,
-    pub decision: JsString,
+    /// TS decidePermission resolves the pending entry with `input.decision`
+    /// verbatim (GatewayInteractionCoordinator.ts:118-123); a non-string
+    /// decision is delivered as-is, never validated or coerced.
+    pub decision: JsValue,
     pub remember: Option<JsValue>,
     pub reason: Option<JsValue>,
 }
@@ -23,7 +26,7 @@ impl PermissionDecision {
     pub fn to_value(self) -> JsValue {
         object([
             ("requestId", JsValue::String(self.request_id)),
-            ("decision", JsValue::String(self.decision)),
+            ("decision", self.decision),
             ("remember", self.remember.unwrap_or(JsValue::Undefined)),
             ("reason", self.reason.unwrap_or(JsValue::Undefined)),
         ])
