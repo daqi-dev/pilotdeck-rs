@@ -47,6 +47,7 @@ import bisect
 import json
 import math
 import os
+import posixpath
 import re
 import stat
 import sys
@@ -554,7 +555,15 @@ def section_text(text, keyword):
 
 
 def _split_row(row):
-    return [c.strip() for c in row.strip().strip("|").split("|")]
+    """按竖线切格。**只剥一根**行首 / 行尾竖线：`strip("|")` 会把 `|| a | b | …` 的粘写双竖线
+    一并剥掉，GFM 的空首格塌缩、整行左移一位——6 格行被当成 5 格与表头对齐，段名读成次格、
+    估时列对齐到别的格子，非合规任务书 rc 0（gate18 GLM boundary P0）。"""
+    r = row.strip()
+    if r.startswith("|"):
+        r = r[1:]
+    if r.endswith("|"):
+        r = r[:-1]
+    return [c.strip() for c in r.split("|")]
 
 
 def cells(row, width=None):
@@ -710,11 +719,12 @@ def _paren_inside(s):
     for o, c in (("（", "）"), ("(", ")")):
         open_at = -1
         for i, ch in enumerate(s):
+            if ch == c and open_at >= 0:
+                open_at = -1
+                continue                  # 闭括号自身不算「在括号里」（与 docstring / 旧 rfind 写法一致）
             inside[i] |= open_at >= 0     # 只看 [0, i)
             if ch == o:
                 open_at = i
-            elif ch == c and open_at >= 0:
-                open_at = -1
     return inside
 
 
@@ -868,7 +878,7 @@ def resume_problems(resume):
             elif NEGATION.search(re.split(r"[，。；、：,;]", line[max(0, m.start() - NEG_WINDOW):m.start()])[-1]):
                 bad = "写在否定句里"
             if bad:
-                bad_paths.append(f"{p}（{bad}）")
+                bad_paths.append(f"{_clip(p)}（{bad}）")
             elif path is None:
                 path = p
     if not path:
@@ -941,9 +951,9 @@ def check_segments(text):
             for i, r in enumerate(data, 1):
                 if "files" in col:      # 段间不共写同一文件：共写 = 两段不能各自独立收货
                     for tok_ in FILE_TOKEN.findall(r[col["files"]] if col["files"] < len(r) else ""):
-                        key = tok_[2:] if tok_.startswith("./") else tok_
+                        key = _file_key(tok_)
                         if key in owner and owner[key] != i:
-                            problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {_clip(key)}"
+                            problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {_clip(tok_)}"
                                             "（段间不共写同一文件，否则不能独立收货）")
                         else:
                             owner.setdefault(key, i)
@@ -997,9 +1007,21 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 # 分段表「涉及文件」列里的文件路径（按扩展名认，避免把 `S1` 这类段名当文件）
 # 只认代码扩展名时 `Cargo.lock` / `events.proto` / `001.sql` / `a.html` 不算文件 → 两段共写照样放行（假 PASS）。
 # `jsonl` 单列：`src/` 下有 50+ 个 `.jsonl` fixture，两段各追加同一份也照样放行（gate16 sibling P2）。
+# 交替按**最长优先**排（`jsonl` 在 `json` 前、`json` 在 `js` 前、`tsx` 在 `ts` 前），外加右边界：
+# Python `re` 是最左优先，`events.jsonl` 会被 `js` 吃成 `events.js`——`.json` 与 `.jsonl` 两个
+# 不同文件的键撞成一个，报「共写 events.js」（假 FAIL，报错里的文件名也是错的）。
 FILE_TOKEN = re.compile(
     r"[A-Za-z0-9_./-]*[A-Za-z0-9_-]\."
-    r"(?:rs|py|ts|tsx|js|mjs|md|json|jsonl|toml|ya?ml|sh|txt|lock|proto|sql|html|css)")
+    r"(?:jsonl|json|js|tsx|ts|mjs|rs|py|md|toml|ya?ml|sh|txt|lock|proto|sql|html|css)"
+    r"(?![A-Za-z0-9])")
+
+
+def _file_key(tok_):
+    """共写判定键：`./` 前缀、`x/../x/a.rs` 这类同义写法与大小写都归一——APFS 默认大小写不敏感，
+    `SRC/A.rs` 与 `src/a.rs` 就是同一个文件，不归一会让「段间不共写同一文件」被绕过（fail-open）。
+    报错仍打原文，不暴露归一后的键。"""
+    key = tok_[2:] if tok_.startswith("./") else tok_
+    return posixpath.normpath(key).casefold()
 
 
 def _clip(text, n=80):
@@ -1237,9 +1259,14 @@ def main(argv):
         return 0
     hours = None
     root, root_given = ".", False
+    seen_opt = set()
     rest, i = [], 0
     while i < len(args):
         a = args[i]
+        if a in ("--recent", "--root"):
+            if a in seen_opt:   # last-wins 会把前一个 root 下的任务书整批漏扫，且 rc 0 冒充「扫过」
+                return usage(f"{a} 写了两次：后一次会静默覆盖前一次，不猜你的意思")
+            seen_opt.add(a)
         if a == "--recent":
             if i + 1 >= len(args):
                 return usage("--recent 需要小时数")
