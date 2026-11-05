@@ -1,0 +1,75 @@
+# channel-sms
+
+`#1339` A8.3: gold master for the baseline SMS channel
+(`src/adapters/channel/sms/`, #1327 protocol shape). The real baseline TS
+closure runs against mock external services only:
+
+- `twilio` is replaced at the `require` seam by a mock REST client that
+  records every `messages.create` call. No network beyond loopback, no
+  real account. The real `node:crypto`/`node:http` builtins are used.
+- The A7 gateway is a mock that models the stream contract the helper
+  comments describe: after the turn's events are consumed, a turn with
+  `holdAfter: "elicit"`/`"decide"` stays open until `respondElicitation` /
+  `permissionDecide` releases it, so a pending answer reply arrives while
+  the turn is still in flight, exactly like the product.
+- The mapper's injected `uuid` is fixed, which makes session keys
+  (`sms:chat=<From>:s_<uuid>` vs `:general`) deterministic.
+
+The probe client speaks raw HTTP over a socket (`Connection: close`), so
+the oracle records the exact response status, `Content-Type` and body per
+request — including the destructive branches (payload over 1 MiB
+destroys the socket with zero response bytes; bad signature answers 401)
+and the loopback listener lifecycle (ECONNREFUSED after stop).
+
+## oracle.json
+
+Each case is run twice per generation and must produce identical
+records; the run is not deterministic otherwise. Cases cover the 23-cell
+state×event×timing matrix from `plan.md` (start failure modes, webhook
+request validation, turn fragment rendering, dedupe/`/new` session
+switching, elicitation and permission answering, stop while a turn is
+held). `expected` records, per case:
+
+- `logs` — `[level, text]` pairs through the injected logger
+- `responses` — one entry per HTTP probe: `{status, contentType, body}`,
+  `{closed: true}` (socket destroyed without any response byte) or
+  `{refused: true}` (nothing listening on the port)
+- `sends` — recorded mock Twilio sends `{body, from, to}`
+- `rpcs` — recorded gateway calls (`submitTurn`, `respondElicitation`,
+  `permissionDecide`) with their cloned arguments
+- `unhandled` — rejections the product leaves unhandled. A non-string
+  JSON `Body` is a process-level uncaught exception in the baseline (the
+  generator's harness records it); the Rust port contains it in the
+  connection task, see diffs ledger `A8.3-CH-SMS-001`.
+- `cronResults` — `deliverCronResult` return values
+
+Megabyte request bodies appear as a `{repeat, count}` spec in `steps`;
+the bytes only exist while the request is on the wire.
+
+## Regenerate
+
+```
+PDRS_BASELINE=<PilotDeck checkout at cc7c4e6> \
+node --import $PDRS_BASELINE/node_modules/tsx/dist/loader.mjs \
+  generate.mts <empty-out-dir>
+```
+
+Node must be v22.22.0 with ICU 78.2; the generator asserts both. The
+`#[ignore]` replay guard `regenerates_identically("channel-sms")` in
+the crate re-runs this and requires byte-identical output.
+
+## Negative controls
+
+`negative_controls.py` runs the 11 `#996` compile-time switches the
+channel carries (`crate::mutants::on("sms-…")`) through the shared
+`_shared/mutant_switch` executor: one precompile, then per switch a
+positive run, the mutated kill run (bound oracle cell + assertion) and
+a restored re-run. `mutating_sources` cannot run pre-commit (new files
+are not at HEAD), which is why the switches are compile-time and the
+script only needs the caller's `CARGO_TARGET_DIR`:
+
+```
+python3 -I negative_controls.py --check          # bindings preflight
+python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
+                                                 # unless all KILLED
+```

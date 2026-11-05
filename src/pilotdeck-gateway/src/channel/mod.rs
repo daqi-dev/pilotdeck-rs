@@ -4,6 +4,7 @@ pub mod api_server;
 pub mod loader;
 pub mod protocol;
 pub mod server;
+pub mod sms;
 #[cfg(test)]
 mod tests;
 pub mod turn_submitter;

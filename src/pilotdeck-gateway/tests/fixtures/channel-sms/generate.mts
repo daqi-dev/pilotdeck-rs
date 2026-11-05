@@ -1,0 +1,822 @@
+// #1339 sms channel gold master: the real baseline SmsChannel closure runs
+// against a mock Twilio REST client, a mock A7 gateway and a raw HTTP probe
+// client. No network leaves loopback, no real account is touched. The event
+// stream contract is modelled explicitly: after an elicitation/permission
+// event the gateway holds the stream until respondElicitation/permissionDecide
+// (the helper comments describe exactly that block), which is what lets the
+// pending-answer replies arrive while the turn is still open.
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { createRequire } from 'node:module';
+import net from 'node:net';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
+
+assert.equal(process.version, 'v22.22.0', '#1339 Node baseline');
+assert.equal(process.versions.icu, '78.2', '#1339 ICU baseline');
+assert.ok(process.env.PDRS_BASELINE, '#1339 PDRS_BASELINE');
+assert.ok(process.argv[2], '#1339 output directory');
+const baseline = resolve(process.env.PDRS_BASELINE!);
+const sourceCommit = assertBaseline(baseline);
+const sources = [
+  'src/adapters/channel/sms/SmsChannel.ts',
+  'src/adapters/channel/sms/SmsSessionMapper.ts',
+  'src/adapters/channel/sms/sms-render.ts',
+  'src/adapters/channel/protocol/ImElicitationHelper.ts',
+  'src/adapters/channel/protocol/ImPermissionHelper.ts',
+  'src/adapters/channel/protocol/ImCronDelivery.ts',
+];
+const sourceSha256 = await baselineSourceHashes(baseline, sources);
+const require = createRequire(join(baseline, 'package.json'));
+const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
+
+const EXPECTED_CASE_COUNT = 47;
+
+// ---------------------------------------------------------------------------
+// real module graph, transpiled once, with `twilio` mocked at the require seam
+// ---------------------------------------------------------------------------
+const compiled = new Map<string, string>();
+for (const source of sources) {
+  compiled.set(
+    source,
+    transformSync(await readFile(join(baseline, source)), {
+      loader: 'ts',
+      format: 'cjs',
+      target: 'es2022',
+    }).code,
+  );
+}
+const directoryOf = (source: string) => source.split('/').slice(0, -1).join('/');
+const resolveFrom = (from: string, name: string): string => {
+  if (!name.startsWith('./') && !name.startsWith('../')) return name;
+  const base = join(directoryOf(from), name);
+  for (const candidate of [base, `${base}.js`, base.replace(/\.js$/, '.ts')]) {
+    const hit = sources.find((source) => source === candidate);
+    if (hit) return hit;
+  }
+  throw new Error(`#1339 cannot resolve ${name} from ${from}`);
+};
+type Twilio = ReturnType<typeof makeTwilio>;
+type Gateway = ReturnType<typeof makeGateway>;
+function makeTwilio(script: any, sends: any[], gates: Map<string, any>) {
+  const gate = (name: string) => {
+    if (!gates.has(name)) {
+      let release!: () => void;
+      const promise = new Promise<void>((done) => { release = done; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name)!;
+  };
+  return (accountSid: string) => {
+    if (accountSid === 'THROW') throw new Error('twilio init boom');
+    return {
+      messages: {
+        create: async (params: any) => {
+          sends.push({ body: params.body, from: params.from, to: params.to });
+          if (script.sendBlockAt === sends.length) await gate('send-block').promise;
+          if (script.sendFailAt?.includes(sends.length)) {
+            throw new Error(script.sendError ?? 'mock send failure');
+          }
+        },
+      },
+    };
+  };
+}
+function makeGateway(script: any, rpcs: any[], gates: Map<string, any>) {
+  const gate = (name: string) => {
+    if (!gates.has(name)) {
+      let release!: () => void;
+      const promise = new Promise<void>((done) => { release = done; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name)!;
+  };
+  return {
+    async *submitTurn(request: any) {
+      rpcs.push({ rpc: 'submitTurn', request: structuredClone(request) });
+      if (script.turn?.gate) await gate(script.turn.gate).promise;
+      if (script.turn?.error) throw new Error(script.turn.error);
+      for (const event of script.turn?.events ?? []) yield structuredClone(event);
+      if (script.turn?.holdAfter === 'elicit') await gate('elicited').promise;
+      if (script.turn?.holdAfter === 'decide') await gate('decided').promise;
+    },
+    async respondElicitation(response: any) {
+      rpcs.push({ rpc: 'respondElicitation', response: structuredClone(response) });
+      gates.get('elicited')?.release();
+    },
+    async permissionDecide(decision: any) {
+      rpcs.push({ rpc: 'permissionDecide', decision: structuredClone(decision) });
+      if (script.permissionGate) await gate(script.permissionGate).promise;
+      // A macrotask boundary keeps the resumed turn out of this reply's
+      // microtask chain, so the confirmation and the turn tail are ordered
+      // by the harness steps rather than by promise scheduling.
+      await new Promise((done) => setImmediate(done));
+      gates.get('decided')?.release();
+      if (script.permissionError) throw new Error(script.permissionError);
+      return { delivered: script.permissionDelivered ?? true };
+    },
+  };
+}
+function loadChannel(twilioFactory: Twilio, gateway: Gateway, mapperUuid: string, extra: Record<string, unknown>) {
+  const cache = new Map<string, { exports: any }>();
+  const load = (source: string): any => {
+    if (cache.has(source)) return cache.get(source)!.exports;
+    const module = { exports: {} as any };
+    cache.set(source, module);
+    const custom = (name: string) => {
+      const target = resolveFrom(source, name);
+      if (target === 'twilio') return twilioFactory;
+      if (target === name) return require(name); // node:crypto, node:http
+      return load(target);
+    };
+    new Function('require', 'module', 'exports', compiled.get(source)!)(
+      custom, module, module.exports,
+    );
+    return module.exports;
+  };
+  const { SmsChannel } = load(sources[0]);
+  const { SmsSessionMapper } = load(sources[1]);
+  return new SmsChannel({
+    extra,
+    mapper: new SmsSessionMapper({ activeByChatId: {} }, () => mapperUuid),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// raw HTTP probe client: one Connection: close request per step, full bytes
+// ---------------------------------------------------------------------------
+function connectProbe(port: number): Promise<any> {
+  return new Promise((done, fail) => {
+    const socket = net.connect(port, '127.0.0.1');
+    socket.on('connect', () => { socket.destroy(); done({ refused: false }); });
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED') done({ refused: true });
+      else fail(error);
+    });
+    setTimeout(() => { socket.destroy(); fail(new Error('#1339 connect probe timeout')); }, 3000).unref();
+  });
+}
+function rawRequest(port: number, raw: string): Promise<any> {
+  return new Promise((done, fail) => {
+    const socket = net.connect(port, '127.0.0.1');
+    const chunks: Buffer[] = [];
+    socket.on('connect', () => socket.write(raw));
+    socket.on('data', (chunk: Buffer) => chunks.push(chunk));
+    socket.on('close', () => {
+      const text = Buffer.concat(chunks).toString('latin1');
+      if (!text) {
+        done({ closed: true });
+        return;
+      }
+      const [head, ...rest] = text.split('\r\n\r\n');
+      const status = Number.parseInt(head.split('\r\n')[0].split(' ')[1], 10);
+      const contentType = /^content-type:\s*(.*)$/im.exec(head)?.[1] ?? null;
+      done({ status, contentType, body: rest.join('\r\n\r\n') });
+    });
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED') done({ refused: true });
+      else fail(error);
+    });
+    setTimeout(() => { socket.destroy(); fail(new Error('#1339 probe client timeout')); }, 3000).unref();
+  });
+}
+const REQUEST = (
+  body: string | { repeat: string; count: number },
+  headers: Record<string, string>,
+  method: string,
+  path: string,
+) => {
+  const bytes = typeof body === 'string' ? body : body.repeat.repeat(body.count);
+  return (
+    `${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n` +
+    Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('') +
+    `Content-Length: ${Buffer.byteLength(bytes)}\r\n\r\n${bytes}`
+  );
+};
+const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
+
+async function waitUntil(predicate: () => boolean, label: string) {
+  const deadline = Date.now() + 3000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`#1339 wait timeout: ${label}`);
+    await new Promise((done) => setImmediate(done));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// scenario definitions
+// ---------------------------------------------------------------------------
+interface Definition {
+  name: string;
+  port: number;
+  env?: Record<string, string>;
+  extra?: Record<string, unknown>;
+  blockPort?: boolean;
+  turn?: { gate?: string; error?: string; events?: any[]; holdAfter?: string };
+  permissionDelivered?: boolean;
+  permissionError?: string;
+  permissionGate?: string;
+  sendFailAt?: number[];
+  sendBlockAt?: number;
+  sendError?: string;
+  steps: any[];
+}
+
+const definitions: Definition[] = [];
+const scenario = (definition: Definition) => definitions.push(definition);
+const port = (index: number) => 18800 + index;
+const request = (step: any) => ({ op: 'request', ...step });
+const form = (body: string, extra: Record<string, string> = {}) =>
+  request({ body, headers: { ...FORM, ...extra }, method: 'POST', path: '/sms/incoming' });
+const text = (message: string, extra: Record<string, string> = {}) =>
+  form(`From=%2B15550001&Body=${encodeURIComponent(message)}`, extra);
+const waitLog = (level: string, message: string) => ({ op: 'wait-log', level, text: message });
+const waitSends = (count: number) => ({ op: 'wait-sends', count });
+const waitRpcs = (count: number) => ({ op: 'wait-rpcs', count });
+const release = (gate: string) => ({ op: 'release', gate });
+const settle = () => ({ op: 'settle' });
+const SETTLE = settle();
+const stop = (reason?: string) => ({ op: 'stop', ...(reason === undefined ? {} : { reason }) });
+const connect = () => ({ op: 'connect' });
+const cron = (delivery: any) => ({ op: 'cron', delivery });
+const TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
+
+const textDelta = (text: string) => ({ type: 'assistant_text_delta', text });
+const toolFailure = (toolName: string) => ({ type: 'tool_call_finished', ok: false, toolName });
+const toolFailureById = (toolCallId: string) => ({ type: 'tool_call_finished', ok: false, toolCallId });
+const elicitation = (requestId: string) => ({
+  type: 'elicitation_request',
+  requestId,
+  questions: [{
+    question: '选择一个选项',
+    header: '选项',
+    options: [{ label: 'One', description: 'first' }, { label: 'Two' }],
+  }],
+});
+const permission = (requestId: string, payload: unknown = { command: 'ls -la' }) => ({
+  type: 'permission_request',
+  requestId,
+  toolName: 'Bash',
+  payload,
+});
+const multiElicitation = (requestId: string) => ({
+  type: 'elicitation_request',
+  requestId,
+  questions: [{
+    question: '多选',
+    header: '',
+    options: [{ label: '甲' }, { label: '乙' }],
+    multiSelect: true,
+  }],
+});
+const cronDelivery = (over: Record<string, unknown>) => ({
+  originChannelKey: 'sms',
+  sessionKey: 'sms:chat=+15550001:general',
+  text: '定时结果',
+  ...over,
+});
+
+scenario({
+  name: 'start-missing-config', port: port(0), steps: [
+    connect(), stop(),
+  ],
+});
+scenario({
+  name: 'start-twilio-init-failed', port: port(1),
+  extra: { accountSid: 'THROW', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    connect(), stop(),
+  ],
+});
+scenario({
+  name: 'start-port-busy', port: port(2), blockPort: true,
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    connect(), stop(),
+  ],
+});
+scenario({
+  name: 'start-port-out-of-range', port: port(3),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookPort: 65536 }, steps: [
+    connect(), stop(),
+  ],
+});
+scenario({
+  name: 'start-port-nan', port: port(4),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookPort: 'not-a-port' }, steps: [
+    connect(), stop(),
+  ],
+});
+scenario({
+  name: 'start-ok', port: port(5),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('hello'), waitSends(1), stop('done'),
+  ],
+  turn: { events: [textDelta('reply text')] },
+});
+scenario({
+  name: 'start-ok-public-url', port: port(6),
+  extra: {
+    accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000',
+    publicUrl: 'https://sms.example.com/',
+  }, steps: [
+    connect(), stop(),
+  ],
+});
+scenario({
+  name: 'start-env-config', port: port(7),
+  env: {
+    TWILIO_ACCOUNT_SID: 'ACenv', TWILIO_AUTH_TOKEN: 'tokenv',
+    TWILIO_PHONE_NUMBER: '+15550env', TWILIO_WEBHOOK_PORT: String(port(7)),
+  }, steps: [
+    text('hello'), waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('env reply')] },
+});
+scenario({
+  name: 'start-extra-coercion', port: port(8),
+  extra: {
+    accountSid: 5, authToken: true, phoneNumber: ['+15550000'],
+    apiKey: 'unused', webhookPort: `0x${port(8).toString(16)}`,
+  }, steps: [
+    text('hello'), waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('coerced')] },
+});
+scenario({
+  name: 'auth-token-chain', port: port(9),
+  extra: { accountSid: 'AC1', phoneNumber: '+15550000', token: 'tok9' },
+  env: { TWILIO_AUTH_TOKEN: 'env-ignored' }, steps: [
+    text('hello'), waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('key reply')] },
+});
+scenario({
+  name: 'wrong-path-and-method', port: port(10),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({ body: '', headers: {}, method: 'GET', path: '/sms/incoming' }),
+    request({ body: 'Body=hi&From=%2B1', headers: FORM, method: 'POST', path: '/other' }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('nope')] },
+});
+scenario({
+  name: 'query-ignored', port: port(11),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({ body: 'From=%2B15550001&Body=hi', headers: FORM, method: 'POST', path: '/sms/incoming?x=1&y=2' }),
+    waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('queried')] },
+});
+scenario({
+  name: 'payload-too-large', port: port(12),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    // The megabyte bodies are recorded as a repeat spec; the raw bytes only
+    // exist while the request is on the wire.
+    form({ repeat: 'x', count: 1024 * 1024 + 1 }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'payload-exactly-1mib', port: port(13),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    form({ repeat: 'x', count: 1024 * 1024 }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'bad-json', port: port(14),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({ body: '{"Body":', headers: { 'Content-Type': 'application/json' }, method: 'POST', path: '/sms/incoming' }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'content-type-json-charset', port: port(15),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({
+      body: '{"Body":"你好","From":"+15550001"}',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' }, method: 'POST', path: '/sms/incoming',
+    }),
+    waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('json 你好')] },
+});
+scenario({
+  name: 'content-type-uppercase-not-json', port: port(16),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({
+      body: '{"Body":"hi","From":"+15550001"}',
+      headers: { 'Content-Type': 'APPLICATION/JSON' }, method: 'POST', path: '/sms/incoming',
+    }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'bad-signature', port: port(17),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('hi', { 'X-Twilio-Signature': 'bogus' }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'valid-signature', port: port(18),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('signed'),
+    waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('verified')] },
+});
+scenario({
+  name: 'empty-from-and-whitespace-body', port: port(19),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    form('Body=hi'),
+    form('From=%2B15550001&Body=%20%20%C2%A0%09'),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'form-plus-and-percent', port: port(20),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    form('From=+15550001&Body=1+2'),
+    waitRpcs(1), stop(),
+  ],
+  turn: { events: [textDelta('plus')] },
+});
+scenario({
+  name: 'dup-keys-last-wins', port: port(21),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    form('From=1&Body=a&Body=b&Body=c&Flag&Empty=&Pct=%E4%BD%A0%E5%A5%BD&Bad=%FF'),
+    waitRpcs(1), stop(),
+  ],
+  turn: { events: [textDelta('dup')] },
+});
+scenario({
+  name: 'non-string-json-body', port: port(22),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({ body: '{"Body":5,"From":77}', headers: { 'Content-Type': 'application/json' }, method: 'POST', path: '/sms/incoming' }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'turn-reply-fragments', port: port(23),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('multi'), waitSends(1), stop(),
+  ],
+  turn: {
+    events: [
+      textDelta('  think '),
+      { type: 'assistant_thinking_delta' },
+      { type: 'tool_call_started', toolName: 'Bash' },
+      toolFailure('Bash'),
+      { type: 'tool_call_finished', ok: true, toolName: 'Bash' },
+      toolFailureById('call_7'),
+      { type: 'error', message: 'soft failure' },
+      { type: 'mystery_event' },
+      textDelta(' done  '),
+    ],
+  },
+});
+scenario({
+  name: 'turn-error', port: port(24),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('boom'), waitSends(1), stop(),
+  ],
+  turn: { error: 'gateway exploded' },
+});
+scenario({
+  name: 'send-fail', port: port(25),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' },
+  sendFailAt: [1], steps: [
+    text('hello'), waitLog('error', 'sms: sendMessage failed: Error: mock send failure'), stop(),
+  ],
+  turn: { events: [textDelta('undelivered')] },
+});
+scenario({
+  name: 'active-dedupe', port: port(26),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('first'), waitRpcs(1),
+    text('second'), waitLog('info', 'sms: chat +15550001 already active, skipping'),
+    release('turn'), waitSends(1),
+    text('third'), waitRpcs(2), waitSends(2), stop(),
+  ],
+  turn: { gate: 'turn', events: [textDelta('first reply')] },
+});
+scenario({
+  name: 'new-session', port: port(27),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('/new'), waitSends(1),
+    text('in new'), waitSends(2),
+    text('/new with a message'), waitSends(3),
+    text('still new'), waitSends(4),
+    text(' /new '), waitSends(5),
+    text('after reset'), waitSends(6), stop(),
+  ],
+  turn: { events: [textDelta('r')] },
+});
+scenario({
+  name: 'elicitation-cancel', port: port(28),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('pick one'), waitSends(1),
+    text('0'), waitRpcs(2), waitSends(2), stop(),
+  ],
+  turn: { events: [elicitation('e1')], holdAfter: 'elicit' },
+});
+scenario({
+  name: 'elicitation-answer', port: port(29),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('pick one'), waitSends(1),
+    text('2'), waitRpcs(2), stop(),
+  ],
+  turn: { events: [elicitation('e1')], holdAfter: 'elicit' },
+});
+scenario({
+  name: 'permission-allow-once', port: port(30),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('run it'), waitSends(1),
+    text('1'), waitRpcs(2), waitSends(2), waitSends(3), stop(),
+  ],
+  turn: { events: [permission('p1'), textDelta(' after permit')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-deny', port: port(31),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('run it'), waitSends(1),
+    text('0'), waitRpcs(2), waitSends(2), stop(),
+  ],
+  turn: { events: [permission('p1')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-allow-session', port: port(32),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('run it'), waitSends(1),
+    text('2'), waitRpcs(2), waitSends(2), stop(),
+  ],
+  turn: { events: [permission('p1')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-invalid-reply', port: port(33),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('run it'), waitSends(1),
+    text('huh?'), waitSends(2),
+    text('0'), waitRpcs(2), waitSends(3), stop(),
+  ],
+  turn: { events: [permission('p1')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-decide-in-flight-status', port: port(34),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' },
+  permissionGate: 'decide-block', steps: [
+    text('run it'), waitSends(1),
+    text('1'), waitRpcs(2),
+    text('again'), waitSends(2),
+    release('decide-block'), waitSends(3), stop(),
+  ],
+  turn: { events: [permission('p1')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-prompt-sending-status', port: port(35),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' },
+  sendBlockAt: 1, steps: [
+    text('run it'), waitSends(1),
+    text('again'), waitSends(2),
+    release('send-block'), SETTLE, stop(),
+  ],
+  turn: { events: [permission('p1')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-prompt-fail-retry', port: port(36),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' },
+  sendFailAt: [1], steps: [
+    text('run it'), waitLog('error', 'sms: sendMessage failed: Error: mock send failure'),
+    text('again'), waitSends(3),
+    text('1'), waitRpcs(2), waitSends(5), stop(),
+  ],
+  turn: { events: [permission('p1'), textDelta(' tail')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-decide-not-delivered', port: port(37),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' },
+  permissionDelivered: false, steps: [
+    text('run it'), waitSends(1),
+    text('1'), waitRpcs(2), waitSends(3), stop(),
+  ],
+  turn: { events: [permission('p1'), textDelta(' tail')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-decide-error', port: port(38),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' },
+  permissionError: 'decide boom', steps: [
+    text('run it'), waitSends(1),
+    text('1'), waitRpcs(2),
+    waitLog('error', 'sms: permission answer error: Error: decide boom'),
+    text('1'), waitRpcs(3), waitSends(2), stop(),
+  ],
+  turn: { events: [permission('p1')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'permission-confirmation-send-fail', port: port(39),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' },
+  // The released turn tail overtakes the confirmation (the decide gate opens
+  // before permissionDecide's return reaches handleIncoming), so the
+  // confirmation is the third send. Its failure is the releaseAnswer path.
+  sendFailAt: [3], steps: [
+    text('run it'), waitSends(1),
+    text('1'), waitRpcs(2),
+    waitLog('error', 'sms: sendMessage failed: Error: mock send failure'),
+    waitSends(3), stop(),
+  ],
+  turn: { events: [permission('p1'), textDelta(' tail')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'elicitation-multiselect', port: port(40),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('pick two'), waitSends(1),
+    text('1，2'), waitRpcs(2), stop(),
+  ],
+  turn: { events: [multiElicitation('e2')], holdAfter: 'elicit' },
+});
+scenario({
+  name: 'elicitation-answer-fallback', port: port(41),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('pick one'), waitSends(1),
+    text('red'), waitRpcs(2), stop(),
+  ],
+  turn: { events: [elicitation('e1')], holdAfter: 'elicit' },
+});
+scenario({
+  name: 'cron-delivery', port: port(42),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    cron(cronDelivery({})),
+    cron(cronDelivery({ originChannelKey: 'telegram' })),
+    cron(cronDelivery({ sessionKey: 'sms:chat=+15550001:s_not-a-uuid' })),
+    cron(cronDelivery({ text: '第二次' })),
+    waitSends(2), stop(),
+  ],
+});
+scenario({
+  name: 'cron-after-stop', port: port(43),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    stop('drained'),
+    cron(cronDelivery({})),
+    settle(),
+  ],
+});
+scenario({
+  name: 'auth-token-apikey', port: port(44),
+  extra: { accountSid: 'AC1', apiKey: 'k2', phoneNumber: '+15550000' },
+  env: { TWILIO_AUTH_TOKEN: 'env-ignored' }, steps: [
+    text('signed'),
+    waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('api key reply')] },
+});
+scenario({
+  name: 'start-ok-custom-path', port: port(45),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookPath: '/custom/hook' }, steps: [
+    request({ body: 'From=%2B15550001&Body=path', headers: FORM, method: 'POST', path: '/custom/hook' }),
+    request({ body: 'From=%2B15550001&Body=old', headers: FORM, method: 'POST', path: '/sms/incoming' }),
+    waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('custom path')] },
+});
+scenario({
+  name: 'stop-during-turn', port: port(46),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('hold'), waitRpcs(1),
+    stop('drain'),
+    release('turn'), settle(), stop(),
+  ],
+  turn: { gate: 'turn', events: [textDelta('after release')] },
+});
+assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1339 generator case count');
+
+// ---------------------------------------------------------------------------
+// execution
+// ---------------------------------------------------------------------------
+async function run(definition: Definition) {
+  const record: any = { logs: [], sends: [], rpcs: [], responses: [], unhandled: [], cronResults: [] };
+  const unhandled = (error: unknown) => { record.unhandled.push(String(error)); };
+  process.on('unhandledRejection', unhandled);
+  const logger = {
+    info: (message: string) => record.logs.push(['info', message]),
+    warn: (message: string) => record.logs.push(['warn', message]),
+    error: (message: string) => record.logs.push(['error', message]),
+  };
+  const gates = new Map<string, any>();
+  const gateway = makeGateway(definition, record.rpcs, gates);
+  const twilioFactory = makeTwilio(definition, record.sends, gates);
+  const previousEnv: Record<string, string | undefined> = {};
+  for (const key of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER', 'TWILIO_WEBHOOK_PORT']) {
+    previousEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(definition.env ?? {})) process.env[key] = value;
+  let blocker: net.Server | null = null;
+  if (definition.blockPort) {
+    blocker = net.createServer();
+    await new Promise<void>((done) => blocker!.listen(definition.port, '127.0.0.1', done));
+  }
+  const extra = { webhookHost: '127.0.0.1', webhookPort: definition.port, ...definition.extra };
+  const channel = loadChannel(twilioFactory, gateway, 'aaaaaaaa-1111-2222-3333-444444444444', extra);
+  const handle = await (channel as any).start({ gateway, logger });
+  const signedText = (message: string, headers: Record<string, string>) => {
+    if (definition.name !== 'valid-signature' && definition.name !== 'auth-token-apikey') return headers;
+    const token = String(
+      (definition.extra as any)?.authToken ?? (definition.extra as any)?.apiKey
+        ?? definition.env?.TWILIO_AUTH_TOKEN ?? (definition.extra as any)?.token ?? '',
+    );
+    const fullUrl = `http://127.0.0.1:${definition.port}/sms/incoming`;
+    const params: Record<string, string> = { From: '+15550001', Body: message };
+    const data = fullUrl + Object.keys(params).sort().map((key) => key + params[key]).join('');
+    const signature = createHmac('sha1', token).update(data).digest('base64');
+    return { ...headers, 'X-Twilio-Signature': signature };
+  };
+  try {
+    for (const step of definition.steps) {
+      switch (step.op) {
+        case 'request': {
+          const body = typeof step.body === 'string' ? step.body : '';
+          const headers = signedText(body.includes('Body=') ? decodeFormBody(body) : '', step.headers);
+          record.responses.push(await rawRequest(definition.port, REQUEST(step.body, headers, step.method, step.path)));
+          break;
+        }
+        case 'connect': {
+          record.responses.push(await connectProbe(definition.port));
+          break;
+        }
+        case 'wait-log':
+          await waitUntil(() => record.logs.some(([level, text]: any[]) => level === step.level && text === step.text), `log ${step.text}`);
+          break;
+        case 'wait-sends':
+          await waitUntil(() => record.sends.length >= step.count, `sends ${step.count}`);
+          break;
+        case 'wait-rpcs':
+          await waitUntil(() => record.rpcs.length >= step.count, `rpcs ${step.count}`);
+          break;
+        case 'release': gates.get(step.gate)?.release(); break;
+        case 'settle':
+          await new Promise((done) => setImmediate(() => done(null)));
+          await new Promise((done) => setTimeout(() => done(null), 25));
+          break;
+        case 'stop': await handle.stop(step.reason); break;
+        case 'cron': record.cronResults.push(await channel.deliverCronResult(step.delivery)); break;
+        default: throw new Error(`#1339 unknown step ${step.op}`);
+      }
+    }
+  } finally {
+    await handle.stop('cleanup');
+    process.off('unhandledRejection', unhandled);
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((done) => (blocker ? blocker.close(() => done()) : done()));
+    // Let the final stop's async tail land in the record.
+    await new Promise((done) => setImmediate(() => done(null)));
+    await new Promise((done) => setTimeout(() => done(null), 25));
+  }
+  return record;
+}
+function decodeFormBody(body: string): string {
+  const match = /Body=([^&]*)/.exec(body);
+  return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : '';
+}
+
+const out = resolve(process.argv[2]!);
+await mkdir(out, { recursive: true });
+const cases: any[] = [];
+for (const definition of definitions) {
+  const first = await run(definition);
+  const second = await run(definition);
+  assert.deepEqual(second, first, `#1339 case ${definition.name} is not deterministic`);
+  cases.push({
+    name: definition.name,
+    port: definition.port,
+    env: definition.env ?? {},
+    extra: { webhookHost: '127.0.0.1', webhookPort: definition.port, ...definition.extra },
+    turn: definition.turn ?? null,
+    permissionDelivered: definition.permissionDelivered ?? true,
+    permissionError: definition.permissionError ?? null,
+    permissionGate: definition.permissionGate ?? null,
+    sendFailAt: definition.sendFailAt ?? [],
+    sendBlockAt: definition.sendBlockAt ?? null,
+    sendError: definition.sendError ?? null,
+    steps: definition.steps,
+    expected: first,
+  });
+  console.log(`#1339 recorded ${definition.name}`);
+}
+const oracle = { sourceCommit, sourceSha256, node: process.version, icu: process.versions.icu, expectedCaseCount: EXPECTED_CASE_COUNT, cases };
+const target = join(out, 'oracle.json.tmp');
+await writeFile(target, JSON.stringify(oracle, null, 2) + '\n', { flag: 'wx' });
+const { rename } = await import('node:fs/promises');
+await rename(target, join(out, 'oracle.json'));
+console.log(`#1339 wrote ${join(out, 'oracle.json')} with ${cases.length} cases`);
