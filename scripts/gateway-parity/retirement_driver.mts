@@ -73,7 +73,7 @@ try {
     const params = substitute(entry.params);
     const started = Date.now();
     if (entry.shape === 'stream') {
-      let events = 0, lastEventType: string | null = null, finalSeen = false;
+      let events = 0, lastEventType: string | null = null, finalSeen = false, streamError: any = null;
       try {
         const iterator = client.stream(entry.method, params)[Symbol.asyncIterator]();
         for (;;) {
@@ -82,9 +82,24 @@ try {
           const event: any = next.value;
           events += 1; lastEventType = event?.type ?? null;
           if (event?.final === true) { finalSeen = true; break; }
-          if (event?.type === 'error') break;
+          // A1 (#1355 fix-r2): an error event is an error outcome, not an ok
+          // stream that merely stopped early.
+          if (event?.type === 'error') { streamError = event; break; }
         }
-        outcomes.push({ method: entry.method, shape: 'stream', outcome: 'ok', events, lastEventType, finalSeen, elapsedMs: Date.now() - started });
+        // A1: ok additionally requires a final event — a stream that ends
+        // without one (and without an error event) is recorded as an error.
+        if (streamError) {
+          outcomes.push({ method: entry.method, shape: 'stream', outcome: 'error',
+            errorCode: streamError?.code ?? streamError?.error?.code ?? null,
+            error: String(streamError?.message ?? streamError?.error?.message ?? streamError),
+            events, lastEventType, finalSeen, elapsedMs: Date.now() - started });
+        } else if (finalSeen) {
+          outcomes.push({ method: entry.method, shape: 'stream', outcome: 'ok', events, lastEventType, finalSeen, elapsedMs: Date.now() - started });
+        } else {
+          outcomes.push({ method: entry.method, shape: 'stream', outcome: 'error', errorCode: null,
+            error: 'stream ended without a final event', events, lastEventType, finalSeen,
+            elapsedMs: Date.now() - started });
+        }
       } catch (error: any) {
         // F1 (#1355 fix-r1): only the driver's own withTimeout marker counts as a
         // timeout.  A real gateway error whose message happens to contain
@@ -119,7 +134,8 @@ async function probe(path: string, options: any = {}) {
   try {
     const response = await fetch(base + path, { signal: AbortSignal.timeout(10000), ...options });
     const body = await response.text().catch(() => '');
-    return { path, status: response.status, bodyBytes: body.length, method: options.method ?? 'GET' };
+    // A10 (#1355 fix-r2): body.length counts UTF-16 code units, not bytes.
+    return { path, status: response.status, bodyBytes: Buffer.byteLength(body), method: options.method ?? 'GET' };
   } catch (error: any) {
     return { path, status: null, error: String(error?.message ?? error), method: options.method ?? 'GET' };
   }
@@ -141,10 +157,17 @@ const probes = [
       operation: 'retirement-none', input: {} }) }),
   await probe('/api/module-host/approvals/status', { headers: bearer }),
   await probe('/api/module-host/approvals/resume', { method: 'POST', headers: { ...bearer, 'content-type': 'application/json' }, body: '{}' }),
-  await probe('/favicon.ico'),
 ];
+// R6 (#1355 fix-r2): no /favicon.ico probe — static assets are served only when
+// staticAssetsPath is configured, which the round config never sets, so the
+// probe 404s unconditionally and no entry consumes it (static resources are
+// out of this slice's scope; see A8.6-RETIREMENT-001 known boundaries).
 save('methods.json', { methods: outcomes });
 save('http.json', { probes });
-save('result.json', { status: 'PASS', methods: outcomes.length, probes: probes.length,
+// A3 (#1355 fix-r2): result.json no longer asserts an unconditional status;
+// the scorer derives verdicts from methods.json/frames.jsonl (timeout methods
+// are listed in missing for quick reading).
+save('result.json', { methods: outcomes.length, probes: probes.length,
   missing: outcomes.filter((row) => row.outcome === 'timeout').map((row) => row.method) });
-save('complete.json', { records: seq, connections: connection, complete: true });
+save('complete.json', { records: seq, connections: connection,
+  complete: sockets.every((ws) => ws.readyState === Native.CLOSED) });
