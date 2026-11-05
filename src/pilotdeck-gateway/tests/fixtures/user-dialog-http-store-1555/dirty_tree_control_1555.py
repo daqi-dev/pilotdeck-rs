@@ -73,8 +73,14 @@ breaks the driver outright is INVALID, not a survivor), and the two sides read
 `provenance` from different places -- the lock side scans the driver's log
 text, the dirty side reads `summary['provenance']`. A restore that puts the
 bytes back without its file mode makes the dirty row INVALID through
-`provenance.negctl_restore_mode_lost`: git tracks only the exec bit, so the
-difference would otherwise be invisible to every guard.
+`provenance.negctl_restore_mode_lost`, and this file's own restore through a
+`mode_lost` flag kept apart from the free-text complaint (the complaint also
+carries the "restored without the lock" note, which says nothing about the
+mode): git tracks only the exec bit, so the difference would otherwise be
+invisible to every guard. The marker write is where the mode is still known
+good, so a marker whose `chmod` fails is never swapped in -- both restore
+paths read the mode back off the file and would otherwise preserve the wrong
+one and report success (fix-r11 review).
 
 The marker is normally undone by the driver itself, inside the lock (see
 `negctl_restore` in `rss_probe_1555.py`); this file's `restore_locked` is the
@@ -265,24 +271,29 @@ def settle(process, log):
 def restore(path, original, marked=None):
     """Undo this process's marker only; never overwrite someone else's bytes.
 
-    Returns `(restored, complaint)`. `restored` is False when the bytes are not
-    HEAD and not *this* process's marker (the marker carries our pid, so a
-    concurrent control's marker is not mistaken for ours): another writer
-    touched the file and the run must neither report success nor clobber that
-    work. The write is a temp file plus `os.replace`, which is atomic for a
-    reader on the same filesystem, and the temp file is removed if the replace
-    itself fails.
+    Returns `(restored, mode_lost, complaint)`. `restored` is False when the
+    bytes are not HEAD and not *this* process's marker (the marker carries our
+    pid, so a concurrent control's marker is not mistaken for ours): another
+    writer touched the file and the run must neither report success nor clobber
+    that work. `mode_lost` is a separate machine flag, not a reading of
+    `complaint`: `complaint` also carries the "restored without the lock"
+    fallback note, which says nothing about the mode and must not invalidate
+    the row (fix-r11 review, boundary P1 / sibling P2). The write is a temp
+    file plus `os.replace`, which is atomic for a reader on the same
+    filesystem, and the temp file is removed if the replace itself fails.
     """
     marked = original + MARKER if marked is None else marked
     try:
         current = path.read_bytes()
     except OSError as error:
-        return False, f'{type(error).__name__}: {error} (could not read the source back)'
+        return (False, False,
+                f'{type(error).__name__}: {error} (could not read the source back)')
     if current == original:
-        return True, ''
+        return True, False, ''
     if current != marked:
-        return False, ('the product source no longer matches HEAD or this '
-                       'control\'s marker; left untouched for inspection')
+        return (False, False,
+                'the product source no longer matches HEAD or this '
+                'control\'s marker; left untouched for inspection')
     temp = scratch('restore')
     try:
         # Read the mode first, but never let a failed read abandon the byte
@@ -312,21 +323,24 @@ def restore(path, original, marked=None):
             temp.unlink()
         except OSError:
             pass
-        return False, f'{type(error).__name__}: {error} (the rewrite failed)'
+        return (False, False,
+                f'{type(error).__name__}: {error} (the rewrite failed)')
     try:
         readback = path.read_bytes()
     except OSError as error:
-        return False, f'{type(error).__name__}: {error} (rewrite not readable)'
+        return (False, False,
+                f'{type(error).__name__}: {error} (rewrite not readable)')
     if readback == original:
         if mode is None:
             # The bytes are back but the mode is not HEAD's, and git tracks
             # only the exec bit: this difference is invisible to every guard.
             # Report it instead of claiming a clean restore.
-            return True, ('restored the bytes but not the file mode (stat or '
-                          'chmod failed); the worktree may carry a mode-only '
-                          'difference that no guard can see')
-        return True, ''
-    return False, 'the restore did not read back as HEAD bytes'
+            return (True, True,
+                    'restored the bytes but not the file mode (stat or chmod '
+                    'failed); the worktree may carry a mode-only difference '
+                    'that no guard can see')
+        return True, False, ''
+    return False, False, 'the restore did not read back as HEAD bytes'
 
 
 def restore_locked(path, original):
@@ -353,9 +367,12 @@ def restore_locked(path, original):
         with tree_lock(root, timeout=RESTORE_LOCK_TIMEOUT):
             return restore(path, original, original + MARKER)
     except OSError as error:
-        restored, complaint = restore(path, original, original + MARKER)
-        return restored, (f'{type(error).__name__}: {error} '
-                          f'(restored without the lock); {complaint}')
+        restored, mode_lost, complaint = restore(path, original, original + MARKER)
+        # The fallback note goes into the free-text channel on purpose: taking
+        # the lock failed, but the bytes may have been restored perfectly, and
+        # that must not read as a mode loss (fix-r11 review, boundary P1).
+        return restored, mode_lost, (f'{type(error).__name__}: {error} '
+                                     f'(restored without the lock); {complaint}')
 
 
 def lock_check(out, env):
@@ -514,7 +531,7 @@ def dirty_check(out, env, original):
     process = None
     early = ''
     reason = ''
-    restored, complaint = True, ''
+    restored, mode_lost, complaint = True, False, ''
     try:
         with tree_lock(root, timeout=LOCK_TIMEOUT):
             if source.read_bytes() != original:
@@ -524,13 +541,27 @@ def dirty_check(out, env, original):
             mode = stat.S_IMODE(source.stat().st_mode)
             temp.write_bytes(marked)
             # Same inode swap as the two restore paths: keep the source's own
-            # mode instead of the umask's (fix-r6 review, sibling P2). Only the
-            # `chmod` is best effort -- the marker must land even if the mode
-            # cannot be applied; reading it is not (fix-r9 review).
+            # mode instead of the umask's (fix-r6 review, sibling P2). Both the
+            # read above and this `chmod` are fatal *here*, while the source
+            # has just been verified byte-identical to HEAD -- the one moment
+            # in the whole chain when its mode is known good. A swallowed
+            # `chmod` would land a umask-mode marker, and both restore paths
+            # read the mode back off the file: they would then faithfully
+            # write that wrong mode home, leaving a permanent mode difference
+            # that git and every guard are blind to, with `mode_lost` False
+            # (fix-r11 review, sibling P2 / boundary P2). Aborting before the
+            # replace leaves the tracked source untouched; only the temp goes.
             try:
                 os.chmod(temp, mode)
-            except OSError:
-                pass
+            except OSError as error:
+                try:
+                    temp.unlink()
+                except OSError:
+                    pass
+                raise RuntimeError(
+                    'the marker could not carry the source file mode '
+                    f'({type(error).__name__}: {error}); refusing to swap a '
+                    'umask-mode marker into the tracked source') from error
             os.replace(temp, source)
             # The driver undoes the marker itself, under the lock, before it
             # returns (`negctl_restore` in rss_probe_1555.py): a restore issued
@@ -553,7 +584,7 @@ def dirty_check(out, env, original):
         log.close()
         returncode = None
     finally:
-        restored, complaint = restore_locked(source, original)
+        restored, mode_lost, complaint = restore_locked(source, original)
     summary = read_summary(out / 'probe-dirty' / 'summary.json')
     failures = [str(item) for item in (summary.get('failures') or [])]
     provenance = summary.get('provenance') or {}
@@ -566,13 +597,15 @@ def dirty_check(out, env, original):
                and not summary.get('minima')
                and not (out / 'probe-dirty' / 'build.log').exists()
                and provenance.get('src_dirty') is True)
-    if not restored:
-        status = 'INVALID'
-        reason = complaint
-    elif complaint:
-        # The bytes are HEAD again but the file mode is not: git tracks only
-        # the exec bit, so the worktree is now dirty in a way no guard sees.
-        # Attribute it instead of riding on a green row (fix-r9 review).
+    if not restored or mode_lost:
+        # Either the bytes are not HEAD again (`not restored`, always with a
+        # complaint), or they are but the file mode is not (`mode_lost`):
+        # git tracks only the exec bit and `_assert_workspace_sources` only
+        # byte-compares, so the second case leaves the worktree dirty in a way
+        # no guard can see. Attribute it instead of riding on a green row
+        # (fix-r9 review). `mode_lost` is a machine flag of its own, not a
+        # reading of `complaint`, so the "restored without the lock" fallback
+        # note cannot trip this branch (fix-r11 review, boundary P1).
         status = 'INVALID'
         reason = complaint
     elif provenance.get('negctl_restore_mode_lost'):
@@ -634,19 +667,21 @@ def main():
     original = _head_bytes(root, RELATIVE, 'HEAD')
     rows = []
     restored = False
+    mode_lost = False
     complaint = ''
     try:
         rows.append(lock_check(out, env))
         rows.append(dirty_check(out, env, original))
     finally:
-        restored, complaint = restore_locked(source, original)
+        restored, mode_lost, complaint = restore_locked(source, original)
     counts = {state: sum(row['status'] == state for row in rows)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
     record = dict(controls=rows, counts=counts, restored=restored,
-                  restore_complaint=complaint)
+                  restore_mode_lost=mode_lost, restore_complaint=complaint)
     (out / 'summary.json').write_text(json.dumps(record, indent=2) + '\n')
     print(json.dumps(record), flush=True)
-    return 0 if restored and counts['KILLED'] == len(rows) else 1
+    return (0 if restored and not mode_lost
+            and counts['KILLED'] == len(rows) else 1)
 
 
 if __name__ == '__main__':
