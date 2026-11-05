@@ -4606,3 +4606,76 @@ async fn early_close_response_survives_shutdown_with_unread_body() {
         .unwrap();
     let _ = std::fs::remove_dir_all(directory);
 }
+
+/// #1555 peak-RSS probe: the issue's acceptance line asks for a real peak
+/// memory measurement of the two resource-bound cells this change touches.
+///
+/// `tests/fixtures/user-dialog-http-store-1555/rss_probe_1555.py` runs this
+/// test once per mode in its own process under `/usr/bin/time -l`, so each
+/// sample is a fresh process's `maximum resident set size` and modes stay
+/// comparable. The measurement is whole-process: libtest, the tokio runtime,
+/// the loopback server and the client all count, so only the *difference*
+/// between modes is attributable to the head being parsed. `fields-max` is the
+/// densest Node-legal field count (16,329 `a:` fields = 16,383 counted bytes)
+/// and `fields-max-16x` runs sixteen of them at once to lift hyper's
+/// per-parse `max_headers` slot vectors above process noise.
+#[tokio::test]
+#[ignore = "manual peak-RSS probe; drive through tests/fixtures/user-dialog-http-store-1555/rss_probe_1555.py"]
+async fn header_budget_peak_rss() {
+    let mode = std::env::var("PDRS_PROBE").expect("set PDRS_PROBE");
+    // Node-legal dense field count: `Host: h` (5 counted) + `Connection: close`
+    // (15) + the 34-byte target leave 16,329 one-byte fields under the 16,384
+    // counted-byte limit (same arithmetic as
+    // `small_field_count_is_bounded_by_the_node_budget_not_a_field_cap`).
+    let dense_head = |fields: usize| {
+        format!(
+            "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n{}Connection: close\r\n\r\n",
+            "a:\r\n".repeat(fields)
+        )
+        .into_bytes()
+    };
+    let (requests, width) = match mode.as_str() {
+        "baseline" => (vec![http_get(true)], 1),
+        "ows-90000" => (
+            vec![
+                format!(
+                    "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\nX: {}a\r\nConnection: close\r\n\r\n",
+                    " ".repeat(90_000)
+                )
+                .into_bytes(),
+            ],
+            1,
+        ),
+        "fields-4097" => (vec![dense_head(4_097)], 1),
+        "fields-max" => (vec![dense_head(16_329)], 1),
+        "fields-max-16x" => ((0..16).map(|_| dense_head(16_329)).collect(), 16),
+        other => panic!("unknown PDRS_PROBE={other}"),
+    };
+    let (store, directory) = file_store("peak-rss");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let started = Instant::now();
+    let mut tasks = Vec::new();
+    for request in requests {
+        tasks.push(tokio::spawn(async move {
+            let response = exchange(port, &request).await.expect("probe response");
+            (status(&response), response.len())
+        }));
+    }
+    let mut codes = Vec::new();
+    let mut response_bytes = 0usize;
+    for task in tasks {
+        let (code, len) = task.await.expect("probe request task");
+        codes.push(code);
+        response_bytes += len;
+    }
+    println!(
+        "mode={mode} width={width} statuses={codes:?} response_bytes={response_bytes} elapsed_ms={:.1}",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    assert!(
+        codes.iter().all(|code| *code == 405),
+        "#1555 the probe cell must reach the handler (405): {codes:?}"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
