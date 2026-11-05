@@ -29,8 +29,9 @@
 //! of either stack cannot change its verdict). Transport-level byte
 //! divergences of the hyper codec are the ones A8.4-NATIVE-HTTP-001 already
 //! registers (header name case, chunk-size case, the HTTP/1.0 status line)
-//! and the premature-close residual A8.4-MODULE-HOST-001 registers; the
-//! approvals replay normalizes or pins them the same way.
+//! and the premature-close residual A8.4-MODULE-HOST-APPROVALS-001 registers
+//! (its 继承差异 section); the approvals replay normalizes or pins them the
+//! same way.
 //!
 //! Scope note: the bridge's `authenticate` port is the seam the external
 //! StaffDeck authority lives behind (TS loads
@@ -633,7 +634,7 @@ pub(crate) async fn serve(
         }
         // A body that errors before its declared end is a premature close;
         // TS's aborted request destroys the response with zero bytes (the
-        // A8.4-MODULE-HOST-001 residual).
+        // A8.4-MODULE-HOST-APPROVALS-001 residual).
         Err(ReadError::PrematureClose) => {
             return Some(Err(io::Error::other(
                 "module-host approvals request body ended prematurely",
@@ -807,7 +808,14 @@ enum Operation {
 /// serializes as `null`.
 fn failure_body(code: &JsValue) -> String {
     let serialized = stringify_json(code).expect("#1350 a failure code is serializable");
-    format!("{{\"code\":{}}}", serialized.as_deref().unwrap_or("null"))
+    // `approvals-failure-body-null-off`: the null fallback removed is the
+    // original illegal-frame bug the fix-r1 direct test pins (`{"code":}`).
+    let fallback = if crate::mutants::on("approvals-failure-body-null-off") {
+        ""
+    } else {
+        "null"
+    };
+    format!("{{\"code\":{}}}", serialized.as_deref().unwrap_or(fallback))
 }
 
 enum ReadError {

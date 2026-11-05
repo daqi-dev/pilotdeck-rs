@@ -126,9 +126,16 @@ impl PendingSopStore {
             return replay_receipt(input, &duplicate);
         }
         // `!current.wait` — after migration the wait is a valid object or
-        // absent, so `Some` is the truthy case.
+        // absent, so `Some` is the truthy case. `approvals-not-waiting-off`
+        // relabels the branch, killed by the fix-r1 direct test.
         let Some(wait) = current.wait.clone() else {
-            return Err(state_error("SOP_NOT_WAITING"));
+            return Err(state_error(
+                if crate::mutants::on("approvals-not-waiting-off") {
+                    "SOP_SESSION_NOT_FOUND"
+                } else {
+                    "SOP_NOT_WAITING"
+                },
+            ));
         };
         // `current.wait.id !== input.waitId` — the id is a string by `isWait`.
         let stale = !matches!(wait.get("id"), Some(JsValue::String(id)) if id == &input.wait_id);
@@ -157,7 +164,15 @@ impl PendingSopStore {
             validate_authority(input.authority.as_ref(), &input.session_key, &approval)
                 .map_err(|error| state_error(error.code))?;
             let Some(expected) = input.expected_revision else {
-                return Err(state_error("SOP_REVISION_REQUIRED"));
+                // `approvals-revision-required-off` relabels the branch,
+                // killed by the fix-r1 direct test.
+                return Err(state_error(
+                    if crate::mutants::on("approvals-revision-required-off") {
+                        "SOP_REVISION_CONFLICT"
+                    } else {
+                        "SOP_REVISION_REQUIRED"
+                    },
+                ));
             };
             authorization = Some(crate::metadata::object([
                 ("authority", authority_value(input.authority.as_ref())),
@@ -254,7 +269,15 @@ fn replay_receipt(
             .get("authorization")
             .filter(|value| js_truthy(value));
         let Some(authorization) = authorization else {
-            return Err(state_error("SOP_APPROVAL_LEGACY_RECEIPT"));
+            // `approvals-legacy-receipt-off` relabels the branch, killed by
+            // the fix-r1 direct test.
+            return Err(state_error(
+                if crate::mutants::on("approvals-legacy-receipt-off") {
+                    "SOP_RESUME_REQUEST_CONFLICT"
+                } else {
+                    "SOP_APPROVAL_LEGACY_RECEIPT"
+                },
+            ));
         };
         // `validateAuthority(input.authority, input.sessionId,
         // duplicate.authorization.approval)`.
@@ -523,8 +546,14 @@ fn validate_authority(
     approval: &JsValue,
 ) -> Result<(), PendingFailure> {
     let Some(authority) = authority else {
+        // `approvals-auth-required-off` relabels the branch, killed by the
+        // fix-r1 direct test.
         return Err(pending(
-            "SOP_APPROVAL_AUTH_REQUIRED",
+            if crate::mutants::on("approvals-auth-required-off") {
+                "SOP_APPROVAL_FORBIDDEN"
+            } else {
+                "SOP_APPROVAL_AUTH_REQUIRED"
+            },
             "Authenticated native subject and original session access are required.",
         ));
     };

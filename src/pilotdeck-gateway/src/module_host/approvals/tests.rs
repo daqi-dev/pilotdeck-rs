@@ -145,10 +145,11 @@ struct Catalog;
 fn session_project(session: &str) -> Option<&'static str> {
     match session {
         "sess-proj2" => Some("proj2"),
-        "sess-handoff" | "sess-handoff2" | "sess-handoff3" | "sess-handoff4" | "sess-legacy"
-        | "sess-active" | "sess-ext" | "sess-waitstale" | "sess-rev" | "sess-badpin"
-        | "sess-unassigned" | "sess-gone" | "sess-done" | "sess-mismatch" | "sess-dyn2"
-        | "sess-dynfail" => Some("proj1"),
+        "sess-handoff" | "sess-handoff2" | "sess-handoff3" | "sess-handoff4" | "sess-active"
+        | "sess-ext" | "sess-waitstale" | "sess-rev" | "sess-badpin" | "sess-unassigned"
+        | "sess-gone" | "sess-done" | "sess-mismatch" | "sess-dyn2" | "sess-dynfail" => {
+            Some("proj1")
+        }
         _ => None,
     }
 }
@@ -366,7 +367,9 @@ async fn seeded_store() -> Arc<PendingSopStore> {
     }
     // A pre-migration legacy receipt: a stored resume result without the
     // `authorization` facts (it survives `isResumeResult`), so a human
-    // replay of its requestId hits the legacy-receipt rejection.
+    // replay of its requestId hits the legacy-receipt rejection. This seed
+    // is a Rust-side store-level fixture (no TS generator counterpart —
+    // the registered session catalog above stops at the recorder's set).
     store.seed(
         None,
         &JsString::from("sess-legacy"),
@@ -782,7 +785,7 @@ async fn http10_close_delimited_response() {
 /// `premature-close`), bytes the hyper typed response API cannot produce; the
 /// transport itself writes nothing in either stack, and hyper's handler
 /// error is the zero-byte close — the residual registered in
-/// A8.4-MODULE-HOST-001.
+/// A8.4-MODULE-HOST-APPROVALS-001 (its 继承差异 section).
 #[tokio::test]
 async fn premature_close_is_a_zero_byte_close() {
     let cell = cell("premature-close");
@@ -791,7 +794,7 @@ async fn premature_close_is_a_zero_byte_close() {
         serve_and_capture(setup.approvals, &cell.request, &cell.id, cell.half_close).await;
     assert!(
         raw.is_empty(),
-        "#1350 pin premature-close: the truncated body closes with zero bytes (Node answers its own parser-level 400 Connection: close — the registered A8.4-MODULE-HOST-001 residual): {raw:?}"
+        "#1350 pin premature-close: the truncated body closes with zero bytes (Node answers its own parser-level 400 Connection: close — the registered A8.4-MODULE-HOST-APPROVALS-001 residual): {raw:?}"
     );
     assert!(
         closed,
@@ -1459,28 +1462,33 @@ async fn handoff_resume_without_expected_revision_requires_it() {
     );
 }
 
-/// #1350 fix-r1 (Opus review P2): `SOP_APPROVAL_LEGACY_RECEIPT` — a stored
-/// receipt without `authorization` facts (the pre-migration shape) replays
-/// as rejected for the human source, over the real transport.
+/// #1350 fix-r1 (Opus review P2), fix-r2 (minimax sibling review P1, ruling
+/// b): `SOP_APPROVAL_LEGACY_RECEIPT` — a stored receipt without
+/// `authorization` facts (the pre-migration shape) replays as rejected for
+/// the human source. A pure store-level assertion: the TS generator has no
+/// `sess-legacy` seed (an unregistered session dies at `resolveSession`'s
+/// 403 long before the store), so no golden cell carries these bytes and no
+/// TS-side answer is claimed here — the cross-stack pairing waits for the
+/// follow-up that seeds the session and records the cell.
 #[tokio::test]
 async fn legacy_receipt_replay_is_rejected() {
-    let body = r#"{"tenantId":"t1","agentId":"a1","sessionKey":"sess-legacy","source":"human","requestId":"req-legacy","waitId":"wait-1","expectedRevision":1,"message":"legacy"}"#;
-    let request = format!(
-        "POST /api/module-host/approvals/resume HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nx-staffdeck-approver-authorization: Bearer staff-member\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
-    );
-    let setup = server_setup("main").await;
-    let (raw, _) = serve_and_capture(
-        setup.approvals,
-        request.as_bytes(),
-        "resume-legacy-receipt",
-        false,
+    let store = seeded_store().await;
+    let failure = store_resume(
+        &store,
+        "sess-legacy",
+        "req-legacy",
+        Some(member_authority("sess-legacy")),
+        Some(1.0),
     )
-    .await;
-    let response = latin1_string(&raw);
-    assert!(
-        response.starts_with("HTTP/1.1 502")
-            && response.contains("{\"code\":\"SOP_APPROVAL_LEGACY_RECEIPT\"}"),
-        "#1350 the legacy receipt replay must be the legacy 502: {response}"
+    .await
+    .expect_err("#1350 the legacy receipt replay must be rejected");
+    assert_eq!(
+        failure.status, None,
+        "#1350 a state error never carries its own status"
+    );
+    assert_eq!(
+        failure_code(&failure),
+        "SOP_APPROVAL_LEGACY_RECEIPT",
+        "#1350 the legacy receipt replay must be rejected as the legacy shape"
     );
 }
