@@ -66,7 +66,7 @@ and element-wise tuple targets.  Every return arm is judged on its own, so
 call in the other arm.  A bare `return`, a literal `0`, and `raise
 SystemExit(0)` are optimistic exits and are flagged; a non-zero exit literal
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) stays legal because it cannot
-claim a clean run.  The audit self-tests twenty probes: a direct `{'status': ...}`
+claim a clean run.  The audit self-tests twenty-two probes: a direct `{'status': ...}`
 return, an inline `0 if ... else 1` branch, a legal shared pair, a summary dict
 returned through a local name, a bare `return 0`, an optimistic conditional arm,
 a bare `return`, a summary dict returned under an arbitrary name, a status slot
@@ -75,7 +75,14 @@ verdict written straight into a `report['status']` slot, an explicit
 `return None`, a `raise SystemExit(None)`, an exit code relayed through a local
 variable, a status slot filled from a local dict subscript, a local
 `aggregate_status` lookalike, a `report.update({'status': 'PASS'})` write, a
-duplicate `status` key, and a nested `def main`.  Registered points also
+duplicate `status` key, a nested `def main`, a zero branch beside a shared
+branch (must be flagged), and a zero initializer every following path
+overwrites (must stay legal).  A `code = 0` initializer is therefore judged by
+reachability, not by the presence of a shared assignment somewhere else in the
+function: only a later statement that rebinds the name from the shared call on
+every fall-through path (same block, both `if` arms, a `with` body, or a `try`
+body whose handlers also rebind) makes it an initializer rather than an
+optimistic exit.  Registered points also
 write their report incrementally instead of returning the dict, so every
 `x['status'] = ...` assignment in a registered point is judged by the same rule:
 a `'PASS'` / `'PASS_WITH_SKIPS'` literal (directly or through a local variable)
@@ -89,7 +96,10 @@ a duplicate `status` key inside one summary dict is judged by every value, a
 another dict is read where the summary is returned or passed on.  Known
 boundaries, not covered by this check: the module-level `raise
 SystemExit(main())` that no function contains, and a status key built by
-`dict(**kwargs)` or a comprehension.  The
+`dict(**kwargs)` or a comprehension.  The exit-code reachability judgement errs
+strict: an overwrite that can be skipped (`for` / `while` bodies, `match` cases)
+does not count, so an initializer overwritten only inside a loop is still
+flagged — a false FAIL on unusual code, never a false PASS.  The
 exit mapping is the one
 registered order: `PASS=0`, `PASS_WITH_SKIPS/FAIL=1`, `BLOCKED=2`, `NOT_RUN=3`.
 Every process mode checks the live process group and the grandchild PID after
@@ -163,7 +173,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 40 mutants:
+`JUDGES`, keyed by the same names. The current table has 43 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -180,7 +190,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `controls-return-none`, `controls-system-exit-none`,
 `calibrate-exit-code-relayed`, `controls-status-slot-subscript`,
 `controls-aggregate-lookalike`, `calibrate-status-update`,
-`retirement-duplicate-status-key`, `controls-nested-same-name`.  The batch-related
+`retirement-duplicate-status-key`, `controls-nested-same-name`,
+`calibrate-shared-excuse`, `calibrate-status-setdefault`,
+`calibrate-status-update-kwarg`.  The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
@@ -212,7 +224,14 @@ returns `None` from a registered `main`, and `controls-system-exit-none` raises
 `controls-aggregate-lookalike` shadows the shared function with a local one;
 `calibrate-status-update` writes the slot through `update()`;
 `retirement-duplicate-status-key` repeats the `status` key with a clean value
-second; `controls-nested-same-name` nests a second `def main`.  The
+second; `controls-nested-same-name` nests a second `def main`.  The three
+`fix-r4` mutants pin what the r3 reviews found and the review of this round
+required to stay separate: `calibrate-shared-excuse` writes `code = 0` into one
+`session_domain.py:main` suite branch while the other branch still calls the
+shared function (the reachability rule must flag it, and the zero initializer
+above the `try` must stay legal); `calibrate-status-setdefault` writes the slot
+through `setdefault()`; `calibrate-status-update-kwarg` passes the slot as a
+keyword argument to `update()`.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
