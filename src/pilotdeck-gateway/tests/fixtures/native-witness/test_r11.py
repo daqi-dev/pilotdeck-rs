@@ -730,6 +730,42 @@ class R11Tests(unittest.TestCase):
         self.assertTrue(observation is not None
                         and observation['registry']['record']['state'] == 'completed', marker)
 
+    def test_settle_terminal_state_is_per_round(self):
+        marker = '#1715 terminal state is re-derived every round, never carried forward'
+        expectation = {'registry': {'applicable': False}, 'durableStatus': ['turn_failed']}
+        def tick(duration):
+            self.sleep(duration)
+            if len(self.sleeps) == 1:
+                # Round one is terminal; the product then moves back to
+                # `running` without ever writing a durable entry.  A value
+                # carried over from round one would settle a later stable
+                # round and score a state the product no longer has.
+                self.write('running')
+        try:
+            result = self.wait(tick, deadline=0.2, received=[{'id': 'request', 'final': True}],
+                               expectation=expectation)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+        self.assertTrue(result[0] is None and '落盘未完成' in result[2]['collectionError'], marker)
+
+    def test_settle_unlanded_durable_scores_difference_not_pass(self):
+        marker = '#1715 an early settle surfaces the missing entry, it never passes'
+        expectation = {'registry': {'applicable': False}, 'durableStatus': ['turn_failed']}
+        try:
+            observation, _, _ = self.wait(received=[{'id': 'request', 'final': True}],
+                                          expectation=expectation)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+        self.assertIsNotNone(observation, marker)
+        # The terminal registry settles the window, but the transcript never
+        # wrote a terminal durable entry: the settled observation still lacks
+        # it, so the registered surface differs and the case scores FAIL.  A
+        # PASS from this state would mean the settle invented evidence.
+        projected = s.project_observation(observation)
+        self.assertEqual(observation['registry']['record']['state'], 'completed', marker)
+        self.assertEqual(projected['durableStatus'], ['complete'], marker)
+        self.assertNotEqual(projected['durableStatus'], ['turn_failed'], marker)
+
     def test_terminal_durable_events_match_fixture(self):
         marker = '#1363 terminal durable labels are the frozen fixture label family'
         document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json')

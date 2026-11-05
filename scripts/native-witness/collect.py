@@ -378,17 +378,25 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
             last = result
             last_error = None
             record = observation['registry']['record']
-            terminal = record.get('state') in SESSION_TERMINAL_STATES
+            # Every signal below is recomputed from *this* round's observation
+            # and this round's first recording of `received`.  Nothing is
+            # carried into the next round: a registry that goes back to
+            # `running` must stop settling even if an earlier round saw a
+            # terminal state (test_settle_terminal_state_is_per_round).
+            final_seen = any(frame.get('id') == request_id and frame.get('final') is True
+                             for frame in received)
             # A failed registry is still appendable during a turn. After this
             # request's final error it is a finished failed attempt; the final
             # may be result_unknown while the durable error is turn_timeout.
             # Retain both verbatim for #1242 scoring rather than requiring them
             # equal (which would hide a stable product difference as NOT_RUN).
-            terminal = terminal or (record.get('state') == 'failed'
+            registry_terminal = record.get('state') in SESSION_TERMINAL_STATES or (
+                record.get('state') == 'failed'
                 and isinstance(record.get('result'), dict) and record['result'].get('type') == 'error'
                 and any(frame.get('id') == request_id and frame.get('final') is True
                         and isinstance(frame.get('event'), dict) and frame['event'].get('type') == 'error'
                         for frame in received))
+            terminal = registry_terminal
             if expectation is not None and expectation['registry']['applicable'] is False:
                 # No registry is promised for this registered case. A terminal
                 # transcript status (or a registered empty status surface) and
@@ -404,12 +412,22 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
                 # three-sample window (two 0.05 s intervals, i.e. >=0.10 s of
                 # unchanged bytes) is what keeps that narrow, and a late entry
                 # shows as an ordered product difference rather than NOT_RUN.
-                terminal = (terminal or not expectation['durableStatus'] or any(
-                    entry.get('event') in SESSION_TERMINAL_DURABLE_EVENTS
-                    for entry in observation['durableStatus']['entries']) or any(
-                        json.loads(line).get('type') == 'turn_result'
-                        for line in w.native.jsonl_lines(source['transcriptText']) if line.strip())) and any(
-                        frame.get('id') == request_id and frame.get('final') is True for frame in received)
+                # Measured (#1715): such an early settle can only score a
+                # `durableStatus` difference (FAIL), never a PASS, because the
+                # missing entry is still missing in the returned observation
+                # (test_settle_unlanded_durable_scores_difference_not_pass).
+                durable_terminal = (not expectation['durableStatus']
+                                    or any(entry.get('event') in SESSION_TERMINAL_DURABLE_EVENTS
+                                           for entry in observation['durableStatus']['entries'])
+                                    or any(json.loads(line).get('type') == 'turn_result'
+                                           for line in w.native.jsonl_lines(source['transcriptText'])
+                                           if line.strip()))
+                # Full evaluation, both operands derived this round: the
+                # terminal registry a product did write and the durable
+                # evidence are read from the same observation, and the final
+                # frame is still required (without it the turn is not
+                # delimited: test_settle_inapplicable_transcript_pending).
+                terminal = final_seen and (registry_terminal or durable_terminal)
             if terminal and before == after:
                 stable = stable + 1 if after == previous else 1
                 previous = after
