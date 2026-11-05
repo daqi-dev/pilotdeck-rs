@@ -125,7 +125,11 @@ class R11Tests(unittest.TestCase):
         try:
             expectations = c.session_expectations()
             inapplicable = [row for row in expectations.values() if row['registry']['applicable'] is False]
-            self.assertTrue(len(inapplicable) == 18 and any(not row['durableStatus'] for row in inapplicable), marker)
+            # #1363 (#8): derive, do not pin the frozen fixture's count. The
+            # structural invariant is "there is at least one inapplicable case,
+            # and at least one of them registers no durable status".
+            self.assertTrue(inapplicable and any(not row['durableStatus'] for row in inapplicable), marker)
+            self.assertTrue(all(row['registry'] == {'applicable': False} for row in inapplicable), marker)
             for expected in inapplicable:
                 self.clock, self.sleeps = 0.0, []
                 self.chat.write_text(''.join(json.dumps({'type': 'agent_status_message', 'event': label}) + '\n'
@@ -604,6 +608,12 @@ class R11Tests(unittest.TestCase):
     def test_settle_timeout_full_chain(self):
         marker = '#1140 r11 unsettled case passes authentication and stays NOT_RUN'
         fixture_tools = load('r11_timeout_controls', ROOT / 'scripts/gateway-parity/controls/session_domain.py')
+        # #1363 (#3): bind the mutation with the paired positive. The untouched
+        # fixture must still score, so a change that made every verdict NOT_RUN
+        # can no longer satisfy this test vacuously.
+        baseline = fixture_tools.control_deadline_report(
+            fixture_tools.native_capture_fixture(self.home / 'timeout-baseline'))['cells'][-1]['cases'][0]
+        self.assertTrue(baseline['status'] != 'NOT_RUN', marker + ': baseline never scored')
         folder = fixture_tools.native_capture_fixture(self.home / 'timeout-chain')
         rows = json.loads((folder / 'session-domain/cases.json').read_text())
         rows['cases'][0].update(observation=None, reason='落盘未完成')
@@ -677,6 +687,82 @@ class R11Tests(unittest.TestCase):
                 except Exception as error:
                     self.fail(marker + ': ' + repr(error))
                 self.assertTrue(result[0] is not None and len(self.sleeps) == 4, marker)
+
+    def test_settle_zero_window_reads_once(self):
+        marker = '#1363 zero-length settle window still reads the files once'
+        self.write('running')
+        calls = []
+        real = c.read_observation
+        def counted(*args, **kwargs):
+            calls.append(1)
+            return real(*args, **kwargs)
+        self.clock = 5.0  # deadline already elapsed when wait_observation starts
+        try:
+            with patch.object(c, 'read_observation', side_effect=counted):
+                result = self.wait(deadline=1.0)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+        # One iteration performs one stat-bracketed read (two read_observation
+        # calls); the invariant under test is "no iteration skipped, no retry
+        # loop", so assert a read happened and no sleep was attempted.
+        self.assertTrue(calls and self.sleeps == [] and result[0] is None, marker)
+
+    def test_settle_keeps_last_error(self):
+        marker = '#1363 a swallowed structural Incomplete keeps its last cause'
+        def structural(*args, **kwargs):
+            raise c.w.Incomplete('#1140 STRUCTURAL: expected exactly one project marker')
+        caught = None
+        try:
+            with patch.object(c, 'read_observation', side_effect=structural):
+                self.wait(deadline=0.06)
+        except BaseException as error:
+            caught = error
+        self.assertTrue(isinstance(caught, c.Blocked) and 'STRUCTURAL' in str(caught), marker)
+
+    def test_settle_keeps_terminal_registry_when_inapplicable(self):
+        marker = '#1363 inapplicable registry must not overwrite a terminal registry'
+        expectation = {'registry': {'applicable': False}, 'durableStatus': ['turn_failed']}
+        try:
+            observation, _, _ = self.wait(received=[{'id': 'request', 'final': True}],
+                                          expectation=expectation)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+        self.assertTrue(observation is not None
+                        and observation['registry']['record']['state'] == 'completed', marker)
+
+    def test_terminal_durable_events_match_fixture(self):
+        marker = '#1363 terminal durable labels are the frozen fixture label family'
+        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json').read_text())
+        labels = {event for row in document['cases'] for side in ('ts', 'rust')
+                  for event in row[side]['durableStatus']}
+        self.assertEqual(labels, set(c.SESSION_TERMINAL_DURABLE_EVENTS), marker)
+
+    def test_expectations_reject_bad_fixtures(self):
+        marker = '#1363 expectations fixture must be non-empty, unique and label-stable'
+        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json').read_text())
+        for name in ('empty', 'duplicate', 'drift'):
+            fixture = Path(self.temp.name) / ('exp-' + name) / 'scripts/gateway-parity/fixtures'
+            fixture.mkdir(parents=True)
+            body = json.loads(json.dumps(document))
+            if name == 'empty':
+                body['cases'] = []
+            elif name == 'duplicate':
+                body['cases'] = body['cases'] + [body['cases'][0]]
+            else:
+                body['cases'][0]['rust']['durableStatus'] = ['turn_cancelled']
+            (fixture / 'session-expectations.json').write_text(json.dumps(body))
+            module_file = fixture.parent.parent / 'native-witness' / 'collect.py'
+            caught = None
+            try:
+                with patch.object(c, '__file__', str(module_file)):
+                    c.session_expectations()
+            except BaseException as error:
+                caught = error
+            self.assertTrue(isinstance(caught, c.w.Incomplete), marker + ': ' + name)
+
+    def test_expectations_mirror_mock_gateway(self):
+        marker = '#1363 collector and mock gateway read the same expectations'
+        self.assertEqual(c.session_expectations(), mock_gateway.load_expectations(ROOT), marker)
 
 
 if __name__ == '__main__':
