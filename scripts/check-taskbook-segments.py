@@ -121,9 +121,12 @@ def placeholder_in(text):
         # 表达式上下文里**（前一个字符是 `(` `,` `=` `[` `{` `+`）才按代码放行。
         # 只看「紧贴引号」会把正文里的 `按 "{name}" 填`、`"{file}"`、`"{N}"` 一并当代码跳过——
         # 这三个词正在占位词表里，交付物格写成引号裹占位词就假 PASS。
+        # 字符串前缀（`f"{name}"` / `rb"{path}"`）也是表达式上下文：前一个字符是 ASCII 标识符字符。
         if (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", m.group(1).strip())
                 and m.start() > 1 and text[m.start() - 1] in "\"'"
-                and text[m.start() - 2] in "(,=[{+"
+                and (text[m.start() - 2] in "(,=[{+"
+                     or (text[m.start() - 2].isascii()
+                         and (text[m.start() - 2].isalnum() or text[m.start() - 2] == "_")))
                 and m.end() < len(text) and text[m.end()] in "\"'"):
             continue
         if _looks_placeholder(m.group(1)):

@@ -487,6 +487,10 @@ case("引号裹占位词 \"{file}\" 仍是占位符（P2 假 PASS）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "按 \"{file}\" 填"), must=["占位符"])
 case("引号裹占位词 \"{N}\" 仍是占位符（P2 假 PASS）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "按 \"{N}\" 填"), must=["占位符"])
+case("字符串前缀 f\"{name}\" 仍放行（第十轮豁免别被收紧掉）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`f\"{name}\"`"))
+case("字符串前缀 rb\"{path}\" 同样放行", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`rb\"{path}\"`"))
 case("表达式上下文里的命名参数 format!(\"{idx}\") 仍放行（别矫枉过正）", 0,
      BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1",
                                      "`S1-RESULT.md`，改 `format!(\"{idx}\")`"))
