@@ -17,7 +17,9 @@
 ### A. 仓内（本 PR 落地，合并进 main 即生效）
 
 1. **上限常量仍只有一处**：`scripts/lib/worktree-count.sh` 的 `PDRS_WORKTREE_CAP_MAX`，值 40 → **60**。`scripts/wt-status.sh` 与 `pdrs-ops` 的 `new-tree.sh` 都 source 它，不另写数字。
-2. **磁盘三档的阈值与测量也收敛到一处**：新增 `scripts/lib/disk-budget.sh`（`PDRS_DISK_TOTAL_GIB=200` / `PDRS_DISK_HARD_GIB=180` / `PDRS_DISK_WARN_GIB=160`、`pdrs_disk_used_kib`、`pdrs_disk_level`）。判断一律用 `du -sk` 的 **KiB 原值**，不做 GiB 四舍五入；`du` 非 0 或输出非数字返回 2，**fail-closed**，不把「没量到」当 0 放行。
+2. **磁盘三档的阈值与测量也收敛到一处**：新增 `scripts/lib/disk-budget.sh`（`PDRS_DISK_TOTAL_GIB=200` / `PDRS_DISK_HARD_GIB=180` / `PDRS_DISK_WARN_GIB=160`、`pdrs_disk_used_kib`、`pdrs_disk_level`）。判断一律用 `du -sk` 的 **KiB 原值**，不做 GiB 四舍五入；`du` 非 0 或输出非数字返回 2，**fail-closed**，不把「没量到」当 0 放行。两处易踩的坑已实测并处理：
+   - **命令行符号链接 `du -sk` 不跟随**（11-05 BSD 实测：指向 3 MiB 目录的链接报 `0 KiB`、rc=0）——本仓 runner 树确有 `_build` 指向外接卷的配置，直接量会让闸门静默失效。改为先 `cd + pwd -P` 取物理路径再量。
+   - **断链**同样是 `0 KiB` + rc=0，按测量失败处理（rc=2 拒开）。
 3. **`scripts/pdrs-loop.sh` 接同一实现**：删掉自带的 `DISK_CAP_KIB=167772160` 与内联 `du`，改调 `pdrs_disk_used_kib`；保留「在 160 GiB 就停派新活」的保守行为（比开树硬闸早一档），并把陈旧的「超 100GiB 上限」文案改正。测量失败同样停机（fail-closed）。
 4. `CLAUDE.md` §五「资源上限」两条与 `.42cog/real.md` 的 40 同步为 60，细节指向两处 lib，不重复写数字。
 
@@ -31,7 +33,7 @@
 6. `pdrs-ops/scripts/loop/recycle-tree.sh` 在 `git worktree remove` 前删该树的 `_build/cargo-target` 与 `target/`，并打印释放量；顺带加树名单段校验（脚本现在会 `rm -rf`，挡 `../` 越界）。
 7. `pdrs-ops/scripts/remote-worker/README.md` §7.6 写明：每棵树的 `CARGO_TARGET_DIR` 必须在树内 `_build/cargo-target`（或 `target/`），否则回收删不掉。
 
-> 状态说明：ops 是仓外本地 git（无远端），按本次任务约定只提交到新分支、不合并、不推送。**在 ops 侧合并之前，`/Users/da/ws/pdrs-ops` 主检出里的 `new-tree.sh` 仍是旧行为（185 GiB 硬闸、无 WARN、GiB 四舍五入）**，仓内文档描述的是合并后的目标行为。要核这侧实现，读 worktree `/Users/da/ws/pdrs-ops-cap60`（分支 `chore/worktree-cap-60-1105`，commits `74cb144` + `310640e`），不要读 `/Users/da/ws/pdrs-ops`（那里有别的会话未提交改动，本单未触碰）。
+> 状态说明：ops 是仓外本地 git（无远端），按本次任务约定只提交到新分支、不合并、不推送。**在 ops 侧合并之前，`/Users/da/ws/pdrs-ops` 主检出里的 `new-tree.sh` 仍是旧行为（185 GiB 硬闸、无 WARN、GiB 四舍五入）**，仓内文档描述的是合并后的目标行为。要核这侧实现，读 worktree `/Users/da/ws/pdrs-ops-cap60` 的分支 `chore/worktree-cap-60-1105`（两笔提交：名额/磁盘闸/回收删 target、改用主仓 `disk-budget.sh`；ops main 每次前进都要 rebase，故这里不写死 SHA），不要读 `/Users/da/ws/pdrs-ops`（那里有别的会话未提交改动，本单未触碰）。
 
 ## 选项与后果
 

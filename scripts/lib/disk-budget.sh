@@ -36,11 +36,17 @@ PDRS_DISK_WARN_GIB=$(_pdrs_disk_clamp "${PDRS_DISK_WARN_GIB:-}" "$PDRS_DISK_WARN
 [ "$PDRS_DISK_WARN_GIB" -le "$PDRS_DISK_HARD_GIB" ] || PDRS_DISK_WARN_GIB=$PDRS_DISK_HARD_GIB
 
 pdrs_disk_used_kib() {
-  local root=${1:-$PWD} d out sum=0
+  local root=${1:-$PWD} d real out sum=0
   for d in "$root/_build" "$root/_tmp"; do
-    [ -d "$d" ] || continue
+    # 既不是实体也不是链接 → 目录本就不存在（远端宿主的 target 在别处），计 0
+    [ -e "$d" ] || [ -L "$d" ] || continue
+    # 断链：`du` 对它是 0 KiB 且 rc=0（11-05 实测），静默放行等于把闸关掉 → fail-closed
+    [ -e "$d" ] || return 2
+    # 命令行操作数是符号链接时 `du -sk` 不跟随（11-05 BSD 实测 0 KiB；本仓 runner 树
+    # 有 `_build` 指向外接卷的配置）→ 先 cd + pwd -P 取物理路径再量
+    real=$(cd "$d" 2>/dev/null && pwd -P) || return 2
     # fail-closed：du 非 0 或输出不是数字就返回 2，绝不把「没量到」当 0 放行
-    out=$(du -sk "$d" 2>/dev/null) || return 2
+    out=$(du -sk "$real" 2>/dev/null) || return 2
     out=${out%%[!0-9]*}
     [ -n "$out" ] || return 2
     sum=$((sum + out))
@@ -48,17 +54,21 @@ pdrs_disk_used_kib() {
   printf '%s\n' "$sum"
 }
 
-pdrs_disk_level() {
-  local root=${1:-$PWD} kib
-  kib=$(pdrs_disk_used_kib "$root") || return 2
-  if [ "$kib" -gt "$((PDRS_DISK_HARD_GIB * 1048576))" ]; then printf 'hard\n'
-  elif [ "$kib" -gt "$((PDRS_DISK_WARN_GIB * 1048576))" ]; then printf 'warn\n'
+_pdrs_disk_level_of() { # $1=KiB 原值；三档判定只有这一处
+  if [ "$1" -gt "$((PDRS_DISK_HARD_GIB * 1048576))" ]; then printf 'hard\n'
+  elif [ "$1" -gt "$((PDRS_DISK_WARN_GIB * 1048576))" ]; then printf 'warn\n'
   else printf 'ok\n'; fi
+}
+
+pdrs_disk_level() {
+  local kib
+  kib=$(pdrs_disk_used_kib "${1:-$PWD}") || return 2
+  _pdrs_disk_level_of "$kib"
 }
 
 # 直接执行：打印三档阈值、当前测量值与级别（自测 / 排障用）
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   kib=$(pdrs_disk_used_kib "$PWD") || { echo "disk-budget: 测量失败" >&2; exit 2; }
   echo "disk-budget: 总量上限 ${PDRS_DISK_TOTAL_GIB} GiB / 硬闸 ${PDRS_DISK_HARD_GIB} GiB / WARN ${PDRS_DISK_WARN_GIB} GiB"
-  echo "disk-budget: 当前 $((kib / 1048576)) GiB（${kib} KiB）→ $(pdrs_disk_level "$PWD")"
+  echo "disk-budget: 当前 $((kib / 1048576)) GiB（${kib} KiB）→ $(_pdrs_disk_level_of "$kib")"
 fi
