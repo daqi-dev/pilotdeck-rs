@@ -230,6 +230,13 @@ impl PendingSopStore {
         // null`, `slots_json` merged, the wait cleared, the receipt stored.
         let state = {
             let mut next = current.state.clone();
+            if crate::mutants::on("approvals-resume-empty-default-on") && next.as_object().is_none()
+            {
+                // #1473 negative control: the historical silent
+                // empty-object default the seed shape gate removed — the
+                // corrupted-state resume must not succeed on it.
+                next = JsValue::Object(JsObject::new());
+            }
             let JsValue::Object(object) = &mut next else {
                 // Unreachable since the seed shape gate (every seeded state
                 // is an object), but a structurally sound store must never
@@ -813,4 +820,26 @@ pub(crate) fn deep_strict_equal(left: &JsValue, right: &JsValue) -> bool {
 /// strictly equal (`-0 === 0`), `NaN` equals nothing.
 fn strict_not_equal(left: f64, right: f64) -> bool {
     !(left == right)
+}
+
+/// #1473 negative-control support: swap one seeded entry's `state` behind
+/// the seed shape gate, so the resume no-panic branch can be driven by a
+/// test (the historical `unreachable!` under the lock is reachable only
+/// through this corruption).
+#[cfg(test)]
+pub(crate) fn corrupt_seeded_state_for_test(
+    store: &PendingSopStore,
+    project_key: Option<&JsValue>,
+    session: &str,
+    state: JsValue,
+) {
+    let root = (store.profiles)(project_key).expect("#1473 the test must resolve the profile");
+    let mut states = store
+        .states
+        .lock()
+        .expect("#1473 the test must take the state lock");
+    let entry = states
+        .get_mut(&(root, JsString::from(session)))
+        .expect("#1473 the corruption target must be seeded first");
+    entry.state = state;
 }
