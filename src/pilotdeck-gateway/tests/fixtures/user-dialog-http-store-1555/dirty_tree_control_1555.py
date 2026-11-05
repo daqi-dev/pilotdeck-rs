@@ -66,7 +66,15 @@ and is SURVIVED; non-zero means it died before the lock and is INVALID, since
 infrastructure failure is not evidence a mutant survived. The `dirty-src`
 control applies the same split: no `provenance` with a zero exit is SURVIVED,
 non-zero is INVALID (fix-r9 review, three independent P1s -- the two chains
-had drifted apart).
+had drifted apart). Two differences between the chains are deliberate and
+written down here so they are not read as drift again: the lock side applies
+that split only after the clean-run positive control has passed (a mutant that
+breaks the driver outright is INVALID, not a survivor), and the two sides read
+`provenance` from different places -- the lock side scans the driver's log
+text, the dirty side reads `summary['provenance']`. A restore that puts the
+bytes back without its file mode makes the dirty row INVALID through
+`provenance.negctl_restore_mode_lost`: git tracks only the exec bit, so the
+difference would otherwise be invisible to every guard.
 
 The marker is normally undone by the driver itself, inside the lock (see
 `negctl_restore` in `rss_probe_1555.py`); this file's `restore_locked` is the
@@ -277,23 +285,27 @@ def restore(path, original, marked=None):
                        'control\'s marker; left untouched for inspection')
     temp = scratch('restore')
     try:
-        # Read the mode first: `stat` failing here is a real failure of the
-        # rewrite and must stay visible (the outer `except OSError` records
-        # INVALID). Only the `chmod` below is best effort (fix-r9 review,
-        # boundary P3 / concurrency P2 -- swallowing both silently wrote the
-        # umask's mode onto a tracked source and still reported success).
-        mode = stat.S_IMODE(path.stat().st_mode)
+        # Read the mode first, but never let a failed read abandon the byte
+        # restore: leaving the marker on disk is the worse failure (it is
+        # process-tagged, so no other control will ever clear it and the whole
+        # worktree stays dirty for this fixture family). A missing mode is
+        # carried out as a complaint instead (fix-r9 review, boundary P3 /
+        # concurrency P2; the earlier version swallowed the stat failure and
+        # reported success, which was just as wrong in the other direction).
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except OSError:
+            mode = None
         temp.write_bytes(original)
         # `os.replace` swaps in the temp file's inode, so without this the
         # tracked source comes back with the umask's mode instead of its own
         # (fix-r6 review, sibling P2 -- the driver's `negctl_restore` path got
-        # the same fix; both write the same tracked file). Best effort on
-        # purpose: a failed chmod must not abort the restore and leave the
-        # source marked (fix-r7 review, concurrency P2).
-        try:
-            os.chmod(temp, mode)
-        except OSError:
-            pass
+        # the same fix; both write the same tracked file).
+        if mode is not None:
+            try:
+                os.chmod(temp, mode)
+            except OSError:
+                mode = None
         os.replace(temp, path)
     except OSError as error:
         try:
@@ -306,6 +318,13 @@ def restore(path, original, marked=None):
     except OSError as error:
         return False, f'{type(error).__name__}: {error} (rewrite not readable)'
     if readback == original:
+        if mode is None:
+            # The bytes are back but the mode is not HEAD's, and git tracks
+            # only the exec bit: this difference is invisible to every guard.
+            # Report it instead of claiming a clean restore.
+            return True, ('restored the bytes but not the file mode (stat or '
+                          'chmod failed); the worktree may carry a mode-only '
+                          'difference that no guard can see')
         return True, ''
     return False, 'the restore did not read back as HEAD bytes'
 
@@ -550,6 +569,20 @@ def dirty_check(out, env, original):
     if not restored:
         status = 'INVALID'
         reason = complaint
+    elif complaint:
+        # The bytes are HEAD again but the file mode is not: git tracks only
+        # the exec bit, so the worktree is now dirty in a way no guard sees.
+        # Attribute it instead of riding on a green row (fix-r9 review).
+        status = 'INVALID'
+        reason = complaint
+    elif provenance.get('negctl_restore_mode_lost'):
+        # The driver put the bytes back but lost the mode; the fallback below
+        # then reads that wrong mode off the file and "preserves" it, so this
+        # machine field is the only place the loss is visible (fix-r10 review,
+        # sibling P3). Attribute it rather than ride on a green row.
+        status = 'INVALID'
+        reason = ('the driver restored the marker bytes but not the file mode: '
+                  f'{provenance.get("negctl_restore")!r}')
     elif reason:
         status = 'INVALID'
     elif not provenance and returncode == 0:

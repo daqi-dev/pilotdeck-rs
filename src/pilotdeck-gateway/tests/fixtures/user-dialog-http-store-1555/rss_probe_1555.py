@@ -128,38 +128,52 @@ def negctl_restore():
     file>`; both files live in the control's output directory, outside the
     repository. Unset (the normal case) this is a no-op, and the write only
     happens when the bytes on disk are exactly the marker that control wrote.
+
+    Returns `(note, mode_lost)`. `mode_lost` is a machine field, not a
+    substring of `note`: the control records it as
+    `provenance.negctl_restore_mode_lost` and refuses to score the row green
+    when it is set, because git tracks only the exec bit and a mode-only
+    difference is invisible to every guard (fix-r10 review, sibling P3).
     """
     spec = os.environ.get('PDRS_NEGCTL_RESTORE')
     if not spec:
-        return None
+        return None, False
     temp = root / f'.negctl-{os.getpid()}-probe-restore'
+    mode = None
     try:
         relative, original_path, marked_path = spec.split('\x1f')
         target = root / relative
         if target.read_bytes() != Path(marked_path).read_bytes():
             return 'left untouched: the bytes are not this control\'s marker'
-        # Read the mode before writing: a `stat` failure is a real failure of
-        # the restore and must reach the caller (the outer handler below), not
-        # be swallowed with the chmod (fix-r9 review).
-        mode = stat.S_IMODE(target.stat().st_mode)
+        # Read the mode before writing, but a failed read must not abandon the
+        # restore: leaving the marker on disk is worse (it is process-tagged,
+        # so no other control will clear it). The loss is reported instead, in
+        # the string the control records as `provenance.negctl_restore`
+        # (fix-r9 review).
+        try:
+            mode = stat.S_IMODE(target.stat().st_mode)
+        except OSError:
+            mode = None
         temp.write_bytes(Path(original_path).read_bytes())
         # `os.replace` swaps in the temp file's inode, so without this the
         # tracked source would come back with the umask's mode instead of its
-        # own. This path runs on every control, not only on failures. Best
-        # effort: a failed chmod must not abort the restore (fix-r7 review,
-        # concurrency P2).
-        try:
-            os.chmod(temp, mode)
-        except OSError:
-            pass
+        # own. This path runs on every control, not only on failures.
+        if mode is not None:
+            try:
+                os.chmod(temp, mode)
+            except OSError:
+                mode = None
         os.replace(temp, target)
     except (OSError, ValueError) as error:
         try:
             temp.unlink()
         except OSError:
             pass
-        return f'{type(error).__name__}: {error}'
-    return 'restored under the tree lock'
+        return f'{type(error).__name__}: {error}', False
+    if mode is None:
+        return ('restored the bytes but not the file mode (stat or chmod '
+                'failed); no guard can see a mode-only difference'), True
+    return 'restored under the tree lock', False
 
 
 def summary_for(provenance, status, **over):
@@ -233,7 +247,9 @@ def main():
             time_tool='time -l' if DARWIN else 'time -v', rounds=args.rounds)
         if dirty is not None:
             # Still inside the lock: see `negctl_restore`.
-            provenance['negctl_restore'] = negctl_restore()
+            note, mode_lost = negctl_restore()
+            provenance['negctl_restore'] = note
+            provenance['negctl_restore_mode_lost'] = mode_lost
         print(f'provenance {json.dumps(provenance)}', flush=True)
         if dirty is not None:
             summary = summary_for(provenance, 'INVALID', failures=[
