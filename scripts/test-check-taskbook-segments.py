@@ -414,6 +414,61 @@ case("整格就是 {} 仍算占位符（正控）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "{}"),
      must=["占位符"])
 
+# ---- fix-r11 第四批（GLM 第十一轮 concurrency P0×2、sibling P2 / P3，另修 patch14 引入的回归）----
+# patch14 重写 _blank_indented 时丢了「空行之后 in_block = True」：中段的缩进代码块不再抹掉，
+# 里面的示例 scope 被当成真声明把大包短路成小包（实测修前 rc 0，假 PASS）。
+case("中段缩进代码块里的示例 scope 不算声明（回归，P0 假 PASS）", 1,
+     "# t\n\n正文一行。\n\n    <!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n"
+     + TEN_RS + "\n", must=["分段交付"])
+# 续跑路径不在反引号里时，只有 PATH_TOKEN 静音那一条能挡住路径里的 resume（旧的负控只测到反引号那条）
+# 只有 _blank_indented 拦得住：中段缩进块里的示例分段行若没被抹掉，会被当成本包的表行（120 min > 90）
+case("中段缩进块里的示例分段行不算数（回归，P0 假 PASS）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("""## 续跑""", """写法示例（上一单）：
+
+    | 段 | 涉及文件 | 交付物 | 预估时长 | 段间依赖 |
+    |----|---------|--------|---------|---------|
+    | S1 | `src/x.rs` | `X.md` | 120 min | — |
+
+## 续跑"""))
+case("裸进度路径里带 resume 也不算失败续跑说明（P0 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`_tmp/20261105-issue-100/progress.md`",
+                                     "_tmp/20261105-issue-100/resume-r1/progress.md")
+     .replace("- 第 N 段失败：读 progress.md 最后一个 done 段，从 N+1 继续。\n", ""),
+     must=["第 N 段失败"])
+case("两段共写同一文件必须报（sibling P2 漏判）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/native_http.rs`", "`src/interaction.rs`"),
+     must=["共写同一文件"])
+
+# ---- fix-r11 第三批（DeepSeek 第十一轮 boundary P0×2 P2×5 P3×2，全部先复现原始 rc）----------
+case("千分位 1,000 min 不许读成 1 min（P0 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1,000 min |"), must=["1000 min > 90 min"])
+case("全角千分位 1，000 min 同样（P0）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1，000 min |"), must=["1000 min > 90 min"])
+case("进度路径里带 resume 不算「失败从哪继续」（P0 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
+                                     "_tmp/20261105-issue-100/resume-r1/progress.md")
+     .replace("- 第 N 段失败：读 progress.md 最后一个 done 段，从 N+1 继续。\n", ""),
+     must=["第 N 段失败"])
+case("松散列表：空行 + 4 格缩进的进度路径仍是正文（P2 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("- 进度文件：`_tmp/20261105-issue-100/progress.md`（每段一行）",
+                                     "- 进度文件：\n\n    `_tmp/20261105-issue-100/progress.md`"))
+case("Rust 内联命名参数 format!(\"{x}\") 不是占位符（P2 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1",
+                                     "`S1-RESULT.md`，改 `format!(\"{x}\")`"))
+case("分段文件 + 段 的表头按整格绑列（P2 假 FAIL）", 0,
+     BIG_SCOPE + """## 分段交付
+
+| 分段文件 | 段 | 交付物 | 预估时长 | 段间依赖 |
+|---------|----|--------|---------|---------|
+| `src/a.rs` | S1 | `S1-RESULT.md` | 40 min | — |
+| `src/b.rs` | S2 | `S2-RESULT.md` | 40 min | S1 |
+
+## 续跑
+
+- 进度文件：`_tmp/20261105-issue-100/progress.md`（每段一行）
+- 第 N 段失败：读 progress.md 最后一个 done 段，从 N+1 继续。
+""")
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -580,7 +635,7 @@ def run():
         fails += 0 if ok else 1
 
         # 真实权限拒绝：chmod 000 的 _tmp 下任务书必须让扫描「中断」而不是静默消失
-        if os.name == "posix":
+        if os.name == "posix" and os.geteuid() != 0:   # root 下 chmod 000 拦不住，用例会假红
             blocked = Path(td) / "_build" / "wt-9998" / "_tmp"
             blocked.mkdir(parents=True)
             (blocked / "task.md").write_text(SMALL, encoding="utf-8")
@@ -653,24 +708,70 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  读中路径被同 size/mtime 换掉 → rc=2：rc={r and r['rc']} {detail}")
         fails += 0 if ok else 1
 
-        # 4) 换成 FIFO 也必须 rc 2 且不阻塞（O_NONBLOCK + fstat 判类型）
+        # 4) stat 与 open 之间换成 FIFO：必须靠 O_NONBLOCK + fstat 判类型 rc 2（不阻塞）。
+        #    换入点必须在 os.open **之前**：旧用例在 fdopen 时才换，fd 仍指向原普通文件，
+        #    删掉 S_ISREG 判定照样 PASS（断言只看 rc，没测到声称的那条路径）。
         fifo_md = Path(td) / "swapfifo.md"
         fifo_md.write_text(SMALL, encoding="utf-8")
-        real_fdopen2 = os.fdopen
+        real_open2 = os.open
+        target = os.path.realpath(fifo_md)
 
-        def spy_fdopen2(fd, *a, **kw):
-            if fifo_md.exists():
-                fifo_md.unlink()
-            os.mkfifo(fifo_md)
-            return real_fdopen2(fd, *a, **kw)
+        def spy_open2(path, flags, *a, **kw):
+            if str(path) == target:
+                if fifo_md.exists():
+                    fifo_md.unlink()
+                os.mkfifo(fifo_md)
+            return real_open2(path, flags, *a, **kw)
 
-        ctbs.os.fdopen = spy_fdopen2
+        ctbs.os.open = spy_open2
         try:
             r = ctbs.check_file(fifo_md)
         finally:
-            ctbs.os.fdopen = real_fdopen2
-        ok = r is not None and r["rc"] == 2
-        print(f"{'PASS' if ok else 'FAIL'}  读中路径被换成 FIFO / 换后不是普通文件 → rc=2：rc={r and r['rc']}")
+            ctbs.os.open = real_open2
+        ok = (r is not None and r["rc"] == 2 and "不是普通文件" in r["problems"][0])
+        detail = (r["problems"] or [""])[0][:20] if r else ""
+        print(f"{'PASS' if ok else 'FAIL'}  stat→open 之间换成 FIFO → rc=2 非普通文件："
+              f"rc={r and r['rc']} {detail}")
+        fails += 0 if ok else 1
+
+        # 5) mask_inline_code 也是线性的：长度 1..2000 的反引号开串全不闭合 = 2 MiB 病态输入，
+        #    修前逐串后扫 O(k·n) 实测 53 s
+        bad_ticks = "".join("`" * i + "a" for i in range(1, 2001))
+        t0 = time.monotonic()
+        masked = ctbs.mask_inline_code(bad_ticks)
+        dt = time.monotonic() - t0
+        ok = (dt < 5.0 and masked.count("a") == 2000
+              and ctbs.mask_inline_code("`a` `b`") == " " * 7          # 两段各自整体抹掉
+              and ctbs.mask_inline_code("x `no close") == "x `no close")  # 没闭合按字面量
+        print(f"{'PASS' if ok else 'FAIL'}  mask_inline_code 线性（2 MiB 病态输入 {dt:.2f}s）："
+              f"未闭合按字面量保留={masked.count('a') == 2000}")
+        fails += 0 if ok else 1
+
+        # 6) strip_fences 线性：2 MiB 全闭合围栏（262144 跨）修前每跨整串重建，实测 32.66 s
+        big_fences = "```\n```\n" * 262144
+        t0 = time.monotonic()
+        no_fence = ctbs.strip_fences(big_fences)
+        dt = time.monotonic() - t0
+        ok = (dt < 5.0 and no_fence.strip() == ""
+              and no_fence.count("\n") == big_fences.count("\n"))
+        print(f"{'PASS' if ok else 'FAIL'}  strip_fences 线性（2 MiB / 26 万跨 {dt:.2f}s）："
+              f"全抹平={no_fence.strip() == ''} 行数不变={no_fence.count(chr(10)) == big_fences.count(chr(10))}")
+        fails += 0 if ok else 1
+
+        # 7) parse_est 超长格子：2 MiB 单格修前 44.19 s（O(n²)），现在按 MAX_EST_CELL 直接判「读不出」
+        t0 = time.monotonic()
+        got = ctbs.parse_est("60 min + 1 " * 174762)
+        dt = time.monotonic() - t0
+        ok = got is None and dt < 1.0
+        print(f"{'PASS' if ok else 'FAIL'}  parse_est 2 MiB 单格 {dt:.2f}s → {got}（须 <1 s 且读不出）")
+        fails += 0 if ok else 1
+
+        # 8) 读不出时的报错不嵌整格原文：否则问题列表随格子尺寸膨胀（2 MiB 格子 → 2 MiB stdout）
+        long_est = BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| " + "x" * 5000 + " |")
+        probs = ctbs.check_segments(long_est)
+        worst = max((len(x) for x in probs), default=0)
+        ok = worst < 400 and any("读不出" in x for x in probs)
+        print(f"{'PASS' if ok else 'FAIL'}  长格子报错截断（最长问题 {worst} 字符）：读不出={any('读不出' in x for x in probs)}")
         fails += 0 if ok else 1
 
         # 5) --explain 的空扫描也不许打文本 SUMMARY（按行解析的调用方不认）
@@ -732,6 +833,7 @@ def run():
             ("--recent 缺小时数", ["x", "--recent"], 3),
             ("--recent nan 是用法错误", ["x", "--recent", "nan", "task.md"], 3),
             ("--recent 0 是用法错误", ["x", "--recent", "0", "task.md"], 3),
+            ("--recent 窗口短于新鲜度阈值是用法错误", ["x", "--recent", "0.001", "task.md"], 3),
             ("--recent 负数 是用法错误", ["x", "--recent", "-1", "task.md"], 3),
             ("--recent --root 不是目录是用法错误", ["x", "--recent", "24", "--root", "/nonexistent-pdrs-xyz"], 3),
             ("--root 不带 --recent 是用法错误", ["x", "--root", ".", "task.md"], 3),
@@ -741,7 +843,7 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 30 + len(PARSE_EST)   # 17 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
+    total = len(CASES) + 36 + len(PARSE_EST)   # 26 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
     # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
     for cell, unit, want in PARSE_EST:
         got = ctbs.parse_est(cell, unit)

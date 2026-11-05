@@ -117,6 +117,12 @@ def placeholder_in(text):
         # 误判会把合规任务书打回（假 FAIL）。
         if not m.group(1).strip() and text.strip() != m.group(0):
             continue
+        # Rust 内联命名参数（`format!("{x}")` / `"{n}"`）：花括号紧贴引号且内容是单个标识符，
+        # 是字符串字面量里的代码，不是「待填」。
+        if (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", m.group(1).strip())
+                and m.start() > 0 and text[m.start() - 1] in "\"'"
+                and m.end() < len(text) and text[m.end()] in "\"'"):
+            continue
         if _looks_placeholder(m.group(1)):
             return m.group(0)
     for m in FW_ANGLE.finditer(text):
@@ -144,9 +150,9 @@ COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
 # 反引号串长度必须配对（CommonMark）：修前只认单反引号，``` ``…`` ``` 里的示例 scope 照样被当前置声明。
 
 
-def mask_inline_code(text):
-    """把行内代码整段抹成空格（换行保留）。没有配对串的反引号按字面量处理。"""
-    n, out, i = len(text), list(text), 0
+def _backtick_runs(text):
+    """所有极大反引号串 [(start, length)]。"""
+    n, runs, i = len(text), [], 0
     while i < n:
         a = text.find("`", i)
         if a < 0:
@@ -154,25 +160,35 @@ def mask_inline_code(text):
         j = a
         while j < n and text[j] == "`":
             j += 1
-        run, k, close = j - a, j, -1
-        while True:                       # 找**恰好** run 个反引号的闭合串
-            k = text.find("`", k)
-            if k < 0:
-                break
-            e = k
-            while e < n and text[e] == "`":
-                e += 1
-            if e - k == run:
-                close = k
-                break
-            k = e
-        if close < 0:                     # 没有闭合：这串反引号是字面量，继续往后找
-            i = j
+        runs.append((a, j - a))
+        i = j
+    return runs
+
+
+def mask_inline_code(text):
+    """把行内代码整段抹成空格（换行保留）。没有配对串的反引号按字面量处理。
+
+    先建「长度 → 起点」表再二分找闭合串：修前每个开串都往后重扫一遍，长度 1..k 的开串
+    全不闭合时是 O(k·n)（2 MiB 病态输入实测 53 s，派单闸门跟着卡住）。
+    """
+    runs = _backtick_runs(text)
+    by_len = {}
+    for st, ln in runs:
+        by_len.setdefault(ln, []).append(st)
+    out = list(text)
+    consumed = 0                                 # 已经抹掉的区间末尾：里面的开串不再当开串
+    for a, run in runs:
+        if a < consumed:
             continue
+        pos = by_len[run]
+        k = bisect.bisect_right(pos, a)          # 闭合串必须在开串之后
+        if k >= len(pos):
+            continue                             # 没有闭合：这串反引号是字面量
+        close = pos[k]
         for x in range(a, close + run):
             if out[x] != "\n":
                 out[x] = " "
-        i = close + run
+        consumed = close + run
     return "".join(out)
 SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
 # 关键字与数字之间允许标点（`工作量：3 人日` / `预计,2 人日`）；「估计」要单列（裸「估」后跟「计」不匹配）。
@@ -191,17 +207,32 @@ QUOTED = re.compile(r"(?m)^[ \t]*>.*$")
 # 缩进代码块按 CommonMark 要求「前置空行」，且列表续行不算：`1. 进度文件：` 下一行缩进 4 格的路径是正文，
 # 一刀切会把它抹掉 → 续跑路径整段消失（假 FAIL）。
 INDENTED_HEAD = re.compile(r"(?: {4,}|\t)")
+CODE_INDENT = 4
+# 列表标记 + 其后的空格：决定「列表项内容列」，缩进代码块的门槛按它 + 4 算
+LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
 
 
 def _blank_indented(text):
-    out, in_block = [], True          # 文档开头等价于「空行之后」
+    """抹掉缩进代码块：前置空行（或文档开头）且缩进达到「当前容器 + 4」。
+
+    列表项里的段落只比标记多 2–3 格，`1. 进度文件：` + 空行 + 4 格路径在 CommonMark 里仍是正文
+    （松散列表的段落）。一刀切按 4 格抹会把合规任务书的进度路径抹掉（假 FAIL），所以上一个非空行
+    是列表项时，门槛抬到「标记内容列 + 4」（`- ` = 6、`1. ` = 7）。
+    """
+    out, in_block, need = [], True, CODE_INDENT
     for line in text.splitlines(keepends=True):
         body = line.rstrip("\n")
-        if in_block and INDENTED_HEAD.match(body):
+        head = body[:len(body) - len(body.lstrip(" \t"))]
+        if in_block and len(head.expandtabs(4)) >= need:
             out.append(" " * len(body) + line[len(body):])
             continue
         out.append(line)
-        in_block = not body.strip()   # 空行：后面仍可能是缩进块；非空非缩进行：缩进块结束
+        if not body.strip():
+            in_block = True           # 空行之后可能是缩进代码块（门槛沿用上一个非空行）
+            continue
+        in_block = False
+        m = LIST_ITEM.match(body)
+        need = len(m.group(0).expandtabs(4)) + CODE_INDENT if m else CODE_INDENT
     return "".join(out)
 
 SECTION = re.compile(r"^(#{2,3})\s+(.*)$")
@@ -249,6 +280,9 @@ def _fence_spans(text):
     return spans
 
 
+_NON_NL = re.compile(r"[^\n]")
+
+
 def strip_fences(text):
     """抹掉代码围栏 / 引用块 / 缩进代码块里的内容（保留行数与偏移）。
 
@@ -256,9 +290,12 @@ def strip_fences(text):
     是另外两种贴示例的标准写法——修前它们里的示例 scope 会被当成本包声明，把 9 个 `.rs` 的包
     短路成小包 rc 0（与 fix-r6 的围栏示例同一条失效类）。
     """
-    for a, b, _closed in reversed(_fence_spans(text)):
-        seg = text[a:b]
-        text = text[:a] + "".join("\n" if ch == "\n" else " " for ch in seg) + text[b:]
+    spans = _fence_spans(text)
+    if spans:                       # 一次建缓冲、逐跨切片替换、末尾只拼一次：修前每跨整串重建
+        buf = list(text)            # （`text[:a] + 掩码 + text[b:]`）是 O(跨度数 × n)，病态输入分钟级
+        for a, b, _closed in spans:
+            buf[a:b] = _NON_NL.sub(" ", text[a:b])
+        text = "".join(buf)
     blank = lambda m: " " * len(m.group(0))   # noqa: E731 —— 行内不换行，行数不变
     out = QUOTED.sub(blank, text)
     return _blank_indented(out)
@@ -453,6 +490,14 @@ def cells(row):
     return [c.strip() for c in row.strip("|").split("|")]
 
 
+def _col_hit(alt, header_cell):
+    """列别名匹配：单字别名（`段`）只认整格，其余按子串。
+
+    `段` 按子串会把「分段文件」认成段名列，文件列再无列可绑 → 合规分段表被判「缺列：涉及文件」。
+    """
+    return header_cell.strip() == alt if len(alt) <= 1 else alt in header_cell
+
+
 def is_separator(row):
     """GFM 分隔行：`---` / `:--:` / 单 `-` 都合法；全空行不算分隔行（那是坏行）。"""
     filled = [c for c in row if c]
@@ -471,6 +516,8 @@ RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=
 # `和` 常是「S1 和 S2」——把这些当加法会把 `60–80 min，含联调` 加成 140（假 FAIL）。
 # 裸「加」是「增加 / 加班」的子串（`60–80 min（增加 20 min 联调）`），不当加法。
 ADD_MARK = re.compile(r"\+|＋|另加|再加|再补")
+BREAK_CHARS = "（(，,；;"     # 回看窗口的边界：括注开头 / 句读
+MAX_EST_CELL = 65536        # 单个估时格子 64 KiB 上限：正常格子 < 100 字符
 UNIT_MIN = ("", "min", "mins", "minute", "minutes", "m", "分", "分钟")
 UNIT_HOUR = ("h", "hr", "hrs", "hour", "hours", "时", "小时", "个小时")
 UNIT_DAY = ("d", "day", "days", "天", "日")
@@ -510,16 +557,23 @@ def _header_unit(header_cell):
     return None
 
 
-def _in_paren(s, pos):
-    """`pos` 是否落在同一行的 `（…）` / `(…)` 里（只看最近的开括号有没有闭合）。"""
+def _paren_inside(s):
+    """每个位置 `pos` 是否落在同一行的 `（…）` / `(…)` 里（与逐次 rfind 的旧写法同义）。
+
+    旧写法对每个候选位置各做一次 `rfind(o, 0, pos)` + 无上界的 `find(c, start)`：单个长格子
+    O(n²)（实测 "60 min + 1 " × 16000 = 176 KB 要 0.42 s，2 MiB 单格分钟级）。这里一次正扫出表，
+    查询 O(1)。闭括号恰在 pos 上时不算「在括号里」（旧写法 `end > pos` 不成立）。
+    """
+    inside = bytearray(len(s))
     for o, c in (("（", "）"), ("(", ")")):
-        start = s.rfind(o, 0, pos)
-        if start < 0:
-            continue
-        end = s.find(c, start)
-        if end < 0 or end > pos:
-            return True
-    return False
+        open_at = -1
+        for i, ch in enumerate(s):
+            inside[i] |= open_at >= 0     # 只看 [0, i)
+            if ch == o:
+                open_at = i
+            elif ch == c and open_at >= 0:
+                open_at = -1
+    return inside
 
 
 def parse_est(cell, default_unit=""):
@@ -530,12 +584,18 @@ def parse_est(cell, default_unit=""):
     把「60 + 40 = 100 min」读成 60 min 放行；单值按自身单位换算。
     认不出的单位返回 None（报「读不出」），不许默默当 min。
     """
+    if len(cell) > MAX_EST_CELL:      # 单格 64 KiB 以上不是估时：直接判「读不出」（也挡住病态输入）
+        return None
+    # 千分位分隔符（半角 / 全角）先去掉：`1,000 min` 会被 EST_TOKEN 拆成 `1`（无单位）与 `000`（单位 min），
+    # 后面的单位再借给 `1`、求和成 1 min → 1000 min 的段 rc 0（假 PASS）。
+    cell = re.sub(r"(?<=[0-9])[,，](?=[0-9]{3}(?![0-9]))", "", cell)
     cell = COMPACT_UNIT.sub(lambda m: f"{m.group('h')} h {m.group('m')} min", cell)
     # 明确加法先切段：`40–50 min + 20 min` 是 max(40,50)+20=70，不是 40+50+20=110。
     # 括注里的 `+` 是列表（`80 min（S1 + S2 各 40 min）`），切开后后半段只剩被跳过的数字 → 整格「读不出」。
     # 文字加法词（另加 / 再加 / 再补）写在括注里仍然是加法；只有裸 `+` 在括注里才算列表。
+    inside = _paren_inside(cell)
     cut = [m.span() for m in ADD_MARK.finditer(cell)
-           if not _in_paren(cell, m.start()) or m.group(0) not in ("+", "＋")]
+           if not inside[m.start()] or m.group(0) not in ("+", "＋")]
     parts, prev = [], 0
     for a, b in cut:
         parts.append(cell[prev:a])
@@ -555,14 +615,15 @@ def parse_est(cell, default_unit=""):
     # 括注里的数字多半是说明（`90 min（含 10 min 缓冲）`、`80 min（2 个文件）`、`（S1 和 S2 各 30 min）`），
     # 既不是并列也不是区间：`含 / 各 / 其中 / 包括 / 内含 / 外加` 之后的数字不计入，「（…）」里单位不是
     # 时长数字的跳过而不是整格报「读不出」（旧行为会把 90 min 的合规段判成 100 → 拒派）。
+    # 回看窗口的边界字符位置表：每个数字 6 次 rfind 是 O(n²)（纯数字长格上尤其明显），
+    # 一次列出再用二分取「最近的一个」。
+    breaks = sorted(i for i, ch in enumerate(cell) if ch in BREAK_CHARS)
     toks = []
     for m in EST_TOKEN.finditer(cell):
         # 回看窗口到「最近的括注开头 / 句读」为止，不再固定 4 字符：`90 min（含双段联调 10 min）` 里
         # `含` 与 `10` 隔 6 字符，旧窗口看不到 → 10 被计入求和 → 100 > 90 → 合规段被拒（假 FAIL）。
-        cut = max(cell.rfind("（", 0, m.start()), cell.rfind("(", 0, m.start()),
-                  cell.rfind("，", 0, m.start()), cell.rfind(",", 0, m.start()),
-                  cell.rfind("；", 0, m.start()), cell.rfind(";", 0, m.start()))
-        head = cell[cut + 1:m.start()]
+        k = bisect.bisect_left(breaks, m.start())
+        head = cell[(breaks[k - 1] if k else -1) + 1:m.start()]
         if re.search(r"[含各]|其中|包括|内含|外加", head):
             continue
         toks.append((float(m.group(1)), m.group(2).lower(), m.start()))
@@ -581,7 +642,7 @@ def parse_est(cell, default_unit=""):
         u = u.strip("至到")   # `60 至 80 分钟`：区间词被并进单位，剥掉后按无单位处理（后面按区间取 max）
         mins = _unit_minutes(v, u)
         if mins is None:
-            if _in_paren(cell, pos):
+            if inside[pos]:
                 continue    # `（2 个文件）` 这类括注不是时长，跳过；整格没有时长数字时才报「读不出」
             return None
         resolved.append(mins)
@@ -640,11 +701,15 @@ def resume_problems(resume):
                         f"不许只写文件名，也不许写在「无需 / 不用」这类否定句里）{detail}")
     positive = []
     for line in resume.splitlines():
-        for clause in re.split(r"[，。；、：,;]", line):
+        # 路径 / 行内代码里的 `resume` / 进度 不算「第 N 段失败从哪继续」的说明：
+        # `- 进度文件：_tmp/x/resume-r1/progress.md` 修前命中英文关键字，整节只写路径也 PASS。
+        bare = PATH_TOKEN.sub(lambda m: " " * len(m.group(0)), line)
+        bare = re.sub(r"`[^`\n]*`", lambda m: " " * len(m.group(0)), bare)
+        for clause in re.split(r"[，。；、：,;]", bare):
             if not NEGATION.search(clause):
                 positive.append(clause)
     if not any(w in "\n".join(positive).lower() for w in RESUME_FAIL_WORDS):
-        problems.append("`## 续跑` 里没写「第 N 段失败从哪继续」（要有 失败 / 继续 / 接续 / 恢复 / 重跑 之一的说明）")
+        problems.append("`## 续跑` 里没写「第 N 段失败从哪继续」（要有 失败 / 继续 / 接续 / 恢复 / 重跑 / resume 之一的说明）")
     return problems
 
 
@@ -673,7 +738,8 @@ def check_segments(text):
             col, used = {}, set()
             for key, alts in WANT_COLS.items():
                 for alt in alts:   # 别名按优先级试；`段名` 命中前不会退回 `段`
-                    hit = next((i for i, h in enumerate(header) if alt in h and i not in used), None)
+                    hit = next((i for i, h in enumerate(header)
+                                if i not in used and _col_hit(alt, h)), None)
                     if hit is not None:
                         col[key], _ = hit, used.add(hit)
                         break
@@ -683,7 +749,16 @@ def check_segments(text):
             if len(data) < 2:
                 problems.append(f"分段表只有 {len(data)} 段；大包至少要切成 2 段（每段可独立收货）")
             default_unit = _header_unit(header[col["est"]]) if "est" in col else ""
+            owner = {}
             for i, r in enumerate(data, 1):
+                if "files" in col:      # 段间不共写同一文件：共写 = 两段不能各自独立收货
+                    for tok_ in FILE_TOKEN.findall(r[col["files"]] if col["files"] < len(r) else ""):
+                        key = tok_[2:] if tok_.startswith("./") else tok_
+                        if key in owner and owner[key] != i:
+                            problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {key}"
+                                            "（段间不共写同一文件，否则不能独立收货）")
+                        else:
+                            owner.setdefault(key, i)
                 if len(r) < len(header):
                     problems.append(f"第 {i} 行字段数 {len(r)} < 表头 {len(header)}")
                 for key, idx in col.items():
@@ -698,7 +773,8 @@ def check_segments(text):
                     est_cell = r[col["est"]] if col["est"] < len(r) else ""
                     est = parse_est(est_cell, default_unit)
                     if est is None:
-                        problems.append(f"第 {i} 段预估时长读不出（{est_cell!r}；只认 min / 分钟 / h / 小时）")
+                        problems.append(f"第 {i} 段预估时长读不出（{_clip(est_cell)!r}；"
+                                        "只认 min / 分钟 / h / 小时）")
                     elif est > SEGMENT_MAX_MIN:
                         problems.append(f"第 {i} 段预估 {est:g} min > {SEGMENT_MAX_MIN} min（切成更小的段）")
             table_text = "\n".join(x for x in body.splitlines() if x.lstrip().startswith("|"))
@@ -728,6 +804,15 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 - 进度文件：`_tmp/<日期>-issue-<N>/progress.md`（每段开工 / 收工各追加一行 `S<n> start|done <时间> <HEAD>`）
 - 第 N 段失败：读 progress.md 最后一个 done 段，先 `git apply` 该段 final.patch 分片，再从 N+1 段继续；不重做已 done 段。
 """
+
+
+# 分段表「涉及文件」列里的文件路径（按扩展名认，避免把 `S1` 这类段名当文件）
+FILE_TOKEN = re.compile(r"[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.(?:rs|py|ts|tsx|js|mjs|md|json|toml|ya?ml|sh|txt)")
+
+
+def _clip(text, n=80):
+    """报错里嵌原文时截断：整格可能上万字符，原样塞进问题列表会把输出撑爆。"""
+    return text if len(text) <= n else text[:n] + "…"
 
 
 def _err(path, detail):
@@ -964,6 +1049,9 @@ def main(argv):
                 return usage("--recent <小时数>")
             if not (math.isfinite(hours) and hours > 0):
                 return usage("--recent <小时数> 要是 > 0 的有限数（nan / inf / 0 / 负数不行）")
+            if hours * 3600 <= FRESH_SEC:   # 窗口比新鲜度阈值还短：什么都扫不到，别冒充「通过」
+                return usage(f"--recent {hours:g}h 的窗口（{hours * 3600:g} s）不大于新鲜度阈值 "
+                             f"{FRESH_SEC} s，任何文件都会被跳过；给个更大的窗口")
             i += 2
             continue
         if a == "--root":
