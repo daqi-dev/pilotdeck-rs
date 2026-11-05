@@ -14,8 +14,8 @@ use crate::{
             coordinator::TurnEventCoordinator, gateway::GatewayRequests, publish::FileRegistry,
         },
     },
-    user_dialog::GatewayUserDialogBus,
     upload::gateway::UploadGateway,
+    user_dialog::GatewayUserDialogBus,
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
