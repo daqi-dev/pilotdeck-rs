@@ -887,7 +887,7 @@ fn text(s: &str) -> JsValue {
 /// `Unknown projectKey: ${projectKey}` (UploadStore.ts:63) with the caller's
 /// raw UTF-16 units. `display`/lossy decoding would turn a lone surrogate into
 /// U+FFFD, changing the message even though the key stayed unavailable.
-fn unknown_project_key(project_key: &JsString) -> UploadError {
+pub(crate) fn unknown_project_key(project_key: &JsString) -> UploadError {
     let mut message = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
     message.extend_from_slice(project_key.units());
     UploadError::dialog("PROJECT_NOT_FOUND", JsString::from_utf16(message))

@@ -297,4 +297,6 @@ impl TurnEnvironment for NativeTurnEnvironment {
 }
 
 #[cfg(test)]
+mod services_tests;
+#[cfg(test)]
 mod tests;
