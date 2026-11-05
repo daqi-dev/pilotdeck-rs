@@ -2877,6 +2877,14 @@ class RetirementScoring(unittest.TestCase):
             ('unparsed line', {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}],
                                'unparsed': [{'peer': None, 'raw': 'junk'}],
                                'commandStatus': 'ok'}, 'unobservable'),
+            # P1 (#1355 fix-r4f, anthropic sibling #1): with a pre-existing
+            # undeclared peer the round's own verdict is FAIL, not BLOCKED, so
+            # a status-based observability test credited the injection against
+            # an unparsed sample.  Observability is the observation's shape.
+            ('unparsed line + own peer',
+             {'rows': [{'peer': '180.101.242.203:443', 'raw': 'x'}],
+              'unparsed': [{'peer': None, 'raw': 'junk'}], 'commandStatus': 'ok'},
+             'unobservable'),
         )
         for tag, observation, reason in samples:
             row = self._stream_ok_round_row()
@@ -2897,6 +2905,17 @@ class RetirementScoring(unittest.TestCase):
         class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
         self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 no observation: {class4}')
         self.assertIn('recorded no network observation', class4['reason'])
+        # P1 (#1355 fix-r4f, anthropic boundary #1): the round already reports
+        # the injected peer itself, so the injection changes nothing and the
+        # set delta would be empty — never PASS.
+        row = self._stream_ok_round_row()
+        row['connections'] = {'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}],
+                              'commandStatus': 'ok'}
+        controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 own injected peer: {class4}')
+        self.assertIn('already reports', class4['reason'])
+        self._assert_full_faces(self._report_for(row, expected), '#41 own injected peer')
         # Positive side: the same round with a usable sample still passes, and
         # so does a round that already reports an undeclared peer of its own
         # (the r2 shape): the injected peer must be the exact set delta.

@@ -1801,6 +1801,28 @@ def _retirement_network_verdict(connections):
     return {'status': 'PASS', 'rule': 'NETWORK_FALLBACK', 'undeclared': [], 'unparsed': []}
 
 
+def _retirement_network_observable(connections):
+    """Whether the round recorded a network sample a control can be judged on.
+
+    P1 (#1355 fix-r4f, anthropic sibling #1): the control used to ask the
+    *verdict* whether the round's sample was BLOCKED, but
+    `_retirement_network_verdict` returns FAIL on `undeclared` before it
+    reaches the `unparsed or not rows` check — a round with a pre-existing
+    undeclared peer (the real r2 round's provider egress, #1478) *and* an
+    unparsed line read as observable, and the injected peer was credited
+    against it.  Observability is the shape of the observation: a successful
+    probe, at least one parsed row, no unparsed lines, and no row without a
+    parsed peer.
+    """
+    if not isinstance(connections, dict):
+        return False
+    rows = connections.get('rows')
+    if (connections.get('commandStatus') != 'ok' or not isinstance(rows, list) or not rows
+            or connections.get('unparsed')):
+        return False
+    return all(isinstance(row, dict) and row.get('peer') for row in rows)
+
+
 def _retirement_listener_verdict(listeners, gateway_port):
     """R9 (#1355 fix-r2): loopbackOnly is judged, not just recorded.
 
@@ -2198,24 +2220,30 @@ def _retirement_controls(round_row, expected):
     # mutated one.  Judging the mutated verdict let an empty or unparsed
     # sample count as landing — `_retirement_network_verdict` checks
     # `undeclared` before `unparsed or not rows`, so the injected row turned
-    # the round's BLOCKED network face into FAIL and the class recorded PASS,
-    # while the registered criterion (diffs/A8.6-RETIREMENT-001.md) requires
-    # NOT_APPLICABLE there.  A non-dict observation is no observation at all.
-    # A round that already reports undeclared peers (the real r2 round does:
-    # provider egress, registered as #1478) stays establishable — the injected
-    # peer has its own address, so attribution is the exact set delta, not
-    # "some undeclared peer is present".
+    # the round's BLOCKED network face into FAIL and the class recorded PASS.
+    # P1 (#1355 fix-r4f, anthropic sibling #1): asking the *verdict* about the
+    # round's own sample has the same masking — a round with a pre-existing
+    # undeclared peer (the real r2 round's provider egress, #1478) *and* an
+    # unparsed line reads FAIL, not BLOCKED, and was credited as establishable.
+    # So observability is the shape of the observation, never a verdict status.
+    # A round that already reports the injected peer itself cannot attribute
+    # the injection either (P1 #1355 fix-r4f, anthropic boundary #1): the set
+    # delta would be empty and the injection would change nothing.
     original_network = (_retirement_network_verdict(connections)
-                        if isinstance(connections, dict) else None)
-    if original_network is None:
+                        if _retirement_network_observable(connections) else None)
+    if not isinstance(connections, dict):
         unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
                     'the control round recorded no network observation, so adding a non-loopback '
                     'peer cannot be established')
-    elif original_network.get('status') == 'BLOCKED':
+    elif original_network is None:
         unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
-                    f"the control round's network observation is unobservable "
-                    f"({original_network.get('reason')}), so adding a non-loopback peer cannot be "
+                    "the control round's network observation is unobservable (failed lsof or an "
+                    'empty / partly unparsed sample), so adding a non-loopback peer cannot be '
                     'established')
+    elif injected_peer in (original_network.get('undeclared') or []):
+        unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
+                    f'the control round already reports {injected_peer!r} as an undeclared peer, '
+                    'so the injected peer cannot be told apart from the pre-existing one')
     else:
         undeclared_before = set(original_network.get('undeclared') or [])
         mutated_connections = json.loads(json.dumps(connections))
