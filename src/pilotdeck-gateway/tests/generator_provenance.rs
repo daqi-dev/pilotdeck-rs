@@ -157,6 +157,10 @@ regeneration!(bash_session_regenerates_identically, "bash-session");
 regeneration!(bash_tool_regenerates_identically, "bash-tool");
 regeneration!(builtin_tools_regenerates_identically, "builtin-tools");
 regeneration!(
+    api_server_channel_regenerates_identically,
+    "api-server-channel"
+);
+regeneration!(
     channel_lifecycle_regenerates_identically,
     "channel-lifecycle"
 );
