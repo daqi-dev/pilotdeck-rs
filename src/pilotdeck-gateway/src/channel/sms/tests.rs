@@ -706,6 +706,7 @@ async fn replay_named(name: &str) {
             config: None,
             report_status: None,
             log: Some(logger),
+            turn_gateway: None,
         })
         .await
         .expect("#1339 start");
@@ -1144,6 +1145,7 @@ async fn logger_panic_does_not_poison_boundaries() {
             config: None,
             report_status: None,
             log: Some(logger),
+            turn_gateway: None,
         })
         .await
         .expect("#1339 logger-panic test start");
@@ -1216,6 +1218,7 @@ async fn json_null_body_is_unhandled_destroy() {
             config: None,
             report_status: None,
             log: None,
+            turn_gateway: None,
         })
         .await
         .expect("#1339 json-null test start");
