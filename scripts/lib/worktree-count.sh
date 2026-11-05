@@ -16,23 +16,23 @@
 #   pdrs_worktree_paths [repo]    # 打印每个 linked worktree 的绝对路径，每行一个
 #   pdrs_worktree_count [repo]    # 打印一个整数；失败返回 2，不会把失败静默算成 0
 #   repo 省略时取当前目录所属仓库；调用方**应显式传入自己的仓根**，不要依赖调用者 cwd。
-#   PDRS_WORKTREE_CAP             # 生效上限。缺省 40 = 人定上限（2026-11-01 由 24 放宽，PR #1236，人同意）；
-#                                   # 代码支持到 60，但「放宽到 60」待人批（#1157），
-#                                   # 未批前只有显式 PDRS_WORKTREE_CAP=60 才按 60 计；非数字 / 0 / >60 一律回落 40。
+#   PDRS_WORKTREE_CAP             # 生效上限，缺省 60（2026-11-05 23:0x 人令「放宽、按硬盘算」，
+#                                   # AI 代批待人复核，见 #1157）；非数字 / 0 / >60 一律回落 60，
+#                                   # 笔误不会把闸门关掉；调低只应出现在自测里。
 # 直接执行：打印「数 + 上限」与明细（自测用）。
 
-PDRS_WORKTREE_CAP_MAX=60          # 代码能力上限（不是当前生效上限）
-PDRS_WORKTREE_CAP_DEFAULT=40      # 人定上限（PR #1236）；放宽待人批 #1157
+PDRS_WORKTREE_CAP_MAX=60          # 能力上限（2026-11-05 23:0x 人令放宽，AI 代批待人复核；回退只改这一处）
+PDRS_WORKTREE_CAP_DEFAULT=$PDRS_WORKTREE_CAP_MAX   # 生效默认 = 能力上限
 PDRS_WORKTREE_CAP=${PDRS_WORKTREE_CAP:-$PDRS_WORKTREE_CAP_DEFAULT}
 case "$PDRS_WORKTREE_CAP" in
   '' | *[!0-9]*) PDRS_WORKTREE_CAP=$PDRS_WORKTREE_CAP_DEFAULT ;;
 esac
-# 超过能力上限或 0：回落人定默认，不把笔误（999）当成「放宽到能力上限」
+# 超过能力上限或 0：回落默认，不把笔误（999）当成「放宽」
 [ "$PDRS_WORKTREE_CAP" -ge 1 ] && [ "$PDRS_WORKTREE_CAP" -le "$PDRS_WORKTREE_CAP_MAX" ] ||
   PDRS_WORKTREE_CAP=$PDRS_WORKTREE_CAP_DEFAULT
-# 偏离人定默认就嚷一声：调高=用未批的放宽，调低=只应出现在自测里
+# 偏离默认就嚷一声：调低只应出现在自测里（调高超过 60 上面已回落）
 [ "$PDRS_WORKTREE_CAP" -eq "$PDRS_WORKTREE_CAP_DEFAULT" ] ||
-  echo "worktree-count: 注意生效上限 ${PDRS_WORKTREE_CAP} 偏离人定默认 ${PDRS_WORKTREE_CAP_DEFAULT}（调高=待人批的放宽 #1157；调低只应出现在自测里）" >&2
+  echo "worktree-count: 注意生效上限 ${PDRS_WORKTREE_CAP} 低于默认 ${PDRS_WORKTREE_CAP_DEFAULT}（只应出现在自测里）" >&2
 
 _pdrs_worktree_root() {
   local here=${1:-$PWD} top
