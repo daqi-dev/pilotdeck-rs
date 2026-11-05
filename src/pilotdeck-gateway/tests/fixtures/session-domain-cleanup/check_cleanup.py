@@ -1179,6 +1179,62 @@ def _exit_code_shaped(node):
     return False
 
 
+# #892 r2: a clean verdict written straight into a ``['status']`` slot claims a
+# run the shared map never produced.
+_CLEAN_STATUS_LITERALS = frozenset({'PASS', 'PASS_WITH_SKIPS'})
+
+
+def _writes_status_slot(target):
+    """True when *target* assigns the ``'status'`` key of a dict (#892 r2)."""
+    if isinstance(target, ast.Subscript):
+        return isinstance(target.slice, ast.Constant) and target.slice.value == 'status'
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return any(_writes_status_slot(element) for element in target.elts)
+    return False
+
+
+def _status_write_values(target, value, out):
+    """Collect the values an assignment writes into a ``['status']`` slot."""
+    if (isinstance(target, (ast.Tuple, ast.List))
+            and isinstance(value, (ast.Tuple, ast.List))
+            and len(target.elts) == len(value.elts)):
+        for element_target, element_value in zip(target.elts, value.elts):
+            _status_write_values(element_target, element_value, out)
+    elif _writes_status_slot(target):
+        out.append(value)
+
+
+def _assigns_clean_status(value, bindings, seen=None):
+    """True when *value* can put a clean verdict into a ``['status']`` slot.
+
+    Registered points also write their report incrementally
+    (``report['status'] = overall``) instead of returning the dict, so the same
+    fail-closed rule must cover those writes: changing one line of an already
+    registered point to ``'PASS'`` is otherwise a silent bypass (DeepSeek
+    sibling P1-2).  A relay, a shared call and a non-batch label such as
+    ``'PENDING_REVIEW'`` stay legal.
+    """
+    for arm in _exit_arms(value):
+        if (isinstance(arm, ast.Constant) and isinstance(arm.value, str)
+                and arm.value in _CLEAN_STATUS_LITERALS):
+            return True
+        if _has_passed_aggregate(arm) and not _calls_aggregate(arm):
+            return True
+        if isinstance(arm, ast.Name) and _name_assigns_clean(arm.id, bindings, seen):
+            return True
+    return False
+
+
+def _name_assigns_clean(name, bindings, seen=None):
+    """True when any local assignment to *name* can be a clean verdict."""
+    seen = set() if seen is None else seen
+    if name in seen:
+        return False
+    seen.add(name)
+    return any(_assigns_clean_status(value, bindings, seen)
+               for value in bindings.get(name, ()))
+
+
 def unshared_status_slots(function):
     """Status/exit computations a registered point must route through the
     shared function, per return path (#892).
@@ -1197,6 +1253,23 @@ def unshared_status_slots(function):
     bound = _bound_summary_dicts(function)
     bindings = _name_bindings(function)
     for node in _own_nodes(function):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            # Incremental report writes (``report['status'] = overall``) never
+            # appear in a Return (#892 r2, DeepSeek sibling P1-2).
+            if isinstance(node, ast.Assign):
+                write_targets, write_value = node.targets, node.value
+            elif node.value is not None:
+                write_targets, write_value = [node.target], node.value
+            else:
+                continue
+            written = []
+            for write_target in write_targets:
+                _status_write_values(write_target, write_value, written)
+            if any(_assigns_clean_status(item, bindings) for item in written):
+                violations.append(
+                    f'inline status/exit assignment {ast.unparse(write_value)[:60]} '
+                    f'at line {node.lineno}')
+            continue
         if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
             # ``raise SystemExit(0)`` leaves the process with 0 and never
             # returns through the shared map (MiniMax P1-2).
@@ -1428,6 +1501,9 @@ def aggregation_audit():
         "def _system_exit(report):\n"
         "    if report.get('special'):\n"
         "        raise SystemExit(0)\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _assigned_status(report, rows):\n"
+        "    report['status'] = 'PASS' if all(row['passed'] for row in rows) else 'FAIL'\n"
         "    return common.aggregate_status(report['status'])[1]\n")
     probe892_found = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
@@ -1471,6 +1547,10 @@ def aggregation_audit():
     if not system_exit or not unshared_status_slots(system_exit[1]):
         failures.append('#892 aggregation-audit: detector self-test did not flag an '
                         'optimistic raise SystemExit(0)')
+    assigned_status = probe892_found.get(('<self-test-892>', '_assigned_status'))
+    if not assigned_status or not unshared_status_slots(assigned_status[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a clean '
+                        "verdict written into a report['status'] slot")
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,

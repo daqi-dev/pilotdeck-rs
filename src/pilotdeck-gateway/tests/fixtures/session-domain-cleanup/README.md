@@ -66,11 +66,17 @@ and element-wise tuple targets.  Every return arm is judged on its own, so
 call in the other arm.  A bare `return`, a literal `0`, and `raise
 SystemExit(0)` are optimistic exits and are flagged; a non-zero exit literal
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) stays legal because it cannot
-claim a clean run.  The audit self-tests ten probes: a direct `{'status': ...}`
+claim a clean run.  The audit self-tests eleven probes: a direct `{'status': ...}`
 return, an inline `0 if ... else 1` branch, a legal shared pair, a summary dict
 returned through a local name, a bare `return 0`, an optimistic conditional arm,
 a bare `return`, a summary dict returned under an arbitrary name, a status slot
-filled from a locally computed variable, and a `raise SystemExit(0)`.
+filled from a locally computed variable, a `raise SystemExit(0)`, and a clean
+verdict written straight into a `report['status']` slot.  Registered points also
+write their report incrementally instead of returning the dict, so every
+`x['status'] = ...` assignment in a registered point is judged by the same rule:
+a `'PASS'` / `'PASS_WITH_SKIPS'` literal (directly or through a local variable)
+and an inline `all(...passed...)` are flagged; relays, shared calls and
+non-batch labels such as `'PENDING_REVIEW'` stay legal.
 Known boundaries, not covered by this check: an explicit `return None` /
 `return False` (``_guard._failure`` uses ``None`` as its "propagate unchanged"
 sentinel and the caller re-raises), a `status` key nested inside another dict,
@@ -148,7 +154,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 31 mutants:
+`JUDGES`, keyed by the same names. The current table has 32 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -161,7 +167,7 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `aggregation-branch-exit-inline`, `summary-name-bypass`, `bare-exit-zero`,
 `status-slot-relayed`, `system-exit-zero-bypass`, `bare-return-exit`,
 `conditional-arm-exit`, `calibrate-bare-zero`,
-`restored-skip-accepted`.  The batch-related
+`calibrate-status-write-pass`, `restored-skip-accepted`.  The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
@@ -179,10 +185,12 @@ inline right before the summary dict is built (the variable-following rule must
 catch it); `system-exit-zero-bypass` replaces one `main()` exit path with
 `raise SystemExit(0)`; `bare-return-exit` replaces it with a bare `return`;
 `conditional-arm-exit` hides the optimistic value inside one arm of a
-conditional; and `calibrate-bare-zero` puts the same optimistic exit on the
+conditional; `calibrate-bare-zero` puts the same optimistic exit on the
 calibrate entry point (`session_domain.py:main`, a different registered point,
-so the rule is not proven only on the controls file).  The last one binds
-`check_cleanup.py --mode batch-aggregation`'s
+so the rule is not proven only on the controls file); and
+`calibrate-status-write-pass` writes `report['status'] = 'PASS'` incrementally,
+with no Return involved, so the assignment scan is proven on its own.  The
+restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
 `points.controls-main.shared` and its dedicated first failure message.
