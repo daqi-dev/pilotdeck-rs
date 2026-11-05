@@ -560,6 +560,24 @@ class EnvironmentControls(unittest.TestCase):
         # 二进制并被判假红。只允许缓存 cargo 注册表（#1632 评审 P1）。
         self.assertNotIn('Swatinem/rust-cache', body,
                          '#1632 a restored target hands back a stale scanner binary')
+        # 按路径语义钉，而不是只查一个缓存动作的名字：手写 actions/cache 把 target
+        # 塞进 path 的写法与 rust-cache 一样危险，禁用名单抓不到（#1632 评审 P2）。
+        caches = [step for step in steps if 'actions/cache@v4' in step]
+        self.assertEqual(len(caches), 1, '#1632 the job caches the cargo registry and git sources')
+        cache = self.ci_step_fields(caches[0], '#1632')
+        self.assertEqual(cache.get('uses'), ('actions/cache@v4', []),
+                         '#1632 the cache is declared on the cache action itself')
+        block = cache.get('with', ('', []))[1]
+        self.assertIn('path: |', block, '#1632 the cache declares its paths as a block')
+        cached = []
+        for line in block[block.index('path: |') + 1:]:
+            if re.fullmatch(r'[a-z][a-z-]*:.*', line):
+                break
+            cached.append(line)
+        self.assertEqual(cached, ['~/.cargo/registry', '~/.cargo/git'],
+                         '#1632 cached paths are exactly the registry and git sources, never target')
+        self.assertIn("key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}",
+                      block, '#1632 the cache key follows the committed lockfile')
         # 夹具最坏墙钟远超平台默认 360 min，必须有显式上界（#1632 评审 P2）。
         self.assertIn('    timeout-minutes: 120\n', body,
                       '#1632 the job bounds its own wall clock')
@@ -609,6 +627,16 @@ class EnvironmentControls(unittest.TestCase):
                '        with:\n'
                '          workspaces: src -> ../_build/cargo-target\n',
                '#1632 a restored target hands back a stale scanner binary')
+        change('target-in-cache-path',
+               '            ~/.cargo/registry\n            ~/.cargo/git\n',
+               '            ~/.cargo/registry\n            ~/.cargo/git\n'
+               '            _build/cargo-target\n',
+               '#1632 cached paths are exactly the registry and git sources, never target')
+        change('cache-step-removed',
+               '      - uses: actions/cache@v4\n        with:\n'
+               '          path: |\n            ~/.cargo/registry\n            ~/.cargo/git\n'
+               "          key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}\n",
+               '', '#1632 the job caches the cargo registry and git sources')
         change('job-timeout-removed', '    timeout-minutes: 120\n', '',
                '#1632 the job bounds its own wall clock')
         change('evidence-upload-conditional', '        if: ${{ always() }}\n',

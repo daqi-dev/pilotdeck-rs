@@ -16,6 +16,7 @@ so neither needs `CARGO_TARGET_DIR`.
 import difflib
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -152,6 +153,9 @@ SLOT_TIMEOUT_SECONDS = 1800
 
 def acquire_slot(script=None, timeout=SLOT_TIMEOUT_SECONDS):
     """Wait for a cargo slot; the deadline is an explicit exit, never an assert."""
+    if not math.isfinite(timeout) or timeout <= 0:
+        # float('inf')/nan 会让 deadline 比较永远成立（或永远不成立），必须先拒。
+        sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
     script = root / 'scripts/cargo-slots.sh' if script is None else script
     try:
         return wait_for_slot(script, timeout=timeout)
@@ -195,40 +199,55 @@ def take_slot(name):
 def self_check(timeout=2, wall=60):
     """Negative control for the slot guard: `-O` must not change the exit (#1632).
 
-    A permanently busy gate forces the deadline. The guard runs in child
-    interpreters both plain and under `-O`; the old assert-based deadline never
-    returned under `-O`, so the bounded child would have to be killed at `wall`
-    and this check would report the hang instead of passing.
+    The real gate (`scripts/cargo-slots.sh`) is tri-state: 0 free, 1 full,
+    2 invalid cap, 3 `ps` sampling failed. Every branch is exercised here, in
+    child interpreters both plain and under `-O`. The old assert-based deadline
+    never returned under `-O`, so the bounded child would have to be killed at
+    `wall` and this check would report the hang instead of passing; likewise,
+    reading rc=2/3 as "0 slots in use" would silently run cargo anyway.
     """
+    # name -> (gate script, expected exit, expected stderr fragment)
+    gates = {
+        'free': ('#!/bin/sh\necho "cargo-slots: 0 / cap 1"\nexit 0\n', 0, 'slot free'),
+        'busy': ('#!/bin/sh\necho "cargo-slots: 1 / cap 1"\nexit 1\n',
+                 1, 'cargo slots unavailable'),
+        'invalid-cap': ('#!/bin/sh\necho "上限非法" >&2\nexit 2\n',
+                        1, 'cargo slot gate failed with rc=2'),
+        'ps-failed': ('#!/bin/sh\necho "ps 取样失败" >&2\nexit 3\n',
+                      1, 'cargo slot gate failed with rc=3'),
+    }
     problems = []
     with tempfile.TemporaryDirectory(prefix='negctl-1316-slot-') as directory:
-        busy = Path(directory) / 'cargo-slots-busy.sh'
-        busy.write_text('#!/bin/sh\necho "cargo-slots: 1 / cap 1"\nexit 1\n')
-        busy.chmod(0o755)
-        for flags in ([], ['-O']):
-            label = ' '.join(['python3'] + flags)
-            started = time.monotonic()
-            try:
-                result = run_owned(
-                    [sys.executable, '-I', *flags, str(Path(__file__).resolve()),
-                     '--slot-guard-probe', str(busy), str(timeout)],
-                    timeout=wall)
-            except subprocess.TimeoutExpired:
-                problems.append(f'{label}: the slot guard never returned within {wall}s')
-                continue
-            elapsed = time.monotonic() - started
-            if result.returncode != 1:
-                problems.append(f'{label}: expected the bounded exit rc=1, got rc={result.returncode}')
-            elif 'cargo slots unavailable' not in result.stderr:
-                problems.append(f'{label}: exit did not report the slot timeout')
-            else:
-                print(f'self-check {label}: bounded exit rc=1 in {elapsed:.1f}s', flush=True)
+        for name, (text, expected, needle) in gates.items():
+            gate = Path(directory) / f'cargo-slots-{name}.sh'
+            gate.write_text(text)
+            gate.chmod(0o755)
+            for flags in ([], ['-O']):
+                label = f'{name} ' + ' '.join(['python3'] + flags)
+                started = time.monotonic()
+                try:
+                    result = run_owned(
+                        [sys.executable, '-I', *flags, str(Path(__file__).resolve()),
+                         '--slot-guard-probe', str(gate), str(timeout)],
+                        timeout=wall)
+                except subprocess.TimeoutExpired:
+                    problems.append(f'{label}: the slot guard never returned within {wall}s')
+                    continue
+                elapsed = time.monotonic() - started
+                haystack = result.stdout + result.stderr
+                if result.returncode != expected:
+                    problems.append(f'{label}: expected rc={expected}, '
+                                    f'got rc={result.returncode}')
+                elif needle not in haystack:
+                    problems.append(f'{label}: exit did not report {needle!r}')
+                else:
+                    print(f'self-check {label}: exit rc={expected} in {elapsed:.1f}s', flush=True)
     for problem in problems:
         print('self-check FAILED: ' + problem, file=sys.stderr)
     if problems:
         return 1
-    print(f'self-check: the slot guard exits bounded with and without -O ({timeout}s deadline)',
-          flush=True)
+    print(f'self-check: the slot guard handles free/full/broken gates with and without -O '
+          f'({timeout}s deadline)', flush=True)
     return 0
 
 
@@ -241,8 +260,9 @@ if sys.argv[1:2] == ['--slot-guard-probe']:
         probe_timeout = float(sys.argv[3])
     except ValueError:
         sys.exit(f'--slot-guard-probe: not a timeout: {sys.argv[3]!r}')
-    acquire_slot(script=Path(sys.argv[2]), timeout=probe_timeout)
-    sys.exit('the slot guard returned instead of exiting at its deadline')
+    slots = acquire_slot(script=Path(sys.argv[2]), timeout=probe_timeout)
+    print(f'slot free: {slots.stdout.strip()}', flush=True)
+    sys.exit(0)
 if sys.argv[1:] == ['--self-check']:
     sys.exit(self_check())
 
