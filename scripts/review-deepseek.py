@@ -2,7 +2,7 @@
 """review-deepseek.py — DeepSeek 评审通道（第三谱系），直连 API，替代 dsh。
 
 只把输入文件的文本发给模型、把回复落盘；模型拿不到任何工具，天然只读（dsh 只能靠提示词约束）。
-密钥取环境变量 DEEPSEEK_API_KEY（`--channel official` 时为 DS_ORI_PARA_API_KEY），没有再读 `.env.local`（先当前检出根，再主仓根，worktree 里也能找到）；
+密钥取环境变量 DEEPSEEK_API_KEY，没有再读 `.env.local`（先当前检出根，再主仓根，worktree 里也能找到）；
 本脚本不打印、不落盘密钥，错误信息里出现的密钥一律替换成 ***。
 
 用法：
@@ -29,11 +29,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 API = "https://llm-center.modelbest.co/v1/messages"  # Anthropic Messages 协议（x-api-key + anthropic-version）
 DEFAULT_MODEL = "deepseek-v4.1-flash-mb"
-# 通道：llm-center（默认，与 dsh 实现共用 50 RPM key）· official（DeepSeek 官方 Anthropic 兼容端点，支持并发；
-# 2026-10-25 人提供 DS_ORI_PARA_API_KEY，实测 /models 列出 deepseek-flash = DeepSeek-V4.1-Flash）
+# 通道：llm-center（唯一通道，与 dsh 实现共用 50 RPM key；官方 Anthropic 兼容端点 2026-11-05 人令删除，DS 只走 llm-center）
 CHANNELS = {
     "llm-center": (API, "DEEPSEEK_API_KEY", DEFAULT_MODEL),
-    "official": ("https://api.deepseek.com/anthropic/v1/messages", "DS_ORI_PARA_API_KEY", "deepseek-flash"),
 }
 DEFAULT_MAX_TOKENS = 16384  # Messages 协议必填 max_tokens；--max-tokens 可覆盖
 THINKING_BUDGET = 8192  # --thinking enabled 时的 budget_tokens（须小于 max_tokens）
@@ -298,8 +296,8 @@ def main() -> int:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--force", action="store_true", help="允许覆盖已存在的 --out")
     ap.add_argument("--channel", choices=sorted(CHANNELS), default=os.environ.get("PDRS_DEEPSEEK_CHANNEL", "llm-center"),
-                    help="llm-center（默认，DEEPSEEK_API_KEY）或 official（DeepSeek 官方，DS_ORI_PARA_API_KEY，可并发）；也可用环境变量 PDRS_DEEPSEEK_CHANNEL")
-    ap.add_argument("--model", help="不给时取通道默认（llm-center：deepseek-v4.1-flash-mb；official：deepseek-flash）")
+                    help="llm-center（默认，DEEPSEEK_API_KEY）；也可用环境变量 PDRS_DEEPSEEK_CHANNEL")
+    ap.add_argument("--model", help="不给时取默认 deepseek-v4.1-flash-mb")
     ap.add_argument("--max-tokens", type=int, help=f"输出上限；不给用 {DEFAULT_MAX_TOKENS}（Messages 协议必填；截断时按失败退出）")
     ap.add_argument("--thinking", choices=["disabled", "enabled"], default="disabled",
                     help="默认 disabled：2026-10-17 实测 37K token 输入的评审，开思考时 16K/65K 输出额度全被 reasoning 吃光、正文为空"
