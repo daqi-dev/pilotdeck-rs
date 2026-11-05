@@ -209,7 +209,7 @@ def main():
                 row['status'], row['reason'] = classify(run(case.mutation + '-negative', args), case)
                 # Restore and re-run inside the source guard: the restored control
                 # compiles the tree, so it must never race another runner that
-                # takes the same .negative-source.lock (#1440 review P2).
+                # takes the same .negative-source.lock (#1440).
                 case.path.write_bytes(originals[case.path])
                 if not passed(run(case.mutation + '-restored', args), case.test):
                     raise RuntimeError('restored positive control failed')
