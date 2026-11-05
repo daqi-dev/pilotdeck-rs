@@ -569,8 +569,11 @@ def calibrate_container_slot(rows):
 def calibrate_alias_cycle(rows):
     """#892 r6: a status slot fed by an alias cycle proves nothing (MiniMax
     sibling r5 P2-2: the rule needs an end-to-end mutant, not only a probe)."""
+    # The cycle is caught on the summary side: ``return {'status': status}, code``
+    # reads a name whose only binding is the swap itself, so the slot carries no
+    # provenance (fail-closed, same rule as ``_name_relays``).
     return _controls_main_needle(
-        rows, 'inline status/exit',
+        rows, 'found status slot status',
         'aggregation-audit: alias-cycle status slot flagged, passed=False')
 
 
