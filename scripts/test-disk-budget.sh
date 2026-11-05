@@ -25,6 +25,12 @@ eq() { [ "$2" = "$3" ] && ok "$1（$2）" || bad "$1：期望 $3，实得 $2"; }
 mkdir -p "$T/bin" "$T/root/_build" "$T/root/_tmp"
 cat >"$T/bin/du" <<'STUB'
 #!/usr/bin/env bash
+# DU_FIRST_FAIL=1：第一次调用失败、之后正常（钉「失败先重试一次」这条路径本身）
+if [ "${DU_FIRST_FAIL:-0}" = 1 ]; then
+  n=$(cat "${DU_COUNT_FILE:-/dev/null}" 2>/dev/null || echo 0); n=$((n + 1))
+  echo "$n" > "${DU_COUNT_FILE:-/dev/null}" 2>/dev/null || true
+  [ "$n" = 1 ] && { echo "du: transient stat failure" >&2; exit 1; }
+fi
 [ "${DU_FAIL:-0}" = 1 ] && { echo "du: permission denied" >&2; exit 1; }
 for a in "$@"; do last=$a; done
 case $last in
@@ -86,6 +92,10 @@ mkdir -p "$T/bin-bad"
 printf '%s\n' '#!/usr/bin/env bash' 'echo -e "12x345\t$2"' > "$T/bin-bad/du"; chmod +x "$T/bin-bad/du"
 out=$(PATH="$T/bin-bad:$PATH" pdrs_disk_used_kib "$T/root" 2>/dev/null); rc=$?
 eq "du 畸形输出 rc" "$rc" 2
+
+# 5d. 瞬时失败的重试路径本身：第一次 du 失败、重试成功 → 正常放行（把重试块删掉/不重新赋值时这条会红）
+eq "首次 du 失败、重试成功 → 求和正确" \
+  "$(DU_FIRST_FAIL=1 DU_COUNT_FILE="$T/cnt" DU_BUILD_KIB=$((3 * GIB)) DU_TMP_KIB=$((2 * GIB)) pdrs_disk_used_kib "$T/root")" "$((5 * GIB))"
 eq "du 畸形输出无值" "[$out]" "[]"
 
 # 5a. 仓根不存在 = 前置错误（拼错路径不能读成 0 GiB 放行）；仓根在、但没有 _build/_tmp 仍按 0
@@ -121,6 +131,10 @@ if git -C "$T/git/main" init -q 2>/dev/null &&
   git -C "$T/git/main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null &&
   git -C "$T/git/main" worktree add -q "$T/git/wt" 2>/dev/null; then
   eq "linked 树 → 主仓根" "$(cd "$T/git/wt" && pdrs_disk_main_root "$PWD")" "$(cd "$T/git/main" && pwd -P)"
+  # 排障常在子目录里执行：`cd src && bash ../scripts/lib/disk-budget.sh` 不得把 src 当仓根（会打印 0 GiB → ok）
+  mkdir -p "$T/git/main/src" "$T/git/wt/src"
+  eq "主仓子目录 → 主仓根" "$(cd "$T/git/main/src" && pdrs_disk_main_root "$PWD")" "$(cd "$T/git/main" && pwd -P)"
+  eq "linked 树子目录 → 主仓根" "$(cd "$T/git/wt/src" && pdrs_disk_main_root "$PWD")" "$(cd "$T/git/main" && pwd -P)"
   # 裸主仓没有工作区：首条 porcelain 是仓目录本身，量它必得 0 → 必须 fail-closed 而不是打 ok
   if git clone -q --bare "$T/git/main" "$T/git/bare.git" 2>/dev/null &&
     git -C "$T/git/bare.git" worktree add -q "$T/git/bwt" 2>/dev/null; then
@@ -132,6 +146,7 @@ if git -C "$T/git/main" init -q 2>/dev/null &&
 else
   bad "fixture：主仓 + linked 树造不出来"
 fi
+eq "子目录（非 git）→ 原样返回" "$(mkdir -p "$T/root/sub" && pdrs_disk_main_root "$T/root/sub")" "$T/root/sub"
 eq "普通目录（非 git）→ 原样返回" "$(pdrs_disk_main_root "$T/root")" "$T/root"
 
 # 8. 直接执行：打印三档与当前级别，并打出实测的仓根（在 linked 树里排障不会误读成「闸显示 ok」）

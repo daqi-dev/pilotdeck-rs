@@ -79,9 +79,16 @@ pdrs_disk_main_root() { # $1=起点目录；输出「该量的仓根」
   # 「量哪个根」是策略，不是调用方的私事：从 linked worktree 里跑时量自己那棵（没有 _build/_tmp）
   # 会恒判 ok，闸门静默失效。策略放这里，pdrs-loop.sh / new-tree.sh / 直接执行块都调它。
   # 非 git 树（隔离测试 fixture）原样返回；解析不出主仓根、或主仓是裸仓（没有工作区）→ 返回 2（fail-closed）。
-  local d=${1:-$PWD} out first
-  [ -e "$d/.git" ] || { printf '%s\n' "$d"; return 0; }
-  out=$(git -C "$d" worktree list --porcelain 2>/dev/null) || return 2
+  local d=${1:-$PWD} start out first
+  start=$d   # 不能写进上一条 local：local 会先把 $d 展开再赋值，set -u 下直接 unbound
+  if [ ! -e "$d/.git" ]; then
+    # 子目录也要能定位：`cd src && bash ../scripts/lib/disk-budget.sh` 若把 src 当仓根，
+    # 会量到不存在的 _build/_tmp → 打印「0 GiB → ok」，正是这段要防的误读。
+    # --show-toplevel 在 linked worktree 里给的是**本树**根，主仓还要再走下面的 worktree list。
+    start=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null) || { printf '%s\n' "$d"; return 0; }
+    [ -n "$start" ] && [ -e "$start/.git" ] || { printf '%s\n' "$d"; return 0; }   # 非 git 树（隔离 fixture）原样返回
+  fi
+  out=$(git -C "$start" worktree list --porcelain 2>/dev/null) || return 2
   first=$(printf '%s\n' "$out" | sed -n 's/^worktree //p' | head -n 1)
   [ -n "$first" ] || return 2
   # 裸主仓的首条是仓目录本身，其下没有工作区 → 量它必得 0（=闸门静默放行），宁可停机
