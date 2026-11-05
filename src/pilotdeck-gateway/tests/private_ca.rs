@@ -150,7 +150,7 @@ async fn private_ca_matrix() {
     // provenance live in `fixtures/private-ca/openssl-cases.json`.
     // Same provenance guard as the frozen oracle: a wrong commit or an empty
     // hash table must fail here, not silently trust stale expectations.
-    baseline::oracle(OPENSSL_CASES);
+    baseline::oracle_bounded(OPENSSL_CASES);
     let openssl: Value = serde_json::from_str(OPENSSL_CASES).expect("#1552 openssl cases JSON");
     let openssl_cases = openssl["cases"]
         .as_array()
