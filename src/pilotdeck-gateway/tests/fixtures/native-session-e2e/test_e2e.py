@@ -88,7 +88,42 @@ def _acquire_port_lease(port):
         if error.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
             return None
         raise
+    try:
+        # #1510 r2: never unlinking only constrains *this* code.  An external
+        # /tmp cleaner ages entries by their times (Linux systemd-tmpfiles
+        # defaults to 10 days; macOS 26 no longer ships periodic(8)) and could
+        # unlink a lease file a sibling still holds, after which the next
+        # opener leases a fresh inode for the same port and the closed-guard
+        # handoff window is open again.  Refreshing the times while holding
+        # the lock keeps a live lease out of a cleaner's reach.
+        os.utime(lease, None)
+    except OSError:
+        pass
     return lease
+
+
+def _free_private_pair():
+    """#1510 a port pair nobody leases right now, outside the scan range.
+
+    The starting point is derived from the pid so parallel copies usually
+    disagree, but pid values mod 10000 are not unique: probing both leases
+    skips a pair a sibling already holds instead of turning this probe into a
+    false FAIL about leases that were in fact released.
+    """
+    base = 40000 + (os.getpid() % 10000) * 2
+    for offset in range(0, 2000, 2):
+        candidate = 40000 + ((base - 40000) + offset) % 20000
+        gateway = _acquire_port_lease(candidate)
+        if gateway is None:
+            continue
+        peer = _acquire_port_lease(candidate + 1)
+        if peer is None:
+            os.close(gateway)
+            continue
+        os.close(peer)
+        os.close(gateway)
+        return candidate
+    raise AssertionError('#1510 no unleased port pair outside the scan range')
 
 
 # #1510 concurrent sibling scanners transiently hold candidate leases and
@@ -97,7 +132,7 @@ def _acquire_port_lease(port):
 # scan interference without masking exhaustion: they do NOT wait out a sibling
 # that holds a pair for a whole collection (leases live as long as the
 # collection), so a genuinely busy range still fails with the reason map after
-# this budget.  Total budget: 8 x 0.05 s = 0.35 s.
+# this budget.  Total budget: 7 waits x 0.05 s = 0.35 s across 8 passes.
 PORT_SCAN_PASSES = 8
 PORT_SCAN_PASS_SECONDS = 0.05
 
@@ -110,7 +145,15 @@ def _scan_port_pair_once(candidates):
         if gateway_lease is None:
             blocked.append(f'{candidate}:lease')
             continue
-        provider_lease = _acquire_port_lease(candidate + 1)
+        try:
+            provider_lease = _acquire_port_lease(candidate + 1)
+        except BaseException:
+            # #1510 r2: only a held peer lease returns None.  Every other errno
+            # (EMFILE, an unsupported filesystem) and a rejected lease
+            # directory raise instead, and the gateway lease must not outlive
+            # that: it would shrink this process's range for good.
+            os.close(gateway_lease)
+            raise
         if provider_lease is None:
             os.close(gateway_lease)
             blocked.append(f'{candidate}:peer-lease')
@@ -125,11 +168,14 @@ def _scan_port_pair_once(candidates):
             raise
         try:
             gateway_guard.bind(('127.0.0.1', candidate))
-        except OSError as error:
+        except (OSError, OverflowError) as error:
+            # Same shape as the provider bind below: an out-of-range candidate
+            # raises OverflowError, not OSError, and must not leak the guard or
+            # the two leases.
             gateway_guard.close()
             os.close(gateway_lease)
             os.close(provider_lease)
-            blocked.append(f'{candidate}:gateway-bind:{error.errno}')
+            blocked.append(f'{candidate}:gateway-bind:{getattr(error, "errno", error)}')
             continue
         port = gateway_guard.getsockname()[1]
         try:
@@ -793,10 +839,11 @@ class LifecycleTests(unittest.TestCase):
 
     def test_failed_reservation_closes_both_sockets(self):
         marker = '#1140 r9 failed reservation closes both guards'
-        # #1510 r1: a pair outside the scan range and private to this process.
-        # The suite's parallel copies lease 28999+ for a whole collection, so a
-        # hardcoded 28999/29000 here made the second copy fail on both asserts.
-        pair = 40000 + (os.getpid() % 10000) * 2
+        # #1510 r2: a pair outside the scan range, free *right now*.  A bare
+        # pid-derived pair collides whenever two parallel copies draw congruent
+        # pids, and a held pair would surface as "the leases were not released"
+        # -- a false FAIL for a test that pins the opposite.
+        pair = _free_private_pair()
         made = []
 
         def fake_socket():
@@ -814,9 +861,46 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaises(AssertionError, msg=marker):
                 _reserve_port_pair([pair], passes=3)
         self.assertTrue(made and all(guard.close.called for guard in made), marker)
-        # #1510 the failed candidate must not leak its port leases either:
-        # both ports must be immediately re-leasable from this process (flock
-        # is per open file description on macOS and Linux, probed here).
+        self._assert_pair_releasable(pair)
+
+        # #1510 r2: the other two failure branches leak just as easily and had
+        # no control at all -- a gateway bind that fails (`blocked`, not raise)
+        # and socket creation itself (EMFILE re-raises out of the scan).
+        def failing_gateway_socket():
+            guard = mock.Mock()
+            guard.bind.side_effect = OSError(errno.EADDRINUSE, 'gateway bind failed')
+            return guard
+
+        with mock.patch.object(socket, 'socket', side_effect=failing_gateway_socket):
+            with self.assertRaises(AssertionError, msg=marker):
+                _reserve_port_pair([pair], passes=2)
+        self._assert_pair_releasable(pair)
+
+        with mock.patch.object(socket, 'socket',
+                               side_effect=OSError(errno.EMFILE, 'too many open files')):
+            with self.assertRaises(OSError, msg=marker):
+                _reserve_port_pair([pair], passes=1)
+        self._assert_pair_releasable(pair)
+
+        # And a peer lease that raises instead of reporting "busy" (EMFILE, an
+        # unsupported filesystem) must release the gateway lease first.
+        real_acquire, calls = _acquire_port_lease, []
+
+        def raising_peer(port):
+            calls.append(port)
+            if len(calls) % 2 == 0:
+                raise OSError(errno.EMFILE, 'too many open files')
+            return real_acquire(port)
+
+        with mock.patch.dict(globals(), {'_acquire_port_lease': raising_peer}):
+            with self.assertRaises(OSError, msg=marker):
+                _reserve_port_pair([pair], passes=1)
+        self._assert_pair_releasable(pair)
+
+    def _assert_pair_releasable(self, pair):
+        # #1510 a failed reservation must not leave either port leased: both
+        # must be immediately re-leasable from this process (flock is per open
+        # file description on macOS and Linux, probed by this acquisition).
         for port in (pair, pair + 1):
             lease = _acquire_port_lease(port)
             try:
@@ -839,7 +923,12 @@ class LifecycleTests(unittest.TestCase):
         provider_guard.close()
         try:
             child = subprocess.run(
-                [sys.executable, '-I', '-c',
+                # -B: the child must not drop .pyc of a mutated fixture into the
+                # guarded source tree.  timeout stays well below the negative
+                # control's outer bound (BOUND_TEST_SECONDS = 300), otherwise the
+                # outer kill fires first and this TimeoutExpired branch is dead:
+                # the control would read INVALID instead of KILLED.
+                [sys.executable, '-I', '-B', '-c',
                  'import importlib.util, os, sys\n'
                  'spec = importlib.util.spec_from_file_location("e2e_port_lease_child", sys.argv[1])\n'
                  'module = importlib.util.module_from_spec(spec)\n'
@@ -853,7 +942,7 @@ class LifecycleTests(unittest.TestCase):
                  '    os.close(lease)\n'
                  'print(port)\n',
                  str(Path(__file__).resolve()), str(port)],
-                capture_output=True, text=True, timeout=300)
+                capture_output=True, text=True, timeout=120)
         except subprocess.TimeoutExpired:
             self.fail(marker + ': the sibling reservation did not finish in time')
         finally:
