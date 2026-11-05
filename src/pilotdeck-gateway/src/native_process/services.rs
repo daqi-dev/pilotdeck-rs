@@ -406,12 +406,13 @@ fn read_bounded(file: &mut File, limit: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// P0-b (codex): the leaf/ancestor swap check between the two path lookups —
-/// `fs::metadata(&resolved)` recorded right before `File::open`, against the
-/// opened handle's own fstat. Identity is `(dev, inode)`: a link swapped
-/// between the lookups opens a different file, and the mismatch is treated
-/// as not-found (no read, no registration; allowedReadFiles keeps the
-/// resolved canonical spelling either way).
+/// P0-b (codex, fix-r4 repositioned): the leaf/ancestor swap check between
+/// the post-open revalidation and the read — `fs::metadata` of the
+/// revalidated path against the opened handle's own fstat. Identity is
+/// `(dev, inode)`: a link swapped between the two stats points the path at
+/// a different file than the handle, and the mismatch is treated as
+/// not-found (no read, no registration; allowedReadFiles keeps the
+/// post-open canonical spelling either way).
 #[cfg(unix)]
 pub(super) fn attachment_identity_matches(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -420,8 +421,10 @@ pub(super) fn attachment_identity_matches(before: &fs::Metadata, opened: &fs::Me
 
 #[cfg(not(unix))]
 pub(super) fn attachment_identity_matches(_before: &fs::Metadata, _opened: &fs::Metadata) -> bool {
-    // No stable cross-platform file identity: the check degrades to the
-    // lease guard's canonical containment.
+    // No stable cross-platform file identity: non-Unix leans on the
+    // post-open canonicalize containment revalidation (step 2 of the
+    // open-first sequence in compose_attachment_turn, which runs on every
+    // platform) instead of this comparison.
     true
 }
 
@@ -613,21 +616,67 @@ pub(super) fn compose_attachment_turn(
             Err(rejected) => return Err(rejected),
         };
         let route = attachment_route(entry, &entry.path);
-        // P0-b (codex): the (dev, inode) of the resolved path recorded right
-        // before the open, compared against the opened handle's own fstat —
-        // a leaf or ancestor swapped between the two lookups opens a
-        // different file and is treated as not-found: no read, no
-        // registration. allowedReadFiles always records the resolved
-        // canonical spelling.
-        let pre_open = match fs::metadata(&resolved) {
-            Ok(metadata) => metadata,
+        // P0 fix-r4 (codex): open-first revalidation. The previous order
+        // (path stat → open → identity) only pinned the object two adjacent
+        // lookups happened to see: swap the leaf or an ancestor to an
+        // outside-project symlink after `lease_guard`'s canonicalize and
+        // both lookups follow the same link onto the same outside inode —
+        // the (dev, inode) comparison passes and outside bytes get inlined.
+        // The approved object is now bound by revalidating the path AFTER
+        // the open, and every read comes from the handle:
+        //   1. open `resolved`;
+        //   2. post-open `canonicalize` containment under the canonical
+        //      lease root — a swap made after the open resolves outside
+        //      and is treated as not-found (no read, no registration);
+        //   3. path stat vs the handle's fstat `(dev, inode)` — a swap
+        //      made after the revalidation stats a different file than
+        //      the handle and is treated as not-found;
+        //   4. a swap made after all checks only moves the path, never
+        //      the opened handle, so the bytes still come from the object
+        //      this sequence validated.
+        // Step 2 runs on every platform; the (dev, inode) comparison is a
+        // Unix-only strengthening (non-Unix leans on step 2). The
+        // registered allowedReadFiles spelling is the post-open canonical
+        // form from step 2 (identical to the pre-open one when nothing
+        // moved).
+        let mut file = match File::open(&resolved) {
+            Ok(file) => file,
             Err(error) => {
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error));
                 continue;
             }
         };
-        let mut file = match File::open(&resolved) {
-            Ok(file) => file,
+        #[cfg(test)]
+        swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &resolved);
+        let resolved = match fs::canonicalize(&resolved) {
+            Ok(post_open) => match lease_canon.as_deref() {
+                Some(root) if post_open.starts_with(root) => post_open,
+                // A leaf or ancestor swapped after the open: the
+                // revalidated spelling escapes the lease root (or there is
+                // no valid root left, P0-a). No read, no registration —
+                // the TS-shaped not-found diagnostic.
+                _ => {
+                    let error = std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "attachment resolved outside the lease root after open",
+                    );
+                    diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                    continue;
+                }
+            },
+            // The revalidation cannot prove the approved object (a lease
+            // TTL cleanup race, a swapped-away path): the TS-shaped
+            // not-found diagnostic, never a whole-turn failure (#1459 owns
+            // the hard-failure shapes).
+            Err(error) => {
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                continue;
+            }
+        };
+        #[cfg(test)]
+        swap_test_hook::notify(swap_test_hook::SwapWindow::AfterRevalidate, &resolved);
+        let path_stat = match fs::metadata(&resolved) {
+            Ok(metadata) => metadata,
             Err(error) => {
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error));
                 continue;
@@ -640,10 +689,10 @@ pub(super) fn compose_attachment_turn(
                 continue;
             }
         };
-        if !attachment_identity_matches(&pre_open, &metadata) {
+        if !attachment_identity_matches(&path_stat, &metadata) {
             let error = std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "attachment resolved to a different file between validation and open",
+                "attachment resolved to a different file between revalidation and read",
             );
             diagnostics.push(attachment_not_found(entry, &entry.path, &error));
             continue;
@@ -1084,13 +1133,20 @@ impl SubmitHostServices for Services {
             let release: crate::runtime::turn::submit_host::SubmitLeaseRelease =
                 Box::new(move || {
                     Box::pin(async move {
-                        for lease in leases.iter().rev() {
-                            // Best-effort: log failures but continue.
-                            if let Err(e) = lease.release() {
-                                eprintln!("native upload lease release: {e}");
+                        // Concurrency P2a (gate): `lease.release()` removes the
+                        // whole lease directory; like the acquire path it runs
+                        // on a blocking thread so the serial host event loop is
+                        // never blocked on unlink churn.
+                        tokio::task::spawn_blocking(move || {
+                            for lease in leases.iter().rev() {
+                                // Best-effort: log failures but continue.
+                                if let Err(e) = lease.release() {
+                                    eprintln!("native upload lease release: {e}");
+                                }
                             }
-                        }
-                        Ok(())
+                        })
+                        .await
+                        .map_err(|e| SubmitError::new("CAPABILITY_UNAVAILABLE", e.to_string()))
                     })
                 });
             Ok(SubmitAttachmentLease {
@@ -1215,5 +1271,62 @@ impl SubmitHostServices for Services {
     }
     fn abort_turn_timeout_ms(&self) -> u64 {
         self.options.drain_budget.as_millis() as u64
+    }
+}
+
+/// fix-r4 window-injection seam (tests only): the open-first sequence in
+/// `compose_attachment_turn` notifies [`swap_test_hook::notify`] at each
+/// window; a test installs a callback that swaps a leaf or an ancestor
+/// for an outside-project symlink exactly inside that window, and must
+/// assert the hook actually fired — an unfired hook proves nothing, so
+/// the test fails (race-hook-target-assert). Per-thread and RAII-removed
+/// like the `mutation_test_hook` convention in file_memory.rs; production
+/// builds compile none of this.
+#[cfg(test)]
+pub(super) mod swap_test_hook {
+    use super::*;
+
+    /// Which injection point the swap happens in: between `File::open` and
+    /// the post-open `canonicalize` containment revalidation (step 2), or
+    /// between the revalidation and the `(dev, inode)` path-stat/fstat
+    /// comparison (step 3).
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum SwapWindow {
+        AfterOpen,
+        AfterRevalidate,
+    }
+
+    type Hook = Box<dyn FnMut(&Path)>;
+
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<(SwapWindow, Hook)>> =
+            std::cell::RefCell::default();
+    }
+
+    pub struct Guard;
+
+    pub fn set(window: SwapWindow, hook: impl FnMut(&Path) + 'static) -> Guard {
+        HOOK.with(|slot| {
+            assert!(slot.borrow().is_none());
+            *slot.borrow_mut() = Some((window, Box::new(hook)));
+        });
+        Guard
+    }
+
+    pub fn notify(window: SwapWindow, resolved: &Path) {
+        HOOK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if let Some((hook_window, hook)) = slot.as_mut()
+                && *hook_window == window
+            {
+                hook(resolved);
+            }
+        });
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOK.with(|slot| *slot.borrow_mut() = None);
+        }
     }
 }
