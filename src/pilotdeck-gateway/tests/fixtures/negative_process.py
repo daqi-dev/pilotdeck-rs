@@ -31,7 +31,7 @@ from types import ModuleType
 KILL_TIMEOUT = 10
 
 # Total budget for a cargo slot wait in fixtures that also build afterwards
-# (#1556). cargo-slots.sh may need one cold bootstrap of up to its 120 s
+# (#1556). cargo-slots.sh may need one cold bootstrap of up to its 240 s
 # budget on the first call of a machine, so a budget that is only one cold
 # call long leaves no room to retry a full pool. Single source of truth: the
 # number used to be copied into every fixture.

@@ -15,7 +15,8 @@ root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_selection import baseline_passed, verdict_exit
-from negative_process import mutating_sources, node_version, run_owned, wait_for_slot
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources, node_version,
+                              run_owned, wait_for_slot)
 
 # generate.mts:11 pins the TS baseline: assert.equal(process.version,
 # 'v22.22.0'). A host outside that contract records INVALID for the
@@ -113,7 +114,7 @@ def main():
             if ignored:
                 test_args.append('--ignored')
             def run(label, args):
-                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
                 (out / f'{name}.{label}.slots.log').write_text(slot.stdout + slot.stderr)
                 try:
                     result = run_owned(args, cwd=root, env=env, timeout=300)

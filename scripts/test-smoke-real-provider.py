@@ -1166,7 +1166,7 @@ def test_probe_rust_tests() -> None:
         ["bash", str(repo / "scripts" / "cargo-slots.sh")],
         repo,
         os.environ.copy(),
-        # 与 real_provider.run_cargo_slots 同一个常数：脚本自身冷启动预算 120 s，
+        # 与 real_provider.run_cargo_slots 同一个常数：脚本自身冷启动预算 240 s，
         # 这里给 60 s 会在冷 du 慢时先杀脚本 → 假 FAIL（#1556 r2 boundary P1）。
         rp.CARGO_SLOTS_TIMEOUT_SECONDS,
     )

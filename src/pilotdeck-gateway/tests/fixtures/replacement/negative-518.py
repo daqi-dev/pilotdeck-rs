@@ -152,7 +152,7 @@ def main():
         for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
             slot_deadline = time.monotonic() + 1800
             while True:
-                slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=180)
+                slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=300)
                 if slots.returncode in (0, 69):
                     break
                 if slots.returncode != 1:

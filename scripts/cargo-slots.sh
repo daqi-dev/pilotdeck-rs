@@ -280,6 +280,10 @@ if read_cap_cache; then
         echo "cargo-slots: 解不出统一闸的名额（${GATE} --status 输出：${GATE_OUT}）→ fail-closed" >&2
         exit 4
       fi
+      # 时间戳要在闸答完之后取：`now` 是问闸**之前**的时间，用它当 lastok/USED_TS 会让
+      # used_age ≈ 闸本次应答耗时——闸慢过 USED_TTL 时，刚拿到的 used 立刻被判「陈旧」而弃用，
+      # 等于白问一次（#1556 r5 boundary P1）。
+      now=$(date +%s)
       write_cap_cache "$CAP" "$USED" "$now"
       CAP_SOURCE="闸刷新"
       USED_TS=$now

@@ -60,7 +60,7 @@ def main():
             saved = snapshots[path]
             text = saved.decode()
             assert text.count(before) == 1, (label, 'mutation anchor')
-            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], cwd=ROOT, capture_output=True, text=True, timeout=180)
+            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], cwd=ROOT, capture_output=True, text=True, timeout=300)
             # Exit 1 means no slot. Do not mutate or launch cargo while full.
             # Exit 69 (EX_UNAVAILABLE) means there is no unified gate on this
             # machine (CI has none), so there is no shared quota to respect.
