@@ -573,7 +573,7 @@ def calibrate_dict_code_zero(rows):
         return False, error
     ok, detail = _point_failure(
         row, 'scripts/gateway-parity/session_domain.py', 'main',
-        'inline exit code (subscript relay) code', 'calibrate-main')
+        "inline exit code holder['code']", 'calibrate-main')
     if not ok:
         return ok, detail
     return True, ('aggregation-audit: zero read back from a local dict flagged, '
@@ -591,7 +591,7 @@ def calibrate_nested_def_zero(rows):
         return False, error
     ok, detail = _point_failure(
         row, 'scripts/gateway-parity/session_domain.py', 'main',
-        'inline exit code (nested def relay) code', 'calibrate-main')
+        'inline exit code _exit_code()', 'calibrate-main')
     if not ok:
         return ok, detail
     return True, 'aggregation-audit: nested zero helper flagged, passed=False'
