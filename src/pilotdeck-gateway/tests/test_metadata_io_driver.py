@@ -888,7 +888,11 @@ class EnvironmentControls(unittest.TestCase):
     def assert_cargo_slots_fails_closed(self, script, tmp, label):
         """取样不可用时必须 rc=3，且绝不打印「在跑 N」——打印了就是把空样本读成 0 放行。"""
         for case, body in (('ps exits non-zero', '#!/bin/sh\nexit 1\n'),
-                           ('ps prints nothing', '#!/bin/sh\nexit 0\n')):
+                           ('ps prints nothing', '#!/bin/sh\nexit 0\n'),
+                           # 残缺采样：先输出一行再非零退出。只有这一格能把「取样失败」
+                           # 那条守卫和「输出为空」那条分开——前两格都会被空输出守卫兜住。
+                           ('ps prints rows then fails',
+                            '#!/bin/sh\nprintf "  123 1 cargo\\n"\nexit 1\n')):
             done = self.run_cargo_slots(script, tmp, body)
             self.assertEqual(done.returncode, 3, f'#1632 {label} / {case}: {done.stderr}')
             self.assertIn('不按 0 放行', done.stderr, f'#1632 {label} / {case} explains itself')
@@ -902,9 +906,16 @@ class EnvironmentControls(unittest.TestCase):
         script = Path(__file__).resolve().parents[3]/'scripts/cargo-slots.sh'
         text = script.read_text()
         guard = next(line for line in text.splitlines(keepends=True) if 'ps 输出为空' in line)
+        sampling = next(line for line in text.splitlines(keepends=True) if 'ps 取样失败' in line)
         with tempfile.TemporaryDirectory() as tmp:
             self.assert_cargo_slots_fails_closed(script, tmp, 'real script')
             for label, mutant in (
+                    ('sampling-guard-condition-flipped',
+                     text.replace(') || { echo "cargo-slots: ps 取样失败',
+                                  ') && { echo "cargo-slots: ps 取样失败', 1)),
+                    ('sampling-guard-exit-in-subshell',
+                     text.replace(sampling,
+                                  sampling.replace('|| {', '|| ( {', 1).rstrip(chr(10)) + ' )\n', 1)),
                     ('guard-condition-flipped',
                      text.replace('] || { echo "cargo-slots: ps 输出为空',
                                   '] && { echo "cargo-slots: ps 输出为空', 1)),
