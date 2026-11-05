@@ -68,12 +68,20 @@ SystemExit(0)` are optimistic exits and are flagged.  The same provenance rules
 judge the argument of `sys.exit(...)`, `os._exit(...)` and `raise
 SystemExit(...)`, the bare `raise SystemExit` included (it raises with no
 argument, so the process exits 0), and a boolean exit expression (`return not
-ok`) or a comparison is an inline exit code.  A non-zero exit literal on its own
+ok`) or a comparison is an inline exit code.  The statement form and the
+`return sys.exit(0)` form share one judgement, because a `return` of an exit
+call never returns either; an arm of an `if` / boolean argument that is a
+literal zero (`sys.exit(0 if cond else 1)`) is inline on its own, even though
+the whole argument is not a literal (`fix-r7`).  A returned conditional or
+boolean is expanded into its arms, so ``return {'status': 'PASS'} if cond else
+report`` and ``return payload if cond else report`` are judged slot by slot like
+a plain return, and ``report.update(**name)`` whose expansion this function
+never built writes slots the audit cannot see, so it fails closed (`fix-r7`).  A non-zero exit literal on its own
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) is not an optimistic exit and
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests forty-four probe functions; `probe892` in `check_cleanup.py` is
+(`fix-r6` pins both sides).  The audit self-tests forty-nine probe functions; `probe892` in `check_cleanup.py` is
 the authoritative list (the four helpers it defines — `_exit_code`, `_exit_a`,
 `_exit_b`, `_decoy_code` — are leaves reached through a probe, not probes
 themselves).  Every rule below has a flagged probe and, where the shape is legal,
@@ -95,7 +103,10 @@ rebuilt summary, and a function whose only status evidence is a
 expression, an exit code relayed into `sys.exit(...)`, a bare `raise
 SystemExit`, a two-hop delegation chain, a decoy shared call beside a `return 0`,
 an unproven subscript written into the slot, a summary keyed `verdict`, and the
-legal / illegal pair around a non-zero exit literal.
+legal / illegal pair around a non-zero exit literal.  The `fix-r7` probes added
+five: a summary dict in a conditional arm, a conditional arm returning a *bound*
+summary, an `update(**name)` expansion the function never built, a zero arm
+inside an exit call's argument, and an exit call in `return` position.
 A `code = 0` initializer is therefore judged by
 reachability, not by the presence of a shared assignment somewhere else in the
 function: only a later statement that rebinds the name from the shared call on
@@ -140,7 +151,8 @@ common.aggregate_status(result['status'])[1]`).  That is exactly the healthy
 per-case verdict in `scripts/gateway-parity/controls/session_domain.py:main`,
 and the identical shape with a batch summary is a hardcoded PASS; the audit
 therefore judges every other write (subscript, `update`, `|`, walrus,
-unresolvable name, a dict rebuilt with `{**name}`) but exempts the fresh literal
+unresolvable name, a keyword expansion `update(**name)`, a dict rebuilt with
+`{**name}`) but exempts the fresh literal
 for such a name.  The batch status of both registered `main` points is instead
 pinned at runtime: the published status must equal what the one shared
 aggregation returns for the observed cell statuses, and a `--case all` replay
@@ -223,7 +235,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 60 mutants:
+`JUDGES`, keyed by the same names. The current table has 64 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -250,7 +262,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-boolean-exit`, `calibrate-sys-exit-relay`,
 `calibrate-system-exit-bare`, `calibrate-delegated-chain`,
 `calibrate-container-slot`, `calibrate-alias-cycle`,
-`calibrate-verdict-dict`, `calibrate-clean-argument`.  The batch-related
+`calibrate-verdict-dict`, `calibrate-clean-argument`,
+`calibrate-conditional-summary`, `calibrate-update-expansion`,
+`calibrate-exit-conditional`, `calibrate-return-exit-call`.  The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
@@ -321,6 +335,13 @@ it is pinned at runtime instead, by the `caseFailure` row of
 `--mode batch-aggregation` (a failing case must reach the batch status).  The first six replace the one shared exit
 line in `controls/session_domain.py:main` (`CT_EXIT`), the last one prepends a
 function to that module.  The
+four `fix-r7` mutants pin the return-path shapes the r6 reviews found still
+silent: `calibrate-conditional-summary` returns `{'status': 'PASS'}` from one arm
+of a conditional, `calibrate-update-expansion` passes an unbound name through
+`update(**extra)`, `calibrate-exit-conditional` calls `sys.exit(0 if ... else
+1)`, and `calibrate-return-exit-call` writes `return sys.exit(0)`.  All four
+replace the one shared exit line in `controls/session_domain.py:main`
+(`CT_EXIT`).  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
