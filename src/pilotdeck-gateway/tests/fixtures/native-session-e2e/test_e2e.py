@@ -990,9 +990,17 @@ class LifecycleTests(unittest.TestCase):
             # directory) also exits non-zero, and the assertions below would
             # then fail WITH the marker -- measured: the real classify() turns
             # such a log into KILLED, i.e. "the mutant was caught" for a mutant
-            # nothing ever exercised.  Require the exhaustion report first and
-            # fail without the marker otherwise, exactly like the timeout path.
-            if '#1510 e2e: no free gateway/provider port pair (' not in log:
+            # nothing ever exercised.  So the exclusion evidence is checked
+            # first, without the marker: the scan must have exhausted because
+            # BOTH ports reported the lease reason.  An exhaustion report that
+            # names a bind error instead means an unrelated process held the
+            # ports, which proves nothing about the handoff window (r5: the
+            # bare exhaustion check let that case fall through to the marked
+            # assertions below and still grade KILLED).
+            excluded = ('#1510 e2e: no free gateway/provider port pair (' in log
+                        and str(port) + ':lease' in log
+                        and str(port + 1) + ':lease' in log)
+            if not excluded:
                 self.fail('#1510 the sibling reservation failed for an infrastructure '
                           'reason, not because the pair was leased (no mutant verdict): '
                           + log.replace('\n', ' ')[-400:])
