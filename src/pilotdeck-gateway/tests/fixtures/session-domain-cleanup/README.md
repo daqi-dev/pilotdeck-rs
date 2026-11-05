@@ -52,9 +52,17 @@ key in the returned dict or a dict element of a returned tuple) marks the
 function as an aggregation point that must be registered, and every registered
 point must route each return path's status slot, status literal, and exit-code
 computation through the shared function instead of computing its own verdict
-inline.  The audit self-tests these probes: a direct `{'status': ...}` return
-that must be caught, an inline `0 if ... else 1` branch that must be flagged,
-and a legal shared pair that must stay clean.  The exit mapping is the one
+inline.  The per-return-path check follows the dominant real-code shape — the
+summary dict is built into a local `report`/`summary`/`result` name and returned
+by that name — and it only accepts a written status literal when it is
+fail-closed (`BLOCKED`/`FAIL`/`NOT_RUN`); `'PASS'` written straight into a slot
+is a bypass even though it is an `ast.Constant`.  A bare optimistic `return 0`
+on any return path of a registered point is flagged too; a non-zero exit literal
+stays legal because it cannot claim a clean run.  The audit self-tests five
+probes: a direct `{'status': ...}` return that must be caught, an inline
+`0 if ... else 1` branch that must be flagged, a legal shared pair that must
+stay clean, a summary dict returned through a local name that must be caught,
+and a bare `return 0` that must be flagged.  The exit mapping is the one
 registered order: `PASS=0`, `PASS_WITH_SKIPS/FAIL=1`, `BLOCKED=2`, `NOT_RUN=3`.
 Every process mode checks the live process group and the grandchild PID after
 the run.  On non-Darwin the Darwin-only positives (`clean`, `leak`, `ignore`,
@@ -127,7 +135,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 24 mutants:
+`JUDGES`, keyed by the same names. The current table has 26 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -137,7 +145,8 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `linux-visible-census-trusted`, `batch-status-relaxed`,
 `fixture-summary-relaxed`, `calibrate-controls-skip-accepted`,
 `aggregation-exit-bypassed`, `summary-dict-bypass`,
-`aggregation-branch-exit-inline`, `restored-skip-accepted`.  The batch-related
+`aggregation-branch-exit-inline`, `summary-name-bypass`, `bare-exit-zero`,
+`restored-skip-accepted`.  The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
@@ -146,7 +155,11 @@ calibrate skipped-controls mapping, the controls `main()` shared exit call
 dict directly (the #892 enumeration and per-branch audits must catch it);
 `aggregation-branch-exit-inline` rewrites one `main()` exit branch to compute
 its own code while the other still shares (the per-branch slot audit must
-catch it).  The last one binds
+catch it); `summary-name-bypass` writes `'PASS'` into `run_all()`'s summary
+dict that is returned by name (the name-resolution and literal rules must
+catch it, and no unregistered point may appear); `bare-exit-zero` replaces one
+`main()` exit path with a bare `return 0` while the other still shares (the
+optimistic-exit rule must catch it).  The last one binds
 `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
