@@ -5,14 +5,18 @@ date: 2026-11-06
 title: A7.2-pr6b 四格矩阵一次性账本（#590）
 tags: [phase-a, session-domain, four-cell, native-witness, parity]
 status: 一次性账本已记录；四格分别报告，无后续四格回归闸门
+related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/gap, plan/005_phase-a-session-domain]
 ---
 
 # 四格矩阵一次性账本（#590 / A7.2-pr6b）
 
 > ## 一次性账本
 >
-> **这是一次性账本，不是常设闸门。** 按 #1301 选项 B（人批），A6 的完成口径降为「#590 一次性四格账本」；
-> **之后没有四格回归闸门**。常设回归闸门是 host suite #1314，另单另授权。
+> **这是一次性账本，不是常设闸门。** 按 #1301 选项 B（人批，正本 `state/decisions-20261102-a-stage-scope.md`「#1301 → B」节），
+> A6 的完成口径降为「#590 一次性四格账本」；
+> **之后没有四格回归闸门**。原拟的常设闸门 host suite **#1314 / #1315 已按 #1301 B 以 `not planned` 关单**
+> （`gh issue view 1314`：`CLOSED / NOT_PLANNED`），A7 的 50 项改由 #1317 的人工对账表承担，同样无回归闸门；
+> 日后若要恢复常设闸门，须另开单人批。
 > 后来人不要把这页当成 CI 判据，也不要因为它没有跟进就当成回归失守。
 
 四格 = 宿主 × sidecar 的四种组合。**每格单独报告，不合成一个 PASS/FAIL**（人批口径：能定位是宿主错还是 sidecar 错）。
@@ -54,13 +58,13 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 （"controlled in-process TS loop; no sidecar binary"），`acceptanceStatus=NOT_RUN`、`freezeStatus=DRAFT_AWAITING_A5_4`。
 **它证明的是 TS 进程内会话域观察装置自身可用，不是"TS 宿主 + TS sidecar 这一格通过"。**
 
-`summary.json` 的账：**27 条 failed**（26 条纯换位 + 1 条内容差异 `sidecar_budget_limit`）+
+`summary.json` 的账：**27 个场景 failed**（26 个纯换位 + 1 个内容差异 `sidecar_budget_limit`）+
 **3 条 expectedExtensions**（`deadline` 的 2 条差异、两条 `sidecar_continuable_followup_*` 的 0 条差异）
-+ 23 条完全一致 = 53。（分诊口径：把每份 md 的 semantic difference 条目取左/右非 null 值做多重集比对。）
++ 23 条完全一致 = 53。（分诊口径可复算：`summary.json` 的 failed / expectedExtensions 名单决定场景归类；「换位」= 该场景的 semantic difference 全是同值不同 trace 下标，「内容」= 存在左右都有值但不等的字段；下文的 26/1、47/2 都是**场景数**，不是差异条目数。）
 
-- **26 条纯换位**：同一批事件/字段，出现位置不同。例：`single_tool` 的 `agent.status/turn_continued`
+- **26 个场景纯换位**：该场景的 semantic difference 全是「同一个值在两侧落在不同 trace 下标」。例：`single_tool` 的 `agent.status/turn_continued`
   在宿主侧落在 `trace[10]`、sidecar 侧落在 `trace[12]`，比较器按位置判成 2 条差异。
-- **1 条内容差异**：`sidecar_budget_limit` —— 宿主写 `text="Reached Gateway-owned maxBudgetUsd ($0.500000) after spending $1.000000."`，
+- **1 个场景是内容差异**：`sidecar_budget_limit` —— 宿主写 `text="Reached Gateway-owned maxBudgetUsd ($0.500000) after spending $1.000000."`，
   sidecar 侧写 `text="max_budget_reached"`。
 - **`deadline` 不算失败**：它的 2 条差异（`durableStopReason="aborted_streaming"`、`resultType="aborted"` 对 `null`）
   是场景里**已声明的 transport extension**，`declared_extension_matches` 判为 `verified 2 declared transport difference(s)`。
@@ -68,12 +72,16 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 
 ### 格② TS 宿主 × Rust sidecar
 
+同一份 `native-topology` 装置里也有这一格的对应行（该装置把 Rust 二进制叫 `native`）：
+`TS-sidecar-native` = `NOT_RUN`，`reason="TS host not executed"` —— 与①的 `TS-sidecar-ts` 同因，
+它说明**该装置根本起不了 TS 宿主**，所以①②两格只能靠 `scripts/parity/round.py` 取证。
+
 | 项 | 值 |
 |---|---|
 | sidecar 二进制 | `pilotdeck-agent-loop-sidecar`，sha256 `37961b37b9340e49f0ec6d76a65a58703c5f6832aa34f1f49a4a02d72d7009f6` |
-| 身份 | `identity_ok=true`，**53/53 场景逐条** `harness.proof` 命中（side/sha256/spawnObserved 三项全对） |
+| 身份 | `identity_ok=true`，**53/53 场景逐条** `harness.proof` 命中（side / sha256 / spawnObserved 三项全对，且 `trace_health` 无异常——`round.py:438` 的四项合取） |
 | 轮次 | `valid_round=true`，`run_py_exit=1`，用时 243.7 s |
-| 比较 | **49 条 failed**（47 条纯换位 + 2 条内容差异）+ **2 条 expectedExtensions**（0 条差异）+ **2 条完全一致**（`auto_compact`、`plan_mode_host_policy`）= 53 |
+| 比较 | **49 个场景 failed**（47 个纯换位 + 2 个内容差异）+ **2 条 expectedExtensions**（0 条差异）+ **2 条完全一致**（`auto_compact`、`plan_mode_host_policy`）= 53 |
 
 **归因（这是本账本最有用的一格）：**
 
@@ -86,9 +94,12 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
   `write_snapshot_resume`。
 - 第 23 条是 `deadline`：① 里它的 2 条差异被登记为**已声明扩展**（verified），② 里变成 `transport contract mismatch`
   ⇒ 同样归因 **sidecar 侧**，但性质是"已声明的契约没兑现"，不是"凭空多出的差异"。22 + 1 = 23 条 sidecar 侧信号。
+  闭合核对（场景级）：② 的 49 = 47 换位 + 2 内容；47 换位 = **22 只在②** + **25 ①②共有**；
+  2 内容 = 1 共有（`sidecar_budget_limit`）+ 1 `deadline`（①里是已声明扩展）。① 的 27 = 26 换位 + 1 内容，
+  其中 26 换位 = 25 共有 + 1 只在①（`plan_mode_host_policy`）。两边共有失败场景恰为 26，对得上。
 - 1 条**只在①有差异**（`plan_mode_host_policy`）⇒ 归因 **sidecar 侧的反向不稳定**：换 Rust sidecar 后该场景反而对上了。
   这一条同时说明该场景的"一致"不稳，不能单独当通过证据。
-- 2 条内容差异（`deadline`、`sidecar_budget_limit`）：
+- 2 个场景是内容差异（`deadline`、`sidecar_budget_limit`）：
 
   | 场景 | 宿主侧（native） | sidecar 侧 | 归因 |
   |---|---|---|---|
@@ -126,8 +137,8 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 
 | 格 | 一句话结论 | 主要归因 |
 |---|---|---|
-| ① TS/TS | 装置可跑；E1 进程内校准 PASS，但**带 sidecar 的这一格本身没有 PASS 判据**；宿主 vs sidecar 在 53 场景里 27 条 failed（26 换位 + 1 内容），另 3 条已声明扩展（`deadline` 等）判 verified | 宿主侧（1 条内容 `sidecar_budget_limit`）+ 两侧公共排序 |
-| ② TS/Rust | Rust sidecar **身份 53/53 可核**；宿主 vs sidecar 差异 49 条 failed（47 换位 + 2 内容），比①多 22 条 failed 场景、且 `deadline` 由"已声明扩展"降为契约不符 ⇒ sidecar 侧信号共 23 条 | sidecar 侧（22 条 + `deadline` 契约不符） |
+| ① TS/TS | 装置可跑；E1 进程内校准 PASS，但**带 sidecar 的这一格本身没有 PASS 判据**；宿主 vs sidecar 在 53 场景里 27 个场景 failed（26 换位 + 1 内容），另 3 个场景是已声明扩展（`deadline` 等）判 verified | 宿主侧（1 条内容 `sidecar_budget_limit`）+ 两侧公共排序 |
+| ② TS/Rust | Rust sidecar **身份 53/53 可核**；宿主 vs sidecar 差异 49 个场景 failed（47 换位 + 2 内容），比①多 22 个 failed 场景、且 `deadline` 由"已声明扩展"降为契约不符 ⇒ sidecar 侧信号共 23 条 | sidecar 侧（22 条 + `deadline` 契约不符） |
 | ③ Rust/TS | 4 案 × 5 轮 PASS，但整份报告因生产入口/退役未接而 `NOT_RUN` | 无差异可归因（样本小） |
 | ④ Rust/Rust | 4 案 × 5 轮 PASS；72 case 的**采集成功、判分全 NOT_RUN**（前置于 #1242） | 无法归因（判分未执行） |
 
@@ -164,7 +175,7 @@ RC-COLLECT=0
 
 采集到的东西（证明 Rust 宿主 + Rust sidecar 真的跑了，不是空目录）：
 
-- `processes` 73 条；`execWitness.complete=true`，`source=exec-monitor`，146 条 exec 事件、73 次尝试。
+- `processes` 73 条；`execWitness.complete=true`，`source=exec-monitor`，146 条 exec 见证事件 = 73 条 `exec` + 73 条 `exit`。
 - `networkWitness.complete=true`，`source=strace-connect`，142 次 connect。
 - `transcriptWitness.complete=true`，`source=strace-openat`，1106 次 openat（会话转录首开）。
 - `topology=native`；`observer` 1 条连接 552 行；`provider` 63 次本地 mock 请求；`cleanup.allStopped=true`。
@@ -195,7 +206,9 @@ EXIT=3
 - `structureStatus=PASS`、`frozen.exitCode=0`（30 项登记全对）⇒ 冻结件没被绕过，采集也被审计接住了（否则会是 `BLOCKED`）。
 - `rust-host/rust-sidecar` 格：`topology=native`，`sidecarSha256=37961b37b934…`（与 4.2 用的 Rust sidecar 同一枚），
   `processes` 里有真实宿主 argv（`pilotdeck-gateway --native --sidecar …pilotdeck-agent-loop-sidecar --drain-ms 1500`），
-  `cases` **72 条**，**全部 `NOT_RUN`**，逐条 `rule=COVERAGE`、`detail="未执行：缺少受控入口及目标边界见证: registry, phase, order"`。
+  `cases` **72 条**，**全部 `NOT_RUN`**，逐条 `rule=COVERAGE`、detail 前缀统一为
+  `"未执行：缺少受控入口及目标边界见证: "`，其后的缺失边界名**逐 case 不同**（72 条共 12 种，例：
+  `registry, phase, order` ×20 / `registry, phase, order, failStatus` ×8 / `…, slowAppend, failAppend` ×8）。
 - 其余三格仍是 `NOT_RUN` / 0 case（没有原生素材的格不会被凑数）。
 
 根因不在采集器，也不在本单：`scripts/native-witness/stimulus_plan.py:execution()` 目前对每个 stimulus 直接返回
@@ -216,21 +229,40 @@ EXIT=3
 | `MAX_OUTPUT_TOKENS_PER_REQUEST` | 128 |
 | `MAX_TOTAL_OUTPUT_TOKENS` | 384 |
 
+（以上三项以 `scripts/smoke/real_provider.py` 的常量为准，脚本每次运行也把同名字段写进 `report.json`
+（`limits.*`），核对时以原始记录 JSON 为准而不是本表拷贝。）
+
 运行与人工复核步骤见 PR 正文与 `_tmp/20261106-issue-590-smoke/` 下的原始记录；本轮实测结论与"待人签字"状态见 PR 正文
 （AI 实测不改变阶段完成状态，人签字后才算实效通过）。
 
 ## 六、边界与未覆盖（不要把本页读大）
 
 1. **没有四格回归闸门**（本节开头已声明），也没有把四格合成一个分数。
-2. **四格 fixture 集不同**，跨格只能比同一装置内的横向差；②的 49 条差异不是对拍 FAIL，①的 27 条也不是。
+2. **四格 fixture 集不同**，跨格只能比同一装置内的横向差；②的 49 个 failed 场景不是对拍 FAIL，①的 27 个也不是。
 3. **A6.9 原始验收「四格矩阵同 fixture 语义一致」当前不成立**：#1301 选项 B 只是把完成口径降到本账本，
    没有说语义已经一致。
 4. **格①②的宿主不是 Rust**，因此这两格不能证明 Rust 宿主的任何事；Rust 宿主只有 4 案 × 5 轮（③④）加 72 case 采集（④）。
 5. **72 case 全部 NOT_RUN**，前置于 **#1242**（受控入口与目标边界见证）。
 6. E1 calibrate 仍是 `DRAFT_AWAITING_A5_4` / `acceptanceStatus=NOT_RUN`，不可当已冻结尺子引用。
 7. 本账本未改任何冻结件：`specs/gateway-parity/{accepted-diffs.md,README.md,FROZEN.md}` 未触碰。
+8. **取消类已批偏离 `A7-HOST-POST-CANCEL-EXIT-001-R3` 的适用性**（正本 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R3.md` 自述
+   「四格矩阵（#590）中涉及取消的场景按本偏离判定」，出处 `state/decisions-20261025.md`「#643 取消退出到点后的有界收尾：选 A」）：
+   - 该偏离描述的是 **Rust 宿主** `host/execution.rs` 取消后的 5 s 墙钟期限。①② 的宿主是 TS 基线 native ⇒ **不适用**；
+     ② 里 `cancel_during_tool`、`stream_interruption` 等取消场景的差异是**宿主为 TS 时观测到的 sidecar 侧差异**，
+     **不落在**这条偏离的「范围」内（它只管 Rust 宿主的取消后收尾），不能被它豁免，仍按 sidecar 侧信号记。
+   - ③④ 的 fixture 只有 `model-stream` / `provider-error` / `provider-unconfigured` / `token-saver-judge` 四案，**不含取消场景** ⇒ 未被触发；
+     ④ 的 72 case 全部 `NOT_RUN` ⇒ 也判不到。
+   - 结论：四格里没有任何一格能验证这条偏离，本账本不对它作裁决，也不据此改任何判据。
+9. **本单的冻结装置授权没用上**：`state/decisions-20261025.md`「#590 A7.2-pr6b 四格矩阵：授权修改冻结装置」允许在本单范围内改
+   `session_domain.py` 及配套冻结件；实际执行**没有改动任何冻结文件**（30 项登记哈希在每份报告里 `frozen.exitCode=0`），
+   72 case 的 `NOT_RUN` 是装置现状而非本单改判的结果。人要求的「事后详细解释」在 PR 正文里给出。
 
 ## 七、复现
+
+> 平台注记：`sha256sum` 是 GNU coreutils，**macOS 上用 `shasum -a 256`**；`--native-capture` 的判分
+> **必须在采集机上按原绝对路径跑**（`capture/prelaunch.json` 记的是 ELF 绝对路径 + sha256，异地判分为
+> `BLOCKED / APPARATUS_IMPORTS`，见 §4.3）；`native-topology/run.py` 在 report 级 `NOT_RUN` 时**退出码 2**
+> （源码 `run.py:599` 注释 "NOT_RUN never means success"），exit 2 既不是通过也不是失败。
 
 ```sh
 # ① E1 进程内校准（TS）
@@ -241,7 +273,7 @@ python3 -I scripts/gateway-parity/session_domain.py --suite calibrate \
 python3 -I scripts/parity/round.py --side ts   --label side-ts
 python3 -I scripts/parity/round.py --side rust --label side-rust \
   --rust-binary $CARGO_TARGET_DIR/debug/pilotdeck-agent-loop-sidecar \
-  --expected-sha256 "$(sha256sum $CARGO_TARGET_DIR/debug/pilotdeck-agent-loop-sidecar | cut -d' ' -f1)"
+  --expected-sha256 "$(shasum -a 256 $CARGO_TARGET_DIR/debug/pilotdeck-agent-loop-sidecar | cut -d' ' -f1)"  # Linux 用 sha256sum
 
 # ③④ 原生拓扑 4 案 × 5 轮（需只读基线 cc7c4e65）
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-topology/run.py --output _tmp/<new>/native-topology

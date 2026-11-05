@@ -11,6 +11,7 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/gap,
 # 008 · 必须先知道的事
 
 **建议把“构建粒度”和“切换粒度”分开：按状态所有者分小 PR 构建，连接、会话、交互及其宿主依赖准备齐后，在停止接收新轮次并排空旧运行时的边界整块切换；不要逐个打开 (b)(c) method。** 依据是连接注入 binding、会话接纳锁、交互 bus 与收尾持久化相互依赖：`B/src/gateway/server/GatewayWsConnection.ts:123-169`、`B/src/gateway/SessionRouter.ts:217-249`、`B/src/gateway/client/GatewayInteractionCoordinator.ts:75-125`、`B/src/gateway/client/InProcessGateway.ts:1779-1849`。方案与取舍见 [decision.md](decision.md)，事实缺口见 [gap.md](gap.md)，实施顺序见 [计划 005](../../plan/005_phase-a-session-domain.md)。
+A6/A7 收口用的四格矩阵一次性账本见 [four-cell-matrix.md](four-cell-matrix.md)（#590；**一次性账本，不是常设回归闸门**；#1314 / #1315 已按 #1301 B 以 not planned 关单，日后要闸门须另开单人批）。
 
 ## 证据口径
 
