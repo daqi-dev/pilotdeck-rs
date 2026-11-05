@@ -110,20 +110,20 @@ mutations.append(('empty-storage-advertised', REQUESTS, 'self.snapshot_enabled\n
 
 # fix-r3: provider-derived advertisement, explicit filter and production boundary.
 mutations.append(('snapshot-state-disabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() && false)', HOST, '#1231 exact wired capability set'))
-mutations.append(('snapshot-state-enabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() || true)', PRODUCTION, '#1231 production entry exact 10 capabilities'))
+mutations.append(('snapshot-state-enabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() || true)', PRODUCTION, '#1231 production entry starts without snapshots'))
 mutations.append(('production-storage-authority-accepted', ENTRY, '        "PILOTDECK_STORAGE_ROOT",', '        "UNWIRED_PILOTDECK_STORAGE_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
 mutations.append(('production-snapshot-authority-accepted', ENTRY, '        "PILOTDECK_SNAPSHOT_ROOT",', '        "UNWIRED_PILOTDECK_SNAPSHOT_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
 mutations.append(('production-blank-authority-accepted', ENTRY, 'env.get(key).is_some_and(|v| !v.is_empty())', 'env.get(key).is_some_and(|v| !v.trim().is_empty())', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
-mutations.append(('snapshot-list-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"unwired_snapshot_list" | "snapshot_get" | "snapshot_restore"', PRODUCTION, '#1231 production entry exact 10 capabilities'))
-mutations.append(('snapshot-get-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "unwired_snapshot_get" | "snapshot_restore"', PRODUCTION, '#1231 production entry exact 10 capabilities'))
-mutations.append(('snapshot-restore-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "snapshot_get" | "unwired_snapshot_restore"', PRODUCTION, '#1231 production entry exact 10 capabilities'))
+mutations.append(('snapshot-list-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"unwired_snapshot_list" | "snapshot_get" | "snapshot_restore"', PRODUCTION, '#1231 production entry exact capability set'))
+mutations.append(('snapshot-get-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "unwired_snapshot_get" | "snapshot_restore"', PRODUCTION, '#1231 production entry exact capability set'))
+mutations.append(('snapshot-restore-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "snapshot_get" | "unwired_snapshot_restore"', PRODUCTION, '#1231 production entry exact capability set'))
 mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",', '\n      "unwired_run_get",', HOST, '#1231 wired capabilities are TS subset'))
 
 # fix-r2 (#1322): memory IO must stay off the serial host.
 mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'std::future::ready(requests.memory_dispatch(&method, &params))\n                    .await,', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 # fix-r3 (#1322): inline-sync variant — calls memory_dispatch directly on the
 # calling thread (no spawn_blocking), which blocks the serial host.
-mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'requests.memory_dispatch(&method, &params),', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 memory dispatch must not run inline on the serial host'))
+mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'requests.memory_dispatch(&method, &params),', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 
 
 def mutate(case, text):
