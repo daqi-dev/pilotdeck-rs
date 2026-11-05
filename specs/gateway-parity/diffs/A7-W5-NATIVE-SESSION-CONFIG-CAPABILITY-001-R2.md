@@ -21,19 +21,20 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
 `src/pilotdeck-gateway/src/native_process/methods/config.rs`（#1455 后）：
 
-- set_permission_mode：mode 门 → busy 门（has_active_turn）→ CAPABILITY_UNAVAILABLE；**不设 sessionKey 门**，与 TS 一致（缺失/非串 key 因无处预留 turn 而跳过 busy 查询，可观察结果与 TS 相同：不 busy、落到 unavailable）。
+- set_permission_mode：mode 门 → busy 门（has_active_turn）→ CAPABILITY_UNAVAILABLE；**不设 sessionKey 门**，与 TS 一致（TS 只把原始 key 传给 hasActiveTurn，不做形态校验——probe1 实测 `busyKeys:[null]` / `busyKeys:[42]`）。非串 key 在 Rust 侧无处查 turn 而跳过 busy 查询，**「结果与 TS 相同」是读码推断**：probe1 的 `hasActiveTurn` 是注入假件（忽略 key 直接返回场景标志），无法判定真实 router 对 null/42 的查表结果，需在 #1457 装配回调后用真实 router 实测。
 - seed_read_state：sessionKey/path/mtime 门 → busy 门 → unavailable；非串 sessionKey 答 `INVALID_SESSION_KEY`（TS 为 TypeError，差异见「范围」）。
+- `INVALID_PERMISSION_MODE` 报文按 JS ToString 渲染 `input.mode`：缺失字段渲染 `undefined`（probe1 missing-mode，四组场景一致），非串 42 渲染 `42`。#1455 r1 前缺失字段渲染成空串（`"Unsupported permission mode: "`），属移植偏差而非基线差异，本轮已改为对齐 TS 并加断言测试 + 绑定变异。
 - session_model_set / session_model_clear / set_session_thinking / output_styles_list / set_output_style：capability 门第一步即 unavailable，busy 门不可达；session_model_set/clear 即使补装回调也不应加 hasActiveTurn 门（TS 侧本就没有，见 TS 依据第 4 点）。
 - 保留守卫 `require_session_key` / `require_output_style_name`：非串 sessionKey 答 INVALID_SESSION_KEY、非串 name 静默通过——两者与 TS 的 TypeError 形状不一致，待 #1457 装配回调时定夺（TypeError 无法映射为 RequestError 码）。
-- `methods/config.rs::is_trimmed_non_empty` / `trimmed_string_is_non_empty`（`pub(super)`）：session_dir 与 config 共享的 `?.trim()` 实现，lossy 转换放行 lone-surrogate（对齐 TS）；session_dir 的 `require_session_key` 据此由「to_utf8 拒绝」改为「放行」，返回类型仍为 JsString（config 侧守卫返回 ()，按各自调用形状保留）。
+- `methods/config.rs::is_trimmed_non_empty` / `trimmed_string_is_non_empty`（`pub(super)`）：session_dir 与 config 共享的 `?.trim()` 实现，lossy 转换放行 lone-surrogate（对齐 TS）；session_dir 的 `require_session_key` 据此由「to_utf8 拒绝」改为「放行」，返回类型仍为 JsString（config 侧守卫返回 ()，按各自调用形状保留）。**注意**：lone-surrogate 的 TS 实测只覆盖 config 族（probe4 的 setSessionThinking/setOutputStyle）；session_dir 族（resume/close/delete/rename/tag）按同一 `?.trim()` 形状**推断**，尚未对 TS 侧跑探针——落地前不得把这段当「已实测等价」。
 
 ## 范围
 
-仅 A7-W5 会话配置 7 方法及共享 trim 守卫。四组差异中：① 已按 TS 对齐（无需改码）；②③ 为已登记事实差异，属 -R1 所述「未实现」范围的一部分，随 #1457 实现单闭合，本条不扩大豁免、不放宽判分；④ 为对齐性修复（session_dir 收敛）。不涉及 proxy 分发、session runtime 生命周期、其他方法族；tools.rs 的 `required_trimmed`（to_utf8 + Rust trim，另一处同语义实现）不在本条范围，待独立跟进。
+仅 A7-W5 会话配置 7 方法及共享 trim 守卫。四组差异中：① 已按 TS 对齐（无需改码）；②③ 为已登记事实差异，属 -R1 所述「未实现」范围的一部分，随 #1457 实现单闭合，本条不扩大豁免、不放宽判分；④ 为对齐性修复（session_dir 收敛）。不涉及 proxy 分发、session runtime 生命周期、其他方法族；`native_process/tools.rs::required_trimmed`（`to_utf8` + Rust `str::trim`，另一处同语义实现，JS WhiteSpace 集合与 Rust `trim` 在 U+FEFF / U+0085 上分叉）不在本条范围，前置于 #1604（P2-跟进：`tools.rs` / `session_dir.rs` 迁 `require_text`）。session_dir 族的 `projectKey` 也不在 `require_session_key` 覆盖内（该守卫只查 `sessionKey`），其形态校验与 TS 的对齐同属未收敛项，一并前置于 #1604；`session_dir` 的 lone-surrogate 放行仅为推断（见上），同样由 #1604 落地时用真实 TS 探针闭合。
 
 ## 机器判据
 
-`cargo test -p pilotdeck-gateway --lib -- native_process::methods::config::tests native_process::methods::session_dir::tests`（32 项全过）：busy 门配对 `set_permission_mode_busy_during_active_turn` / `seed_read_state_busy_during_active_turn`（SESSION_BUSY + TS 报文）；顺序 `set_permission_mode_invalid_mode_wins_over_busy` / `seed_read_state_rejects_negative_mtime_during_active_turn` / `set_permission_mode_missing_session_key_hits_unavailable`；边界 `seed_read_state_unavailable_with_zero_mtime`（mtime 0）；G7 `resume_session_accepts_lone_surrogate_session_key` / `resume_session_rejects_blank_session_key`。负控 `tests/fixtures/native-config/negative_controls.py` 18 条变异（含两个 busy-gate-removed、mtime 边界/整数性、空白串、INVALID_SESSION_KEY、CAPABILITY_UNAVAILABLE 终态码与报文）须全部 KILLED；锚点漂移报错退出。
+`cargo test -p pilotdeck-gateway --lib -- native_process::methods::config::tests native_process::methods::session_dir::tests`（36 项全过）：busy 门配对 `set_permission_mode_busy_during_active_turn` / `seed_read_state_busy_during_active_turn`（SESSION_BUSY + TS 报文）；顺序 `set_permission_mode_invalid_mode_wins_over_busy` / `seed_read_state_rejects_negative_mtime_during_active_turn` / `set_permission_mode_missing_session_key_hits_unavailable`；边界 `seed_read_state_unavailable_with_zero_mtime`（mtime 0）、`seed_read_state_rejects_blank_session_key`、`require_output_style_name_rejects_js_whitespace_name`（U+FEFF）；报文 `set_permission_mode_missing_mode_message_matches_ts` / `set_permission_mode_nonstring_mode_message_matches_ts`；G7 `resume_session_accepts_lone_surrogate_session_key` / `resume_session_rejects_blank_session_key`。负控 `tests/fixtures/native-config/negative_controls.py` 23 条变异（含两个 busy-gate-removed、两处门序反转、插入 TS 没有的 sessionKey 门、mtime 边界/整数性、空白串、缺失/非串 mode 报文、INVALID_SESSION_KEY、CAPABILITY_UNAVAILABLE 终态码与报文）须全部 KILLED；锚点漂移报错退出。**证据边界**：空白 sessionKey 用例直接构造请求参数，不经真实 router 的字符串归一化；「真实链路上空白键是否原样抵达」尚未实测（与上面 session_dir 的推断同批，前置于 #1604）。
 
 ## 批准记录
 

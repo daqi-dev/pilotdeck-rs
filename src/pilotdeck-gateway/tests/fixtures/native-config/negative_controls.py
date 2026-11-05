@@ -31,6 +31,21 @@ mutations = [
     ('permission-mode-gate-removed', CONFIG, '                    if !mode_ok {', '                    if !mode_ok && false {',
      CFG + 'set_permission_mode_rejects_invalid_mode',
      '#1310 set_permission_mode invalid mode'),
+    ('permission-missing-mode-rendered-empty', CONFIG,
+     'params.get("mode").unwrap_or(&JsValue::Undefined),',
+     'params.get("mode").unwrap_or(&JsValue::Null),',
+     CFG + 'set_permission_mode_missing_mode_message_matches_ts',
+     '#1455 set_permission_mode missing mode renders undefined'),
+    ('permission-session-key-gate-inserted', CONFIG,
+     '                    let mode = params.get("mode").and_then(JsValue::as_string);',
+     '                    if !is_trimmed_non_empty(params.get("sessionKey")) {\n                        return Err(error("INVALID_SESSION_KEY", "sessionKey is required."));\n                    }\n                    let mode = params.get("mode").and_then(JsValue::as_string);',
+     CFG + 'set_permission_mode_missing_session_key_hits_unavailable',
+     '#1455 set_permission_mode missing sessionKey is unavailable, not INVALID_SESSION_KEY'),
+    ('permission-busy-before-mode', CONFIG,
+     '                    let mode = params.get("mode").and_then(JsValue::as_string);',
+     '                    if params.get("sessionKey").and_then(JsValue::as_string).is_some_and(|k| self.owner.has_active_turn(k)) {\n                        return Err(error("SESSION_BUSY", "Cannot change permission mode during an active turn."));\n                    }\n                    let mode = params.get("mode").and_then(JsValue::as_string);',
+     CFG + 'set_permission_mode_invalid_mode_wins_over_busy',
+     '#1455 set_permission_mode mode gate precedes the busy gate'),
     ('permission-busy-gate-removed', CONFIG,
      '                    if let Some(ref key) = session_key\n                        && self.owner.has_active_turn(key)\n                    {',
      '                    if let Some(ref key) = session_key\n                        && self.owner.has_active_turn(key)\n                        && false\n                    {',
@@ -46,10 +61,10 @@ mutations = [
      CFG + 'set_permission_mode_missing_session_key_hits_unavailable',
      '#1455 set_permission_mode terminal message matches the unavailable shape'),
     ('seed-key-gate-removed', CONFIG,
-     '                    if !is_trimmed_non_empty(params.get("sessionKey")) {\n                        return Err(error("INVALID_SESSION_KEY", "sessionKey is required."));\n                    }\n                    if !is_trimmed_non_empty(params.get("path")) {',
-     '                    if false {\n                        return Err(error("INVALID_SESSION_KEY", "sessionKey is required."));\n                    }\n                    if !is_trimmed_non_empty(params.get("path")) {',
-     CFG + 'seed_read_state_requires_session_key',
-     '#1455 seed_read_state sessionKey present after the gate'),
+     '                        .filter(|s| trimmed_string_is_non_empty(s))\n',
+     '                        .filter(|_| true)\n',
+     CFG + 'seed_read_state_rejects_blank_session_key',
+     '#1455 seed_read_state rejects the blank key'),
     ('seed-path-gate-removed', CONFIG, '                    if !is_trimmed_non_empty(params.get("path")) {', '                    if false {',
      CFG + 'seed_read_state_requires_path',
      '#1310 seed_read_state missing path'),
@@ -59,6 +74,11 @@ mutations = [
     ('seed-mtime-integer', CONFIG, 'n.fract() == 0.0', 'true',
      CFG + 'seed_read_state_rejects_fractional_mtime',
      '#1310 seed_read_state fractional mtime'),
+    ('seed-busy-before-mtime', CONFIG,
+     '                    if !is_trimmed_non_empty(params.get("path")) {\n                        return Err(error("INVALID_FILE_PATH", "path is required."));\n                    }',
+     '                    if self.owner.has_active_turn(&session_key) {\n                        return Err(error("SESSION_BUSY", "Cannot seed file read state while a turn is active."));\n                    }\n                    if !is_trimmed_non_empty(params.get("path")) {\n                        return Err(error("INVALID_FILE_PATH", "path is required."));\n                    }',
+     CFG + 'seed_read_state_rejects_negative_mtime_during_active_turn',
+     '#1455 seed_read_state mtime gate precedes the busy gate'),
     ('seed-busy-gate-removed', CONFIG, '                    if self.owner.has_active_turn(&session_key) {',
      '                    if false && self.owner.has_active_turn(&session_key) {',
      CFG + 'seed_read_state_busy_during_active_turn',
@@ -77,9 +97,16 @@ mutations = [
      'fn require_session_key(params: &JsValue) -> Result<(), RequestError> {\n    if false {',
      CFG + 'require_session_key_rejects_missing_key',
      '#1310 require_session_key missing key'),
-    ('output-style-name-gate-removed', CONFIG, '            if blank {', '            if blank && false {',
+    ('output-style-name-gate-removed', CONFIG,
+     '            if let Some(s) = name.as_string()\n                && !trimmed_string_is_non_empty(s)\n            {',
+     '            if let Some(s) = name.as_string()\n                && !trimmed_string_is_non_empty(s)\n                && false\n            {',
      CFG + 'require_output_style_name_rejects_blank_name',
      '#1310 require_output_style_name blank name'),
+    ('output-style-inline-rust-trim', CONFIG,
+     '                && !trimmed_string_is_non_empty(s)',
+     '                && String::from_utf16_lossy(s.units()).trim().is_empty()',
+     CFG + 'require_output_style_name_rejects_js_whitespace_name',
+     '#1455 require_output_style_name rejects the BOM-only name'),
     ('shared-trim-dropped', CONFIG,
      '    !crate::metadata::js_trim(&String::from_utf16_lossy(value.units())).is_empty()',
      '    !String::from_utf16_lossy(value.units()).is_empty()',
@@ -149,41 +176,49 @@ def main():
     # One lease covers the complete batch, including every restored positive.
     # No summary is published until the guard has verified restoration on exit.
     phase = 'enter'
+    body_error = None
     try:
         paths = list(dict.fromkeys(case.path for case in selected_rows))
         with mutating_sources(ROOT, [*paths, Path(__file__).resolve()]) as originals:
             phase = 'body'
-            for case in selected_rows:
-                row = invalid(case, '')
-                args = [case.test, '--', '--exact']
-                try:
-                    changed = mutate(case, originals[case.path].decode())
-                    if not compile_only and not passed(run(case.mutation + '-positive', args), case.test):
-                        raise RuntimeError('#1455 positive control failed')
-                    case.path.write_text(changed)
-                    compiled = run(case.mutation + '-compile', ['--no-run'])
-                    row['compiled'] = compiled.returncode == 0
-                    if not row['compiled']:
-                        raise RuntimeError('#1455 mutant did not compile')
-                    if compile_only:
-                        row.update(status='COMPILED', reason='mutant cargo test --no-run passed')
-                    else:
-                        row['status'], row['reason'] = classify(run(case.mutation + '-negative', args), case)
-                except Exception as error:
-                    row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-                finally:
-                    phase = 'restore'
-                    case.path.write_bytes(originals[case.path])
-                    if case.path.read_bytes() != originals[case.path]:
-                        raise RuntimeError('#1455 source restoration failed')
-                    phase = 'body'
-                if not compile_only:
+            try:
+                for case in selected_rows:
+                    row = invalid(case, '')
+                    args = [case.test, '--', '--exact']
                     try:
-                        if not passed(run(case.mutation + '-restored', args), case.test):
-                            raise RuntimeError('#1455 restored positive control failed')
+                        changed = mutate(case, originals[case.path].decode())
+                        if not compile_only and not passed(run(case.mutation + '-positive', args), case.test):
+                            raise RuntimeError('#1455 positive control failed')
+                        case.path.write_text(changed)
+                        compiled = run(case.mutation + '-compile', ['--no-run'])
+                        row['compiled'] = compiled.returncode == 0
+                        if not row['compiled']:
+                            raise RuntimeError('#1455 mutant did not compile')
+                        if compile_only:
+                            row.update(status='COMPILED', reason='mutant cargo test --no-run passed')
+                        else:
+                            row['status'], row['reason'] = classify(run(case.mutation + '-negative', args), case)
                     except Exception as error:
                         row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-                record(row)
+                    finally:
+                        phase = 'restore'
+                        case.path.write_bytes(originals[case.path])
+                        if case.path.read_bytes() != originals[case.path]:
+                            raise RuntimeError('#1455 source restoration failed')
+                        phase = 'body'
+                    if not compile_only:
+                        try:
+                            if not passed(run(case.mutation + '-restored', args), case.test):
+                                raise RuntimeError('#1455 restored positive control failed')
+                        except Exception as error:
+                            row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                    record(row)
+            except BaseException as error:
+                # Keep the refusal/cancellation object so the handler below can
+                # tell it apart from a failure raised by the guard exit
+                # (same contract as negative_suite.run_cases, #1076).
+                body_error = error
+                raise
             phase = 'exit'
     except BaseException as error:
         reason = f'source guard: {type(error).__name__}: {error}'
@@ -191,7 +226,15 @@ def main():
         for case in selected_rows[len(results):]:
             record(invalid(case, reason))
         publish_summary(out, results)
-        return 1 if phase == 'enter' and isinstance(error, Exception) else 2
+        # #1455 r1: port of the run_cases three-state contract. Only an
+        # unverified restore, a cancellation, or a guard that raised while
+        # unwinding keeps rc=2; a refusal to run before the guard opened keeps
+        # rc=1. ``body_error`` tells a body raise apart from a guard-exit
+        # failure even while ``phase`` still says 'body'.
+        if (phase in ('restore', 'exit') or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
+            return 2
+        return 1
     publish_summary(out, results)
     success = 'COMPILED' if compile_only else 'KILLED'
     return int(not results or any(row['status'] != success for row in results))
