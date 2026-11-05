@@ -140,6 +140,66 @@ switches = [
     # target TS serves.
     ('native-http-uri-realloc', SOURCE, 'header_budget_431s_like_ts',
      'the raw target on the wire) stays under the budget'),
+    # #1292 fix-r2: the connection's *first* head anchors its own
+    # headersTimeout at its first byte — Node's on_message_begin resets
+    # last_message_start_ for every message (probe `probe-c1.out`: 30 s of
+    # silence then an incomplete head is answered at first byte + 90 s, not
+    # at connect + 60 s); the mutant keeps the pre-fix-r2 connect anchor, so
+    # its on-grid +60 s deadline lands the 408 at +90 s and the +90.6 s probe
+    # reads it.
+    ('native-http-first-head-anchor-off', SOURCE_PROXY,
+     'first_head_delayed_anchors_at_its_first_byte_like_ts',
+     '#1292 the delayed first head stays unanswered past both the head\'s on-grid +90 s deadline and the connect anchor\'s +90 s landing'),
+    # #1292 fix-r2: a follow-up head that starts arriving while the previous
+    # response is still streaming (or is held) is bounded from its own first
+    # byte (probes `probe-g2.out`/`probe-c2.out`/`probe-g4.out`); the mutant
+    # never anchors it — nothing ever closes the streaming connection, no 408
+    # ever reaches the held-response cell, and the pipelined cell's third head
+    # is bounded only by the +88 s finish's own re-arm (+150 s grid landing),
+    # so the +94 s idle close owns the connection as a bare EOF.
+    ('native-http-mid-stream-head-anchor-off', SOURCE_PROXY,
+     ['mid_stream_head_timeout_closes_stream_silently_like_ts',
+      'held_response_mid_stream_head_still_408s_like_ts',
+      'pipelined_mid_stream_head_keeps_own_deadline_like_ts'],
+     ["#1292 the mid-stream head's deadline closes the streaming connection without a 408: the streaming connection was never closed at the grid point",
+      '#1292 mid-stream head against a held response: the 51-byte 408 never arrived at the headersTimeout deadline',
+      '#1292 pipelined mid-stream third head: the 51-byte 408 never arrived at the headersTimeout deadline']),
+    # #1292 fix-r2: the response ending does not move Node's
+    # last_message_start_ — a head already mid-arrival keeps its deadline
+    # across the previous response's finish (the pipelined cell's third head:
+    # +25 s anchor → +90 s landing, finish at +88 s must not push it to +150);
+    # the mutant re-arms from the finish's own instant, so no 408 exists at
+    # the +90 s landing and the probe window times out (the +94 s idle close
+    # would end the connection only after the window).
+    ('native-http-rearm-resets-started-head', SOURCE_PROXY,
+     'pipelined_mid_stream_head_keeps_own_deadline_like_ts',
+     '#1292 pipelined mid-stream third head: the 51-byte 408 never arrived at the headersTimeout deadline'),
+    # #1292 fix-r2: a *started* head's deadline rides out the previous
+    # response's stream — Node's checker stays active through it; the mutant
+    # lets the in-flight check disarm it, so the streaming cell is never
+    # closed and the held-response cell never sees its 408.
+    ('native-http-headers-timeout-busy-blocks-head', SOURCE_PROXY,
+     ['mid_stream_head_timeout_closes_stream_silently_like_ts',
+      'held_response_mid_stream_head_still_408s_like_ts'],
+     ["#1292 the mid-stream head's deadline closes the streaming connection without a 408: the streaming connection was never closed at the grid point",
+      '#1292 mid-stream head against a held response: the 51-byte 408 never arrived at the headersTimeout deadline']),
+    # #1292 fix-r2: Node's socketOnError answers a mid-stream expiry with a
+    # bare destroy once the in-flight response has sent its head
+    # (`_headerSent`, probes `probe-g2.out`/`probe-c2.out`); the mutant
+    # writes the 51-byte 408 into the started response, so the close-only
+    # read sees its bytes in front of the EOF.
+    ('native-http-408-into-started-response', SOURCE_PROXY,
+     'mid_stream_head_timeout_closes_stream_silently_like_ts',
+     "#1292 the mid-stream head's deadline closes the streaming connection without a 408: the close-only end must carry no bytes"),
+    # #1292 fix-r2: the checker's comparison is strictly greater, so a
+    # deadline that lands exactly on a 30 s grid point answers at the *next*
+    # point (probe `probe-c1.out`: a first byte at +30 s arms exactly the
+    # +90 s point and Node answers at +120.001 s); the mutant fires the
+    # on-grid deadline at its own point, so the 408 is already buffered at
+    # the +90.6 s probe.
+    ('native-http-headers-grid-inclusive', SOURCE_PROXY,
+     'first_head_delayed_anchors_at_its_first_byte_like_ts',
+     '#1292 the delayed first head stays unanswered past both the head\'s on-grid +90 s deadline and the connect anchor\'s +90 s landing'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
