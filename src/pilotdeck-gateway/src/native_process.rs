@@ -8,10 +8,13 @@ use std::{
     time::Duration,
 };
 mod assembly;
+mod channels;
 mod families;
 mod management;
 mod methods;
 pub use methods::registered_methods;
+#[cfg(test)]
+mod channels_tests;
 #[cfg(test)]
 mod management_tests;
 mod requests;

@@ -116,6 +116,10 @@ fn registry_matches_current_methods() {
         "output_styles_list",
         "set_output_style",
         "seed_read_state",
+        // #1328 U12: connection-level wire method, registered in its own
+        // family (not an advertised capability — TS keeps it out of
+        // describeServer's capabilities list too).
+        "prepare_weixin_login",
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();
@@ -159,9 +163,13 @@ async fn registry_management_gate_agrees() {
             expected,
             "#1305 management gate matches registered family"
         );
+        // #1328: prepare_weixin_login is the second BeforeAdmission family
+        // (TS dispatches it at the connection switch), so the admission-phase
+        // expectation covers both pre-admission families.
+        let expected_before_admission = expected || method == "prepare_weixin_login";
         negative_assert_eq!(
             before_admission(&requests, method, &params).await.is_some(),
-            expected,
+            expected_before_admission,
             "#1305 registry preserves management admission phase"
         );
     }
@@ -1590,4 +1598,186 @@ async fn permission_list_projection_and_grant_succeed() {
         .dispose()
         .await
         .expect("#1309 permission positive fixture project shutdown");
+}
+
+// #1328 U12 `prepare_weixin_login` shapes. TS pins the guard and the wire
+// dispatch case: no callback → `{requested: false, requestedAt: <now ISO>,
+// reason: "unsupported"}` (InProcessGateway.ts:2912-2921); a configured
+// callback's result is forwarded as-is, once per call, and `params` are
+// ignored by the dispatch case (GatewayWsConnection.ts:528-536).
+fn iso_keys(value: &JsValue) -> Vec<String> {
+    value
+        .as_object()
+        .expect("#1328 result is an object")
+        .entries()
+        .iter()
+        .map(|(key, _)| key.to_utf8().expect("#1328 key UTF-8").to_string())
+        .collect()
+}
+
+fn parse_iso(text: &JsString) -> Option<f64> {
+    use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
+    SystemExecutionClock
+        .parse_date(text)
+        .expect("#1328 requestedAt must parse or report why")
+}
+
+#[tokio::test]
+async fn prepare_weixin_login_without_callback_answers_unsupported() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1328 registry fixture setup");
+    // The wire method answers Ok — not metadata::unavailable — with the exact
+    // unsupported shape and field order, ignoring whatever params carry.
+    let result = requests
+        .request(
+            "prepare_weixin_login".into(),
+            crate::metadata::object([("junk", "noise".into())]),
+        )
+        .await
+        .expect("#1328 unsupported is a normal result, not CAPABILITY_UNAVAILABLE");
+    negative_assert_eq!(
+        iso_keys(&result),
+        vec![
+            "requested".to_string(),
+            "requestedAt".to_string(),
+            "reason".to_string()
+        ],
+        "#1328 unsupported shape field order"
+    );
+    negative_assert_eq!(
+        result.get("requested"),
+        Some(&JsValue::Bool(false)),
+        "#1328 unsupported shape requested flag"
+    );
+    negative_assert_eq!(
+        result.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("unsupported")),
+        "#1328 unsupported shape reason"
+    );
+    let requested_at = result
+        .get("requestedAt")
+        .and_then(JsValue::as_string)
+        .expect("#1328 unsupported shape carries requestedAt");
+    negative_assert!(
+        parse_iso(&requested_at).is_some(),
+        "#1328 requestedAt is a fresh ISO timestamp"
+    );
+    // A repeat call is not cached: a fresh object with a fresh timestamp each
+    // time, exactly like the TS guard re-entering on every request.
+    let second = requests
+        .request("prepare_weixin_login".into(), crate::metadata::object([]))
+        .await
+        .expect("#1328 repeat call stays Ok");
+    negative_assert_eq!(
+        second.get("requested"),
+        Some(&JsValue::Bool(false)),
+        "#1328 repeat call re-enters the guard"
+    );
+    let second_at = second
+        .get("requestedAt")
+        .and_then(JsValue::as_string)
+        .expect("#1328 repeat call carries requestedAt");
+    negative_assert!(
+        parse_iso(&second_at).is_some(),
+        "#1328 repeat call timestamp is ISO"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1328 fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1328 fixture project shutdown");
+}
+
+#[tokio::test]
+async fn prepare_weixin_login_forwards_the_callback_result_each_call() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1328 callback fixture setup");
+    let calls = std::sync::Arc::new(AtomicU32::new(0));
+    let counter = calls.clone();
+    requests.prepare_weixin_login = Some(std::sync::Arc::new(move || {
+        let counter = counter.clone();
+        Box::pin(async move {
+            let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
+            // The CLI callback shape: requestedAt captured before the work,
+            // `{requested: true, requestedAt}` after it (pilotdeck.ts:240-247).
+            Ok(crate::metadata::object([
+                ("requested", JsValue::Bool(true)),
+                (
+                    "requestedAt",
+                    JsValue::String(pilotdeck_protocol::JsString::from(format!(
+                        "2026-11-05T00:00:0{n}.000Z"
+                    ))),
+                ),
+                (
+                    "attempt",
+                    JsValue::String(pilotdeck_protocol::JsString::from(format!("{n}"))),
+                ),
+            ]))
+        })
+    }));
+    for attempt in 1..=2u32 {
+        let result = requests
+            .request("prepare_weixin_login".into(), crate::metadata::object([]))
+            .await
+            .expect("#1328 callback result is forwarded as-is");
+        negative_assert_eq!(
+            result.get("requested"),
+            Some(&JsValue::Bool(true)),
+            "#1328 callback result requested flag"
+        );
+        negative_assert_eq!(
+            result.get("requestedAt").and_then(JsValue::as_string),
+            Some(&pilotdeck_protocol::JsString::from(format!(
+                "2026-11-05T00:00:0{attempt}.000Z"
+            ))),
+            "#1328 callback result requestedAt is forwarded verbatim"
+        );
+        negative_assert_eq!(
+            result.get("attempt").and_then(JsValue::as_string),
+            Some(&pilotdeck_protocol::JsString::from(format!("{attempt}"))),
+            "#1328 callback runs once per request, no caching"
+        );
+    }
+    negative_assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "#1328 repeat delivery re-invokes the callback"
+    );
+    // Removing the callback again (setPrepareWeixinLogin(undefined)) returns
+    // the unsupported shape rather than replaying the old callback.
+    requests.prepare_weixin_login = None;
+    let result = requests
+        .request("prepare_weixin_login".into(), crate::metadata::object([]))
+        .await
+        .expect("#1328 cleared callback stays Ok");
+    negative_assert_eq!(
+        result.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("unsupported")),
+        "#1328 cleared callback falls back to unsupported"
+    );
+    negative_assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "#1328 cleared callback is not invoked again"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1328 callback fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1328 callback fixture project shutdown");
 }

@@ -589,6 +589,44 @@ pub(super) async fn start_observed(
     let cleanup_project = project.clone();
     let build_factory = factory.clone();
     let build_project = project.clone();
+    // #1328 A8.3: the channel assembly (ChannelAdapterBundle weixin subset
+    // on the #1327 ChannelServer). The same config snapshot drives the
+    // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config.
+    let channel_assembly = {
+        use crate::runtime::project::ConfigSource;
+        let config = crate::runtime::project::NativeConfigSource::new(
+            options.project.clone(),
+            env.clone(),
+            Some(options.home.clone()),
+            None,
+        )
+        .load(&options.project);
+        let config = match config {
+            Ok(config) => config,
+            Err(error) => {
+                let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
+                return Err(error.into());
+            }
+        };
+        Arc::new(super::channels::NativeChannels::new(
+            super::channels::NativeChannelsOptions {
+            pilot_home: options.home.clone(),
+            config: Arc::new(
+                config
+                    .get("config")
+                    .cloned()
+                    .unwrap_or_else(|| JsValue::Object(JsObject::new())),
+            ),
+                weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+                weixin_maker: None,
+                log: None,
+                report_status: None,
+                close_host: None,
+            },
+        ))
+    };
+    let build_channels = channel_assembly.clone();
+    let cleanup_channels = channel_assembly.clone();
     let budget = options.drain_budget;
     let host = TurnGateway::start_with_cleanup(
         TurnReplayOptions::new(),
@@ -708,25 +746,56 @@ pub(super) async fn start_observed(
                 mcp: mcp_gateway,
                 async_hook_registry,
                 user_dialog_bus: user_dialog_bus.clone(),
+                // The CLI `prepareWeixinLogin` callback (pilotdeck.ts:240-247):
+                // hot-start the weixin channel on request, after the same
+                // durable-state restore as a config-enabled start.
+                prepare_weixin_login: Some(build_channels.prepare_login_callback()),
             });
+            let submitter = Arc::new(TurnSubmitter {
+                owner,
+                coordinator,
+                registry: runs.map(|runs| runs as Arc<dyn TurnRunRegistry>),
+                workspace_admissions: WorkspaceAdmissions::default(),
+                host: Arc::new(GatewaySubmitHost::new(
+                    services,
+                    Arc::new(NativeSubmitReplacement((*replacement).clone())),
+                    Arc::new(GatewaySubmitAdmission::new(admission)),
+                )),
+                projector,
+            });
+            // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
+            // every channel start receives) before any channel can construct.
+            // The builder runs exactly once per host, so a second publish is
+            // a wiring bug, not a value to ignore.
+            if !build_channels.set_gateway_port(Arc::new(
+                crate::channel::weixin::NativeWeixinGatewayPort::new(submitter.clone()),
+            )) {
+                return Err(std::io::Error::other(
+                    "weixin gateway port already published",
+                ));
+            }
             Ok(GatewayServices {
                 interactions,
                 requests,
-                submitter: Arc::new(TurnSubmitter {
-                    owner,
-                    coordinator,
-                    registry: runs.map(|runs| runs as Arc<dyn TurnRunRegistry>),
-                    workspace_admissions: WorkspaceAdmissions::default(),
-                    host: Arc::new(GatewaySubmitHost::new(
-                        services,
-                        Arc::new(NativeSubmitReplacement((*replacement).clone())),
-                        Arc::new(GatewaySubmitAdmission::new(admission)),
-                    )),
-                    projector,
-                }),
+                submitter,
             })
         },
         async move {
+            // #1328 A8.3: stop the channel assembly and flush its durable
+            // mapper state — the closeServer + flushChannelState pair
+            // (PilotDeckServerShutdownBundle.ts:33-37: channels stop before
+            // the gateway disposes). The WS server has already drained when
+            // this cleanup runs; the close-host hook is the pr2 WS-ordering
+            // follow-up.
+            let channel_stop = cleanup_observer(
+                "channels",
+                cleanup_channels
+                    .close()
+                    .await
+                    .map_err(|e| e.message().to_string()),
+            )
+            .await;
+            let channel_flush = cleanup_channels.flush().await;
             let sessions = cleanup_observer(
                 "session",
                 cleanup_factory.dispose().await.map_err(|e| e.to_string()),
@@ -740,11 +809,24 @@ pub(super) async fn start_observed(
             if let Err(error) = &project {
                 cleanup_diagnostic(error);
             }
-            sessions.and(project)
+            let mut outcome = sessions.and(project);
+            for failure in [channel_stop.err(), channel_flush.err()] {
+                if let Some(failure) = failure {
+                    outcome = outcome.and(Err(failure));
+                }
+            }
+            outcome
         },
     );
     match host {
-        Ok(host) => Ok(host),
+        Ok(host) => {
+            // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
+            // once the builder has published the gateway port.
+            if let Some(weixin) = channel_assembly.create_startup_weixin().await {
+                channel_assembly.server().start_channels(vec![weixin]);
+            }
+            Ok(host)
+        }
         Err(error) => {
             let _ = tokio::time::timeout(budget, async {
                 let _ = factory.dispose().await;

@@ -740,6 +740,7 @@ async fn project_path_boundaries_worker() {
                 None,
             ),
         )),
+        prepare_weixin_login: None,
     };
     let services = services::Services {
         options: options.clone(),

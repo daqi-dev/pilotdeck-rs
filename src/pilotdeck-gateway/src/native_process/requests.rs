@@ -41,6 +41,11 @@ pub struct Requests {
     pub async_hook_registry: Option<Arc<AsyncHookRegistry>>,
     /// Gateway user-dialog bus backing the `user_dialog` / `respond` methods.
     pub user_dialog_bus: Arc<Mutex<GatewayUserDialogBus>>,
+    /// U12 `prepareWeixinLogin` callback (InProcessGateway options field,
+    /// set through `setPrepareWeixinLogin`). `None` is the TS
+    /// "callback not configured" shape: `{requested: false, reason:
+    /// "unsupported"}` with a fresh `requestedAt`.
+    pub prepare_weixin_login: Option<methods::PrepareWeixinLogin>,
 }
 
 #[cfg(test)]

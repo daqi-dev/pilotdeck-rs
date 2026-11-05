@@ -212,6 +212,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
                     None,
                 ),
             )),
+            prepare_weixin_login: None,
         }
     })
 }
