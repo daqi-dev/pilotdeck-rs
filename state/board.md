@@ -3143,3 +3143,24 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 7. #1470/#1472 queue 状态核（MERGED 后核邮箱、回收 wt-ds-official-cleanup）。
 
 资源：本机磁盘 191.9/200 GiB（WARN，wt-1310+wt-1321 合入后回收约 76 GiB）；worktree 23/40；在审 15/16（拟 20）；三台全回。谱系提醒：协调者/GLM 作者线评审 = DS + MiniMax/codex（若独立）/Opus（兜底）；DS 大 diff 复读循环前科，大 diff 用 MiniMax。
+
+### 15:0x（进展段，非交接）
+
+14:4x 以来（持有人：协调者本会话）：
+
+- **#1355 fix-r1 双家复核收敛 → 冻结登记完成**：DS P0=0 P1=0 P2=3（三条 P2 经 Opus 实测全部排除：findall 13 条含 call/resume、topology.ports 无消费者、portAudit 全 bound）、Opus 实测 P0=0 P1=0 P2=0 P3=1。协调者已执行 `check_frozen --write` + test_safety 87/87 自愈，单独提交 `61d2accad`（wt-1355）。待闸门（排队 #1480 后）→ PR。
+- **runner PR #1480 已开**（分支 claude/tools-runner-mm-ds，2 提交：run-review-roles minimax/deepseek 通道 + check-pr-gate 登记 MiniMax-*/deepseek-* 前缀）：deepseek 闸门四角色全 PASS，CI 守望入队中。**它是当前收口瓶颈**——#1350/#1369/#1392 的 minimax/deepseek 闸门块须等 #1480 合入 main 后 CI 才认（merge commit 会带上前缀补丁）。
+- **三张闸门块已备好（均全 PASS）**：#1350（minimax，head ec5937bc3）、#1369（minimax，head f26abd24）、#1392（deepseek r3 整块四角色，head 5178da395）。
+- **#1350 闸门 sibling 抓到 2 条 P1 → fix-r2 已派**（任务书 `_tmp/20261105-issue-1350/task-fix-r2.md`）：F1 账本漏登（A8.4-MODULE-HOST-APPROVALS-001 补继承差异段）、F2 sess-legacy TS 宣称失真（裁定选 b：降 store 级断言）、F3 负控配对补 5 开关、F4 README 清单。
+- **#1369 rebase 收口 + 评审推进**：新 head f26abd24 已推、3494 全绿。DS 评审 P0=0、实质 P1 一条是 rebase 报告描述失真（代码经核验无恙）；codex 第二家重跑中（警戒条件修正：config 的 model_providers.* 定义段不算配置，顶层无 model_provider 键即走官方订阅）。
+- **codex 谱系探针结论（双机实测）**：官方 ChatGPT 订阅、真 GPT 后端（terra/sol/astra/5.6-sol 全核实）；早间「→GLM-5.3」结论系中转配置混淆，memory 已更正（codex-channel-glm-backend）。评审轮换恢复 DS + codex 可用组合。
+- **#1473 升 P1 派修中**（#1305 前置已失效，unreachable! 持锁 panic 在 main 可达）：子代理改 label + 写任务书 + 派 cb8。
+- **停摆 PR 宿主批次**：子代理在排（cb8+mbp2；macmini 已清盘 49→150 GiB，101 GiB 已删，外接卷未碰）。**批量入队实际 0 张**——五张候选（#1405/#1384/#1375/#1391/#1364）全是 Draft + 正文 worker 占位草稿，盘点「全绿可入队」高估；正确顺序 = 宿主证据 → 贴正文 → ready → 入队，等宿主批次回报后逐张收口。#1391 的 mbp2 r3 证据已齐（唯一失败为已知噪音，先例 #1318/#1349/#1368 同因收口）。
+- **决策卡 PR #1481 已开**（claude/decisions-1313-rescope，纯文档 waiver）；CI 守望入队中。
+- **磁盘**：本机 204.5 GiB 超限（先回收后新增，闸门 _tmp 小文件除外）；wt-ds-official-cleanup 已回收；wt-1323 被用户 codex 进程占 cwd（跳过，记缺口）；wt-1310（50.8G）/wt-1321（29.7G）等 #1417/#1418 合入后回收。pdrs-ops ccf5d58 限制调整已提交（本地仓无远端，提交即生效）。
+- **#1417 闸门**：simplify 块已 PASS（final3-simplify）；concurrency --paths 分批仍在跑（3600s 上限）。
+- **#1317 正文判据矛盾已确认**（#1314/#1315 已 CLOSED、A6 口径已改 #590 四格账本），正文修正待做（本会话在办）。
+
+下一步：① #1480/#1481 入队合入（合入后核邮箱）→ #1392 PR 收口（/tmp/pr1392.md 插 r3 块）→ #1369 PR edit 插块 → #1417 出块推 9f86cfedf → #1418 净合并链；② #1350 fix-r2 收货 → 闸门重跑 → PR；③ #1355 闸门 → PR；④ 宿主批次回报 → 停摆 PR 逐张收口；⑤ #1473 worker 交付收货。
+
+资源：本机磁盘超限（204.5/200 GiB，优先回收）；worktree 22/40（回收 1 棵）；在审 15/20；cb8 8 车道空、mbp2 3 车道空、macmini 150 GiB 空闲。
