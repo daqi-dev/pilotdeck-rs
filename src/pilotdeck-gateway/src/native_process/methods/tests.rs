@@ -865,6 +865,110 @@ async fn user_dialog_capability_gate_precedes_parameter_validation() {
 }
 
 #[tokio::test]
+async fn connected_bus_serves_zero_pending_user_dialog_semantics() {
+    // #1445: production builds a connected bus with no observer. Availability
+    // is method presence (TS GatewayWsConnection.ts:481-490), so every method
+    // must answer its real zero-pending semantics instead of
+    // CAPABILITY_UNAVAILABLE. Reverting production to the observer-coupled
+    // `new(runtime, None)` makes these calls fail with CAPABILITY_UNAVAILABLE.
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1445 connected-bus fixture setup");
+    *requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = crate::user_dialog::GatewayUserDialogBus::connected(
+        crate::user_dialog::DialogRuntime::default(),
+    );
+    let session = JsValue::from("connected-session");
+    let request = JsValue::from("connected-request");
+
+    let listed = requests
+        .user_dialog_request(
+            "user_dialog_list".into(),
+            crate::metadata::object([("sessionKey", session.clone())]),
+        )
+        .await
+        .expect("#1445 list serves a connected bus");
+    assert_eq!(
+        listed.get("dialogs").and_then(|value| match value {
+            JsValue::Array(items) => Some(items.len()),
+            _ => None,
+        }),
+        Some(0),
+        "#1445 list on a zero-pending bus returns an empty dialogs array"
+    );
+
+    let claimed = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", session.clone()),
+                ("requestId", request.clone()),
+            ]),
+        )
+        .await
+        .expect("#1445 claim serves a connected bus");
+    negative_assert_eq!(
+        claimed.get("claimed"),
+        Some(&JsValue::Bool(false)),
+        "#1445 claim on a zero-pending bus reports not claimed"
+    );
+    negative_assert_eq!(
+        claimed.get("reason"),
+        Some(&JsValue::from("not_pending")),
+        "#1445 claim on a zero-pending bus reports not_pending"
+    );
+
+    let released = requests
+        .user_dialog_request(
+            "user_dialog_release".into(),
+            crate::metadata::object([
+                ("sessionKey", session.clone()),
+                ("requestId", request.clone()),
+                ("leaseId", JsValue::from("lease-1")),
+            ]),
+        )
+        .await
+        .expect("#1445 release serves a connected bus");
+    negative_assert_eq!(
+        released.get("released"),
+        Some(&JsValue::Bool(false)),
+        "#1445 release on a zero-pending bus reports not released"
+    );
+
+    let responded = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", session),
+                ("requestId", request),
+                (
+                    "result",
+                    crate::metadata::object([("behavior", JsValue::from("cancelled"))]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1445 respond serves a connected bus");
+    negative_assert_eq!(
+        responded.get("delivered"),
+        Some(&JsValue::Bool(false)),
+        "#1445 respond on a zero-pending bus reports not delivered"
+    );
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1445 connected-bus fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1445 connected-bus fixture project shutdown");
+}
+
+#[tokio::test]
 async fn user_dialog_claim_null_ttlms_claims_default_lease() {
     let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1309 ttlMs fixture setup");
