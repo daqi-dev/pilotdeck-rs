@@ -7,12 +7,9 @@
 #   `git worktree list` 会列出它们，因而与 `_build/wt-*` 同一口径计入——它们同样吃磁盘、占席位。
 #   主仓不是副本、不可回收，不计入。
 #
-# 背景（2026-11-05 21:1x–21:2x 实测，_tmp/20261105-tree-hyg/TREES.md）：
-#   `_build/wt-*` 子集 29 → 35（21:16 → 21:26），而全量条目 37 → 43；
-#   非 _build 条目两个时刻都是 8（主仓 1 + codex 6 + /tmp 1）。
-#   new-tree.sh 与 wt-status.sh 只看 `_build` 子集，35 < 40 便放行，而真值 43 已越顶。
-#   2026-11-05 人询问后上限由 40 放宽到 60（state/decisions-20261105-worktree-cap-60.md）：
-#   40 棵已不是瓶颈，真正的闸是磁盘（new-tree.sh 的 _build+_tmp 180 GiB 硬闸 / 160 GiB WARN）。
+# 为什么是全量口径（实测见 _tmp/20261105-tree-hyg/TREES.md）：只看 `_build/wt-*` 会漏掉
+#   codex 6 棵与 /tmp 1 棵——子集 35 < 40 放行时，真值已 43。上限为什么是 60、真闸为什么
+#   换成磁盘，见 state/decisions-20261105-worktree-cap-60.md；磁盘三档在 scripts/lib/disk-budget.sh。
 #
 # 用法：
 #   . scripts/lib/worktree-count.sh

@@ -8,12 +8,16 @@
 #   scripts/pdrs-loop.sh [--runner opencode|claude] [--max-iter N] [--iter-timeout SEC] [--dry-run]
 # 停：touch /tmp/pdrs-loop.stop（本迭代结束后停）；Ctrl-C（立即，杀本迭代进程组）。
 # 停机条件＝CLAUDE.md「连续推进模式」的机器化：队列无 ready（④）· 同一单两迭代未推进（②挂起后仍不动）·
-#           磁盘超 100 GiB · stop 文件 · max-iter。「暂不执行」档由协调会话把条目标 human（①）。
+#           _build+_tmp 超 160 GiB（WARN 线）· stop 文件 · max-iter。「暂不执行」档由协调会话把条目标 human（①）。
 # 退出码：0 正常停 · 1 前置/守卫失败 · 2 锁被占 · 130 中断
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# 磁盘阈值与测量只有一处实现（scripts/lib/disk-budget.sh，new-tree.sh 共用）：
+# ok ≤160 GiB · warn (160,180] · hard >180 GiB。本循环在 WARN 线就停派新活，比开树硬闸保守一档。
+# shellcheck source=lib/disk-budget.sh
+. "$ROOT/scripts/lib/disk-budget.sh" || { echo "pdrs-loop: 缺 or 无法读 scripts/lib/disk-budget.sh" >&2; exit 1; }
 LOCK_DIR=/tmp/pdrs-loop.lock
 STOP_FILE=/tmp/pdrs-loop.stop
 # 测试注入：只在没有 .git 的隔离 fixture 根里允许改锁/stop 路径；真实仓库与 worktree 一律拒绝（防误删、防绕开单实例锁）
@@ -25,7 +29,6 @@ RUNNER=opencode
 MAX_ITER=50
 ITER_TIMEOUT=7200
 DRY=0
-DISK_CAP_KIB=167772160  # 160 GiB，正本见 CLAUDE.md「资源上限」
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -102,9 +105,11 @@ while :; do
   [ "$iter" -le "$MAX_ITER" ] || { echo "pdrs-loop: 到 max-iter=${MAX_ITER}，停"; exit 0; }
   if [ -e "$STOP_FILE" ]; then echo "pdrs-loop: 见 stop 文件，停"; rm -f "$STOP_FILE"; exit 0; fi
 
-  used_kib="$({ du -sk "$ROOT/_build" "$ROOT/_tmp" 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')"
-  if [ "$used_kib" -gt "$DISK_CAP_KIB" ]; then
-    echo "pdrs-loop: _build+_tmp=${used_kib}KiB 超 100GiB 上限，停（CLAUDE.md 资源上限）" >&2; exit 1
+  if ! used_kib="$(pdrs_disk_used_kib "$ROOT")"; then
+    echo "pdrs-loop: 磁盘测量失败（du 非 0），停（fail-closed；CLAUDE.md 资源上限）" >&2; exit 1
+  fi
+  if [ "$used_kib" -gt "$((PDRS_DISK_WARN_GIB * 1048576))" ]; then
+    echo "pdrs-loop: _build+_tmp=$((used_kib / 1048576)) GiB（${used_kib} KiB）超 ${PDRS_DISK_WARN_GIB} GiB 预警线，停（先回收；CLAUDE.md 资源上限）" >&2; exit 1
   fi
 
   set +e
