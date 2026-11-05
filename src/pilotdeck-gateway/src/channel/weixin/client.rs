@@ -591,8 +591,12 @@ pub async fn login_with_qr(
                 (callbacks.on_status_change)("waiting");
             }
             "confirmed" => {
-                let bot_token = string_field(&status, "bot_token");
-                let account_id = string_field(&status, "ilink_bot_id");
+                // auth.js:81 — `if (!status.ilink_bot_id || !status.bot_token)`:
+                // an empty string is falsy, so `""` counts as "not returned".
+                let bot_token =
+                    string_field(&status, "bot_token").filter(|token| !token.units().is_empty());
+                let account_id =
+                    string_field(&status, "ilink_bot_id").filter(|id| !id.units().is_empty());
                 let (Some(bot_token), Some(account_id)) = (bot_token, account_id) else {
                     return Err(WeixinClientError::error(
                         "Login failed: server did not return required credentials",
