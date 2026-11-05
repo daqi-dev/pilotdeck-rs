@@ -506,7 +506,7 @@ fn durable_entries(transcript: &Value, native: bool) -> Value {
             primary.remove(key);
         }
         if kind == "model_request" {
-            mask_request_platform(&mut primary["request"]);
+            mask_request_platform(&mut primary["request"], native);
         }
         if kind == "session_metadata" {
             if !mutants::on("live-metadata") {
@@ -555,7 +555,12 @@ fn durable_entries(transcript: &Value, native: bool) -> Value {
 /// sidecar writes ``process.platform`` (``linux`` on the cb8 hosts). That line
 /// is a host fact, not gateway behavior, so both sides of the golden comparison
 /// are masked to the same token; every other system-prompt byte stays exact.
-fn mask_request_platform(request: &mut Value) {
+/// The observed side (`native`) must additionally match *this* host's Node
+/// platform name: a sidecar hardcoding any whitelisted token (e.g. always
+/// ``darwin``) would otherwise pass on every host, because the whitelist check
+/// alone cannot see the lie. The golden side keeps the whitelist-only check —
+/// its bytes were recorded by whichever host produced the fixture.
+fn mask_request_platform(request: &mut Value, native: bool) {
     let prompt = request["systemPrompt"]
         .as_str()
         .expect("#748 request system prompt")
@@ -577,11 +582,38 @@ fn mask_request_platform(request: &mut Value) {
         .contains(&platforms[0]),
         "#748 request system-prompt platform token"
     );
-    request["systemPrompt"] = json!(prompt.replacen(
-        &format!("platform: {}", platforms[0]),
-        "platform: <PLATFORM>",
-        1,
-    ));
+    if native {
+        negative_assert!(
+            platforms[0] == node_platform(),
+            "#748 request system-prompt platform token must match this host's Node platform \
+             ({}), got {}",
+            node_platform(),
+            platforms[0]
+        );
+    }
+    // Replace the whole matched line instead of the first substring: a value
+    // like `platform: darwin` appearing mid-line earlier in the prompt must
+    // not eat the replacement (#1204 review follow-up). `split('\n')` keeps
+    // every other byte (including a trailing newline) exactly as recorded.
+    let mut lines: Vec<&str> = prompt.split('\n').collect();
+    let at = lines
+        .iter()
+        .position(|line| line.strip_prefix("platform: ").is_some())
+        .expect("#748 request system-prompt platform line");
+    lines[at] = "platform: <PLATFORM>";
+    request["systemPrompt"] = json!(lines.join("\n"));
+}
+
+/// The Node `process.platform` name for this host: the sidecar records
+/// `process.platform`, while `std::env::consts::OS` uses its own names for the
+/// two that differ (`macos`/`windows` vs `darwin`/`win32`); the rest share
+/// spellings.
+fn node_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        os => os,
+    }
 }
 fn mask_timestamp(value: &mut Value) {
     let valid = value.as_str().is_some_and(|text| {

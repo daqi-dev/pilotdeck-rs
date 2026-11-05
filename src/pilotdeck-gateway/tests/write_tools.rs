@@ -4,6 +4,8 @@
 mod baseline;
 #[path = "common/scratch.rs"]
 mod scratch;
+#[path = "common/skip_line.rs"]
+mod skip_line;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pilotdeck_gateway::{
@@ -1399,7 +1401,8 @@ fn case_insensitive_cwd_spelling_writes_and_edits() {
     fs::create_dir(&disk).unwrap();
     let alias = root.path().join("caseroot");
     if fs::canonicalize(&alias).is_err() {
-        eprintln!("skip: volume is case-sensitive");
+        // #1263: the skip line must reach default `cargo test` output.
+        skip_line::stderr_skip_line("skip: volume is case-sensitive\n");
         return;
     }
     alias_cwd_write_and_edit(&disk, &alias, "case-insensitive cwd");
@@ -1412,7 +1415,8 @@ fn nfd_directory_with_nfc_cwd_writes_and_edits() {
     fs::create_dir(&disk).unwrap();
     let alias = root.path().join("Caf\u{e9}");
     if fs::canonicalize(&alias).is_err() {
-        eprintln!("skip: volume distinguishes NFC/NFD");
+        // #1263: the skip line must reach default `cargo test` output.
+        skip_line::stderr_skip_line("skip: volume distinguishes NFC/NFD\n");
         return;
     }
     alias_cwd_write_and_edit(&disk, &alias, "NFC cwd over NFD directory");
@@ -1486,7 +1490,8 @@ fn permission_denied_is_not_reported_as_outside() {
         .is_some_and(|error| error.kind() == io::ErrorKind::PermissionDenied);
     if !denied {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-        eprintln!("skip: user bypasses mode 000 (running as root)");
+        // #1263: the skip line must reach default `cargo test` output.
+        skip_line::stderr_skip_line("skip: user bypasses mode 000 (running as root)\n");
         return;
     }
     let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
