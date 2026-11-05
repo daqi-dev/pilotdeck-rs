@@ -18,6 +18,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # ok ≤160 GiB · warn (160,180] · hard >180 GiB。本循环在 WARN 线就停派新活，比开树硬闸保守一档。
 # shellcheck source=lib/disk-budget.sh
 . "$ROOT/scripts/lib/disk-budget.sh" || { echo "pdrs-loop: 缺 or 无法读 scripts/lib/disk-budget.sh" >&2; exit 1; }
+# 磁盘闸量的是**主仓**：从 worktree 里跑循环时本树没有 _build/_tmp，量自己会恒判 ok（闸门静默失效）
+DISK_ROOT="$ROOT"
+_main_root="$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)" || _main_root=""
+[ -n "$_main_root" ] && DISK_ROOT="$_main_root"
 LOCK_DIR=/tmp/pdrs-loop.lock
 STOP_FILE=/tmp/pdrs-loop.stop
 # 测试注入：只在没有 .git 的隔离 fixture 根里允许改锁/stop 路径；真实仓库与 worktree 一律拒绝（防误删、防绕开单实例锁）
@@ -105,7 +109,7 @@ while :; do
   [ "$iter" -le "$MAX_ITER" ] || { echo "pdrs-loop: 到 max-iter=${MAX_ITER}，停"; exit 0; }
   if [ -e "$STOP_FILE" ]; then echo "pdrs-loop: 见 stop 文件，停"; rm -f "$STOP_FILE"; exit 0; fi
 
-  if ! used_kib="$(pdrs_disk_used_kib "$ROOT")"; then
+  if ! used_kib="$(pdrs_disk_used_kib "$DISK_ROOT")"; then
     echo "pdrs-loop: 磁盘测量失败（du 未取到结果，已重试一次），停（fail-closed；CLAUDE.md 资源上限）" >&2; exit 1
   fi
   # 档位判定只走 lib 的 pdrs_disk_level_of_kib：循环比开树硬闸早一档（>160 GiB 即停派新活）

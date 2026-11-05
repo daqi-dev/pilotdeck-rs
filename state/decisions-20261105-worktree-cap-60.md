@@ -58,7 +58,8 @@
 - 回收删 `target/` 只删可重建的编译产物；`git status` 干净检查与 `_tmp` 归档在此之前完成，不碰未提交改动与证据。
 - ops 侧改动未合并（见上「状态说明」），合并前磁盘闸不生效。
 - **闸的测量面 = 主仓 `_build` + `_tmp`**：`~/.codex/worktrees/…`、`/tmp` 下的树同样吃磁盘（它们已计入名额口径），但它们的树内 `_build/cargo-target` 不在磁盘闸视野里。阈值按「少算的数」标定，真占用可能高于闸看到的数。
-- **`du` 无超时**：`_build` 若指向一个挂死的外接卷，`cd`/`du` 会阻塞，闸门自身挂起（本机没有 `timeout` 命令，需自建 watchdog）。未做，属已知缺口。
+- **树内嵌套符号链接不计入**：`cd + pwd -P` 只解决「被量的 `_build` 本身是链接」；`du` 遍历时不跟随树内遇到的链接，`_build/wt-*/_build` 指向外接卷的配置那份体积仍不可见。
+- 已补：`du` / `cd` 走 `timeout`（10 s / 180 s，本机有 GNU coreutils；无 `timeout` 的环境退化为不限时）；`pdrs-loop.sh` 从 worktree 启动时改量**主仓**根（`git worktree list` 第一行），避免量到自己那棵没有 `_build`/`_tmp` 的树而恒判 ok。
 - **冻结装置 `scripts/ui-server-parity/calibrate.py` 的 80 GiB 闸仍有同类反模式**：`p.exists()` 会滤掉断链、`du -sk` 不跟随 symlink、失败时取 `max(totals)` 的部分和。阈值属已登记的例外，但**测量**要在冻结程序里改，本单不动。
 - **ops 侧还有两处自带测量**：`disk-guard.sh`（内联 `du | awk` + 字面量 160）与 `disk-trim-idle.sh`；「唯一实现」目前只对仓内成立，收敛这侧要另开一笔。
 - **开树的名额/磁盘闸与 `git worktree add` 之间无锁**：两个并发 `new-tree` 可读到同一快照（59 棵 / 179 GiB）后都放行。上限放宽到 60 反而让并发开树更常见；收口需一把全局 flock。

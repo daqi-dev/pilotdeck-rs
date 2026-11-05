@@ -61,6 +61,11 @@ eq "180 GiB 整 → warn" "$(lv $((180 * GIB)))" warn
 eq "180 GiB + 1 KiB → hard" "$(lv $((180 * GIB + 1)))" hard
 eq "level_of_kib 160 整 → ok（调用方入口）" "$(lvk $((160 * GIB)))" ok
 eq "level_of_kib 160 + 1 KiB → warn（调用方入口）" "$(lvk $((160 * GIB + 1)))" warn
+# 入参校验：空 / 非数字绝不能落到 else 打印 ok（`[ "" -gt N ]` 报错后两个分支都为假）
+eq "level_of_kib 空串 → unknown" "$(lvk '')" "unknown"
+eq "level_of_kib 空串 rc" "$(lvk '' >/dev/null 2>&1; echo $?)" 2
+eq "level_of_kib 非数字 → unknown" "$(lvk abc)" "unknown"
+eq "level_of_kib 非数字 rc" "$(lvk abc >/dev/null 2>&1; echo $?)" 2
 
 # 4. 目录不存在按 0（远端宿主的 target 不在 _build/_tmp）
 mkdir -p "$T/empty"
@@ -75,6 +80,13 @@ out=$(DU_FAIL=1 pdrs_disk_level "$T/root" 2>/dev/null); rc=$?
 eq "du 失败 level rc" "$rc" 2
 # 失败必须给出显式值：空串等于「不是 hard」，`[ "$lvl" = hard ]` 形式的调用方会静默放行
 eq "du 失败 level 打印 unknown" "$out" "unknown"
+
+# 4b. du 输出畸形（"12x345"）必须整条拒绝，不能前缀截断读成 12 KiB（偏小 = 假 PASS）
+mkdir -p "$T/bin-bad"
+printf '%s\n' '#!/usr/bin/env bash' 'echo -e "12x345\t$2"' > "$T/bin-bad/du"; chmod +x "$T/bin-bad/du"
+out=$(PATH="$T/bin-bad:$PATH" pdrs_disk_used_kib "$T/root" 2>/dev/null); rc=$?
+eq "du 畸形输出 rc" "$rc" 2
+eq "du 畸形输出无值" "[$out]" "[]"
 
 # 5a. 仓根不存在 = 前置错误（拼错路径不能读成 0 GiB 放行）；仓根在、但没有 _build/_tmp 仍按 0
 eq "仓根不存在 used rc" "$(pdrs_disk_used_kib /nonexistent/pdrs 2>/dev/null; echo "rc=$?")" "rc=2"
