@@ -86,7 +86,10 @@ try {
         }
         outcomes.push({ method: entry.method, shape: 'stream', outcome: 'ok', events, lastEventType, finalSeen, elapsedMs: Date.now() - started });
       } catch (error: any) {
-        const timedOut = Boolean(error?.timedOut) || /timeout/.test(String(error?.message ?? ''));
+        // F1 (#1355 fix-r1): only the driver's own withTimeout marker counts as a
+        // timeout.  A real gateway error whose message happens to contain
+        // "timeout" must be recorded as an error, never misfiled as timeout.
+        const timedOut = Boolean(error?.timedOut);
         outcomes.push({ method: entry.method, shape: 'stream', outcome: timedOut ? 'timeout' : 'error',
           errorCode: error?.code ?? null, error: String(error?.message ?? error), events, lastEventType, finalSeen,
           elapsedMs: Date.now() - started });
@@ -96,7 +99,8 @@ try {
         await withTimeout(client.request(entry.method, params), PER_METHOD_TIMEOUT_MS, entry.method);
         outcomes.push({ method: entry.method, shape: 'request', outcome: 'ok', elapsedMs: Date.now() - started });
       } catch (error: any) {
-        const timedOut = Boolean(error?.timedOut) || /timeout/.test(String(error?.message ?? ''));
+        // F1 (#1355 fix-r1): same rule as the stream branch — timedOut marker only.
+        const timedOut = Boolean(error?.timedOut);
         outcomes.push({ method: entry.method, shape: 'request', outcome: timedOut ? 'timeout' : 'error',
           errorCode: error?.code ?? null, error: String(error?.message ?? error), elapsedMs: Date.now() - started });
       }

@@ -1663,10 +1663,13 @@ def _retirement_wire_backing(frames):
 def score_retirement_round(row, expected):
     """Score one TS round against the anti-faking rules; never raises.
 
-    Rules: COVERAGE (executed must equal expected), UNIFORM_UNAVAILABLE (all
-    answers CAPABILITY_UNAVAILABLE cannot pad coverage), EVIDENCE_BACKING
-    (every outcome needs its wire frame), MISSING_GROUP / MISSING_FIELD /
-    ZERO_TESTS / UNKNOWN_SKIP (structure), ROUND_EXECUTION (driver exit).
+    Rules: COVERAGE (executed must equal expected), DUPLICATE_EXECUTION (an
+    executed method reported twice), UNIFORM_UNAVAILABLE (all answers
+    CAPABILITY_UNAVAILABLE cannot pad coverage), EVIDENCE_BACKING (every
+    outcome needs its wire frame; a timeout outcome is never executed and by
+    definition lacks wire backing — any timeout fails the round, fail-closed),
+    MISSING_GROUP / MISSING_FIELD / ZERO_TESTS / UNKNOWN_SKIP (structure),
+    ROUND_EXECUTION (driver exit).
     """
     verdict = {'round': row['label'], 'status': 'FAIL', 'rules': [], 'executed': [],
                'methodVerdicts': {}, 'driverExitCode': row['driverExitCode']}
@@ -1693,12 +1696,23 @@ def score_retirement_round(row, expected):
         if status not in RETIREMENT_OUTCOME_STATUSES:
             unknown.append(method)
             continue
-        executed.append(method)
         verdict['methodVerdicts'][method] = status
+        if status == 'timeout':
+            # F1 (#1355 fix-r1, fail-closed): a timeout is not an executed
+            # method — it counts as missing for COVERAGE, and the wire-backing
+            # pass below flags it so any single timeout fails the round.
+            continue
+        executed.append(method)
     if missing_fields:
         problems.append({'rule': 'MISSING_FIELD', 'detail': missing_fields})
     if unknown:
         problems.append({'rule': 'UNKNOWN_SKIP', 'detail': unknown})
+    if len(executed) != len(set(executed)):
+        counts: dict = {}
+        for method in executed:
+            counts[method] = counts.get(method, 0) + 1
+        problems.append({'rule': 'DUPLICATE_EXECUTION',
+                         'detail': sorted(method for method, n in counts.items() if n > 1)})
     expected_set, executed_set = set(expected), set(executed)
     missing = [method for method in expected if method not in executed_set]
     extra = [method for method in executed if method not in expected_set]
@@ -1715,11 +1729,16 @@ def score_retirement_round(row, expected):
     violations = []
     for outcome_row in outcomes:
         method = outcome_row.get('method')
+        status = outcome_row.get('outcome')
+        if status == 'timeout':
+            # F1 (#1355 fix-r1): a gateway that takes requests and never answers
+            # produces exactly this outcome with zero wire backing.
+            violations.append({'method': method, 'problem': 'timeout lacks wire backing'})
+            continue
         if method not in sends:
             violations.append({'method': method, 'problem': 'send frame missing'})
             continue
         identifier = sends[method]
-        status = outcome_row.get('outcome')
         if outcome_row.get('shape') == 'stream':
             if status == 'ok' and events.get(identifier, 0) < 1:
                 violations.append({'method': method, 'problem': 'stream ok without any event frame'})
@@ -1807,18 +1826,28 @@ def _retirement_http_routes(baseline):
     """Parse the production HTTP route set from the baseline sources.
 
     Every row carries file:line provenance from the parsed source; the route
-    set is never hand-listed.
+    set is never hand-listed.  One line can guard several routes
+    (`path !== '/a' && path !== '/b'`), so every match on the line is
+    collected; the same route under the same kind is never counted twice
+    (first occurrence wins), so prefix/subPath aliases do not inflate the set.
     """
     routes = []
+    seen_kinds = set()
 
     def scan(relative, patterns):
         path = baseline / relative
         require(path.is_file(), 'ENTRY_SOURCE', f'baseline source missing: {path}')
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            line_seen = set()
             for pattern, kind in patterns:
-                match = re.search(pattern, line)
-                if match:
-                    routes.append({'route': match.group(1), 'kind': kind, 'source': f'{relative}:{lineno}',
+                for route in re.findall(pattern, line):
+                    if (route, kind) in line_seen:
+                        continue
+                    line_seen.add((route, kind))
+                    if (route, kind) in seen_kinds:
+                        continue
+                    seen_kinds.add((route, kind))
+                    routes.append({'route': route, 'kind': kind, 'source': f'{relative}:{lineno}',
                                    'line': line.strip()[:200]})
 
     scan('src/gateway/server/GatewayServer.ts',
@@ -1925,12 +1954,12 @@ def _retirement_ports_available(ports):
         return False
 
 
-def _retirement_round(index, output, baseline, ports, timeout, methods_fixture=RETIREMENT_METHODS_FIXTURE):
+def _retirement_round(index, output, baseline, ports, timeout):
     """One real TS-side gateway round: mock model + baseline CLI + driver.
 
-    ``methods_fixture`` is a smoke seam (like run_fixture's ``command``):
-    production always drives the frozen 101-entry fixture; coverage scoring
-    enforces the full expected set regardless of what the driver ran.
+    Production always drives the frozen 101-entry fixture
+    (RETIREMENT_METHODS_FIXTURE); coverage scoring enforces the full expected
+    set regardless of what the driver ran.
     """
     run_round_module = _load('run_round', common.SCRIPT / 'run_round.py')
     mock_port, gateway_port, webui_port = ports
@@ -2033,7 +2062,7 @@ webui:
                             'loopbackOnly': addresses == [f'127.0.0.1:{gateway_port}']}
         driver = launch('driver-retirement', ['node', '--import', baseline / 'node_modules/tsx/dist/loader.mjs',
                                               RETIREMENT_DRIVER, '--url', f'ws://127.0.0.1:{gateway_port}/ws',
-                                              '--token', run_round_module.TOKEN, '--methods', methods_fixture,
+                                              '--token', run_round_module.TOKEN, '--methods', RETIREMENT_METHODS_FIXTURE,
                                               '--out', folder / 'driver'], None)
         row['driverExitCode'] = run_round_module.wait_owned(
             driver, max(.1, deadline - time.monotonic()))
@@ -2073,6 +2102,10 @@ def _retirement_report(output, baseline):
                 port_attempts.append({'round': index, 'ports': list(ports),
                                       'outcome': 'AddrInUse: retried on the alternate port set'})
                 continue
+            # DS P2-11 (#1355 fix-r1): portAudit records the successful port
+            # set too, not only the skipped ones.
+            port_attempts.append({'round': index, 'ports': list(ports),
+                                  'outcome': 'bound: round executed on this port set'})
             rounds.append(_retirement_round(index, output, baseline, ports, RETIREMENT_ROUND_TIMEOUT))
             break
         else:
@@ -2110,7 +2143,10 @@ def _retirement_report(output, baseline):
         'controls': controls,
         'coldRestartRollback': cold_restart,
         'topology': {'host': 'ts-reference', 'sidecar': 'ts-mock-model', 'entry': 'official GatewayWsClient driver',
-                     'ports': {'mock': rounds[0]['ports']['mock'], 'gateway': rounds[0]['ports']['gateway']}},
+                     # DS P2-13 (#1355 fix-r1): each round's actual ports, not
+                     # round 1's set silently standing in for all of them.
+                     'ports': [{'round': row['label'], 'mock': row['ports']['mock'],
+                                'gateway': row['ports']['gateway']} for row in rounds]},
         'portAudit': port_attempts,
         'processAudit': [row['audit'] for row in rounds],
         'cleanupAudit': {'status': 'PASS' if all(row['audit']['allStopped'] for row in rounds) else 'FAIL'},
