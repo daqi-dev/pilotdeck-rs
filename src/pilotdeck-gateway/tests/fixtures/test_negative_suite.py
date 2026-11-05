@@ -1218,6 +1218,24 @@ class ResultRowSchemaTests(unittest.TestCase):
         with self.assertRaises(comparator.InputError):
             self.load(comparator, row)
 
+    def test_unjudged_row_keeps_hits_absent(self):
+        # A row that never reached `judge` must not carry `hits: []`: the
+        # comparator normalizes a missing `hits` to null and treats null != [],
+        # so the same unjudged row would compare as NOT EQUIVALENT across the
+        # old (no key) and new (empty list) runners — a false FAIL.
+        comparator = self.comparator()
+        row = suite.result_row('rejection-silenced',
+                               reason='RuntimeError: positive matrix did not pass',
+                               targets=[('rejects_unmigrated_qq', '#1386 marker')])
+        self.assertNotIn('hits', row)
+        self.assertLessEqual(set(row), set(suite.RESULT_ROW_FIELDS))
+        # The comparator accepts the absent-key form; the empty list is a
+        # different table, which is exactly why the key must stay absent.
+        self.load(comparator, row)
+        with_hits = dict(row, hits=[])
+        self.load(comparator, with_hits)
+        self.assertNotEqual(self.load(comparator, row), self.load(comparator, with_hits))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
