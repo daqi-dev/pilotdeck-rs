@@ -35,7 +35,9 @@
 
 必须上车：改动落在 `check_frozen.py:manifest_inventory()` 任一哈希行的文件（当前 28 行：`acceptance.md`、`normalization.md`、`accepted-diffs.md`；`common.A2_SCRIPTS` 18 件；`fixtures/session-calibration.json`、`fixtures/session-expectations.json`；`scripts/a5-19/` 5 件）。
 
-**不用上车（登记成本为零）**：只新增 `specs/gateway-parity/diffs/<ID>.md`；只改 `scripts/gateway-parity/README.md` 等未登记文件；只改产品代码 / Rust 测试 / 账本措辞。
+**不用上车（登记成本为零）**：只新增 `specs/gateway-parity/diffs/<ID>.md`；只改 `scripts/gateway-parity/README.md` 等未登记文件；只改产品代码 / Rust 测试。
+
+**账本例外**：`accepted-diffs.md` 虽在 28 行清单里，但它是**原字节冻结**的旧账本（`check_append_only` 强制）——车次不能改它，新条目走新增 `diffs/<ID>.md`，它自身的任何字节变化都不属于车次处置范围，按冻结程序另办。`FROZEN.md` 叙述同理。
 
 一个单元可同车，当且仅当全部满足：
 
@@ -70,7 +72,7 @@
     - 若同一文件上还有**后续单元**，把它们重放到回滚后的树上并重建各自的 `Change:` 边——中间断一环，后续边全部失效；重放后的单元坐标变了，须**增量重审**并更新其 `Calibration-Evidence` 切片；
     - 三种失败形态都要靠「摘 / 改未合入事件」消解：回滚该文件**唯一**单元 → `old==new` 且残留边被判 stale；回滚**最后一个**单元（`a→b→c` 回到 `b`）→ 残留 `b→c` 被判 stale；回滚**中间**单元 → 后续边**断链**。都不改已合入事件。
     收拾完重跑 `--write`、§4.6、§4.7，其余单元在新 HEAD 重跑复算后再出车。
-- **F4 rebase / 队列更新 / 冲突解决（含无冲突重放）**：处理完一律比较 `merge-base(origin/main)` 与每个登记文件的当前摘要——**只要 merge-base 或任一登记文件字节变了就重新登记**，不要只在「有冲突标记」时才动作：无冲突重放同样会换 base、换装置字节，旧事件链不再从新 base 出发、旧复算也不再对应新树。触发后按序做：① 把重放 / 解冲突结果提交、工作树干净（`--write` 要求工作树字节等于 HEAD）；② 重跑 §4.6；③ 重跑 `--write`；④ **换新车次证据目录重跑 §4.7**（旧产物的装置字节摘要已失配、不可复用），更新受影响单元的 `Calibration-Evidence` 与切片；⑤ 按新摘要**重建受影响的 `Change:` 边**——车次内尚未合入的事件可改写，已合入的事件不可改（另开 `-r<n>` 事件）；⑥ 变化了的单元做**增量重审**（评审对象变了）。
+- **F4 rebase / 队列更新 / 冲突解决（含无冲突重放）**：处理完一律比较 `merge-base(origin/main)` 与每个登记文件的当前摘要——**只要 merge-base 或任一登记文件字节变了就重新登记**，不要只在「有冲突标记」时才动作：无冲突重放同样会换 base、换装置字节，旧事件链不再从新 base 出发、旧复算也不再对应新树。触发后按序做（**先修清单与边、再自检**，否则 §4.6 会在旧 `FROZEN.md` 与旧事件链上先卡住）：① 把重放 / 解冲突结果**提交、工作树干净**（`--write` 要求工作树字节等于 HEAD）；② 按新摘要**重建受影响的 `Change:` 边**——车次内尚未合入的事件可改写，已合入的事件不可改（另开 `-r<n>` 事件）；③ 重跑 `--write`；④ 跑 §4.6 自检（`check_frozen` 无 `--base` / `--base origin/main` / `test_safety`）；⑤ **换新车次证据目录重跑 §4.7**（旧产物的装置字节摘要已失配、不可复用），更新受影响单元的 `Calibration-Evidence` 与切片；⑥ 变化了的单元做**增量重审**（评审对象变了）；⑦ 把事件 + `FROZEN.md` 作为登记提交落盘，**对最终 HEAD 再跑一次 §4.6**。
 - **F5 同一处修 3 次不过**：按 CLAUDE.md 挂起该项，其余单元照常出车。
 
 ## 6. 评审强度（不降，只换聚合粒度）
@@ -96,7 +98,7 @@
 | 改 `check_frozen.py` 的检查规则语义 | 上车，且独占一车 |
 | 改 `scripts/parity/` 或 `scripts/ui-server-parity/` | 不上这车，走各自装置 |
 | 改判分阈值 / 分母 / 映射 | 先决策卡；未获批不上车 |
-| 改 `FROZEN.md` 叙述或 `accepted-diffs.md` | 不是车次问题，走原批准程序 |
+| 改 `FROZEN.md` 叙述或 `accepted-diffs.md` 字节 | 不上车，原字节冻结，按既有冻结批准程序另办 |
 | 并发 / 生命周期类改动 | 不同车 |
 
 ## 9. 车次记录（追加，不倒序）
