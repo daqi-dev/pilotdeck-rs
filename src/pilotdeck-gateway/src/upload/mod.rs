@@ -853,8 +853,10 @@ pub const CLEANUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
 pub fn spawn_cleanup(store: &Arc<UploadStore>, interval: Duration) -> tokio::task::JoinHandle<()> {
     // `tokio::time::interval` panics on a zero period, and a panic raised
     // inside this detached task is invisible: the caller drops the handle and
-    // cleanup stops silently. Clamp instead so any separator yields a live loop.
-    let interval = interval.max(Duration::from_millis(1));
+    // cleanup stops silently. Clamp instead so any separator yields a live
+    // loop; the 1 s floor also keeps a mistyped separator from turning into a
+    // full-project directory scan per millisecond.
+    let interval = interval.max(Duration::from_secs(1));
     let store = Arc::downgrade(store);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);

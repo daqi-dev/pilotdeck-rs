@@ -450,7 +450,9 @@ pub(super) async fn start_observed_with_upload_cleanup(
         }
     };
     // TS ui/server/routes/uploads.js:73-76: the store sweeps its own TTLs on a
-    // detached schedule (#1439); the JoinHandle is dropped, not awaited.
+    // detached schedule (#1439); the JoinHandle is dropped, not awaited. An
+    // idle tick never blocks shutdown, but a sweep already running inside
+    // `spawn_blocking` is not cancelled by the drop — see `spawn_cleanup`.
     crate::upload::spawn_cleanup(&upload_store, upload_cleanup_interval);
     let cleanup_factory = factory.clone();
     let cleanup_project = project.clone();
