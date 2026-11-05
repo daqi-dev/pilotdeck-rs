@@ -59,6 +59,15 @@ about. Two independent state checks close it:
   driver acquires the lock the moment it is released, so a run that finished
   `status=OK` without ever printing that line never took the lock at all.
 
+Neither check is the whole verdict: a run with no `lock-acquired` and no
+`provenance` is split by its exit code. Zero means the driver ran to the end
+without ever entering the lock block (the mutant deleted it, prints included)
+and is SURVIVED; non-zero means it died before the lock and is INVALID, since
+infrastructure failure is not evidence a mutant survived. The `dirty-src`
+control applies the same split: no `provenance` with a zero exit is SURVIVED,
+non-zero is INVALID (fix-r9 review, three independent P1s -- the two chains
+had drifted apart).
+
 The marker is normally undone by the driver itself, inside the lock (see
 `negctl_restore` in `rss_probe_1555.py`); this file's `restore_locked` is the
 fallback for a driver that never reached the dirty branch, and the final
@@ -102,6 +111,10 @@ HOLD_SECONDS = 10.0
 # lock is released; a request that lands in the last moment of the hold is a
 # slow start, not a proven wait.
 MIN_BLOCK_SECONDS = 2.0
+# How far before the hold began a driver stamp may sit and still be believed:
+# a stamp from earlier than this would make the measured wait longer than the
+# whole hold, which is the direction that turns a slow start into a proven one.
+STAMP_SLACK_SECONDS = 1.0
 LOCK_TIMEOUT = 3600
 RESTORE_LOCK_TIMEOUT = 120
 WATCHDOG = 1800
@@ -165,8 +178,8 @@ def requested_clock(text, not_before=None):
     the control's own `time.monotonic()` when it started the hold: a stamp
     from before that (or `0.0`, which `float('1e-400')` yields) would make the
     measured wait look longer than the whole epoch, and `MIN_BLOCK_SECONDS` is
-    the only proof of a wait -- so anything earlier than one second before the
-    hold began is rejected too (fix-r7 review, boundary P2).
+    the only proof of a wait -- so anything earlier than `STAMP_SLACK_SECONDS`
+    before the hold began is rejected too (fix-r7 review, boundary P2).
     """
     lines = text.split('\n')
     if lines and lines[-1] != '':
@@ -181,7 +194,8 @@ def requested_clock(text, not_before=None):
                     return None
                 if not math.isfinite(value) or value > time.monotonic():
                     return None
-                if not_before is not None and value < not_before - 1.0:
+                if (not_before is not None
+                        and value < not_before - STAMP_SLACK_SECONDS):
                     return None
                 return value
             return None
@@ -263,6 +277,12 @@ def restore(path, original, marked=None):
                        'control\'s marker; left untouched for inspection')
     temp = scratch('restore')
     try:
+        # Read the mode first: `stat` failing here is a real failure of the
+        # rewrite and must stay visible (the outer `except OSError` records
+        # INVALID). Only the `chmod` below is best effort (fix-r9 review,
+        # boundary P3 / concurrency P2 -- swallowing both silently wrote the
+        # umask's mode onto a tracked source and still reported success).
+        mode = stat.S_IMODE(path.stat().st_mode)
         temp.write_bytes(original)
         # `os.replace` swaps in the temp file's inode, so without this the
         # tracked source comes back with the umask's mode instead of its own
@@ -271,7 +291,7 @@ def restore(path, original, marked=None):
         # purpose: a failed chmod must not abort the restore and leave the
         # source marked (fix-r7 review, concurrency P2).
         try:
-            os.chmod(temp, stat.S_IMODE(path.stat().st_mode))
+            os.chmod(temp, mode)
         except OSError:
             pass
         os.replace(temp, path)
@@ -434,7 +454,7 @@ def lock_check(out, env):
         # summary, so it has to be caught here rather than blamed on the
         # infrastructure (fix-r7 review, concurrency P2 / boundary P3).
         status = 'SURVIVED'
-        reason = ('the driver exited cleanly without ever printing '
+        reason = ('the driver exited cleanly (rc=0) without ever printing '
                   'lock-acquired or provenance -- it ran without the lock')
     elif not acquired:
         # No `lock-acquired` *and* no `provenance` *and* a non-zero exit: the
@@ -482,12 +502,14 @@ def dirty_check(out, env, original):
                 raise RuntimeError('product source differs from HEAD before the dirty check')
             marked = original + MARKER
             temp = scratch('marker')
+            mode = stat.S_IMODE(source.stat().st_mode)
             temp.write_bytes(marked)
             # Same inode swap as the two restore paths: keep the source's own
-            # mode instead of the umask's (fix-r6 review, sibling P2). Best
-            # effort -- the marker must land even if the mode cannot be read.
+            # mode instead of the umask's (fix-r6 review, sibling P2). Only the
+            # `chmod` is best effort -- the marker must land even if the mode
+            # cannot be applied; reading it is not (fix-r9 review).
             try:
-                os.chmod(temp, stat.S_IMODE(source.stat().st_mode))
+                os.chmod(temp, mode)
             except OSError:
                 pass
             os.replace(temp, source)
@@ -530,6 +552,18 @@ def dirty_check(out, env, original):
         reason = complaint
     elif reason:
         status = 'INVALID'
+    elif not provenance and returncode == 0:
+        # The `lock_check` clean-exit branch, mirrored (fix-r9 review, three
+        # independent P1s): no `provenance` and a zero exit means the driver
+        # ran to the end without ever reaching the dirty check -- exactly the
+        # mutant that deletes the whole `with tree_lock(...)` block, summary
+        # write included. Its own failure to check the tree is the mutation,
+        # so this is SURVIVED, not an infrastructure INVALID. A non-zero exit
+        # with no summary is still ambiguous and stays INVALID below.
+        status = 'SURVIVED'
+        reason = ('the driver exited cleanly (rc=0) without ever printing '
+                  'provenance -- it ran to the end without reaching the dirty '
+                  'check')
     elif not provenance:
         # Same rule as `lock_check`'s "never reached the lock" branch (fix-r7
         # review, sibling P1): a driver that died before it could check the

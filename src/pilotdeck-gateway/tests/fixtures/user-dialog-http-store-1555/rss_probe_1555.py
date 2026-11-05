@@ -138,6 +138,10 @@ def negctl_restore():
         target = root / relative
         if target.read_bytes() != Path(marked_path).read_bytes():
             return 'left untouched: the bytes are not this control\'s marker'
+        # Read the mode before writing: a `stat` failure is a real failure of
+        # the restore and must reach the caller (the outer handler below), not
+        # be swallowed with the chmod (fix-r9 review).
+        mode = stat.S_IMODE(target.stat().st_mode)
         temp.write_bytes(Path(original_path).read_bytes())
         # `os.replace` swaps in the temp file's inode, so without this the
         # tracked source would come back with the umask's mode instead of its
@@ -145,7 +149,7 @@ def negctl_restore():
         # effort: a failed chmod must not abort the restore (fix-r7 review,
         # concurrency P2).
         try:
-            os.chmod(temp, stat.S_IMODE(target.stat().st_mode))
+            os.chmod(temp, mode)
         except OSError:
             pass
         os.replace(temp, target)
