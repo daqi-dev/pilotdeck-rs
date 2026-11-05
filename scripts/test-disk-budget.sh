@@ -106,7 +106,9 @@ rc=2"
 # 5b. 符号链接：`du -sk` 对命令行 symlink 不跟随（BSD 实测 0 KiB），lib 必须先 cd + pwd -P。
 #     本仓库的 runner 树确有 `_build` 指向外接卷的配置，量成 0 会让闸门静默失效。
 mkdir -p "$T/data/_build" "$T/rootlink"
-dd if=/dev/zero of="$T/data/_build/blob" bs=1m count=3 2>/dev/null || bad "fixture 写入 3 MiB blob 失败"
+#     `bs` 用字节数而不是 `1m`：GNU dd（CI 的 ubuntu runner）不认小写 `m`，会直接失败，
+#     blob 不落地 → 下一步量到空目录 4 KiB（11-05 CI a51-coverage 实测）
+dd if=/dev/zero of="$T/data/_build/blob" bs=1048576 count=3 2>/dev/null || bad "fixture 写入 3 MiB blob 失败"
 ln -s "$T/data/_build" "$T/rootlink/_build"
 # 阈值取 2 MiB 而不是 1 MiB：空目录本身约 4 KiB、ext4 快符号链接可能占 ≥4 KiB，
 # 门槛太低的话「漏掉 cd+pwd -P 的回归」在某些文件系统上仍会发绿（评审 P2）
