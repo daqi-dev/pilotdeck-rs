@@ -60,154 +60,13 @@ use std::{
     time::SystemTime,
 };
 
+mod mcp;
+mod memory;
+mod snapshot;
+mod steer;
+mod user_dialog;
+
 pub type Recorders = Arc<Mutex<HashMap<JsString, Weak<Recorder>>>>;
-
-// ── U6 MCP resolver / session-plugins for the native process (#1319) ────────
-
-/// The native process serves exactly one project. The SDK MCP resolver resolves
-/// any `projectKey` (or no key) to that project's plugin runtime. This mirrors
-/// `ProjectRuntimeRegistry.resolve` without exposing the full SDK session layer.
-struct NativeMcpResolver {
-    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
-}
-impl SdkMcpProjectResolver for NativeMcpResolver {
-    fn resolve<'a>(
-        &'a self,
-        _project_key: Option<&'a JsString>,
-    ) -> SdkMcpFuture<'a, Result<Arc<dyn SdkMcpProject>, SdkMcpError>> {
-        let project = self.project.clone();
-        Box::pin(async move {
-            let lease = project
-                .acquire(None)
-                .map_err(|e| SdkMcpError::plain("Error", JsString::from(e.to_string())))?;
-            let resources = lease
-                .runtime()
-                .resources()
-                .get::<ProjectResources>()
-                .ok_or_else(|| {
-                    SdkMcpError::plain("Error", "Native project resources are missing.")
-                })?;
-            let plugin_res = resources
-                .context()
-                .resource(Resource::PluginRuntime)
-                .ok_or_else(|| {
-                    SdkMcpError::plain("Error", "Native plugin runtime resource is missing.")
-                })?;
-            let plugin_runtime = plugin_res
-                .as_any()
-                .downcast_ref::<PluginResources>()
-                .ok_or_else(|| {
-                    SdkMcpError::plain("Error", "Native plugin runtime has the wrong type.")
-                })?
-                .runtime
-                .clone();
-            let project_root = JsString::from(
-                lease
-                    .runtime()
-                    .project_root()
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-            let resolved: Arc<dyn SdkMcpProject> =
-                Arc::new(PluginProjectRuntime::new(project_root, plugin_runtime));
-            Ok(resolved)
-        })
-    }
-}
-
-/// The native process has no SDK session plugin sources (only project-level
-/// plugins apply). This satisfies the `SdkMcpSessionPlugins` contract with an
-/// empty list, matching the TS path where `sdkSessionPlugins` is never set.
-struct NoSessionPlugins;
-impl SdkMcpSessionPlugins for NoSessionPlugins {
-    fn plugins(&self, _session_key: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
-        Vec::new()
-    }
-}
-
-/// `ProjectMemoryRegistry` adapter over the native `ProjectRuntimeRegistry`.
-/// Mirrors the single-project `dialog.projects` surface from
-/// `createLocalGateway.ts:1238-1259`: `resolveProjectKey` accepts the
-/// configured project path and returns it unchanged (native process serves
-/// only one project); any other key is rejected with `PROJECT_NOT_FOUND`.
-/// `memory_management` acquires the current generation and reads
-/// `Resource::MemoryManagement` from the staged context, returning `None`
-/// when memory management was not staged (provider disabled or absent).
-struct NativeMemoryRegistry {
-    project: Arc<ProjectRuntimeRegistry>,
-    project_root: std::path::PathBuf,
-}
-
-impl ProjectMemoryRegistry for NativeMemoryRegistry {
-    fn resolve_project_key(&self, project_key: &JsString) -> Result<JsString, MemoryProviderError> {
-        let root = self
-            .project_root
-            .to_str()
-            .ok_or_else(MemoryProviderError::host_required)?;
-        if project_key.equals_str(root) {
-            Ok(project_key.clone())
-        } else {
-            Err(MemoryProviderError::unknown_project_key(
-                project_key.units(),
-            ))
-        }
-    }
-
-    fn memory_management(
-        &self,
-        _project_key: &JsString,
-    ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
-        let lease = self
-            .project
-            .acquire(None)
-            .map_err(MemoryProviderError::from)?;
-        let resources = lease
-            .runtime()
-            .resources()
-            .get::<ProjectResources>()
-            .ok_or_else(|| MemoryProviderError::new("Native project resources are missing."))?;
-        let context = resources.context();
-        let Some(handle) = context.resource(Resource::MemoryManagement) else {
-            return Ok(None);
-        };
-        let resource = handle
-            .as_any()
-            .downcast_ref::<MemoryManagementResource>()
-            .ok_or_else(|| {
-                MemoryProviderError::new("Native memory management resource has the wrong type.")
-            })?;
-        Ok(Some(resource.management().clone()))
-    }
-}
-
-/// Build the `MemoryGateway` by probing the current project generation. If
-/// `Resource::MemoryManagement` is staged the gateway is enabled; otherwise
-/// (`MemoryGateway::disabled()`) it advertises `CAPABILITY_UNAVAILABLE` after
-/// parameter validation, matching the TS wrapper seam.
-fn build_memory_gateway(
-    options: &Options,
-    project: &Arc<ProjectRuntimeRegistry>,
-) -> Result<MemoryGateway, RuntimeError> {
-    let registry = Arc::new(NativeMemoryRegistry {
-        project: project.clone(),
-        project_root: options.project.clone(),
-    });
-    // Check if the current generation staged a management resource. If the
-    // project has no memory provider the gateway is disabled but not an error.
-    let lease = project.acquire(None)?;
-    let resources = lease
-        .runtime()
-        .resources()
-        .get::<ProjectResources>()
-        .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
-    let context = resources.context();
-    if context.resource(Resource::MemoryManagement).is_some() {
-        let projection = MemoryProjection::new(registry, options.project.clone());
-        Ok(MemoryGateway::from_projection(projection))
-    } else {
-        Ok(MemoryGateway::disabled())
-    }
-}
 
 /// The controlled registry switch for collection and testing (#1369).
 /// Unset keeps the production default (registry on, no receipt); "on"/"off"
@@ -270,92 +129,17 @@ pub(super) async fn start_observed(
     validate_profile_inner(&options, &env, true).await?;
     register_project(&options)?;
     let project = project_registry(&options, &env);
-    // Validate real families before claiming readiness. Partial staging belongs
-    // to this registry and must drain even when construction returns an error.
-    let snapshot_enabled = match project.acquire(None).and_then(|lease| {
-        let resources = lease
-            .runtime()
-            .resources()
-            .get::<ProjectResources>()
-            .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
-        let persistence = resources
-            .context()
-            .resource(Resource::Persistence)
-            .ok_or_else(|| RuntimeError::new("Native persistence resource is missing."))?;
-        let persistence = persistence
-            .as_any()
-            .downcast_ref::<PersistenceResources>()
-            .ok_or_else(|| RuntimeError::new("Native persistence resource has the wrong type."))?;
-        // Staging already resolved the immutable environment to build this
-        // provider. Advertise that result instead of resolving it per request.
-        Ok(persistence.snapshots.is_some())
-    }) {
-        Ok(enabled) => enabled,
-        Err(error) => {
-            let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
-            return Err(error.into());
-        }
-    };
-    // Extract the snapshot recorder once, so `Services` can hand the same
-    // provider to every submit turn without re-acquiring the project lease.
-    let snapshot_recorder = if snapshot_enabled {
-        match project.acquire(None).and_then(|lease| {
-            let resources = lease
-                .runtime()
-                .resources()
-                .get::<ProjectResources>()
-                .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
-            let persistence = resources
-                .context()
-                .resource(Resource::Persistence)
-                .ok_or_else(|| RuntimeError::new("Native persistence resource is missing."))?;
-            let persistence = persistence
-                .as_any()
-                .downcast_ref::<PersistenceResources>()
-                .ok_or_else(|| {
-                    RuntimeError::new("Native persistence resource has the wrong type.")
-                })?;
-            persistence
-                .snapshots
-                .as_ref()
-                .map(|snapshots| snapshots.recorder.clone())
-                .ok_or_else(|| RuntimeError::new("Native snapshot recorder is missing."))
-        }) {
-            Ok(recorder) => Some(recorder),
-            Err(error) => {
-                let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
-                return Err(error.into());
-            }
-        }
-    } else {
-        None
-    };
-    let memory = match build_memory_gateway(&options, &project) {
-        Ok(gateway) => Arc::new(gateway),
-        Err(error) => {
-            let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
-            return Err(error.into());
-        }
-    };
+    let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
+    let snapshot_recorder =
+        snapshot::snapshot_recorder(&options, &project, snapshot_enabled).await?;
+    let memory = memory::build_memory(options.clone(), project.clone()).await?;
     let recorders: Recorders = Arc::default();
     let permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry> = Arc::default();
     let interactions = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
         permission_grants: Some(permission_rule_sets.clone()),
         ..InteractionOptions::default()
     }));
-    // #1445 (phased follow-up): this bus is constructed without `on_change`,
-    // so `is_connected()` (bus wired iff on_change is supplied) is the only
-    // capability signal today and the RPC handlers' null tri-state /
-    // lease-trim semantics (methods/user_dialog.rs) rely on that wiring, not on
-    // a real change observer. Production on_change wiring and the
-    // capability-criterion rework land in #1445; do not treat the current
-    // gate as the final semantics.
-    let user_dialog_bus = Arc::new(std::sync::Mutex::new(
-        crate::user_dialog::GatewayUserDialogBus::new(
-            crate::user_dialog::DialogRuntime::default(),
-            None,
-        ),
-    ));
+    let user_dialog_bus = user_dialog::build_user_dialog_bus();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
@@ -643,87 +427,14 @@ pub(super) async fn start_observed(
                 snapshot_recorder: snapshot_recorder.clone(),
                 upload_store: upload_store.clone(),
             });
-            // U6 MCP four-control gateway (#1319): wire the #1215 component
-            // into the native request router. The SdkMcpConfig owns the
-            // registry state; the McpGateway owns validation, the busy gate,
-            // and the post-success close. The close_session callback mirrors
-            // the TS `closeSession` that the registry calls after its commit.
-            let close_owner = owner.clone();
-            let close_session: SdkMcpCloseSession = Arc::new(move |session_key, _reason| {
-                let key = match &session_key {
-                    JsValue::String(key) => key.clone(),
-                    _ => JsString::from(""),
-                };
-                let owner = close_owner.clone();
-                Box::pin(async move {
-                    owner
-                        .close(&key)
-                        .await
-                        .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))
-                })
-            });
-            let mcp_config = Arc::new(SdkMcpConfig::new(SdkMcpConfigOptions {
-                resolver: Arc::new(NativeMcpResolver {
-                    project: build_project.clone(),
-                }),
-                close_session,
-                session_plugins: Arc::new(NoSessionPlugins),
-                permission_rule_sets: permission_rule_sets.clone(),
-                environment: Arc::new(SystemEnvironment),
-                projects: SdkSessionProjects::shared(),
-            }));
-            // Publish the config so the prepare closure's sync_permission_rules
-            // call (on each session lease acquire) can reach it.  The set
-            // succeeds once; subsequent calls from a second start_with_cleanup
-            // invocation are silently ignored because the reference is stable.
-            let _ = build_mcp_config.set(mcp_config.clone());
-            let mcp_gateway = Arc::new(McpGateway::new(McpGatewayOptions {
-                owner: owner.clone(),
-                config: mcp_config,
-            }));
-            // Build the async-hook registry only when the project stages an
-            // InteractionSteer resource (i.e. the steer pathway is wired).
-            // Check via ProjectResources→StageContext since InteractionSteer does
-            // not implement RuntimeResources directly.
-            let async_hook_registry = build_project
-                .acquire(None)
-                .ok()
-                .and_then(|lease| {
-                    lease
-                        .runtime()
-                        .resources()
-                        .get::<ProjectResources>()?
-                        .context()
-                        .resource(Resource::InteractionSteer)
-                        .map(|_| ())
-                })
-                .map(|_| {
-                    let reg_project = build_project.clone();
-                    let reg_owner = owner.clone();
-                    let reg_coordinator = coordinator.clone();
-                    let registry = AsyncHookRegistry::new(
-                        Arc::new(TokioHookClock),
-                        move |session_key| {
-                            // Turn is live only when the admission slot holds a run ID.
-                            let run_id = reg_owner.active_turn_run_id(session_key)?;
-                            // Shared lookup: fetch the InteractionSteer resource
-                            // and guard the run ID against the admission slot.
-                            let info = crate::runtime::project::interaction_steer::active_turn_for(
-                                &reg_project,
-                                session_key,
-                                Some(&run_id),
-                            )?;
-                            Some(AsyncHookTurn {
-                                run_id: info.turn_id,
-                                mailbox: info.mailbox,
-                            })
-                        },
-                        move |session_key, event| {
-                            reg_coordinator.emit(session_key, &JsValue::Object(event));
-                        },
-                    );
-                    Arc::new(registry)
-                });
+            let mcp_gateway = mcp::build_mcp_gateway(
+                &owner,
+                &build_project,
+                &permission_rule_sets,
+                &build_mcp_config,
+            );
+            let async_hook_registry =
+                steer::build_async_hook_registry(&build_project, &owner, &coordinator);
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
                 snapshot_enabled,
