@@ -44,7 +44,10 @@ mutations = [
      'const MAX_LEASE_MS: f64 = 300_000.0;',
      'const MAX_LEASE_MS: f64 = 400_000.0;',
      TEST + 'user_dialog_claim_ttlms_bounds',
-     '#1437 above ttlMs is rejected'),
+     # The mutated constant is interpolated into the rejection message, so the
+     # `below` case fails on its message assertion before the `above` case is
+     # reached; either assertion is proof the mutation was caught (#1616 r1).
+     ['#1437 below ttlMs message', '#1437 above ttlMs is rejected']),
     ('ttl-fraction-allowed', USER_DIALOG,
      '|| ttl_ms.fract() != 0.0',
      '|| false',
@@ -131,7 +134,9 @@ mutations = [
      '        .cloned()\n'
      '        .ok_or_else(|| request_error(format!("{key} must be a non-empty string.")))',
      TEST + 'user_dialog_claim_release_domain_codes',
-     '#1437 claim blank sessionKey domain code'),
+     # A blank key that passes the guard no longer rejects, so the run dies on
+     # `expect_err` before the domain-code assertion.
+     ['#1437 claim rejects a blank sessionKey', '#1437 claim blank sessionKey domain code']),
     # claim leaseId: a whitespace-only string must stay rejected.
     ('claim-blank-lease-allowed', USER_DIALOG,
      'if crate::metadata::js_trim(&text).is_empty() {\n'
@@ -175,13 +180,16 @@ mutations = [
      '                        DialogAnswer::Cancelled(None)\n'
      '                    };',
      TEST + 'user_dialog_respond_behavior_branches',
-     '#1437 respond unknown behavior message'),
+     # The mutated arm now returns Ok, so the run dies on `expect_err` before
+     # the message assertion it was written to break (#1616 r1).
+     ['#1437 respond rejects a unknown behavior', '#1437 respond unknown behavior message']),
     # the cancelled arm must still produce a Cancelled answer.
     ('behavior-cancelled-skipped', USER_DIALOG,
      '} else if behavior.equals_str("cancelled") {',
      '} else if behavior.equals_str("cancelledx") {',
      TEST + 'user_dialog_respond_behavior_branches',
-     '#1437 a cancelled behavior reports delivered'),
+     # `cancelledx` falls into the reject arm, so `.expect` fails first (#1616 r1).
+     ['#1437 a cancelled behavior delivers', '#1437 a cancelled behavior reports delivered']),
     # USER_DIALOG_LEASE_REQUIRED on a foreign lease.
     ('lease-required-code', USER_DIALOG,
      'code: "USER_DIALOG_LEASE_REQUIRED".into(),',
@@ -221,7 +229,7 @@ mutations = [
      '                    .ok_or_else(|| {\n'
      '                        // TS: DialogGatewayError("INVALID_PERMISSION_LIST",',
      TEST + 'permission_blank_session_key_rejected',
-     '#1437 permission_list rejects a blank sessionKey'),
+     ['#1437 permission_list rejects a blank sessionKey', '#1437 permission_list blank sessionKey keeps the domain code']),
     # the grant arm's blank-sessionKey trim guard (same source, other branch).
     ('grant-blank-trim', PERMISSION,
      'let text = String::from_utf16_lossy(s.units());\n'
@@ -237,7 +245,9 @@ mutations = [
      '                    .ok_or_else(|| {\n'
      '                        // TS grantSessionPermission performs no input validation',
      TEST + 'permission_blank_session_key_rejected',
-     '#1437 grant blank sessionKey keeps the domain code'),
+     # A blank key that passes the guard makes `grant` succeed, so the run dies
+     # on `expect_err` before the domain-code assertion (#1616 r1).
+     ['#1437 grant rejects a blank sessionKey', '#1437 grant blank sessionKey keeps the domain code']),
 ]
 
 
