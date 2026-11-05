@@ -129,16 +129,18 @@ cases = [
     ('status-worker-lease', base / 'runner.rs',
      'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);', 'drop(lease);\n            let result = write(&recorder, &session, &turn);\n            drop(owner);',
      None, test_prefix + 'forward_status_drop', '#741h status dropped worker holds lease'),
+    # #1219 / A7.2-LIVE-DROP-COMPLETION-001-R2: the failing status worker must
+    # not append a durable turn_result. Persisting one from the same blocking
+    # worker must die on the case's own ordering assertion: the report is
+    # recorded by OrderedStore before its TS-order panic, because that panic
+    # lands in a JoinHandle nobody awaits (see forward_tests.rs OrderedStore).
+    ('status-fail-completes', base / 'runner.rs',
+     'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);\n            result',
+     'let result = write(&recorder, &session, &turn);\n            if result.is_err() {\n                let _ = recorder.writer().record_turn_result(&session, &turn, crate::metadata::object([("type", JsValue::String("error".into()))]));\n            }\n            drop(owner);\n            drop(lease);\n            result',
+     None, test_prefix + 'forward_status_fail_drop', '#1219 [status-fail-drop]: no out-of-order turn_result from the failed worker'),
     # #1219 / A7.2-LIVE-DROP-COMPLETION-001-R2: the failing status worker still
     # owns the turn's lease until its write resolves. Releasing it before the
     # write must die on that case's own assertion.
-    #
-    # The durable-completion fact (`completes == 0`) has no injectable kill:
-    # a turn_result appended from this worker lands before the fixture's TS
-    # ordering invariant (OrderedStore, `#741h loop cleanup before catch
-    # complete`) allows it, and that rejection panics inside the detached
-    # blocking thread, which no one awaits. Raw output:
-    # _tmp/20261106-1219/neg5-inject-completion/manual-inject.txt.
     ('status-fail-lease-early', base / 'runner.rs',
      'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);',
      'drop(lease);\n            let result = write(&recorder, &session, &turn);\n            drop(owner);',

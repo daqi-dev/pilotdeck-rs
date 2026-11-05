@@ -81,6 +81,7 @@ async fn matrix(name: &str) {
             usize::from(name.ends_with("failure") || name.ends_with("once"))
         },
         completes: AtomicUsize::new(0),
+        order_violations: AtomicUsize::new(0),
         attempts: AtomicUsize::new(0),
         gate: Mutex::new(Some((entered, wait))),
     });
@@ -483,6 +484,7 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
         kind: "turn_started",
         fail: usize::from(case == "reject"),
         completes: AtomicUsize::new(0),
+        order_violations: AtomicUsize::new(0),
         attempts: AtomicUsize::new(0),
         gate: Mutex::new((case != "reject").then_some((entered, wait))),
     });
