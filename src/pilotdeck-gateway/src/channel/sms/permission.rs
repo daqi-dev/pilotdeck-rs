@@ -525,7 +525,9 @@ fn status_answer(text: &str, can_advance: bool, retry_prompt: bool) -> Permissio
     }
 }
 
-fn optional_string(value: &JsValue) -> Option<JsString> {
+/// `String(x) ?? nothing` event fields: `undefined`/`null` stay absent.
+/// #1339 fix-r1: shared with the elicitation capture (same event shape).
+pub(crate) fn optional_string(value: &JsValue) -> Option<JsString> {
     match value {
         JsValue::Undefined | JsValue::Null => None,
         value => Some(js_string_of(value)),

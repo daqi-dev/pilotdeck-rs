@@ -1,8 +1,9 @@
-//! #1339 gold-master replay: the 47 scenarios recorded by
+//! #1339 gold-master replay: the scenarios recorded by
 //! `tests/fixtures/channel-sms/generate.mts` against the real TS baseline,
-//! re-driven through the Rust port with loopback mocks only.
+//! re-driven through the Rust port with loopback mocks only. The
+//! `port-busy-preflight` case has no replay cell of its own: it exists so
+//! `port_busy_preflight_fails_fast` can hold its port busy.
 use super::*;
-use base64::Engine as _;
 use serde_json::{Map as JsonMap, Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -17,7 +18,7 @@ use super::super::loader::{
 use crate::channel::protocol::{ChannelLog, ChannelStartDeps};
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-sms/oracle.json");
-const EXPECTED_CASE_COUNT: usize = 47;
+const EXPECTED_CASE_COUNT: usize = 55;
 /// The fixed mapper uuid the generator injects, so `/new` session keys match.
 const MAPPER_UUID: &str = "aaaaaaaa-1111-2222-3333-444444444444";
 
@@ -32,7 +33,24 @@ fn oracle_cases() -> Vec<Value> {
         .as_array()
         .cloned()
         .expect("#1339 oracle cases");
-    assert_eq!(cases.len(), EXPECTED_CASE_COUNT, "#1339 oracle case count");
+    // #1339 fix-r1 (P2 #10): pin both counts — the loaded array and the
+    // generator's own `expectedCaseCount` declaration — so a regenerated
+    // oracle that adds a case without updating the harness fails loudly.
+    crate::negative_assert_eq!(
+        cases.len(),
+        EXPECTED_CASE_COUNT,
+        "#1339 oracle case array length"
+    );
+    let declared_expected =
+        EXPECTED_CASE_COUNT + usize::from(crate::mutants::on("sms-oracle-declaration-count"));
+    let declared = value["expectedCaseCount"]
+        .as_u64()
+        .expect("#1339 oracle expectedCaseCount field");
+    crate::negative_assert_eq!(
+        declared as usize,
+        declared_expected,
+        "#1339 oracle declared case count"
+    );
     cases
 }
 
@@ -332,19 +350,16 @@ impl TurnEventStream for MockTurnStream {
 }
 
 // ---------------------------------------------------------------------------
-// raw probe client request building (the generator's `REQUEST` + signing)
+// raw probe client request building (the generator's `REQUEST`)
 // ---------------------------------------------------------------------------
 
-fn decode_form_body(body: &str) -> String {
-    let Some(at) = body.find("Body=") else {
-        return String::new();
-    };
-    let raw = body[at + "Body=".len()..].split('&').next().unwrap_or("");
-    String::from_utf8_lossy(&decode_form_component(raw.replace('+', " ").as_bytes())).into_owned()
-}
-
-fn signed_headers(step: &Value, case: &Value, port: u16) -> Vec<(String, String)> {
-    let mut headers: Vec<(String, String)> = step["headers"]
+/// The effective headers the generator recorded per step — including the
+/// `X-Twilio-Signature` values the TS side itself computed over its signing
+/// URL. #1339 fix-r1 (P1 #1): the harness replays those recorded bytes
+/// instead of re-signing with the port's own HMAC, so the oracle pins the
+/// signature algorithm through the generator's implementation.
+fn recorded_headers(step: &Value) -> Vec<(String, String)> {
+    step["headers"]
         .as_object()
         .map(|object| {
             object
@@ -352,40 +367,10 @@ fn signed_headers(step: &Value, case: &Value, port: u16) -> Vec<(String, String)
                 .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_owned()))
                 .collect()
         })
-        .unwrap_or_default();
-    let name = case["name"].as_str().unwrap_or_default();
-    if name != "valid-signature" && name != "auth-token-apikey" {
-        return headers;
-    }
-    let body = step["body"].as_str().unwrap_or("");
-    let message = if body.contains("Body=") {
-        decode_form_body(body)
-    } else {
-        String::new()
-    };
-    let extra = case["extra"].as_object().cloned().unwrap_or_default();
-    let env = case["env"].as_object().cloned().unwrap_or_default();
-    let token = [
-        extra.get("authToken"),
-        extra.get("apiKey"),
-        env.get("TWILIO_AUTH_TOKEN"),
-        extra.get("token"),
-    ]
-    .into_iter()
-    .flatten()
-    .find(|value| !value.is_null())
-    .and_then(Value::as_str)
-    .unwrap_or_default();
-    let full_url = format!("http://127.0.0.1:{port}/sms/incoming");
-    // `Object.keys({From, Body}).sort()` — Body sorts before From.
-    let data = format!("{full_url}Body{message}From+15550001");
-    let signature = base64::engine::general_purpose::STANDARD
-        .encode(hmac_sha1(token.as_bytes(), data.as_bytes()));
-    headers.push(("X-Twilio-Signature".to_owned(), signature));
-    headers
+        .unwrap_or_default()
 }
 
-fn build_raw(step: &Value, case: &Value, port: u16) -> Vec<u8> {
+fn build_raw(step: &Value) -> Vec<u8> {
     let body: Vec<u8> = match &step["body"] {
         Value::String(text) => text.clone().into_bytes(),
         Value::Object(spec) => spec["repeat"]
@@ -401,11 +386,16 @@ fn build_raw(step: &Value, case: &Value, port: u16) -> Vec<u8> {
         step["path"].as_str().unwrap_or("/sms/incoming"),
     )
     .into_bytes();
-    for (key, value) in signed_headers(step, case, port) {
+    for (key, value) in recorded_headers(step) {
         raw.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
     raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
     raw.extend_from_slice(&body);
+    // The generator's `truncate`: Content-Length keeps declaring the full
+    // body while the wire stops short; the `halfClose` step flag then
+    // finishes the request.
+    let truncate = step["truncate"].as_u64().unwrap_or_default() as usize;
+    raw.truncate(raw.len().saturating_sub(truncate));
     raw
 }
 
@@ -422,9 +412,28 @@ fn cron_delivery(value: &Value) -> CronResultDelivery {
 // replay driver
 // ---------------------------------------------------------------------------
 
+/// #1339 fix-r1 (P2 #13): a replay needs its case port free — a second
+/// channel bound to it would answer the probe requests and corrupt the
+/// recorded oracle bytes. Fail fast with a dedicated message instead of
+/// letting the run mismatch. (The switch keeps the guard testable.)
+async fn ensure_replay_port_free(port: u16) {
+    if crate::mutants::on("sms-port-preflight") {
+        return;
+    }
+    let occupied = tokio::net::TcpListener::bind(("127.0.0.1", port))
+        .await
+        .is_err();
+    if occupied {
+        panic!(
+            "#1339 port {port} already in use; a concurrent channel-sms replay would corrupt the oracle"
+        );
+    }
+}
+
 async fn replay_named(name: &str) {
     let case = case_by_name(name);
     let port = case["port"].as_u64().expect("#1339 case port") as u16;
+    ensure_replay_port_free(port).await;
     let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
     let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
 
@@ -518,8 +527,9 @@ async fn replay_named(name: &str) {
     for step in case["steps"].as_array().cloned().unwrap_or_default() {
         match step["op"].as_str().expect("#1339 step op") {
             "request" => {
-                let raw = build_raw(&step, &case, port);
-                let outcome = bounded("probe response", raw_request(port, &raw)).await;
+                let raw = build_raw(&step);
+                let half_close = step["halfClose"].as_bool().unwrap_or(false);
+                let outcome = bounded("probe response", raw_request(port, &raw, half_close)).await;
                 let mut record = record.lock().expect("#1339 record mutex");
                 record.responses.push(match outcome {
                     Ok(value) => value,
@@ -672,11 +682,23 @@ replay_cases! {
     "auth-token-apikey" => auth_token_apikey,
     "start-ok-custom-path" => start_ok_custom_path,
     "stop-during-turn" => stop_during_turn,
+    // #1339 fix-r1: the seven cells the review round added.
+    "valid-signature-query" => valid_signature_query,
+    "json-body-number-empty-from" => json_body_number_empty_from,
+    "permission-missing-request-id" => permission_missing_request_id,
+    "elicitation-missing-request-id" => elicitation_missing_request_id,
+    "empty-webhook-host" => empty_webhook_host,
+    "start-host-unavailable" => start_host_unavailable,
+    "body-truncated" => body_truncated,
 }
 
 #[test]
 fn oracle_case_count_is_recorded() {
-    assert_eq!(oracle_cases().len(), EXPECTED_CASE_COUNT);
+    assert_eq!(
+        oracle_cases().len(),
+        EXPECTED_CASE_COUNT,
+        "#1339 oracle case array length"
+    );
 }
 
 #[test]
@@ -704,4 +726,278 @@ fn loader_mount_builds_sms_channel() {
 #[ignore = "regenerates from the real TS baseline; set PDRS_BASELINE and the pinned Node v22.22.0 runtime"]
 fn channel_sms_fixture_regenerates_identically() {
     crate::test_baseline::regenerates_identically("channel-sms");
+}
+
+// ---------------------------------------------------------------------------
+// #1339 fix-r1 dedicated tests (paths the oracle cannot pin)
+// ---------------------------------------------------------------------------
+
+/// A `SmsSender` that accepts everything; the dedicated tests never look at
+/// outbound traffic.
+struct NullSender;
+impl SmsSender for NullSender {
+    fn send(&self, _message: SmsOutgoingMessage) -> BoxFuture<Result<(), ChannelError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn null_factory() -> TwilioFactory {
+    Arc::new(|_account_sid: &JsString, _auth_token: &JsString| {
+        Ok(Arc::new(NullSender) as Arc<dyn SmsSender>)
+    })
+}
+
+/// A spawned `handle.stop()` outcome as a message: `None` when it completed,
+/// otherwise the stop error or the panic payload it aborted with.
+fn stop_outcome(
+    joined: Result<Result<(), ChannelError>, tokio::task::JoinError>,
+) -> Option<String> {
+    match joined {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(format!("#1339 stop returned an error: {error:?}")),
+        Err(join_error) => {
+            let panic = join_error.into_panic();
+            Some(
+                panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_else(|| "#1339 non-string panic payload".to_owned()),
+            )
+        }
+    }
+}
+
+/// #1339 fix-r1 (P2 #11): the injected logger runs outside the boundaries
+/// lock, so a logger that panics cannot poison the mutex for later stops.
+#[tokio::test]
+async fn logger_panic_does_not_poison_boundaries() {
+    let logs: Arc<SyncMutex<Vec<(String, String)>>> = Arc::new(SyncMutex::new(Vec::new()));
+    let logger: ChannelLog = {
+        let logs = logs.clone();
+        Arc::new(move |level, message| {
+            if message.starts_with("sms: stopping (boom") {
+                panic!("#1339 injected logger panic");
+            }
+            logs.lock()
+                .expect("#1339 logger record mutex")
+                .push((level.to_owned(), message.to_owned()));
+        })
+    };
+    // `webhookPort: 0` — an ephemeral port; this test never speaks HTTP.
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&json!({
+            "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
+            "webhookPort": 0,
+        }))),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+    });
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: Some(logger),
+        })
+        .await
+        .expect("#1339 logger-panic test start");
+    // First stop: the logger panics inside `SmsShared::log`. The panic still
+    // aborts the stop task itself; with the fix the boundaries guard is
+    // already released when it does.
+    let first = tokio::spawn({
+        let handle = handle.clone();
+        async move { handle.stop("boom").await }
+    });
+    let joined = first.await;
+    let payload = stop_outcome(joined);
+    crate::negative_assert!(
+        payload
+            .as_deref()
+            .is_some_and(|message| message.contains("#1339 injected logger panic")),
+        "#1339 first stop must surface the injected logger panic: {payload:?}"
+    );
+    // Second stop: the boundaries mutex must not be poisoned — the stop
+    // completes and its log line lands.
+    let second = tokio::spawn({
+        let handle = handle.clone();
+        async move { handle.stop("cleanup").await }
+    });
+    let joined = second.await;
+    let second_payload = stop_outcome(joined);
+    crate::negative_assert!(
+        second_payload.is_none(),
+        "#1339 stop after a logger panic must not see a poisoned boundaries mutex: {second_payload:?}"
+    );
+    until("logger-panic cleanup log", || {
+        logs.lock()
+            .expect("#1339 logger record mutex")
+            .iter()
+            .any(|(_, message)| message == "sms: stopping (cleanup)")
+    })
+    .await;
+}
+
+/// #1339 fix-r1 (P2 #6): a JSON `null` body throws on the TS side with the
+/// socket left hanging (probes/null-body.txt — no response byte ever
+/// arrives), so the oracle cannot pin it. The port reports the exact
+/// TypeError through the recorder and destroys the connection; the
+/// hang-vs-destroy deviation is ledgered in `A8.3-CH-SMS-007`.
+#[tokio::test]
+async fn json_null_body_is_unhandled_destroy() {
+    const PORT: u16 = 18901;
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let unhandled_record = record.clone();
+    let record_unhandled: UnhandledRecorder = Arc::new(move |message| {
+        unhandled_record
+            .lock()
+            .expect("#1339 record mutex")
+            .unhandled
+            .push(message.to_owned());
+    });
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&json!({
+            "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
+            "webhookPort": PORT,
+        }))),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: Some(record_unhandled),
+    });
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+        })
+        .await
+        .expect("#1339 json-null test start");
+    // 1) No signature header: the gate is skipped, `params.Body` on null
+    //    throws first.
+    let outcome = bounded(
+        "json null without signature",
+        raw_request(
+            PORT,
+            b"POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+              Content-Type: application/json\r\nContent-Length: 4\r\n\r\nnull",
+            false,
+        ),
+    )
+    .await
+    .expect("#1339 json null without signature response");
+    crate::negative_assert_eq!(
+        outcome,
+        json!({"closed": true}),
+        "#1339 json null without signature must destroy the connection"
+    );
+    // 2) With the signature header present the gate runs `Object.keys` on
+    //    null, which throws with its own message before any comparison.
+    let outcome = bounded(
+        "json null with signature",
+        raw_request(
+            PORT,
+            b"POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+              Content-Type: application/json\r\nX-Twilio-Signature: bogus\r\n\
+              Content-Length: 4\r\n\r\nnull",
+            false,
+        ),
+    )
+    .await
+    .expect("#1339 json null with signature response");
+    crate::negative_assert_eq!(
+        outcome,
+        json!({"closed": true}),
+        "#1339 json null with signature must destroy the connection"
+    );
+    settle().await;
+    let unhandled = { record.lock().expect("#1339 record mutex").unhandled.clone() };
+    crate::negative_assert!(
+        unhandled
+            .contains(&"TypeError: Cannot read properties of null (reading 'Body')".to_owned()),
+        "#1339 json null without signature must record the params.Body TypeError: {unhandled:?}"
+    );
+    crate::negative_assert!(
+        unhandled.contains(&"TypeError: Cannot convert undefined or null to object".to_owned()),
+        "#1339 json null with signature must record the Object.keys TypeError: {unhandled:?}"
+    );
+    bounded("json null cleanup stop", handle.stop("cleanup"))
+        .await
+        .expect("#1339 json null cleanup stop");
+}
+
+/// #1339 fix-r1 (P2 #13): an occupied replay port fails fast with the
+/// preflight panic instead of corrupting the run. Drives the
+/// `port-busy-preflight` oracle case (its own port, held busy here; the
+/// case has no replay cell of its own so the parallel suite cannot race
+/// this hold).
+#[test]
+fn port_busy_preflight_fails_fast() {
+    let port: u16 = case_by_name("port-busy-preflight")["port"]
+        .as_u64()
+        .expect("#1339 preflight case port") as u16;
+    let _busy =
+        std::net::TcpListener::bind(("127.0.0.1", port)).expect("#1339 preflight busy bind");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("#1339 preflight runtime build")
+            .block_on(replay_named("port-busy-preflight"))
+    }));
+    let payload = match result {
+        Err(payload) => payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|text| (*text).to_owned())
+            })
+            .unwrap_or_else(|| "#1339 non-string panic payload".to_owned()),
+        Ok(()) => "#1339 replay unexpectedly completed".to_owned(),
+    };
+    crate::negative_assert!(
+        payload.contains(&format!("#1339 port {port} already in use")),
+        "#1339 port-busy preflight marker: {payload}"
+    );
+}
+
+/// #1339 fix-r1 (P2 #15): the mapped Node `listen` error texts (probed on
+/// the pinned Node v22.22.0; probes/listen-errors.txt).
+#[test]
+fn listen_error_matches_node_text() {
+    let addr_in_use = listen_error(
+        &std::io::Error::from(std::io::ErrorKind::AddrInUse),
+        "127.0.0.1",
+        18802.0,
+    );
+    crate::negative_assert_eq!(
+        addr_in_use,
+        "Error: listen EADDRINUSE: address already in use 127.0.0.1:18802",
+        "#1339 EADDRINUSE Node text"
+    );
+    let not_available = listen_error(
+        &std::io::Error::from(std::io::ErrorKind::AddrNotAvailable),
+        "203.0.113.7",
+        18852.0,
+    );
+    crate::negative_assert_eq!(
+        not_available,
+        "Error: listen EADDRNOTAVAIL: address not available 203.0.113.7:18852",
+        "#1339 EADDRNOTAVAIL Node text"
+    );
+    let denied = listen_error(
+        &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        "127.0.0.1",
+        80.0,
+    );
+    crate::negative_assert_eq!(
+        denied,
+        "Error: listen EACCES: permission denied 127.0.0.1:80",
+        "#1339 EACCES Node text"
+    );
 }

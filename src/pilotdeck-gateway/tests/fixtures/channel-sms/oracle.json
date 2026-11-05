@@ -687,7 +687,7 @@
   },
   "node": "v22.22.0",
   "icu": "78.2",
-  "expectedCaseCount": 47,
+  "expectedCaseCount": 55,
   "cases": [
     {
       "name": "start-missing-config",
@@ -697,6 +697,7 @@
         "webhookHost": "127.0.0.1",
         "webhookPort": 18800
       },
+      "sign": false,
       "turn": null,
       "permissionDelivered": true,
       "permissionError": null,
@@ -741,6 +742,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": null,
       "permissionDelivered": true,
       "permissionError": null,
@@ -785,6 +787,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": null,
       "permissionDelivered": true,
       "permissionError": null,
@@ -829,6 +832,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": null,
       "permissionDelivered": true,
       "permissionError": null,
@@ -873,6 +877,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": null,
       "permissionDelivered": true,
       "permissionError": null,
@@ -917,6 +922,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1005,7 +1011,15 @@
         "phoneNumber": "+15550000",
         "publicUrl": "https://sms.example.com/"
       },
-      "turn": null,
+      "sign": true,
+      "turn": {
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "public url reply"
+          }
+        ]
+      },
       "permissionDelivered": true,
       "permissionError": null,
       "permissionGate": null,
@@ -1014,7 +1028,18 @@
       "sendError": null,
       "steps": [
         {
-          "op": "connect"
+          "op": "request",
+          "body": "From=%2B15550001&Body=via%20public%20url",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Twilio-Signature": "DJpWG+h7w6NaB8NXXnljamo/Zpw="
+          },
+          "method": "POST",
+          "path": "/sms/incoming"
+        },
+        {
+          "op": "wait-sends",
+          "count": 1
         },
         {
           "op": "stop"
@@ -1035,11 +1060,28 @@
             "sms: stopping (cleanup)"
           ]
         ],
-        "sends": [],
-        "rpcs": [],
+        "sends": [
+          {
+            "body": "public url reply",
+            "from": "+15550000",
+            "to": "+15550001"
+          }
+        ],
+        "rpcs": [
+          {
+            "rpc": "submitTurn",
+            "request": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "channelKey": "sms",
+              "message": "via public url"
+            }
+          }
+        ],
         "responses": [
           {
-            "refused": false
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
           }
         ],
         "unhandled": [],
@@ -1059,6 +1101,7 @@
         "webhookHost": "127.0.0.1",
         "webhookPort": 18807
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1148,6 +1191,7 @@
         ],
         "apiKey": "unused"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1236,6 +1280,7 @@
         "phoneNumber": "+15550000",
         "token": "tok9"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1322,6 +1367,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1404,6 +1450,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1490,6 +1537,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1561,6 +1609,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1634,6 +1683,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1704,6 +1754,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1790,6 +1841,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1860,6 +1912,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -1935,6 +1988,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": true,
       "turn": {
         "events": [
           {
@@ -1954,7 +2008,8 @@
           "op": "request",
           "body": "From=%2B15550001&Body=signed",
           "headers": {
-            "Content-Type": "application/x-www-form-urlencoded"
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Twilio-Signature": "ibeNWMtP0bjuNGdW8v0caCcEAvU="
           },
           "method": "POST",
           "path": "/sms/incoming"
@@ -2021,6 +2076,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -2105,6 +2161,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -2191,6 +2248,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -2277,6 +2335,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -2349,6 +2408,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -2468,6 +2528,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "error": "gateway exploded"
       },
@@ -2553,6 +2614,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -2646,6 +2708,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "gate": "turn",
         "events": [
@@ -2799,6 +2862,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3024,6 +3088,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3164,6 +3229,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3297,6 +3363,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3437,6 +3504,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3564,6 +3632,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3691,6 +3760,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3841,6 +3911,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -3995,6 +4066,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -4116,6 +4188,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -4287,6 +4360,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -4423,6 +4497,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -4585,6 +4660,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -4732,6 +4808,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -4868,6 +4945,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -5001,6 +5079,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": null,
       "permissionDelivered": true,
       "permissionError": null,
@@ -5098,6 +5177,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": null,
       "permissionDelivered": true,
       "permissionError": null,
@@ -5159,6 +5239,7 @@
         "apiKey": "k2",
         "phoneNumber": "+15550000"
       },
+      "sign": true,
       "turn": {
         "events": [
           {
@@ -5178,7 +5259,8 @@
           "op": "request",
           "body": "From=%2B15550001&Body=signed",
           "headers": {
-            "Content-Type": "application/x-www-form-urlencoded"
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Twilio-Signature": "6Mqyno+XTKON9HzP5hIFVKPdJQI="
           },
           "method": "POST",
           "path": "/sms/incoming"
@@ -5246,6 +5328,7 @@
         "phoneNumber": "+15550000",
         "webhookPath": "/custom/hook"
       },
+      "sign": false,
       "turn": {
         "events": [
           {
@@ -5346,6 +5429,7 @@
         "authToken": "tok",
         "phoneNumber": "+15550000"
       },
+      "sign": false,
       "turn": {
         "gate": "turn",
         "events": [
@@ -5425,6 +5509,682 @@
             "status": 200,
             "contentType": "text/xml",
             "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "valid-signature-query",
+      "port": 18847,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18847,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": true,
+      "turn": {
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "query signed"
+          }
+        ]
+      },
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=query",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Twilio-Signature": "IjxcJXc+6ELvMFi2DffqShUr/cc="
+          },
+          "method": "POST",
+          "path": "/sms/incoming?x=1&y=2"
+        },
+        {
+          "op": "wait-sends",
+          "count": 1
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18847/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [
+          {
+            "body": "query signed",
+            "from": "+15550000",
+            "to": "+15550001"
+          }
+        ],
+        "rpcs": [
+          {
+            "rpc": "submitTurn",
+            "request": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "channelKey": "sms",
+              "message": "query"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "json-body-number-empty-from",
+      "port": 18848,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18848,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": {
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "never"
+          }
+        ]
+      },
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "{\"Body\":5,\"From\":\"\"}",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "method": "POST",
+          "path": "/sms/incoming"
+        },
+        {
+          "op": "settle"
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18848/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [],
+        "rpcs": [],
+        "responses": [
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "permission-missing-request-id",
+      "port": 18849,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18849,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": {
+        "events": [
+          {
+            "type": "permission_request",
+            "toolName": "Bash",
+            "payload": {
+              "command": "ls -la"
+            }
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": " tail"
+          }
+        ],
+        "holdAfter": "decide"
+      },
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=run%20it",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "method": "POST",
+          "path": "/sms/incoming"
+        },
+        {
+          "op": "wait-sends",
+          "count": 1
+        },
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=1",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "method": "POST",
+          "path": "/sms/incoming"
+        },
+        {
+          "op": "wait-rpcs",
+          "count": 2
+        },
+        {
+          "op": "wait-sends",
+          "count": 3
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18849/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [
+          {
+            "body": "工具 Bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"ls -la\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+            "from": "+15550000",
+            "to": "+15550001"
+          },
+          {
+            "body": "tail",
+            "from": "+15550000",
+            "to": "+15550001"
+          },
+          {
+            "body": "已允许一次，继续执行。",
+            "from": "+15550000",
+            "to": "+15550001"
+          }
+        ],
+        "rpcs": [
+          {
+            "rpc": "submitTurn",
+            "request": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "channelKey": "sms",
+              "message": "run it"
+            }
+          },
+          {
+            "rpc": "permissionDecide",
+            "decision": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "decision": "allow",
+              "remember": false
+            }
+          }
+        ],
+        "responses": [
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          },
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "elicitation-missing-request-id",
+      "port": 18850,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18850,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": {
+        "events": [
+          {
+            "type": "elicitation_request",
+            "questions": [
+              {
+                "question": "选择一个选项",
+                "header": "选项",
+                "options": [
+                  {
+                    "label": "One",
+                    "description": "first"
+                  },
+                  {
+                    "label": "Two"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "holdAfter": "elicit"
+      },
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=pick%20one",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "method": "POST",
+          "path": "/sms/incoming"
+        },
+        {
+          "op": "wait-sends",
+          "count": 1
+        },
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=1",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "method": "POST",
+          "path": "/sms/incoming"
+        },
+        {
+          "op": "wait-rpcs",
+          "count": 2
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18850/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [
+          {
+            "body": "**选项**\n选择一个选项\n1. One — first\n2. Two\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+            "from": "+15550000",
+            "to": "+15550001"
+          }
+        ],
+        "rpcs": [
+          {
+            "rpc": "submitTurn",
+            "request": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "channelKey": "sms",
+              "message": "pick one"
+            }
+          },
+          {
+            "rpc": "respondElicitation",
+            "response": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "answer": {
+                "type": "answered",
+                "answers": {
+                  "选择一个选项": "One"
+                }
+              }
+            }
+          }
+        ],
+        "responses": [
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          },
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "empty-webhook-host",
+      "port": 18851,
+      "env": {},
+      "extra": {
+        "webhookHost": "",
+        "webhookPort": 18851,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": {
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "any address"
+          }
+        ]
+      },
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=hello",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "method": "POST",
+          "path": "/sms/incoming"
+        },
+        {
+          "op": "wait-sends",
+          "count": 1
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://:18851/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [
+          {
+            "body": "any address",
+            "from": "+15550000",
+            "to": "+15550001"
+          }
+        ],
+        "rpcs": [
+          {
+            "rpc": "submitTurn",
+            "request": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "channelKey": "sms",
+              "message": "hello"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "start-host-unavailable",
+      "port": 18852,
+      "env": {},
+      "extra": {
+        "webhookHost": "203.0.113.7",
+        "webhookPort": 18852,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": null,
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "connect"
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "error",
+            "sms: HTTP server failed: Error: listen EADDRNOTAVAIL: address not available 203.0.113.7:18852"
+          ]
+        ],
+        "sends": [],
+        "rpcs": [],
+        "responses": [
+          {
+            "refused": true
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "body-truncated",
+      "port": 18853,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18853,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": {
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "never"
+          }
+        ]
+      },
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=truncated",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "method": "POST",
+          "path": "/sms/incoming",
+          "truncate": 3,
+          "halfClose": true
+        },
+        {
+          "op": "settle"
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18853/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [],
+        "rpcs": [],
+        "responses": [
+          {
+            "status": 400,
+            "contentType": null,
+            "body": ""
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "port-busy-preflight",
+      "port": 18854,
+      "env": {},
+      "extra": {
+        "webhookHost": "203.0.113.7",
+        "webhookPort": 18854,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": null,
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "connect"
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "error",
+            "sms: HTTP server failed: Error: listen EADDRNOTAVAIL: address not available 203.0.113.7:18854"
+          ]
+        ],
+        "sends": [],
+        "rpcs": [],
+        "responses": [
+          {
+            "refused": true
           }
         ],
         "unhandled": [],

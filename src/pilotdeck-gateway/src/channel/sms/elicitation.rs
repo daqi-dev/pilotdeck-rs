@@ -16,7 +16,9 @@ pub(crate) fn as_array(value: Option<&JsValue>) -> &[JsValue] {
 
 pub struct PendingElicitation {
     pub session_key: JsString,
-    pub request_id: JsString,
+    /// #1339 fix-r1: a missing event `requestId` stays `None` — the response
+    /// then records real `undefined` (the JSON record omits the key).
+    pub request_id: Option<JsString>,
     /// The raw `questions` array from the elicitation event.
     pub questions: Vec<JsValue>,
 }
@@ -84,11 +86,23 @@ impl ImElicitationHelper {
     ) -> JsString {
         let questions: Vec<JsValue> = as_array(event.get("questions")).to_vec();
         let text = question_text(&questions);
+        // #1339 fix-r1: the event may carry no `requestId`; TS stores real
+        // `undefined` and `JSON.stringify` then omits the key.
+        let request_id = event
+            .get("requestId")
+            .and_then(super::permission::optional_string);
+        let request_id = if crate::mutants::on("sms-elicit-request-id-empty") {
+            // fix-r1 mutant: the pre-fix `js_string_of` coercion turned a
+            // missing id into the string "undefined".
+            Some(request_id.unwrap_or_else(|| js_string_of(&JsValue::Undefined)))
+        } else {
+            request_id
+        };
         self.pending.insert(
             chat_id.clone(),
             PendingElicitation {
                 session_key: session_key.clone(),
-                request_id: js_string_of(event.get("requestId").unwrap_or(&JsValue::Undefined)),
+                request_id,
                 questions,
             },
         );

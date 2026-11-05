@@ -32,7 +32,7 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const require = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
 
-const EXPECTED_CASE_COUNT = 47;
+const EXPECTED_CASE_COUNT = 55;
 
 // ---------------------------------------------------------------------------
 // real module graph, transpiled once, with `twilio` mocked at the require seam
@@ -158,11 +158,16 @@ function connectProbe(port: number): Promise<any> {
     setTimeout(() => { socket.destroy(); fail(new Error('#1339 connect probe timeout')); }, 3000).unref();
   });
 }
-function rawRequest(port: number, raw: string): Promise<any> {
+function rawRequest(port: number, raw: string, halfClose = false): Promise<any> {
   return new Promise((done, fail) => {
     const socket = net.connect(port, '127.0.0.1');
     const chunks: Buffer[] = [];
-    socket.on('connect', () => socket.write(raw));
+    socket.on('connect', () => {
+      socket.write(raw);
+      // The truncated-body steps half-close their write side after the
+      // short body; the response is still readable on the same socket.
+      if (halfClose) socket.end();
+    });
     socket.on('data', (chunk: Buffer) => chunks.push(chunk));
     socket.on('close', () => {
       const text = Buffer.concat(chunks).toString('latin1');
@@ -187,12 +192,17 @@ const REQUEST = (
   headers: Record<string, string>,
   method: string,
   path: string,
+  truncate = 0,
 ) => {
   const bytes = typeof body === 'string' ? body : body.repeat.repeat(body.count);
+  // `truncate` keeps the full Content-Length but sends fewer bytes, so the
+  // server sees a request body cut short by the client (the half-close of
+  // the `halfClose` step op finishes it).
+  const wire = truncate > 0 ? bytes.slice(0, Math.max(0, bytes.length - truncate)) : bytes;
   return (
     `${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n` +
     Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('') +
-    `Content-Length: ${Buffer.byteLength(bytes)}\r\n\r\n${bytes}`
+    `Content-Length: ${Buffer.byteLength(bytes)}\r\n\r\n${wire}`
   );
 };
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
@@ -214,6 +224,8 @@ interface Definition {
   env?: Record<string, string>;
   extra?: Record<string, unknown>;
   blockPort?: boolean;
+  /** Add the TS-computed X-Twilio-Signature to every request step. */
+  sign?: boolean;
   turn?: { gate?: string; error?: string; events?: any[]; holdAfter?: string };
   permissionDelivered?: boolean;
   permissionError?: string;
@@ -261,6 +273,22 @@ const permission = (requestId: string, payload: unknown = { command: 'ls -la' })
   toolName: 'Bash',
   payload,
 });
+// The same events without any `requestId` key: the helpers store the raw
+// `event.requestId` (undefined), and `JSON.stringify` omits the key from the
+// recorded gateway rpc arguments.
+const permissionWithoutRequestId = () => ({
+  type: 'permission_request',
+  toolName: 'Bash',
+  payload: { command: 'ls -la' },
+});
+const elicitationWithoutRequestId = () => ({
+  type: 'elicitation_request',
+  questions: [{
+    question: '选择一个选项',
+    header: '选项',
+    options: [{ label: 'One', description: 'first' }, { label: 'Two' }],
+  }],
+});
 const multiElicitation = (requestId: string) => ({
   type: 'elicitation_request',
   requestId,
@@ -277,6 +305,39 @@ const cronDelivery = (over: Record<string, unknown>) => ({
   text: '定时结果',
   ...over,
 });
+// The signing URL `SmsChannel.validateTwilioSignature` builds: the publicUrl
+// branch, else host:port — always the configured path, never the request's
+// query string.
+function signingUrl(definition: Definition): string {
+  const extra = (definition.extra ?? {}) as Record<string, unknown>;
+  const publicUrl = String(extra.publicUrl ?? '');
+  const path = String(extra.webhookPath ?? '/sms/incoming');
+  if (publicUrl) return `${publicUrl.replace(/\/$/, '')}${path}`;
+  return `http://127.0.0.1:${definition.port}${path}`;
+}
+// The effective request headers of one step: a `sign` definition adds the
+// TS-side `X-Twilio-Signature`, computed with Node's own `createHmac` over the
+// parsed form params, exactly like `validateTwilioSignature` expects. The
+// signature is recorded into the oracle steps, so the Rust replay replays TS
+// bytes instead of re-signing with the port's own implementation.
+function effectiveHeaders(definition: Definition, step: any): Record<string, string> {
+  const headers: Record<string, string> = { ...(step.headers ?? {}) };
+  if (definition.sign && step.op === 'request' && typeof step.body === 'string') {
+    const extra = (definition.extra ?? {}) as Record<string, unknown>;
+    const token = String(
+      extra.authToken ?? extra.apiKey ?? definition.env?.TWILIO_AUTH_TOKEN ?? extra.token ?? '',
+    );
+    const params: Record<string, string> = Object.fromEntries(new URLSearchParams(step.body));
+    const data = signingUrl(definition)
+      + Object.keys(params).sort().map((key) => key + params[key]).join('');
+    headers['X-Twilio-Signature'] = createHmac('sha1', token).update(data).digest('base64');
+  }
+  return headers;
+}
+const effectiveSteps = (definition: Definition) =>
+  definition.steps.map((step) => step.op === 'request'
+    ? { ...step, headers: effectiveHeaders(definition, step) }
+    : step);
 
 scenario({
   name: 'start-missing-config', port: port(0), steps: [
@@ -315,13 +376,16 @@ scenario({
   turn: { events: [textDelta('reply text')] },
 });
 scenario({
-  name: 'start-ok-public-url', port: port(6),
+  name: 'start-ok-public-url', port: port(6), sign: true,
   extra: {
     accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000',
     publicUrl: 'https://sms.example.com/',
   }, steps: [
-    connect(), stop(),
+    // The signature is computed over the publicUrl form of the signing URL,
+    // so the publicUrl branch of `fullUrl` is exercised by a signed request.
+    text('via public url'), waitSends(1), stop(),
   ],
+  turn: { events: [textDelta('public url reply')] },
 });
 scenario({
   name: 'start-env-config', port: port(7),
@@ -425,7 +489,7 @@ scenario({
   turn: { events: [textDelta('never')] },
 });
 scenario({
-  name: 'valid-signature', port: port(18),
+  name: 'valid-signature', port: port(18), sign: true,
   extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
     text('signed'),
     waitSends(1), stop(),
@@ -670,7 +734,7 @@ scenario({
   ],
 });
 scenario({
-  name: 'auth-token-apikey', port: port(44),
+  name: 'auth-token-apikey', port: port(44), sign: true,
   extra: { accountSid: 'AC1', apiKey: 'k2', phoneNumber: '+15550000' },
   env: { TWILIO_AUTH_TOKEN: 'env-ignored' }, steps: [
     text('signed'),
@@ -695,6 +759,79 @@ scenario({
     release('turn'), settle(), stop(),
   ],
   turn: { gate: 'turn', events: [textDelta('after release')] },
+});
+scenario({
+  name: 'valid-signature-query', port: port(47), sign: true,
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    // The signing URL is the configured path without any query string; a
+    // request that carries one still validates and dispatches.
+    request({ body: 'From=%2B15550001&Body=query', headers: FORM, method: 'POST', path: '/sms/incoming?x=1&y=2' }),
+    waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('query signed')] },
+});
+scenario({
+  name: 'json-body-number-empty-from', port: port(48),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    // `!from` short-circuits before `body.trim()`: the 200 TWIML is written,
+    // the number Body never throws and nothing is dispatched.
+    request({ body: '{"Body":5,"From":""}', headers: { 'Content-Type': 'application/json' }, method: 'POST', path: '/sms/incoming' }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  name: 'permission-missing-request-id', port: port(49),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('run it'), waitSends(1),
+    text('1'), waitRpcs(2), waitSends(3), stop(),
+  ],
+  turn: { events: [permissionWithoutRequestId(), textDelta(' tail')], holdAfter: 'decide' },
+});
+scenario({
+  name: 'elicitation-missing-request-id', port: port(50),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    text('pick one'), waitSends(1),
+    text('1'), waitRpcs(2), stop(),
+  ],
+  turn: { events: [elicitationWithoutRequestId()], holdAfter: 'elicit' },
+});
+scenario({
+  name: 'empty-webhook-host', port: port(51),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookHost: '' }, steps: [
+    // Node `listen(port, "")` binds every address (the dual-stack `::`).
+    text('hello'), waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('any address')] },
+});
+scenario({
+  name: 'start-host-unavailable', port: port(52),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookHost: '203.0.113.7' }, steps: [
+    // A non-local webhookHost fails the bind with Node's EADDRNOTAVAIL line.
+    connect(), stop(),
+  ],
+});
+scenario({
+  name: 'body-truncated', port: port(53),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    // Content-Length declares the full body but the wire stops 3 bytes
+    // short, then the write side half-closes: the request read fails and
+    // Node answers a bare 400 with an empty body.
+    request({ body: 'From=%2B15550001&Body=truncated', headers: FORM, method: 'POST', path: '/sms/incoming', truncate: 3, halfClose: true }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  // Not replayed by its own test: this case exists so the Rust port's
+  // port-busy preflight check (fix-r1 P2 #13) has an oracle port it can
+  // drive while a test holds it busy. Its own replay cell would race that
+  // test for the port in the parallel suite, so the preflight test is the
+  // only consumer.
+  name: 'port-busy-preflight', port: port(54),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000', webhookHost: '203.0.113.7' }, steps: [
+    connect(), stop(),
+  ],
 });
 assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1339 generator case count');
 
@@ -727,25 +864,18 @@ async function run(definition: Definition) {
   const extra = { webhookHost: '127.0.0.1', webhookPort: definition.port, ...definition.extra };
   const channel = loadChannel(twilioFactory, gateway, 'aaaaaaaa-1111-2222-3333-444444444444', extra);
   const handle = await (channel as any).start({ gateway, logger });
-  const signedText = (message: string, headers: Record<string, string>) => {
-    if (definition.name !== 'valid-signature' && definition.name !== 'auth-token-apikey') return headers;
-    const token = String(
-      (definition.extra as any)?.authToken ?? (definition.extra as any)?.apiKey
-        ?? definition.env?.TWILIO_AUTH_TOKEN ?? (definition.extra as any)?.token ?? '',
-    );
-    const fullUrl = `http://127.0.0.1:${definition.port}/sms/incoming`;
-    const params: Record<string, string> = { From: '+15550001', Body: message };
-    const data = fullUrl + Object.keys(params).sort().map((key) => key + params[key]).join('');
-    const signature = createHmac('sha1', token).update(data).digest('base64');
-    return { ...headers, 'X-Twilio-Signature': signature };
-  };
+  // The recorded steps carry the effective (signed) headers; the replay then
+  // reuses the TS-computed signature bytes instead of re-signing them.
+  const steps = effectiveSteps(definition);
   try {
-    for (const step of definition.steps) {
+    for (const step of steps) {
       switch (step.op) {
         case 'request': {
-          const body = typeof step.body === 'string' ? step.body : '';
-          const headers = signedText(body.includes('Body=') ? decodeFormBody(body) : '', step.headers);
-          record.responses.push(await rawRequest(definition.port, REQUEST(step.body, headers, step.method, step.path)));
+          record.responses.push(await rawRequest(
+            definition.port,
+            REQUEST(step.body, step.headers, step.method, step.path, step.truncate ?? 0),
+            step.halfClose === true,
+          ));
           break;
         }
         case 'connect': {
@@ -785,10 +915,6 @@ async function run(definition: Definition) {
   }
   return record;
 }
-function decodeFormBody(body: string): string {
-  const match = /Body=([^&]*)/.exec(body);
-  return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : '';
-}
 
 const out = resolve(process.argv[2]!);
 await mkdir(out, { recursive: true });
@@ -802,6 +928,7 @@ for (const definition of definitions) {
     port: definition.port,
     env: definition.env ?? {},
     extra: { webhookHost: '127.0.0.1', webhookPort: definition.port, ...definition.extra },
+    sign: definition.sign ?? false,
     turn: definition.turn ?? null,
     permissionDelivered: definition.permissionDelivered ?? true,
     permissionError: definition.permissionError ?? null,
@@ -809,7 +936,7 @@ for (const definition of definitions) {
     sendFailAt: definition.sendFailAt ?? [],
     sendBlockAt: definition.sendBlockAt ?? null,
     sendError: definition.sendError ?? null,
-    steps: definition.steps,
+    steps: effectiveSteps(definition),
     expected: first,
   });
   console.log(`#1339 recorded ${definition.name}`);
