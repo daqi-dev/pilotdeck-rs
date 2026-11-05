@@ -59,6 +59,15 @@ def _port_lease_dir():
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner:
         raise RuntimeError(f'#1510 the port-lease directory {directory} is not a directory '
                            f'owned by uid {owner}')
+    # mkdir(mode=0o700) only applies when the directory is created; a leftover
+    # directory with looser bits would let another uid plant files in it, which
+    # then read as "port busy" below.  Self-heal instead of trusting the mode.
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        os.chmod(directory, 0o700)
+        info = os.lstat(directory)
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            raise RuntimeError(f'#1510 the port-lease directory {directory} is not private '
+                               f'(mode {oct(stat.S_IMODE(info.st_mode))})')
     return directory
 
 
@@ -76,14 +85,13 @@ def _acquire_port_lease(port):
     any other errno (unsupported filesystem, EMFILE, ...) is an environment
     failure and must surface instead of masquerading as port exhaustion.
     """
-    try:
-        lease = os.open(_port_lease_path(port),
-                        os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0)
-                        | getattr(os, 'O_CLOEXEC', 0), 0o600)
-    except OSError as error:
-        if error.errno in (errno.EACCES, errno.EPERM, errno.ELOOP):
-            return None
-        raise
+    # #1510 r4: an unopenable lease path is NOT "this port is busy".  With a
+    # 0700 directory owned by this uid, EACCES/EPERM/ELOOP mean the lease tree
+    # itself is broken (a symlink or a foreign file); folding that into "busy"
+    # made a refused scan look like proof of exclusion, so let it surface.
+    lease = os.open(_port_lease_path(port),
+                    os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0)
+                    | getattr(os, 'O_CLOEXEC', 0), 0o600)
     try:
         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as error:
@@ -978,6 +986,16 @@ class LifecycleTests(unittest.TestCase):
             # would mean some unrelated process held the ports, which proves
             # nothing about the handoff window.
             log = child.stdout + child.stderr
+            # #1510 r4: a crash (ImportError, EMFILE, a rejected lease
+            # directory) also exits non-zero, and the assertions below would
+            # then fail WITH the marker -- measured: the real classify() turns
+            # such a log into KILLED, i.e. "the mutant was caught" for a mutant
+            # nothing ever exercised.  Require the exhaustion report first and
+            # fail without the marker otherwise, exactly like the timeout path.
+            if '#1510 e2e: no free gateway/provider port pair (' not in log:
+                self.fail('#1510 the sibling reservation failed for an infrastructure '
+                          'reason, not because the pair was leased (no mutant verdict): '
+                          + log.replace('\n', ' ')[-400:])
             self.assertIn(str(port) + ':lease', log,
                           marker + ': the sibling was not excluded by the gateway lease: ' + log)
             self.assertIn(str(port + 1) + ':lease', log,
