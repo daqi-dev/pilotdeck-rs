@@ -1,27 +1,28 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-05 17:47 · by Claude Code 协调者（17:4x READY 刷新：三批次合入收口、并行提速在跑、远端宿主三台不可达）
-- #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：当前待人项 #1475（#1313 always-on 暂缓重划，label question）与 #144（P0 候选待补决策卡）；本轮无新增待人阻塞（磁盘 112.3/200 GiB、worktree 31/40、在审 13、merge queue 1）
-- #1490 | coord | doing | 并行提速决策卡 PR #1490 已入队（position 1 AWAITING_CHECKS）；#1412、#1417、#1488、#1491 已 MERGED（邮箱 noreply 全核），#1369、#1392、#1310、#1327 随之关单
-- #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412）已合入，s3 #1370 解锁就绪；跟进 #1402、#1408 前置于本单关单
-- #1473 | impl | doing | P2-跟进 #1350：fix-r1 完成（30f47380e，DS 静态 0/0/2/2 后补第 15 例 + 负控 5/5 KILLED）；#1487 已合入，rebasing 上新 main 后跑四角色闸门 + DS 增量复核 → PR（Closes #1473）
-- #1355 | impl | doing | E1 --suite retirement 冻结装置：fix-r1 GLM 在跑（wt-1355，任务书 _tmp/20261105-issue-1355/），修尺子级 P1 两项（fixture 未进哈希清单、HOST_CENSUS 空普查假 PASS）+ P2 三分；跟进 #1477、#1478
-- #1292 | impl | doing | 原生 HTTP 解析预算 / 超时 / loopback 七项：PR #1405 fix-r2 在 cb8 等，fleet 三台远端 ssh 全超时无法核验（不重派）；同包 #1366；合入解锁 #1351、#1348、#1383、#1404
-- #1321 | impl | doing | A8 接线 U1 upload 五方法 + 附件 lease：PR #1418 fix-r4 head 99c1c2a02，前置 #1417 已合入 → 净合并上新 main + 闸门 r6；跟进 #1439、#1440、#1441、#1446、#1447、#1448、#1458–#1464、#1468、#1469
-- #1365 | impl | doing | P1-跟进 #1245 ClosingGuard settle 写入无判据 + panic 先结算：PR #1413 草稿 CLEAN 待闸门；与 #996（M6 车道）同改 owner.rs 族串行
-- #1328 | impl | doing | channel 五单并行在跑（GLM/dsh，本机）：#1328 weixin、#1333 api-server、#1334 webhook、#1336 wecom-callback、#1339 sms（#1327 已合入解锁）；第 7 单 #1329 与 #1292 同改 native_http 须串行
-- #1220 | review | blocked | PR #1237 需本轮 head 复跑：前置 = 远端三台 ssh 不可达（fleet 10 s 超时）；含 #1219、#1274、#1406；合入解锁 #589
-- #1253 | review | blocked | PR #1275 需整套重跑：前置 = 远端宿主不可达；含 #1281、#897；前置于 #589
-- #1233 | review | blocked | PR #1257（A6.5 background 持久化）待宿主复跑：前置 = 远端宿主不可达；含 #1276、#953
-- #1324 | review | blocked | PR #1375（A8.3-pr1b cron 时区）草稿 CLEAN 只差宿主与收口：前置 = 远端宿主不可达；合入解锁 #1325 → #1326
-- #1318 | review | blocked | PR #1384（A8.1-pr5 settings 写）草稿 CLEAN 批量收口：前置 = 远端宿主不可达；含 #1397；下游 #1320
-- #360 | review | blocked | PR #1234（Retry-After 全方言）待宿主复跑：前置 = 远端宿主不可达；含 #1269；合入解锁 A6.4 收尾
-- #283 | review | blocked | PR #1268（non-utf8 快照）待宿主复跑：前置 = 远端宿主不可达；含 #1273；合入解锁 A6.6 收尾
+updated: 2026-11-05 19:18 · by Claude Code 协调者（19:1x READY 刷新：macmini-01 Wi-Fi 链路自恢复、dep-tools/远端派单修复、channel 五单与 A7.8 并行、宿主排期）
+- #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：当前待人项 #1475（#1313 always-on 暂缓重划，label question）、#144（P0 候选待补决策卡）、**待人工：给 macmini-01 插网线并优先以太网 → #1498 选项 A**（5 分钟，根治 Wi-Fi 断链；AI 无法完成）；本轮资源（磁盘 173.9/200 GiB、worktree 27/40、在审 13、merge queue 1（#1493 处理中））
+- #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412）已合入；s3 #1370 已派 cb8，s4/s5 #1371/#1372 顺次；#1408 前置于本单关单
+- #1402 | impl | doing | P2-跟进 #1368 刺激计划 4 项：已派 mbp2（pid 76713/76725，分支 claude/issue-1402-p2-followup）；第 6 项拆 #1408、第 4 项写明理由关；triage _tmp/20261105-issue-1402/triage.md；前置于 #1242 关单
+- #1473 | impl | doing | P2-跟进 #1350：fix-r1 完成（wt-1473 HEAD 2e45489e2，DS 静态 0/0/2/2 后补第 15 例 + 负控 5/5 KILLED）；#1487 已合入，落后 main 7 提交待 rebase → 四角色闸门 + DS 增量复核 → PR（Closes #1473）
+- #1355 | impl | doing | E1 --suite retirement 冻结装置：fix-r2 GLM 本机 resume（pid 46391，wt-1355，任务书 _tmp/20261105-issue-1355/fix-r2/），修尺子级 P1 两项（fixture 未进哈希清单、HOST_CENSUS 空普查假 PASS）+ P2 三分；跟进 #1477、#1478
+- #1292 | impl | doing | 原生 HTTP 解析预算 / 超时 / loopback 七项：PR #1405 fix-r2 在 cb8（pid 795610，HEAD b50cf7e4a，ETA ≤21:08）；分支落后 main 113 提交，入队前 rebase + cargo test --no-run；同包 #1366；合入解锁 #1351、#1348、#1383、#1404
+- #1321 | impl | doing | A8 接线 U1 upload 五方法 + 附件 lease：PR #1418 增量闸门 r6 19:10 起；裁定 audio P1 当轮最小修，read_at TOCTOU 开 P1 跟进 #1494；跟进 #1439、#1440、#1441、#1446、#1447、#1448、#1458–#1464、#1468、#1469
+- #1365 | impl | doing | P1-跟进 #1245 ClosingGuard settle 写入无判据 + panic 先结算：PR #1413 草稿 CLEAN；fix-r1 GLM 两次空响应 → 改 mbp2 Codex 重派；与 #996（M6 车道）同改 owner.rs 族串行
+- #1328 | impl | doing | channel 五单并行在跑（GLM）：#1328 weixin（mbp2 38m）、#1333 api-server（分诊/解阻中，本机 9 改动）、#1334 webhook（本机 46m）、#1336 wecom-callback（cb8 48m）、#1339 sms（mbp2 38m）（#1327 已合入解锁）；第 7 单 #1329 与 #1292 同改 native_http 须串行
+- #1316 | impl | doing | A7.8-pr1 会话域整域装配（50 项 + U9/U10、能力声明、HTTP 同域入口直达同 owner）：cb8 pid 718617，18:52 起，ETA ≤20:52；合入解锁 #1317、#589、#590、#727、#19
+- #1220 | review | doing | PR #1237 收口中（宿主已复跑，本轮 head 收口）；含 #1219、#1274、#1406；合入解锁 #589
+- #1253 | review | doing | PR #1275 close→reopen 刷新 CI base，新 run + 四角色闸门，ETA 30–45 min；含 #1281、#897；前置于 #589
+- #1233 | review | doing | PR #1257（A6.5 background 持久化）r3 整套宿主负控已重派 macmini（本机 pid 58649 / 远端 chain 89121，19:16 起，ETA 21:30–21:45，seq.log HEAD=96a78c0b）；含 #1276、#953
+- #1324 | review | blocked | PR #1375（A8.3-pr1b cron 时区）草稿 CLEAN 只差宿主与收口：前置 = 宿主迁移 macmini→cb8/mbp2（cb8 链已起，1h11）；合入解锁 #1325 → #1326
+- #1318 | review | blocked | PR #1384（A8.1-pr5 settings 写）草稿 CLEAN 批量收口：前置 = 宿主迁移 macmini→cb8/mbp2；含 #1397；下游 #1320
+- #360 | review | blocked | PR #1234（Retry-After 全方言）待宿主复跑：前置 = 宿主迁移 macmini→cb8/mbp2；含 #1269；合入解锁 A6.4 收尾
+- #283 | review | blocked | PR #1268（non-utf8 快照）待宿主复跑：前置 = macmini 上 #1233 r3 整套负控跑完（每机只跑 1 条整套负控），macOS 裁决排其后；含 #1273；合入解锁 A6.6 收尾
 - #132 | review | blocked | PR #1235 现 CONFLICTING 需 rebase 合 main：前置 = rebase；前置于 A8 退役（#1357）
-- #1279 | review | blocked | P2 批次 2 PR #1364 草稿 CLEAN 待收口：含 #1263、#1204、#1053、#1203；前置于 #590
+- #1279 | review | doing | P2 批次 2 PR #1364 收口中；含 #1263、#1204、#1053、#1203；前置于 #590
 - #1386 | impl | ready | A8.3 未迁 13 个 channel 登记差异并让 Rust 明确拒绝启动（#1302 B）：#1327 已合入解锁，可派；前置于 #1357
-- #1370 | impl | ready | #1242-s3 writer append / registry persist barrier 与 EIO 见证：s2 #1369 已合入解锁；后续 #1371、#1372 顺次，#1367 随链
+- #1370 | impl | doing | #1242-s3 writer append / registry persist barrier 与 EIO 见证：已派 cb8（glm 1h01）；后续 #1371、#1372 顺次，#1367 随链
 - #1363 | impl | ready | #1140 收口剩余 P2：改冻结装置走冻结程序；与 #1355 同改 session_domain.py 串行
 - #1398 | impl | ready | A5 冻结装置跟进同类取消处理与 memory_run 去重（#1374 c 类 P2）：冻结件走冻结程序，_shared 部分经 M6 车道 #1099；前置于 #590
 - #892 | impl | ready | session-domain 清理装置汇总枚举测试（A5.4 收尾）：触冻结件走冻结程序
@@ -29,7 +30,7 @@ updated: 2026-11-05 17:47 · by Claude Code 协调者（17:4x READY 刷新：三
 - #1162 | research | ready | 剩余需修差异族先 TS 实测、逐族开单（A6.2 两族、A6.4-TLS、A6.5-MCP、A6.9-PERSISTENCE-IO）
 - #401 | research | ready | A6.5-pr10b gate7 剩余：先只读核第 1 条（-32001 共用）是否仍有效再定实现
 - #297 | research | ready | A6-recorder 闸门遗留（陈旧快照 restore）：先只读核现场是否仍成立再定实现（A7 收尾）
-- #1382 | impl | ready | #1252 收口剩余 P2（含 #1260 同包，先做本单）；A 链 ready 取完再派
+- #1382 | impl | doing | #1252 收口剩余 P2（含 #1260 同包）：PR #1493 闸门 + 第二家评审 + 入队中
 - #1329 | impl | blocked | A8.3-ch-feishu + /feishu/webhook：等 #1292（PR #1405），native_http.rs 同文件串行
 - #1320 | impl | blocked | A8 接线 U7 六方法 + generation 顺序：等 #1318（PR #1384）；#1397 金样随本批
 - #1313 | impl | blocked | A7-W7-pr2 always-on：核心 agent 优先，增值模块暂缓不派（待人批见 #1475）
@@ -42,7 +43,7 @@ updated: 2026-11-05 17:47 · by Claude Code 协调者（17:4x READY 刷新：三
 - #1427 | impl | blocked | P2-跟进 #1323：#1427、#1431（非 UTF-8 storage-root 负控、snapshots() 接线无测试）
 - #1483 | impl | blocked | 本轮合入 PR 的 P2 分流：#1483（#1412 run 白名单硬编码）、#1484（#1391 close 交错）、#1486（#1350 keep-alive 门）；前置于各自 A8 面收口
 - #1258 | impl | blocked | cron 家族：#1258（store README / panic tail / 争用测试）、#1400（macOS APFS migration 恒失败）；前置于 A8.3 / A8.6 收尾
-- #1401 | impl | blocked | A8.6 前置跟进：#1401（#1261 native 入口 7 项）、#1402、#1408（#1242 刺激计划 6 项与挂起候选）
+- #1401 | impl | blocked | A8.6 前置跟进：#1401（#1261 native 入口 7 项）、#1408（#1242 刺激计划挂起候选）；#1402 已解阻派出见上
 - #1409 | impl | blocked | P2-跟进 #1155 r5：返回边界扫描读失败静默跳过 + 负控 / README 五项；前置于 A8.6 收尾
 - #1351 | impl | blocked | 同改 native_http 等 #1292（PR #1405）：#1351 WS 预算、#1348 /api/web 路由组、#1383 账本 CI、#1394 HTTP store、#1404 共享辅助去重
 - #1317 | impl | blocked | A7 收口链：#1317 等 #1316、#589、#590、#727、#19（A7.8 50 项对账 + deadline 收尾）
@@ -3151,3 +3152,44 @@ updated: 2026-11-05 17:47 · by Claude Code 协调者（17:4x READY 刷新：三
 资源：本机磁盘 178.9/200 GiB；worktree 31/40；cargo 0/4；fleet cb8 链 1/8（#1365）、mbp2 1/3（#1220）——派单前重跑 fleet；在审上限已随人令解除。
 
 新窗口接续协议：round-start → 读本段 + `state/decisions-20261105-parallel-speedup.md` → 重挂守望（queue 三张 + #1490 / #1292 waiter / #1355 boundary 双通道）→ 按就绪序 1–6 并行推进。
+
+### 19:1x（两小时交接）
+
+上一交接 17:1x（总管交接）。本轮做了什么：
+
+- **拆单结构评估完成**（两份分析）：`_tmp/20261105-work-splitting/PLAN.md`、`_tmp/20261105-hotspot-analysis/HOTSPOTS.md`。结论：不是拆得不够细；真瓶颈只有 `channel/mod.rs` + `protocol.rs`（19 张）与 `generator_provenance.rs`（4 张）。
+- **跟进单批次化映射**在跑（`_tmp/20261105-work-splitting/BATCHES.md` 待出）。
+- **dep-tools 修复完成**并提交 `pdrs-dep-tools@b01bebc`（权威源取 origin/main、PR 上限 2000、R1 判据统一）；证据 `_tmp/20261105-dep-tools-fix/`。
+- **人批（2026-11-05）**：① 冻结装置「发车制批处理」获批，落地中（决策卡 `state/decisions-20261105-frozen-batch.md`，证明 `_tmp/20261105-frozen-batch/proof/`）；② **macmini-01 从未宕机**：连续开机 10 天 4:39、pmset 无 sleep/wake、sshd 正常、IP/MAC 未变；断的是本机↔macmini 的 **Wi-Fi 链路**（en0 唯一在用、未插网线；抖动标准差 59 ms、峰值 270 ms），19:12 自恢复，无需改设置。已重派 #1233 r3 整套宿主负控到 macmini（本机 pid 58649 / 远端 chain 89121，19:16 起，ETA 21:30–21:45，seq.log HEAD=96a78c0b）；#283 macOS 裁决排其后（每机只跑 1 条整套负控）。
+- **远端派单工具修复**：`remote-worker.sh` 的 rsync 改 tar + 逐文件 sha256、`rewrite_task.py` 递归子目录；审计结论「需重跑：无」（`_tmp/20261105-rsync-audit/`）。
+
+在途（主机 / pid）：
+
+- #1316 A7.8 整域装配：cb8 pid 718617，18:52 起，ETA ≤20:52（本轮新派，READY 之前漏登）。
+- #1292 fix-r2：cb8 pid 795610，HEAD b50cf7e4a，ETA ≤21:08；分支落后 main 113 提交，入队前须 rebase + `cargo test --no-run`。
+- #1370 s3：cb8（glm 1h01）；#1336 wecom-callback cb8 48m；#1328 weixin / #1339 sms mbp2 38m；#1334 webhook 本机 46m。
+- #1418（#1321）：增量闸门 19:10 起；裁定 audio P1 当轮最小修、read_at TOCTOU 开 P1 跟进 #1494。
+- #1382 PR #1493：闸门 + 第二家评审 + 入队中。
+- #1253 PR #1275：close→reopen 刷新 CI base，新 run + 四角色闸门，ETA 30–45 min。
+- #1220 PR #1237、#1364：收口中。
+- #1355 fix-r2：本机 resume pid 46391。
+- #1365 fix-r1：GLM 两次空响应，改 mbp2 Codex 重派。
+- #1402：已解阻派 mbp2（pid 76713/76725）；#1333 分诊/解阻中。
+- 宿主：#1233 r3 已重派 macmini（19:16 起）；#1324/#1318/#360 迁 cb8/mbp2 排队；#283 macOS 裁决排 #1233 之后（每机 1 条整套负控）。
+
+待人（需人工）：**给 macmini-01 插网线并优先以太网 → #1498 选项 A**（5 分钟，根治 Wi-Fi 断链）。
+
+下一步（就绪序）：
+
+1. #1418 r6 增量闸门出块 → 两家复核（修 P1 轮）→ 正文更新 → 入队。
+2. #1292 fix-r2 交付（cb8）→ rebase 上新 main + `cargo test --no-run` → 增量评审 → PR #1405 ready。
+3. #1316 交付（≤20:52）→ 四角色闸门 → PR。
+4. #1493 入队 MERGED → 核邮箱 → #1382 关单；#1275 CI 绿 → 四角色闸门 → 入队。
+5. #1237 / #1364 收口 → 入队。
+6. #1355 fix-r2 交付 → 冻结程序 `--write` 收货 → 尺子级 P1 两家复核。
+7. 就绪池可派：#1386、#1363 / #1398 / #892 / #91（冻结程序串行）、#1162 / #401 / #297（research）。
+8. 跟进批次化 BATCHES.md 出 → 按批次并行派。
+
+资源：`_build` + `_tmp` 173.9/200 GiB；worktree 27/40（wt-status，可回收 1）；本机 cargo 1/4；fleet：本机 2 worker（#1334 #1355）、cb8 4 worker + 1 链（#1370 #1336 #1316 #1292 / #1324）、mbp2 3 worker（#1328 #1339 #1402）、macmini-01 空闲；闸门 zai:9 minimax:4 deepseek:0 anthropic:0。
+
+交接说明：本段为 19:1x 两小时交接；在途按上表接续，不重复派。
