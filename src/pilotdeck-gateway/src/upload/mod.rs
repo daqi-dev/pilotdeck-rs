@@ -842,6 +842,10 @@ impl UploadStore {
 /// TS `ui/server/routes/uploads.js:73-76`: `15 * 60 * 1000`.
 pub const CLEANUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
+/// Lower bound [`spawn_cleanup`] clamps its period to. Exported so callers and
+/// tests cannot silently pick a period that the clamp would rewrite.
+pub const MIN_CLEANUP_INTERVAL: Duration = Duration::from_secs(1);
+
 /// TS `ui/server/routes/uploads.js:73-76`: detached `setInterval` that calls
 /// [`UploadStore::cleanup_expired`] and only logs failures. `Weak` follows
 /// `config::store::watch_loop`: the tick after the last store handle is
@@ -853,10 +857,10 @@ pub const CLEANUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
 pub fn spawn_cleanup(store: &Arc<UploadStore>, interval: Duration) -> tokio::task::JoinHandle<()> {
     // `tokio::time::interval` panics on a zero period, and a panic raised
     // inside this detached task is invisible: the caller drops the handle and
-    // cleanup stops silently. Clamp instead so any separator yields a live
-    // loop; the 1 s floor also keeps a mistyped separator from turning into a
+    // cleanup stops silently. Clamp instead so any sub-floor period yields a
+    // live loop; the floor also keeps a mistyped separator from turning into a
     // full-project directory scan per millisecond.
-    let interval = interval.max(Duration::from_secs(1));
+    let interval = interval.max(MIN_CLEANUP_INTERVAL);
     let store = Arc::downgrade(store);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
