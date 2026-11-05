@@ -38,8 +38,10 @@ pub(super) fn render_webhook_event(event: &JsValue) -> Option<String> {
             .get("text")
             .and_then(JsValue::as_string)
             .map(|text| String::from_utf16_lossy(text.units())),
-        // TS returns `event.text` itself: a missing text field returns
-        // `undefined`, the same as an unshown event.
+        // Matches the baseline: `webhook-render.ts` (sha256 `ce1c9a51…`, equal
+        // to `oracle.json`'s `sourceSha256` for this file at baseline
+        // `cc7c4e6`) returns the empty string `""` for this event, not
+        // `event.text`, so the event's fields are never read.
         "assistant_thinking_delta" => Some(String::new()),
         "tool_call_started" => Some(format!(
             "\n[{} running]\n",

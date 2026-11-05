@@ -1181,3 +1181,98 @@ async fn cron_delivery_resolves_session_suffix_chat_ids() {
     let taken = channel.deliver_cron_result(&delivery).await;
     negative_assert!(taken, "#1334 an s_ session key is a cron target");
 }
+
+/// A `POST /webhooks/main` with a literal `null` body, optionally followed by
+/// a pipelined `GET /health` in the same buffer.
+fn null_request_bytes(pipeline_health: bool) -> Vec<u8> {
+    let mut bytes = b"POST /webhooks/main HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+                      Content-Type: application/json\r\nX-Delivery-Id: p0-null\r\n\
+                      Content-Length: 4\r\n\r\nnull"
+        .to_vec();
+    if pipeline_health {
+        bytes.extend_from_slice(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    }
+    bytes
+}
+
+/// #1534 P0: a literal-`null` body followed by a pipelined request, then a
+/// client FIN, must reclaim the connection. hyper 1.7.0's
+/// `mid_message_detect_eof` returns `Pending` whenever its `read_buf` holds
+/// the pipelined bytes, so without the duplicate-socket FIN probe `stop()`
+/// waits on the connection forever (measured in
+/// `_tmp/20261106-1534-p0/verdict.md`: Rust hung, the same bytes/timing on TS
+/// reclaimed the socket in +1 ms). The `webhook-null-body-probe-off` mutant
+/// removes the probe so the negative control reproduces the hang.
+#[tokio::test]
+async fn pipelined_null_body_disconnect_reclaims_the_connection() {
+    let channel = WebhookChannel::new(test_options());
+    channel
+        .start(ChannelStartDeps::default())
+        .await
+        .expect("#1334 start for the pipelined-null disconnect test");
+    let port = channel
+        .bound_addr()
+        .expect("#1334 bound listener for the pipelined-null test")
+        .port();
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1334 connect to the pipelined-null listener");
+    // One write, so hyper reads the null POST and the follow-up request into
+    // the same buffer — the condition that stops it from reading the FIN.
+    stream
+        .write_all(&null_request_bytes(true))
+        .await
+        .expect("#1334 send the pipelined null request");
+    // Let hyper read the whole segment into its buffer before the FIN.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    stream
+        .shutdown()
+        .await
+        .expect("#1334 half-close the pipelined-null client");
+    drop(stream);
+    let resolved = matches!(
+        timeout(DEADLINE, channel.stop_with_reason(Some("p0"))).await,
+        Ok(Ok(()))
+    );
+    negative_assert!(
+        resolved,
+        "#1334 a pipelined null body reclaims the connection after the client FIN"
+    );
+}
+
+/// Plain control: with no pipelined bytes hyper itself reads the FIN
+/// (`read_buf` empty), so this resolves both before and after the #1534 fix.
+/// It pins that the duplicate-socket probe did not change the plain path.
+#[tokio::test]
+async fn plain_null_body_disconnect_reclaims_the_connection() {
+    let channel = WebhookChannel::new(test_options());
+    channel
+        .start(ChannelStartDeps::default())
+        .await
+        .expect("#1334 start for the plain-null disconnect test");
+    let port = channel
+        .bound_addr()
+        .expect("#1334 bound listener for the plain-null test")
+        .port();
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1334 connect to the plain-null listener");
+    stream
+        .write_all(&null_request_bytes(false))
+        .await
+        .expect("#1334 send the plain null request");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    stream
+        .shutdown()
+        .await
+        .expect("#1334 half-close the plain-null client");
+    drop(stream);
+    let resolved = matches!(
+        timeout(DEADLINE, channel.stop_with_reason(Some("p0"))).await,
+        Ok(Ok(()))
+    );
+    negative_assert!(
+        resolved,
+        "#1334 a plain null body reclaims the connection after the client FIN"
+    );
+}

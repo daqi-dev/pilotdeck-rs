@@ -41,6 +41,9 @@ switches = [
     # A null JSON body must hang the connection (noResponse cell), never be
     # answered with a 400.
     ('webhook-null-body-responds', SOURCE_WEBHOOK, 'no_text', '#1334 webhook oracle case no-text'),
+    # #1534 P0: a pipelined null body must let the client FIN reclaim the
+    # connection; without the duplicate-socket FIN probe, stop() hangs forever.
+    ('webhook-null-body-probe-off', SOURCE_WEBHOOK, 'pipelined_null_body_disconnect_reclaims_the_connection', '#1334 a pipelined null body reclaims the connection after the client FIN'),
     # The error body carries the TS `code` verbatim, not a decorated one.
     ('webhook-error-body-code', SOURCE_WEBHOOK, 'unknown_route', '#1334 webhook oracle case unknown-route'),
     # `/new` replies with the fixed new-session message.

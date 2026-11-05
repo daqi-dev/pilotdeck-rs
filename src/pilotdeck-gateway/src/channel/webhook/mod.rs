@@ -12,8 +12,10 @@
 //! `stop()` stays bounded (probe
 //! `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`). The deadline
 //! covers the body read only, never the whole handler: a JSON body of
-//! literal `null` keeps hanging the connection forever, reproducing the TS
-//! baseline where the voided rejection never writes a response (#1557).
+//! literal `null` never responds while the client stays connected (the TS
+//! baseline, where the voided rejection writes no response, #1557), and a
+//! client FIN now reclaims the connection instead of hanging `stop()`
+//! forever (#1534 P0).
 //!
 //! The 408's frame-level presentation is registered as the draft (unapproved)
 //! ledger entry `A8.3-CH-WEBHOOK-001` (`specs/gateway-parity/diffs/`): hyper
@@ -60,7 +62,11 @@ use hyper::body::Incoming;
 use pilotdeck_protocol::{
     JsObject, JsString, JsValue, number::number_to_string, parse_json, stringify_json,
 };
-use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::watch,
+    task::JoinHandle,
+};
 
 use super::{
     im_cron::{CronResultDelivery, deliver_chat_cron_result},
@@ -406,13 +412,31 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Rece
         };
         let stop_signal = stop.clone();
         let connection_ctx = ctx.clone();
+        // #1534 P0: duplicate the accepted socket so the literal-null branch
+        // can read the client's FIN itself. hyper 1.7.0's
+        // `mid_message_detect_eof` returns `Pending` whenever its `read_buf`
+        // still holds pipelined bytes, so after a follow-up request the
+        // connection never observes the FIN and the `pending()` request
+        // future has no other wake source; `stop()` then waits on it forever.
+        let (socket, client_probe) = match duplicate_socket(socket) {
+            Ok((socket, probe)) => (socket, Some(Arc::new(probe))),
+            Err(error) => {
+                log(
+                    &ctx,
+                    "error",
+                    &format!("webhook: cannot duplicate the accepted socket: {error}"),
+                );
+                continue;
+            }
+        };
         let served = tokio::spawn(async move {
             let handler = {
                 let ctx = connection_ctx.clone();
                 move |request: hyper::Request<Incoming>,
                       _lease: Option<crate::http_proxy::ReadLease>| {
                     let ctx = ctx.clone();
-                    async move { handle_request(ctx, request).await }
+                    let client_probe = client_probe.clone();
+                    async move { handle_request(ctx, request, client_probe).await }
                 }
             };
             // #1292 added the test-only `stop_observed` counter and the
@@ -451,9 +475,24 @@ impl ChannelHandle for WebhookHandle {
     }
 }
 
+/// #1534: duplicate the accepted socket so the literal-`null` branch can read
+/// the client's FIN itself — hyper 1.7.0's `mid_message_detect_eof` returns
+/// `Pending` while its `read_buf` holds pipelined bytes. `try_clone` is
+/// `dup(2)`, which shares the nonblocking open file description, so both
+/// halves stay usable by tokio.
+fn duplicate_socket(socket: TcpStream) -> io::Result<(TcpStream, TcpStream)> {
+    let std_socket = socket.into_std()?;
+    let std_probe = std_socket.try_clone()?;
+    Ok((
+        TcpStream::from_std(std_socket)?,
+        TcpStream::from_std(std_probe)?,
+    ))
+}
+
 async fn handle_request(
     ctx: Arc<Ctx>,
     request: hyper::Request<Incoming>,
+    client_probe: Option<Arc<TcpStream>>,
 ) -> Result<hyper::Response<Body>, io::Error> {
     if let Some(rejection) = native_http::node_parser_admission(&request)? {
         return Ok(rejection);
@@ -487,7 +526,7 @@ async fn handle_request(
             || crate::mutants::on("webhook-route-method-off"))
     {
         let route_name = route_name.to_owned();
-        return handle_webhook(ctx, request, route_name, keep_alive).await;
+        return handle_webhook(ctx, request, route_name, keep_alive, client_probe).await;
     }
     // `res.statusCode = 404; res.end("Not Found")` — no content-type.
     Ok(native_http::node_plain_response(
@@ -596,6 +635,7 @@ async fn handle_webhook(
     request: hyper::Request<Incoming>,
     route_name: String,
     keep_alive: bool,
+    client_probe: Option<Arc<TcpStream>>,
 ) -> Result<hyper::Response<Body>, io::Error> {
     let headers = request.headers().clone();
     let Some(route) = ctx.routes.get(&route_name).cloned() else {
@@ -708,11 +748,11 @@ async fn handle_webhook(
 
     // `extractText` dereferences `body` on its first line; a JSON body of
     // literal `null` throws there, the voided rejection goes unhandled, and
-    // no response is ever written. The socket then hangs indefinitely, and
-    // so does `stop()`: Node's `requestTimeout` (300 s) only covers a body
-    // that never completes, and this four-byte body is already complete, so
-    // TS `server.close()` waits on the same socket this future waits on
-    // (issue #1557).
+    // no response is ever written. The socket hangs indefinitely while the
+    // client stays connected, and so does `stop()`: Node's `requestTimeout`
+    // (300 s) only covers a body that never completes, and this four-byte
+    // body is already complete, so TS `server.close()` waits on the same
+    // socket this future waits on (issue #1557).
     //
     // Measured on the fixed TS baseline (cc7c4e6, Node v22.22.0) through the
     // real `WebhookChannel.start()`: no response at 20 s, no keep-alive close
@@ -720,11 +760,30 @@ async fn handle_webhook(
     // listening port already refused (evidence
     // `_tmp/20261105-issue-1534/ts-probe/probeB-app-shutdown.mjs`,
     // `probeC-channel-isolated.mjs`, `probeD-long.mjs`). This is a replicated
-    // baseline defect, not a Rust deviation, so the pending future stays:
-    // replacing it with a response would diverge from TS. The
-    // `webhook-null-body-responds` mutant exists only so the negative control
-    // can turn the hang into a 400 and watch the `noResponse` oracle cell go
-    // red; it never runs in the shipped path.
+    // baseline defect, not a Rust deviation, so the "no response while the
+    // client is connected" behavior stays: responding would diverge from TS.
+    // The `webhook-null-body-responds` mutant exists only so the negative
+    // control can turn the hang into a 400 and watch the `noResponse` oracle
+    // cell go red; it never runs in the shipped path.
+    //
+    // #1534 P0: staying pending is correct only *while the client is still
+    // connected*. A client FIN must reclaim the connection, and hyper 1.7.0
+    // will not read it: `mid_message_detect_eof` (`proto/h1/conn.rs`) returns
+    // `Pending` whenever `read_buf` is non-empty, so a pipelined follow-up
+    // request left in the buffer means the connection never observes the FIN,
+    // the `pending()` below has no other wake source, and `stop()` waits on
+    // this connection forever (measured: Rust hung, the same bytes/timing on
+    // TS reclaimed the socket in +1 ms — `_tmp/20261106-1534-p0/verdict.md`).
+    // The duplicated socket reaches EOF on that FIN without touching hyper's
+    // buffered bytes (they belong to a request this connection will never
+    // serve), which ends the connection exactly as TS `server.close()`
+    // reclaims the same socket. There is no timeout: EOF is a real signal,
+    // and while the client stays connected the read simply stays pending, so
+    // the probeC/D baseline equivalence is unchanged. The probe spends task
+    // budget per read so a client that streams without ever closing cannot
+    // starve the runtime. The
+    // `webhook-null-body-probe-off` mutant disables the probe so the negative
+    // control can reproduce the hang.
     let text = if nullish(&body) {
         if crate::mutants::on("webhook-null-body-responds") {
             return Ok(json_response(
@@ -732,6 +791,45 @@ async fn handle_webhook(
                 &JsValue::Null,
                 keep_alive,
             ));
+        }
+        if !crate::mutants::on("webhook-null-body-probe-off")
+            && let Some(probe) = client_probe
+        {
+            let mut discard = [0u8; 4096];
+            loop {
+                probe.readable().await?;
+                match probe.try_read(&mut discard) {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "webhook: client closed after a literal-null body",
+                        ));
+                    }
+                    Ok(_) => {
+                        // Neither `readable()` nor `try_read()` draws on the
+                        // task budget (tokio 1.48 `Registration::readiness` and
+                        // `Registration::try_io` call no `coop::poll_proceed`),
+                        // so a client that keeps this socket saturated would
+                        // otherwise spin this task without ever yielding to the
+                        // scheduler: measured on a current-thread runtime, a
+                        // 10 ms ticker fell from 175 ticks/2 s to 17 with one
+                        // stream and to ~1 tick/s with 32
+                        // (`_tmp/20261106-issue-1534/coop-probe/`). Spend one
+                        // unit per read so the loop yields once the budget runs
+                        // out, exactly as hyper's own reads do.
+                        tokio::task::coop::consume_budget().await;
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
         }
         return std::future::pending().await;
     } else {
