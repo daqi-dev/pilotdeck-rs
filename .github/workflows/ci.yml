@@ -84,6 +84,9 @@ jobs:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
+    # 夹具最坏墙钟 = 夹具内每次 cargo 调用 1800 s × 15 次 + 扫描器构建，远超平台默认
+    # 360 min；给一个显式上界，让超时表现成一次有界失败而不是 6 小时空转后被取消。
+    timeout-minutes: 120
     env:
       # 夹具要求调用方提供 target；#1166 共享入口拒收 src/ 内与仓库根目录，
       # 树内 _build/cargo-target 是本仓负控的既有约定（fixtures/README.md）。
@@ -114,6 +117,16 @@ jobs:
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check
       - name: session-assembly-1316 负控夹具执行（#1316 / #1632）
         run: python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py "$RUNNER_TEMP/negctl-1316"
+      # 夹具为每条变异写了 .patch / .log / summary.json；job 红了才最需要它们，所以
+      # 用 `if: always()` 上传（失败也要传）。#1632 评审：否则 runner 结束时证据全丢，
+      # 排查只剩步骤日志里那几行 KILLED/SURVIVED。
+      - name: 上传负控证据（#1632）
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: negctl-1316
+          path: ${{ runner.temp }}/negctl-1316
+          if-no-files-found: warn
 
   # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；各重 job 的结果
   # 「非 success 且不是（skipped 且 docs_only=true）」才拒绝——即分类器确定纯文档改动才

@@ -174,12 +174,13 @@ def run(full):
     # reason). A timeout keeps the cargo output it collected: a bare
     # TimeoutExpired traceback would leave the run red with no evidence at all
     # (#1632 review). The bound is generous because the first call on a cold CI
-    # target also compiles every dependency.
+    # target also compiles every dependency; `idle_timeout` catches a compile
+    # that hangs without printing (the shared entry uses the same pair).
     try:
         result = run_owned(
             ['cargo', 'test', '--locked', '--manifest-path', 'src/Cargo.toml', '-p',
              'pilotdeck-gateway', '--lib', full, '--', '--exact'],
-            cwd=root, env=env, timeout=CARGO_TEST_TIMEOUT_SECONDS)
+            cwd=root, env=env, timeout=CARGO_TEST_TIMEOUT_SECONDS, idle_timeout=900)
         return result.returncode, result.stdout + result.stderr
     except subprocess.TimeoutExpired as error:
         collected = (error.output or '') + (error.stderr or '')

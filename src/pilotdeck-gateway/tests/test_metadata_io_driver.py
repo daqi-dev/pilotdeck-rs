@@ -1,4 +1,5 @@
 """Toolchain starts are mocked; watchdog controls run only this Python interpreter."""
+import ast
 import importlib.util
 import os
 from pathlib import Path
@@ -547,6 +548,10 @@ class EnvironmentControls(unittest.TestCase):
         self.assertIn([self.negative_controls_command + ' "$RUNNER_TEMP/negctl-1316"'], commands,
                       '#1632 the fixture itself runs in CI')
         for step in steps:
+            # 只约束跑命令的步骤：证据上传步用 `if: always()` 是刻意的（失败也要留证据），
+            # 而 self-check / 夹具执行 / 工具链步骤一旦有条件就会被静默跳过。
+            if 'run' not in self.ci_step_fields(step, '#1632'):
+                continue
             fields = self.ci_step_fields(step, '#1632')
             for key in ('if', 'continue-on-error'):
                 self.assertNotIn(key, fields, '#1632 negative-control steps stay unconditional')
@@ -555,6 +560,17 @@ class EnvironmentControls(unittest.TestCase):
         # 二进制并被判假红。只允许缓存 cargo 注册表（#1632 评审 P1）。
         self.assertNotIn('Swatinem/rust-cache', body,
                          '#1632 a restored target hands back a stale scanner binary')
+        # 夹具最坏墙钟远超平台默认 360 min，必须有显式上界（#1632 评审 P2）。
+        self.assertIn('    timeout-minutes: 120\n', body,
+                      '#1632 the job bounds its own wall clock')
+        # 失败时最需要证据：夹具已经把 .log/.patch/summary.json 写好，别让 runner 丢掉。
+        uploads = [step for step in steps if 'actions/upload-artifact@v4' in step]
+        self.assertEqual(len(uploads), 1, '#1632 the run leaves its evidence behind')
+        upload = self.ci_step_fields(uploads[0], '#1632')
+        self.assertEqual(upload.get('if'), ('${{ always() }}', []),
+                         '#1632 evidence is uploaded even when the run fails')
+        self.assertIn('${{ runner.temp }}/negctl-1316', uploads[0],
+                      '#1632 uploads the fixture output directory')
 
     def test_negative_controls_job_regressions_are_rejected(self):
         workflow = self.ci_workflow_fixture()
@@ -593,6 +609,20 @@ class EnvironmentControls(unittest.TestCase):
                '        with:\n'
                '          workspaces: src -> ../_build/cargo-target\n',
                '#1632 a restored target hands back a stale scanner binary')
+        change('job-timeout-removed', '    timeout-minutes: 120\n', '',
+               '#1632 the job bounds its own wall clock')
+        change('evidence-upload-conditional', '        if: ${{ always() }}\n',
+               '        if: ${{ success() }}\n',
+               '#1632 evidence is uploaded even when the run fails')
+        upload_step = ('      - name: 上传负控证据（#1632）\n'
+                       '        if: ${{ always() }}\n'
+                       '        uses: actions/upload-artifact@v4\n'
+                       '        with:\n'
+                       '          name: negctl-1316\n'
+                       '          path: ${{ runner.temp }}/negctl-1316\n'
+                       '          if-no-files-found: warn\n')
+        change('evidence-upload-dropped', upload_step, '',
+               '#1632 the run leaves its evidence behind')
         self.check_ci_mutations(cases, 'test_negative_controls_job_runs_the_gateway_fixture', '#1632')
 
     def test_isolation_ci_regressions_are_rejected(self):
@@ -648,6 +678,31 @@ class EnvironmentControls(unittest.TestCase):
 
     def ci_workflow_fixture(self):
         return (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
+
+    def test_negative_control_table_cannot_shrink_silently(self):
+        # #1632 评审（boundary，P2）：夹具自己的 fail-closed 只挡「表为空（n=0）」，
+        # 删掉 1..n-1 行照样全绿。这里把行数钉死，并用内存内变异证明少一行会被判红。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+
+        def rows(text):
+            # 只认字面量表：脚本后面还有 `mutations = [m for m in mutations if ...]`
+            # 的过滤赋值（ListComp），那不是表本身。
+            for node in ast.walk(ast.parse(text)):
+                if (isinstance(node, ast.Assign)
+                        and isinstance(node.value, (ast.List, ast.Tuple))
+                        and any(isinstance(target, ast.Name) and target.id == 'mutations'
+                                for target in node.targets)):
+                    return node.value.elts
+            self.fail('#1632 the fixture must define a literal mutations table')
+
+        pinned = rows(source)
+        self.assertEqual(len(pinned), 11, '#1632 eleven mutations cover the wire-up')
+        dropped = ast.get_source_segment(source, pinned[0])
+        mutant = source.replace(dropped + ',', '', 1)
+        self.assertEqual(mutant.count(dropped), 0, '#1632 the mutant row really left the table')
+        self.assertEqual(len(rows(mutant)), 10,
+                         '#1632 dropping a row must change the pinned count')
 
     def test_nextest_keeps_workspace_doctests_and_failure_semantics(self):
         jobs = self.ci_jobs(issue='#922')
