@@ -59,12 +59,38 @@ pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
     "wecom",
 ];
 
+/// The two keys whose TS gate is strict. `qq` and `wecom` are built by
+/// `ChannelAdapterBundle.createQQ` / `createWeCom`, which both start with
+/// `if (settings?.enabled !== true) return undefined` — a config of
+/// `{"enabled": 1}` or `{"enabled": "true"}` builds nothing and the TS
+/// gateway starts normally. The other eleven keys are consumed by
+/// `loadEnabledChannels`'s `if (!cfg?.enabled) continue`, i.e. JS truthiness.
+/// Measured on the frozen baseline `cc7c4e65`: see
+/// `specs/gateway-parity/diffs/A8.3-CHANNEL-QQ-001.md`, which records the
+/// probe that drove `createStartupAdapters` over `true` / `1` / `"true"` /
+/// `"1"` / falsy / absent for every key of this table.
+const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];
+
+/// The TS `enabled` gate for one key: strict `=== true` for the
+/// `ChannelAdapterBundle` keys, JS truthiness (`js_truthy`) for the loader
+/// table. Splitting the table here is what keeps the Rust rejection aligned
+/// with the two different TS gates instead of imposing one on both.
+fn rejects_enabled(key: &str, cfg: &JsValue) -> bool {
+    if STRICT_TRUE_CHANNEL_KEYS.contains(&key) {
+        matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))
+    } else {
+        js_truthy(cfg.get("enabled"))
+    }
+}
+
 /// `#1302 B`: a config that enables a channel Rust does not implement
 /// refuses startup — never a silent skip, a downgrade to disabled, or a
 /// fallback to the TS gateway. The gate reads the config object's own keys
 /// (`wecom`/`qq` are absent from `CHANNEL_LOADER_KEYS`, so iterating the
-/// loader table alone would miss them); `enabled` uses the same truthiness
-/// as the TS `cfg?.enabled` gate, and `None` adapters is the TS
+/// loader table alone would miss them); `enabled` follows each key's own TS
+/// gate — strict `=== true` for the two `ChannelAdapterBundle` keys, JS
+/// truthiness for the loader table (see [`STRICT_TRUE_CHANNEL_KEYS`]) — and
+/// `None` adapters is the TS
 /// `if (!adapters) return []` no-configuration path. Production assembly
 /// calls this seam before [`load_enabled_channels`]; the assembly unit
 /// itself is separate work, which is why the seam takes no mounts and no
@@ -78,7 +104,7 @@ pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), Chan
         let Some(cfg) = adapters.get(key) else {
             continue;
         };
-        if js_truthy(cfg.get("enabled")) {
+        if rejects_enabled(key, cfg) {
             return Err(ChannelError::error(format!(
                 "[adapters] channel \"{key}\" 未迁移到 Rust，需继续使用 TS gateway"
             )));
