@@ -81,7 +81,7 @@ never built writes slots the audit cannot see, so it fails closed (`fix-r7`).  A
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests forty-nine probe functions; `probe892` in `check_cleanup.py` is
+(`fix-r6` pins both sides).  The audit self-tests fifty-two probe functions; `probe892` in `check_cleanup.py` is
 the authoritative list (the four helpers it defines — `_exit_code`, `_exit_a`,
 `_exit_b`, `_decoy_code` — are leaves reached through a probe, not probes
 themselves).  Every rule below has a flagged probe and, where the shape is legal,
@@ -106,7 +106,11 @@ an unproven subscript written into the slot, a summary keyed `verdict`, and the
 legal / illegal pair around a non-zero exit literal.  The `fix-r7` probes added
 five: a summary dict in a conditional arm, a conditional arm returning a *bound*
 summary, an `update(**name)` expansion the function never built, a zero arm
-inside an exit call's argument, and an exit call in `return` position.
+inside an exit call's argument, and an exit call in `return` position.  The
+`fix-r8` probes added three: an annotated `report: dict = {**report, ...}`
+rebuild (the Assign branch's unpack re-judge did not reach the `AnnAssign`
+shape), a bare `verdict = 'PASS'` name write (the write family accepted only the
+`status` spelling), and `return bool(x)` as an exit code.
 A `code = 0` initializer is therefore judged by
 reachability, not by the presence of a shared assignment somewhere else in the
 function: only a later statement that rebinds the name from the shared call on
@@ -235,7 +239,7 @@ worktree snapshots and alternate trees must not bypass the pristine-source guard
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 64 mutants:
+`JUDGES`, keyed by the same names. The current table has 67 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -264,7 +268,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-container-slot`, `calibrate-alias-cycle`,
 `calibrate-verdict-dict`, `calibrate-clean-argument`,
 `calibrate-conditional-summary`, `calibrate-update-expansion`,
-`calibrate-exit-conditional`, `calibrate-return-exit-call`.  The batch-related
+`calibrate-exit-conditional`, `calibrate-return-exit-call`,
+`calibrate-ann-rebuilt`, `calibrate-bare-verdict`, `calibrate-bool-exit`.
+The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
 (`aggregation-audit`), and the source negative-control final aggregation
@@ -341,7 +347,10 @@ of a conditional, `calibrate-update-expansion` passes an unbound name through
 `update(**extra)`, `calibrate-exit-conditional` calls `sys.exit(0 if ... else
 1)`, and `calibrate-return-exit-call` writes `return sys.exit(0)`.  All four
 replace the one shared exit line in `controls/session_domain.py:main`
-(`CT_EXIT`).  The
+(`CT_EXIT`).  The three `fix-r8` mutants pin the remaining write/exit spellings:
+`calibrate-ann-rebuilt` rebuilds the summary through an annotated assignment,
+`calibrate-bare-verdict` writes `'PASS'` into a bare `verdict` name, and
+`calibrate-bool-exit` returns `bool(...)`.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
