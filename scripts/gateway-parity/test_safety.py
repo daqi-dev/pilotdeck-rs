@@ -2288,7 +2288,8 @@ class ApparatusInputs(unittest.TestCase):
 
 
 class RetirementScoring(unittest.TestCase):
-    """#1355 fix-r2: E1 retirement scoring rules (R1/R3/R6/R7/R9 + timeout).
+    """#1355 fix-r2/r3: E1 retirement scoring rules (R1/R3/R6/R7/R9 + timeout
+    + ①final-frame/②budget/④every-round inventory).
 
     Bounded offline regressions on the frozen scoring helpers: each rule gets
     a positive control (real-shaped evidence passes) and a negative control
@@ -2301,15 +2302,22 @@ class RetirementScoring(unittest.TestCase):
         cls.session = _load('session_domain', common.SCRIPT / 'session_domain.py')
 
     @staticmethod
-    def _frames(send_only=False):
-        # One stream method: a send frame plus (unless stripped) one receive
-        # event frame under the same id — the minimal real-shaped wire record.
+    def _frames(send_only=False, final=False):
+        # One stream method: a send frame plus (unless stripped) receive event
+        # frames under the same id — the minimal real-shaped wire record.
+        # final adds the terminal final:true event frame an ok outcome needs
+        # (① fix-r3); without it the record is the exact "stream merely ended"
+        # shape that must not pass as ok.
         frames = [{'seq': 1, 'connection': 1, 'direction': 'send',
                    'frame': {'type': 'request', 'id': 'id-1', 'method': 'submit_turn'}}]
         if not send_only:
             frames.append({'seq': 2, 'connection': 1, 'direction': 'receive',
                            'frame': {'type': 'event', 'id': 'id-1', 'final': False,
                                      'event': {'type': 'turn_started'}}})
+            if final:
+                frames.append({'seq': 3, 'connection': 1, 'direction': 'receive',
+                               'frame': {'type': 'event', 'id': 'id-1', 'final': True,
+                                         'event': {'type': 'turn_completed'}}})
         return frames
 
     def _round_row(self, outcomes, frames, http=None):
@@ -2320,21 +2328,145 @@ class RetirementScoring(unittest.TestCase):
 
     def test_stream_outcomes_need_a_receive_frame(self):
         # R1: pre-fix, a stream error outcome with zero received frames still
-        # counted as executed and passed the round.
+        # counted as executed and passed the round.  ① (fix-r3): the ok
+        # positive control now carries a final:true event frame — the old
+        # final:false-only positive was the exact fake-pass shape.
         expected = ['submit_turn']
-        for status in ('ok', 'error'):
+        for status, final in (('ok', True), ('error', False)):
             outcome = {'method': 'submit_turn', 'outcome': status, 'shape': 'stream'}
             verdict = self.session.score_retirement_round(
                 self._round_row([outcome], self._frames(send_only=True)), expected)
-            self.assertEqual(verdict['status'], 'FAIL', status)
+            self.assertTrue(verdict['status'] == 'FAIL', f'#1 stream {status} send-only must FAIL: {verdict}')
             violation = next(p for p in verdict['rules'] if p['rule'] == 'EVIDENCE_BACKING')['detail']
-            self.assertEqual(violation, [{'method': 'submit_turn',
-                                          'problem': f'stream {status} without any receive frame'}])
+            problem = ('stream ok without a final event frame' if status == 'ok'
+                       else f'stream {status} without any receive frame')
+            self.assertTrue(violation == [{'method': 'submit_turn', 'problem': problem}],
+                            f'#2 stream {status} send-only violation: {violation}')
             self.assertIn('submit_turn', verdict['executed'], status)
             verdict = self.session.score_retirement_round(
-                self._round_row([outcome], self._frames()), expected)
-            self.assertEqual([p['rule'] for p in verdict['rules']], [], status)
-            self.assertEqual(verdict['executed'], ['submit_turn'], status)
+                self._round_row([outcome], self._frames(final=final)), expected)
+            self.assertTrue([p['rule'] for p in verdict['rules']] == [],
+                            f'#3 stream {status} with backing must PASS: {verdict["rules"]}')
+            self.assertTrue(verdict['executed'] == ['submit_turn'],
+                            f'#4 stream {status} executed set: {verdict["executed"]}')
+
+    def test_stream_ok_requires_a_final_event_frame(self):
+        # ① (#1355 fix-r3): a stream that only ever emitted non-final events and
+        # ended is an error outcome at the driver; a forged ok over the same
+        # wire must fail EVIDENCE_BACKING.  The pre-fix scorer passed exactly
+        # this shape (arbitration P0).
+        outcome = {'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}
+        verdict = self.session.score_retirement_round(
+            self._round_row([outcome], self._frames()), ['submit_turn'])
+        self.assertTrue(verdict['status'] == 'FAIL', f'#5 non-final-only ok must FAIL: {verdict}')
+        violation = next(p for p in verdict['rules'] if p['rule'] == 'EVIDENCE_BACKING')['detail']
+        self.assertTrue(violation == [{'method': 'submit_turn',
+                                        'problem': 'stream ok without a final event frame'}],
+                        f'#6 non-final-only ok violation: {violation}')
+        self.assertIn('submit_turn', verdict['executed'])
+        verdict = self.session.score_retirement_round(
+            self._round_row([outcome], self._frames(final=True)), ['submit_turn'])
+        self.assertTrue(verdict['status'] == 'PASS', f'#7 final-backed ok must PASS: {verdict}')
+        self.assertTrue(verdict['executed'] == ['submit_turn'],
+                        f'#8 final-backed ok executed set: {verdict["executed"]}')
+
+    def test_driver_final_evidence_comes_from_the_wire(self):
+        # ① (#1355 fix-r3): the driver's finalSeen must come from recorded wire
+        # evidence (wireFinals/requestIds in the wrapper), in both the success
+        # path and the catch path — the pre-fix driver set finalSeen from
+        # iterator `done`, which is exactly the shape that let a final-less
+        # stream be recorded as a completed one.
+        source = (common.SCRIPT / 'retirement_driver.mts').read_text()
+        self.assertTrue(source.count('wireFinals.has(requestIds.get(entry.method)') == 2,
+                        f'#21 finalSeen must derive from wire evidence in both stream '
+                        f'branches, found {source.count("wireFinals.has(requestIds.get(entry.method)")}')
+        self.assertNotIn('finalSeen = true', source)
+        self.assertTrue('wireFinals.add(String(wire.id))' in source
+                        and "requestIds.set(String(wire.method), String(wire.id))" in source,
+                        '#22 the wrapper must record request ids and final:true frames')
+
+    def test_round_budget_covers_every_legal_driver_path(self):
+        # ② (#1355 fix-r3): the budget is the sum of its legal worst-case
+        # components (methods + HTTP probes + socket close + readiness + connect
+        # margin), not the old 101×15+90=1605 that sat below the 1730s worst
+        # legal path; the driver's own timeout values must stay in sync with
+        # the constants it is budgeted against (.mts ↔ .py cross-check).
+        session = self.session
+        worst = (session.RETIREMENT_METHOD_COUNT * session.RETIREMENT_PER_METHOD_TIMEOUT_S
+                 + session.RETIREMENT_HTTP_PROBE_COUNT * session.RETIREMENT_HTTP_PROBE_TIMEOUT_S
+                 + session.RETIREMENT_SOCKET_CLOSE_TIMEOUT_S
+                 + 2 * session.RETIREMENT_READINESS_TIMEOUT_S
+                 + session.RETIREMENT_CONNECT_MARGIN_S)
+        self.assertTrue(session.RETIREMENT_ROUND_TIMEOUT == worst,
+                        f'#9 budget {session.RETIREMENT_ROUND_TIMEOUT} != component sum {worst}')
+        self.assertTrue(session.RETIREMENT_ROUND_TIMEOUT >= 1730,
+                        f'#10 budget {session.RETIREMENT_ROUND_TIMEOUT} below the 1730s worst legal path')
+        source = (common.SCRIPT / 'retirement_driver.mts').read_text()
+        self.assertIn(f'PER_METHOD_TIMEOUT_MS = {session.RETIREMENT_PER_METHOD_TIMEOUT_S * 1000};', source)
+        self.assertIn(f'AbortSignal.timeout({session.RETIREMENT_HTTP_PROBE_TIMEOUT_S * 1000})', source)
+        self.assertIn(f"'closed sockets', {session.RETIREMENT_SOCKET_CLOSE_TIMEOUT_S * 1000})", source)
+        self.assertTrue(source.count('await probe(') == session.RETIREMENT_HTTP_PROBE_COUNT,
+                        f'#11 driver probes {source.count("await probe(")} != budgeted '
+                        f'{session.RETIREMENT_HTTP_PROBE_COUNT}')
+
+    def test_timeout_expired_classifies_blocked_with_full_faces(self):
+        # ② (#1355 fix-r3): subprocess.TimeoutExpired is a SubprocessError
+        # subclass and not a TimeoutError, so the pre-fix BLOCKED tuple let it
+        # fall through to FAIL, and retirement_report let it escape main leaving
+        # a 9-key report whose scoring faces were all missing.
+        self.assertIsInstance(subprocess.TimeoutExpired('node', 1), self.session.BLOCKED_APPARATUS_ERRORS)
+        with patch.object(self.session, '_retirement_report',
+                          side_effect=subprocess.TimeoutExpired('node', 1760)):
+            report = self.session.retirement_report(Path('out'), Path('baseline'))
+        self.assertTrue(report['status'] == 'BLOCKED', f'#12 budget-blocked status: {report["status"]}')
+        self.assertTrue(report['executionStatus'] == 'BLOCKED',
+                        f'#13 budget-blocked executionStatus: {report["executionStatus"]}')
+        self.assertTrue(report['failure']['rule'] == 'ROUND_BUDGET',
+                        f'#14 budget-blocked failure rule: {report["failure"]}')
+        for face in ('expected', 'executed', 'rounds', 'methodCoverage', 'entryInventory',
+                     'hostAudit', 'controls', 'coldRestartRollback', 'topology', 'portAudit',
+                     'processAudit', 'cleanupAudit', 'baseline', 'reason', 'failure'):
+            self.assertIn(face, report, f'#15 budget-blocked report lacks face {face}')
+        for face, status in (('methodCoverage', 'BLOCKED'), ('entryInventory', 'BLOCKED'),
+                             ('hostAudit', 'BLOCKED'), ('controls', 'NOT_RUN'),
+                             ('coldRestartRollback', 'NOT_RUN')):
+            self.assertTrue(report[face]['status'] == status,
+                            f'#16 budget-blocked face {face}: {report[face]["status"]} != {status}')
+
+    def test_entry_inventory_reads_every_round(self):
+        # ④ (#1355 fix-r3): an entry that answered in round 1 but 404'd in
+        # round 2 is NO_HIT — the pre-fix face only read rounds[0] and hid the
+        # second round's answer.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = self._fake_baseline(root)
+            home = root / 'home'
+            home.mkdir()
+            (home / 'pilotdeck.yaml').write_text('schemaVersion: 1\n')
+
+            def round_row(label, health_status):
+                return {'label': label, 'http': [{'path': '/health', 'status': health_status}],
+                        'frames': self._frames(final=True),
+                        'outcomes': [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
+                        'runtime': {'pilotHome': str(home)}}
+
+            def aggregate(rows):
+                return self.session._retirement_entry_inventory_aggregate(
+                    [(row['label'], self.session._retirement_entry_inventory(baseline, row))
+                     for row in rows])
+
+            merged = aggregate([round_row('round-01', 200), round_row('round-02', 404)])
+            health = next(entry for entry in merged['entries'] if entry['entry'] == '/health')
+            self.assertTrue(health['status'] == 'NO_HIT', f'#17 mixed rounds must aggregate NO_HIT: {health}')
+            self.assertTrue(health['rounds'] == [{'round': 'round-01', 'status': 'HIT'},
+                                                 {'round': 'round-02', 'status': 'NO_HIT'}],
+                            f'#18 per-round statuses must stay visible: {health["rounds"]}')
+            self.assertIn('/health', merged['unhit'])
+            self.assertTrue(merged['status'] == 'BLOCKED', f'#19 inventory face must stay BLOCKED: {merged["status"]}')
+            merged = aggregate([round_row('round-01', 200), round_row('round-02', 200)])
+            health = next(entry for entry in merged['entries'] if entry['entry'] == '/health')
+            self.assertTrue(health['status'] == 'HIT', f'#20 all-answer rounds aggregate HIT: {health}')
+            self.assertNotIn('/health', merged['unhit'])
 
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for
