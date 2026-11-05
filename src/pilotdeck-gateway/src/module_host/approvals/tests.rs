@@ -530,6 +530,10 @@ async fn serve_and_capture(
                         }
                     },
                     stop,
+                    // #1292 rebase: this harness predates fix-r1's grid wiring
+                    // and pins the module-host lane, not headersTimeout.
+                    None,
+                    None,
                 )
                 .await;
                 if let Err(error) = served {
