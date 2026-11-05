@@ -646,10 +646,23 @@ impl TranscriptWriter {
         for entry in &entries {
             domain = domain.next(entry)?;
         }
-        inner.sequence = state.sequence;
-        inner.last_entry_id = state.last_entry_id;
-        inner.entry_ids = ids;
-        inner.recorder_domain = domain;
+        // #297 a caller's snapshot can be older than what this shared writer has
+        // already committed (a producer appended between its read and this
+        // restore). Rewinding sequence/last_entry_id/entry_ids here makes the
+        // next append write a sequence the persisted log already contains, and
+        // rewinding the domain replays later events against an earlier state.
+        // Install only a strictly further-committed snapshot; an equal one is
+        // what this writer already holds (a differing last_entry_id at the same
+        // sequence is a foreign chain and must not fork the parent link). The
+        // entry ids merge either way, so a stale id stays a duplicate.
+        if state.sequence > inner.sequence {
+            inner.sequence = state.sequence;
+            inner.last_entry_id = state.last_entry_id;
+            inner.recorder_domain = domain;
+        }
+        for id in ids {
+            inner.entry_ids.insert(id);
+        }
         Ok(())
     }
     pub(super) fn append_recorder_event(
