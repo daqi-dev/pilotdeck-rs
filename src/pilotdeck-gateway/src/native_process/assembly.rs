@@ -624,23 +624,13 @@ pub(super) async fn start_observed(
                         move |session_key| {
                             // Turn is live only when the admission slot holds a run ID.
                             let run_id = reg_owner.active_turn_run_id(session_key)?;
-                            // Fetch the InteractionSteer resource for the project.
-                            let lease = reg_project.acquire(None).ok()?;
-                            let context = lease
-                                .runtime()
-                                .resources()
-                                .get::<ProjectResources>()?
-                                .context();
-                            let steer = context
-                                .resource(Resource::InteractionSteer)?
-                                .as_any()
-                                .downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>()?
-                                .clone();
-                            let info = steer.active_steer_info(session_key)?;
-                            // Guard: the external run ID must still match admission.
-                            if info.run_id != run_id {
-                                return None;
-                            }
+                            // Shared lookup: fetch the InteractionSteer resource
+                            // and guard the run ID against the admission slot.
+                            let info = crate::runtime::project::interaction_steer::active_turn_for(
+                                &reg_project,
+                                session_key,
+                                Some(&run_id),
+                            )?;
                             Some(AsyncHookTurn {
                                 run_id: info.turn_id,
                                 mailbox: info.mailbox,

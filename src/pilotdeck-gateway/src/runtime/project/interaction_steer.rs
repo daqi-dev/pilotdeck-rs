@@ -126,6 +126,37 @@ pub struct ActiveSteerInfo {
     pub mailbox: SteerMailbox,
 }
 
+/// Shared admission lookup for the native gateway's steer/cancel handlers and
+/// the async-hook registry: acquire the project's InteractionSteer resource,
+/// return the active steer info for `session_key`, and guard that its run ID
+/// still matches the admission slot `active_run` (from
+/// `SessionOwner::active_turn_run_id`). Returns `None` when the resource is
+/// not staged, no steer info exists, or the run IDs disagree. The returned
+/// `turn_id` and `mailbox` also construct `AsyncHookTurn`.
+pub fn active_turn_for(
+    project: &super::ProjectRuntimeRegistry,
+    session_key: &JsString,
+    active_run: Option<&JsString>,
+) -> Option<ActiveSteerInfo> {
+    let lease = project.acquire(None).ok()?;
+    let context = lease
+        .runtime()
+        .resources()
+        .get::<super::ProjectResources>()?
+        .context();
+    let steer = context
+        .resource(super::Resource::InteractionSteer)?
+        .as_any()
+        .downcast_ref::<InteractionSteer>()?
+        .clone();
+    let info = steer.active_steer_info(session_key)?;
+    // Guard: the steer slot's run must still match the admission slot.
+    if Some(&info.run_id) != active_run {
+        return None;
+    }
+    Some(info)
+}
+
 #[derive(Clone, Default)]
 pub struct InteractionSteer(Arc<Mutex<State>>);
 impl InteractionSteer {
