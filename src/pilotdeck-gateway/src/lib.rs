@@ -63,10 +63,16 @@ mod test_node_provenance;
 #[path = "../tests/common/oracle_locale.rs"]
 mod test_oracle_locale;
 #[cfg(test)]
+#[path = "../tests/common/permission_faults.rs"]
+mod test_permission_faults;
+#[cfg(test)]
 mod test_process;
 #[cfg(test)]
 #[path = "../tests/common/scratch.rs"]
 mod test_scratch;
+#[cfg(test)]
+#[path = "../tests/common/skip_line.rs"]
+mod test_skip_line;
 // fix-r3 review P2: `write_stage` hardcodes `/bin/sh` helpers and calls
 // `rustix::process`, so it is unix-only like `test_scratch` above.
 #[cfg(all(test, unix))]
