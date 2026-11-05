@@ -353,13 +353,17 @@ def chain_backed(root, kind, edges, path, mb):
     Bytes come from HEAD, not the working tree: an uncommitted edit must not be
     able to complete a chain the branch does not contain.
     """
-    state, actual = blob_at(root, 'HEAD', path)
-    if state is None or (state is True and actual is None):
-        return False
-    # A deleted member is a registration change too: --write drops its row and
-    # the real gate wants ``Change: <old> -``.  Target '-' mirrors
-    # ``new_hashes.get(name, '-')``.
-    target = actual if state else '-'
+    # The target is "what the new manifest will pin": the HEAD bytes when
+    # --write would register the path, '-' when it drops or never had the row
+    # (a deleted file *and* a member removed from the inventory while the file
+    # stays tracked both end at '-', exactly like ``new_hashes.get(name, '-')``).
+    if not registrable(root, kind, path):
+        target = '-'
+    else:
+        state, actual = blob_at(root, 'HEAD', path)
+        if state is not True or actual is None:
+            return False
+        target = actual
     if not mb:
         return False
     base = base_digest(root, kind, mb, path)
