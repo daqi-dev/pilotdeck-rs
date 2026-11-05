@@ -104,8 +104,6 @@ BYTECODE = re.compile(r'(?:^|/)__pycache__(?:/|$)|\.py[co]$')
 # ``scripts/parity/`` recursively and takes five fixed top-level files of
 # ``specs/parity/``; gateway-parity keeps an explicit inventory in its own
 # source, so a new member there must be named by that source to be registrable.
-PARITY_SPEC_FILES = ('README.md', 'acceptance.md', 'normalization.md',
-                     'accepted-diffs.md', 'multimodal.md')
 GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
@@ -718,6 +716,42 @@ def _ui_exp008_dir(tree):
     return found.pop() if len(found) == 1 else None
 
 
+def _ui_required_names(tree):
+    """True when ``REQUIRED`` is derived from ``SPEC_FILES``, else None.
+
+    ``required_files`` registers ``folder / name for name in REQUIRED``; the
+    precheck models the names from ``apparatus.py:SPEC_FILES``.  Today the two
+    agree because ``check_frozen.py`` writes ``REQUIRED = set(SPEC_FILES)``, but
+    a literal copy (or ``set(SPEC_FILES) | {...}``) would drift silently -- the
+    same class as the copied spec list parity just lost.  Only the derived shape
+    is accepted: anything else is "cannot tell" (None) and blocks.
+    """
+    stores = [node for node in ast.walk(tree)
+              if isinstance(node, ast.Name) and node.id == 'REQUIRED'
+              and isinstance(node.ctx, ast.Store)]
+    if len(stores) != 1:
+        return None
+    for node in tree.body:
+        targets, value = [], None
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        for target in targets:
+            if not (isinstance(target, ast.Name) and target.id == 'REQUIRED'):
+                continue
+            if isinstance(value, ast.Name) and value.id == 'SPEC_FILES':
+                return True
+            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                    and value.func.id == 'set' and len(value.args) == 1
+                    and not value.keywords
+                    and isinstance(value.args[0], ast.Name)
+                    and value.args[0].id == 'SPEC_FILES'):
+                return True
+            return None
+    return None
+
+
 def _ui_scan_dirs(tree):
     """The ``scan(root / '<dir>')`` directories in ``apparatus_files``, or None."""
     function = _function_node(tree, 'apparatus_files')
@@ -745,8 +779,12 @@ def parity_spec_names(root, commit=None):
 
     Derived from the apparatus's own ``names`` tuple so a changed list shows up
     as a disagreement instead of a stale copy.  ``None`` means the source could
-    not be read or did not have the shape this model parses; the caller then
-    falls back to the literal and only blocks when a *derived* list disagrees.
+    not be read or the binding is not a unique literal tuple -- and the caller
+    then fails closed.  There is deliberately no fallback to the copied literal:
+    a branch that reshapes ``names`` (``names = SPEC_NAMES``) would otherwise
+    silently switch the cross-check off, and a renamed/added/removed spec doc
+    after that reads as READY while ``--write`` cannot register it.  That is the
+    same coarse-fallback class this tool already removed elsewhere.
     """
     commit = commit or pinned_head()
     key = ('parity-spec-names', str(root), commit)
@@ -825,8 +863,10 @@ def ui_inventory(root, commit=None):
             scan_dirs = _ui_scan_dirs(frozen_tree)
             spec_dir = _module_path(frozen_tree, 'SPEC')
             exp008_dir = _ui_exp008_dir(frozen_tree)
+            required_ok = _ui_required_names(frozen_tree)
             if (paths is not None and specs is not None and toolchain is not None
                     and scan_dirs is not None and spec_dir is not None
+                    and required_ok is True
                     and exp008_dir is not None and exp008_dir in scan_dirs
                     and len(paths) == 3 and all(isinstance(item, str) for item in paths)
                     and all(item.startswith('scripts/') for item in paths[:2])
@@ -867,10 +907,10 @@ def registrable(root, kind, path):
     against a ``-`` target the real ``--write`` will never produce.
     """
     if kind == 'parity':
-        derived = parity_spec_names(root)
-        if derived is not None and derived != set(PARITY_SPEC_FILES):
-            return None  # the copied list and the apparatus source disagree
-        if path in {f'specs/parity/{name}' for name in PARITY_SPEC_FILES}:
+        specs = parity_spec_names(root)
+        if specs is None:
+            return None  # shape not recognised: never guess in either direction
+        if path in {f'specs/parity/{name}' for name in specs}:
             return True
         if not path.startswith('scripts/parity/'):
             return False
@@ -901,8 +941,11 @@ def tracked_at_head(root, path):
     prefix = path.split('/', 1)[0] + '/' if '/' in path else path
     key = (str(root), prefix, pinned_head())
     if key not in _SOURCE_CACHE:
-        code, out, _ = git(root, 'ls-tree', '-r', '--name-only', pinned_head(), '--', prefix)
-        _SOURCE_CACHE[key] = set(out.splitlines()) if code == 0 else None
+        code, out, _ = git(root, 'ls-tree', '-r', '-z', '--name-only',
+                           pinned_head(), '--', prefix)
+        # ``-z``: without it core.quotePath escapes non-ASCII paths, so the
+        # names here would never equal the path being asked about.
+        _SOURCE_CACHE[key] = set(filter(None, out.split('\0'))) if code == 0 else None
     listing = _SOURCE_CACHE[key]
     return None if listing is None else path in listing
 
@@ -929,8 +972,12 @@ def unregistered_added(root, kind, mb):
         inventory = ui_inventory(root)
         prefixes = () if inventory is None else inventory['dirs']
     else:
-        prefixes = {'parity': ('scripts/parity/',),
-                    'gateway-parity': GATEWAY_DIRS}.get(kind, ())
+        # ``specs/<kind>/`` belongs to the inventory too: neither apparatus
+        # reports a *new* spec document that has no hash row (parity only skips
+        # them, gateway only says "hash list differs"), so an unscanned spec
+        # directory is a false READY that ``--write`` turns into a missing chain.
+        prefixes = {'parity': ('scripts/parity/', 'specs/parity/'),
+                    'gateway-parity': GATEWAY_DIRS + ('specs/gateway-parity/',)}.get(kind, ())
     for prefix in prefixes:
         code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
                              pinned_head(), '--', prefix)

@@ -60,7 +60,17 @@ def row(root, kind, path, digest, text=None):
         write(root, path, text)
 
 
+# parity 的规格名单现在与装置源交叉核对（读不出即阻塞），所以假装置也必须带
+# 与真装置同形的 ``manifest_inventory``，否则每条 parity 用例都只会撞上「不可判定」。
+PARITY_MANIFEST = ("\n\ndef manifest_inventory(root):\n"
+                   "    names = ('README.md', 'acceptance.md', 'normalization.md',\n"
+                   "             'accepted-diffs.md', 'multimodal.md')\n"
+                   "    return {name: name for name in names}\n")
+
+
 def fake_apparatus(root, kind, payload, source=""):
+    if kind == 'parity' and 'manifest_inventory' not in source:
+        source += PARITY_MANIFEST
     body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + source
     write(root, f"scripts/{kind}/check_frozen.py", body)
     # 装置自身在 base 已有清单行：它改字节时走「改已登记文件」的路，不该被当成首登记。
@@ -289,6 +299,55 @@ def run():
         case("未跟踪草稿不计首登记（不误拦）",
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 装置源名单新增一个 spec 文档：两套装置都不会自己报「缺行」（gateway 只
+        # 说 hash list differs），首登记扫描必须覆盖 specs/<kind>/ 才拦得住。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        proc = delivery(Path(td), "gateway-parity", payload,
+                        source=gw_source().replace("'accepted-diffs.md')",
+                                                   "'accepted-diffs.md', 'extra.md')"),
+                        files=[("specs/gateway-parity/extra.md", "EXTRA\n")],
+                        base_files=[("scripts/gateway-parity/common.py", GW_COMMON)])
+        case("gateway 清单新增 spec 文档、无事件链 → BLOCKED（首登记不漏判）",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        proc = delivery(Path(td), "gateway-parity", payload,
+                        source=gw_source().replace("'accepted-diffs.md')",
+                                                   "'accepted-diffs.md', 'extra.md')"),
+                        files=[("specs/gateway-parity/extra.md", "EXTRA\n")],
+                        events=[("specs/gateway-parity/frozen/20260101-x.md",
+                                 f"Change: - {sha('EXTRA\n')} specs/gateway-parity/extra.md\n"
+                                 + EVENT_FIELDS)],
+                        base_files=[("scripts/gateway-parity/common.py", GW_COMMON)])
+        case("gateway 清单新增 spec 文档、有 Change: - <hash> → READY",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # parity 同向：源里新增 sixth.md 且文件是新加的，没有链就必须拦。
+        payload = dict(parity_payload)
+        proc = delivery(Path(td), "parity", payload,
+                        source=PARITY_MANIFEST.replace("'multimodal.md')",
+                                                       "'multimodal.md', 'sixth.md')"),
+                        files=[("specs/parity/sixth.md", "SIXTH\n")])
+        case("parity 清单新增 spec 文档、无事件链 → BLOCKED",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 非 ASCII 路径：ls-tree 不带 -z 时 core.quotePath 会把它转义成 \344\270\255，
+        # 按行比对就永远查不到 → registrable 误判 False（首登记漏判）。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/parity/check_frozen.py", PARITY_MANIFEST)
+        write(root, "scripts/parity/中文.py", "x = 1\n")
+        commit(root, "base")
+        case("非 ASCII 路径按字面匹配（ls-tree 必须 -z）",
+             cfd.registrable(root, "parity", "scripts/parity/中文.py") is True)
 
     with tempfile.TemporaryDirectory() as td:
         proc = delivery(Path(td), "gateway-parity",
@@ -598,18 +657,59 @@ def run():
              proc.returncode == 1 and "cannot tell" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
-    with tempfile.TemporaryDirectory() as td:
-        # common.py 读不出（语法错）时，模板臂的 A2_SCRIPTS 就没有值：
-        # 必须整体「不可判定」，不能拿 None 去遍历（会抛 TypeError 直接崩）。
-        root = Path(td)
+    def gateway_tree(common_text):
+        """建一棵 gateway 装置树（common.py 内容由调用方给），返回 (root, td)。"""
+        td = tempfile.TemporaryDirectory()
+        root = Path(td.name)
         init_repo(root)
-        write(root, "scripts/gateway-parity/common.py", "A2_SCRIPTS = (\n")
+        write(root, "scripts/gateway-parity/common.py", common_text)
         write(root, "scripts/gateway-parity/check_frozen.py", gw_source())
         commit(root, "base")
-        case("gateway 的 A2_SCRIPTS 读不出 → 不可判定（不崩、不猜）",
+        return root, td
+
+    # common.py 读不出时整棵装置都不可判定；注意 `A2_SCRIPTS = (` 是语法错，
+    # `_parse` 就先短路了，所以另外补一条「能解析、但绑定不是字面元组」的夹具，
+    # 才能把 scripts=None 真正送进 `_gateway_manifest`。
+    root, td = gateway_tree("A2_SCRIPTS = (\n")
+    try:
+        case("gateway 的 common.py 语法错 → 不可判定（不崩、不猜）",
              cfd.gateway_inventory(root) is None
              and cfd.registrable(root, "gateway-parity",
                                  "scripts/gateway-parity/check_frozen.py") is None)
+    finally:
+        td.cleanup()
+
+    root, td = gateway_tree("A2_SCRIPTS = tuple(EXTRA)\n")
+    try:
+        case("gateway 的 A2_SCRIPTS 不是字面元组 → 不可判定（None 不参与遍历）",
+             cfd.gateway_inventory(root) is None
+             and cfd.registrable(root, "gateway-parity",
+                                 "scripts/gateway-parity/check_frozen.py") is None)
+    finally:
+        td.cleanup()
+
+    root, td = gateway_tree("A2_SCRIPTS = ()\n")
+    try:
+        # 空元组是「已知的空清单」，不是「不知道」：不能像旧代码那样当假值退回。
+        case("gateway 的 A2_SCRIPTS 为空元组 → 已知清单，脚本不可登记",
+             cfd.gateway_inventory(root) is not None
+             and cfd.registrable(root, "gateway-parity",
+                                 "scripts/gateway-parity/check_frozen.py") is False)
+    finally:
+        td.cleanup()
+
+    root, td = gateway_tree(GW_COMMON)
+    try:
+        # 三个 spec 名由装置源里的裸名常量派生（GATEWAY_SPEC_FILES 已删）：
+        # 在名单里才可登记，不在名单里一律不可登记。
+        case("gateway spec 名在装置源名单里 → 可登记",
+             cfd.registrable(root, "gateway-parity",
+                             "specs/gateway-parity/acceptance.md") is True)
+        case("gateway spec 名不在装置源名单里 → 不可登记",
+             cfd.registrable(root, "gateway-parity",
+                             "specs/gateway-parity/other.md") is False)
+    finally:
+        td.cleanup()
 
     with tempfile.TemporaryDirectory() as td:
         # 装置两侧的目录清单必须一致：只有一侧改了就是「认不出」，不能按位置猜。
@@ -652,24 +752,37 @@ def run():
             return cfd.registrable(root, "ui-server-parity",
                                    "specs/ui-server-parity/acceptance.md")
 
-    def parity_registrable(names):
-        """按给定 ``names`` 元组建 parity 装置源，返回 README.md 的 registrable。"""
+    def parity_registrable(names, path="specs/parity/README.md", names_expr=None):
+        """按给定 ``names`` 元组建 parity 装置源，返回 path 的 registrable。
+
+        ``names_expr`` 用来把绑定换成解析不出的形态（非字面量赋值）。
+        """
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             init_repo(root)
-            body = ("\ndef manifest_inventory(root):\n"
-                    "    names = (" + ", ".join(repr(n) for n in names) + ")\n"
+            value = names_expr or ("(" + ", ".join(repr(n) for n in names) + ")")
+            body = ("\nSPEC_NAMES = ('placeholder.md',)\n"
+                    "\ndef manifest_inventory(root):\n"
+                    f"    names = {value}\n"
                     "    return {name: name for name in names}\n")
             write(root, "scripts/parity/check_frozen.py", body)
             commit(root, "base")
-            return cfd.registrable(root, "parity", "specs/parity/README.md")
+            return cfd.registrable(root, "parity", path)
 
     five = ('README.md', 'acceptance.md', 'normalization.md',
             'accepted-diffs.md', 'multimodal.md')
-    case("parity 五个固定名单 → README 可登记（正控）",
+    case("parity 装置源名单 → README 可登记（正控）",
          parity_registrable(five) is True)
-    case("parity 装置源名单少了 multimodal.md → 不可判定（副本与源不一致）",
-         parity_registrable(five[:4]) is None)
+    # 清单只有装置源一份：源里删掉的名字立即不可登记（掉行才看得见），
+    # 源里新增的名字立即要链（首登记才看得见）。字面量副本会让两向都静默。
+    case("parity 源里删掉 multimodal.md → 该项不可登记（掉行不漏判）",
+         parity_registrable(five[:4], "specs/parity/multimodal.md") is False)
+    case("parity 源里新增 sixth.md → 该项要链（首登记不漏判）",
+         parity_registrable(five + ('sixth.md',), "specs/parity/sixth.md") is True)
+    case("parity 清单外的顶层文档仍不可登记",
+         parity_registrable(five, "specs/parity/foo.md") is False)
+    case("parity names 改成非字面量 → 不可判定（不退回副本）",
+         parity_registrable(five, names_expr="SPEC_NAMES") is None)
 
     # 下面四条都是「认不出就阻塞」：任何一种静默退出都会让模型漂移变成假 READY。
     case("装置源解析不出（NUL 字节）→ 不可判定，不按子串猜",
@@ -681,6 +794,30 @@ def run():
     case("SPEC 绑定两次 → 不可判定（不取首个）",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN + "\nSPEC = ROOT / 'specs/ui-server-parity-alt'\n") is None)
+    case("scan 调用带额外参数 → 不可判定（形状认不出）",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN.replace("scan(root / 'scripts/exp008')",
+                                          "scan(root / 'scripts/exp008', extra)")) is None)
+    case("多出一条认不出的 scan（属性调用）→ 不可判定（不在模型里的目录）",
+         ui_registrable(
+             UI_APPARATUS,
+             UI_FROZEN.replace(
+                 "    files.update(Path(p) for p in scan(root / 'scripts/exp008'))",
+                 "    files.update(Path(p) for p in scan(root / 'scripts/exp008'))\n"
+                 "    files.update(Path(p) for p in apparatus.scan(root / 'scripts/extra'))"))
+         is None)
+    case("scan 走属性调用（apparatus.scan）→ 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN.replace("scan(root / 'scripts/exp008')",
+                                          "apparatus.scan(root / 'scripts/exp008')")) is None)
+    case("REQUIRED 偏离 SPEC_FILES（并集）→ 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN.replace("REQUIRED = set(SPEC_FILES)",
+                                          "REQUIRED = set(SPEC_FILES) | {'extra.md'}")) is None)
+    case("REQUIRED 是字面量副本 → 不可判定（不认第二处清单）",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN.replace("REQUIRED = set(SPEC_FILES)",
+                                          "REQUIRED = ('acceptance.md',)")) is None)
     case("EXP008 目录不在被扫描目录里 → 不可判定",
          ui_registrable(UI_APPARATUS,
                         UI_FROZEN.replace("{root / 'scripts/exp008' / name",
