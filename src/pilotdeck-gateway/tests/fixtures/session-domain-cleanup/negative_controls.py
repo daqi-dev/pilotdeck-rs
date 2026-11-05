@@ -56,6 +56,9 @@ A_EXIT = "                    _, code = common.aggregate_status(report['status']
 B_STATUS = ("                report['status'] = 'BLOCKED' if "
             "isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n")
 CONTROLS_SOURCE = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
+# #892 fix-r6: the one shared exit in ``controls/session_domain.py:main``.
+CT_EXIT = "        return common.aggregate_status(report['status'])[1]\n"
+CT_MAIN = "def main():\n"
 COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
@@ -507,6 +510,86 @@ def calibrate_status_setdefault(rows):
     if not ok:
         return ok, detail
     return True, ('aggregation-audit: setdefault() status write flagged, '
+                  'passed=False')
+
+
+def _controls_main_needle(rows, needle, detail):
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, reason = _main_failure(row, needle)
+    if not ok:
+        return ok, reason
+    return True, detail
+
+
+def calibrate_boolean_exit(rows):
+    """#892 r6: ``return not ok`` computes the exit code inline (GLM r5 P2-3 /
+    MiniMax r5 P1-1)."""
+    return _controls_main_needle(
+        rows, 'inline exit code not ok',
+        'aggregation-audit: boolean exit expression flagged, passed=False')
+
+
+def calibrate_sys_exit_relay(rows):
+    """#892 r6: ``sys.exit(holder['code'])`` reuses the exit-code provenance
+    rules (GLM sibling r5 P1-2)."""
+    return _controls_main_needle(
+        rows, "inline exit code holder['code']",
+        'aggregation-audit: sys.exit subscript relay flagged, passed=False')
+
+
+def calibrate_system_exit_bare(rows):
+    """#892 r6: ``raise SystemExit`` without arguments exits 0 too (GLM
+    sibling r5 P1-3 / boundary r5 P1-1)."""
+    return _controls_main_needle(
+        rows, 'inline optimistic exit (SystemExit)',
+        'aggregation-audit: bare raise SystemExit flagged, passed=False')
+
+
+def calibrate_delegated_chain(rows):
+    """#892 r6: an exit code delegated twice is followed to the leaf (MiniMax
+    boundary r5 P1-2)."""
+    return _controls_main_needle(
+        rows, 'inline exit code _exit_a(report)',
+        'aggregation-audit: two-hop delegated exit flagged, passed=False')
+
+
+def calibrate_container_slot(rows):
+    """#892 r6: a status slot filled from an unproven subscript is inline (GLM
+    boundary r5 P1-2)."""
+    return _controls_main_needle(
+        rows, "inline status/exit assignment upstream['status']",
+        'aggregation-audit: unproven subscript slot flagged, passed=False')
+
+
+def calibrate_alias_cycle(rows):
+    """#892 r6: a status slot fed by an alias cycle proves nothing (MiniMax
+    sibling r5 P2-2: the rule needs an end-to-end mutant, not only a probe)."""
+    return _controls_main_needle(
+        rows, 'inline status/exit',
+        'aggregation-audit: alias-cycle status slot flagged, passed=False')
+
+
+def calibrate_verdict_dict(rows):
+    """#892 r6: a summary dict keyed ``verdict`` is an aggregation point too
+    (GLM sibling r5 P1-1 / MiniMax sibling r5 P1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('unregistered aggregation point' in failure
+               and 'controls/session_domain.py:publish' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, want the verdict-keyed summary '
+                       'enumerated as an unregistered point')
+    return True, ('aggregation-audit: verdict-keyed summary enumerated, '
                   'passed=False')
 
 
@@ -987,6 +1070,43 @@ MUTATIONS = [
     ('calibrate-rebuilt-summary', SOURCE,
      B_STATUS,
      "                report = {**report, 'status': 'PASS'}\n"),
+    # #892 fix-r6: exit-0 spellings the r5 reviews found outside the Return arm.
+    ('calibrate-boolean-exit', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            ok = bool(report.get('cells'))\n"
+     "            return not ok\n" + CT_EXIT),
+    ('calibrate-sys-exit-relay', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        holder = {'code': 0}\n"
+     "        if report.get('special'):\n"
+     "            sys.exit(holder['code'])\n" + CT_EXIT),
+    ('calibrate-system-exit-bare', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            raise SystemExit\n" + CT_EXIT),
+    ('calibrate-delegated-chain', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        def _exit_a(rep):\n"
+     "            return _exit_b(rep)\n\n"
+     "        def _exit_b(rep):\n"
+     "            return 0 if rep.get('ok') else 1\n\n"
+     "        return _exit_a(report)\n"),
+    ('calibrate-container-slot', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            report['status'] = upstream['status']\n" + CT_EXIT),
+    ('calibrate-alias-cycle', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            status, code = code, status\n"
+     "            return {'status': status}, code\n" + CT_EXIT),
+    ('calibrate-verdict-dict', CONTROLS_SOURCE,
+     CT_MAIN,
+     "def publish(rows):\n"
+     "    payload = {'verdict': 'PASS', 'rows': rows}\n"
+     "    print(json.dumps(payload))\n"
+     "    return 0\n\n\n" + CT_MAIN),
     ('calibrate-status-update-kwarg', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update(status='PASS')\n"),
@@ -1181,6 +1301,20 @@ JUDGES = {
         'aggregation-audit', calibrate_rebuilt_summary, False, ()),
     'calibrate-verdict-write': (
         'aggregation-audit', calibrate_verdict_write, False, ()),
+    'calibrate-boolean-exit': (
+        'aggregation-audit', calibrate_boolean_exit, False, ()),
+    'calibrate-sys-exit-relay': (
+        'aggregation-audit', calibrate_sys_exit_relay, False, ()),
+    'calibrate-system-exit-bare': (
+        'aggregation-audit', calibrate_system_exit_bare, False, ()),
+    'calibrate-delegated-chain': (
+        'aggregation-audit', calibrate_delegated_chain, False, ()),
+    'calibrate-container-slot': (
+        'aggregation-audit', calibrate_container_slot, False, ()),
+    'calibrate-alias-cycle': (
+        'aggregation-audit', calibrate_alias_cycle, False, ()),
+    'calibrate-verdict-dict': (
+        'aggregation-audit', calibrate_verdict_dict, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
     'restored-skip-accepted': (
