@@ -587,6 +587,30 @@ def is_separator(row):
     return bool(filled) and all(re.fullmatch(r":?-+:?", c) for c in filled)
 
 
+def _header_index(raw):
+    """分段表表头行号：优先「下一行是分隔行」的那一行——GFM 每行都可省行首竖线，表头与数据行还能
+    混写（表头省、数据行保留），只认「第一条带首竖线的行」会把数据行当表头 → 合规表假 FAIL。
+    锚不到再退到第一条带首竖线的行（与旧行为一致）。"""
+    for i in range(len(raw) - 1):
+        if "|" not in raw[i] or "|" not in raw[i + 1]:
+            continue
+        if is_separator(_split_row(raw[i + 1])):
+            return i
+    return next((i for i, line in enumerate(raw) if cells(line) is not None), None)
+
+
+def _bind_cols(header):
+    """表头 → {列键: 下标}。别名按优先级试；`段名` 命中前不会退回 `段`。"""
+    col, used = {}, set()
+    for key, alts in WANT_COLS.items():
+        for alt in alts:
+            hit = next((i for i, h in enumerate(header) if i not in used and _col_hit(alt, h)), None)
+            if hit is not None:
+                col[key], _ = hit, used.add(hit)
+                break
+    return col
+
+
 EST_TOKEN = re.compile(r"(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z一-鿿]*)")
 # 小时+分钟的连写（`1h40m` / `1h45min` / `1h30`）：直接切 token 时后一个数字会被 lookbehind
 # 挡掉、只读成 60 min。先把「N 小时 M 分」整体改写成两个带单位的 token 再切。
@@ -798,6 +822,19 @@ RESUME_FAIL_WORDS = ("失败", "继续", "接续", "恢复", "重跑", "resume")
 PATH_TOKEN = re.compile(r"[A-Za-z0-9_./㐀-鿿<>{}…＜＞｛｝【】〈〉-]+\.md")
 NEG_WINDOW = 30         # 只看路径所在分句（路径前 30 字符里最后一个句读之后）：
                         # 「不需要在这里写 progress.md」命中，「…progress.md（不要提交进 git）」不命中
+# 路径段里的裸占位：骨架 `_tmp/<日期>-issue-<N>/progress.md` 去掉尖括号就是 `…-issue-N`，
+# 整串既没有 `{}<>…` 也有 `/`，旧规则判成实例路径 → rc 0 假 PASS（gate17 GLM boundary P0）。
+# 只认 ASCII 单字母段（按 `-_.` 再切一层），CJK 段（`评审记录`、`进度`）放行：仓里真有中文目录名。
+PATH_PLACEHOLDER_PART = re.compile(r"[NnMmKk]")
+
+
+def _path_placeholder(p):
+    """返回路径里第一个裸占位段（`N` / `issue-N` / `N-issue`），没有返回 None。"""
+    for seg in p.split("/"):
+        for part in re.split(r"[-_.]", seg):
+            if PATH_PLACEHOLDER_PART.fullmatch(part):
+                return part
+    return None
 
 
 def _looks_url(p):
@@ -819,8 +856,11 @@ def resume_problems(resume):
             if not re.search(r"progress|进度", name, re.I):   # `PROGRESS.md` / `Progress.md` 同样是进度文件
                 continue
             bad = None
+            ph = _path_placeholder(p)
             if any(ch in p for ch in "{}<>…＜＞｛｝【】〈〉") or "..." in p:
                 bad = "还是占位符"
+            elif ph:
+                bad = f"路径段 {ph!r} 是没替换的占位"
             elif "/" not in p:
                 bad = "只有文件名、没有目录"
             elif p.startswith("//") or _looks_url(p):
@@ -835,6 +875,7 @@ def resume_problems(resume):
         detail = f"；看到的不合规路径：{'、'.join(bad_paths)}" if bad_paths else ""
         problems.append("`## 续跑` 里没写具体的进度文件路径（要带目录的实例路径，如 "
                         "`_tmp/20261105-issue-1316/progress.md`；不许留 <…> / {…} / …，"
+                        "也不许留裸 `N` 这类没替换的路径段，"
                         f"不许只写文件名，也不许写在「无需 / 不用」这类否定句里）{detail}")
     positive = []
     for line in resume.splitlines():
@@ -858,17 +899,16 @@ def check_segments(text):
         problems.append("缺 `## 分段交付` 一节（大包必须按文件切段，模板见 ~/ws/pdrs-ops/templates/taskbook-segments.md）")
     else:
         raw = body.splitlines()
-        hidx = next((i for i, line in enumerate(raw) if cells(line) is not None), None)
-        if hidx is None:
-            # 整张表都省了行首竖线：表头 = 紧跟分隔行（也带竖线）的那一行。`---` 单独一行是 setext
-            # 标题 / 分隔线，不带竖线，不会误认。
-            for i in range(len(raw) - 1):
-                if "|" not in raw[i] or "|" not in raw[i + 1]:
-                    continue
-                if is_separator(_split_row(raw[i + 1])):
-                    hidx = i
-                    break
+        hidx = _header_index(raw)
         header = _split_row(raw[hidx]) if hidx is not None else None
+        if header is not None and len(_bind_cols(header)) < len(COL_NAMES):
+            # 锚到的表头绑不出全部五列时退回「第一条带首竖线的行」：表头省竖线、数据行保留竖线的
+            # 混写里主扫会抓到数据行当表头。只在兜底结果更好时才换，别把正常表头换掉。
+            first = next((i for i, line in enumerate(raw) if cells(line) is not None), None)
+            if first is not None and first != hidx:
+                alt = _split_row(raw[first])
+                if len(_bind_cols(alt)) > len(_bind_cols(header)):
+                    hidx, header = first, alt
         data, table_lines = [], []
         if header is None:
             problems.append("`## 分段交付` 里没有表格（需 markdown 表：段名 / 涉及文件 / 交付物 / 预估时长 / 段间依赖）")
@@ -890,14 +930,7 @@ def check_segments(text):
                     problems.append(f"分段表第 {len(data) + 1} 行整行为空（不许用空行占位）")
                     continue
                 data.append(r)
-            col, used = {}, set()
-            for key, alts in WANT_COLS.items():
-                for alt in alts:   # 别名按优先级试；`段名` 命中前不会退回 `段`
-                    hit = next((i for i, h in enumerate(header)
-                                if i not in used and _col_hit(alt, h)), None)
-                    if hit is not None:
-                        col[key], _ = hit, used.add(hit)
-                        break
+            col = _bind_cols(header)
             missing_cols = [COL_NAMES[k] for k in COL_NAMES if k not in col]
             if missing_cols:
                 problems.append("分段表缺列：" + "、".join(missing_cols))
