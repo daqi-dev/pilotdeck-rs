@@ -58,10 +58,10 @@ report() { printf '\n== %s\n' "$*"; }
 
 # scripts/cargo-slots.sh exits 1 while full (its header says callers wait and
 # retry, like the Python side's wait_for_slot: 30s interval, 15-minute cap).
-# Exit 2 means the unified gate is unavailable (a CI runner has none): there is
-# no shared quota to wait for, so that also proceeds. Any other non-zero status
-# means the check itself is broken — a missing script must never read as
-# "slot free". Poll, then BLOCKED.
+# Exit 69 (EX_UNAVAILABLE) means there is no unified gate on this machine (a CI
+# runner has none): no shared quota to wait for, so that also proceeds. Any other
+# non-zero status (2 = the script itself is broken, 3/4/64 = gate unusable) must
+# never read as "slot free". Poll, then BLOCKED.
 wait_for_cargo_slot() {
   local slots="$repo/scripts/cargo-slots.sh"
   local waited=0
@@ -72,7 +72,7 @@ wait_for_cargo_slot() {
   while true; do
     bash "$slots"
     local rc=$?
-    if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+    if [ "$rc" -eq 0 ] || [ "$rc" -eq 69 ]; then
       return 0
     fi
     if [ "$rc" -ne 1 ] || [ "$waited" -ge 900 ]; then

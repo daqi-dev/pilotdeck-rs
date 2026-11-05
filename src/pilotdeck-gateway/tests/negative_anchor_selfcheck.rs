@@ -31,6 +31,9 @@ fn negative_fixture_anchors_and_checker_controls() {
         (
             "test_negative_process.py",
             &[
+                // ProcessControls 持 wait_for_slot / run_owned 的契约测试（含
+                // cargo-slots.sh 退出码语义）；不列进来等于这些测试在 CI 里从没跑过。
+                "ProcessControls",
                 "OutputDirectoryGuard",
                 "OutputDirectoryClaim",
                 "OutputDirectoryRunnerTests",

@@ -741,7 +741,8 @@ def cargo_slots() -> tuple[int, str, str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=10,
+        # 180 s：本机首次碰统一闸要等冷 du（实测 38.6 s），之后走名额缓存。
+        timeout=180,
     )
     note = (script.stdout + script.stderr).strip()
     count, error = slots_from_ps()

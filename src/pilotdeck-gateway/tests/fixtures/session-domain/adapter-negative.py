@@ -32,9 +32,9 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
             path.write_text(text)
 
     def run(name, red):
-        slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], timeout=10, capture_output=True, text=True)
+        slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], timeout=180, capture_output=True, text=True)
         (OUT / f'{name}-slots.log').write_text(slot.stdout + slot.stderr)
-        assert slot.returncode in (0, 2), 'no cargo slot; rerun later'
+        assert slot.returncode in (0, 69), 'no cargo slot; rerun later'
         env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG=os.environ.get('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only'), CARGO_PROFILE_TEST_DEBUG=os.environ.get('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only'))
         with (OUT / f'{name}.log').open('w') as log:
             child = subprocess.Popen(['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib', 'storage::transcript_adapter_tests::real_ts_scenarios_match_outcomes_calls_and_bytes', '--', '--exact', '--nocapture'], cwd=SRC, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)

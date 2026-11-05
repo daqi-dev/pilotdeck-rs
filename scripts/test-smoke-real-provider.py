@@ -951,6 +951,17 @@ def test_cargo_slots_path() -> None:
               result["status"] == "PASS", repr(result))
 
     with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        write_exec(root / "scripts" / "cargo-slots.sh", "#!/bin/sh\nexit 69\n")
+        result = rp.run_cargo_slots(root)
+        # 69 (EX_UNAVAILABLE) = 本机没有统一闸（CI 就是这样）。当前 run_cargo_slots
+        # 仍把一切非 0 记成 BLOCKED（#1603 会把它改成「无共享名额，继续」）；这里先锁住
+        # 它是一个明确的、可记录的退出码——不是崩溃、不是超时、也不能被吃掉。
+        check("exit 69 (no gate) is recorded, not a crash or timeout",
+              result["status"] == "BLOCKED" and result["exit"] == 69
+              and result["timedOut"] is False, repr(result))
+
+    with tempfile.TemporaryDirectory() as d:
         result = rp.run_cargo_slots(Path(d))
         check("missing cargo-slots is BLOCKED, never SKIPPED",
               result["status"] == "BLOCKED" and "missing" in result["detail"],
@@ -1142,9 +1153,9 @@ def test_probe_rust_tests() -> None:
     hide unexecuted probe tests.
 
     11-05：`cargo-slots.sh` 的名额只来自统一闸（`~/ws/pdrs-ops/bin/cargo-slot`，
-    按主机 2 / 4 / 2 / 2）。CI 与普通开发机没有这把闸，脚本按设计 fail-closed
-    退出 2——那说明本机没有共享名额可等，不是「槽位已满」，继续跑 probe 测试；
-    退出 1（真的满）仍然是硬失败。
+    按主机 2 / 4 / 2 / 2）。CI 与普通开发机没有这把闸，脚本按 EX_UNAVAILABLE
+    退出 69——那说明本机没有共享名额可等，不是「槽位已满」，继续跑 probe 测试；
+    退出 1（真的满）仍然是硬失败，退出 2 / 3 / 4 / 64（脚本或闸坏了）同样是硬失败。
     """
     repo = SCRIPT.resolve().parents[2]
     cargo = shutil.which("cargo")
@@ -1157,9 +1168,9 @@ def test_probe_rust_tests() -> None:
         os.environ.copy(),
         60,
     )
-    if slots["exit"] == 2 and not slots["timedOut"]:
-        # 统一闸不可用（fail-closed）：本机没有共享名额，跑就是了。
-        print("note: 统一 cargo 闸不可用（cargo-slots.sh exit 2），本机无共享名额可等，继续")
+    if slots["exit"] == 69 and not slots["timedOut"]:
+        # 本机没有统一闸（EX_UNAVAILABLE）：没有共享名额可等，跑就是了。
+        print("note: 本机没有统一 cargo 闸（cargo-slots.sh exit 69），无共享名额可等，继续")
     elif slots["timedOut"] or slots["exit"] != 0:
         check("probe Rust tests: cargo slot is available", False,
               (slots["stdout"] + slots["stderr"]).strip()[-300:])

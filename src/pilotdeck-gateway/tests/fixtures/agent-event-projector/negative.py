@@ -905,9 +905,9 @@ fn directory_flags() -> rustix::fs::OFlags {
             [
                 "bash",
                 "-c",
-                # 0 = slot free, 2 = unified gate unavailable (no shared
-                # quota); both proceed. 1 (full) waits and retries.
-                'while :; do bash "$1"; rc=$?; [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] && break; sleep 30; done',
+                # 0 = slot free, 69 = no unified gate on this machine (no
+                # shared quota); both proceed. 1 (full) waits and retries.
+                'while :; do bash "$1"; rc=$?; [ "$rc" -eq 0 ] || [ "$rc" -eq 69 ] && break; sleep 30; done',
                 "cargo-slots",
                 str(fixture.parents[4] / "scripts/cargo-slots.sh"),
             ],

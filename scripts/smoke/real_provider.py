@@ -56,7 +56,9 @@ PROBE_SCENARIO_TIMEOUT_SECONDS = 45
 # timeout (environment-or-provider), never product-or-protocol.
 PROBE_TIMEOUT_SECONDS = PROBE_SCENARIO_TIMEOUT_SECONDS + 15
 BUILD_TIMEOUT_SECONDS = 600
-CARGO_SLOTS_TIMEOUT_SECONDS = 30
+# 180 s：cargo-slots.sh 在本机首次碰统一闸时要等冷 du（实测 38.6 s），
+# 之后走名额缓存是毫秒级。见 scripts/cargo-slots.sh 头注释。
+CARGO_SLOTS_TIMEOUT_SECONDS = 180
 
 # `stream-cancel` aborts on the first content delta. In the Anthropic Messages
 # protocol the `usage` block is emitted at the end of the stream, so an abort
