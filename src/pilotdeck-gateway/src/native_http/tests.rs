@@ -166,6 +166,7 @@ async fn exchange(server: &str, request: &[u8], id: &str, fixture: &Fixture) -> 
                     },
                     stop,
                     None,
+                    None,
                 )
                 .await;
                 if let Err(error) = served {
@@ -1177,11 +1178,11 @@ async fn header_budget_431s_like_ts() {
     );
     // The absolute-form target with a path and query exercises the
     // no-reallocation span arithmetic in `tracked_header_bytes`
-    // (`scheme + "://" + authority + path-and-query`); for every accepted
-    // form the sum renders byte-identical to `to_string()` (uri-probe,
-    // #1292), so the change is allocation-only and unkillable by byte
-    // comparisons — these cells pin the budget boundary for the fragmented
-    // form under the existing `native-http-header-budget-boundary` mutant.
+    // (`scheme + "://" + authority + path-and-query`); with a real path the
+    // sum renders byte-identical to `to_string()` (uri-probe, #1292), so the
+    // change is allocation-only there — these cells pin the budget boundary
+    // for the fragmented form under the existing
+    // `native-http-header-budget-boundary` mutant.
     let (raw, _) = exchange(
         "a",
         format!(
@@ -1215,6 +1216,51 @@ async fn header_budget_431s_like_ts() {
     assert!(
         closed,
         "#1292 the fragmented absolute-form span 431 closes the connection like TS"
+    );
+    // The absolute-form empty-path + query target `http://h?x=<pad>` is the
+    // one accepted form where the segmented sum and `to_string()` diverge:
+    // `PathAndQuery::as_str()` carries no implicit slash, so the sum is the
+    // raw target span on the wire (11 + pad) — exactly what Node's
+    // TrackHeader counts — while `to_string()` renders `http://h/?x=<pad>`
+    // one byte wider (probe `probe-p2.out`). The 16383 cell is the
+    // `native-http-uri-realloc` mutant's kill: under the to_string()
+    // re-render it lands on 16384 and 431s a target TS serves. Below the
+    // budget this lane answers the empty path with the static index where
+    // TS's router answers 404 (probe `probe-p2.out` p2a) — the budget
+    // boundary, not the route, is what replicates.
+    let (raw, _) = exchange(
+        "a",
+        format!(
+            "GET http://h?x={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "a".repeat(16359)
+        )
+        .as_bytes(),
+        "pin-budget-absolute-query",
+        &fixture,
+    )
+    .await;
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1292 the segmented empty-path + query span (tracked 16383, the raw target on the wire) stays under the budget — the to_string() re-render (16384) would 431 it; this lane's index answer vs TS's 404 is routing, not budget: {raw:?}"
+    );
+    let (raw, closed) = exchange(
+        "a",
+        format!(
+            "GET http://h?x={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "a".repeat(16360)
+        )
+        .as_bytes(),
+        "pin-budget-absolute-query-431",
+        &fixture,
+    )
+    .await;
+    assert!(
+        raw.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "#1292 the segmented empty-path + query span (tracked 16384) is the TS 431: {raw:?}"
+    );
+    assert!(
+        closed,
+        "#1292 the empty-path + query span 431 closes the connection like TS"
     );
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
@@ -1568,6 +1614,7 @@ async fn stop_serves_in_flight_request_and_waits_like_ts_close() {
             },
             stop_rx,
             Some(stop_count_in_serve),
+            None,
         )
         .await
     });
@@ -1893,6 +1940,7 @@ async fn keep_alive_idle_close_lands_at_six_seconds() {
             },
             stop_rx,
             None,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -1948,6 +1996,7 @@ async fn idle_close_waits_for_streaming_body() {
                 }
             },
             stop_rx,
+            None,
             None,
         ));
         client
@@ -2013,6 +2062,7 @@ async fn idle_close_refreshes_on_read_segments() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
             None,
         ));
         client
@@ -2091,6 +2141,7 @@ async fn handler_execution_blocks_idle_close() {
             },
             stop_rx,
             None,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -2155,6 +2206,7 @@ async fn idle_state_no_request_stays_open() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
             None,
         ));
         tokio::time::advance(Duration::from_secs(30)).await;
@@ -2244,6 +2296,7 @@ async fn pipelined_request_during_body() {
             },
             stop_rx,
             None,
+            None,
         ));
         client
             .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
@@ -2327,6 +2380,7 @@ async fn client_close_ends_connection_without_timer() {
             },
             stop_rx,
             None,
+            None,
         ));
         client
             .write_all(&latin1_bytes(
@@ -2373,6 +2427,7 @@ async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
             None,
         ));
         client
@@ -2485,6 +2540,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 },
                 stop_rx,
                 None,
+                None,
             ));
             client
                 .write_all(&latin1_bytes(
@@ -2530,6 +2586,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 },
                 stop_rx,
                 None,
+                None,
             ));
             // Let the serve task run once before the advance: the deadline is
             // armed at the connection's first poll (Node counts the 60 s from
@@ -2556,12 +2613,13 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
     .await;
 }
 
-/// #1292 (matrix M-7 row 2, probe `b1-T2.out`): once a head completed, no
-/// 408 exists anymore — a served connection with a partial follow-up head
-/// is ended by the 6 s keep-alive idle close, never by a 408: the deadline
-/// is not re-armed for follow-up heads.
+/// #1292 (matrix M-7 row 2, probe `b1-T2.out`): a served connection whose
+/// follow-up head arrives and then goes silent is ended by the 6 s
+/// keep-alive idle close, never by a 408 — the deadline re-armed for the
+/// follow-up head (fix-r1, 60 s) is far behind the idle close no further
+/// segment refreshes.
 #[tokio::test(start_paused = true)]
-async fn served_follow_up_head_gets_no_headers_timeout() {
+async fn served_follow_up_head_silent_ends_at_idle_close() {
     manual_clock(async {
         let (server, mut client) = tokio::io::duplex(4096);
         let (_stop, stop_rx) = watch::channel(false);
@@ -2577,6 +2635,7 @@ async fn served_follow_up_head_gets_no_headers_timeout() {
                 async move { serve(&request, &config).await }
             },
             stop_rx,
+            None,
             None,
         ));
         client
@@ -2594,15 +2653,15 @@ async fn served_follow_up_head_gets_no_headers_timeout() {
             .expect("#1292 write the partial follow-up head");
         // Let the serve task read the segment before the advance: the read
         // refreshes the idle deadline at this instant, and the close must land
-        // at last activity + 6 s with no 408 in front of it, never at the
-        // 60 s headersTimeout (which would land at connection + 60 s).
+        // at last activity + 6 s with no 408 in front of it — the re-armed
+        // deadline (head first byte + 60 s) never gets near a silent head.
         for _ in 0..8 {
             tokio::task::yield_now().await;
         }
         tokio::time::advance(Duration::from_millis(5_930)).await;
         probe_still_open(
             &mut client,
-            "#1292 the partial follow-up head stays unanswered: no 408 exists once a head completed",
+            "#1292 the silent partial follow-up head stays unanswered: the 6 s idle close owns it",
         )
         .await;
         eof_after_idle_close(
@@ -2615,6 +2674,376 @@ async fn served_follow_up_head_gets_no_headers_timeout() {
         assert!(
             served.is_ok(),
             "#1292 the follow-up-head connection future resolves Ok once the idle close ended it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r1 (matrix M4, probes `probe-p11.out`/`probe-p12.out`): Node
+/// re-arms `headersTimeout` per request — after a served first response, a
+/// follow-up head that keeps dribbling one byte per second never lets the
+/// 6 s idle close land (every segment refreshes it,
+/// `node-dribble-valid-segments.out`) yet is answered with the 51-byte 408
+/// at the head's first byte + 60 s. The follow-up head starts 5 s into the
+/// connection's life, so the re-armed deadline (+65 s) is distinct from the
+/// pre-fix-r1 arm (connection start + 60 s): the probes bracket the old
+/// arm's instant before crossing the re-armed one. Like the real TS server,
+/// the 408 never lands at the deadline itself — the connections checker's
+/// 30 s grid (anchored at the listener's bind) quantizes +65 s up to the
+/// next grid point (+90 s), and the probes at the deadline and at +80 s pin
+/// that nothing fires in between. Binds the negative control
+/// `native-http-headers-rearm-off` (the per-request re-arm removed, so the
+/// once-armed connection-start deadline is consumed by the served first
+/// request and the dribble hangs past every deadline with no 408) and kills
+/// `native-http-headers-grid-off` at the +65 s probe (deadline mode would
+/// answer the 408 exactly there).
+#[tokio::test(start_paused = true)]
+async fn served_follow_up_head_dribble_408s_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the first health request");
+        read_response(&mut client, "dribble first health").await;
+        // The follow-up head starts 5 s in — inside the 6 s keep-alive
+        // window, late enough that its re-armed deadline (first byte + 60 s
+        // = +65 s) is measurable against the pre-fix-r1 connection-start arm
+        // (+60 s).
+        tokio::time::advance(Duration::from_secs(5)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the partial follow-up head");
+        // Let the serve task read the first segment: it re-arms the deadline
+        // at the head's first byte — the request's own headersTimeout start.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // Dribble one byte per second: each segment refreshes the idle
+        // deadline (never its 6 s close) but must not defer the re-armed
+        // 60 s deadline. The writes are error-tolerant: the grid-off
+        // negative control (deadline mode) closes the connection exactly at
+        // the +65 s iteration, and the cell's verdict must come from the
+        // probes below, not from a failed dribble write.
+        for second in 6..=89u64 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            let _ = client.write_all(&latin1_bytes("X")).await;
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+            if second == 59 {
+                // t = +59 s: still unanswered just before the pre-fix-r1
+                // arm's instant (the re-armed deadline is +65 s).
+                probe_still_open(
+                    &mut client,
+                    "#1292 the dribbling follow-up head stays unanswered just before the pre-fix-r1 arm's 60 s instant",
+                )
+                .await;
+            }
+            if second == 61 {
+                // t = +61 s: past the connection-start instant with the
+                // re-armed deadline still pending — only the per-request
+                // re-arm keeps a timer alive here at all.
+                probe_still_open(
+                    &mut client,
+                    "#1292 the dribbling follow-up head stays unanswered past the pre-fix-r1 arm's 60 s instant",
+                )
+                .await;
+            }
+            if second == 65 {
+                // t = +65 s: the re-armed deadline itself. Nothing fires
+                // here — the 408 quantizes up to the next checker grid
+                // point (+90 s), never landing at the deadline.
+                probe_still_open(
+                    &mut client,
+                    "#1292 the dribbling follow-up head stays unanswered at the re-armed deadline itself: the 408 lands on the next connections-checker grid point (+90 s), never at the deadline",
+                )
+                .await;
+            }
+            if second == 80 {
+                // t = +80 s: between the deadline and its grid landing.
+                probe_still_open(
+                    &mut client,
+                    "#1292 the dribbling follow-up head stays unanswered between the re-armed deadline and its grid landing",
+                )
+                .await;
+            }
+        }
+        // t ≈ +89.2 s (the probes each add 60 ms): still nothing, just
+        // before the grid landing.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the dribbling follow-up head stays unanswered just before the +90 s grid landing",
+        )
+        .await;
+        tokio::time::advance(Duration::from_millis(200)).await;
+        headers_timeout_408_arrives(&mut client, "dribbled follow-up head").await;
+        let served = task.await.expect("#1292 dribble task join");
+        ended_by_408_close(
+            served,
+            "the dribble connection future ends at the 408 close",
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r1 (ADDENDUM, probe `probe-p12.out` cells p12a/p12b): the
+/// 408's landing is the connections checker's grid — a 30 s interval
+/// anchored at the listener's bind — not the connection's own start and
+/// not the deadline itself. A connection whose partial head begins 15 s
+/// after the bind carries a +75 s deadline that must not land at +75 s:
+/// it quantizes up to the anchor's next grid point (+90 s). The probes
+/// bracket the deadline (+74 s) and the gap before the landing (+89 s):
+/// nothing may answer in between. Binds the negative control
+/// `native-http-headers-grid-off` (deadline mode: the 408 fires at +75 s
+/// and the +89 s probe reads it).
+#[tokio::test(start_paused = true)]
+async fn headers_timeout_lands_on_checker_grid_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        // The connection begins 15 s after the listener's bind: its own
+        // deadline (+75 s) is off the anchor's phase, so only the bind
+        // grid can land the 408 at +90 s — a per-connection 30 s alignment
+        // or the deadline itself would answer earlier.
+        tokio::time::advance(Duration::from_secs(15)).await;
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the phase-shifted partial head");
+        // Let the serve task run once before the advances: the deadline is
+        // armed at the connection's first poll, so advancing first would
+        // push it out and the 408 would never land.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +74 s: still unanswered just before the deadline.
+        tokio::time::advance(Duration::from_millis(59_400)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the phase-shifted partial head stays unanswered just before its +75 s deadline",
+        )
+        .await;
+        // t = +89 s: past the deadline, still nothing — the landing is the
+        // anchor's next grid point at +90 s, not the deadline.
+        tokio::time::advance(Duration::from_millis(14_900)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the phase-shifted partial head stays unanswered past its deadline and before its +90 s grid landing",
+        )
+        .await;
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "phase-shifted partial head").await;
+        let served = task.await.expect("#1292 phase-shifted task join");
+        ended_by_408_close(
+            served,
+            "the phase-shifted connection future ends at the 408 close",
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r1 (matrix M6): while a request is in flight — here a pipelined
+/// second request whose response body is held mid-stream — no
+/// headersTimeout exists: Node's `requestTimeout` (300 s, registered as not
+/// replicated) governs a busy socket, so crossing the re-armed deadline's
+/// instant mid-flight answers neither a 408 nor a close, and the held
+/// response is delivered normally afterwards.
+#[tokio::test(start_paused = true)]
+async fn in_flight_request_disarms_rearmed_timeout() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let release_rx = release_rx;
+        // Both requests are `/health` (the read helper pins the 200); the
+        // counter holds only the second one mid-service.
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                let mut release = release_rx.clone();
+                let count = request_count.clone();
+                async move {
+                    if count.fetch_add(1, Ordering::Relaxed) == 1 {
+                        release
+                            .wait_for(|released| *released)
+                            .await
+                            .expect("#1292 hold signal intact");
+                    }
+                    serve(&request, &config).await
+                }
+            },
+            stop_rx,
+            None,
+            None,
+        ));
+        // Pipelined: both requests are on the wire before any response is
+        // read, so the second head is parsed from hyper's buffer while the
+        // first response streams.
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\nGET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the pipelined requests");
+        read_response(&mut client, "pipelined first health").await;
+        // Cross the first response's re-armed deadline (its finish + 60 s)
+        // while the second request is still in flight: nothing may answer.
+        tokio::time::advance(Duration::from_millis(60_500)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the in-flight second request stays unanswered past the re-armed deadline: requestTimeout owns a busy socket",
+        )
+        .await;
+        release_tx.send_replace(true);
+        read_response(&mut client, "held second health").await;
+        tokio::time::advance(Duration::from_millis(5_930)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the second response's connection stays open at +5.99 s past its finish",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(200),
+            "#1292 the pipelined connection ends at the 6 s idle close",
+        )
+        .await;
+        let served = task.await.expect("#1292 pipelined task join");
+        assert!(
+            served.is_ok(),
+            "#1292 the pipelined connection future resolves Ok once the idle close ended it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r1 (review P2, opus boundary): the served disarm — once the
+/// awaited head has parsed, the request owns the socket: Node's parser
+/// leaves the checker's active list on `on_message_complete`, so neither a
+/// served socket nor one whose response is still streaming is ever
+/// header-timeout-eligible. Here the first request's response is held
+/// mid-stream across the deadline armed at the connection's start (+60 s):
+/// no 408 may interrupt it, and the response completes normally once
+/// released; the connection then ends at its own 6 s idle close. Binds the
+/// negative control `native-http-headers-timeout-ignores-served` (the
+/// served/busy disarm removed, so the 408 fires at +60 s straight into the
+/// held response and the probe reads it).
+#[tokio::test(start_paused = true)]
+async fn held_response_gets_no_headers_timeout() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let release_rx = release_rx;
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                let mut release = release_rx.clone();
+                async move {
+                    release
+                        .wait_for(|released| *released)
+                        .await
+                        .expect("#1292 hold signal intact");
+                    serve(&request, &config).await
+                }
+            },
+            stop_rx,
+            None,
+            None,
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the held health request");
+        // Let the serve task parse the head before the advance: the parse
+        // itself is what takes the socket off the checker's active list
+        // (served_heads passes the disarm watermark), so the deadline armed
+        // at the connection's start must already be inert.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // Cross the armed deadline (+60 s) mid-response: nothing may answer.
+        tokio::time::advance(Duration::from_millis(60_500)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the held first response gets no 408 past its headersTimeout: the parsed request owns the socket",
+        )
+        .await;
+        release_tx.send_replace(true);
+        read_response(&mut client, "held first health").await;
+        tokio::time::advance(Duration::from_millis(5_930)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the held response's connection stays open at +5.99 s past its finish",
+        )
+        .await;
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(200),
+            "#1292 the held-response connection ends at the 6 s idle close",
+        )
+        .await;
+        let served = task.await.expect("#1292 held-response task join");
+        assert!(
+            served.is_ok(),
+            "#1292 the held-response connection future resolves Ok once the idle close ended it: {served:?}"
         );
     })
     .await;
@@ -2643,6 +3072,7 @@ async fn stop_disarms_headers_timeout() {
             },
             stop_rx,
             Some(stop_count.clone()),
+            None,
         ));
         client
             .write_all(&latin1_bytes(
@@ -2667,6 +3097,21 @@ async fn stop_disarms_headers_timeout() {
         probe_still_open(
             &mut client,
             "#1292 the stopped partial head stays unanswered past the headersTimeout: close() cleared Node's connections checker",
+        )
+        .await;
+        // One more segment after the stop: a read on a stopped connection
+        // must not re-arm the deadline either (the re-arm consults the stop
+        // channel), so the connection stays unanswered past a further
+        // deadline's worth of time. The write is error-tolerant in case the
+        // stopped lane ever closes early — the verdict is the probe's.
+        let _ = client.write_all(&latin1_bytes("X")).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_millis(60_500)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the stopped partial head stays unanswered past a post-stop segment: the stop blocks the re-arm too",
         )
         .await;
         drop(client);

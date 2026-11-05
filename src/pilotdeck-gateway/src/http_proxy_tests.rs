@@ -495,11 +495,15 @@ fn cancelling_service_lease_wakes_paused_reader() {
         io,
         state.clone(),
         tokio::sync::watch::channel(None).0,
-        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicUsize::new(1)),
         // #1292: no headersTimeout in this gate-level test — it pins the
         // lease wake path, not the deadline.
         None,
         None,
+        None,
+        None,
+        tokio::sync::watch::channel(0usize).1,
+        Arc::new(AtomicUsize::new(0)),
     );
     let lease = ReadLease(state.clone());
     let mut bytes = [0; 1];

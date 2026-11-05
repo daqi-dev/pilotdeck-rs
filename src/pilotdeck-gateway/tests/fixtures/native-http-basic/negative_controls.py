@@ -113,6 +113,33 @@ switches = [
     # every cell's panic payload.
     ('native-http-headers-timeout-off', SOURCE_PROXY, 'unserved_head_headers_timeout_408s_like_ts',
      'the 51-byte 408 never arrived at the headersTimeout deadline'),
+    # #1292 fix-r1: Node re-arms headersTimeout per request — a served first
+    # response must not consume the follow-up head's own 60 s window; the
+    # mutant never re-arms, so the dribbled follow-up head hangs past every
+    # deadline and the 408 never arrives (probes probe-p11.out/probe-p12.out).
+    ('native-http-headers-rearm-off', SOURCE_PROXY, 'served_follow_up_head_dribble_408s_like_ts',
+     'the 51-byte 408 never arrived at the headersTimeout deadline'),
+    # #1292 fix-r1: the 408 lands on the connections checker's 30 s grid
+    # anchored at the listener's bind, never at the deadline itself (probe
+    # probe-p12.out p12a: a +15 s connection's +75 s deadline answers at +90 s);
+    # the mutant fires at the deadline, so the phase-shifted head's 408 is
+    # already buffered when the pre-landing probe reads it.
+    ('native-http-headers-grid-off', SOURCE_PROXY, 'headers_timeout_lands_on_checker_grid_like_ts',
+     'the phase-shifted partial head stays unanswered past its deadline and before its +90 s grid landing'),
+    # #1292 fix-r1: a parsed request owns the socket — Node's parser leaves
+    # the checker's active list on on_message_complete, so neither a served
+    # socket nor a held response is header-timeout-eligible; the mutant keeps
+    # the connection-start deadline armed and answers the held response with
+    # the 408 the probe then reads.
+    ('native-http-headers-timeout-ignores-served', SOURCE_PROXY, 'held_response_gets_no_headers_timeout',
+     'the held first response gets no 408 past its headersTimeout'),
+    # #1292 fix-r1: Node's TrackHeader counts the raw target span, and the
+    # absolute-form empty-path + query target is the one accepted form where
+    # the segmented sum and to_string() diverge (probe probe-p2.out: pad 16359
+    # is raw 16383 served / toString 16384); the mutant re-renders and 431s a
+    # target TS serves.
+    ('native-http-uri-realloc', SOURCE, 'header_budget_431s_like_ts',
+     'the raw target on the wire) stays under the budget'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

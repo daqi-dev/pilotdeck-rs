@@ -48,6 +48,12 @@ pub struct NativeWsServer {
     version: String,
     resources: Resources,
     http: native_http::Config,
+    /// #1292 fix-r1: the bind instant — Node anchors its connections
+    /// checker's 30 s grid (`setInterval(checkConnections, 30_000)` armed
+    /// at `'listening'`) here, so every connection's `headersTimeout` 408
+    /// lands on a phase measured from the server, not the connection
+    /// (fix-r1 probe `probe-p12a.out`).
+    grid_anchor: tokio::time::Instant,
     /// #1292: how many connection servings consumed a genuine stop, so a
     /// test can deterministically sequence its next step after the stop (the
     /// replacement for the #1209 stop tests' fixed 100/200 ms sleeps).
@@ -85,6 +91,7 @@ impl NativeWsServer {
             static_root: None,
         };
         Ok(Self {
+            grid_anchor: tokio::time::Instant::now(),
             listener: TcpListener::bind(address).await?,
             host,
             token,
@@ -164,6 +171,7 @@ impl NativeWsServer {
                 version,
                 resources,
                 http,
+                grid_anchor,
                 stop_observed,
             } = self;
             let mut connections = JoinSet::new();
@@ -201,7 +209,7 @@ impl NativeWsServer {
                                     Some(permit)
                                 };
                                 if let Err(error) =
-                                    serve_socket(socket, host, token, version, input, http, stop_http, stop_observed)
+                                    serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed)
                                         .await
                                 {
                                     eprintln!("native WS connection: {error}");
@@ -579,6 +587,7 @@ async fn serve_socket(
     version: String,
     input: Arc<Semaphore>,
     http: native_http::Config,
+    grid_anchor: tokio::time::Instant,
     stop: watch::Receiver<bool>,
     stop_observed: Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<(), ProxyError> {
@@ -626,6 +635,7 @@ async fn serve_socket(
         },
         stop,
         Some(stop_observed),
+        Some(grid_anchor),
     )
     .await?;
     drop(upgrade);
