@@ -160,6 +160,7 @@ struct PumpContext<'a> {
     publisher: &'a TurnPublisher,
     progress: &'a Mutex<SnapshotProgress>,
     timed_out: &'a AtomicBool,
+    terminal: &'a TerminalClaim,
     ready: oneshot::Sender<(tokio::time::Instant, LiveSessionHandle)>,
     workspace_id: Option<JsString>,
     recorder: Option<Arc<dyn SubmitSnapshots>>,
@@ -591,6 +592,7 @@ impl TurnSubmitter {
                     publisher: &worker_publisher,
                     progress: &worker_progress,
                     timed_out: &worker_timeout,
+                    terminal: &worker_terminal,
                     ready,
                     workspace_id,
                     recorder,
@@ -692,12 +694,17 @@ impl TurnSubmitter {
                         let mut event = error_event(&run, "turn_timeout", &message, false);
                         set(&mut event, "userHint", hint.into());
                         publisher.gateway_event(event);
-                        publisher.close_live();
                     }
-                    // Settlement is sent after the terminal is fully written so a
-                    // worker that observed the timeout cannot close delivery
-                    // before the winner's events exist.
+                    // The deadline always closes delivery, whoever wrote the
+                    // terminal: the winner's worker only reaches `finish` after
+                    // its own host futures return, and a hanging host future
+                    // would otherwise keep the turn (and its admission and
+                    // fence) alive forever. Events the winner already queued
+                    // still drain; this only stops new ones. The settlement is
+                    // sent first so a worker that observed the timeout can
+                    // drain and finish before the close.
                     let _ = timeout_settled.send(());
+                    publisher.close_live();
                 }
             }
         };
@@ -908,6 +915,7 @@ impl TurnSubmitter {
             publisher,
             progress,
             timed_out,
+            terminal,
             ready,
             workspace_id,
             recorder,
@@ -1158,6 +1166,10 @@ impl TurnSubmitter {
                     .is_current_completion(&run.session_key, completion)
                 && !guard.is_tripped()
                 && let Some(trip) = guard.observe(&event)
+                // Same single-writer rule as the pump failure path: a policy
+                // stop is a terminal, so a deadline that already claimed the
+                // turn keeps it (and this trip is dropped, not double-recorded).
+                && terminal.claim()
             {
                 self.trip_failure_guard(run, publisher, &handle, &trip, last_model.as_ref())
                     .await?;
