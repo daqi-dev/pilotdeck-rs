@@ -420,7 +420,7 @@ async fn mcp_legacy_start_failure_matrix() {
     // Abort: start stays pending while the SSE body stalls; close() settles
     // it with Connection closed (TS keeps start pending forever — registered).
     {
-        let server = scripted_server(vec![(stalled, true)], tag).await;
+        let mut server = scripted_server(vec![(stalled, true)], tag).await;
         let wire = Wire::http(HttpLink::new(
             HttpKind::LegacySse,
             server.url.clone(),
@@ -436,6 +436,26 @@ async fn mcp_legacy_start_failure_matrix() {
             assert!(
                 pending.as_mut().poll(cx).is_pending(),
                 "{tag}: start stays pending while the body stalls"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
+        // Wait until the server has written the headers and is holding the
+        // body open. Without this the event source may never be polled before
+        // the abort: `close()` has no await point, so the row would only
+        // exercise the abort-before-connect path and the "stalls" half of its
+        // claim would be vacuous.
+        let mut held = server
+            .stalled
+            .take()
+            .unwrap_or_else(|| panic!("{tag}: stall channel"));
+        bounded(held.recv(), tag)
+            .await
+            .unwrap_or_else(|| panic!("{tag}: the server must reach the stalled body"));
+        std::future::poll_fn(|cx| {
+            assert!(
+                pending.as_mut().poll(cx).is_pending(),
+                "{tag}: start stays pending while the stalled body is open"
             );
             std::task::Poll::Ready(())
         })
@@ -550,6 +570,10 @@ async fn scripted_server(responses: Vec<(Vec<u8>, bool)>, tag: &'static str) -> 
     let url = Url::parse(&format!("http://{address}/mcp"))
         .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
     let (connections, reported) = mpsc::unbounded_channel();
+    // Fires once the scripted response has been written and the socket is
+    // being held open without its body: accepting a connection is not enough,
+    // the client may still be sending its request.
+    let (stalled, held) = mpsc::unbounded_channel();
     let task = tokio::spawn(async move {
         let mut sockets = JoinSet::new();
         let mut index = 0usize;
@@ -559,6 +583,7 @@ async fn scripted_server(responses: Vec<(Vec<u8>, bool)>, tag: &'static str) -> 
                     let (socket, _) = accepted
                         .unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
                     let (bytes, stall) = responses[index.min(responses.len() - 1)].clone();
+                    let stalled = stalled.clone();
                     sockets.spawn(async move {
                         let mut socket = socket;
                         let mut request = Vec::new();
@@ -580,6 +605,7 @@ async fn scripted_server(responses: Vec<(Vec<u8>, bool)>, tag: &'static str) -> 
                             return;
                         }
                         if stall {
+                            let _ = stalled.send(());
                             let mut buf = [0; 1024];
                             let _ = bounded(socket.read(&mut buf), tag).await;
                         }
@@ -598,12 +624,16 @@ async fn scripted_server(responses: Vec<(Vec<u8>, bool)>, tag: &'static str) -> 
     ScriptedServer {
         url,
         connections: Some(reported),
+        stalled: Some(held),
         task,
     }
 }
 struct ScriptedServer {
     url: Url,
     connections: Option<mpsc::UnboundedReceiver<usize>>,
+    /// Fires once a scripted response has been written and the socket is held
+    /// open without its body.
+    stalled: Option<mpsc::UnboundedReceiver<()>>,
     task: JoinHandle<()>,
 }
 impl Drop for ScriptedServer {

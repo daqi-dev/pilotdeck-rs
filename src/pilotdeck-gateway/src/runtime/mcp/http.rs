@@ -1957,7 +1957,7 @@ mod tests {
                 ),
                 "sse" => {
                     let mut events = Vec::new();
-                    read_events(response.into_body(), &signal, before_abort, |event| {
+                    let _ = read_events(response.into_body(), &signal, before_abort, |event| {
                         events.push(event)
                     })
                     .await;
