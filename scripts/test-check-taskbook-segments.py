@@ -565,6 +565,34 @@ case("Cargo.lock 两段共写也要报（P2 假 PASS）", 1,
 case(".jsonl fixture 两段共写也要报（gate16 sibling P2）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`src/fixtures/events.jsonl`")
      .replace("`src/native_http.rs`", "`src/fixtures/events.jsonl`"), must=["共写同一文件"])
+# gate18 GLM boundary P0：`strip("|")` 把 `|| a | b | …` 的粘写双竖线一并剥掉，GFM 空首格塌缩、
+# 整行左移一位 → 6 格行与 5 列表头对齐，非合规任务书 rc 0
+case("行首双竖线的空段名不许塌缩（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(
+         "| S2 HTTP 同域 | `src/native_http.rs` | `S2-RESULT.md` + `final.patch` S2 | 60 min | S1 |",
+         "|| S2 HTTP 同域 | `src/native_http.rs` | `S2-RESULT.md` + `final.patch` S2 | 60 min | S1 |"),
+     must=["段名」为空"])
+# gate18 MiniMax boundary：`FILE_TOKEN` 交替最左优先，`events.jsonl` 被 `js` 吃成 `events.js`
+# → `.json` 与 `.jsonl` 两个不同文件撞键，合规任务书被判共写（假 FAIL，文件名也是错的）
+case("四处扩展名最左优先：.json 与 .jsonl 分属两段不算共写（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`src/fixtures/events.json`")
+     .replace("`src/native_http.rs`", "`src/fixtures/events.jsonl`"))
+case("同一 .jsonl 两段共写的报错要写全扩展名（不是 events.js）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`src/fixtures/events.jsonl`")
+     .replace("`src/native_http.rs`", "`src/fixtures/events.jsonl`"),
+     must=["events.jsonl（段间不共写"])
+case(".ts 与 .tsx 分属两段不算共写（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`src/a.ts`")
+     .replace("`src/native_http.rs`", "`src/a.tsx`"))
+# gate18 MiniMax boundary P1：共写键不归一（`SRC/A.rs` vs `src/a.rs` 是同一个文件）→ 规则被绕过
+case("同一文件大小写不同写法也算共写（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`src/a.rs`")
+     .replace("`src/native_http.rs`", "`SRC/A.rs`"), must=["共写同一文件"])
+case("x/../x/a.rs 与 x/a.rs 归一到同一键（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`x/a.rs`")
+     .replace("`src/native_http.rs`", "`x/../x/a.rs`"), must=["共写同一文件"])
+case("不同文件不算共写（正控：src/a.rs 与 src/b.rs）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`src/a.rs`"))
 
 # ---- fix-r13：gate14（DeepSeek boundary P0×1 + GLM boundary P1×1）---------------------------------
 # 区间两侧各自连写时，`max(所有 token)` 只取到 60：105 min 的段被当成 60 → rc 0 假 PASS
@@ -648,6 +676,24 @@ PARSE_EST = [
     ("2", "d", None),
     ("2", None, None),
 ]
+
+CLI_CASES = [
+        ("--print-skeleton 带文件参数", ["x", "--print-skeleton", "task.md"], 3),
+        ("--print-skeleton 带 --recent", ["x", "--print-skeleton", "--recent", "24"], 3),
+        ("未知参数不许静默吞掉", ["x", "--jso", "task.md"], 3),
+        ("--recent 缺小时数", ["x", "--recent"], 3),
+        ("--recent nan 是用法错误", ["x", "--recent", "nan", "task.md"], 3),
+        ("--recent 0 是用法错误", ["x", "--recent", "0", "task.md"], 3),
+        ("--recent 窗口短于新鲜度阈值是用法错误", ["x", "--recent", "0.001", "task.md"], 3),
+        ("--recent 负数 是用法错误", ["x", "--recent", "-1", "task.md"], 3),
+        ("--recent --root 不是目录是用法错误", ["x", "--recent", "24", "--root", "/nonexistent-pdrs-xyz"], 3),
+        ("--root 不带 --recent 是用法错误", ["x", "--root", ".", "task.md"], 3),
+        ("--recent 写了两次是用法错误（last-wins 会漏扫）",
+         ["x", "--recent", "24", "--recent", "24"], 3),
+        ("--root 写了两次是用法错误（last-wins 会漏扫）",
+         ["x", "--recent", "24", "--root", ".", "--root", "."], 3),
+]
+
 
 
 def run():
@@ -952,7 +998,7 @@ def run():
         one = "<!--pdrs-scope files=2 -->" * 78000      # 2.03 MB / 7.8 万条
         # 每档取 3 次的最小值：满载机器上单次会被抢占（实测同一档 0.35 / 0.9 / 1.2 s 都出现过），
         # 最小值才反映算法本身；平方实现在最小耗时上照样是 4 倍。
-        def _best(text, times=3):
+        def _best(text, times=4):
             best = float("inf")
             res = None
             for _ in range(times):
@@ -963,7 +1009,9 @@ def run():
         (sc2, err2), d1 = _best(one)
         (sc2b, err2b), d2 = _best(one * 2)              # 4.06 MB / 15.6 万条
         ratio = d2 / max(d1, 0.02)
-        ok = (ratio < 3.0 and len(sc2) == 78000 and not err2 and len(sc2b) == 156000 and not err2b
+        # 阈值 3.5：满载（四路 gate 同时在跑）实测同一条曾到 3.02 误红；平方实现是 4 倍以上，
+        # 3.5 仍分得开「线性（~2 倍）」与「平方（~4 倍）」，不改变判据语义。
+        ok = (ratio < 3.5 and len(sc2) == 78000 and not err2 and len(sc2b) == 156000 and not err2b
               and ctbs.parse_scopes("<!-- pdrs-scope: files=2")[1])   # 未闭合注释里的 scope 仍要报错
         print(f"{'PASS' if ok else 'FAIL'}  scope 扫描线性（2.03 MB {d1:.2f}s → 4.06 MB {d2:.2f}s，"
               f"比值 {ratio:.1f} <3；60k 条={len(sc2)}）：err1={len(err1)}")
@@ -1020,24 +1068,16 @@ def run():
 
 
     # 命令行契约
-    for name, argv, expect in (
-            ("--print-skeleton 带文件参数", ["x", "--print-skeleton", "task.md"], 3),
-            ("--print-skeleton 带 --recent", ["x", "--print-skeleton", "--recent", "24"], 3),
-            ("未知参数不许静默吞掉", ["x", "--jso", "task.md"], 3),
-            ("--recent 缺小时数", ["x", "--recent"], 3),
-            ("--recent nan 是用法错误", ["x", "--recent", "nan", "task.md"], 3),
-            ("--recent 0 是用法错误", ["x", "--recent", "0", "task.md"], 3),
-            ("--recent 窗口短于新鲜度阈值是用法错误", ["x", "--recent", "0.001", "task.md"], 3),
-            ("--recent 负数 是用法错误", ["x", "--recent", "-1", "task.md"], 3),
-            ("--recent --root 不是目录是用法错误", ["x", "--recent", "24", "--root", "/nonexistent-pdrs-xyz"], 3),
-            ("--root 不带 --recent 是用法错误", ["x", "--root", ".", "task.md"], 3),
-    ):
+    for name, argv, expect in CLI_CASES:
         rc = ctbs.main(argv)
         ok = rc == expect
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 36 + len(PARSE_EST)   # 26 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 符号链接目录 / 真实 chmod 000 …）+ 10 条命令行契约；两份清单都要与实际 print 行数同源（修前写「26 + 9」，加一条独立检查又不改常数，SUMMARY 就多报一条）
+    # 命令行契约用 len(CLI_CASES) 数，不再手写常数（加一条契约就 SUMMARY 失真，gate18 GLM P3 同款）。
+    # 剩下的 26 条独立检查仍在 run() 里线性铺开（chmod 000 / symlink 用例在 root / 无符号链接平台
+    # 会整块跳过而不打印——那一处仍是手写常数，见 SEGMENTS.md §6）。
+    total = len(CASES) + 26 + len(CLI_CASES) + len(PARSE_EST)
     # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
     for cell, unit, want in PARSE_EST:
         got = ctbs.parse_est(cell, unit)
