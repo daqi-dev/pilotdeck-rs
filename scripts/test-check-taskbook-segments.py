@@ -477,6 +477,14 @@ case("小数小时连写 1.5h40m = 130 min（P0）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1.5h40m |"), must=["130 min > 90 min"])
 case("小数小时连写 1.5h100min = 190 min（P0）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1.5h100min |"), must=["190 min > 90 min"])
+case("括注「不含」是排除不是包含：90 + 30 = 120 min（P0 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 min（不含 30 min 测试） |"),
+     must=["120 min > 90 min"])
+case("括注「未含」同样计入", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60 min（未含 40 min 联调） |"),
+     must=["100 min > 90 min"])
+case("括注「含」仍是包含：90 min 不变", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 min（含 30 min 测试） |"))
 case("万位分组 1,0000 min 不许读成 1 min（P1 假 PASS）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1,0000 min |"), must=["10000 min > 90 min"])
 case("全角万位分组 1，0000 min 同样（P1）", 1,
@@ -498,6 +506,21 @@ case("Cargo.lock 两段共写也要报（P2 假 PASS）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`Cargo.lock`")
      .replace("`src/native_http.rs`", "`Cargo.lock`"), must=["共写同一文件"])
 
+# ---- fix-r13：gate14（DeepSeek boundary P0×1 + GLM boundary P1×1）---------------------------------
+# 区间两侧各自连写时，`max(所有 token)` 只取到 60：105 min 的段被当成 60 → rc 0 假 PASS
+case("区间两侧各自连写：1h30m–1h45m = max(90,105) = 105（P0 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1h30m–1h45m |"), must=["105 min > 90 min"])
+case("小数小时 + 区间：1.5h–1h45m = 105（P0）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1.5h–1h45m |"), must=["105 min > 90 min"])
+case("段落懒续行里的缩进 scope 不许静默忽略（P1 假 PASS）", 2,
+     "# t\n一些正文\n    <!-- pdrs-scope: files=6 est_min=300 -->\n\n## 要做\n1. 改 src/a.rs\n",
+     must=["缩进在正文下面"])
+case("列表项下贴的缩进示例仍静默忽略（正控）", 0,
+     "# t\n\n- scope 写法示例：\n    <!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n正文\n")
+case("大写 PROGRESS.md 也算进度文件（P3 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
+                                     "_tmp/20261105-issue-100/PROGRESS.md"))
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -511,6 +534,12 @@ PARSE_EST = [
     ("1.5h30m", "", 120.0),
     ("1.5h40m", "", 130.0),
     ("1.5h100min", "", 190.0),
+    ("90 min（不含 30 min 测试）", "", 120.0),
+    ("60 min（未含 40 min 联调）", "", 100.0),
+    ("90 min（含 30 min 测试）", "", 90.0),
+    ("1h30m–1h45m", "", 105.0),
+    ("1.5h–1h45m", "", 105.0),
+    ("80–120 min", "", 120.0),
     ("1,0000 min", "", 10000.0),
     ("1，0000 min", "", 10000.0),
     ("1 h 100 min", "", 160.0),
