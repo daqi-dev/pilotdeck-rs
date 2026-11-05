@@ -944,13 +944,34 @@ await mkdir(out, { recursive: true });
 // #1339 fix-r7 (P2, minimax sibling #3): ask by *connecting*, not by binding.
 // libuv sets `SO_REUSEADDR` on `listen`, and on macOS/BSD such a socket binds a
 // concrete address even while a wildcard listener owns the port — the same
-// blind spot the Rust-side guard dropped in fix-r6. A connect probe answers
-// "occupied" for any live listener and "free" for a `TIME_WAIT` remnant.
-const portIsFree = (port: number) => new Promise<boolean>((done) => {
-  const probe = net.connect(port, '127.0.0.1');
-  probe.once('connect', () => { probe.destroy(); done(false); });
-  probe.once('error', () => { probe.destroy(); done(true); });
-});
+// blind spot the Rust-side guard dropped in fix-r6.
+//
+// #1339 fix-r8 (P2, Codex): only `ECONNREFUSED` proves the port free. Any other
+// error (`EADDRNOTAVAIL`, resource exhaustion, ...) and a probe that never
+// settles say nothing about the port, so they abort the recording instead of
+// being read as "free".
+const portIsFree = (port: number) =>
+  new Promise<boolean>((done, fail) => {
+    const probe = net.connect(port, '127.0.0.1');
+    const timer = setTimeout(() => {
+      probe.destroy();
+      fail(new Error(`#1339 port ${port} probe timed out; refusing to record an oracle`));
+    }, 1000);
+    probe.once('connect', () => {
+      clearTimeout(timer);
+      probe.destroy();
+      done(false);
+    });
+    probe.once('error', (error: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      probe.destroy();
+      if (error.code === 'ECONNREFUSED') {
+        done(true);
+        return;
+      }
+      fail(new Error(`#1339 port ${port} probe failed with ${error.code ?? error.message}; refusing to record an oracle`));
+    });
+  });
 for (const definition of definitions) {
   assert.ok(
     await portIsFree(definition.port),

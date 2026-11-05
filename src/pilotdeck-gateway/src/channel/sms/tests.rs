@@ -433,11 +433,16 @@ async fn ensure_replay_port_free(port: u16) {
     // neither problem: a live listener answers, a lingering `TIME_WAIT` socket
     // refuses.
     //
-    // #1339 fix-r7 (P2, Codex): what this probe does *not* see is a socket that
-    // is bound but never listens, or a v6-only listener on the same port. Both
-    // make the replay's own `127.0.0.1` bind fail right after, so they surface
-    // as a bind error rather than as silent oracle corruption; only the
-    // dedicated message is lost.
+    // #1339 fix-r8 (P1, Codex): what this probe does *not* see, and what that
+    // costs:
+    //   * a socket that is bound but never listens — the replay's own
+    //     `127.0.0.1` bind then fails, so the run stops on a bind error and
+    //     only the dedicated message is lost;
+    //   * a v6-only listener on the same port — the replay's `::` bind fails,
+    //     `bind_listener` falls back to `0.0.0.0`, and the IPv4 probes every
+    //     oracle cell sends still reach *our* listener, so the recording is not
+    //     corrupted; only the IPv6 side stays foreign, and no cell probes it.
+    //     What is lost there is the guarantee that the whole port is ours.
     if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
         panic!(
             "#1339 port {port} already in use; a concurrent channel-sms replay would corrupt the oracle"
