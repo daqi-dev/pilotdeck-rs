@@ -17,19 +17,23 @@ _tmp/20261105-taskbook-segments/SEGMENTS.md）：
   大包 = 任一条成立
     1) 任务书声明 `<!-- pdrs-scope: files=N lines=M est_min=K -->`（可多条，任一条达阈值即大包）
        且 files ≥ 8 或 lines ≥ 1500 或 est_min > 90；
-    2) 没有可解析的 scope 行时，正文出现「约/估 … 人日」→ 人日 × 480 min > 90（历史任务书的回退信号）；
+    2) 没有可解析的 scope 行时，正文出现「约/估 … 人日」→ 人日 × 480 min > 90（历史任务书的回退信号，
+       多条取最大值）；
     3) 仍判不出时，正文点名的 `*.rs` 路径 ≥ 8 个（回退启发式）。
   scope 行写坏（占位符 / 非整数 / 没写阈值键 / 没收到 `-->` / 没写进 `<!-- -->`）→ 退出 2，不静默退回启发式。
+  代码围栏（``` / ~~~）里的内容一律不算数：贴「上一单的示例分段表」不能当成本包的分段表，
+  里面残留的 `<段名>` 也不该把合规任务书打回。
 
 分段表要求（`## 分段交付` 一节里的 markdown 表，≥2 段）：
   列：段名 / 涉及文件 / 交付物（含该段自己的 RESULT 片段）/ 预估时长 / 段间依赖（列序不限，按表头定位）
-  每段预估 ≤ 90 min：单位认 min/分钟/m/h/小时，区间（`–`/`~`/`至`）取最大值，
-  并列（`+`/`、`/和`/`含` 或 `1 h 30 min` 这种连写）按总时长相加；不认的单位按「读不出」报错；
-  另需 `## 续跑` 一节：具体的进度文件路径（带目录的 `…progress.md` / `…进度.md`，不许留 `<…>` / `{…}` / `…`）
-  + 「第 N 段失败从哪继续」的最小学样（失败 / 继续 / 接续 / 恢复 / resume）。
+  每段预估 ≤ 90 min：单位认 min/分钟/m/h/小时，区间（`–`/`~`/`至`/`/`/`上限`）取最大值，
+  并列（`+`/`、`/和`/`含`）或连写（`1 h 30 min`、`1h30m`）按总时长相加；不认的单位按「读不出」报错；
+  另需 `## 续跑` 一节：具体的进度文件路径（带目录的 `…progress.md` / `…进度.md`，不许留 `<…>` / `{…}` / `…`，
+  不许写成「无需 / 不用 …」）+「第 N 段失败从哪继续」的最小学样（失败 / 继续 / 接续 / 恢复 / resume）。
 
-退出码：0 通过（含「小包，无需分段」）· 1 命中大包但分段表缺失/不全 · 2 任务书读不了、
-为空或 scope 行写坏 · 3 用法错误（多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
+退出码：0 通过（含「小包，无需分段」，`--recent` 没扫到也算 0）· 1 命中大包但分段表缺失/不全 ·
+2 任务书读不了、为空、读取期间被改写或 scope 行写坏 · 3 用法错误
+（多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
 """
 
 import json
@@ -45,6 +49,7 @@ SEGMENT_MAX_MIN = 90
 FALLBACK_RS_PATHS = 8
 PERSON_DAY_MIN = 480    # 1 人日 ≈ 8 h；只用于把历史任务书里「约 N 人日」换算成分钟
 MAX_BYTES = 2 * 1024 * 1024  # 任务书不可能这么大；超了按「读不了」处理，不整文件读进内存
+FRESH_SEC = 10          # --recent 跳过「刚写几秒」的文件：写方不是原子写时读到半截会误判
 
 # ---- 占位符 ----------------------------------------------------------------
 # 只认「像占位符」的尖括号/花括号内容：含中日韩字，或是已知占位词（N / 日期 / 待填 …）。
@@ -54,7 +59,7 @@ ANGLE = re.compile(r"<([^<>\n]{0,200})>")
 BRACE = re.compile(r"\{([^{}\n]{0,80})\}")
 PLACEHOLDER_WORDS = {
     "n", "n+1", "n-1", "nn", "tbd", "todo", "xxx", "yyy", "???", "待填", "待补", "空",
-    "date", "name", "dir", "path", "head", "sha", "reason",
+    "date", "name", "dir", "path", "head", "sha", "reason", "file", "id", "num", "idx", "x",
 }
 # 裸省略号 / 问号 / 英文占位词（CJK 前后没有 \b，用显式 ASCII 环视）
 BARE_PLACEHOLDER = re.compile(r"\.\.\.|…|。。。|\?\?\?|？？？|(?<![A-Za-z])(?:tbd|todo|xxx)(?![A-Za-z])", re.I)
@@ -77,19 +82,25 @@ def placeholder_in(text):
     for m in BRACE.finditer(text):
         if _looks_placeholder(m.group(1)):
             return m.group(0)
-    m = BARE_PLACEHOLDER.search(text)
+    # 裸占位符前先把尖括号/花括号整段抹掉：`<https://…>`、`Vec<u8>` 里的 `…` 不是占位符
+    masked = ANGLE.sub(lambda m: " " * len(m.group(0)), text)
+    masked = BRACE.sub(lambda m: " " * len(m.group(0)), masked)
+    m = BARE_PLACEHOLDER.search(masked)
     return m.group(0) if m else None
 
 
 # ---- scope 行 --------------------------------------------------------------
-# 容忍大小写、`pdrs-scope` / `pdrs_scope` / `pdrs scope`、半角与全角冒号、冒号前后空格。
-SCOPEISH = re.compile(r"pdrs[\s_-]*scope", re.I)
+# 容忍大小写、`pdrs-scope` / `pdrs_scope` / `pdrs scope`、半角与全角冒号、半角与全角连字符、冒号前后空格。
+DASHES = r"[\s_\-－—‐‑]"
+SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
 COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
-SCOPE_BODY = re.compile(r"^\s*pdrs[\s_-]*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
+SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
 PERSON_DAY = re.compile(r"(?:约|估|预计|预计约)\s*([0-9]+(?:\.[0-9]+)?)\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
-# URL 只吃 ASCII URL 字符：中文顿号/逗号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
-URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+,;-]+")
+# URL 只吃 ASCII URL 字符：中文顿号/逗号/分号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
+URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
 RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
+# 代码围栏：整段（含内容）抹成空行，行数不变
+FENCE = re.compile(r"(?ms)^[ \t]*(?P<f>```+|~~~+)[^\n]*\n.*?(?:^[ \t]*(?P=f)[^\n]*$|\Z)")
 
 SECTION = re.compile(r"^(#{2,3})\s+(.*)$")
 WANT_COLS = {
@@ -100,6 +111,11 @@ WANT_COLS = {
     "dep": ("依赖",),
 }
 COL_NAMES = {"seg": "段名", "files": "涉及文件", "deliver": "交付物", "est": "预估时长", "dep": "段间依赖"}
+
+
+def strip_fences(text):
+    """抹掉代码围栏里的内容（保留行数）。围栏里的示例表既不算合规，也不该被当占位符打回。"""
+    return FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
 
 
 def _parse_scope_body(body):
@@ -114,13 +130,14 @@ def _parse_scope_body(body):
         if "=" not in tok and "＝" not in tok:
             return None, f"scope 行里有无法解析的片段：{tok!r}（应形如 files=16 lines=1124 est_min=180）"
         k, v = re.split(r"[=＝]", tok, maxsplit=1)
-        k = k.strip()
+        k, v = k.strip(), v.strip()
         if k in ("files", "lines", "est_min", "modules"):
-            if not re.fullmatch(r"[0-9]+", v.strip()):
-                return None, f"scope 行 {k}={v.strip()!r} 不是整数（不许留占位符）"
-            out[k] = int(v.strip())
+            # 位数上限：Python 3.11+ 的 int() 对 >4300 位会抛 ValueError（崩溃冒充 FAIL）
+            if not re.fullmatch(r"[0-9]{1,18}", v):
+                return None, f"scope 行 {k}={v[:40]!r} 不是整数（不许留占位符）"
+            out[k] = int(v)
         else:
-            out[k] = v.strip()
+            out[k] = v
     if not any(k in out for k in ("files", "lines", "est_min")):
         return None, "scope 行至少要写 files= / lines= / est_min= 之一"
     return out, None
@@ -183,16 +200,19 @@ def classify(text):
         if triggers:
             return {"big": True, "reason": "；".join(dict.fromkeys(triggers)), "metrics": metrics}
         return {"big": False, "reason": "scope 声明未达阈值", "metrics": metrics}
-    m = PERSON_DAY.search(text)
-    if m:
+    # 人日估算可能写多条（前置准备 + 主体）：取最大值，不能只看第一条（前小后大会漏判大包）
+    best = None
+    for m in PERSON_DAY.finditer(text):
         val = max(float(m.group(1)), float(m.group(2)) if m.group(2) else 0.0)
         if not math.isfinite(val):
             return {"big": None, "reason": "人日估算数值过大/非法，读不出", "metrics": metrics}
-        est = int(math.ceil(val * PERSON_DAY_MIN))
-        metrics["person_day"] = val
+        best = val if best is None else max(best, val)
+    if best is not None:
+        est = int(math.ceil(best * PERSON_DAY_MIN))
+        metrics["person_day"] = best
         metrics["est_min"] = est
         return {"big": est > SCOPE_MIN,
-                "reason": f"人日估算 {val:g} → est_min={est} {'>' if est > SCOPE_MIN else '≤'} {SCOPE_MIN}",
+                "reason": f"人日估算 {best:g} → est_min={est} {'>' if est > SCOPE_MIN else '≤'} {SCOPE_MIN}",
                 "metrics": metrics}
     n = metrics["rs_paths"]
     return {"big": n >= FALLBACK_RS_PATHS,
@@ -230,7 +250,11 @@ def is_separator(row):
 
 
 EST_TOKEN = re.compile(r"(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z一-鿿]*)")
-RANGE_MARK = re.compile(r"[–—~～]|至|到|(?<=\d)\s*-\s*(?=\d)")
+# 单位后紧跟数字的连写（`1h40m` / `1h45min`）：直接切 token 时后一个数字会被 lookbehind 挡掉，
+# 先补一个空格再切，`1h40m` 才读得成 60 + 40 min。
+COMPACT_UNIT = re.compile(r"(?<=[0-9])(?P<u>hours?|hrs?|h|minutes?|mins?|m|分钟|分|小时|时)(?=[0-9])", re.I)
+# 区间 / 上限语义取最大值：`80–120 min`、`80/90 min`、`80 min（上限 90 min）`
+RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=\d)\s*-\s*(?=\d)")
 SUM_MARK = re.compile(r"\+|＋|、|，|,|加|和|含|另")
 UNIT_MIN = ("", "min", "mins", "minute", "minutes", "m", "分", "分钟")
 UNIT_HOUR = ("h", "hr", "hrs", "hour", "hours", "时", "小时", "个小时")
@@ -245,18 +269,35 @@ def _unit_minutes(v, unit):
     return None  # 「天 / 日 / d」等未支持单位：宁可报「读不出」，也不许当 min 放行
 
 
+def _header_unit(header_cell):
+    """表头里的单位提示：`预估时长(h)` / `（hrs）` / `（h)` / `/h`。
+
+    与单元格同一张单位表（此前只硬编码 `(h|hr|小时)`，`(hrs)` 的裸数字被当 min 放行）。
+    认不出的写法按 min —— 只有括号/斜杠里的独立词才算，`预估时长` 里的「时」不算。
+    """
+    for tok in re.findall(r"[a-z一-鿿]+", header_cell.lower()):
+        if tok in UNIT_HOUR:
+            return "h"
+        if tok in UNIT_DAY:
+            return "d"     # _unit_minutes 会判「读不出」
+        if tok in UNIT_MIN:
+            return ""
+    return ""
+
+
 def parse_est(cell, default_unit=""):
     """从「预估时长」单元格取分钟数。
 
-    规则：区间（`80–120 min`）取最大值；并列（`60 min + 40 min`、`1 h 30 min`）求和——
-    此前一律取 max，把「60 + 40 = 100 min」读成 60 min 放行；单值按自身单位换算。
+    规则：区间/上限（`80–120 min`、`80/90 min`、`上限 90 min`）取最大值；
+    并列或连写（`60 min + 40 min`、`1 h 30 min`、`1h30m`）求和——此前一律取 max，
+    把「60 + 40 = 100 min」读成 60 min 放行；单值按自身单位换算。
     认不出的单位返回 None（报「读不出」），不许默默当 min。
     """
+    cell = COMPACT_UNIT.sub(lambda m: m.group("u") + " ", cell)
     toks = [(float(m.group(1)), m.group(2).lower()) for m in EST_TOKEN.finditer(cell)]
     if not toks:
         return None
     # 无单位的数字：先看它后面最近的显式单位，没有再看前面，最后用表头暗示的单位
-    units = [u for _, u in toks if u]
     resolved = []
     for i, (v, u) in enumerate(toks):
         if not u:
@@ -269,14 +310,16 @@ def parse_est(cell, default_unit=""):
         resolved.append(mins)
     if len(resolved) == 1:
         return resolved[0]
-    if RANGE_MARK.search(cell) and not SUM_MARK.search(cell):
-        return max(resolved)
+    if RANGE_MARK.search(cell):
+        return max(resolved)   # 区间 / 上限：按最大值判（「60–80 min，含联调」里的逗号不算并列）
     return sum(resolved)
 
 
 NEGATION = re.compile(r"不要|不用|不必|无需|无须|不许|不能|不需要|别写|勿写")
 RESUME_FAIL_WORDS = ("失败", "继续", "接续", "恢复", "重跑", "resume")
-PATH_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.md")
+# 路径允许中文（`…/进度.md`、`…/评审记录/progress.md`）；把 `<>{}}…` 也吃进来，占位形态才能整串识别
+PATH_TOKEN = re.compile(r"[A-Za-z0-9_./㐀-鿿<>{}…-]+\.md")
+NEG_WINDOW = 8          # 否定词只看路径前这几个字符：「无需 progress.md」命中，「…progress.md（不要提交）」不命中
 
 
 def resume_problems(resume):
@@ -284,24 +327,17 @@ def resume_problems(resume):
     problems = []
     path, bad_paths = None, []
     for line in resume.splitlines():
-        if line.strip().startswith("```"):
-            continue
-        # 整行带占位符（`<日期>` / `{N}` / `…`）就不是实例路径：整行不认，免得正则从
-        # `_tmp/<日期>-issue-<N>/progress.md` 里截出 `/progress.md` 当合规路径（假 PASS 面）。
-        line_ph = placeholder_in(line)
         for m in PATH_TOKEN.finditer(line):
             p = m.group(0)
             name = p.rsplit("/", 1)[-1]
             if not re.search(r"progress|进度", name):
                 continue
             bad = None
-            if line_ph is not None:                            # 整行带占位符
-                bad = f"整行含占位符 {line_ph!r}"
-            elif "/" not in p:                                 # 裸 `progress.md`：没写目录
-                bad = "只有文件名、没有目录"
-            elif any(ch in p for ch in "{}<>…") or "..." in p:  # 占位形态
+            if any(ch in p for ch in "{}<>…") or "..." in p:
                 bad = "还是占位符"
-            elif NEGATION.search(line):                         # 「无需 progress.md」
+            elif "/" not in p:
+                bad = "只有文件名、没有目录"
+            elif NEGATION.search(line[max(0, m.start() - NEG_WINDOW):m.start()]):
                 bad = "写在否定句里"
             if bad:
                 bad_paths.append(f"{p}（{bad}）")
@@ -349,11 +385,7 @@ def check_segments(text):
                 problems.append("分段表缺列：" + "、".join(missing_cols))
             if len(data) < 2:
                 problems.append(f"分段表只有 {len(data)} 段；大包至少要切成 2 段（每段可独立收货）")
-            default_unit = ""
-            if "est" in col:
-                est_header = header[col["est"]].lower()
-                if re.search(r"\((h|hr|小时)\)|（(h|hr|小时)）", est_header):
-                    default_unit = "h"   # 表头写「预估时长(h)」时，格内裸数字按小时算
+            default_unit = _header_unit(header[col["est"]]) if "est" in col else ""
             for i, r in enumerate(data, 1):
                 if len(r) < len(header):
                     problems.append(f"第 {i} 行字段数 {len(r)} < 表头 {len(header)}")
@@ -400,28 +432,59 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 """
 
 
+def _err(path, detail):
+    return {"file": str(path), "rc": 2, "problems": [detail], "class": None}
+
+
 def check_file(path, ignore_missing=False):
     p = Path(path)
     try:
-        if p.stat().st_size > MAX_BYTES:
-            return {"file": str(path), "rc": 2,
-                    "problems": [f"任务书 {p.stat().st_size} 字节超过 {MAX_BYTES}（不整文件读进内存；先删生成物）"],
-                    "class": None}
-        text = p.read_text(encoding="utf-8-sig")
+        st1 = p.stat()
     except FileNotFoundError:
         if ignore_missing:      # --recent 扫描期间树被回收：跳过，不报 ERROR
             return None
-        return {"file": str(path), "rc": 2, "problems": [f"读不了：找不到 {path}"], "class": None}
-    except (OSError, UnicodeDecodeError) as e:
-        return {"file": str(path), "rc": 2, "problems": [f"读不了：{e}"], "class": None}
-    if not text.strip("﻿\x00 \t\r\n\f\v"):
-        return {"file": str(path), "rc": 2, "problems": ["任务书是空文件（不是「小包」）"], "class": None}
-    cls = classify(text)
+        return _err(path, f"读不了：找不到 {path}")
+    except OSError as e:
+        return _err(path, f"读不了：{e}")
+    if st1.st_size > MAX_BYTES:
+        return _err(path, f"任务书 {st1.st_size} 字节超过 {MAX_BYTES}（不整文件读进内存；先删生成物）")
+    # 限长读：stat 与 read 之间文件继续增长时不至于把几百 MB 读进内存（TOCTOU）
+    try:
+        with p.open("rb") as f:
+            data = f.read(MAX_BYTES + 1)
+    except FileNotFoundError:
+        if ignore_missing:
+            return None
+        return _err(path, f"读不了：找不到 {path}")
+    except OSError as e:
+        return _err(path, f"读不了：{e}")
+    if len(data) > MAX_BYTES:
+        return _err(path, f"任务书超过 {MAX_BYTES} 字节（不整文件读进内存；先删生成物）")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        return _err(path, f"读不了：{e}")
+    # 读后复核：写方还在写（停顿 >10 s 的半截任务书）时判回显——否则 --recent 兜底轮会按半截内容
+    # 判成「小包」rc 0，真正的大包从此漏审（fail-open）。
+    try:
+        st2 = p.stat()
+    except OSError:
+        st2 = None
+    if st2 is not None and (st2.st_size != st1.st_size or st2.st_mtime != st1.st_mtime):
+        if ignore_missing:
+            return None
+        return _err(path, "任务书在读取过程中被改写（可能还在写），稍后重跑")
+    if all(ch.isspace() or ch in "﻿\x00" for ch in text):
+        return _err(path, "任务书是空文件（不是「小包」）")
+    body = strip_fences(text)
+    if not body.strip():
+        return _err(path, "任务书去掉代码围栏后没有正文（不是「小包」）")
+    cls = classify(body)
     if cls["big"] is None:
         return {"file": str(path), "rc": 2, "problems": [cls["reason"]], "class": cls}
     if not cls["big"]:
         return {"file": str(path), "rc": 0, "problems": [], "class": cls}
-    problems = check_segments(text)
+    problems = check_segments(body)
     return {"file": str(path), "rc": 1 if problems else 0,
             "problems": problems, "class": cls}
 
@@ -429,8 +492,10 @@ def check_file(path, ignore_missing=False):
 def find_recent(root, hours):
     """扫最近 N 小时生成的任务书。
 
-    刚写几秒的文件跳过：写方不是原子写时，读到半截 scope 行会误报 rc 2（假 ERROR）。
-    文件在扫描与读取之间被删（worktree 回收）时静默跳过——那种「读不了」不是任务书的问题。
+    刚写 FRESH_SEC 秒内的文件跳过：写方不是原子写时，读到半截 scope 行会误报 rc 2（假 ERROR）。
+    文件在扫描与读取之间被删（worktree 回收）时静默跳过——那种「读不了」不是任务书的问题；
+    check_file 里还会做一次「读后复核」，挡住停顿超过 FRESH_SEC 的半截文件。
+    mtime 在未来的（时钟偏移）不跳过，否则它在墙钟追上之前永远扫不到。
     """
     import time
     now = time.time()
@@ -441,7 +506,7 @@ def find_recent(root, hours):
             st = p.stat()
         except OSError:
             continue
-        if st.st_mtime < cutoff or now - st.st_mtime < 10 or st.st_size == 0:
+        if st.st_mtime < cutoff or 0 <= now - st.st_mtime < FRESH_SEC:
             continue
         out.append(p)
     return out
@@ -481,6 +546,8 @@ def main(argv):
                 hours = float(args[i + 1])
             except ValueError:
                 return usage("--recent <小时数>")
+            if not (math.isfinite(hours) and hours > 0):
+                return usage("--recent <小时数> 要是 > 0 的有限数（nan / inf / 0 / 负数不行）")
             i += 2
             continue
         if a == "--root":
@@ -492,13 +559,24 @@ def main(argv):
         if not a.startswith("--"):
             rest.append(a)
         i += 1
-    files = rest
-    if hours is not None:
-        files = [str(p) for p in find_recent(root, hours)] + files
+    scanned = [str(p) for p in find_recent(root, hours)] if hours is not None else []
+    files = list(dict.fromkeys(scanned + rest))   # 同一个文件既被扫到又被点名时不检查两遍
     if not files:
+        if hours is not None:      # 合法空扫描：没有新任务书不算用法错误
+            print(f"（--recent {hours:g}h 在 {root} 下没扫到任务书；刚写不到 {FRESH_SEC} s 的会跳过）",
+                  file=sys.stderr)
+            print("SUMMARY files=0 ok=0 fail=0 error=0")
+            return 0
         return usage()
 
-    results = [r for r in (check_file(f, ignore_missing=hours is not None) for f in files) if r is not None]
+    # ignore_missing 只给 find_recent 扫出来的文件：显式点名的任务书不见了要报 ERROR，
+    # 否则「没检查」会被当成「通过」（--recent 与显式参数同用时最危险）。
+    from_scan = set(scanned)
+    results = []
+    for f in files:
+        r = check_file(f, ignore_missing=f in from_scan)
+        if r is not None:
+            results.append(r)
     if as_json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     elif explain:
