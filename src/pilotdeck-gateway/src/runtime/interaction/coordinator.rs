@@ -153,18 +153,19 @@ impl GatewayInteractionCoordinator {
         (entry.resolve)(decision.to_value());
         true
     }
-    /// `owner` is `None` when the wire `sessionKey` is not a non-blank string.
-    /// TS keys `permissionGrants` by the raw `input.sessionKey`, so `5` / `{}` /
-    /// `true` / `undefined` are entries of their own and never alias a real
-    /// session. This registry is keyed by the lossy string form instead, and a
-    /// turn sent without a `sessionKey` acquires the `""` entry
-    /// (`runtime/turn/submit.rs:330` → `native_process/assembly.rs:247`), so
-    /// storing a malformed grant there would put an allow rule in front of
-    /// unrelated sessionless turns. Such a grant still answers with the shape
-    /// the TS probe captures (`{granted:true, entry}`, #1465
-    /// `_tmp/20261106-issue-1465/ts-probe/output.txt` req-22 / req-6); only the
-    /// write is skipped, because no string key can reproduce a non-string
-    /// lookup anyway.
+    /// `owner` is `None` when the wire `sessionKey` is not a string, or is the
+    /// empty string. TS keys `permissionGrants` by the raw `input.sessionKey`,
+    /// so a non-string value (`5` / `{}` / `true` / `undefined`) is an entry of
+    /// its own that no Rust turn can ever look up — turns always acquire with a
+    /// string key (`runtime/turn/submit.rs:330`). `""` is the one string key
+    /// that is lossy here: that same `string()` maps a missing or non-string
+    /// turn `sessionKey` to `""`, and a turn acquires by it
+    /// (`native_process/assembly.rs:247`), so storing a grant there would put an
+    /// allow rule in front of unrelated sessionless turns. Every other string —
+    /// including whitespace-only values, which the turn side keeps verbatim —
+    /// is stored under its own key exactly like TS. A skipped grant still
+    /// answers with the shape the TS probe captures (`{granted:true, entry}`,
+    /// #1465 `_tmp/20261106-issue-1465/ts-probe/output.txt` req-22 / req-6).
     pub fn grant_session_permission(&self, owner: Option<&JsString>, entry: &JsString) -> JsValue {
         let rule = entry_to_rule(entry);
         if rule.tool_name.is_empty() {
