@@ -5,7 +5,7 @@ date: 2026-11-06
 title: A7.2-pr6b 四格矩阵一次性账本（#590）
 tags: [phase-a, session-domain, four-cell, native-witness, parity]
 status: 一次性账本已记录；四格分别报告，无后续四格回归闸门
-related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/gap, plan/005_phase-a-session-domain]
+related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/gap, research/009_a19-host-expectations/decision, experiments/exp006-gateway-parity-ruler, plan/005_phase-a-session-domain]
 ---
 
 # 四格矩阵一次性账本（#590 / A7.2-pr6b）
@@ -15,8 +15,12 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 > **这是一次性账本，不是常设闸门。** 按 #1301 选项 B（人批，正本 `state/decisions-20261102-a-stage-scope.md`「#1301 → B」节），
 > A6 的完成口径降为「#590 一次性四格账本」；
 > **之后没有四格回归闸门**。原拟的常设闸门 host suite **#1314 / #1315 已按 #1301 B 以 `not planned` 关单**
-> （`gh issue view 1314`：`CLOSED / NOT_PLANNED`），A7 的 50 项改由 #1317 的人工对账表承担，同样无回归闸门；
+> （`gh issue view 1314`：`CLOSED / NOT_PLANNED`），A7 的「50 项 PASS/FAIL」改由 #1317 的人工对账表承担，同样无回归闸门
+> ——分母以更晚的 `state/decisions-20261105-1313-rescope.md` 为准：**47 项装配 + 3 项 always-on 暂缓（如实报 `CAPABILITY_UNAVAILABLE`）**，
+> 即 47/50 + 3，暂缓的三项不算漏项；
 > 日后若要恢复常设闸门，须另开单人批。
+> 计划 005 的原文按 #1301 B 的约定**不回写**（它还是 `specs/gateway-coverage/ledger.json` 的钉哈希输入，改一个字节就 `input_drift`），
+> 所以 A6.9「四格矩阵相同 fixture 下语义一致」、A7 的 `--suite session` / `--suite host` 等旧口径仍留在原处——以决策卡与本页为准。
 > 后来人不要把这页当成 CI 判据，也不要因为它没有跟进就当成回归失守。
 
 四格 = 宿主 × sidecar 的四种组合。**每格单独报告，不合成一个 PASS/FAIL**（人批口径：能定位是宿主错还是 sidecar 错）。
@@ -61,9 +65,9 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 `summary.json` 的账：**27 个场景 failed**（26 个纯换位 + 1 个含非换位差异 `sidecar_budget_limit`）+
 **3 条 expectedExtensions**（`deadline` 的 2 条差异、两条 `sidecar_continuable_followup_*` 的 0 条差异）
 + 23 条完全一致 = 53。（分诊口径可复算：`summary.json` 的 failed / expectedExtensions 名单决定场景归类。两个类别的定义写在比较器的语义差异上，不是猜的：
-**「纯换位」** = 该场景的 semantic difference 全是「同一个值在两侧落在不同 trace 下标」（两侧同为 `null` 也算换位）；
-**「含非换位」** = 至少有一条差异不属于上面这种——两侧都有值但不等（内容差异）、一侧有值另一侧 `null`（缺失/多出）、
-或一侧在对应位置多出一条条目。下文的 26/1、47/2 都是**场景数**，不是差异条目数。）
+**「纯换位」** = 差异列表里每一条「一侧有值、另一侧 `null`」都能在另一侧找到**同值**条目与之配对，配完没有剩余，
+且没有任何「两侧都有值但不等」的条目（换位就是这么成对出现的，所以配对是判定它的唯一依据）；
+**「含非换位」** = 至少有一条不满足上面——配不上对的缺失/多出，或两侧都有值但不等（内容差异）。下文的 26/1、47/2 都是**场景数**，不是差异条目数。）
 
 - **26 个场景纯换位**：该场景的 semantic difference 全是「同一个值在两侧落在不同 trace 下标」。例：`single_tool` 的 `agent.status/turn_continued`
   在宿主侧落在 `trace[10]`、sidecar 侧落在 `trace[12]`，比较器按位置判成 2 条差异。
@@ -83,7 +87,7 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 | 项 | 值 |
 |---|---|
 | sidecar 二进制 | `pilotdeck-agent-loop-sidecar`，sha256 `37961b37b9340e49f0ec6d76a65a58703c5f6832aa34f1f49a4a02d72d7009f6` |
-| 身份 | `identity_ok=true`，**53/53 场景逐条** `harness.proof` 命中（side / sha256 / spawnObserved 三项全对，且 `trace_health` 无异常——`round.py:438` 的四项合取） |
+| 身份 | `identity_ok=true`，**53/53 场景逐条** `harness.proof` 命中——`round.py:438` 是**五项合取**：`len(proofs)==1`（恰一条 proof）、`side`、`sha256`、`spawnObserved is True`，且 `trace_health(...)` 无异常 |
 | 轮次 | `valid_round=true`，`run_py_exit=1`，用时 243.7 s |
 | 比较 | **49 个场景 failed**（47 个纯换位 + 2 个含非换位差异）+ **2 条 expectedExtensions**（0 条差异）+ **2 条完全一致**（`auto_compact`、`plan_mode_host_policy`）= 53 |
 
@@ -167,6 +171,9 @@ EXIT=3
 
 ### 4.2 真采集（cb8，Linux 6.17，strace 6.8，pidfd）
 
+（版本是 2026-11-06 回采集机复核的现场值：`uname -sr` = `Linux 6.17.0-1008-nvidia`，`strace -V` = `strace -- version 6.8`。
+这两个值不写进 `capture/` 的元数据里，是本节唯一的「非留存证据」，其余数字都能在 `capture/evidence.json` 里对上。）
+
 ```sh
 python3 -I scripts/native-witness/collect.py \
   --gateway  $CARGO_TARGET_DIR/debug/pilotdeck-gateway \
@@ -185,7 +192,9 @@ RC-COLLECT=0
 
 - `processes` 73 条；`execWitness.complete=true`，`source=exec-monitor`，146 条 exec 见证事件 = 73 条 `exec` + 73 条 `exit`。
 - `networkWitness.complete=true`，`source=strace-connect`，142 次 connect。
-- `transcriptWitness.complete=true`，`source=strace-openat`，1106 次 openat（会话转录首开）。
+- `transcriptWitness.complete=true`，`source=strace-openat`，1106 次 **openat 调用**——它们分布在 **72 个转录文件**
+  （36 个 `*.model.jsonl` + 36 个 `*.tool.jsonl`）上，每个文件被打开 10–19 次；判分侧在 `native_evidence.py:391`
+  用 `first.setdefault(key, …)` **按路径取首开**去重，所以「1106」是调用数不是转录份数（转录是 72 份）。
 - `topology=native`；`observer` 1 条连接 552 行；`provider` 63 次本地 mock 请求；`cleanup.allStopped=true`。
 - `capture/receipt.json` 正常发布（`tracerExitCode` 与六个附件 sha256 齐备）。
 
@@ -218,8 +227,8 @@ EXIT=3
 - `rust-host/rust-sidecar` 格：`topology=native`，`sidecarSha256=37961b37b934…`（与 4.2 用的 Rust sidecar 同一枚），
   `processes` 里有真实宿主 argv（`pilotdeck-gateway --native --sidecar …pilotdeck-agent-loop-sidecar --drain-ms 1500`），
   `cases` **72 条**，**全部 `NOT_RUN`**，逐条 `rule=COVERAGE`、detail 前缀统一为
-  `"未执行：缺少受控入口及目标边界见证: "`，其后的缺失边界名**逐 case 不同**（72 条共 12 种，前四多的是：
-  `registry, phase, order` ×20 / `…, failAppend` ×8 / `…, failStatus` ×8 / `…, slowAppend, failStatus` ×8）。
+  `"未执行：缺少受控入口及目标边界见证: "`，其后的缺失边界名取自 **12 种组合**（不是 72 种），最多的四组是
+  `registry, phase, order` ×20 / `…, failAppend` ×8 / `…, failStatus` ×8 / `…, slowAppend, failStatus` ×8。
 - 其余三格仍是 `NOT_RUN` / 0 case（没有原生素材的格不会被凑数）。
 
 根因不在采集器，也不在本单：`scripts/native-witness/stimulus_plan.py:execution()` 目前对每个 stimulus 直接返回
@@ -243,10 +252,29 @@ EXIT=3
 （以上三项以 `scripts/smoke/real_provider.py` 的常量为准，脚本每次运行也把同名字段写进 `report.json`
 （`limits.*`），核对时以原始记录 JSON 为准而不是本表拷贝。）
 
-运行与人工复核步骤见 PR 正文；原始记录只落 `_tmp/20261106-issue-590-smoke/`（独占创建、不覆盖）。
-跑成时该目录含 `report.json`（含 `limits.*` 与逐场景结果），没跑成时只有 `harness.std*.log` 与失败原因 ——
-**两种情形都在 PR 正文如实写明，不以「候选已备」冒充「已实测」**。本轮实测结论与「待人签字」状态见 PR 正文
-（AI 实测不改变阶段完成状态，人签字后才算实效通过）。
+**本轮已实测（AI 已实测，待人签字）**：2026-11-05T22:50:13Z 起跑，`exitCode=0`、`finalPass=true`、`capsVerified=true`：
+
+| 场景 | 结果 | 请求数 | 输出 token | 说明 |
+|---|---|---|---|---|
+| `model_runtime_text`（text） | **PASS** | 1 | 6（in 25 / total 31） | `finishReason=stop`，回 `SMOKE-OK` |
+| `model_runtime_stream_cancel`（stream-cancel） | **PASS** | 1 | 不适用 | 首个 stream delta 后即中止，Anthropic Messages 的 usage 块在流尾，结构性缺席（`limits.usageNotApplicable` 有记录） |
+| `model_runtime_tool`（tool） | **PASS** | 1 | 43 | 工具轮完整 |
+
+合计 **3 次请求 / 49 输出 token**（上限 3 / 384），`limits.violations=[]`、`usageMissing=[]`、`echoMissing=[]`；
+`secretSelfCheck.finalPass=true`（三个 key 名与本机 generic 模式零命中）。
+provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key 只从 `/Users/da/ws/pilotdeck-rs/.env.local` 读，
+证据目录独占（`fcntl.flock`，`evidenceLock.holder.pid=67214`），跑前 `cargo-slots` 为「在跑 1 / 上限 2」。
+
+**这只覆盖 Layer 0**（`pilotdeck-gateway` 的 model HTTP 运行时，经 `scripts/smoke/probe`）；
+`report.json` 里另有 8 条 `NOT_YET` 的 gateway-process 场景（`gateway_e2e_*` / `permission_*` / `hooks_*` / `steer_*` / `reload_*` / `cleanup_once`），
+它们**既不是 PASS 也不是失败**，本页不拿它们充数。**阶段状态不因此改变**：人签字前不算实效通过。
+
+原始记录：主仓 `_tmp/20261106-issue-590-smoke/`（`report.json` / `report.md` / `run-20261105T225013Z-67214/`；
+`report.json` 内部路径记的是工作树绝对路径，归档副本在主仓同目录）。
+
+**待人签字的部分**：AI 只能判「请求/上限/回包/密钥自检」这些可实测项；需要人眼的是
+① `report.md` 的可读性与场景叙述是否符合你的验收口味，② 三个场景的输出文案（`SMOKE-OK`、工具轮回复）观感是否可接受，
+③ 是否认可「Layer 0 通过 ≠ 阶段通过」这个分层结论。人回复一句「签字」或指出要改哪一条即可。
 
 ## 六、边界与未覆盖（不要把本页读大）
 
@@ -268,12 +296,17 @@ EXIT=3
    - 结论：四格里没有任何一格能验证这条偏离，本账本不对它作裁决，也不据此改任何判据。
      该条目最新版本是 `A7-HOST-POST-CANCEL-EXIT-001-R4`（2026-10-31 人批「全部按默认」，#1158），R4 自述「范围同 R3、只改批准状态」，
      因此上面引用的适用范围以 R3 原文为准。
-   - **那句「四格矩阵中涉及取消的场景按本偏离判定」的适用范围有歧义**（窄读=只管 Rust 宿主格；广读=四格全管，会把②的 sidecar 侧信号由 23 降到 21）。
-     本页采**窄读**，理由与两种读法的逐场景差别见决策单 **#1716**（`question`，AI 代批待人复核）。这不是判分语义变更，不动冻结件，
-     只影响本页一处计数；人回一句即可改。
+   - **那句「四格矩阵中涉及取消的场景按本偏离判定」的适用范围有歧义**（窄读=只管 Rust 宿主格；广读=四格全管，
+     会把②的 sidecar 侧信号由 23 降到至少 21——具体降幅取决于「涉及取消」是否把名字带 abort/close 的
+     `sidecar_one_shot_parent_abort_after_admission`、`sidecar_one_shot_parent_close_after_admission` 也算进去，
+     R3 原文没有枚举）。本页采**窄读**，理由与两种读法的逐场景差别见决策单 **#1716**（`question`，AI 代批待人复核）。
+     这不是判分语义变更，不动冻结件，只影响本页一处计数；人回一句即可改。
 9. **本单的冻结装置授权没用上**：`state/decisions-20261025.md`「#590 A7.2-pr6b 四格矩阵：授权修改冻结装置」允许在本单范围内改
    `session_domain.py` 及配套冻结件；实际执行**没有改动任何冻结文件**（30 项登记哈希在每份报告里 `frozen.exitCode=0`），
    72 case 的 `NOT_RUN` 是装置现状而非本单改判的结果。人要求的「事后详细解释」在 PR 正文里给出。
+10. **证据归档位置**：本页链接的原始记录归档在**主仓** `_tmp/20261106-issue-590/`
+   （绝对路径 `/Users/da/ws/pilotdeck-rs/_tmp/20261106-issue-590/`），不只在工作树里——工作树回收会连带删掉 gitignored 的 `_tmp/`。
+   其中 `native-session-001/` 是 Linux-only 采集，macOS 上无法重采，**删前必须确认 cb8 上的 build 树还在**（见 §七末段）。
 
 ## 七、复现
 
@@ -283,8 +316,14 @@ EXIT=3
 > （源码 `run.py:599` 注释 "NOT_RUN never means success"），exit 2 既不是通过也不是失败。
 
 ```sh
-# ① E1 进程内校准（TS）
+# 0) 先定 target 目录：后面所有二进制路径都走它（不 export 时 cargo 默认写 src/target/，
+#    而 $CARGO_TARGET_DIR 会展开成空的 /debug/...）
+export CARGO_TARGET_DIR="$PWD/_build/cargo-target"   # 每树独占一个
+
+# ① E1 进程内校准（TS；默认 --baseline 指本树 resources/PilotDeck，那里通常只有 README.md）
+#    需只读基线：--baseline /abs/path/PilotDeck 或 PDRS_BASELINE；缺则打印 BLOCKED、exit 2，且不建输出目录
 python3 -I scripts/gateway-parity/session_domain.py --suite calibrate \
+  --baseline /absolute/path/to/PilotDeck \
   --output _tmp/<new>/calibrate
 
 # ①② 宿主 vs sidecar（53 场景；需只读基线 + 已构建 Rust sidecar）
@@ -317,12 +356,17 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
 
 **复现时的四条硬约束**（都是本单踩过的，不是假想）：
 
-1. **对拍锁是独占的**：`round.py`、`native-topology/run.py`、`session_domain.py`、`collect.py` 内部都取同一把
-   `common.parity_lock`（`/tmp/pdrs-parity.lock`，目录租约，**不要**自己 `flock` 一个文件），等锁超时会让整次运行 FAIL。
-   同一主机同时只跑一个全量对拍，串行排队；锁被别的进程长期占着时不要删锁，先 `cat /tmp/pdrs-parity.lock/owner.json` 看持有人
-   （`pid` / `timestamp` / `cleanupPending`；超过 2400 s 才算陈旧，由后来者按 `common.parity_lock` 的接管规则处理）。
-   `collect.py --session-domain` 取锁只等 **1 s**（`collect.py:182` 的 `parity_lock(timeout=1)`；`session_domain.py` 等 30 s，
-   `round.py` / `native-topology/run.py` 用默认 600 s）——被占时它会很快失败，直接重跑，不要并发抢。
+1. **对拍锁是独占的，但四个装置不是同一份实现**：四者都抢 `/tmp/pdrs-parity.lock`（目录租约，**不要**自己 `flock` 一个文件），
+   可得行为并不一样：
+   - `round.py` 自带一份同契约实现（`scripts/parity/round.py:211`，**没有 timeout 形参**），抢不到就 `sleep 2` **无限等**，
+     不会超时退出、也不写 `run.json`——看到 `waiting for /tmp/pdrs-parity.lock` 就是它在等，别当成死锁去删锁。
+   - `collect.py` 等 **1 s**（`:182`），失败抛 `Blocked` → **BLOCKED / exit 2**；`session_domain.py` 等 **30 s**（`:2952`）→ 同样 BLOCKED / exit 2；
+     `native-topology/run.py` 等 **默认 600 s**（`common.parity_lock`）→ `TimeoutError` 未被 main 捕获，**traceback / exit 1**。
+   - `2400 s` 只是 `MAX_AGE` 上限，**已发布的 owner 不会因年龄被自动接管**：`owner.json` 必带 `cleanupPending`（真值），
+     接管条件要求它是假。所以一次被 SIGKILL 的运行会留下「永不自愈」的锁。脱困路径按 `scripts/cli-parity/README.md`
+     「锁被保留时怎么解」节：先 `cat /tmp/pdrs-parity.lock/owner.json` 看 `pid` / `token` / `cleanupPending`，
+     确认没有残留进程组后**人工**删 `owner.json` 再 `rmdir`；不要在不看残留的情况下删锁。
+   同一主机同时只跑一个全量对拍，串行排队。
 2. **退出码要单独留存**：这几条命令的 stdout 是单行 JSON，退出码不在 JSON 里。写法统一成
    `python3 -I <cmd> > <新文件名>.log 2>&1; echo "EXIT=$?" >> <新文件名>.log`，
    日志文件名每次新起（`deadline-bare-3`、`deadline-native-002` 就是这么来的；`-2` 那次只留了 JSON 没留退出码，被评审正确指出）。
@@ -333,5 +377,10 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
    不要复用 `side-ts` / `side-rust` 这类 label，也不要往已完成目录里补文件。
 
 本单 ④ 的判分是在 cb8 上跑的（`--native-capture` 只能回采集机判分）：用的是一棵按 `git worktree add --detach 2e2a26e4`
-开的临时检出 `~/ws/pdrs-worker-wt/issue-590-deadline`（HEAD 就是基线 `2e2a26e4`，工作区干净，跑完即弃）；
-该树不在本机，本页所有证据链接都指向拷回本机 `_tmp/20261106-issue-590/` 下的副本，不指向那棵树。
+开的临时检出 `~/ws/pdrs-worker-wt/issue-590-deadline`（HEAD 就是基线 `2e2a26e4`，工作区干净，跑完即可弃）；
+该树不在本机，本页所有证据链接都指向归档副本，不指向那棵树。
+
+**但 cb8 上的 build 树不能弃**：`capture/prelaunch.json` 把宿主与 sidecar 钉在
+`/home/clawbox-08/ws/pdrs-worker-build/issue-590/debug/{pilotdeck-gateway,pilotdeck-agent-loop-sidecar}`（含 sha256），
+判分要按这组绝对路径复核字节。那棵树一删，`native-session-001` 就永久只能得到 `BLOCKED / APPARATUS_IMPORTS`，
+而 macOS 上无法重采（`collect.py:178` 的 `need(sys.platform == 'linux')`）。
