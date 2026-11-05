@@ -199,7 +199,8 @@ python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另�
   `manifest_inventory` 的成员
   （`A2_SCRIPTS` + 两个 session fixtures + 五个 a5-19 文件；`A3_SCRIPTS` 与
   `DATA_FILES` 只在未登记文件白名单里、**没有**哈希行，给它们补链反而是死路；
-  成员落在三个前缀目录之外时 `--write` 照原样登记，预检同样按原样扫）。
+  成员落在 `scripts/gateway-parity/` 之外时 `--write` 照原样登记，预检同样按清单
+  原样扫，不按目录前缀筛）。
   ui-server-parity 同理：`SPEC_FILES` 与 `TOOLCHAIN_FILES` 的成员即使不在
   被扫描的装置目录下也在扫描范围内。
   这些同样要求精确的 `Change: - <sha256> <路径>` 链——否则记为阻塞：`--write`

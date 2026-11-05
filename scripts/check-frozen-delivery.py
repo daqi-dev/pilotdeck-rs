@@ -544,45 +544,38 @@ def _module_path(tree, name):
     return None
 
 
-def _ui_spec_files_source(tree):
-    """Module ``SPEC_FILES`` is bound from, or None when the binding is unmodelled.
+def _imported_from(tree, name):
+    """Module ``name`` is bound from, when the only binding is ``from X import name``.
 
-    ``required_files`` registers the names ``REQUIRED`` holds, and
-    ``check_frozen.py`` derives ``REQUIRED`` from ``SPEC_FILES``.  Only ``from
-    apparatus import SPEC_FILES`` keeps that list identical to the one this tool
-    reads; a second import, a local assignment, ``import apparatus as
-    SPEC_FILES`` or any other binding form is "cannot tell".
+    ``required_files`` registers names that come straight out of ``apparatus.py``
+    (``SPEC_FILES``, ``EXP008_FILES``, ``toolchain_files``) and calls ``scan``,
+    so this tool models them from that file.  Only a single ``from apparatus
+    import name`` keeps the two identical: a second import, a local assignment,
+    ``import apparatus as name``, ``from other import y as name`` or ``from
+    other import *`` all put a different object behind the name -- "cannot tell"
+    (None), never the literal this tool read.
     """
-    module = None
+    if _unmodelled_binding(tree, name, imports=False):
+        return None
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            if any(alias.name == '*' for alias in node.names):
-                return None
-            for alias in node.names:
-                if (alias.asname or alias.name) != 'SPEC_FILES':
-                    continue
-                if module is not None:
-                    return None
-                module = node.module
-        elif isinstance(node, ast.Import):
-            if any((alias.asname or alias.name).split('.')[0] == 'SPEC_FILES'
-                   for alias in node.names):
-                return None
-        elif isinstance(node, ast.ExceptHandler) and node.name == 'SPEC_FILES':
-            return None
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == 'SPEC_FILES':
-            return None
-        elif isinstance(node, ast.MatchMapping) and node.rest == 'SPEC_FILES':
-            return None
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
-                and node.name == 'SPEC_FILES':
-            return None
-        elif isinstance(node, (ast.Global, ast.Nonlocal)) and 'SPEC_FILES' in node.names:
-            return None
-        elif isinstance(node, ast.Name) and node.id == 'SPEC_FILES' \
+        if isinstance(node, ast.Name) and node.id == name \
                 and isinstance(node.ctx, ast.Store):
             return None
-    return module
+    module, seen = None, 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if any(alias.name == '*' for alias in node.names):
+            return None
+        for alias in node.names:
+            # The bound name must be exactly this name *and* come from this
+            # module: ``from apparatus import EXP008_FILES as SPEC_FILES`` binds
+            # SPEC_FILES to a different tuple.
+            if alias.name != name or (alias.asname or name) != name:
+                continue
+            seen += 1
+            module = node.module
+    return module if seen == 1 else None
 
 
 def _function_node(tree, name):
@@ -613,7 +606,7 @@ def _parents(tree):
     return parents
 
 
-def _unmodelled_binding(node, name):
+def _unmodelled_binding(node, name, imports=True):
     """True when ``name`` is bound in a form that is not ``name = <literal>``.
 
     Parameters (defaults included), ``import ... as``, ``except ... as``,
@@ -624,6 +617,9 @@ def _unmodelled_binding(node, name):
     are included (a ``global`` assignment there rebinds the module name), but
     nested parameter lists are not: a local parameter of the same name shadows
     only inside that call.
+
+    ``imports=False`` skips the two import branches, for callers that model the
+    one legitimate ``from X import name`` themselves (``_imported_from``).
     """
     arguments = getattr(node, 'args', None)
     if isinstance(arguments, ast.arguments):
@@ -635,7 +631,8 @@ def _unmodelled_binding(node, name):
     for child in ast.walk(node):
         if child is node:
             continue
-        if isinstance(child, ast.alias) and (child.asname or child.name).split('.')[0] == name:
+        if imports and isinstance(child, ast.alias) \
+                and (child.asname or child.name).split('.')[0] == name:
             return True
         if isinstance(child, ast.ExceptHandler) and child.name == name:
             return True
@@ -646,7 +643,8 @@ def _unmodelled_binding(node, name):
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
                 and child.name == name:
             return True
-        if isinstance(child, ast.ImportFrom) and any(a.name == '*' for a in child.names):
+        if imports and isinstance(child, ast.ImportFrom) \
+                and any(a.name == '*' for a in child.names):
             return True
         if isinstance(child, (ast.Global, ast.Nonlocal)) and name in child.names:
             return True
@@ -665,39 +663,62 @@ def _module_scope_nodes(tree):
         stack.extend(ast.iter_child_nodes(node))
 
 
+def _sole_binding(tree, name):
+    """The single module-scope ``name = <expr>``, or None when the shape is unclear.
+
+    Exactly one ``Name(Store)`` for ``name`` outside function/class bodies -- a
+    walrus, a ``for``/``with ... as`` target, an unpacking target or a second
+    assignment leaves the interpreter with a value this parser never saw -- and
+    that one store must be the target of a plain ``name = <expr>``.  Bindings in
+    any other form (``import ... as``, ``except ... as``, a same-named
+    ``def``/``class``, ``import *``, ``global``/``nonlocal``) disqualify the
+    module through ``_unmodelled_binding``.
+    """
+    if _unmodelled_binding(tree, name):
+        return None
+    stores = [node for node in _module_scope_nodes(tree)
+              if isinstance(node, ast.Name) and node.id == name
+              and isinstance(node.ctx, ast.Store)]
+    if len(stores) != 1:
+        return None
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target, value = node.target, node.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and target.id == name:
+            return value
+    return None
+
+
 def _loaded_through_common(tree):
     """True when ``common`` is the module's own loader result, not something else.
 
     The external value (``common.A2_SCRIPTS``) is only trustworthy while
     ``common`` still names ``scripts/gateway-parity/common.py`` -- the file this
-    tool read.  Anything else that binds the name (``import gw_extra as
-    common``, ``common = other``) makes the two disagree.
+    tool read.  The bootstrap is modelled literally (fix-r17): ``_load =
+    _guard.load`` and ``common = _load('common', _apparatus / 'common.py')``,
+    each bound exactly once.  ``import gw_extra as common``, ``common = other``,
+    a walrus/``for``/``with`` target, a second argument that names another file
+    or a rebound ``_load`` all make the two disagree, and the answer is "cannot
+    tell".
     """
-    for node in _module_scope_nodes(tree):
-        if isinstance(node, ast.Assign):
-            targets, value = node.targets, node.value
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            targets, value = [node.target], node.value
-        else:
-            targets, value = [], None
-        for target in targets:
-            if not (isinstance(target, ast.Name) and target.id == 'common'):
-                continue
-            if not (isinstance(value, ast.Call)
-                    and isinstance(value.func, ast.Name) and value.func.id == '_load'
-                    and value.args and isinstance(value.args[0], ast.Constant)
-                    and value.args[0].value == 'common'):
-                return False
-        if isinstance(node, ast.alias) and (node.asname or node.name).split('.')[0] == 'common':
-            return False
-        if isinstance(node, ast.ExceptHandler) and node.name == 'common':
-            return False
-        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == 'common':
-            return False
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
-                and node.name == 'common':
-            return False
-    return True
+    common = _sole_binding(tree, 'common')
+    if not (isinstance(common, ast.Call)
+            and isinstance(common.func, ast.Name) and common.func.id == '_load'
+            and len(common.args) == 2 and not common.keywords
+            and isinstance(common.args[0], ast.Constant)
+            and common.args[0].value == 'common'):
+        return False
+    path = common.args[1]
+    if not (isinstance(path, ast.BinOp) and isinstance(path.op, ast.Div)
+            and isinstance(path.right, ast.Constant) and path.right.value == 'common.py'):
+        return False
+    load = _sole_binding(tree, '_load')
+    return (isinstance(load, ast.Attribute) and load.attr == 'load'
+            and isinstance(load.value, ast.Name) and load.value.id == '_guard')
 
 
 def _external_still_holds(tree, name):
@@ -708,27 +729,32 @@ def _external_still_holds(tree, name):
     here -- ``A2_SCRIPTS = common.A2_SCRIPTS + ('extra.py',)``, a literal,
     ``from common import A2_SCRIPTS``, an unpacking target or a module-level
     walrus -- changes the interpreter's value while the external one stays put,
-    so the answer is "cannot tell", not the stale tuple.
+    so the answer is "cannot tell", not the stale tuple.  The binding must be
+    the *only* module-scope store of the name (walrus / ``for`` / ``with``
+    targets are ``Name(Store)`` too and are counted here).
     """
     if _unmodelled_binding(tree, name) or not _loaded_through_common(tree):
         return False
+    stores = [node for node in _module_scope_nodes(tree)
+              if isinstance(node, ast.Name) and node.id == name
+              and isinstance(node.ctx, ast.Store)]
+    # One store only: a module-level walrus, ``for``/``with ... as`` target or a
+    # second assignment picks a value this parser never saw, and the external
+    # tuple would be the stale one.
+    if len(stores) != 1:
+        return False
     for node in _module_scope_nodes(tree):
-        if isinstance(node, ast.Assign):
-            targets, value = node.targets, node.value
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            targets, value = [node.target], node.value
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target, value = node.target, node.value
         else:
             continue
-        for target in targets:
-            bound = {child.id for child in ast.walk(target)
-                     if isinstance(child, ast.Name)}
-            if name not in bound:
-                continue
-            if not (len(targets) == 1 and isinstance(target, ast.Name)
-                    and isinstance(value, ast.Attribute) and value.attr == name
-                    and isinstance(value.value, ast.Name) and value.value.id == 'common'):
-                return False
-    return True
+        if not (isinstance(target, ast.Name) and target.id == name):
+            continue
+        return (isinstance(value, ast.Attribute) and value.attr == name
+                and isinstance(value.value, ast.Name) and value.value.id == 'common')
+    return False
 
 
 def _tuple_value(tree, function, name, external=()):
@@ -933,7 +959,7 @@ def _ui_required_names(tree):
     # this tool read.  A local rebinding (``SPEC_FILES = SPEC_FILES[:-1]``), a
     # second import from elsewhere, or any other binding form puts a different,
     # invisible list behind ``REQUIRED``.
-    if _ui_spec_files_source(tree) != 'apparatus':
+    if _imported_from(tree, 'SPEC_FILES') != 'apparatus':
         return None
     # ``REQUIRED.discard(...)`` / ``.update(...)`` edit the set in place, so the
     # binding still looks derived while the registered names are not.
@@ -1097,9 +1123,17 @@ def ui_inventory(root, commit=None):
             spec_dir = _module_path(frozen_tree, 'SPEC')
             exp008_dir = _ui_exp008_dir(frozen_tree)
             required_ok = _ui_required_names(frozen_tree)
+            # ``required_files`` registers exactly what ``SPEC_FILES``,
+            # ``EXP008_FILES`` and ``toolchain_files()`` hold and scans what
+            # ``scan()`` is pointed at.  All four must come from the
+            # ``apparatus.py`` this tool read -- a local redefinition or a second
+            # import registers a different list while the model stays put.
+            imported_ok = all(_imported_from(frozen_tree, name) == 'apparatus'
+                              for name in ('SPEC_FILES', 'EXP008_FILES',
+                                           'toolchain_files', 'scan'))
             if (paths is not None and specs is not None and toolchain is not None
                     and scan_dirs is not None and spec_dir is not None
-                    and required_ok is True
+                    and required_ok is True and imported_ok
                     and exp008_dir is not None and exp008_dir in scan_dirs
                     and len(paths) == 3 and all(isinstance(item, str) for item in paths)
                     and all(item.startswith('scripts/') for item in paths[:2])

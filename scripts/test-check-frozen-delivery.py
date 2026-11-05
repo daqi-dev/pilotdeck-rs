@@ -103,6 +103,12 @@ UI_FROZEN = ("\nfrom apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_
              "            | set(toolchain_files(root)))\n")
 
 
+# 真装置的 bootstrap（scripts/gateway-parity/check_frozen.py:64-68）：外部值
+# ``common.A2_SCRIPTS`` 只有在这两行是唯一绑定时才可信，夹具照原样写。
+GW_BOOTSTRAP = ("_load = _guard.load\n"
+                "common = _load('common', _apparatus / 'common.py')\n")
+
+
 def gw_source(*names):
     """假 gateway 装置源：与真装置同形的 ``manifest_inventory``。
 
@@ -111,12 +117,28 @@ def gw_source(*names):
     重建清单，而不是把函数体里所有字符串常量都当成成员。
     """
     extra = "".join(f"    paths.append('scripts/gateway-parity/{name}')\n" for name in names)
-    return ("\ndef manifest_inventory(root):\n"
+    return (GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+            "\ndef manifest_inventory(root):\n"
             "    names = ('acceptance.md', 'normalization.md', 'accepted-diffs.md')\n"
             "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
             + extra +
             "    paths += [f'scripts/a5-19/{name}' for name in ('run.py',)]\n"
             "    return {name: name for name in names}\n")
+
+
+def gw_inventory(check_frozen_body, common=None):
+    """建一棵只有 gateway 装置两半的树，返回 ``gateway_inventory`` 的结果。
+
+    ``common`` 缺省为字面元组；``check_frozen_body`` 是 check_frozen.py 全文，
+    夹具自己决定 bootstrap 走不走形。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON if common is None else common)
+        write(root, "scripts/gateway-parity/check_frozen.py", check_frozen_body)
+        commit(root, "base")
+        return cfd.gateway_inventory(root)
 
 
 HASH_LIST = "hash list differs from generated inventory; run check_frozen.py --write"
@@ -391,6 +413,7 @@ def run():
         init_repo(root)
         write(root, "scripts/gateway-parity/common.py", GW_COMMON)
         write(root, "scripts/gateway-parity/check_frozen.py",
+              GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
               "\ndef manifest_inventory(root, A2_SCRIPTS=('check_frozen.py', 'extra.py')):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    return {name: name for name in paths}\n")
@@ -405,7 +428,7 @@ def run():
         init_repo(root)
         write(root, "scripts/gateway-parity/common.py", GW_COMMON)
         write(root, "scripts/gateway-parity/check_frozen.py",
-              "\nA2_SCRIPTS = common.A2_SCRIPTS + ('extra.py',)\n"
+              GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS + ('extra.py',)\n"
               "\ndef manifest_inventory(root):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    return {name: name for name in paths}\n")
@@ -419,7 +442,7 @@ def run():
         init_repo(root)
         write(root, "scripts/gateway-parity/common.py", GW_COMMON)
         write(root, "scripts/gateway-parity/check_frozen.py",
-              "\nA2_SCRIPTS = common.A2_SCRIPTS\n"
+              GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
               "\ndef manifest_inventory(root):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    return {name: name for name in paths}\n")
@@ -433,8 +456,8 @@ def run():
         init_repo(root)
         write(root, "scripts/gateway-parity/common.py", GW_COMMON)
         write(root, "scripts/gateway-parity/check_frozen.py",
-              "\ncommon = other\n"
-              "A2_SCRIPTS = common.A2_SCRIPTS\n"
+              GW_BOOTSTRAP.replace("_load('common', _apparatus / 'common.py')", "other")
+              + "A2_SCRIPTS = common.A2_SCRIPTS\n"
               "\ndef manifest_inventory(root):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    return {name: name for name in paths}\n")
@@ -447,7 +470,7 @@ def run():
         init_repo(root)
         write(root, "scripts/gateway-parity/common.py", GW_COMMON)
         write(root, "scripts/gateway-parity/check_frozen.py",
-              "\nA2_SCRIPTS, _unused = (common.A2_SCRIPTS, None)\n"
+              GW_BOOTSTRAP + "A2_SCRIPTS, _unused = (common.A2_SCRIPTS, None)\n"
               "\ndef manifest_inventory(root):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    return {name: name for name in paths}\n")
@@ -461,13 +484,74 @@ def run():
         init_repo(root)
         write(root, "scripts/gateway-parity/common.py", "from other import *\n" + GW_COMMON)
         write(root, "scripts/gateway-parity/check_frozen.py",
-              "\nA2_SCRIPTS = common.A2_SCRIPTS\n"
+              GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
               "\ndef manifest_inventory(root):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    return {name: name for name in paths}\n")
         commit(root, "base")
         case("gateway common 里的 import * → 不可判定（清单可能被覆盖）",
              cfd.gateway_inventory(root) is None)
+
+
+    # ---------------------------------------------------------------- r17 负控
+    # 外部值只有在 bootstrap 两行都是唯一绑定时才可信；任何一种别的绑法都
+    # 必须「不可判定」，否则解析器看到的值不是解释器用的值（假 READY）。
+    case("gateway 正控：照原样 bootstrap → 可判定（否则下面六条只是恒 None）",
+         gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is not None)
+    case("gateway A2_SCRIPTS 没有模块级绑定 → 不可判定（不再默认取 common）",
+         gw_inventory("\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    case("gateway 模块级 walrus 重绑 A2_SCRIPTS → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "if (A2_SCRIPTS := ('check_frozen.py',)):\n"
+                      "    pass\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    case("gateway 模块级 for 重绑 A2_SCRIPTS → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "for A2_SCRIPTS in (('check_frozen.py',),):\n"
+                      "    break\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    case("gateway 模块级 with ... as 重绑 A2_SCRIPTS → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "with open(__file__) as A2_SCRIPTS:\n"
+                      "    pass\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    case("gateway _load 取的不是 common.py → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace("_apparatus / 'common.py'",
+                                           "_apparatus / 'other.py'")
+                      + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    case("gateway _load 换成别的 loader → 不可判定",
+         gw_inventory(GW_BOOTSTRAP.replace("_load = _guard.load", "_load = other.load")
+                      + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    case("gateway _load 二次绑定 → 不可判定（不取首个）",
+         gw_inventory(GW_BOOTSTRAP + "_load = _guard.load\n"
+                      "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    case("gateway common 由 import 别名绑定 → 不可判定",
+         gw_inventory("_load = _guard.load\n"
+                      "from other import thing as common\n"
+                      "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
 
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
@@ -640,7 +724,8 @@ def run():
               "A3_SCRIPTS = ('check_schema.py',)\n"
               "DATA_FILES = ('README.md', 'package.json')\n")
         write(root, "scripts/gateway-parity/check_frozen.py",
-              "def manifest_inventory(root):\n"
+              GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+              "\ndef manifest_inventory(root):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    paths += ['scripts/gateway-parity/fixtures/one.json']\n"
               "    return paths\n\n"
@@ -665,7 +750,8 @@ def run():
         write(root, "scripts/gateway-parity/common.py",
               "A2_SCRIPTS = ('alpha.py',)\n")
         write(root, "scripts/gateway-parity/check_frozen.py",
-              "def manifest_inventory(root):\n"
+              GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+              "\ndef manifest_inventory(root):\n"
               "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
               "    paths += [f'scripts/a5-19/{name}' for name in ('run.py', 'six_cells.mts')]\n"
               "    return paths\n\n"
@@ -1000,6 +1086,7 @@ def run():
         init_repo(root)
         write(root, "scripts/gateway-parity/common.py", "A2_SCRIPTS = ('check_frozen.py',)\n")
         write(root, "scripts/gateway-parity/check_frozen.py",
+              GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
               "\ndef manifest_inventory(root):\n"
               "    if (A2_SCRIPTS := ('check_frozen.py', 'extra.py')):\n"
               "        paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
@@ -1066,6 +1153,23 @@ def run():
     # 正控：同一夹具不改任何东西时必须能认出（否则上面四条只是「恒 None」）。
     case("两侧同形清单 → 可判定为登记范围",
          ui_registrable(UI_APPARATUS, UI_FROZEN) is True)
+    # r17：四个名字都必须确实来自 apparatus 的那一份，别名/重定义都不算。
+    case("EXP008_FILES 别名当成 SPEC_FILES 导入 → 不可判定",
+         ui_registrable(
+             UI_APPARATUS,
+             UI_FROZEN.replace("from apparatus import scan, SPEC_FILES, EXP008_FILES, "
+                               "toolchain_files",
+                               "from apparatus import scan, EXP008_FILES as SPEC_FILES, "
+                               "EXP008_FILES, toolchain_files")) is None)
+    case("toolchain_files 从别处再导入一次 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nfrom other import toolchain_files\n") is None)
+    case("toolchain_files 被重新赋值 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\ntoolchain_files = ()\n") is None)
+    case("scan 被同名 def 覆盖 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\ndef scan(paths):\n    return ()\n") is None)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
