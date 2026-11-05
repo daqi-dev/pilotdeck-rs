@@ -1794,9 +1794,15 @@ fn committed_marker_with_unreadable_manifest_republishes() {
     fs::set_permissions(&probe, fs::Permissions::from_mode(0o0))
         .expect("#293 fix-r4 drop the probe's permissions");
     if fs::read(&probe).is_ok() {
-        eprintln!(
-            "committed_marker_with_unreadable_manifest_republishes: skipped, \
-             running as root (chmod cannot make the manifest unreadable)"
+        // #1263/#1525 review (DeepSeek sibling P1 at #1495 B10): write the
+        // note straight to the stderr handle — the print-family macros are
+        // captured by libtest and a passing (skipping) test's captured
+        // output never reaches the log, which left this audit leg's absence
+        // indistinguishable from a pass.
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(
+            b"committed_marker_with_unreadable_manifest_republishes: skipped, \
+              running as root (chmod cannot make the manifest unreadable)\n",
         );
         return;
     }

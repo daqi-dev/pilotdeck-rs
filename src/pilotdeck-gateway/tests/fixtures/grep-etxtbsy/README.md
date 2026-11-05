@@ -42,8 +42,9 @@ ENOENT（fd 中途消失）允许 continue，其余错误、以及 flags 行缺�
 用 NOWAIT `waitid` 确认陌生进程确已重挂（Linux 上 `ECHILD` 直接报错），再以
 `waitpgid` 收割组内全部死者；expiry 起点移到 `spawned(helper_id)` 之后，
 钩子等待不吃写预算。fix-r1 再收紧：`STRANGER_STARTED_DELAY` 6s→8s，helper
-的 started 等待由轮数改为墙钟（`date +%s`，负载拉不长），测试侧 10s 上限
-单一来源派生。fix-r2b（#1155 r2 评审）：helper 的截止秒数 `+ 1` 补偿
+的 started 等待由轮数改为墙钟（`date +%s`，负载拉不长），测试侧上限
+单一来源派生（当时 10s，#1297 二轮评审后放宽到 14s，见下段）。fix-r2b
+（#1155 r2 评审）：helper 的截止秒数 `+ 1` 补偿
 `date +%s` 整秒截断（仍单一来源派生，真实预算不低于测试侧上限）；
 `end` 在启动 stranger 之前算出（计时起点统一）；**saw 写入前复检同一截止**
 （Codex P1-1——轮询跨截止点暂停后恢复、文件已存在也不能把迟到 started 记
@@ -66,24 +67,29 @@ P2b 跟进）：屏障自身的 30s 安全超时是失败而非静默通过—�
 仍先行执行，超时路径继续走截止复检，删复检的变异在该路径照样可杀；新增
 「屏障超时」交错用例（测试侧故意不发 `resume`，断言 helper 非零退出、退出码
 3、park 实跑 ~30s、saw 不写）。#1297（批次 B10）：dead-helper 用例的
-`started` 握手事件化——探针写好 staging 后等待 `started + ".release"` 信号
-文件（50ms 轮询、60s 上限），测试钩子在 adopt 后立刻原子发布
+`started` 握手不再赌固定睡眠——探针写好 staging 后等待 `started + ".release"`
+信号文件（50ms 轮询、60s 上限），测试钩子在 adopt 后立刻原子发布
 （staging+rename）；原先钩子要陪跑探针里固定的 8s 睡眠，10s `started` 上限在
-重载下（4 份并发 lib 副本为负载）会先耗尽。事件的拥有权在测试侧：发布先于
-等待，`started` 的出现只隔着探针的解释器启动（本机实测启动 ~15ms、端到端
-~23ms，负载只会更大）。deadline 下界余量 `DEADLINE_FLOOR_SLACK` 随之
+重载下（4 份并发 lib 副本为负载）会先耗尽。release 是**前置条件**（不发布则
+`started` 永不出现），但它在探针 boot 之前就发出，所以实际时刻由「解释器启动
+（本机实测 ~15ms）+ 用例自己的节拍睡眠」决定——节拍不是装饰，见下段。
+deadline 下界余量 `DEADLINE_FLOOR_SLACK` 随之
 100ms→5ms——健康路径本就用不到余量（expiry 在 `write_began` 之后才计算，
 写阶段只能超时不能提前），而该余量同时是 `expiry-hoisted-before-spawn` 的
-判杀线。#1297 评审（concurrency P1）：判杀裕度是
-`hook 耗时 − 余量 − 返回路径耗时`，事件化后 hook 的保证内容只剩解释器启动，
-负载可能把它饿到 5ms 以下；返回路径（扫描、kill、收割）也在被测的 `took`
-里，会进一步吃掉裕度。故 dead-helper 用例的探针改为在确认持有管道后**故意
-停 `DEAD_HELPER_STRANGER_DELAY`（250ms）**再发 `started`：这是测试自己选的
-节拍，不是等 cap，距 10s `started` 上限仍有 40× 余量，判杀裕度回到 ~240ms。
+判杀线。#1297 评审（concurrency P1 + 两家二轮的 sibling/boundary/concurrency）：
+判杀裕度是 `hook 耗时 − 余量 − 返回路径耗时`，事件化后 hook 的保证内容只剩
+解释器启动，负载可能把它饿到 5ms 以下；返回路径（扫描、kill、收割）也在被测
+的 `took` 里，会进一步吃掉裕度，Linux 上这条路径还含 500ms 宽限的
+返回边界 `/proc` 扫描。故 dead-helper 用例的探针改为在确认持有管道后**故意
+停 `DEAD_HELPER_STRANGER_DELAY`（1s）**再发 `started`：这是测试自己选的
+节拍，不是等 cap，距 14s `started` 上限仍有 14× 余量，判杀裕度回到 ~1s，
+且高于 Linux 扫描的 500ms 宽限；删掉或缩短它会连带拿走该变异体的判杀裕度。
 panic 用例
 与三个场景用例（迟到 started / within-cap / 屏障超时）同样先发布 release
-再等信号，场景节奏不变（within-cap 仍以 8s 延迟的 `started` 暴露硬回 5s 的
-cap）。
+再等信号；within-cap 仍以 8s 延迟的 `started` 暴露硬回 5s 的 cap，因此
+`STRANGER_STARTED_TIMEOUT` 10s→14s（旧值只给探针启动留 2s，正是 #1297 要
+修的那种「固定延迟贴着上限」形状；8s 延迟本身不能缩短——它要明显越过
+硬回的 5s cap，见变异行）。
 
 变异体（25 个；绑定测试如无说明均在 `--test scratch_publication`）：
 
@@ -141,18 +147,21 @@ cap）。
   断言 `#1155 the helper must observe the stranger's started signal before it
   dies` 判杀——两个失败点收进一个锚点列表（列表即备选集）；
 - `expiry-hoisted-before-spawn`（#1155 r4 评审 P2）：expiry 移回 spawn 前
-  ——`spawned` 钩子里的 release 门控 `started` 握手（#1297 起事件化，内容是
-  探针解释器启动 + `DEAD_HELPER_STRANGER_DELAY` 的 250ms 节拍）落进写预算，
-  dead-helper 用例的 `#1155 the write phase must last its full deadline` 下界
-  断言失败（本机 darwin 实测 `1.213185417s elapsed`，比 `1.5s − 5ms` 的阈值
-  低 282ms，即判杀裕度 ≈ 250ms，不再依赖解释器启动那 15ms）；若 expiry 已过
-  导致 writer-exit 竞态先行，则以 `#1125 helper writer did not exit by its
-  deadline` 判杀（双锚点，确定性）；
+  ——`spawned` 钩子里等待 `started` 的整段耗时（#1297 起是探针解释器启动 +
+  `DEAD_HELPER_STRANGER_DELAY` 的 1s 节拍）落进写预算，dead-helper 用例的
+  `#1155 the write phase must last its full deadline` 下界断言失败（本机 darwin
+  实测 `458.24875ms elapsed`，比 `1.5s − 5ms` 的阈值低 ~1.04s，即判杀裕度
+  ≈ 1s，不再依赖解释器启动那 15ms，也高于 Linux 返回路径 `/proc` 扫描的
+  500ms 宽限；原始输出 `_tmp/20261106-1495-s2/negctl-r2.log`）；若 expiry 已过
+  导致 writer-exit 竞态先行，则以
+  `#1125 helper writer did not exit by its deadline` 判杀（该锚点只在极端饥饿
+  下先触发，正常挂钟下由 floor 断言判杀——确定性来自墙钟算术，不来自两条断言
+  都会命中）；
 - `started-cap-hardcoded-short`（#1155 r4 评审 P2，fix-r1 改形状，fix-r2b
   锚点带 `+ 1` 截断补偿，fix-r3 改绑）：helper 侧 started 等待秒数退回字面量
   `5`（墙钟，`date +%s` 基准）——fix-r3 起绑定走事件屏障受控路径的新用例
   `a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll`：该用例
-  在 8s 延迟的 `started` 出现的一刻恢复 helper，推导的 11s cap 当刻仍有预算、
+  在 8s 延迟的 `started` 出现的一刻恢复 helper，推导的 15s cap 当刻仍有预算、
   健康 helper 记录 `saw`；硬回 5s 的 cap 在同一受控时刻截止已过、拒写 saw，
   `#1155 a started within the helper's cap must still be recorded as seen
   after a paused poll` 判杀（确定性；不再依赖旧 dead-helper 用例的时序旁证）；

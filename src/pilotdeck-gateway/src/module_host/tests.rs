@@ -1285,11 +1285,16 @@ async fn describe_and_call_spawn_no_children() {
 }
 
 /// #1349: the `/proc` audit is Linux-only; elsewhere it is skipped with this
-/// note, like the other parity audits of this crate.
+/// note, like the other parity audits of this crate. The note goes straight to
+/// the stderr handle (#1495 B10 review, MiniMax sibling P2): the print-family
+/// macros are captured by the test harness, so on the hosts where this test
+/// exists its note would otherwise never reach the log.
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn process_audit_is_linux_only() {
-    eprintln!("SKIP: #1349 the module-host process audit reads Linux /proc");
+    use std::io::Write as _;
+    let _ = std::io::stderr()
+        .write_all(b"SKIP: #1349 the module-host process audit reads Linux /proc\n");
 }
 
 /// #996-style regeneration guard for the fixture; see the fixture README for
