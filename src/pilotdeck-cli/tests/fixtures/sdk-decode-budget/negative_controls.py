@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""#983 HEAD-only decode-budget controls: --check | [--compile-only] NEW_OUTPUT_DIR [name ...].
+"""#983 HEAD-only decode-budget controls: --check | --self-check |
+[--compile-only] NEW_OUTPUT_DIR [name ...].
 
 Commit the patch before running mutants. CARGO_TARGET_DIR must be supplied by
 caller; each mutant compiles, runs a nonce-bound test, restores and rechecks it.
@@ -9,6 +10,7 @@ landing the patch.
 """
 from collections import namedtuple
 import difflib
+import io
 import json
 import os
 from pathlib import Path
@@ -126,19 +128,61 @@ def tree_matches_head():
         raise RuntimeError('#983 untracked build inputs present:\n' + '\n'.join(untracked[:20]))
 
 
+def check_anchors(stdout=None, stderr=None):
+    """Return 0 only for a non-empty manifest whose every anchor is valid.
+
+    #1364 P0-a: an empty manifest used to print ``0/0 valid`` and exit 0, so a
+    deleted mutation table looked green -- zero anchors verified, gate passed.
+    """
+    stdout = sys.stdout if stdout is None else stdout
+    stderr = sys.stderr if stderr is None else stderr
+    errors = []
+    for row in mutations:
+        try:
+            check(row)
+        except Exception as error:
+            errors.append(str(error))
+    for error in errors:
+        print('INVALID ' + error, file=stdout)
+    if not mutations:
+        print('#983 anchors: empty mutation manifest; refusing to pass', file=stderr)
+        return 2
+    print(f'#983 anchors: {len(mutations) - len(errors)}/{len(mutations)} valid', file=stdout)
+    return int(bool(errors))
+
+
+def self_check():
+    """Negative control for this gate: an empty manifest must fail closed (#1364 P0-a)."""
+    if not mutations:
+        print('self-check FAILED: the shipped mutation manifest is empty', file=sys.stderr)
+        return 1
+    saved = list(mutations)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        mutations.clear()
+        status = check_anchors(stdout=out, stderr=err)
+    finally:
+        mutations[:] = saved
+    if status == 0:
+        print('self-check FAILED: an empty manifest passed the anchor gate', file=sys.stderr)
+        return 1
+    if 'empty mutation manifest' not in err.getvalue():
+        print('self-check FAILED: empty manifest did not report the explicit error',
+              file=sys.stderr)
+        return 1
+    print(f'self-check: empty manifest fails closed (rc={status}); '
+          f'shipped manifest still has {len(mutations)} anchors: ok')
+    return 0
+
+
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
-        errors = []
-        for row in mutations:
-            try:
-                check(row)
-            except Exception as error:
-                errors.append(str(error))
-        for error in errors:
-            print('INVALID ' + error)
-        print(f'#983 anchors: {len(mutations) - len(errors)}/{len(mutations)} valid')
-        return int(bool(errors))
+        return check_anchors()
+    if args == ['--self-check']:
+        return self_check()
+    if not mutations:
+        raise SystemExit('#983 empty mutation manifest: nothing to run; refusing to pass')
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']
     if not args:

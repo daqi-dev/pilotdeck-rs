@@ -67,6 +67,13 @@ jobs:
             echo 'no src/pilotdeck-cli/tests/fixtures/*/negative_controls.py found; the anchor gate must not silently pass' >&2
             exit 1
           fi
+          # #1364 P0-a：闸门自身的负控。这两个脚本清空 mutations 后跑 --check 必须
+          # 非零退出；若有人删掉 fail-closed 分支，--self-check 立即变红。
+          # 今后新增带 --check 的脚本按需补同一接口，本步不强制。
+          for script in src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/negative_controls.py \
+                        src/pilotdeck-cli/tests/fixtures/sdk-stdin/negative_controls.py; do
+            python3 -I "$script" --self-check
+          done
 
   # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；三个重 job 的结果
   # 「非 success 且不是（skipped 且 docs_only=true）」才拒绝——即分类器确定纯文档改动才
