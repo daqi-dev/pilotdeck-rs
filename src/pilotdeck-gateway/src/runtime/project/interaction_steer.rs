@@ -126,7 +126,9 @@ pub struct ActiveSteerInfo {
     /// External run ID — matches the admission slot and the caller's `runId` param.
     pub run_id: JsString,
     /// Internal turn ID — the key the mailbox was started with; used in
-    /// `SteerMailbox::enqueue` / `cancel` and as `AsyncHookTurn::run_id`.
+    /// `SteerMailbox::enqueue` / `cancel`. The async-hook registry does not
+    /// use it as its run ID: `AsyncHookTurn::run_id` reports the external
+    /// `run_id` above, and delivery is fenced by the `Run` identity token.
     pub turn_id: JsString,
     pub mailbox: SteerMailbox,
     /// Identity for the admission-locked enqueue/cancel path: the owning
@@ -145,7 +147,9 @@ pub struct ActiveSteerInfo {
 /// still matches the admission slot `active_run` (from
 /// `SessionOwner::active_turn_run_id`). Returns `None` when the resource is
 /// not staged, no steer info exists, or the run IDs disagree. The returned
-/// `turn_id` and `mailbox` also construct `AsyncHookTurn`.
+/// info is itself the admission-locked handle: `AsyncHookTurn::new(info)`
+/// wraps it so delivery re-checks run identity and enqueues through
+/// `ActiveSteerInfo::enqueue`.
 pub fn active_turn_for(
     project: &super::ProjectRuntimeRegistry,
     session_key: &JsString,
