@@ -813,16 +813,18 @@ class EnvironmentControls(unittest.TestCase):
                 break
         else:
             self.fail('#1632 the fixture must define a literal slot-guard case table')
-        codes = {'free': 0, 'busy': 1, 'invalid-cap': 2, 'ps-failed': 3}
+        codes = {'free': 0, 'no-gate': 69, 'busy': 1, 'syntax-error': 2, 'ps-failed': 3,
+                 'gate-broken': 4, 'usage': 64}
         self.assertEqual([key.value for key in cases.keys], list(codes),
                          '#1632 the slot guard cases are exactly the documented states')
         # 契约的生产方是 shell 脚本而不是这张表：脚本自己文档化的码集是权威，脚本多/少一个码
         # 而夹具与测试一起没跟，就是自指的假 PASS（#1632 r7 评审 MiniMax sibling / boundary P1）。
-        # #1556 之后脚本把退出码改成了一张多行表（0/1/2/3/4/64/69），夹具仍只建模消费方必须
-        # 分流的四态 0/1/2/3，所以口径是「夹具建模的每一态都被脚本文档化」，不是两边码集相等。
+        # #1556 之后脚本把退出码改成了一张多行表（0/1/2/3/4/64/69）；夹具逐码建模，所以口径是
+        # **两边码集相等**（#1632 r14 评审 MiniMax boundary P1：只核「不多」时，脚本真会走到的
+        # 69 / 4 / 64 三格可以永远不被自检覆盖，CI 依然绿）。
         documented = self.documented_exit_codes(script)
-        self.assertLessEqual(set(codes.values()), documented,
-                             '#1632 every exit code the fixture models is documented by the script')
+        self.assertEqual(set(codes.values()), documented,
+                         '#1632 the fixture models exactly the codes cargo-slots.sh documents')
         self.assertLessEqual({int(code) for code in re.findall(r'\bexit (\d+)', script)}, documented,
                              '#1632 every exit in cargo-slots.sh is a documented code')
         # 上面两条只覆盖「不多出一个码」这一向（#1632 r8 评审 MiniMax boundary P1）：
@@ -848,9 +850,10 @@ class EnvironmentControls(unittest.TestCase):
             text, expected, needle = gates[name]
             self.assertEqual(int(re.search(r'\bexit (\d+)', text)[1]), code,
                              f'#1632 the {name} fake gate really exits {code}')
-            self.assertEqual(expected, 0 if code == 0 else 1,
-                             f'#1632 a {code} gate is not a free slot')
-            if code > 1:
+            self.assertEqual(expected, 0 if code in (0, 69) else 1,
+                             f'#1632 only a free slot or a missing gate may proceed (rc={code})')
+            if code > 1 and code != 69:
+                # 69 是「本机没有统一闸」的放行码，探针打印的是 `slot free`，不带 rc。
                 self.assertIn(f'rc={code}', needle, f'#1632 the {code} gate is reported by code')
         # 消费方也要钉：表再全，`self_check` 不遍历它就等于没测。
         loops = [node for node in ast.walk(ast.parse(source))
@@ -869,6 +872,18 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(
             source.count("if sys.argv[1:] == ['--self-check']:\n    sys.exit(self_check())\n"), 1,
             '#1632 --self-check really dispatches to self_check()')
+        # 分发钉住了，裁决还没钉（#1632 r14 评审 GLM boundary P1）：删掉 `if problems: return 1`
+        # 后自检照常逐个起子进程、照常往 stderr 打 `self-check FAILED: …`，但 `self_check()`
+        # 返回 None → `sys.exit(None)` → exit 0，CI 步骤照样绿；删掉任一条 `problems.append`
+        # 更隐蔽——见证那一格的唯一记录没了，剩下的全绿。r6「删一格」与 r12「删分发行」是同一
+        # 个洞的上两层，这是第三层，所以三处收集点与聚合分支逐条钉死。
+        for fragment in ("problems.append(f'{label}: the slot guard never returned within {wall}s')",
+                         "problems.append(f'{label}: expected rc={expected}, '",
+                         "problems.append(f'{label}: exit did not report {needle!r}')"):
+            self.assertEqual(source.count(fragment), 1,
+                             f'#1632 self-check collects this problem: {fragment}')
+        self.assertEqual(source.count('    if problems:\n        return 1\n'), 1,
+                         '#1632 the collected problems decide the exit status')
         return cases
 
     def test_slot_guard_case_table_cannot_shrink_silently(self):
@@ -916,6 +931,23 @@ class EnvironmentControls(unittest.TestCase):
                                msg='#1632 dropping the --self-check dispatch must be caught'):
             self.slot_guard_cases(source.replace(dispatch, '', 1), script)
         print('#1632 slot-guard mutant script-drops-self-check-dispatch: KILLED', flush=True)
+        # 裁决路径负控（r14 评审 GLM boundary P1）：分发钉住以后，删掉聚合分支或任一条
+        # `problems.append` 仍让自检「打印 FAILED 但 exit 0」。替换成 `None` / `pass` 而不是
+        # 删行，免得把负控变成语法错（那样杀它的是 SyntaxError，证明不了断言有效）。
+        for label, old, new in (
+                ('script-drops-self-check-verdict',
+                 '    if problems:\n        return 1\n', '    if problems:\n        pass\n'),
+                ('script-drops-timeout-problem',
+                 "problems.append(f'{label}: the slot guard never returned within {wall}s')", 'None'),
+                ('script-drops-exit-mismatch-problem',
+                 "problems.append(f'{label}: expected rc={expected}, '\n"
+                 "                                    f'got rc={result.returncode}')", 'None'),
+                ('script-drops-missing-needle-problem',
+                 "problems.append(f'{label}: exit did not report {needle!r}')", 'None')):
+            self.assertEqual(source.count(old), 1, f'#1632 unique anchor: {label}')
+            with self.assertRaises(AssertionError, msg=f'#1632 {label} must be caught'):
+                self.slot_guard_cases(source.replace(old, new, 1), script)
+            print(f'#1632 slot-guard mutant {label}: KILLED', flush=True)
         # ast 的 col_offset 是 UTF-8 字节偏移，跨行累加也要按字节算，否则表里出现中文
         # （'ps 取样失败'）时切片会错位（GLM r7 boundary P3）。
         data = source.encode()
@@ -927,7 +959,7 @@ class EnvironmentControls(unittest.TestCase):
         start = offset(cases.keys[-1].lineno, cases.keys[-1].col_offset)
         end = offset(cases.values[-1].end_lineno, cases.values[-1].end_col_offset)
         mutant = (data[:start] + data[end + 1:]).decode()  # 连同分隔逗号一起删掉整格
-        self.assertNotIn("'ps-failed'", mutant, '#1632 the mutant case really left the table')
+        self.assertNotIn("'usage'", mutant, '#1632 the mutant case really left the table')
         with self.assertRaises(AssertionError, msg='#1632 dropping a case must be caught'):
             self.slot_guard_cases(mutant, script)
         print('#1632 slot-guard mutant case-removed: KILLED', flush=True)

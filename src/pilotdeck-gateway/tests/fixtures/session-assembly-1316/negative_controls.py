@@ -199,22 +199,33 @@ def take_slot(name):
 def self_check(timeout=2, wall=60):
     """Negative control for the slot guard: `-O` must not change the exit (#1632).
 
-    The real gate (`scripts/cargo-slots.sh`) is tri-state: 0 free, 1 full,
-    2 invalid cap, 3 `ps` sampling failed. Every branch is exercised here, in
-    child interpreters both plain and under `-O`. The old assert-based deadline
+    `scripts/cargo-slots.sh` documents 0/1/2/3/4/64/69 (see its 退出码 table) and
+    `wait_for_slot` splits them three ways: 0 and 69 (EX_UNAVAILABLE = no unified
+    gate on this machine, which is exactly the CI runner) proceed, 1 retries, and
+    2/3/4/64 abort. Every one of those codes is driven through a stub gate here,
+    in child interpreters both plain and under `-O`. The old assert-based deadline
     never returned under `-O`, so the bounded child would have to be killed at
     `wall` and this check would report the hang instead of passing; likewise,
-    reading rc=2/3 as "0 slots in use" would silently run cargo anyway.
+    reading a broken gate as "0 slots in use" would silently run cargo anyway.
     """
     # name -> (gate script, expected exit, expected stderr fragment)
     gates = {
         'free': ('#!/bin/sh\necho "cargo-slots: 0 / cap 1"\nexit 0\n', 0, 'slot free'),
+        # 69 = no unified gate here: no shared quota to wait for, so proceed. This is
+        # the code a CI runner really hits, so it must not be left untested.
+        'no-gate': ('#!/bin/sh\nexit 69\n', 0, 'slot free'),
         'busy': ('#!/bin/sh\necho "cargo-slots: 1 / cap 1"\nexit 1\n',
                  1, 'cargo slots unavailable'),
-        'invalid-cap': ('#!/bin/sh\necho "上限非法" >&2\nexit 2\n',
-                        1, 'cargo slot gate failed with rc=2'),
+        # 2 is what bash itself returns for a broken script; cargo-slots.sh documents
+        # it as reserved ("本脚本从不主动使用"), so the stub stands in for bash.
+        'syntax-error': ('#!/bin/sh\necho "脚本语法错" >&2\nexit 2\n',
+                         1, 'cargo slot gate failed with rc=2'),
         'ps-failed': ('#!/bin/sh\necho "ps 取样失败" >&2\nexit 3\n',
                       1, 'cargo slot gate failed with rc=3'),
+        'gate-broken': ('#!/bin/sh\necho "闸给不出名额" >&2\nexit 4\n',
+                        1, 'cargo slot gate failed with rc=4'),
+        'usage': ('#!/bin/sh\necho "用法错" >&2\nexit 64\n',
+                  1, 'cargo slot gate failed with rc=64'),
     }
     problems = []
     with tempfile.TemporaryDirectory(prefix='negctl-1316-slot-') as directory:
