@@ -111,6 +111,23 @@ def _looks_placeholder_cjk_bracket(content):
     return c.lower() in PLACEHOLDER_WORDS
 
 
+def _code_string_context(text, i):
+    """`"{x}"` 的左引号前一个字符是 `text[i]`：它在**代码**语境里吗（而不是正文里给词加引号）？
+
+    修前 `( , = [ { +` 一律放行：正文里写 `("{file}")`（前面是裸 `(`）也被当成 `format!` 命名参数
+    跳过 → 占位漏判（假 PASS，gate21 GLM boundary P2 实测）。ASCII `(` 再要求它本身是一次调用：
+    前面是标识符或 `!`（`format!(` / `println!(`）。
+    """
+    ch = text[i]
+    if ch in "=,{[+":
+        return True
+    if ch == "(":
+        return i > 0 and (text[i - 1] == "!"
+                          or (text[i - 1].isascii() and (text[i - 1].isalnum() or text[i - 1] == "_")))
+    # 字符串前缀（`f"{name}"` / `rb"{path}"`）：前一个字符是 ASCII 标识符字符
+    return ch.isascii() and (ch.isalnum() or ch == "_")
+
+
 def placeholder_in(text):
     """返回第一个占位符字面量；没有返回 None。"""
     for m in ANGLE.finditer(text):
@@ -128,9 +145,7 @@ def placeholder_in(text):
         # 字符串前缀（`f"{name}"` / `rb"{path}"`）也是表达式上下文：前一个字符是 ASCII 标识符字符。
         if (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", m.group(1).strip())
                 and m.start() > 1 and text[m.start() - 1] in "\"'"
-                and (text[m.start() - 2] in "(,=[{+"
-                     or (text[m.start() - 2].isascii()
-                         and (text[m.start() - 2].isalnum() or text[m.start() - 2] == "_")))
+                and _code_string_context(text, m.start() - 2)
                 and m.end() < len(text) and text[m.end()] in "\"'"):
             continue
         if _looks_placeholder(m.group(1)):
@@ -421,7 +436,7 @@ def _indent_kind(text, pos):
     if len(text[i:pos].expandtabs(4)) < CODE_INDENT:
         return "flat"           # 缩进不到 4 格：仍按顶格声明算
     # 往回找上一个非空行，看它是不是列表项
-    j, budget = i - 1, 4096
+    j, budget, blank_seen = i - 1, 4096, False
     while j > 0 and budget > 0:
         lo = max(0, j - budget)
         nl_at = text.rfind("\n", lo, j)
@@ -436,10 +451,21 @@ def _indent_kind(text, pos):
             if lo > 0:
                 return "prose"
             first = text[0:j]
-            return "example" if first.strip() and LIST_ITEM.match(first) else "prose"
+            if not first.strip():
+                return "prose"
+            if not LIST_ITEM.match(first):
+                return "prose"
+            return "prose" if blank_seen else "example"
         a = nl_at + 1
         if text[a:j].strip():
-            return "example" if LIST_ITEM.match(text[a:j]) else "prose"
+            if not LIST_ITEM.match(text[a:j]):
+                return "prose"
+            # 列表项与缩进 scope 之间隔着空行时，CommonMark 里那是**松散列表项的正文**（内容列 + 2），
+            # 不是代码块也不是「贴的示例」：静默忽略会把一条 files=6 est_min=300 的声明丢掉 →
+            # 启发式回退判小包 rc 0（假 PASS，gate21 GLM boundary P2 实测）。
+            # 只有紧贴列表项（无空行）的缩进 scope 才是示例。
+            return "prose" if blank_seen else "example"
+        blank_seen = True
         budget -= j - a + 1
         j = a - 1
     return "prose"              # 到文档开头都是空行：判不准（正常任务书不会这样）
@@ -592,16 +618,24 @@ def section_text(text, keyword):
     return "\n".join(out) if grab else None
 
 
+ESCAPED_PIPE = "\x00"   # GFM 转义竖线 `\|` 的临时替身（任务书正文里不会有 NUL）
+
+
 def _split_row(row):
     """按竖线切格。**只剥一根**行首 / 行尾竖线：`strip("|")` 会把 `|| a | b | …` 的粘写双竖线
     一并剥掉，GFM 的空首格塌缩、整行左移一位——6 格行被当成 5 格与表头对齐，段名读成次格、
-    估时列对齐到别的格子，非合规任务书 rc 0（gate18 GLM boundary P0）。"""
-    r = row.strip()
+    估时列对齐到别的格子，非合规任务书 rc 0（gate18 GLM boundary P0）。
+
+    GFM 的 `\\|` 是**格内字面竖线**：切之前换成 NUL 占位、切完还原。修前直接按 `|` 切，
+    `| S1 \\| 网关 | a.rs | S1.md | 80 min | — |` 多切一格、后续列整体右移 → 合规任务书
+    报「预估时长读不出 `S1.md`」（假 FAIL，gate21 GLM boundary P1 实测）。
+    """
+    r = row.strip().replace("\\|", ESCAPED_PIPE)
     if r.startswith("|"):
         r = r[1:]
     if r.endswith("|"):
         r = r[:-1]
-    return [c.strip() for c in r.split("|")]
+    return [c.strip().replace(ESCAPED_PIPE, "|") for c in r.split("|")]
 
 
 def cells(row, width=None):
@@ -662,7 +696,7 @@ EST_TOKEN = re.compile(r"(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z一-�
 # 小时+分钟的连写（`1h40m` / `1h45min` / `1h30`）：直接切 token 时后一个数字会被 lookbehind
 # 挡掉、只读成 60 min。先把「N 小时 M 分」整体改写成两个带单位的 token 再切。
 COMPACT_UNIT = re.compile(
-    r"(?<![0-9.])(?P<h>[0-9]+(?:\.[0-9]+)?)\s*(?:hours?|hrs?|h|小时|时)\s*(?P<m>[0-9]{1,4})\s*"
+    r"(?<![0-9.])(?P<h>[0-9]+(?:\.[0-9]+)?)\s*(?:hours?|hrs?|h|小时|时)\s*(?P<m>[0-9]{1,9})\s*"
     r"(?:minutes?|mins?|min|m|分钟|分)?(?!\s*[0-9])", re.I)
 # 区间 / 上限语义取最大值：`80–120 min`、`80/90 min`、`80 min（上限 90 min）`
 # `或` / `、` 是「二选一 / 列表」：`60 min 或 90 min` 修前落进求和分支读成 150 > 90 → 合规段被拒
@@ -672,6 +706,10 @@ RANGE_MARK = re.compile(r"[–—~～/、]|至|到|上限|不超过|最多|或|�
 # `和` 常是「S1 和 S2」——把这些当加法会把 `60–80 min，含联调` 加成 140（假 FAIL）。
 # 裸「加」是「增加 / 加班」的子串（`60–80 min（增加 20 min 联调）`），不当加法。
 ADD_MARK = re.compile(r"\+|＋|另加|再加|再补|外加")
+# 乘法连写：`4 × 40 min` 是 160 min。修前 `×` / `*` 谁都认不出，`4`（无单位）借后面 `40 min` 的单位
+# 读成 4、与 40 求和成 44 ≤ 90 → 160 min 的段 rc 0（假 PASS，gate21 GLM boundary P1 实测）。
+# `4x40`（字母 x 夹在两个数字之间）同待遇；折叠成单值再走后面的区间 / 求和规则。
+MUL_MARK = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:[×＊*]|[xX](?=\s*\d))\s*(\d+(?:\.\d+)?)")
 BREAK_CHARS = "（(，,；;"     # 回看窗口的边界：括注开头 / 句读
 # 括注里「包含」类说明词：它们后面的数字不计入主估时。**否定式不算包含**——否定词在词前 4 字符内
 # （`不含` / `不包含` / `未包含` / `不需要包括` / `除…含`）时那段时间必须计入。
@@ -791,6 +829,11 @@ def parse_est(cell, default_unit=""):
     # 后面的单位再借给 `1`、求和成 1 min → 1000 min 的段 rc 0（假 PASS）。
     # 分组宽度认 3 位与 4 位：只认 3 位时 `1,0000 min`（中文万位分组）逗号留着 → 同样读成 1 min（假 PASS）。
     cell = re.sub(r"(?<=[0-9])[,，](?=[0-9]{3,4}(?![0-9]))", "", cell)
+    for _ in range(4):      # 连乘 `2 × 3 × 4 min` 逐轮折叠；4 轮足够，剩下的走后面的「读不出」
+        folded = MUL_MARK.sub(lambda m: f"{float(m.group(1)) * float(m.group(2)):g}", cell)
+        if folded == cell:
+            break
+        cell = folded
     cell = COMPACT_UNIT.sub(lambda m: f"{m.group('h')} h {m.group('m')} min", cell)
     # 明确加法先切段：`40–50 min + 20 min` 是 max(40,50)+20=70，不是 40+50+20=110。
     # 括注里的 `+` 是列表（`80 min（S1 + S2 各 40 min）`），切开后后半段只剩被跳过的数字 → 整格「读不出」。
@@ -886,15 +929,22 @@ NEG_WINDOW = 30         # 只看路径所在分句（路径前 30 字符里最�
                         # 「不需要在这里写 progress.md」命中，「…progress.md（不要提交进 git）」不命中
 # 路径段里的裸占位：骨架 `_tmp/<日期>-issue-<N>/progress.md` 去掉尖括号就是 `…-issue-N`，
 # 整串既没有 `{}<>…` 也有 `/`，旧规则判成实例路径 → rc 0 假 PASS（gate17 GLM boundary P0）。
-# 只认 ASCII 单字母段（按 `-_.` 再切一层），CJK 段（`评审记录`、`进度`）放行：仓里真有中文目录名。
-PATH_PLACEHOLDER_PART = re.compile(r"[NnMmKk]")
+# 单字母之外还要认多字母占位词（`xxx` / `TBD` / `NUM` / `DATE` / `N1`）：修前 `_tmp/xxx/progress.md`
+# 与 `_tmp/issue-NUM/progress.md` 照当实例路径（rc 0 假 PASS，gate21 GLM boundary P1 实测）。
+# 词表与格子侧同源（PLACEHOLDER_WORDS / BARE_PLACEHOLDER），两处不再各写一份。
+# CJK 段（`评审记录`、`进度`）放行：仓里真有中文目录名。
+PATH_PLACEHOLDER_PART = re.compile(r"[NnMmKk]\d*")
+# 词表与格子侧同源，但**只取明确的占位词**：`x` / `name` / `dir` / `file` / `path` / `head` / `sha`
+# 在真实路径里是可能的目录名（`_tmp/x/progress.md`），当占位会假 FAIL 拒派合规任务书。
+PATH_PLACEHOLDER_WORDS = {w for w in PLACEHOLDER_WORDS
+                          if w in {"n", "nn", "num", "idx", "id", "date", "tbd", "todo", "xxx", "yyy"}}
 
 
 def _path_placeholder(p):
-    """返回路径里第一个裸占位段（`N` / `issue-N` / `N-issue`），没有返回 None。"""
+    """返回路径里第一个裸占位段（`N` / `issue-N` / `xxx` / `NUM`），没有返回 None。"""
     for seg in p.split("/"):
         for part in re.split(r"[-_.]", seg):
-            if PATH_PLACEHOLDER_PART.fullmatch(part):
+            if PATH_PLACEHOLDER_PART.fullmatch(part) or part.lower() in PATH_PLACEHOLDER_WORDS:
                 return part
     return None
 
@@ -952,6 +1002,7 @@ def resume_problems(resume):
         # 路径 / 行内代码里的 `resume` / 进度 不算「第 N 段失败从哪继续」的说明：
         # `- 进度文件：_tmp/x/resume-r1/progress.md` 修前命中英文关键字，整节只写路径也 PASS。
         bare = PATH_TOKEN.sub(lambda m: " " * len(m.group(0)), line)
+        bare = URL.sub(lambda m: " " * len(m.group(0)), bare)   # URL 里的 `resume` 不是说明（gate21 GLM P2）
         bare = re.sub(r"`[^`\n]*`", lambda m: " " * len(m.group(0)), bare)
         for clause in re.split(r"[，。；、：,;]", bare):
             if not NEGATION.search(clause):
@@ -959,6 +1010,57 @@ def resume_problems(resume):
     if not any(w in "\n".join(positive).lower() for w in RESUME_FAIL_WORDS):
         problems.append("`## 续跑` 里没写「第 N 段失败从哪继续」（要有 失败 / 继续 / 接续 / 恢复 / 重跑 / resume 之一的说明）")
     return problems
+
+
+def _table_starts(raw):
+    """分段小节里**每一张**表的表头行号（GFM 表 = 表头 + 紧贴的分隔行）。
+
+    表体里也可能出现「表头 + 分隔行」的形态，两种要分开（都不能一刀切）：
+      ① 整行 `-` 的**数据行** + 下一行数据：`_split_row` 认成表头，其实只是没填的段行——
+         当成新表头会把真表切成两半、前面几行全丢（gate21 修 P0 时自测撞到）；
+      ② 表头省竖线的混写：两列小表后面紧贴真表头——真表头绑出的列更多，是真表头。
+    判据：候选表头绑出的列数**多于**当前表头才另起一张表，否则按表体里的数据行处理。
+    """
+    out, cur, i, n = [], None, 0, len(raw)
+    while i < n - 1:
+        cand = ("|" in raw[i] and "|" in raw[i + 1]
+                and not is_separator(_split_row(raw[i]))
+                and is_separator(_split_row(raw[i + 1])))
+        if cand:
+            if cur is None or len(_bind_cols(_split_row(raw[i]))) > len(_bind_cols(_split_row(raw[cur]))):
+                out.append(i)
+                cur = i
+        elif cur is not None and not raw[i].strip():
+            cur = None               # 空行结束当前表
+        i += 1
+    return out
+
+
+# GFM 里这些行开头会结束表格；表后紧跟标题 / 列表 / 围栏 / 引用 / 注释是常态，不算「漏写竖线」
+TABLE_BREAK = re.compile(r"^ {0,3}(?:#{1,6}\s|[-*+][ \t]|\d{1,9}[.)][ \t]|>|```|~~~|<!--)")
+
+
+def _table_rows(raw, hidx, starts):
+    """表头之后的表行：空行 / 下一张表的表头 / 别的块级开头处结束。
+
+    返回 (rows, stray)。stray 是表区里第一条**没有竖线**的正文行：GFM 在这里结束表格，
+    但作者多半是漏写竖线——静默丢掉等于该行的估时 / 占位符 / 共写都不再校验
+    （假 PASS，gate21 MiniMax boundary P3 实测：`S2 b.rs y.md 300 min S1`）。
+    """
+    nxt = next((s for s in starts if s > hidx), len(raw))
+    rows, stray = [], None
+    for idx in range(hidx + 1, nxt):
+        line = raw[idx]
+        if not line.strip():
+            break
+        if "|" not in line:
+            if TABLE_BREAK.match(line):
+                break
+            if stray is None:
+                stray = (idx, line)
+            continue
+        rows.append(line)
+    return rows, stray
 
 
 def check_segments(text):
@@ -969,78 +1071,94 @@ def check_segments(text):
         problems.append("缺 `## 分段交付` 一节（大包必须按文件切段，模板见 ~/ws/pdrs-ops/templates/taskbook-segments.md）")
     else:
         raw = body.splitlines()
+        starts = _table_starts(raw)
         hidx = _header_index(raw)
-        header = _split_row(raw[hidx]) if hidx is not None else None
-        if header is not None and len(_bind_cols(header)) < len(COL_NAMES):
-            # 锚到的表头绑不出全部五列时退回「第一条带首竖线的行」：表头省竖线、数据行保留竖线的
-            # 混写里主扫会抓到数据行当表头。只在兜底结果更好时才换，别把正常表头换掉。
-            first = next((i for i, line in enumerate(raw) if cells(line) is not None), None)
-            if first is not None and first != hidx:
-                alt = _split_row(raw[first])
-                if len(_bind_cols(alt)) > len(_bind_cols(header)):
-                    hidx, header = first, alt
-        data, table_lines = [], []
-        if header is None:
+        if hidx is not None and hidx not in starts:
+            starts.append(hidx)          # 兜底锚到的表头（下一行不是分隔行）
+        if not starts:
             problems.append("`## 分段交付` 里没有表格（需 markdown 表：段名 / 涉及文件 / 交付物 / 预估时长 / 段间依赖）")
         else:
-            width = len(header)
-            for line in raw[hidx + 1:]:
-                if not line.strip():
-                    break           # 空行结束表格（GFM 同）：表后正文不参与解析
-                r = cells(line, width)
-                if r is None:
-                    if "|" in line:
-                        problems.append(f"分段表有一行读不出 {width} 列（行首竖线可省，但列数须与表头一致）：{_clip(line.strip())!r}")
-                    continue
-                table_lines.append(line)
-                # GFM 分隔行只能紧贴表头（第 2 行）；后面的全 `-` 行是没填的段行，不许整行跳过。
-                # 修前判据是 `not data and is_separator(r)`：第一条数据行若是全 `-`（没填的段行），
-                # data 仍为空 → 被当第二条分隔行整行丢掉，该行的占位符 / 空值 / 估时全不校验
-                # （gate20 MiniMax boundary P0 实测：三段表的首行全 `-` → rc 0）。
-                if len(table_lines) == 1 and is_separator(r):
-                    continue
-                if not any(r):
-                    problems.append(f"分段表第 {len(data) + 1} 行整行为空（不许用空行占位）")
-                    continue
-                data.append(r)
-            col = _bind_cols(header)
-            missing_cols = [COL_NAMES[k] for k in COL_NAMES if k not in col]
+            # 同一节里的**每一张**表都要校验：示例表（五列齐全、≥2 行）排在本包真表前面时，修前
+            # 只看第一张 → 真表整张不校验，300 min 的段 / 共写 / 占位符全不查、rc 0（假 PASS，
+            # gate21 MiniMax boundary P1 实测）。列数少于 4 的表（如「段 | 说明」）不当分段表。
+            starts = sorted(set(starts))
+            tables = []
+            for s in starts:
+                header = _split_row(raw[s])
+                rows, stray = _table_rows(raw, s, starts)
+                tables.append({"start": s, "header": header, "col": _bind_cols(header),
+                               "rows": rows, "stray": stray})
+            # 主表 = 绑出列最多的那张（同分取靠后的：示例表通常排在本包真表前面）：
+            # 缺列与段数只按主表判，别让一张两列的小表把真表挤掉。
+            main = max(tables, key=lambda t: (len(t["col"]), t["start"]))
+            missing_cols = [COL_NAMES[k] for k in COL_NAMES if k not in main["col"]]
             if missing_cols:
                 problems.append("分段表缺列：" + "、".join(missing_cols))
-            if len(data) < 2:
-                problems.append(f"分段表只有 {len(data)} 段；大包至少要切成 2 段（每段可独立收货）")
-            default_unit = _header_unit(header[col["est"]]) if "est" in col else ""
-            owner = {}
-            for i, r in enumerate(data, 1):
-                if "files" in col:      # 段间不共写同一文件：共写 = 两段不能各自独立收货
-                    files_cell = r[col["files"]] if col["files"] < len(r) else ""
-                    for tok_ in FILE_TOKEN.findall(files_cell) + BARE_FILE.findall(files_cell):
-                        key = _file_key(tok_)
-                        if key in owner and owner[key] != i:
-                            problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {_clip(tok_)}"
-                                            "（段间不共写同一文件，否则不能独立收货）")
-                        else:
-                            owner.setdefault(key, i)
-                if len(r) < len(header):
-                    problems.append(f"第 {i} 行字段数 {len(r)} < 表头 {len(header)}")
-                for key, idx in col.items():
-                    cell = r[idx] if idx < len(r) else ""
-                    if not cell:
-                        problems.append(f"第 {i} 段「{COL_NAMES[key]}」为空")
+            owner, seen, table_text = {}, 0, []
+            for t in tables:
+                if len(t["col"]) < 4:      # 不像分段表：只看不判（段名 / 说明这种小表）
+                    continue
+                width, col, header = len(t["header"]), t["col"], t["header"]
+                default_unit = _header_unit(header[col["est"]]) if "est" in col else ""
+                table_text.extend([raw[t["start"]]] + t["rows"])
+                first_row = True
+                for line in t["rows"]:
+                    r = cells(line, width)
+                    if r is None:
+                        problems.append(f"分段表有一行读不出 {width} 列（行首竖线可省，但列数须与表头一致）：{_clip(line.strip())!r}")
                         continue
-                    hit = placeholder_in(cell)
-                    if hit:
-                        problems.append(f"第 {i} 段「{COL_NAMES[key]}」还是占位符：{_clip(hit)!r}")
-                if "est" in col:
-                    est_cell = r[col["est"]] if col["est"] < len(r) else ""
-                    est = parse_est(est_cell, default_unit)
-                    if est is None:
-                        problems.append(f"第 {i} 段预估时长读不出（{_clip(est_cell)!r}；"
-                                        "只认 min / 分钟 / h / 小时）")
-                    elif est > SEGMENT_MAX_MIN:
-                        problems.append(f"第 {i} 段预估 {est:g} min > {SEGMENT_MAX_MIN} min（切成更小的段）")
-            table_text = "\n".join([raw[hidx]] + table_lines)
-            if placeholder_in(table_text) and not any("占位符" in p for p in problems):
+                    # GFM 分隔行只能紧贴表头（第 2 行）；后面的全 `-` 行是没填的段行，不许整行跳过。
+                    # 修前判据是 `not data and is_separator(r)`：第一条数据行若是全 `-`（没填的段行），
+                    # data 仍为空 → 被当第二条分隔行整行丢掉，该行的占位符 / 空值 / 估时全不校验
+                    # （gate20 MiniMax boundary P0 实测：三段表的首行全 `-` → rc 0）。
+                    if first_row and is_separator(r):
+                        first_row = False
+                        continue
+                    first_row = False
+                    if not any(r):
+                        problems.append(f"分段表第 {seen + 1} 行整行为空（不许用空行占位）")
+                        continue
+                    seen += 1
+                    i = seen
+                    if len(r) != width:
+                        # 多于表头的行修前照收：`r[col["est"]]` 读到的不是估时格、`r[col["files"]]`
+                        # 不是文件格 → 错位格恰好像估时就把真估时 / 真共写掩盖过去（假 PASS，
+                        # gate21 两家 boundary 各自报到）。整行不校验，只报列数。
+                        problems.append(f"第 {i} 行字段数 {len(r)} ≠ 表头 {width}"
+                                        "（列对不齐，这一行的估时 / 文件都不校验）")
+                        continue
+                    if "files" in col:      # 段间不共写同一文件：共写 = 两段不能各自独立收货
+                        files_cell = r[col["files"]]
+                        for tok_ in FILE_TOKEN.findall(files_cell) + BARE_FILE.findall(files_cell):
+                            key = _file_key(tok_)
+                            if key in owner and owner[key] != i:
+                                problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {_clip(tok_)}"
+                                                "（段间不共写同一文件，否则不能独立收货）")
+                            else:
+                                owner.setdefault(key, i)
+                    for key, idx in col.items():
+                        cell = r[idx]
+                        if not cell:
+                            problems.append(f"第 {i} 段「{COL_NAMES[key]}」为空")
+                            continue
+                        hit = placeholder_in(cell)
+                        if hit:
+                            problems.append(f"第 {i} 段「{COL_NAMES[key]}」还是占位符：{_clip(hit)!r}")
+                    if "est" in col:
+                        est_cell = r[col["est"]]
+                        est = parse_est(est_cell, default_unit)
+                        if est is None:
+                            problems.append(f"第 {i} 段预估时长读不出（{_clip(est_cell)!r}；"
+                                            "只认 min / 分钟 / h / 小时）")
+                        elif est > SEGMENT_MAX_MIN:
+                            problems.append(f"第 {i} 段预估 {est:g} min > {SEGMENT_MAX_MIN} min（切成更小的段）")
+                if t["stray"]:
+                    idx, line = t["stray"]
+                    problems.append(f"分段表第 {idx - t['start']} 行没有竖线，表格在这里断了"
+                                    f"（漏写 `|`？这一行之后的估时 / 占位符都不校验）：{_clip(line.strip())!r}")
+            if seen < 2:
+                problems.append(f"分段表只有 {seen} 段；大包至少要切成 2 段（每段可独立收货）")
+            if placeholder_in("\n".join(table_text)) and not any("占位符" in p for p in problems):
                 problems.append("分段表里还有占位符（<…> / {…} / … / TBD / TODO），须填实现值")
     resume = section_text(text, "续跑")
     if resume is None:
@@ -1200,6 +1318,14 @@ def check_file(path, ignore_missing=False):
             "problems": problems, "class": cls}
 
 
+# `.prev-*` 是旧轮次备份目录；用词界而不是裸前缀：`.preview/` 这类正常目录不该被当成备份跳掉
+PREV_BACKUP = re.compile(r"\.prev(?:$|[-_.])")
+
+
+def _is_dispatch_part(part):
+    return part == "remote-run" or part.startswith("remote-run.") or bool(PREV_BACKUP.match(part))
+
+
 def _is_dispatch_copy(p):
     """`remote-run/stage|artifacts` 里是同一份任务书的派发副本，`.prev-*` 是旧轮次备份：都不重复检查。
 
@@ -1210,8 +1336,17 @@ def _is_dispatch_copy(p):
         i = len(parts) - 1 - parts[::-1].index("_tmp")   # 取**最后**一个：--root 前缀里也可能叫 _tmp
     except ValueError:
         return False
-    return any(part == "remote-run" or part.startswith("remote-run.") or part.startswith(".prev")
-               for part in parts[i + 1:-1])
+    return any(_is_dispatch_part(part) for part in parts[i + 1:-1])
+
+
+def _is_dispatch_dir(p):
+    """目录**本身**就是派发副本 / 备份（判断符号链接要不要跳过时用，末段也算进来）。"""
+    parts = p.parts
+    try:
+        i = len(parts) - 1 - parts[::-1].index("_tmp")
+    except ValueError:
+        return False
+    return any(_is_dispatch_part(part) for part in parts[i + 1:])
 
 
 class ScanError(Exception):
@@ -1261,10 +1396,18 @@ def _iter_taskbooks(base):
             for d in dirs:
                 p = os.path.join(dirpath, d)
                 if os.path.islink(p):
+                    # 派发副本 / 旧轮次备份本来就该跳过（`_is_dispatch_copy` 的口径）：这种软链
+                    # 不增强制中断，否则一条 `remote-run -> 共享产物` 的链就让整轮扫描 rc 2
+                    # （gate21 MiniMax boundary P3 实测）。其余软链仍中断，不静默漏。
+                    if _is_dispatch_dir(Path(p)):
+                        continue
                     raise ScanError(f"递归扫到符号链接目录 {p}：不跟随会静默漏掉里面的任务书，"
                                     "请换成真实目录或删掉链接")
-            if "task.md" in files:
-                out.append(Path(dirpath) / "task.md")
+            # `task.md` 按大小写不敏感比：macOS 默认文件系统上 `Task.md` 与 `task.md` 是同一个名字，
+            # 字符串精确比较会把整类任务书漏掉，rc 0 冒充「都通过」（gate21 GLM boundary P3）。
+            names = {n.casefold(): n for n in files}
+            if "task.md" in names:
+                out.append(Path(dirpath) / names["task.md"])
     return sorted(out)
 
 
@@ -1327,6 +1470,10 @@ def main(argv):
         # 修前 if/elif 顺序把 --explain 静默吞掉：调用方按 --explain 想要判定依据却只拿到 JSON
         return usage("--json 与 --explain 不能同用（一个只出 JSON、一个只打判定依据，选一个）")
     modes = [n for n, on in (("--json", as_json), ("--explain", explain), ("--quiet", quiet)) if on]
+    if len(modes) > 1:
+        # 修前 if/elif 顺序把后面的模式静默吞掉：`--quiet --explain` 照打逐文件行、`--json --quiet`
+        # 只出 JSON 却没有 SUMMARY。输出模式互斥，选一个（gate21 MiniMax boundary P3）。
+        return usage(f"{' 与 '.join(modes)} 不能同用（输出模式互斥，选一个）")
     if "--print-skeleton" in args:
         if [a for a in args if not a.startswith("--")]:
             return usage("--print-skeleton 不能与任务书参数同用（会让人误以为文件被检查过）")
