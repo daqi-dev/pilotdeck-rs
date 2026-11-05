@@ -91,6 +91,10 @@ impl NativeWsServer {
             static_root: None,
         };
         Ok(Self {
+            // Node's checker phase anchors at the 'listening' event; this
+            // Instant is taken just before the bind, so the Rust grid runs a
+            // bind-RTT earlier — well under the 30 s interval, registered in
+            // A8.4-NATIVE-HTTP-002-R2 with the other sub-interval residuals.
             grid_anchor: tokio::time::Instant::now(),
             listener: TcpListener::bind(address).await?,
             host,

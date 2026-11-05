@@ -399,6 +399,25 @@ impl<S> UpgradeReadGate<S> {
         }
     }
 
+    /// #1250: both read paths (the withheld mid-stream read and the plain
+    /// one) refresh Node's idle deadline on a read segment with the same
+    /// condition, kept in one place so each fixture switch has the one
+    /// compiled site the negative-controls preflight requires.
+    fn read_refreshes_idle(&self) -> bool {
+        if crate::mutants::on("native-http-read-refresh-off") {
+            // The pre-fix-r1 behavior the negative control kills: a read
+            // segment no longer refreshes the idle deadline, so the previous
+            // response's deadline closes the connection while the follow-up
+            // head is still arriving.
+            return false;
+        }
+        crate::mutants::on("native-http-unserved-read-arms-idle")
+            // The pre-fix-r1 behavior the negative control kills: refreshing
+            // on any read, so a first head's segments arm the idle deadline
+            // and poison the socket.
+            || self.served_heads.load(Ordering::Relaxed) > 0
+    }
+
     /// #1292 fix-r2: a request head's first byte just arrived (not a body
     /// segment): arm the head's own deadline. Two shapes reach here — a
     /// standby window's awaited head, for the connection's *first* head too
@@ -592,10 +611,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
                 // `on_message_begin` — and it anchors the head's own
                 // deadline.
                 self.arm_started_head(cx, true);
-                if !crate::mutants::on("native-http-read-refresh-off")
-                    && (crate::mutants::on("native-http-unserved-read-arms-idle")
-                        || self.served_heads.load(Ordering::Relaxed) > 0)
-                {
+                if self.read_refreshes_idle() {
                     self.activity
                         .send_replace(Some(tokio::time::Instant::now()));
                 }
@@ -632,13 +648,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
                     // not by body bytes).
                     let head_start = body_before <= 0 || read as i64 > body_before;
                     self.arm_started_head(cx, head_start);
-                    if !crate::mutants::on("native-http-read-refresh-off")
-                        // The pre-fix-r1 behavior the negative control kills:
-                        // refreshing on any read, so a first head's segments
-                        // arm the idle deadline and poison the socket.
-                        && (crate::mutants::on("native-http-unserved-read-arms-idle")
-                            || self.served_heads.load(Ordering::Relaxed) > 0)
-                    {
+                    if self.read_refreshes_idle() {
                         self.activity
                             .send_replace(Some(tokio::time::Instant::now()));
                     }
