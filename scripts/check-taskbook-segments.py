@@ -64,12 +64,14 @@ FRESH_SEC = 10          # --recent 跳过「刚写几秒」的文件：写方不
 # 只认「像占位符」的尖括号/花括号内容：含中日韩字，或是已知占位词（N / 日期 / 待填 …）。
 # 这样 `Vec<u8>`、`Result<(), E>`、`<br>`、`<https://…>` 这些仓库常态不会被误判（假 FAIL 会拒派合规任务书）。
 CJK = re.compile(r"[㐀-鿿]")
-ANGLE = re.compile(r"<([^<>\n]{0,200})>")
-BRACE = re.compile(r"\{([^{}\n]{0,80})\}")
+# 不设长度上限：上限之外的内容既不算占位符、又不会被遮蔽 → 超长的 `{请填写…}` 静默通过（假 PASS），
+# 超长的 `<https://…/a...>` 里的 `…` 又会被裸占位规则命中（假 FAIL）。两头都要堵，改成无上限。
+ANGLE = re.compile(r"<([^<>\n]*)>")
+BRACE = re.compile(r"\{([^{}\n]*)\}")
 # 全角尖括号（`＜待填＞`）与中文方括号（`【待填】`）：Unicode 归一化不做，直接加同义模式。
-FW_ANGLE = re.compile(r"[＜〈]([^＜＞〈〉\n]{0,200})[＞〉]")
+FW_ANGLE = re.compile(r"[＜〈]([^＜＞〈〉\n]*)[＞〉]")
 # 中文方括号里可能是正文（`【重要】`），只认明确的占位词，不套「含中文即占位」
-CJK_BRACKET = re.compile(r"【([^【】\n]{0,80})】")
+CJK_BRACKET = re.compile(r"【([^【】\n]*)】")
 # 只认明确的占位词：单字「待」「略」会把 `【策略】` / `【等待】` / `【忽略】` 这类正文判成占位符。
 PLACEHOLDER_HINT = re.compile(r"待填|待补|待定|待完善|待补充|填写|占位|省略号|略去|tbd|todo|xxx", re.I)
 PLACEHOLDER_WORDS = {
@@ -132,6 +134,13 @@ def placeholder_in(text):
 DASHES = r"[\s_\-－—‐‑]"
 SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
 COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
+# 行内代码（`` `…` ``）是第四种「贴示例」形态：示例 scope 写在反引号里同样不是本包声明。
+# 只对 scope 解析屏蔽（人日 / `.rs` 回退、续跑路径仍看原文——反引号里常是真实路径）。
+INLINE_CODE = re.compile(r"`[^`\n]*`")
+
+
+def mask_inline_code(text):
+    return INLINE_CODE.sub(lambda m: " " * len(m.group(0)), text)
 SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
 # 关键字与数字之间允许标点（`工作量：3 人日` / `预计,2 人日`）；「估计」要单列（裸「估」后跟「计」不匹配）。
 PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|估算|估|工作量|共计|合计|总计|共)\s*[:：,，]?\s*"
@@ -140,11 +149,25 @@ PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|估算|估|工�
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
 RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
 # 代码围栏：整段（含内容）抹成空行，行数不变
-FENCE = re.compile(r"(?ms)^[ \t]*(?P<f>```+|~~~+)[^\n]*\n.*?(?:^[ \t]*(?P=f)[^\n]*$|\Z)")
+FENCE = re.compile(r"(?ms)^[ \t]*(?P<f>```+|~~~+)[^\n]*\n.*?(?:^[ \t]*(?P=f)[ \t]*$|\Z)")
 # 引用块与缩进代码块是 Markdown 的另两种「贴示例」形态：里面出现的 scope 同样是示例，不是本包声明。
 # 只抹成空格（行数、偏移不变），人日 / `.rs` 回退仍看原文（宁可判大）。
 QUOTED = re.compile(r"(?m)^[ \t]*>.*$")
-INDENTED = re.compile(r"(?m)^(?: {4,}|\t).*$")
+# 缩进代码块按 CommonMark 要求「前置空行」，且列表续行不算：`1. 进度文件：` 下一行缩进 4 格的路径是正文，
+# 一刀切会把它抹掉 → 续跑路径整段消失（假 FAIL）。
+INDENTED_HEAD = re.compile(r"(?: {4,}|\t)")
+
+
+def _blank_indented(text):
+    out, in_block = [], True          # 文档开头等价于「空行之后」
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\n")
+        if in_block and INDENTED_HEAD.match(body):
+            out.append(" " * len(body) + line[len(body):])
+            continue
+        out.append(line)
+        in_block = not body.strip()   # 空行：后面仍可能是缩进块；非空非缩进行：缩进块结束
+    return "".join(out)
 
 SECTION = re.compile(r"^(#{2,3})\s+(.*)$")
 # 顺序有讲究：`段间依赖` 里也有「段」，dep 必须先认领，seg 才不会绑到依赖列。
@@ -169,15 +192,18 @@ def strip_fences(text):
     blank = lambda m: " " * len(m.group(0))   # noqa: E731 —— 行内不换行，行数不变
     out = FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     out = QUOTED.sub(blank, out)
-    return INDENTED.sub(blank, out)
+    return _blank_indented(out)
 
 
 def fence_unclosed(text):
     """有开栏但没有闭合行（FENCE 匹配到了文件尾）：此时围栏后的正文会被整段抹掉，不能静默判小包。"""
     for m in FENCE.finditer(text):
         lines = m.group(0).rstrip("\n").splitlines()
-        if len(lines) < 2 or not lines[-1].lstrip().startswith(m.group("f")):
+        if len(lines) < 2:
             return True
+        last = lines[-1]
+        if not re.fullmatch(r"[ \t]*" + re.escape(m.group("f")) + r"+[ \t]*", last):
+            return True          # 结尾不是「同串围栏独占一行」：` ``` x ` 不算闭合
     return False
 
 
@@ -197,6 +223,8 @@ def _parse_scope_body(body):
         # 旧实现把未知键原样存进 dict，`files=2 estmins=300` 里那个 300 min 的声明被静默吞掉 →
         # 300 min 的包判成小包 rc 0（假 PASS），与「scope 写坏不许静默」相反。
         k, v = k.strip().lower().replace("-", "_"), v.strip()
+        if k in out:
+            return None, (f"scope 行里 {k} 写了两次（后写的会把先写的阈值吞掉，按「读不了」处理）")
         if k in ("files", "lines", "est_min", "modules"):
             # 位数上限：Python 3.11+ 的 int() 对 >4300 位会抛 ValueError（崩溃冒充 FAIL）
             if not re.fullmatch(r"[0-9]{1,18}", v):
@@ -257,7 +285,7 @@ def classify(text, fallback_text=None):
     `fallback_text`（默认同 text）找人日与 .rs 路径：回退方向取「宁可判大」，围栏里出现的证据也算数。
     """
     fb = text if fallback_text is None else fallback_text
-    scopes, errors = parse_scopes(text)
+    scopes, errors = parse_scopes(mask_inline_code(text))
     metrics = {"scopes": scopes, "scope_errors": errors, "rs_paths": len(rs_paths(fb))}
     if errors:
         return {"big": None, "reason": "；".join(dict.fromkeys(errors)), "metrics": metrics}
@@ -329,7 +357,7 @@ EST_TOKEN = re.compile(r"(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z一-�
 # 小时+分钟的连写（`1h40m` / `1h45min` / `1h30`）：直接切 token 时后一个数字会被 lookbehind
 # 挡掉、只读成 60 min。先把「N 小时 M 分」整体改写成两个带单位的 token 再切。
 COMPACT_UNIT = re.compile(
-    r"(?<![0-9.])(?P<h>[0-9]+)\s*(?:hours?|hrs?|h|小时|时)\s*(?P<m>[0-9]{1,2})\s*"
+    r"(?<![0-9.])(?P<h>[0-9]+)\s*(?:hours?|hrs?|h|小时|时)\s*(?P<m>[0-9]{1,4})\s*"
     r"(?:minutes?|mins?|min|m|分钟|分)?(?!\s*[0-9])", re.I)
 # 区间 / 上限语义取最大值：`80–120 min`、`80/90 min`、`80 min（上限 90 min）`
 RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=\d)\s*-\s*(?=\d)")
@@ -358,9 +386,9 @@ def _header_unit(header_cell):
     """
     low = header_cell.lower()
     # 连续中文会被 findall 并成一个 token（`预估工时` != `工时`），所以中文单位按子串判。
-    if "人日" in low or "工作日" in low:
+    if "人日" in low or "人天" in low or "工作日" in low:
         return "d"         # _unit_minutes 会判「读不出」
-    if "工时" in low:
+    if "工时" in low or "人时" in low or "人小时" in low:
         return "h"
     for tok in re.findall(r"[a-z一-鿿]+", low):
         if tok in UNIT_HOUR:
@@ -369,7 +397,11 @@ def _header_unit(header_cell):
             return "d"     # _unit_minutes 会判「读不出」
         if tok in UNIT_MIN:
             return ""
-    return ""
+    # 认得出的「时长类」表头按 min；**认不出的返回 None**：裸数字不许默默当 min 放行
+    # （`预估人天` 曾被读成 min，2 人天=960 min 的段判成 2 min 通过）。
+    if any(w in low for w in ("时长", "时间", "耗时", "估时", "分钟")):
+        return ""
+    return None
 
 
 def _in_paren(s, pos):
@@ -394,7 +426,16 @@ def parse_est(cell, default_unit=""):
     """
     cell = COMPACT_UNIT.sub(lambda m: f"{m.group('h')} h {m.group('m')} min", cell)
     # 明确加法先切段：`40–50 min + 20 min` 是 max(40,50)+20=70，不是 40+50+20=110。
-    parts = [x for x in ADD_MARK.split(cell) if x.strip()]
+    # 括注里的 `+` 是列表（`80 min（S1 + S2 各 40 min）`），切开后后半段只剩被跳过的数字 → 整格「读不出」。
+    # 文字加法词（另加 / 再加 / 再补）写在括注里仍然是加法；只有裸 `+` 在括注里才算列表。
+    cut = [m.span() for m in ADD_MARK.finditer(cell)
+           if not _in_paren(cell, m.start()) or m.group(0) not in ("+", "＋")]
+    parts, prev = [], 0
+    for a, b in cut:
+        parts.append(cell[prev:a])
+        prev = b
+    parts.append(cell[prev:])
+    parts = [x for x in parts if x.strip()]
     if len(parts) > 1:
         total, seen = 0, False
         for part in parts:
@@ -410,7 +451,12 @@ def parse_est(cell, default_unit=""):
     # 时长数字的跳过而不是整格报「读不出」（旧行为会把 90 min 的合规段判成 100 → 拒派）。
     toks = []
     for m in EST_TOKEN.finditer(cell):
-        head = cell[max(0, m.start() - 4):m.start()]
+        # 回看窗口到「最近的括注开头 / 句读」为止，不再固定 4 字符：`90 min（含双段联调 10 min）` 里
+        # `含` 与 `10` 隔 6 字符，旧窗口看不到 → 10 被计入求和 → 100 > 90 → 合规段被拒（假 FAIL）。
+        cut = max(cell.rfind("（", 0, m.start()), cell.rfind("(", 0, m.start()),
+                  cell.rfind("，", 0, m.start()), cell.rfind(",", 0, m.start()),
+                  cell.rfind("；", 0, m.start()), cell.rfind(";", 0, m.start()))
+        head = cell[cut + 1:m.start()]
         if re.search(r"[含各]|其中|包括|内含|外加", head):
             continue
         toks.append((float(m.group(1)), m.group(2).lower(), m.start()))
@@ -423,7 +469,10 @@ def parse_est(cell, default_unit=""):
             after = next((t[1] for t in toks[i + 1:] if t[1]), "")
             before = next((t[1] for t in reversed(toks[:i]) if t[1]), "")
             u = after or before or default_unit
+        if u is None:
+            return None    # 表头认不出单位、格子里也没写：报「读不出」，不许当 min 放行
         u = re.sub(r"(?:以内|之内|以下|左右|上下)$", "", u)   # `分钟以内` 的限定词不是单位的一部分
+        u = u.strip("至到")   # `60 至 80 分钟`：区间词被并进单位，剥掉后按无单位处理（后面按区间取 max）
         mins = _unit_minutes(v, u)
         if mins is None:
             if _in_paren(cell, pos):
@@ -507,8 +556,9 @@ def check_segments(text):
         if header is None:
             problems.append("`## 分段交付` 里没有表格（需 markdown 表：段名 / 涉及文件 / 交付物 / 预估时长 / 段间依赖）")
         else:
-            for r in rows[1:]:
-                if is_separator(r):
+            for j, r in enumerate(rows[1:]):
+                # GFM 分隔行只能紧贴表头（第 2 行）；后面的全 `-` 行是没填的段行，不许整行跳过。
+                if j == 0 and is_separator(r):
                     continue
                 if not any(r):
                     problems.append(f"分段表第 {len(data) + 1} 行整行为空（不许用空行占位）")
@@ -545,7 +595,8 @@ def check_segments(text):
                         problems.append(f"第 {i} 段预估时长读不出（{est_cell!r}；只认 min / 分钟 / h / 小时）")
                     elif est > SEGMENT_MAX_MIN:
                         problems.append(f"第 {i} 段预估 {est:g} min > {SEGMENT_MAX_MIN} min（切成更小的段）")
-            if placeholder_in(body) and not any("占位符" in p for p in problems):
+            table_text = "\n".join(x for x in body.splitlines() if x.lstrip().startswith("|"))
+            if placeholder_in(table_text) and not any("占位符" in p for p in problems):
                 problems.append("分段表里还有占位符（<…> / {…} / … / TBD / TODO），须填实现值")
     resume = section_text(text, "续跑")
     if resume is None:

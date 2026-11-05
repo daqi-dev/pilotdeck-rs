@@ -331,6 +331,89 @@ case("【待补充】仍是占位符", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "【待补充】"), must=["占位符"])
 
 
+# ---- fix-r10：第九轮闸门（两家 P0×2 / P1×4 / P2×5，全部先实测复现）-----------------------------
+TEN_RS = "\n".join(f"- src/m{i}.rs" for i in range(1, 10))
+case("行内代码里的示例 scope 不算声明（两家同报 P0）", 1,
+     "# t\n\n写法示例：`<!-- pdrs-scope: files=2 lines=80 est_min=30 -->`\n\n" + TEN_RS + "\n",
+     must=["分段交付"])
+case("行内代码里的写坏 scope 也不假 ERROR（回退照走）", 1,
+     "# t\n\n写法：`<!-- pdrs-scope: files=很多 -->`\n\n" + TEN_RS + "\n", must=["分段交付"])
+case("续跑路径写在反引号里仍认（行内代码只对 scope 屏蔽）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 40 min |"))
+case("紧连写 1h100min = 160 min（旧实现只读 60，P0）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1h100min |"), must=["160 min > 90 min"])
+case("紧连写 1h130m = 190 min", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1h130m |"), must=["190 min > 90 min"])
+case("紧连写 1h40m = 100 min", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 1h40m |"), must=["100 min > 90 min"])
+case("超长花括号占位符（>80 字）仍判占位（P0）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1",
+                                     "{" + "请填写本段全部文件、改动行号与验收命令以及相关说明" * 4 + "}"),
+     must=["占位符"])
+case("超长 autolink 里的 … 不算占位符（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1",
+                                     "`S1-RESULT.md`，见 <https://example.com/" + "a" * 240 + "...>"))
+case("表头 预估人天 + 裸数字不许当 min（P1）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 预估时长 |", "| 预估人天 |").replace("| 80 min |", "| 2 |"),
+     must=["读不出"])
+case("表头 预估人时 + 裸数字按小时（P1）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 预估时长 |", "| 预估人时 |").replace("| 80 min |", "| 2 |"),
+     must=["120 min > 90 min"])
+case("区间 60 至 80 分钟 = 80（正控，P1 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60 至 80 分钟 |"))
+case("区间 60 到 100 分钟 = 100（P1）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60 到 100 分钟 |"), must=["100 min > 90 min"])
+case("括注「含」距数字 >4 字符仍不计入（P1 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 90 min（含双段联调 10 min） |"))
+case("括注里的 + 是列表不是加法（P1 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 80 min（S1 + S2 各 40 min） |"))
+case("重复 scope 键后写覆盖前者（P2 假 PASS）", 2,
+     "<!-- pdrs-scope: files=16 est_min=180 files=2 -->\n# x\n", must=["写了两次"])
+case("正文里的 …… 不是表格占位符（P2 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("## 分段交付（大包必填）\n\n",
+                                     "## 分段交付（大包必填）\n\n先做 A 再做 B……\n\n"))
+case("列表续行里缩进 4 格的进度路径仍认（P2 假 FAIL）", 0,
+     BIG_SCOPE + """## 分段交付
+
+| 段 | 涉及文件 | 交付物 | 预估时长 | 段间依赖 |
+|----|---------|--------|---------|---------|
+| S1 | `src/a.rs` | `S1-RESULT.md` | 40 min | — |
+| S2 | `src/b.rs` | `S2-RESULT.md` | 40 min | S1 |
+
+## 续跑
+
+1. 进度文件：
+    `_tmp/20261105-issue-100/progress.md`
+2. 第 1 段失败从第 2 段继续。
+""")
+case("全 - 数据行不许当分隔行跳过（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| S2 HTTP 同域 |", "| - | - | - | - | - |\n| S2 HTTP 同域 |"),
+     must=["读不出"])
+case("关闭围栏带尾随文本 = 未闭合（P2 假 PASS）", 2,
+     "# t\n\n```\n``` x\n<!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n" + TEN_RS + "\n",
+     must=["围栏"])
+
+# parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
+PARSE_EST = [
+    ("80 min（2 个文件）", "", 80.0),
+    ("60 min（S1 和 S2 各 30 min）", "", 60.0),
+    ("90 min（含双段联调 10 min）", "", 90.0),
+    ("80 min（S1 + S2 各 40 min）", "", 80.0),
+    ("40 min + 60 min（含 10 min 缓冲）", "", 100.0),
+    ("60 min + 40 min（最多再补 20 min）", "", 120.0),
+    ("1h100min", "", 160.0),
+    ("1h130m", "", 190.0),
+    ("1 h 100 min", "", 160.0),
+    ("60 至 80 分钟", "", 80.0),
+    ("60 到 80 分钟", "", 80.0),
+    ("60-80 分钟", "", 80.0),
+    ("1.5 小时", "", 90.0),
+    ("2", "h", 120.0),
+    ("2", "d", None),
+    ("2", None, None),
+]
+
+
 def run():
     fails = 0
     with tempfile.TemporaryDirectory() as td:
@@ -513,7 +596,14 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 23   # 14 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
+    total = len(CASES) + 23 + len(PARSE_EST)   # 14 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain / 未来 mtime / 扫描中断异常 / 扫描中断 rc / 真实 chmod 000）+ 9 条命令行契约
+    # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
+    for cell, unit, want in PARSE_EST:
+        got = ctbs.parse_est(cell, unit)
+        ok = got == want
+        print(f"{'PASS' if ok else 'FAIL'}  parse_est({cell!r}, {unit!r}) = {got}（期望 {want}）")
+        fails += 0 if ok else 1
+
     print(f"SUMMARY cases={total} failed={fails}")
     return 1 if fails else 0
 
