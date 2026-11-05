@@ -732,8 +732,9 @@ async fn run_registry_switch_controls_startup() {
 }
 
 // TS ui/server/routes/uploads.js:73-76: the assembly, not a request, drives
-// `cleanup_expired` — the first sweep lands after one interval and only
-// removes records whose expiresAt has passed (#1439).
+// `cleanup_expired`. `setInterval` first fires after one interval (not at
+// t=0) and keeps firing; each round sweeps both TTL families (upload records
+// and crash-orphan leases) (#1439).
 #[tokio::test]
 async fn upload_cleanup_runs_on_the_assembly_schedule() {
     let scratch = Scratch::new();
@@ -742,10 +743,8 @@ async fn upload_cleanup_runs_on_the_assembly_schedule() {
         .expect("#1439 upload cleanup config");
     let project_key = std::fs::canonicalize(&options.project).expect("#1439 project canonical");
     let uploads = options.project.join(".tmp/chat-uploads");
-    for (id, expires_at) in [
-        ("upload-expired", "1970-01-01T00:00:00.000Z"),
-        ("upload-live", "2100-01-01T00:00:00.000Z"),
-    ] {
+    let leases = options.project.join(".tmp/chat-upload-leases");
+    let seed = |id: &str, expires_at: &str| {
         let dir = uploads.join(id);
         std::fs::create_dir_all(&dir).expect("#1439 upload cleanup seed directory");
         let record = json!({
@@ -756,30 +755,67 @@ async fn upload_cleanup_runs_on_the_assembly_schedule() {
         });
         std::fs::write(dir.join("metadata.json"), format!("{record}\n"))
             .expect("#1439 upload cleanup seed metadata");
-    }
+        let lease = leases.join(id).join("lease-1");
+        std::fs::create_dir_all(&lease).expect("#1439 lease cleanup seed directory");
+        std::fs::write(
+            lease.join("lease.json"),
+            format!("{}\n", json!({ "expiresAt": expires_at })),
+        )
+        .expect("#1439 lease cleanup seed lease");
+    };
+    // Seeded before the assembly starts, so a sweep at t=0 would take them.
+    seed("upload-expired", "1970-01-01T00:00:00.000Z");
+    seed("upload-live", "2100-01-01T00:00:00.000Z");
+    let expired_upload = uploads.join("upload-expired");
+    let expired_lease = leases.join("upload-expired").join("lease-1");
     let host = crate::test_negative_receipt::expect_ok(
         assembly::start_observed_with_upload_cleanup(
             options.clone(),
             options.environment(Env::new()),
-            std::time::Duration::from_millis(20),
+            std::time::Duration::from_secs(2),
             Arc::new(|_, result| Box::pin(async move { result })),
             Arc::new(|error| eprintln!("native project cleanup: {error}")),
         )
         .await,
         "#1439 upload cleanup assembly starts",
     );
-    let expired = uploads.join("upload-expired");
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while expired.exists() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    // t ≈ 100 ms « 2 s: the first sweep lands after one interval, not at t=0.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    negative_assert!(
+        expired_upload.exists(),
+        "#1439 the first sweep waits one interval (uploads)"
+    );
+    negative_assert!(
+        expired_lease.exists(),
+        "#1439 the first sweep waits one interval (leases)"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while expired_upload.exists() || expired_lease.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("#1439 upload cleanup removes the expired record within the deadline");
+    .expect("#1439 the first sweep removes both expired TTL families");
     negative_assert!(
         uploads.join("upload-live").exists(),
         "#1439 upload cleanup keeps the unexpired record"
     );
+    negative_assert!(
+        leases.join("upload-live").join("lease-1").exists(),
+        "#1439 lease cleanup keeps the unexpired lease"
+    );
+    // A record that appears after the first round is removed by a later one:
+    // a one-shot sweep would leave it behind forever.
+    seed("upload-round-2", "1970-01-01T00:00:00.000Z");
+    let round_2_upload = uploads.join("upload-round-2");
+    let round_2_lease = leases.join("upload-round-2").join("lease-1");
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while round_2_upload.exists() || round_2_lease.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("#1439 the schedule keeps sweeping after the first round");
     host.request_shutdown(options.drain_budget);
     tokio::time::timeout(std::time::Duration::from_secs(10), host.stopped())
         .await
