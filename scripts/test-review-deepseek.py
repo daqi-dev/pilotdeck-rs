@@ -17,7 +17,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "review-deepseek.py"
 FAKE_KEY = "sk-FAKE0123456789"
-MODEL = "deepseek-v4.1-flash-mb"  # 与脚本默认模型一致；响应模型不一致会被判失败
+MODEL = "DeepSeek-V4.1-Flash"  # llm-center 对 deepseek-v4.1-flash-mb 的回显名；大小写不符也会被拒绝
 
 
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -303,6 +303,10 @@ def main() -> int:
     # 端点常量与 --api 限本机（官方通道已删，只剩 llm-center）
     ok = list(rd.CHANNELS) == ["llm-center"] and rd.CHANNELS["llm-center"][0] == rd.API
     print(f"{'PASS' if ok else 'FAIL'} 通道端点常量")
+    fails += not ok
+    # 回显名别名表：llm-center 不回显请求 id，真实调用实测（_tmp/20261105-minimax-repo/deepseek-model-check/）
+    ok = rd.RESP_MODEL.get(rd.DEFAULT_MODEL) == MODEL
+    print(f"{'PASS' if ok else 'FAIL'} 回显模型别名表 {rd.RESP_MODEL}")
     fails += not ok
     r = run(Path(tempfile.mkdtemp()), "https://evil.example/")
     ok = r.returncode == 2 and "本机测试地址" in r.stderr
