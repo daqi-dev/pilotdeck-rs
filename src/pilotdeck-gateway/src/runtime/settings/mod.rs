@@ -49,6 +49,8 @@
 
 mod gateway;
 #[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
 #[path = "gateway_tests.rs"]
 mod tests;
 
