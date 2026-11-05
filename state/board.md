@@ -3470,3 +3470,18 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 **待人（AI 队列外，均有 issue）**：#401 建议关单 · #1475（#1313 重划）待人复核 · #1569 cargo-slots 默认上限 · #1544 主实现方口径 · #1157 本单 worktree 40→60 已落地待认可关单 · #1355 决策卡 #1598 待人复核。
 
 **本段固化的两条规矩**：① **`PARTIAL ≠ PASS`**——闸门块要 `roles=` 逐角色全 PASS **且** `head=` 等于当前 head 才算数。② **worker 的本地验证不采信**——收货先看 `gh pr checks <N>` 的 `check`，红了 `gh run view <run> --log-failed` 取原文再回派；`cargo test --no-run` 必须跑在已 rebase 到当前 `origin/main` 的树上。
+
+### 05:2x（#1593 合入：非规范 grant 越权 P0 + 空白串收窄）
+
+**#1593（#1465 非规范输入对齐）已合入 main**（merge queue → `06550474f`，rebase 进 main 的三个提交 `d63e7ea1c` / `e0823d020` / `832d8e503`）。开工时 #1591 的前置已解除，rebase 到 `81260372c` 后与 #1591 改动无文件重叠。
+
+**修了什么**
+- **P0（越权，评审给的是 P2，实测后提级）**：`grant_session_permission` 把非字符串 `sessionKey` 折成 `""` 写入规则表，而 turn 侧也把「缺失/非字符串 sessionKey」折成 `""` 去 acquire —— 畸形授权会给无关的 sessionless turn 白名单工具。TS 用原始值作 Map 键，不存在这种别名。实测探针：修前 `empty_bucket_allow` 0→1→2，修后恒 0。修法 owner 改 `Option<&JsString>`，只跳「非字符串 + 恰好 `""`」，响应帧逐字不变。
+- **P2-a ×2**：空白串 `"   "` 曾被过度收窄（turn 侧对字符串原样保留，两侧都是可复现的独立键）→ 改回按原始键落桶；`user_dialog_release` 的 leaseId 守卫改用 `require_text`，去 20 行重复。
+- 负控：改回旧过滤 → 空白串断言 FAILED；去掉 `""` 过滤 → 空串桶断言 FAILED。
+
+**评审**：GLM glm-5.3-mb + MiniMax-M3.1-Flash 两家四角色。最终轮（`832d8e503`）四角色全 PASS、P0=0、P1=0。**第 3 个修复轮后按上限 3 不再改代码**，剩余 P2 全部分诊：方法族未迁 `require_text` → **#1604**（本轮补登 `config.rs seed_read_state` 与 `steer_turn`/`cancel_steer`/`run_*`）；grant 侧三项 + turn 侧 `""` 压平根因 → 新开 **#1649**（含「跨项目共用 live session」需实测后定 P2/P0）。
+
+**踩坑（写进本段，避免再犯）**：同一 worktree 原地跑修前/修后探针变异**与评审并行**，GLM 读到变异字节并据实报 P0，整轮作废重跑（memory「negctl-before-review」再犯一次）。规矩：负控/探针跑完再派评审，评审期间 worktree 只读；`--timeout` 默认 600 s 对 boundary 角色偏紧，两轮都撞过超时，改用 1200 s。
+
+**下一步**：① #1649 第 4 条先做最小实测定 P2/P0；② #1604 按方法族逐个跑 TS 探针再迁；③ 本 PR 的 worktree `_build/wt-1445` 与树内证据先保留（不删）。
