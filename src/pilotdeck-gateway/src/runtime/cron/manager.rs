@@ -25,7 +25,7 @@ use crate::{
     },
     js_value, metadata, node_io,
     project_files::node_compare_utf16,
-    runtime::session::SessionAdmission,
+    runtime::session::{SessionAdmission, TurnReservation},
 };
 
 use super::{
@@ -329,6 +329,25 @@ impl SessionAdmissionCronGateway {
         Self { admission, body }
     }
 }
+/// Releases the admission fence on every exit path, including unwind: if
+/// `run_turn` panics, a plain `end_turn` call after it would be skipped and the
+/// session would answer `session_busy` to every later submit until restart.
+/// Same shape as the `Cleanup` guard in `runtime/turn/submit.rs`.
+struct TurnFence<'a> {
+    admission: &'a SessionAdmission,
+    session_key: &'a JsString,
+    run_id: &'a JsString,
+    reservation: Option<TurnReservation>,
+}
+impl Drop for TurnFence<'_> {
+    fn drop(&mut self) {
+        if let Some(reservation) = self.reservation.take() {
+            self.admission
+                .end_turn(self.session_key, Some(self.run_id), Some(&reservation));
+        }
+    }
+}
+
 impl CronAgentGateway for SessionAdmissionCronGateway {
     fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
         let Some(reservation) = self.admission.begin_turn(&input.session_key, &input.run_id) else {
@@ -343,10 +362,13 @@ impl CronAgentGateway for SessionAdmissionCronGateway {
                 JsString::from_utf16(message),
             ));
         };
-        let result = self.body.run_turn(input);
-        self.admission
-            .end_turn(&input.session_key, Some(&input.run_id), Some(&reservation));
-        result
+        let _fence = TurnFence {
+            admission: self.admission.as_ref(),
+            session_key: &input.session_key,
+            run_id: &input.run_id,
+            reservation: Some(reservation),
+        };
+        self.body.run_turn(input)
     }
     fn abort_turn(
         &self,
@@ -2049,8 +2071,14 @@ impl CronManager {
                 let right = run_started_at(right);
                 node_compare_utf16(&collator, right, left)
             });
+            // `slice(0, limit ?? 50)` — `??` only falls through on nullish, so
+            // both `undefined` and an explicit `null` take the same default the
+            // per-runtime `history_limit` and the store use. A bare
+            // `slice(0, limit)` would instead keep everything for `undefined`
+            // and nothing for `null`; if the baseline turns out to be that
+            // form, the nullish arm below has to go back to `runs.len()`.
             let end = match property(&effective, "limit")? {
-                JsValue::Undefined | JsValue::Null => runs.len(),
+                JsValue::Undefined | JsValue::Null => js_slice_end(runs.len(), 50.0),
                 other => js_slice_end(runs.len(), js_value::to_number(other).unwrap_or(f64::NAN)),
             };
             runs.truncate(end);

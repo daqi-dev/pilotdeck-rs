@@ -657,6 +657,88 @@ fn global_list_merges_and_sorts_by_next_run_at() {
     );
 }
 
+// `listTasks` applies `slice(0, limit ?? 50)` to the *merged* run page too
+// (CronManager.ts:121-142): without a limit the global list must stop at 50,
+// not at 50 per runtime. Two runtimes with 30 runs each merge to 60.
+#[test]
+fn global_list_caps_the_merged_run_page_at_the_nullish_default() {
+    let harness = harness(false);
+    let seed = |project_key: &str, task_id: &str| {
+        let document = format!(
+            r#"{{
+                "schemaVersion": 1,
+                "tasks": [{{
+                    "schemaVersion": 1,
+                    "taskId": "{task_id}",
+                    "message": "seeded",
+                    "schedule": {{"type": "cron", "expression": "5 * * * *", "timezone": "UTC"}},
+                    "status": "scheduled",
+                    "sessionKey": "cron:{task_id}",
+                    "channelKey": "cron",
+                    "originSessionKey": "origin-session",
+                    "originChannelKey": "origin-channel",
+                    "projectKey": "{project_key}",
+                    "timezone": "UTC",
+                    "createdAt": "2025-12-31T00:00:00.000Z",
+                    "updatedAt": "2025-12-31T00:00:00.000Z",
+                    "nextRunAt": "2026-03-01T00:00:00.000Z",
+                    "revision": 0,
+                    "scheduleComputationVersion": 3
+                }}]
+            }}"#
+        );
+        seed_project(&harness.home, project_key, &document);
+        let paths = resolve_cron_paths(&harness.home.to_string_lossy(), project_key).unwrap();
+        let mut lines = String::new();
+        for index in 0..30 {
+            lines.push_str(&format!(
+                "{{\"schemaVersion\":1,\"runId\":\"{task_id}-run-{index}\",\"taskId\":\"{task_id}\",\"sessionKey\":\"cron:{task_id}\",\"startedAt\":\"2026-01-01T00:{index:02}:00.000Z\",\"outcome\":\"succeeded\"}}\n"
+            ));
+        }
+        fs::write(&paths.run_history_file, lines).unwrap();
+    };
+    seed("/alpha", "task-alpha");
+    seed("/beta", "task-beta");
+
+    let body = Arc::new(RecordingBody::default());
+    let gateway: Arc<dyn CronAgentGateway> = Arc::new(SessionAdmissionCronGateway::new(
+        Arc::new(SessionAdmission::default()),
+        body,
+    ));
+    harness.manager.bind_agent_gateway(gateway).unwrap();
+    harness.manager.start().unwrap();
+
+    let merged_runs = |input: JsValue| match harness
+        .manager
+        .list_tasks(&input)
+        .unwrap()
+        .get("recentRuns")
+    {
+        Some(JsValue::Array(runs)) => runs.len(),
+        _ => panic!("recentRuns must be an array when includeHistory"),
+    };
+    assert_eq!(
+        merged_runs(json(r#"{"includeHistory": true}"#)),
+        50,
+        "absent limit takes the same `?? 50` default as the per-runtime path"
+    );
+    assert_eq!(
+        merged_runs(json(r#"{"includeHistory": true, "limit": null}"#)),
+        50,
+        "`??` only falls through on nullish, so an explicit null also defaults"
+    );
+    assert_eq!(
+        merged_runs(json(r#"{"includeHistory": true, "limit": 60}"#)),
+        60,
+        "an explicit limit above the merged size keeps every run"
+    );
+    assert_eq!(
+        merged_runs(json(r#"{"includeHistory": true, "limit": 0}"#)),
+        0,
+        "an explicit 0 still yields the empty page"
+    );
+}
+
 // S2: the six `methods.rs` adapters are the wire call surface
 // (InProcessGateway.ts:2603-2625): everything the S5 gold replay asserts
 // must be reachable through them unchanged — same results, same errors.
