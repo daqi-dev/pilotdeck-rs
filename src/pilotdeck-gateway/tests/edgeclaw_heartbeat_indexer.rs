@@ -3497,3 +3497,100 @@ async fn recaptured_turn_survives_unrelated_later_clear() {
         "#1207 classify and createNote must still run; only the persist decision differs"
     );
 }
+
+// #1246 (#1207 r1 DeepSeek P2-3). `EdgeClawFileStores::removed_since` keys the
+// per-row clear record on the L0 row id, and `build_l0_index_id` derives that
+// id from (session_key, timestamp, payload). A turn re-captured after the clear
+// with the same timestamp and payload is a *new row incarnation* carrying the
+// *same id*: `removed_since` still matches the deleted incarnation, the
+// candidate is discarded before any file write, and `mark_l0_indexed` then
+// stamps the re-captured row as indexed. The row is never reconsidered, so the
+// turn is lost for good — no error, no retry.
+#[tokio::test]
+async fn recapture_with_the_same_id_after_clear_is_not_marked_indexed_unpersisted() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("post-clear-same-id-recapture", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "turn re-captured with the same id",
+    );
+    let stores = lab.stores.clone();
+    let capturing = lab.indexer.clone();
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#1246 the same-id recapture hook must fire on the target session"
+                );
+                if stage == HeartbeatStage::BeforeListUnindexed {
+                    // The clear deletes the old row and bumps the generation;
+                    // the re-capture inserts a new row with the same id.
+                    stores
+                        .clear_session_memory_data("s1")
+                        .expect("#1246 the in-hook clearSession must complete");
+                    capture_user_turn(
+                        &capturing,
+                        "s1",
+                        "2026-10-22T00:00:01.000Z",
+                        "turn re-captured with the same id",
+                    );
+                }
+            }));
+    let stats = hooked
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1246 the heartbeat run over the re-captured turn must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1246 the re-captured turn is new data and must be written, not silently marked indexed"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1246 list l0 rows after the same-id recapture");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1246 only the re-captured row may survive, got {rows:?}"
+    );
+    assert_eq!(
+        rows[0].timestamp, "2026-10-22T00:00:01.000Z",
+        "#1246 the surviving L0 row must be the re-captured turn"
+    );
+    assert!(
+        rows[0].indexed,
+        "#1246 the re-captured row may be marked indexed only because its file was really written"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1246 the re-captured turn's file must be written, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#1246 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#1246 classify and createNote must run for the re-captured turn"
+    );
+}
