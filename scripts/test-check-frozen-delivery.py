@@ -73,15 +73,21 @@ GW_COMMON = "A2_SCRIPTS = ('check_frozen.py',)\n"
 UI_APPARATUS = ("APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008', "
                 "'specs/ui-server-parity')\n"
                 "SPEC_FILES = ('acceptance.md',)\n"
+                "EXP008_FILES = ('compare.py',)\n"
                 "TOOLCHAIN_FILES = ()\n")
 
 # 真装置的另一半：真实登记范围来自 check_frozen.py 的 SPEC 与 apparatus_files()，
 # 预检会与 apparatus.py 的 APPARATUS_PATHS 交叉核对，两边不一致即「不可判定」。
 UI_FROZEN = ("\nSPEC = ROOT / 'specs/ui-server-parity'\n"
+             "REQUIRED = set(SPEC_FILES)\n"
              "\n\ndef apparatus_files(root):\n"
              "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}\n"
              "    files.update(Path(p) for p in scan(root / 'scripts/exp008'))\n"
-             "    return files\n")
+             "    return files\n"
+             "\n\ndef required_files(root, folder):\n"
+             "    return ({folder / name for name in REQUIRED} | apparatus_files(root)\n"
+             "            | {root / 'scripts/exp008' / name for name in EXP008_FILES}\n"
+             "            | set(toolchain_files(root)))\n")
 
 
 def gw_source(*names):
@@ -593,6 +599,19 @@ def run():
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
+        # common.py 读不出（语法错）时，模板臂的 A2_SCRIPTS 就没有值：
+        # 必须整体「不可判定」，不能拿 None 去遍历（会抛 TypeError 直接崩）。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", "A2_SCRIPTS = (\n")
+        write(root, "scripts/gateway-parity/check_frozen.py", gw_source())
+        commit(root, "base")
+        case("gateway 的 A2_SCRIPTS 读不出 → 不可判定（不崩、不猜）",
+             cfd.gateway_inventory(root) is None
+             and cfd.registrable(root, "gateway-parity",
+                                 "scripts/gateway-parity/check_frozen.py") is None)
+
+    with tempfile.TemporaryDirectory() as td:
         # 装置两侧的目录清单必须一致：只有一侧改了就是「认不出」，不能按位置猜。
         root = Path(td)
         init_repo(root)
@@ -607,6 +626,68 @@ def run():
         case("ui 位置猜错的目录不参与登记",
              cfd.registrable(root, "ui-server-parity",
                              "scripts/ui-server-parity/x.py") is None)
+
+    with tempfile.TemporaryDirectory() as td:
+        # 交叉核对不能只靠 exp008 那一条：位置一侧换了目录名时，只有
+        # 「两侧目录集合相等」这条能发现（否则按错目录判登记）。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/ui-server-parity/apparatus.py", UI_APPARATUS)
+        write(root, "scripts/ui-server-parity/check_frozen.py",
+              UI_FROZEN.replace("scan(root / 'scripts/ui-server-parity')",
+                                "scan(root / 'scripts/ui-server-parity-old')"))
+        commit(root, "base")
+        case("ui 位置一侧换了扫描目录名 → 不可判定",
+             cfd.registrable(root, "ui-server-parity",
+                             "specs/ui-server-parity/acceptance.md") is None)
+
+    def ui_registrable(apparatus, frozen):
+        """建一棵只有 ui 装置两半的树，返回 acceptance.md 的 registrable。"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            init_repo(root)
+            write(root, "scripts/ui-server-parity/apparatus.py", apparatus)
+            write(root, "scripts/ui-server-parity/check_frozen.py", frozen)
+            commit(root, "base")
+            return cfd.registrable(root, "ui-server-parity",
+                                   "specs/ui-server-parity/acceptance.md")
+
+    def parity_registrable(names):
+        """按给定 ``names`` 元组建 parity 装置源，返回 README.md 的 registrable。"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            init_repo(root)
+            body = ("\ndef manifest_inventory(root):\n"
+                    "    names = (" + ", ".join(repr(n) for n in names) + ")\n"
+                    "    return {name: name for name in names}\n")
+            write(root, "scripts/parity/check_frozen.py", body)
+            commit(root, "base")
+            return cfd.registrable(root, "parity", "specs/parity/README.md")
+
+    five = ('README.md', 'acceptance.md', 'normalization.md',
+            'accepted-diffs.md', 'multimodal.md')
+    case("parity 五个固定名单 → README 可登记（正控）",
+         parity_registrable(five) is True)
+    case("parity 装置源名单少了 multimodal.md → 不可判定（副本与源不一致）",
+         parity_registrable(five[:4]) is None)
+
+    # 下面四条都是「认不出就阻塞」：任何一种静默退出都会让模型漂移变成假 READY。
+    case("装置源解析不出（NUL 字节）→ 不可判定，不按子串猜",
+         ui_registrable(UI_APPARATUS + "\x00", UI_FROZEN) is None)
+    case("scan() 参数不是字面量目录 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN.replace("scan(root / 'scripts/exp008')",
+                                          "scan(root / target)")) is None)
+    case("SPEC 绑定两次 → 不可判定（不取首个）",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nSPEC = ROOT / 'specs/ui-server-parity-alt'\n") is None)
+    case("EXP008 目录不在被扫描目录里 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN.replace("{root / 'scripts/exp008' / name",
+                                          "{root / 'scripts/exp009' / name")) is None)
+    # 正控：同一夹具不改任何东西时必须能认出（否则上面四条只是「恒 None」）。
+    case("两侧同形清单 → 可判定为登记范围",
+         ui_registrable(UI_APPARATUS, UI_FROZEN) is True)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
@@ -780,6 +861,31 @@ def run():
         case("运行期间 HEAD 移动 → BLOCKED（快照不一致）",
              proc.returncode == 1 and "=== snapshot === BLOCKED" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        # 事件文件内容也必须按起跑 SHA 读：HEAD 前进后写进去的行不能补链。
+        root = Path(td)
+        init_repo(root)
+        write(root, "specs/parity/frozen/keep.md", "seed\n")
+        commit(root, "mb")
+        mb = git(root, "rev-parse", "HEAD")
+        first = ("Change: " + "a" * 64 + " " + "b" * 64
+                 + " scripts/parity/x.py\n" + EVENT_FIELDS)
+        write(root, "specs/parity/frozen/20260101-p.md", first)
+        commit(root, "delivery")
+        pinned = git(root, "rev-parse", "HEAD")
+        write(root, "specs/parity/frozen/20260101-p.md",
+              first + "Change: " + "c" * 64 + " " + "d" * 64
+              + " scripts/parity/y.py\n")
+        commit(root, "later")
+        cfd._PINNED_HEAD["sha"] = pinned
+        try:
+            edges, _, _ = cfd.event_evidence(root, "parity", mb)
+        finally:
+            cfd._PINNED_HEAD["sha"] = None
+        case("事件文件内容钉住起跑 SHA（后提交的行不算证据）",
+             edges == [("20260101-p.md", "scripts/parity/x.py", "a" * 64, "b" * 64)],
+             f"edges={edges}")
+
     with tempfile.TemporaryDirectory() as td:
         # 内部读取钉住起跑 SHA：HEAD 已前进到 C，判定仍按 A（防 A→C→A 抖动）。
         root = Path(td)
