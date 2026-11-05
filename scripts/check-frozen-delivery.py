@@ -412,8 +412,13 @@ def unregistered_added(root, kind, mb):
     prefixes = {'parity': ('scripts/parity/',),
                 'gateway-parity': GATEWAY_DIRS}.get(kind, ())
     for prefix in prefixes:
-        code, out, err = git(root, 'diff', '--name-only', '--diff-filter=A', '-z',
-                             mb, 'HEAD', '--', prefix)
+        # --no-renames: a file moved *into* a registrable directory is status R
+        # under git's default rename detection and would be filtered out here,
+        # while its destination does become a new inventory row --write
+        # registers (a false READY).  Treated as an addition it is chained like
+        # any other first registration.
+        code, out, err = git(root, 'diff', '--no-renames', '--name-only',
+                             '--diff-filter=A', '-z', mb, 'HEAD', '--', prefix)
         if code:
             issues.append(f'cannot list files added under {prefix}: {err.strip()}')
             continue
@@ -634,8 +639,25 @@ def main(argv=None):
         print('BLOCKED 1 / READY 0')
         return 1
 
-    code, dirty, _ = git(root, 'status', '--porcelain', '--untracked-files=no')
-    if code == 0 and dirty.strip():
+    # Pin the SHA the run was started on and compare it at the end: evidence and
+    # target bytes are read from HEAD, and the child apparatus reads HEAD itself,
+    # so a commit landing mid-run (``--amend`` in the audited worker tree) would
+    # let event rows from one commit back bytes from another -- a false READY
+    # that is not fixed by pinning only this process's reads.
+    code, head_before, head_err = git(root, 'rev-parse', '--verify', 'HEAD')
+    head_before = head_before.strip()
+    if code or not head_before:
+        print('=== head === BLOCKED')
+        print('  BLOCK[blocking] cannot resolve HEAD: '
+              f'{head_err.strip() or "<empty>"}')
+        print('BLOCKED 1 / READY 0')
+        return 1
+
+    code, dirty, dirty_err = git(root, 'status', '--porcelain', '--untracked-files=no')
+    if code != 0:
+        print('  note: cannot check working-tree cleanliness '
+              f'({dirty_err.strip() or f"git status rc={code}"})')
+    elif dirty.strip():
         print('  note: working tree has uncommitted tracked changes; event evidence and '
               'target bytes are read from HEAD, while the apparatus reads the working tree')
 
@@ -645,6 +667,17 @@ def main(argv=None):
     results = [run_apparatus(root, kind, entry, mb, mb)
                for kind, entry in apparatuses]
     issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
+
+    code, head_after, _ = git(root, 'rev-parse', '--verify', 'HEAD')
+    head_after = head_after.strip() if code == 0 else ''
+    if head_after != head_before:
+        results.append({'kind': 'snapshot',
+                        'blocking': [('blocking',
+                                      f'HEAD moved during the run ({head_before[:12]} -> '
+                                      f'{head_after[:12] or "<unreadable>"}): event evidence and '
+                                      'target bytes would come from different commits -- re-run',
+                                      None)],
+                        'reducible': [], 'pending': [], 'pending_events': [], 'note': None})
 
     by_kind = {result['kind']: result for result in results}
     for kind, message in issues:
