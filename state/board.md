@@ -1,15 +1,15 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-06 01:34 · by Claude Code 协调者（01:34 两小时交接（02:1x 落盘）：本段 17 张 PR 合入、7 单关闭；#1591/#1515 已合，merge queue 1 张 #1584）· 41 条（doing 26 / ready 3 / blocked 11 / human 1）· 磁盘 188.2/200 GiB（du 02:13 实测；fleet 缓存 190.8）· worktree 44/60 · merge queue 1 张 #1584
+updated: 2026-11-06 03:1x · by Claude Code 协调者（03:1x 两小时交接：本段合入 #1584 #1598；channel 三角 #1333 已通、#1334/#1336 解锁；#892 派 cb8；两次磁盘告急已控）· 41 条（doing 26 / ready 3 / blocked 11 / human 1）· 磁盘 136.4/200 GiB（du 03:11 实测）· worktree 47/60 · merge queue 1 张 #1597
 - #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：01:34 已发评论更新。待人：#401 建议关单 / #1475（#1313 重划）待人复核 / #1498-B（waiter 断链 resume 已实施）待人复核后关单 / #1571 已吸收 #1590 并合入 / #1569 cargo-slots 默认上限 / #1544 主实现方口径 / 本单 worktree 40→60 已落地待认可关单。本轮资源：磁盘 du 188.2/200 GiB（fleet 02:13 报 190.8）；worktree 44/60（`new-tree`#1580 生效，fleet 旧常量报 WARN 44/40）；merge queue 1 张 #1584
 - #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412）已合；s3 #1370 已开 PR #1561 draft；s4/s5 #1371/#1372 顺次；#1408 前置于本单关单
-- #1355 | impl | doing | E1 --suite retirement 冻结装置：PR #1515 已转非 draft、**在 merge queue pos2**（head 636958585）；r4b 增量双家 anthropic P0/P1=0/0 + minimax P0/P1=0/1；冻结 P1 不适用第 3 轮放行；收货后 check_frozen --write 协调者执行；跟进 #1524；#1598 决策卡待人复核
+- #1355 | impl | doing | E1 --suite retirement 冻结装置：**PR #1515 已合入（02:10:57Z）**，冻结重登记 `--write` 已由协调者落 commit；决策卡 #1598 已合入（02:48Z）**待人复核**；跟进 #1524
 - #1365 | impl | doing | P1-跟进 #1245 ClosingGuard settle：PR #1413 draft（head f6a28b745）；fix-r3 在跑（唯一 P1：负控日志名不含测试名，前一个 Case 证据被覆盖）；与 #996（M6 车道）同改 owner.rs 族串行
 - #1328 | impl | doing | channel weixin：mbp2 worker 续跑（树 wt-1328），无 PR；与 #1329 的 native_http 串行已随 #1292 合入解除
 - #1339 | impl | doing | A8.3-ch-sms：PR #1526 draft（head 096bdb0e4），channel 同文件串行待一家合入；linux 负控 + 三通道评审证据在 _tmp/20261105-issue-1339-*，待评审收口入队
-- #1333 | impl | doing | channel 三角实测真冲突、必须串行（先到先得，后到者 rebase 删自己重复定义，入队前 cargo test --no-run）：#1333 api-server（PR #1584 已开（head 303c0fc4d），pr-gate FAILURE + rust E0061 待核）/ #1334 webhook（PR #1534 draft，head dc5902b53）/ #1336 wecom-callback（无 PR，树内 7 提交 ORPHAN-DEAD）；#1333×#1336 合并必 E0428（两边各自定义 TurnEventStream）
-- #1316 | impl | doing | A7.8-pr1 会话域整域装配：PR #1558 draft、MERGEABLE（head 255209f44），fix-r1 在跑（P1×3：必杀标记不可达致恒 INVALID / summary.json 逐变异覆写 / Linux /proc 只采样前后两次）；合入解锁 #1317、#589、#590、#727、#19
+- #1333 | impl | doing | **#1333 api-server 已合入（PR #1584，02:27Z）→ channel 三角解锁**；余 #1334 webhook（PR #1534 draft，等闸门块重置）/ #1336 wecom-callback（仍无 PR，树内 7 提交 ORPHAN-DEAD）；#1334 入队前须删自己在 channel/mod.rs 的重复注册点并 cargo test --no-run
+- #1316 | impl | doing | A7.8-pr1 会话域整域装配：PR #1558 draft、MERGEABLE；fix-r1 三条 P1 已修（必杀标记不可达 / summary.json 逐变异覆写 / /proc 只采样两次），r5 在 cb8 跑、结果块须在新 head 重出；合入解锁 #1317、#589、#590、#727、#19
 - #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：mbp2 worker（树 wt-1325），无 PR；上游 #1324 已合
 - #1233 | review | doing | PR #1257（A6.5 background 持久化）draft（head f8c58c191）；macmini r4 全量宿主链 1h26；13 组里 2 组（background-output / network-timing）用陈旧二进制全 INVALID，链结束补跑该 2 组 + targeted + lib，K/I/S 全表齐才入队；含 #1276、#953
 - #1382 | review | doing | PR #1493 MERGED；issue 待收尾自查后关单（#1252 关闭顺序收口）
@@ -19,11 +19,11 @@ updated: 2026-11-06 01:34 · by Claude Code 协调者（01:34 两小时交接（
 - #1370 | impl | doing | #1242-s3 writer append / registry persist barrier 与 EIO 见证：fix-r1 已交付，PR #1561 draft（head 17f8d9a72）；后续 #1371、#1372 顺次
 - #1363 | impl | ready | #1140 收口剩余 P2：改冻结装置走冻结程序；与 #1355 是不同文件，只按冻结程序串行
 - #1398 | impl | doing | A5 冻结装置跟进：非冻结切片 #1519 的 PR #1577 已合（00:45），#1519 待收尾关单；剩余冻结件（round.py / calibrate.sh）走冻结程序，_shared 部分经 M6 车道 #1099；前置于 #590
-- #892 | impl | ready | session-domain 清理装置汇总枚举测试（A5.4 收尾）：触冻结件走冻结程序
+- #892 | impl | doing | session-domain 清理装置汇总枚举测试（A5.4 收尾）：**已派 cb8 GLM（03:0x 起）**，触冻结件走冻结程序，`--write` 留协调者
 - #91 | impl | ready | 账本 detail 子码 / stopReason（账本已越 1.5 MB）：改冻结账本走冻结程序
 - #1552 | impl | doing | 差异族 A6.4-TLS-CA-SOURCES-001（SSL_CERT_DIR 来源 / --use-*-ca 启动模式未对齐）：cb8 worker（树 wt-1552），无 PR
 - #1553 | impl | doing | 差异族 A6.5-MCP-HTTP-ENCODING-BODY-001（legacy SSE 首包损坏 gzip 不结算握手）：cb8 worker（树 wt-1553），无 PR
-- #1555 | impl | doing | 差异族 A7.4-HTTPSTORE-431-408-SHAPE-001（前导 OWS / 超 4096 小字段头资源上限）：PR #1576 draft（MERGEABLE，head 3d3d5df18），待评审收口入队
+- #1555 | impl | doing | 差异族 A7.4-HTTPSTORE-431-408-SHAPE-001（前导 OWS / 超 4096 小字段头资源上限）：PR #1576 draft；fix-r2 修三条 P1（CR/OWS 复位、RSS 探针改 fcntl.flock、-R7 更正文件），等两家增量评审；**`check_frozen --write` 由协调者跑**
 - #1554 | impl | blocked | 差异族 A6.9-PERSISTENCE-IO-001（+ 同族 #1550/#1551 A6.2 两族）：同改 transcript_adapter.rs，前置 = #1370 收口；#297 同文件随后
 - #1162 | research | doing | 剩余需修差异族先 TS 实测、逐族开单：六单中 #1555 已开 PR #1576，#1552/#1553 在 cb8，#1554 等 #1370，#1550/#1551 待派
 - #401 | research | human | 实测已无剩余工作（TS 取消同样 -32001 且回收共享连接；server.rs 已用共享 timer_delay_ms）：建议关单，待人点头
@@ -32,11 +32,11 @@ updated: 2026-11-06 01:34 · by Claude Code 协调者（01:34 两小时交接（
 - #1320 | impl | doing | A8 接线 U7 六方法 + generation 顺序：macmini GLM S3 resume 23:33 起、硬停 01:33，fleet 01:49 worker 0 → 需 dispatch-resume 接续、**不重开树**；#1397 金样随本批
 - #1401 | impl | blocked | A8.6 前置跟进 #1261 native 入口 7 项 c 类：前置 = #1323（A8 U3 snapshot 生产接线，OPEN）
 - #1409 | impl | blocked | P2-跟进 #1155 r5：返回边界扫描读失败静默跳过（按 P1）+ 负控 / README 五项；前置于 A8.6 收口（#1357）
-- #1351 | impl | doing | native_http 家族（前置 #1292 已合）：**#1351 WS 预算 PR #1582 已合入 `e58af9224`**；#1348 /api/web 待派、#1383 账本 CI 已派 mbp2（恐触冻结账本须先判）、#1394 HTTP store（等 #1576）、#1404 共享辅助去重 顺次
+- #1351 | impl | doing | native_http 家族（前置 #1292 已合）：**#1351 WS 预算 PR #1582 已合入 `e58af9224`**；#1348 /api/web 待派、#1383 → PR #1609 draft（fix-r1 补 `A8.4-NATIVE-HTTP-003-R2.md`，两家增量评审中）、#1348 已派 cb8、#1394 HTTP store（等 #1576）、#1404 共享辅助去重 顺次
 - #1313 | impl | blocked | A7-W7-pr2 always-on：核心 agent 优先，增值模块暂缓不派（待人批见 #1475）
-- #1439 | impl | doing | P2/P1-跟进 #1321 家族（前置 #1321 已关）：A 组 #1455（cb8，00:55:38 起、硬顶 02:55）在跑；B 组 #1440（cb8 01:03 起）；余 #1441/#1446/#1447/#1448/#1459–#1464/#1468/#1469 按批次派、同文件串行
-- #1442 | impl | doing | P2/P1-跟进 #1309、#1419 家族：**#1437 已派；#1445→PR #1591（P0/P1=0，在 merge queue pos1）；#1465→PR #1593（draft，2 条锚点 P1 fix-r1 在修，构建依赖 #1591）**；#1453/#1467 已合入关单
-- #1450 | impl | doing | P1-跟进 #1425（#1307）async-hook 交付路径缺 run 身份栅栏：PR #1597 draft（run 身份栅栏 Arc::ptr_eq + admission-locked enqueue，定级 P1）；共享件 native_process/methods/tests.rs 与 #1558 区间相邻，入队前须 rebase
+- #1439 | impl | doing | P2/P1-跟进 #1321 家族（前置 #1321 已关）：A 组 #1455 在跑；B 组 #1440 → **PR #1622 draft（CONFLICTING，需 rebase）**；#1441/#1446/#1447/#1448/#1459–#1464/#1468/#1469 按批次派、同文件串行
+- #1442 | impl | doing | P2/P1-跟进 #1309、#1419 家族：**#1445→PR #1591 已合入（01:56Z）；#1465→PR #1593 draft，2 条锚点 P1 修完待两家闸门 summary；#1437→PR #1616 draft**；#1453/#1467 已合入关单
+- #1450 | impl | doing | P1-跟进 #1425（#1307）async-hook 交付路径缺 run 身份栅栏：**PR #1597 已 ready、在 merge queue pos1（head 4ce8184ad），AWAITING_CHECKS**；三件套闸门自检 PASS；合入后关 #1450
 - #1455 | impl | doing | P2-跟进 #1417（#1310）config 族 7 条 P2：已派 cb8 GLM（00:55:38 起、硬顶 02:55），任务书版本 d79d686c049d，七条判据 G1–G7 + R1–R4
 - #1429 | impl | blocked | P1-跟进 #1319 家族（MCP ask 无测试、status 空列表、会话 MCP 未进工具组合）：前置于 A 阶段收口 #1357
 - #1428 | impl | blocked | P1-跟进 #1322（memory-inline-sync 断言串错误、memory 接线三处 P1）：前置于 A 阶段收口 #1357
@@ -3393,3 +3393,32 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 **待人（AI 队列外，只列有 issue 的）**：① #1157 待人决策总表（已按 01:34 发评论更新：含 #401 建议关单 / #1475 待人复核 / #1498-B 待人复核后关单 / #1571 已吸收 #1590 且已合 / #1569 cargo-slots 默认上限 / #1544 主实现方口径 / 本单 worktree 40→60 已落地）；② #1598（#1515 冻结重登记决策卡）待人复核；③ 两条 D 类升 P0 待复核判级：#297 / #1246（读码推断未实测，其中 #297 已派 cb8 实测）。
 
 **READY 已按 02:1x 实测修正 17 条**：#1596（01:20）与 #1605（02:10）已先行修块头与 43 条口径；本段在其上再改：出队 2 条（#360/#283 已关）；更新 15 条（表头 + #1157/#1355/#1365/#1339/#1316/#1233/#1386/#297/#1320/#1351/#1439/#1442/#1450/#1455）。现 **41 条（doing 26 / ready 3 / blocked 11 / human 1）**。
+
+### 03:1x（两小时交接，接 01:34；下一段 05:1x）
+
+**现场**（`date` 03:09、fleet 03:11:04、`du -sk` 03:11、gh 03:11 实查；main 为该时刻 `origin/main`）：main `ca37f33c0`（#1598 决策卡 02:48Z），其下 `7618ddd85`（01:34 交接，02:27Z）· `48bc3526c`（#1584 #1333 api-server，02:27Z）· `81260372c`/`3c1c50c22`。merge queue 实查 1 张：pos1 **#1597**（AWAITING_CHECKS，head `4ce8184ad`）。open 21 张（draft 18 / ready 3：#1556 #1527 #1597）。磁盘 `_build`+`_tmp` = **136.4 GiB / 200**（du 实测）。worktree **47/60**（`git worktree list` 48 − 主仓；fleet 自带常量仍 40 故报 WARN）。
+
+**本段做了什么**：合入 8 张，其中本段真实产出 2 张——#1584 `48bc3526c`（#1333 A8.3 api-server channel，channel 三角由此解锁）、#1598 `ca37f33c0`（#1515 冻结重登记决策卡，待人复核）；其余 6 张（#1582 #1590 #1591 #1596 #1605 #1607）是 01:34 前批次排队合入。新派 **#892**（session-domain 清理装置汇总枚举，触冻结件）到 cb8，GLM 已跑 29 min。新开 PR **#1622**（#1439 装配层接线 upload cleanup_expired 定时清理，draft CONFLICTING）。
+
+**两次磁盘告急（本段最大风险，均未越顶）**：
+- 02:18 前一度 **201.1 GiB**（已越 200 硬顶）：回收代理逐闸核过后释放 20.41 GiB；#1413 树 `cargo clean` 78.4 GiB。
+- 02:50–03:00 从 146.7 涨到 **180.5 GiB**（+1.7 GiB/min）：逐棵定位到 `_build/wt-1370`（持有人清 65.2 GiB 写入）与 `_build/wt-1339`（151016 文件 / 65.2 GiB），回落到 123.7 GiB；03:1x 又涨到 136.4（wt-1555-fixr1 12.5 + wt-1439 10.9 + wt-1495 7.7 GiB），已分别通知持有人把测试编译迁 cb8 并 `cargo clean`。
+- **根因写成规则**：本机 cargo 闸显示 2/2，但 `cargo test --all-targets` 一个进程树能同时起 5+ 个 rustc，一次写 GB 级；**「增量编译」这个约束对 `cargo test` 无效**。
+- **从本段起执行**：本机只允许 `cargo check -p <单包>`；凡 `cargo test` / `--all-targets` / 负控编译，一律走 cb8（前缀 `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8`，否则 19 条 catalog/ICU 假红）。
+
+**孤儿交付（本段新发现，仍待派）**：`round-start` 的孤儿检查**静默失败**已久——主仓检出在 `claude/tools-taskbook-segments-1105`，缺 `scripts/delivery-orphan.py`（只在 `origin/main`），报错被吞。用 `git show origin/main:scripts/delivery-orphan.py` 落到 `/tmp` 手动跑（参数是 `--root` 不是 `--repo`），**命中 16 条**：4 棵 DEAD 树（wt-1328/1333/1336/297）、1 条 STALLED（wt-1328 认领 362 分钟未动）、6 笔 UNCLAIMED（wt-1320×2 / wt-1325 / wt-1552 / wt-1553）、5 个 NO-PR。清单在 `_tmp/20261105-coord/PENDING.md`。**并发代理降到 20 以下后立刻派分诊代理**（判定表 + 最小修复：`round-start` 缺文件时回退 `git show origin/main:`）。
+**同一根因的第二个坑**：`~/ws/pdrs-ops/bin/new-tree` 也因主仓缺 `scripts/lib/worktree-count.sh` 拒跑；本段改用直接 `git worktree add -b state/handoff-0334 _build/wt-state-0334 origin/main` 开树。
+
+**在跑**
+- cb8：worker 3（#1348 GLM 1h11 / #1246 GLM 37m / #892 GLM 29m）· channel 链 #1316 5m · 测试 #1386 5m · cargo 3/4。
+- 本机：cargo 2/2、闸门槽 1/2；协调者 + 收货，0 worker（红线：本机不再跑 `cargo test`）。
+- mbp2：空；macmini-01：宿主测试 #1233 6m，盘空闲 42 GiB < 准入 45 GiB **不派 worker**。
+- 通道：zai 1/24 · minimax 16/16 **贴顶** · deepseek 10/16 · anthropic 2/2 贴顶。
+
+**在跑 / 待合**（PR · 卡点）：#1597 merge queue pos1 AWAITING_CHECKS · #1556 ready 待两家闸门 · #1527 ready（r17 修完 Claude r16 的 P0×3/P1×3，**缺两家非作者增量评审**，见 `_tmp/20261105-frozen-delivery-precheck/RESULT.md`）· #1558 fix-r1 已修、r5 在 cb8、结果块须在新 head 重出 · #1609 fix-r1 补 `-R2` 账本更正、两家增量评审中 · #1576 fix-r2 三条 P1 修完待评审（`--write` 协调者跑）· #1579 新 head 双家四角色中 · #1593 等两家闸门 summary · #1526 fix-r7 已推 `07760ee96`，差一轮双家增量 · #1534 `178f34d9b` 已推、safe-push 在 clippy、闸门块待重置（补丁指纹随提交变化）· #1413 fix-r3（修复轮已到上限 3，6+2 条 P2 要开跟进单）· #1257 #1233 r4b 宿主 6m · #1622 CONFLICTING 待 rebase · #1616/#1617/#1618 三笔积压交付由子代理统一驱动 · #1235 #1567 CONFLICTING。
+
+**闸门踩坑（本段两次同一形态）**：#1556 与 #1558 的 pr-gate FAILURE 都不是代码问题，是**推了新提交却没重跑评审**——结果块的 `patch=` 指纹随任何提交变化，`check-pr-gate` 报「结果块 head=X 与当前 PR head=Y 不符（补丁指纹不同）」。**规矩**：推完修复必须删旧块、在**新 head** 重跑 `run-review-roles.py`；本地自检必须 `--pr --base --head` 三件齐全，只传 `--pr` 会跳过 head 段**假 PASS**。
+
+**下一步（按序）**：1) 盯 #1597 入队合入（`rust` merge_group job 是本段唯一未绿项）；2) 并发降下来先派孤儿分诊代理；3) #1527 补两家增量评审后入队；4) #1556 两家闸门 → 入队（修的是 #1569 的 cargo-slots 默认上限，合入即可关 #1569）；5) #1558 r5 新 head 重出块；6) #1609 冻结装置 P1 不适用放行，两家收敛后入队；7) #1576 fix-r2 收敛后协调者跑 `check_frozen --write` 再入队；8) #1413 到上限 3，开 6+2 条 P2 跟进单（先查重）后入队。
+
+**待人（AI 队列外，只列有 issue 的）**：① **#1157** 待人决策总表（本段已更新：含 #401 建议关单 / #1475 #1313 重划 / #1498-B 待人复核后关单 / #1569 cargo-slots 默认上限（#1556 修） / #1544 主实现方口径 / worktree 40→60 待认可关单）；② **#1598**（#1515 冻结重登记决策卡）待人复核；③ #1569 / #1544 / #1475 / #1498 / #1571 各按上述状态。
