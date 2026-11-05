@@ -1971,6 +1971,10 @@ def _retirement_controls(round_row, expected):
     evidence of retirement (memory ruler-real-data).  R4 (#1355 fix-r2): each
     class must be caught by its *own* registered rule — a mutation survived by
     being failed for an unrelated reason is a failed control, not a pass.
+    P1 (#1355 fix-r4): a class a legal degraded round cannot establish (e.g.
+    no ok stream outcome to mutate) is reported NOT_APPLICABLE with its
+    reason, never raised as EvidenceError — raising collapsed the whole
+    16-face report into a 5-key stub.
     """
     controls = []
 
@@ -1982,6 +1986,12 @@ def _retirement_controls(round_row, expected):
                          'rule': expected_rule,
                          'status': 'PASS' if verdict.get('status') == 'FAIL' and attributed else 'FAIL',
                          'detail': {**detail, 'firedRules': fired}})
+
+    def unavailable(name, injection, expected_rule, reason):
+        # P1 (#1355 fix-r4): never PASS — the controls face aggregates an
+        # unavailable class to BLOCKED so the total verdict cannot relax.
+        controls.append({'class': name, 'injection': injection, 'expected': 'FAIL',
+                         'rule': expected_rule, 'status': 'NOT_APPLICABLE', 'reason': reason})
 
     # 1. 故意偷偷回退 TS / 假 local 实透传: an executed method with no wire frame.
     mutated = json.loads(json.dumps(round_row))
@@ -2035,24 +2045,42 @@ def _retirement_controls(round_row, expected):
     mutated = json.loads(json.dumps(round_row))
     stream_ok = next((row for row in mutated['outcomes']
                       if row.get('shape') == 'stream' and row.get('outcome') == 'ok'), None)
-    require(stream_ok is not None, 'CONTROL_SETUP', 'no ok stream outcome to mutate')
-    sends, _responses, _events, _finals = _retirement_wire_backing(mutated['frames'])
-    identifier = sends[stream_ok['method']]
-    flipped = 0
-    for frame_row in mutated['frames']:
-        frame = frame_row.get('frame')
-        if (isinstance(frame, dict) and frame.get('type') == 'event'
-                and frame.get('final') is True and frame.get('id') == identifier):
-            frame['final'] = False
-            flipped += 1
-    require(flipped == 1, 'CONTROL_SETUP',
-            f'expected exactly one terminal event frame for {stream_ok["method"]}, flipped {flipped}')
-    verdict = score_retirement_round(mutated, expected)
-    record('STREAM_OK_NON_FINAL', f"stream method '{stream_ok['method']}' keeps its ok outcome while its "
-                                  'terminal event frame is downgraded to final:false',
-           'EVIDENCE_BACKING', verdict, {})
-    return {'status': 'PASS' if all(row['status'] == 'PASS' for row in controls) else 'FAIL',
-            'classes': controls}
+    injection = 'stream ok outcome whose terminal event frame is downgraded to final:false'
+    if stream_ok is None:
+        # P1 (#1355 fix-r4): a legal degraded round (the only stream method
+        # errored or timed out) leaves no ok stream to mutate.  This used to
+        # raise EvidenceError and replace the whole 16-face report with a
+        # 5-key BLOCKED stub — the very KeyError-on-face shape ② removed.
+        unavailable('STREAM_OK_NON_FINAL', injection, 'EVIDENCE_BACKING',
+                    'no ok stream outcome in the control round: the stream method errored or '
+                    'timed out, so the terminal-frame mutation cannot be established')
+    else:
+        sends, _responses, _events, _finals = _retirement_wire_backing(mutated['frames'])
+        identifier = sends.get(stream_ok['method'])
+        if identifier is None:
+            # Same P1: without the send frame there is no id to locate the
+            # terminal event; a KeyError here escaped even retirement_report's
+            # EvidenceError handler and fell through to main's stub.
+            unavailable('STREAM_OK_NON_FINAL', injection, 'EVIDENCE_BACKING',
+                        f"stream ok method {stream_ok['method']!r} has no recorded send frame, "
+                        'so its terminal event frame cannot be located')
+        else:
+            flipped = 0
+            for frame_row in mutated['frames']:
+                frame = frame_row.get('frame')
+                if (isinstance(frame, dict) and frame.get('type') == 'event'
+                        and frame.get('final') is True and frame.get('id') == identifier):
+                    frame['final'] = False
+                    flipped += 1
+            require(flipped == 1, 'CONTROL_SETUP',
+                    f'expected exactly one terminal event frame for {stream_ok["method"]}, flipped {flipped}')
+            verdict = score_retirement_round(mutated, expected)
+            record('STREAM_OK_NON_FINAL', f"stream method '{stream_ok['method']}' keeps its ok outcome while "
+                                          'its terminal event frame is downgraded to final:false',
+                   'EVIDENCE_BACKING', verdict, {})
+    # The face status is a batch summary; it is computed by the registered
+    # caller (_retirement_report) with the shared aggregator, never here.
+    return {'classes': controls}
 
 
 def _retirement_http_routes(baseline):
@@ -2494,6 +2522,18 @@ def _retirement_report(output, baseline):
     # controls read rounds[0] by design (data mutation controls; the
     # arbitration keeps this rounds[0] use exempt from ④).
     controls = _retirement_controls(rounds[0], expected)
+    # P1 (#1355 fix-r4): a control a legal degraded round cannot establish is
+    # reported NOT_APPLICABLE and aggregates to BLOCKED (never PASS), so the
+    # controls face and the total verdict stay fail-closed.  The batch status
+    # comes from the one shared aggregator (aggregation-audit).
+    controls_status = common.aggregate_status(
+        *('BLOCKED' if row['status'] == 'NOT_APPLICABLE' else row['status']
+          for row in controls['classes']))[0]
+    controls = {**controls, 'status': controls_status}
+    unavailable = [row for row in controls['classes'] if row['status'] == 'NOT_APPLICABLE']
+    if unavailable:
+        controls['reason'] = ('positive mutation control(s) could not be established on this round: '
+                              + '; '.join(f"{row['class']}: {row['reason']}" for row in unavailable))
     # ④ (#1355 fix-r3): the inventory face reads every round, not round 1 —
     # an entry that answered in round 1 but 404'd in round 2 is NO_HIT.
     inventory = _retirement_entry_inventory_aggregate(
