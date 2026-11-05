@@ -158,9 +158,11 @@ impl GatewayRequests for Requests {
                             // TS advertises both in every config state
                             // (oracle.json:2801-2802, 2855-2856, 2956-2957).
                             // permission_list is fully wired; user_dialog_list
-                            // is wired, with runtime availability still gated
-                            // on the bus being connected (on_change wiring is
-                            // the #1445 staging).
+                            // is wired too. Production builds a connected bus
+                            // (#1445), so runtime availability is not gated on
+                            // a renderer change observer. Forwarding
+                            // `user_dialog_changed` remains a separate
+                            // broadcast gap.
                             "user_dialog_list",
                             "permission_list",
                         ]

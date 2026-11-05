@@ -37,20 +37,44 @@ pub struct GatewayUserDialogBus {
     leases: HashMap<(JsString, JsString), ActiveLease>,
     runtime: DialogRuntime,
     on_change: Option<Observer>,
+    /// Whether the four user-dialog methods may serve this bus. Kept separate
+    /// from `on_change`: the observer is a renderer-notification sink, not the
+    /// capability signal. TS gates availability on *method presence*
+    /// (`GatewayWsConnection.ts:481-490` checks `this.options.gateway.listUserDialogs`
+    /// and friends) — `InProcessGateway` always defines those methods
+    /// (`:2710`/`:2734`/`:2765`), so a live in-process bus is available with a
+    /// zero-pending `{dialogs: []}` result regardless of any observer.
+    connected: bool,
 }
 impl GatewayUserDialogBus {
+    /// Legacy/test constructor: connected iff a change observer is supplied.
     pub fn new(runtime: DialogRuntime, on_change: Option<Observer>) -> Self {
+        let connected = on_change.is_some();
         Self {
             pending: HashMap::new(),
             leases: HashMap::new(),
             runtime,
             on_change,
+            connected,
         }
     }
 
-    /// Returns `true` when the bus is wired to a live dialog runtime (i.e.
-    /// `on_change` was supplied at construction time).  Native-process builds
-    /// always pass `None`, so this returns `false` there.
+    /// Production constructor: the bus is live without a renderer notification
+    /// observer. An observer only forwards observational `user_dialog_changed`
+    /// frames (`createLocalGateway.ts:1057`); availability must not depend on
+    /// it, otherwise registration-free zero-pending calls wrongly answer
+    /// `CAPABILITY_UNAVAILABLE` where TS returns `{dialogs: []}`.
+    pub fn connected(runtime: DialogRuntime) -> Self {
+        Self {
+            pending: HashMap::new(),
+            leases: HashMap::new(),
+            runtime,
+            on_change: None,
+            connected: true,
+        }
+    }
+
+    /// Returns whether the bus may serve the four methods.
     ///
     /// Unconnected semantics differ by method:
     /// - `list`, `claim`, `release`: surface `CAPABILITY_UNAVAILABLE`.
@@ -58,7 +82,7 @@ impl GatewayUserDialogBus {
     ///   `GatewayWsConnection.ts:490` (no guard) and
     ///   `InProcessGateway.ts:2672` (`delivered: false`).
     pub fn is_connected(&self) -> bool {
-        self.on_change.is_some()
+        self.connected
     }
 
     pub fn register(&mut self, session: &JsString, entry: PendingDialog) {
