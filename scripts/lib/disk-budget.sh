@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # disk-budget.sh — `_build`+`_tmp` 磁盘预算的**唯一**阈值与测量实现。
 #
-# 三档（2026-11-05 人授权，正本 state/decisions-20261105-worktree-cap-60.md）：
+# 三档（2026-11-05 定，AI 代批待人复核；正本 state/decisions-20261105-worktree-cap-60.md）：
 #   ok     ≤ 160 GiB   放行
 #   warn   > 160 GiB   放行 + WARN（先回收空闲树）；`scripts/pdrs-loop.sh` 在这一线就停派新活
 #   hard   > 180 GiB   拒开新树 / 停新增写入（200 GiB 总量上限留 20 GiB 缓冲）

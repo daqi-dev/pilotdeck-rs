@@ -1,8 +1,8 @@
-# 2026-11-05 · worktree 上限 40 → 60，真闸换成磁盘
+# 2026-11-05 · worktree 上限 40 → 60（**待人批**，默认未改），真闸换成磁盘
 
 ## 卡
 
-- **卡在哪**：人问「worktree 的限额还能放宽吗」并同意往宽做。当前上限 40（`scripts/lib/worktree-count.sh` 的 `PDRS_WORKTREE_CAP_MAX`，2026-11-05 起口径为「全部 linked worktree，排除主仓」）。实测：（2026-11-05 21:5x）
+- **卡在哪**：人 2026-11-05 问「worktree 的限额还能放宽吗」。**当前人定上限是 40**（2026-11-01 由 24 放宽，PR #1236，人同意；`scripts/lib/worktree-count.sh`，2026-11-05 起口径为「全部 linked worktree，排除主仓」）。**放宽到 60 未获批复**：仓库记录里只有 24 → 40 那一次人同意，故本 PR 只把代码能力做到 60，**默认仍 40**，是否放宽待人拍板（#1157）。实测：（2026-11-05 21:5x）
   - `git worktree list` 38 行（含主仓），即 37 棵 linked；
   - `_build/wt-*` 合计约 130 GiB，单棵 3–34 GB：`wt-1334` 34 GB、`wt-1336` 30 GB、`wt-1258` 17 GB —— 大头全是树内 `_build/cargo-target`（`du -sm _build/wt-1334/_build/cargo-target` = 33.9 GB）；
   - `_build`+`_tmp` = 165.9 GiB（`du -sk` 原值 173,996,420 KiB），上限 200 GiB —— **磁盘才是当前真瓶颈，不是树数**。
@@ -16,14 +16,14 @@
 
 ### A. 仓内（本 PR 落地，合并进 main 即生效）
 
-1. **上限常量仍只有一处**：`scripts/lib/worktree-count.sh` 的 `PDRS_WORKTREE_CAP_MAX`，值 40 → **60**。`scripts/wt-status.sh` 与 `pdrs-ops` 的 `new-tree.sh` 都 source 它，不另写数字。
+1. **上限常量仍只有一处**：`scripts/lib/worktree-count.sh`——`PDRS_WORKTREE_CAP_MAX=60`（代码能力上限）+ `PDRS_WORKTREE_CAP_DEFAULT=40`（人定上限，PR #1236）。**不设环境变量时生效值仍是 40**；显式 `PDRS_WORKTREE_CAP=60` 才按 60 计（放宽待人批 #1157）；非数字 / 0 / >60 一律回落 40，笔误不会变成放宽。`scripts/wt-status.sh` 与 `pdrs-ops` 的 `new-tree.sh` 都 source 它，不另写数字。
 2. **磁盘三档的阈值与测量也收敛到仓内一处**：新增 `scripts/lib/disk-budget.sh`（`PDRS_DISK_TOTAL_GIB=200` / `PDRS_DISK_HARD_GIB=180` / `PDRS_DISK_WARN_GIB=160`、`pdrs_disk_used_kib`、`pdrs_disk_level_of_kib`、`pdrs_disk_level`）。判断一律用 `du -sk` 的 **KiB 原值**，不做 GiB 四舍五入；判档只走 `pdrs_disk_level_of_kib`（`pdrs-loop.sh` 与 ops `new-tree.sh` 都调它，调用方不再自写比较式）。四处易踩的坑已实测并处理：
    - **命令行符号链接 `du -sk` 不跟随**（11-05 BSD 实测：指向 3 MiB 目录的链接报 `0 KiB`、rc=0）——本仓 runner 树确有 `_build` 指向外接卷的配置，直接量会让闸门静默失效。改为先 `cd + pwd -P` 取物理路径再量。
    - **断链**同样是 `0 KiB` + rc=0，按测量失败处理（rc=2 拒开）。
    - **仓根不存在**此前被算成 0 GiB 放行（与断链处理相反）；改为前置错误 rc=2。仓根在、但没有 `_build`/`_tmp`（远端宿主）仍按 0。
    - **`du` 部分失败**：`_build` 是 cargo target 树，编译并发删改文件时 du 会以非 0 退出。改为失败先重试一次，仍失败才 fail-closed；`pdrs_disk_level` 失败打印 `unknown` 而不是空串（空串会被 `[ "$lvl" = hard ]` 形式静默放行）。
 3. **`scripts/pdrs-loop.sh` 接同一实现**：删掉自带的 `DISK_CAP_KIB=167772160` 与内联 `du`，改调 `pdrs_disk_used_kib`；保留「在 160 GiB 就停派新活」的保守行为（比开树硬闸早一档），并把陈旧的「超 100GiB 上限」文案改正。测量失败同样停机（fail-closed）。
-4. `CLAUDE.md` §五「资源上限」两条与 `.42cog/real.md` 的 40 同步为 60，细节指向两处 lib，不重复写数字。
+4. `CLAUDE.md` §五「资源上限」两条与 `.42cog/real.md` 如实写明：人定上限 **40**（PR #1236，人同意），代码支持到 60、**放宽待人批 #1157**、未批前默认仍 40；磁盘档位指向 lib，不重复写数字。
 
 ### B. ops 侧（**已提交在 ops 本地分支 `chore/worktree-cap-60-1105`（commit `74cb144`），尚未合并进 ops 运行树——合并后才生效**）
 
@@ -43,7 +43,7 @@
 |---|---|
 | A. 只把 40 改 60，不加磁盘闸 | 树数不再卡，但一棵新树可能带进 10–30 GB；`_build+_tmp` 会更快撞 200 GiB，撞上即全仓停止新增写入（CLAUDE.md §五） |
 | B. **40 → 60 + 磁盘三档 180/160 + 回收删 target**（采纳） | 放宽并行席位的同时把闸门落在真瓶颈上；回收即释放十几 GB，磁盘回到可用区间 |
-| C. 不动上限，只加磁盘闸 | 37/40 已接近顶，并行度上不去；人已明确同意放宽 |
+| C. 不动上限，只加磁盘闸 | 37/40 已接近顶，并行度上不去；人问过能否放宽，但**正式批复待人**（#1157） |
 | D. 按磁盘折算成树数（比如每 3 GiB 算一棵） | 需要新的测量口径与换算表，且磁盘已有独立阈值，重复建模 |
 
 ## 建议
@@ -71,5 +71,5 @@
 ## 登记者
 
 AI 代批，待人复核。
-依据：人已明确同意放宽 worktree 上限（2026-11-05 询问后答复「往宽做」）；改动可撤回、不动尺子与意向；上限常量与磁盘阈值各收敛到一处，磁盘档位以实测（165.9 GiB 现状、单棵 target 17–34 GB）为依据。
+依据：人 2026-11-05 询问「还能放宽吗」，但**仓库里查不到「40 → 60 已获批复」的记录**（唯一的人为上限背书是 board「12:30 人：… worktree 24 → 40，PR #1236，人同意」）。故按「能力先做到 60、默认仍 40、放宽待人批（#1157）」落地，不在规约里写不存在的授权。改动可撤回、不动尺子与意向；上限常量与磁盘阈值各收敛到一处，磁盘档位以实测（165.9 GiB 现状、单棵 target 17–34 GB）为依据。
 关联：`state/decisions-20261105-worktree-cap.md`（计数口径，PR #1548）、`state/decisions-20261105-parallel-speedup.md`（其「worktree ≤ 40」条目已被本卡取代）、PR #1547（`scripts/lib/worktree-count.sh` 实现，本卡改动叠在其分支上）。
