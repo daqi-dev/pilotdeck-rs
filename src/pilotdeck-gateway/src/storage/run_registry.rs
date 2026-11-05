@@ -255,122 +255,134 @@ impl FileRunRegistry {
 
     /// RunRegistry.ts:211-234.
     pub fn accept(&self, input: &RunAcceptInput) -> Result<RunAccepted> {
-        self.mutate(|snapshot| {
-            let key = input.run.key();
-            if let Some(existing) = snapshot.records.get_key(&key).filter(|r| truthy(r)) {
-                if field(existing, "requestMaterial").as_string() != Some(&input.request_material) {
-                    return Err(RunRegistryError::Conflict(format!(
-                        "Run {} already exists with different request material.",
-                        input.run.run_id()
-                    )));
+        self.mutate(
+            |snapshot| {
+                let key = input.run.key();
+                if let Some(existing) = snapshot.records.get_key(&key).filter(|r| truthy(r)) {
+                    if field(existing, "requestMaterial").as_string()
+                        != Some(&input.request_material)
+                    {
+                        return Err(RunRegistryError::Conflict(format!(
+                            "Run {} already exists with different request material.",
+                            input.run.run_id()
+                        )));
+                    }
+                    // Duplicate: no write, so the caller replays rather than executes.
+                    return Ok(((RunRecord(existing.clone()), true), false));
                 }
-                // Duplicate: no write, so the caller replays rather than executes.
-                return Ok(((RunRecord(existing.clone()), true), false));
-            }
-            let now = now()?;
-            // InProcessGateway.ts:906-911 key order, then RunRegistry.ts:221-229.
-            let mut record = JsObject::new();
-            record.insert(
-                "sessionKey".into(),
-                JsValue::String(input.run.session_key.clone()),
-            );
-            if let Some(project) = &input.run.project_key {
-                record.insert("projectKey".into(), JsValue::String(project.clone()));
-            }
-            record.insert("runId".into(), JsValue::String(input.run.run_id.clone()));
-            record.insert(
-                "requestMaterial".into(),
-                JsValue::String(input.request_material.clone()),
-            );
-            record.insert(
-                "ownerPid".into(),
-                JsValue::Number(f64::from(std::process::id())),
-            );
-            record.insert("state".into(), RunState::Accepted.as_str().into());
-            record.insert("revision".into(), JsValue::Number(1.0));
-            record.insert("lastSeq".into(), JsValue::Number(0.0));
-            record.insert("acceptedAt".into(), now.clone());
-            record.insert("updatedAt".into(), now);
-            let record = JsValue::Object(record);
-            snapshot.records.insert(key, record.clone());
-            Ok(((RunRecord(record), false), true))
-        })
+                let now = now()?;
+                // InProcessGateway.ts:906-911 key order, then RunRegistry.ts:221-229.
+                let mut record = JsObject::new();
+                record.insert(
+                    "sessionKey".into(),
+                    JsValue::String(input.run.session_key.clone()),
+                );
+                if let Some(project) = &input.run.project_key {
+                    record.insert("projectKey".into(), JsValue::String(project.clone()));
+                }
+                record.insert("runId".into(), JsValue::String(input.run.run_id.clone()));
+                record.insert(
+                    "requestMaterial".into(),
+                    JsValue::String(input.request_material.clone()),
+                );
+                record.insert(
+                    "ownerPid".into(),
+                    JsValue::Number(f64::from(std::process::id())),
+                );
+                record.insert("state".into(), RunState::Accepted.as_str().into());
+                record.insert("revision".into(), JsValue::Number(1.0));
+                record.insert("lastSeq".into(), JsValue::Number(0.0));
+                record.insert("acceptedAt".into(), now.clone());
+                record.insert("updatedAt".into(), now);
+                let record = JsValue::Object(record);
+                snapshot.records.insert(key, record.clone());
+                Ok(((RunRecord(record), false), true))
+            },
+            None,
+        )
         .map(|(record, duplicate)| RunAccepted { record, duplicate })
     }
 
     /// RunRegistry.ts:236-264. `failed` is not terminal: a later event may
     /// still complete the run (preflight error followed by turn_completed).
     pub fn append(&self, run: &RunRef, event: &JsValue) -> Result<()> {
-        self.mutate(|snapshot| {
-            let key = run.key();
-            let record = snapshot
-                .records
-                .get_key(&key)
-                .filter(|r| truthy(r))
-                .ok_or_else(|| {
-                    RunRegistryError::NotFound(format!("Run {} is not registered.", run.run_id()))
-                })?;
-            if let Some(state) = field(record, "state").as_string()
-                && ["completed", "aborted", "interrupted"]
-                    .iter()
-                    .any(|s| state.equals_str(s))
-            {
-                return Err(RunRegistryError::Terminal(format!(
-                    "Run {} is already terminal ({}).",
-                    run.run_id(),
-                    String::from_utf16_lossy(state.units())
-                )));
-            }
-            // TS strict-mode TypeErrors, in TS order: `.push` on a non-array
-            // list, property writes on a primitive record, `.type` of a
-            // null/undefined event. None of them reaches persist.
-            let seq = js_plus_one(field(record, "lastSeq"))?;
-            let mut events = event_list(snapshot.events.get_key(&key))?.to_vec();
-            events.push(object([("seq", seq.clone()), ("event", event.clone())]));
-            // An array record is a JS object, so the record writes succeed in
-            // memory, but JSON.stringify drops non-index array properties: only
-            // the event list changes on disk and the record bytes stay as read.
-            let record = match record {
-                JsValue::Object(record) => Some(record.clone()),
-                JsValue::Array(_) => None,
-                _ => return Err(invalid("Run registry record is not an object.")),
-            };
-            if matches!(event, JsValue::Null | JsValue::Undefined) {
-                return Err(invalid("Run registry event must be an object."));
-            }
-            snapshot.events.insert(key.clone(), JsValue::Array(events));
-            let Some(mut record) = record else {
-                return Ok(((), true));
-            };
-            record.insert("lastSeq".into(), seq);
-            let revision = js_plus_one(record_field(&record, "revision"))?;
-            record.insert("revision".into(), revision);
-            record.insert("updatedAt".into(), now()?);
-            let kind = field(event, "type");
-            if is(kind, "turn_completed") {
-                let aborted = is(field(event, "finishReason"), "aborted_streaming");
-                let state = if aborted {
-                    RunState::Aborted
-                } else {
-                    RunState::Completed
+        let stimulus_key = super::stimulus::registry_event_key(event);
+        self.mutate(
+            |snapshot| {
+                let key = run.key();
+                let record = snapshot
+                    .records
+                    .get_key(&key)
+                    .filter(|r| truthy(r))
+                    .ok_or_else(|| {
+                        RunRegistryError::NotFound(format!(
+                            "Run {} is not registered.",
+                            run.run_id()
+                        ))
+                    })?;
+                if let Some(state) = field(record, "state").as_string()
+                    && ["completed", "aborted", "interrupted"]
+                        .iter()
+                        .any(|s| state.equals_str(s))
+                {
+                    return Err(RunRegistryError::Terminal(format!(
+                        "Run {} is already terminal ({}).",
+                        run.run_id(),
+                        String::from_utf16_lossy(state.units())
+                    )));
+                }
+                // TS strict-mode TypeErrors, in TS order: `.push` on a non-array
+                // list, property writes on a primitive record, `.type` of a
+                // null/undefined event. None of them reaches persist.
+                let seq = js_plus_one(field(record, "lastSeq"))?;
+                let mut events = event_list(snapshot.events.get_key(&key))?.to_vec();
+                events.push(object([("seq", seq.clone()), ("event", event.clone())]));
+                // An array record is a JS object, so the record writes succeed in
+                // memory, but JSON.stringify drops non-index array properties: only
+                // the event list changes on disk and the record bytes stay as read.
+                let record = match record {
+                    JsValue::Object(record) => Some(record.clone()),
+                    JsValue::Array(_) => None,
+                    _ => return Err(invalid("Run registry record is not an object.")),
                 };
-                record.insert("state".into(), state.as_str().into());
-                record.insert("result".into(), event.clone());
-            } else if is(kind, "error") {
-                let unknown = is(field(event, "code"), "result_unknown");
-                let state = if unknown {
-                    RunState::Interrupted
-                } else {
-                    RunState::Failed
+                if matches!(event, JsValue::Null | JsValue::Undefined) {
+                    return Err(invalid("Run registry event must be an object."));
+                }
+                snapshot.events.insert(key.clone(), JsValue::Array(events));
+                let Some(mut record) = record else {
+                    return Ok(((), true));
                 };
-                record.insert("state".into(), state.as_str().into());
-                record.insert("result".into(), event.clone());
-            } else if is(record_field(&record, "state"), "accepted") {
-                record.insert("state".into(), RunState::Running.as_str().into());
-            }
-            snapshot.records.insert(key, JsValue::Object(record));
-            Ok(((), true))
-        })
+                record.insert("lastSeq".into(), seq);
+                let revision = js_plus_one(record_field(&record, "revision"))?;
+                record.insert("revision".into(), revision);
+                record.insert("updatedAt".into(), now()?);
+                let kind = field(event, "type");
+                if is(kind, "turn_completed") {
+                    let aborted = is(field(event, "finishReason"), "aborted_streaming");
+                    let state = if aborted {
+                        RunState::Aborted
+                    } else {
+                        RunState::Completed
+                    };
+                    record.insert("state".into(), state.as_str().into());
+                    record.insert("result".into(), event.clone());
+                } else if is(kind, "error") {
+                    let unknown = is(field(event, "code"), "result_unknown");
+                    let state = if unknown {
+                        RunState::Interrupted
+                    } else {
+                        RunState::Failed
+                    };
+                    record.insert("state".into(), state.as_str().into());
+                    record.insert("result".into(), event.clone());
+                } else if is(record_field(&record, "state"), "accepted") {
+                    record.insert("state".into(), RunState::Running.as_str().into());
+                }
+                snapshot.records.insert(key, JsValue::Object(record));
+                Ok(((), true))
+            },
+            Some(stimulus_key.as_str()),
+        )
     }
 
     /// RunRegistry.ts:266-272.
@@ -427,29 +439,32 @@ impl FileRunRegistry {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e.into()),
         }
-        let result = self.mutate(|snapshot| {
-            let mut changed = false;
-            for (key, record) in snapshot.records.entries().to_vec() {
-                let JsValue::Object(record) = &record else {
-                    continue;
-                };
-                let mut record = record.clone();
-                if !matches!(
-                    RunState::of(record_field(&record, "state")),
-                    Some(RunState::Accepted | RunState::Running)
-                ) || owner_alive(record_field(&record, "ownerPid"))
-                {
-                    continue;
+        let result = self.mutate(
+            |snapshot| {
+                let mut changed = false;
+                for (key, record) in snapshot.records.entries().to_vec() {
+                    let JsValue::Object(record) = &record else {
+                        continue;
+                    };
+                    let mut record = record.clone();
+                    if !matches!(
+                        RunState::of(record_field(&record, "state")),
+                        Some(RunState::Accepted | RunState::Running)
+                    ) || owner_alive(record_field(&record, "ownerPid"))
+                    {
+                        continue;
+                    }
+                    record.insert("state".into(), RunState::Interrupted.as_str().into());
+                    let revision = js_plus_one(record_field(&record, "revision"))?;
+                    record.insert("revision".into(), revision);
+                    record.insert("updatedAt".into(), now()?);
+                    snapshot.records.insert(key, JsValue::Object(record));
+                    changed = true;
                 }
-                record.insert("state".into(), RunState::Interrupted.as_str().into());
-                let revision = js_plus_one(record_field(&record, "revision"))?;
-                record.insert("revision".into(), revision);
-                record.insert("updatedAt".into(), now()?);
-                snapshot.records.insert(key, JsValue::Object(record));
-                changed = true;
-            }
-            Ok(((), changed))
-        });
+                Ok(((), changed))
+            },
+            None,
+        );
         match result {
             Err(RunRegistryError::Io(e))
                 if matches!(
@@ -464,13 +479,33 @@ impl FileRunRegistry {
     }
 
     /// RunRegistry.ts:196-209; the closure reports whether to persist.
-    fn mutate<T>(&self, operation: impl FnOnce(&mut Snapshot) -> Result<(T, bool)>) -> Result<T> {
+    /// `stimulus_key` addresses the event this mutation appends for the #1370
+    /// controlled stimulus: a barrier here holds the mutation chain and the
+    /// cross-process file lock (after the in-memory mutation, before the
+    /// snapshot is serialized — the TS target witness), and a fault is the
+    /// single EIO. `None` (accept, orphan fencing) is not a stimulus target.
+    fn mutate<T>(
+        &self,
+        operation: impl FnOnce(&mut Snapshot) -> Result<(T, bool)>,
+        stimulus_key: Option<&str>,
+    ) -> Result<T> {
         let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
         let _lock = self.acquire_file_lock()?;
         let mut snapshot = read_snapshot(&self.path)?;
         let (value, changed) = operation(&mut snapshot)?;
         if changed {
+            let mut blocked = None;
+            if let Some(key) = stimulus_key
+                && let Some(stimulus) = super::stimulus::StorageStimulus::global()
+                && stimulus.before_write(super::stimulus::Site::Registry, key)?
+                    == super::stimulus::Applied::Blocked
+            {
+                blocked = Some((stimulus, key));
+            }
             self.persist(&snapshot)?;
+            if let Some((stimulus, key)) = blocked {
+                stimulus.completed(super::stimulus::Site::Registry, key);
+            }
         }
         Ok(value)
     }

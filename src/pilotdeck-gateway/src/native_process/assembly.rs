@@ -56,6 +56,7 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex, Weak},
     time::SystemTime,
 };
@@ -232,6 +233,31 @@ pub(super) fn run_registry_switch(env: &Env) -> Result<Option<RunRegistrySwitch>
     }
 }
 
+/// The controlled storage stimulus entry for collection and testing (#1370,
+/// `PILOTDECK_NATIVE_STORAGE_STIMULUS`). Unset keeps the production default —
+/// no control files are read and no receipts are published. A set value names
+/// the control directory and publishes a construction receipt; a value that
+/// is not an existing directory fails closed at startup.
+pub(super) fn storage_stimulus_switch(env: &Env) -> Result<Option<PathBuf>, ProxyError> {
+    let Some(value) = env.get(crate::storage::stimulus::STIMULUS_ENV) else {
+        return Ok(None);
+    };
+    if value.trim().is_empty() {
+        return Err(
+            "native storage stimulus (PILOTDECK_NATIVE_STORAGE_STIMULUS) must be a control directory."
+                .into(),
+        );
+    }
+    let path = PathBuf::from(value);
+    if !path.is_dir() {
+        return Err(
+            "native storage stimulus (PILOTDECK_NATIVE_STORAGE_STIMULUS) must name an existing directory."
+                .into(),
+        );
+    }
+    Ok(Some(path))
+}
+
 pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
     start_observed(
         options,
@@ -256,6 +282,13 @@ pub(super) async fn start_observed(
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> Result<TurnGateway, ProxyError> {
     let registry_switch = run_registry_switch(&env)?;
+    let stimulus_switch = storage_stimulus_switch(&env)?;
+    if let Some(dir) = &stimulus_switch {
+        // The #1368/#1370 storage stimulus boundary witness: the controlled
+        // entry states its resolved directory at construction, before any turn
+        // is driven. The receipt format follows the #1369 construction style.
+        eprintln!("native storage stimulus on {}", dir.display());
+    }
     if let Some(switch) = &registry_switch {
         // The #1368 registry boundary witness: the switch itself states its
         // resolved state at construction, before any turn is driven.

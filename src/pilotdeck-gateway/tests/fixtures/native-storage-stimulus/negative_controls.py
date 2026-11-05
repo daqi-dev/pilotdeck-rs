@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""#1370: commit first, then compile and run every storage-stimulus mutation.
+
+Usage: negative_controls.py --check
+       negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
+Every mutation must compile, fail at its bound nonce receipt, and pass again
+after restoration. Source bytes must equal HEAD; no alternate baseline exists.
+"""
+import argparse
+import json
+import hashlib
+import re
+import os
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[5]
+FIXTURES = Path(__file__).resolve().parents[1]
+STIMULUS = ROOT / 'src/pilotdeck-gateway/src/storage/stimulus.rs'
+RUN_REGISTRY = ROOT / 'src/pilotdeck-gateway/src/storage/run_registry.rs'
+ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
+TESTS = ROOT / 'src/pilotdeck-gateway/src/storage/stimulus_tests.rs'
+PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_storage_stimulus.rs'
+PROCESS = Path(__file__).resolve().parent / 'process.mts'
+sys.path.insert(0, str(FIXTURES))
+from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import ReceiptRun, invalidate_completed, judge, passed
+
+mutations = [
+    # The barrier must actually hold the write: skipping the bounded wait
+    # releases instantly, so the bound-expiry release receipt loses its
+    # `bounded: true` marker first.
+    ('writer-barrier-never-blocks', STIMULUS,
+     'let released = self.wait_for_release(seq, bound)?;',
+     '''let _ = bound;
+            let released = true;''',
+     'storage::stimulus_tests::writer_barrier_bound_releases_without_release_file', '#1370 bound expiry releases with bounded true'),
+    # The bound is the safety release: without the deadline the barrier never
+    # self-releases, so the release receipt wait fails at its observation cap.
+    ('writer-barrier-bound-unbounded', STIMULUS,
+     'if Instant::now() >= deadline {',
+     'if false {',
+     'storage::stimulus_tests::writer_barrier_bound_releases_without_release_file', '#1370 bound expiry self-releases the barrier'),
+    # The single injected error must be EIO (raw os error 5): any other kind
+    # could be confused with a provider failure family.
+    ('writer-fault-kind-degraded', STIMULUS,
+     'io::Error::from_raw_os_error(rustix::io::Errno::IO.raw_os_error())',
+     'io::Error::other("degraded")',
+     'storage::stimulus_tests::barrier_and_fault_ids_are_single_shot', '#1370 writer fault is EIO (raw os error 5), not another kind'),
+    # Fault ids are single-shot: without the fired marker the same fault fires
+    # on every matching write.
+    ('writer-fault-refires', STIMULUS,
+     'site_state(&mut inner, site).fault_fired = Some(fault.id.clone());',
+     'let _ = &fault;',
+     'storage::stimulus_tests::barrier_and_fault_ids_are_single_shot', '#1370 the fault fires only once'),
+    # The registry barrier must hold the mutation chain lock: hoisting the
+    # wait outside the lock lets a plain get() proceed while the persist is
+    # held.
+    ('registry-barrier-outside-lock', RUN_REGISTRY,
+     '''let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+        let _lock = self.acquire_file_lock()?;
+        let mut snapshot = read_snapshot(&self.path)?;
+        let (value, changed) = operation(&mut snapshot)?;
+        if changed {
+            let mut blocked = None;
+            if let Some(key) = stimulus_key
+                && let Some(stimulus) = super::stimulus::StorageStimulus::global()
+                && stimulus.before_write(super::stimulus::Site::Registry, key)?
+                    == super::stimulus::Applied::Blocked
+            {
+                blocked = Some((stimulus, key));
+            }''',
+     '''let mut pre_blocked = None;
+        if let Some(key) = stimulus_key
+            && let Some(stimulus) = super::stimulus::StorageStimulus::global()
+            && stimulus.before_write(super::stimulus::Site::Registry, key)?
+                == super::stimulus::Applied::Blocked
+        {
+            pre_blocked = Some((stimulus, key));
+        }
+        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+        let _lock = self.acquire_file_lock()?;
+        let mut snapshot = read_snapshot(&self.path)?;
+        let (value, changed) = operation(&mut snapshot)?;
+        if changed {
+            let blocked = pre_blocked;''',
+     'storage::stimulus_tests::registry_barrier_holds_chain_lock', "#1370 get() is held behind the barrier's chain lock"),
+    # The FIFO witness: the queued receipt is published while the barrier is
+    # held, before the caller queues on the chain lock.
+    ('registry-queued-after-release', STIMULUS,
+     '''if site_state_ref(&inner, site).held.is_none() {
+                return Ok(());
+            }''',
+     '''if site_state_ref(&inner, site).held.is_some() {
+                return Ok(());
+            }''',
+     'storage::stimulus_tests::registry_port_appends_queue_with_witness_receipts', '#1370 registry queued receipt is published while held'),
+    # Production default: an unset entry must stay unarmed.
+    ('stimulus-unset-activates', STIMULUS,
+     'Err(_) => None,',
+     'Err(_) => Some(Arc::new(StorageStimulus::control("/nonexistent-pdrs-stimulus-control"))),',
+     'storage::stimulus_tests::stimulus_unset_is_inert', '#1370 unset stimulus keeps the production default'),
+    # A malformed control file must fail the operation closed, not arm nothing.
+    ('invalid-config-accepted', STIMULUS,
+     '''let value = parse_json(&text)
+            .map_err(|error| invalid(format!("stimulus.json is not valid JSON: {error}")))?;
+        parse_config(&value)''',
+     '''let _ = parse_json(&text);
+        Ok(Config::default())''',
+     'storage::stimulus_tests::invalid_control_directory_fails_closed', '#1370 malformed stimulus.json fails the writer closed'),
+    # The construction receipt is the stimulus boundary witness: the assembly
+    # must state the resolved control directory on stderr at startup.
+    ('assembly-receipt-not-published', ASSEMBLY,
+     'eprintln!("native storage stimulus on {}", dir.display());',
+     'let _ = dir;',
+     'executable_native_storage_stimulus', '#1370 executable armed stimulus receipt'),
+    # Fail closed: a value that does not name an existing directory is
+    # rejected before any listening advertisement.
+    ('assembly-invalid-dir-accepted', ASSEMBLY,
+     'if !path.is_dir() {',
+     'if false {',
+     'executable_native_storage_stimulus', '#1370 executable invalid stimulus dir'),
+]
+
+
+def test_body(test, texts=None):
+    if texts is None:
+        texts = {path: path.read_text() for path in [TESTS, PROCESS_TEST]}
+    if test.startswith('storage::stimulus_tests::'):
+        path = TESTS
+    else:
+        path = PROCESS_TEST
+    # These files use top-level test functions. A column-zero closing brace is
+    # the end of this function, so a sibling's assertion cannot satisfy it.
+    pattern = r'^(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^}'
+    bodies = re.findall(pattern, texts[path], re.M | re.S)
+    return bodies[0] if len(bodies) == 1 else ''
+
+
+def check_binding_scope():
+    fixture = 'fn target() {\n}\nfn sibling() {\n assert!(false, "only sibling");\n}\n'
+    if 'only sibling' in test_body('storage::stimulus_tests::target', {TESTS: fixture}):
+        raise RuntimeError('#1370 binding checker accepted sibling assertion')
+    if 'only sibling' not in test_body('storage::stimulus_tests::sibling', {TESTS: fixture, PROCESS_TEST: ''}):
+        raise RuntimeError('#1370 binding checker lost its own assertion')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check', action='store_true')
+    parser.add_argument('--compile-only', action='store_true')
+    parser.add_argument('output', nargs='?')
+    parser.add_argument('selected', nargs='*')
+    args = parser.parse_args()
+    check_binding_scope()
+    stale = []
+    for name, path, old, new, test, assertion in mutations:
+        text = path.read_text()
+        body = test_body(test)
+        if (text.count(old) != 1 or old == new or
+                not body or f'"{assertion}"' not in body):
+            stale.append(name)
+    if stale:
+        raise SystemExit('#1370 stale anchor/test/assertion bindings: ' + ', '.join(stale))
+    if args.check:
+        print(f'#1370 {len(mutations)} unique anchors and assertion bindings: OK')
+        return 0
+    selected = [row for row in mutations if not args.selected or row[0] in args.selected]
+    if not selected or (args.selected and len(selected) != len(args.selected)):
+        raise SystemExit('#1370 unknown or repeated mutation')
+    if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
+        raise SystemExit('#1370 output and caller CARGO_TARGET_DIR required')
+    output = Path(args.output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    env = dict(os.environ)
+    for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
+        env.pop(key, None)
+    guarded = [STIMULUS, RUN_REGISTRY, ASSEMBLY, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
+               FIXTURES / 'negative_process.py',
+               FIXTURES / 'negative_suite.py',
+               ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
+               ROOT / 'src/pilotdeck-gateway/src/lib.rs',
+               ROOT / 'src/pilotdeck-gateway/src/test_process.rs']
+    results = []
+    guarded_sha256 = {}
+    sidecar_sha256 = None
+
+    def run(label, run_env, test, *, compile_only=False):
+        slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600)
+        (output / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
+        command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                   '-p', 'pilotdeck-gateway']
+        command += (['--test', 'native_storage_stimulus']
+                    if test == 'executable_native_storage_stimulus' else ['--lib'])
+        command += ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored']
+        run_env = dict(run_env)
+        if test == 'executable_native_storage_stimulus':
+            run_env['PDRS_1370_PROCESS_OUTPUT'] = str(output / (label + '-process'))
+        (output / f'{label}.command.json').write_text(json.dumps(command) + '\n')
+        result = run_owned(command, cwd=ROOT, env=run_env, timeout=900)
+        (output / f'{label}.log').write_text(result.stdout + result.stderr)
+        return result
+
+    try:
+        with mutating_sources(ROOT, guarded) as originals:
+            guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
+            if any(row[4] == 'executable_native_storage_stimulus' for row in selected):
+                slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600)
+                (output / 'sidecar-build.slots.log').write_text(slot.stdout + slot.stderr)
+                command = ['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
+                           '-p', 'pilotdeck-transport', '--bin', 'pilotdeck-agent-loop-sidecar']
+                (output / 'sidecar-build.command.json').write_text(json.dumps(command) + '\n')
+                built = run_owned(command, cwd=ROOT, env=env, timeout=900)
+                (output / 'sidecar-build.log').write_text(built.stdout + built.stderr)
+                if built.returncode:
+                    raise RuntimeError('#1370 current-source sidecar build failed')
+                sidecar = Path(env['CARGO_TARGET_DIR']) / 'debug/pilotdeck-agent-loop-sidecar'
+                sidecar_sha256 = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+            for name, path, old, new, test, assertion in selected:
+                item = dict(name=name, test=test, assertion=assertion,
+                            status='INVALID', reason='not run', compiled=False)
+                try:
+                    if not args.compile_only and not passed(run(name + '-positive', env, test), test):
+                        raise RuntimeError('positive bound test failed')
+                    path.write_text(originals[path].decode().replace(old, new, 1))
+                    if run(name + '-compile', env, test, compile_only=True).returncode:
+                        raise RuntimeError('mutant did not compile; not a runtime kill')
+                    item['compiled'] = True
+                    if args.compile_only:
+                        item.update(status='COMPILED', reason='mutated source compiled')
+                    else:
+                        receipt = ReceiptRun(output, name, [(test, assertion)])
+                        result = run(name + '-negative', receipt.environment(env), test)
+                        killed, reason, hits = judge(result, '', [(test, assertion)], receipt)
+                        item.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'),
+                                    reason=reason, hits=hits)
+                except Exception as error:
+                    item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                finally:
+                    path.write_bytes(originals[path])
+                try:
+                    if not args.compile_only:
+                        if not passed(run(name + '-restored', env, test), test):
+                            raise RuntimeError('restored bound test failed')
+                        item['restoredPass'] = True
+                except Exception as error:
+                    item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
+                results.append(item)
+                print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
+    except Exception as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
+        for name, _, _, _, test, assertion in selected[len(results):]:
+            results.append(dict(name=name, test=test, assertion=assertion,
+                                status='INVALID', reason=reason, compiled=False))
+    counts = {state: sum(row['status'] == state for row in results)
+              for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
+    temporary = output / 'summary.json.tmp'
+    temporary.write_text(json.dumps(
+        {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256, 'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
+    temporary.replace(output / 'summary.json')
+    print(json.dumps({'controls': results, 'counts': counts}), flush=True)
+    success = 'COMPILED' if args.compile_only else 'KILLED'
+    return int(any(row['status'] != success for row in results))
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

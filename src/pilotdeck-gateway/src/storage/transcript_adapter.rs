@@ -256,10 +256,32 @@ impl TranscriptStore for JsonlTranscriptStore {
         let flush = control
             && is_str(field(boundary, "kind"), "compact")
             && is_str(field(boundary, "subtype"), "compact_boundary");
+        // #1370 controlled stimulus: the real writer's underlying append, with
+        // the caller's commit lock (the TS writeTail) held. Inert unless the
+        // process-wide controlled entry is armed; the bounded barrier holds the
+        // writeTail, and the single EIO fails the append before any bytes.
+        let stimulus = super::stimulus::StorageStimulus::global();
+        let blocked = match &stimulus {
+            Some(stimulus) => {
+                stimulus.before_write(
+                    super::stimulus::Site::Writer,
+                    &super::stimulus::writer_entry_key(entry),
+                )? == super::stimulus::Applied::Blocked
+            }
+            None => false,
+        };
         let mut file = private_open().append(true).create(true).open(path)?;
         file.write_all(line.as_bytes())?;
         if flush {
             file.sync_all()?;
+        }
+        if let Some(stimulus) = &stimulus
+            && blocked
+        {
+            stimulus.completed(
+                super::stimulus::Site::Writer,
+                &super::stimulus::writer_entry_key(entry),
+            );
         }
         Ok(())
     }
@@ -802,6 +824,8 @@ impl TranscriptWriter {
         if self.closed.load(Ordering::SeqCst) {
             return Ok(());
         }
+        // #1370 stimulus entry witness, same position as append_with above.
+        super::stimulus::writer_stimulus_queued_entry(entry).map_err(AdapterError::Store)?;
         let mut inner = self.lock();
         self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
@@ -846,6 +870,12 @@ impl TranscriptWriter {
         self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
             return Ok(());
+        }
+        // #1370 stimulus entry witness: this append queues behind the commit
+        // lock (the TS writeTail) — record what arrived while a barrier holds
+        // the underlying append, before blocking on the lock below.
+        if let Err(error) = super::stimulus::writer_stimulus_queued_draft(&draft) {
+            return Err(E::from(AdapterError::Store(error)));
         }
         let mut inner = self.lock();
         self.check_retired()?;
