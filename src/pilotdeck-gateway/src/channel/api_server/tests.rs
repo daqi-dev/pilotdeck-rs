@@ -42,12 +42,53 @@ struct RawResponse {
 /// request *length*, not a megabyte of filler, so a replay that sends the
 /// placeholder literally would exercise a 15-byte body instead of the cap.
 /// Any other string is the request body itself.
+///
+/// Expansion is load-bearing, so it is fail-closed (#1606 r1). The
+/// `body-limit-exact` cell expects the same `400 invalid_json` for a 15-byte
+/// body as for the full megabyte, so a placeholder that quietly failed to
+/// expand would leave the cell green while testing nothing. A `<... bytes>`
+/// whose middle does not parse is a fixture bug and panics, and a count past
+/// the replay budget is refused before allocating: a fixture edited to a huge
+/// count would otherwise abort the whole test binary on allocation instead of
+/// failing one assertion.
 fn recorded_body(text: &str) -> Vec<u8> {
-    let filler = text
+    let Some(count) = text
         .strip_prefix('<')
         .and_then(|rest| rest.strip_suffix(" bytes>"))
-        .and_then(|count| count.parse::<usize>().ok());
-    filler.map_or_else(|| text.as_bytes().to_vec(), |count| vec![b'x'; count])
+    else {
+        return text.as_bytes().to_vec();
+    };
+    let count = count.parse::<usize>().unwrap_or_else(|error| {
+        panic!("#1333 request placeholder {text:?} does not expand to a byte count: {error}")
+    });
+    assert!(
+        count <= 8 * MAX_REQUEST_BYTES,
+        "#1333 request placeholder {text:?} is beyond the replay budget"
+    );
+    vec![b'x'; count]
+}
+
+#[test]
+fn recorded_body_expands_the_length_placeholder() {
+    assert_eq!(recorded_body("<5 bytes>"), b"xxxxx");
+    assert_eq!(recorded_body("<1000000 bytes>").len(), MAX_REQUEST_BYTES);
+    // Anything that is not the placeholder syntax is the body verbatim.
+    assert_eq!(recorded_body("{}"), b"{}");
+    assert_eq!(recorded_body(""), b"");
+}
+
+#[test]
+#[should_panic(expected = "does not expand to a byte count")]
+fn recorded_body_refuses_a_malformed_placeholder() {
+    // A near-miss placeholder must not fall back to replaying 15 literal
+    // bytes: that is the fake-PASS shape this cell exists to rule out.
+    recorded_body("<1_000_000 bytes>");
+}
+
+#[test]
+#[should_panic(expected = "is beyond the replay budget")]
+fn recorded_body_refuses_an_unbounded_count() {
+    recorded_body("<5000000000 bytes>");
 }
 
 struct ReqSpec {
@@ -627,8 +668,12 @@ async fn replays_real_ts_api_server_cells() {
     for case in cases {
         let id = case["id"].as_str().expect("#1333 case id");
         if id.starts_with("oversized-") {
-            // 1 MB writes are exercised separately by `oversized_body_closes`
-            // to keep this replay's per-request timeout predictable.
+            // The three oversized cells are exercised separately by
+            // `oversized_body_closes_without_response`: the server destroys the
+            // connection mid-write there, so the error shape (ECONNRESET /
+            // EPIPE / EOF) depends on write progress and is not replayable.
+            // `body-limit-exact` stays in this loop: a body at the cap is read
+            // in full and answered, so its response is deterministic.
             continue;
         }
         let dropped = Arc::new(AtomicBool::new(false));
@@ -1112,10 +1157,11 @@ async fn body_at_the_exact_limit_is_read_then_rejected_as_json() {
     // The cap is exclusive (`> MAX_REQUEST_BYTES`, mirroring TS
     // `ApiServerChannel.ts:409` `if (size > max)`), so a body of exactly
     // 1,000,000 bytes is read in full and then fails JSON parsing: 400
-    // invalid_json, *not* the zero-byte close. The oracle cannot see this
-    // cell (every oversized cell sits at 1,000,001), so without this test a
-    // `>` -> `>=` off-by-one would pass replay, the oversized test and the
-    // `body-limit` negative control alike.
+    // invalid_json, *not* the zero-byte close. The `body-limit-exact` oracle
+    // cell now replays this boundary too (#1606), but keep this test: it is
+    // the target the `body-limit-exact` negative-control mutation binds to,
+    // and it builds the 1 MB body directly instead of through the oracle's
+    // `<N bytes>` placeholder.
     let started = start(options(&json!({"options":{}}), None), None).await;
     let body = "x".repeat(1_000_000);
     let response = exchange(
