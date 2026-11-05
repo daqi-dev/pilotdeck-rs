@@ -575,6 +575,81 @@ def _parents(tree):
     return parents
 
 
+def _other_binding(function, name):
+    """True when ``function`` binds ``name`` without an ``ast.Name`` Store.
+
+    Parameters (defaults included), ``import ... as``, ``except ... as``,
+    ``match`` captures and ``global``/``nonlocal`` all rebind the name, and none
+    of them produces a ``Name(Store)`` node -- so a value this parser read from
+    elsewhere is not the value the interpreter uses.
+    """
+    arguments = function.args
+    every = (list(arguments.posonlyargs) + list(arguments.args)
+             + list(arguments.kwonlyargs)
+             + [arg for arg in (arguments.vararg, arguments.kwarg) if arg is not None])
+    if any(arg.arg == name for arg in every):
+        return True
+    for node in ast.walk(function):
+        if isinstance(node, ast.alias) and (node.asname or node.name).split('.')[0] == name:
+            return True
+        if isinstance(node, ast.ExceptHandler) and node.name == name:
+            return True
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == name:
+            return True
+        if isinstance(node, ast.MatchMapping) and node.rest == name:
+            return True
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+            return True
+    return False
+
+
+def _module_scope_nodes(tree):
+    """Module-level statements and their children, function/class bodies excluded."""
+    stack = list(tree.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                             ast.ClassDef)):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _external_still_holds(tree, name):
+    """True when the module does not rebind ``name`` away from ``<mod>.name``.
+
+    The external value comes from another module (gateway's ``common.A2_SCRIPTS``
+    read through ``A2_SCRIPTS = common.A2_SCRIPTS``).  A branch that rebinds it
+    here -- ``A2_SCRIPTS = common.A2_SCRIPTS + ('extra.py',)``, a literal, or
+    ``from common import A2_SCRIPTS`` -- changes the interpreter's value while
+    the external one stays put, so the answer is "cannot tell", not the stale
+    tuple.
+    """
+    for node in _module_scope_nodes(tree):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets, value = [node.target], node.value
+        else:
+            targets, value = [], None
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == name:
+                if not (isinstance(value, ast.Attribute) and value.attr == name
+                        and isinstance(value.value, ast.Name)):
+                    return False
+        if isinstance(node, ast.alias) and (node.asname or node.name).split('.')[0] == name:
+            return False
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+            return False
+        if isinstance(node, ast.ExceptHandler) and node.name == name:
+            return False
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == name:
+            return False
+        if isinstance(node, ast.MatchMapping) and node.rest == name:
+            return False
+    return True
+
+
 def _tuple_value(tree, function, name, external=()):
     """Tuple bound to ``name`` inside ``function`` (local assignment first), else None.
 
@@ -591,7 +666,7 @@ def _tuple_value(tree, function, name, external=()):
     augments = [node for node in ast.walk(function)
                 if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
                 and node.target.id == name]
-    if augments or len(stores) > 1:
+    if augments or len(stores) > 1 or _other_binding(function, name):
         return None
     found = None
     if stores:
@@ -622,7 +697,7 @@ def _tuple_value(tree, function, name, external=()):
     if found is not None:
         return found
     if name in external:
-        return external[name]
+        return external[name] if _external_still_holds(tree, name) else None
     return _module_tuple(tree, name)
 
 
@@ -995,11 +1070,11 @@ def registrable(root, kind, path):
             return False
         return tracked_at_head(root, path)
     if kind == 'gateway-parity':
-        if not path.startswith(REGISTRABLE_DIRS['gateway-parity']):
-            return False
         inventory = gateway_inventory(root)
         if inventory is None:
             return None  # shape not recognised: never guess in either direction
+        # ``--write`` registers exactly the inventory, wherever a member lives:
+        # a member added outside the usual directories is still a row.
         return path in inventory
     if kind == 'ui-server-parity':
         inventory = ui_inventory(root)
@@ -1067,10 +1142,18 @@ def unregistered_added(root, kind, mb):
     extra = ()
     if kind == 'ui-server-parity':
         inventory = ui_inventory(root)
-        prefixes = () if inventory is None else inventory['dirs']
         if inventory is None:
+            prefixes = ()
             issues.append('cannot tell ui-server-parity\'s inventory: '
                           'cannot tell which files --write registers')
+        else:
+            # ``SPEC_FILES`` and ``TOOLCHAIN_FILES`` are rows as well, and the
+            # spec directory / toolchain entry need not live under the scanned
+            # apparatus directories -- same question as the parity branch below.
+            prefixes = inventory['dirs']
+            known = {inventory['spec'] + name for name in inventory['specs']}
+            known |= set(inventory['toolchain'])
+            extra = sorted(p for p in known if not p.startswith(prefixes))
     else:
         # ``specs/<kind>/`` belongs to the inventory too: neither apparatus
         # reports a *new* spec document that has no hash row (parity only skips
@@ -1090,6 +1173,16 @@ def unregistered_added(root, kind, mb):
                               'which files outside the scanned directories --write registers')
             else:
                 extra = sorted(p for p in manifest if not p.startswith(prefixes))
+        elif kind == 'gateway-parity':
+            # Same question, same answer: a member the inventory names outside
+            # the scanned directories is a row ``--write`` adds, so it has to be
+            # looked at too.
+            inventory = gateway_inventory(root)
+            if inventory is None:
+                issues.append('cannot tell gateway-parity\'s inventory: cannot tell '
+                              'which files outside the scanned directories --write registers')
+            else:
+                extra = sorted(p for p in inventory if not p.startswith(prefixes))
     for prefix in prefixes:
         code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
                              pinned_head(), '--', prefix)
