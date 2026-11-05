@@ -73,10 +73,22 @@ mutations = [
      'native_http::tests::user_dialog_store_entry_is_explicitly_not_yet_open',
      '#1316 user-dialog store entry is a 503'),
 ]
+# Fail closed on an empty run: with no mutants the loops below sweep nothing and
+# the script would print KILLED=0 and exit 0, so "the table was emptied" would
+# look exactly like "the control is healthy". Nothing else in CI runs this
+# fixture (ci.yml only globs the cli fixtures), so this check is the only thing
+# standing between a trimmed mutation table and a silent green.
+if not mutations:
+    sys.exit('no mutations defined: the negative control would pass without testing anything')
 selected = sys.argv[2:]
 if selected:
     mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
+    # Explicit exit, not an assert: `python3 -O` strips asserts and the unknown
+    # name would then silently narrow the run (or empty it) instead of failing.
+    if len(mutations) != len(selected):
+        sys.exit(f'unknown mutation name(s): {sorted(set(selected) - {m[0] for m in mutations})}')
+    if not mutations:
+        sys.exit('no mutations selected: the negative control would pass without testing anything')
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
