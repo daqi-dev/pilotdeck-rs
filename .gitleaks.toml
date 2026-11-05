@@ -82,3 +82,8 @@ regexes = [
   '''3b260a848c48c218442735d0cf05ee5acc1570a1d0d75f468b7edd98e64a28a5''',
   '''2b1a02ef3c67a4b45df532c169e2812d1dd9214fcfd95c5b32eaed5a282114de''',
 ]
+
+[[allowlists]]
+description = "#1351 native-ws-upgrade-budget 金样 oracle.json：RFC 6455 §1.3 公开示例 nonce（the sample nonce 的 base64），非密钥；与 scripts/gateway-parity/driver.mts:92、src/pilotdeck-gateway/tests/common/native_ws_sample.rs:2、tests/fixtures/native-ws-entry/sample.mts:2 的 gitleaks:allow 同值先例一致，JSON 不能写行内注释故改值级放行；例外只限 Sec-WebSocket-Key 头后的这一固定值，其他值仍会命中"
+regexTarget = "match"
+regexes = ['''Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==''']
