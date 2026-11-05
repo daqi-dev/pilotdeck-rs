@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# worktree-count.sh — 「worktree 上限 40」名额口径的唯一实现。
+# worktree-count.sh — 「worktree 上限 60」名额口径与上限常量的唯一实现。
 #
 # 口径（2026-11-05 定，决策卡 state/decisions-20261105-worktree-cap.md「口径」节，PR #1548）：
 #   计入本仓全部 linked worktree，排除主仓工作区本身。等价 `git worktree list | wc -l` − 1。
@@ -11,22 +11,24 @@
 #   `_build/wt-*` 子集 29 → 35（21:16 → 21:26），而全量条目 37 → 43；
 #   非 _build 条目两个时刻都是 8（主仓 1 + codex 6 + /tmp 1）。
 #   new-tree.sh 与 wt-status.sh 只看 `_build` 子集，35 < 40 便放行，而真值 43 已越顶。
+#   2026-11-05 人询问后上限由 40 放宽到 60（state/decisions-20261105-worktree-cap-60.md）：
+#   40 棵已不是瓶颈，真正的闸是磁盘（new-tree.sh 的 _build+_tmp 180 GiB 硬闸 / 160 GiB WARN）。
 #
 # 用法：
 #   . scripts/lib/worktree-count.sh
 #   pdrs_worktree_paths [repo]    # 打印每个 linked worktree 的绝对路径，每行一个
 #   pdrs_worktree_count [repo]    # 打印一个整数；失败返回 2，不会把失败静默算成 0
 #   repo 省略时取当前目录所属仓库；调用方**应显式传入自己的仓根**，不要依赖调用者 cwd。
-#   PDRS_WORKTREE_CAP             # 上限，缺省 40；只允许调低（自测拒绝路径用），>40 或非数字一律按 40
+#   PDRS_WORKTREE_CAP             # 上限，缺省 60；只允许调低（自测拒绝路径用），>60 或非数字一律按 60
 # 直接执行：打印「数 + 上限」与明细（自测用）。
 
-PDRS_WORKTREE_CAP_MAX=40
+PDRS_WORKTREE_CAP_MAX=60
 PDRS_WORKTREE_CAP=${PDRS_WORKTREE_CAP:-$PDRS_WORKTREE_CAP_MAX}
 case "$PDRS_WORKTREE_CAP" in
   '' | *[!0-9]*) PDRS_WORKTREE_CAP=$PDRS_WORKTREE_CAP_MAX ;;
 esac
 [ "$PDRS_WORKTREE_CAP" -le "$PDRS_WORKTREE_CAP_MAX" ] || PDRS_WORKTREE_CAP=$PDRS_WORKTREE_CAP_MAX
-# 调低只在自测里合法：生效值不是 40 就嚷一声，免得 shell 里残留的变量静默收紧闸门
+# 调低只在自测里合法：生效值不是 60 就嚷一声，免得 shell 里残留的变量静默收紧闸门
 [ "$PDRS_WORKTREE_CAP" -eq "$PDRS_WORKTREE_CAP_MAX" ] ||
   echo "worktree-count: 注意上限被环境变量改成 ${PDRS_WORKTREE_CAP}（默认 ${PDRS_WORKTREE_CAP_MAX}，只应出现在自测里）" >&2
 
