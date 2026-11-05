@@ -105,10 +105,10 @@ def check_block(attrs: str, head: str, patch: str = "") -> list[str]:
         errs.append("结果块键 patch 至多出现一次；重跑 run-review-roles.py")
     if one.get("readonly", "tools") != "tools":
         errs.append(f"结果块 readonly={one['readonly']}：只接受 readonly=tools（执行层工具白名单）")
-    prefix = {"zai": "glm-", "anthropic": "claude-"}
+    prefix = {"zai": "glm-", "anthropic": "claude-", "minimax": "MiniMax-", "deepseek": "deepseek-"}
     rn, md = one.get("runner"), one.get("model", "")
     if rn is not None and (rn not in prefix or not md.startswith(prefix[rn])):
-        errs.append(f"结果块 runner={rn} model={md} 不是已知组合（zai→glm-*，anthropic→claude-*）")
+        errs.append(f"结果块 runner={rn} model={md} 不是已知组合（zai→glm-*，anthropic→claude-*，minimax→MiniMax-*，deepseek→deepseek-*）")
     # P1（boundary 审 #1）：head= 必须与当前 PR head 比对，防「推新提交后旧 PASS 块照样过闸」
     if head:
         bhead = one.get("head", "")  # 完整键、恰一次（nothead= 不算，重复 head 已在上面拒）

@@ -184,8 +184,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         if rc != 0 or "runner=anthropic model=claude-opus-5-5" not in s or gate_errs(s):
             fails.append(f"anthropic-ok：应全 PASS 且过闸（rc={rc}）")
 
-        # minimax 通道：直连官方接口（不经 llm-center）、只认文件里的 MINIMAX_API_KEY、默认模型与超时落进结果块。
-        # 不做 gate_errs 断言：check-pr-gate.py 的 runner→model 组合表尚未登记 minimax（另一改动范围，负控见下）
+        # minimax 通道：直连官方接口（不经 llm-center）、只认文件里的 MINIMAX_API_KEY、默认模型与超时落进结果块、结果块过闸
         log.write_text("")
         rc, s = run("minimax-ok", "ok", runner="minimax")
         calls = [json.loads(x) for x in log.read_text().splitlines()]
@@ -195,7 +194,7 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("minimax-ok：父环境的令牌/网关头/provider 选择器不得进子进程")
         if any(not c["cfg_empty"] for c in calls) or len({c["cfg"] for c in calls}) != len(calls):
             fails.append("minimax-ok：每个角色应有各自的一次性空 CLAUDE_CONFIG_DIR")
-        if rc != 0 or "simplify:PASS" not in s or "runner=minimax model=MiniMax-M3.1-Flash" not in s:
+        if rc != 0 or "simplify:PASS" not in s or "runner=minimax model=MiniMax-M3.1-Flash" not in s or gate_errs(s):
             fails.append(f"minimax-ok：应全 PASS 且标 runner=minimax model=MiniMax-M3.1-Flash（rc={rc}）")
         if secret in log.read_text() or anth_secret in log.read_text() or mmx_secret in log.read_text():
             fails.append("测试日志里出现了密钥原值")
@@ -210,7 +209,7 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("deepseek-ok：BASE_URL 应为 llm-center 而非父环境值，且只用文件里的 DEEPSEEK_API_KEY")
         if any(polluted & set(c["env"]) for c in calls):
             fails.append("deepseek-ok：父环境的令牌/网关头/provider 选择器不得进子进程")
-        if rc != 0 or "simplify:PASS" not in s or "runner=deepseek model=deepseek-v4.1-flash-mb" not in s:
+        if rc != 0 or "simplify:PASS" not in s or "runner=deepseek model=deepseek-v4.1-flash-mb" not in s or gate_errs(s):
             fails.append(f"deepseek-ok：应全 PASS 且标 runner=deepseek model=deepseek-v4.1-flash-mb（rc={rc}）")
         if any(ds_secret in p.read_text(errors="replace") for p in (out_base / "deepseek-ok").rglob("*") if p.is_file()):
             fails.append("deepseek-ok：密钥不得落盘")
