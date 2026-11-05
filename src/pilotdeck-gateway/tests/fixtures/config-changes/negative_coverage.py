@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import CARGO_SLOTS_WAIT_SECONDS, mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -102,7 +102,8 @@ def main():
     results = []
 
     def run(label, args):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh',
+                             timeout=CARGO_SLOTS_WAIT_SECONDS)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
         result = run_owned(command + ['--test', target] + args, cwd=root, env=env, timeout=900)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)

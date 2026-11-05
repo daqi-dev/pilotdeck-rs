@@ -30,6 +30,18 @@ from types import ModuleType
 # signal cannot reach.
 KILL_TIMEOUT = 10
 
+# Total budget for a cargo slot wait in fixtures that also build afterwards
+# (#1556). cargo-slots.sh may need one cold bootstrap of up to its 120 s
+# budget on the first call of a machine, so a budget that is only one cold
+# call long leaves no room to retry a full pool. Single source of truth: the
+# number used to be copied into every fixture.
+CARGO_SLOTS_WAIT_SECONDS = 600
+
+# Cap for one `cargo-slots.sh` invocation inside wait_for_slot: above the
+# script's cold bootstrap budget, below any caller's total budget, so one slow
+# call cannot swallow the whole wait without a retry chance.
+CARGO_SLOTS_CALL_SECONDS = 300.0
+
 
 def _kill_group(process):
     for attempt in range(2):
@@ -777,7 +789,17 @@ def wait_for_slot(script, *, timeout=900, interval=30):
         if remaining <= 0:
             raise subprocess.TimeoutExpired(command, timeout,
                                             "".join(stdout), "".join(stderr))
-        result = run_owned(command, timeout=remaining)
+        try:
+            result = run_owned(command, timeout=min(remaining, CARGO_SLOTS_CALL_SECONDS))
+        except subprocess.TimeoutExpired:
+            # One call is capped (see CARGO_SLOTS_CALL_SECONDS) so a cold gate
+            # cannot eat the whole budget with no retry. Retry while the total
+            # budget lasts; only then let the timeout out — state/decisions-20261106.md
+            # §5 classifies `TimeoutExpired ... cargo-slots.sh` as "environment
+            # did not produce a verdict", not as a negative-control result.
+            if time.monotonic() >= deadline:
+                raise
+            continue
         stdout.append(result.stdout)
         stderr.append(result.stderr)
         if result.returncode in (0, 69):

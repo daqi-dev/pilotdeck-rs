@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import CARGO_SLOTS_WAIT_SECONDS, mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -145,7 +145,8 @@ def main():
     signal.signal(signal.SIGINT, stop)
 
     def run(label, arguments):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh',
+                             timeout=CARGO_SLOTS_WAIT_SECONDS)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
         try:
             result = run_owned(command + arguments, cwd=root, env=env, timeout=600)
