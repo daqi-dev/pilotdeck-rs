@@ -2,9 +2,11 @@
 //! #1327 lifecycle. All external services are loopback mocks; the Twilio REST
 //! boundary is an injected [`sender::TwilioFactory`].
 //!
-//! TS `start(deps)` reads `deps.gateway`; #1327's `ChannelStartDeps` has no
-//! gateway field (the A7 inbound port is a later unit), so the gateway is a
-//! constructor option instead — recorded in the #1339 diffs ledger.
+//! TS `start(deps)` reads `deps.gateway`; when this unit was written #1327's
+//! `ChannelStartDeps` had no gateway field, so the A7 boundary is a constructor
+//! option ([`SmsChannelOptions::gateway`]). #1333's api-server port later added
+//! `turn_gateway` to the deps; the sms adapter still does not read it — the
+//! difference is recorded in the #1339 diffs ledger (A8.3-CH-SMS-004).
 pub mod elicitation;
 pub mod gateway;
 pub mod mapper;
