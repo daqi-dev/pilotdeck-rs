@@ -39,6 +39,7 @@ class EnvironmentControls(unittest.TestCase):
         'test(=project_files::tests::node_round4_unreadable_huge_file_reports_open_error_first) | '
         'test(=project_files::tests::special_files_do_not_block_and_unreadable_files_still_list) | '
         'test(=project_files::tests::native_read_errors_match_node_ws_responses) | '
+        'test(=dispatch::tests::list_projects_preserves_real_node_scandir_error_suppression) | '
         'test(=runtime::cron::tests::migration_blocked_dir_tasks_eacces_matches_ts) | '
         'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key)')
 
