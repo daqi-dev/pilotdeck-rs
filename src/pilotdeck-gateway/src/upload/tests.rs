@@ -1003,7 +1003,8 @@ fn upload_mkdir_failure_matches_real_ts_caller() {
 // #1439: the native assembly is the only production caller of
 // `cleanup_expired`. These pin the schedule the TS baseline owns
 // (`ui/server/routes/uploads.js:73-76`): the literal 15 min interval, the
-// `Weak` exit that stands in for `unref()`, and "a failed sweep only logs".
+// `Weak` exit that stands in for `unref()`, and "a failed sweep does not end
+// the schedule".
 fn seed_cleanup_record(uploads: &Path, project_key: &Path, id: &str, expires_at: &str) {
     let dir = uploads.join(id);
     fs::create_dir_all(&dir).unwrap();
@@ -1030,18 +1031,19 @@ async fn cleanup_schedule_pins_the_ts_interval_and_ends_with_the_store() {
         "upload-gone",
         "1970-01-01T00:00:00.000Z",
     );
-    let handle = spawn_cleanup(&h.store, Duration::from_millis(100));
+    let handle = spawn_cleanup(&h.store, Duration::from_secs(1));
     // Last strong handle gone before the first tick: like `unref()`, a pending
     // schedule must neither keep the store alive nor touch the disk.
     drop(h);
     for _ in 0..3 {
-        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
         tokio::task::yield_now().await;
     }
-    assert!(
-        handle.is_finished(),
-        "the detached loop ends once the store is dropped"
-    );
+    // `await` (not `is_finished`) so a task that died by panic is a failure
+    // rather than a clean-looking exit.
+    handle
+        .await
+        .expect("the detached loop exits cleanly once the store is dropped");
     assert!(
         uploads.join("upload-gone").exists(),
         "a dropped store is never swept"
@@ -1067,23 +1069,50 @@ async fn cleanup_failure_keeps_the_schedule_alive() {
         "1970-01-01T00:00:00.000Z",
     );
     h.now.store(EPOCH, Ordering::SeqCst);
-    let handle = spawn_cleanup(&h.store, Duration::from_millis(100));
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let handle = spawn_cleanup(&h.store, Duration::from_secs(1));
+    tokio::time::sleep(Duration::from_millis(1_300)).await;
     assert!(
         !handle.is_finished(),
-        "a failed sweep is logged and the schedule keeps ticking"
+        "a failed sweep does not end the schedule"
     );
     assert!(
         uploads.join("upload-expired").exists(),
         "the failed round removes nothing"
     );
     fs::remove_dir_all(uploads.join("upload-bad")).unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(10), async {
         while uploads.join("upload-expired").exists() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
     .expect("the next tick sweeps again after the failed one");
+    handle.abort();
+}
+
+#[tokio::test]
+async fn cleanup_clamps_a_zero_interval_instead_of_panicking() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    seed_cleanup_record(
+        &uploads,
+        &project,
+        "upload-gone",
+        "1970-01-01T00:00:00.000Z",
+    );
+    // `tokio::time::interval(Duration::ZERO)` panics, and inside this detached
+    // task that panic is invisible: the record would never be swept. The clamp
+    // must keep the loop alive at its one-second floor.
+    let handle = spawn_cleanup(&h.store, Duration::ZERO);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while uploads.join("upload-gone").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a zero interval is clamped, not fatal");
+    assert!(!handle.is_finished(), "the clamped schedule keeps running");
     handle.abort();
 }
