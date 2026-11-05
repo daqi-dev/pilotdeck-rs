@@ -1436,8 +1436,12 @@ def _assigns_clean_status(value, bindings, seen=None):
     for arm in _exit_arms(value):
         if isinstance(arm, ast.NamedExpr):
             # ``report['status'] = (status := 'PASS')`` writes the same value
-            # through a walrus target (MiniMax sibling P1-2).
-            return _assigns_clean_status(arm.value, bindings, seen)
+            # through a walrus target (MiniMax sibling P1-2).  A miss may not
+            # end the walk: the other arm of the same conditional is judged on
+            # its own (GLM boundary r10 P2-4).
+            if _assigns_clean_status(arm.value, bindings, seen):
+                return True
+            continue
         if (isinstance(arm, ast.Constant) and isinstance(arm.value, str)
                 and arm.value in _CLEAN_STATUS_LITERALS):
             return True
@@ -1716,18 +1720,41 @@ def _container_holds_zero(value, bindings):
 
 
 def _helper_exits_zero(target, lookup, seen):
-    """True when *target* has a return path that leaves the process with 0."""
+    """True when *target* has a path that leaves the process with 0.
+
+    A bare ``return`` and a body that simply ends both hand ``None`` back, and
+    an entry point that raises ``SystemExit(None)`` exits 0: the point-level
+    rule already judged that shape (``no return or exit path``), so the
+    delegation family may not pass it one call away (GLM boundary r10 P0-1).
+    Exit spellings inside the helper body -- ``sys.exit(0)`` in statement
+    position, a bare ``raise SystemExit`` -- are invisible to a walk that only
+    looks at ``Return`` nodes, yet they leave the process at 0 just the same
+    (GLM boundary r10 P1-2).
+    """
+    hands_back = False
     for item in ast.walk(target):
-        if not (isinstance(item, ast.Return) and item.value is not None):
-            continue
-        if _calls_aggregate(item.value):
-            continue  # this return routes its own code through the map
-        if _constant_exit_zero(item.value) or any(
-                _constant_exit_zero(arm) for arm in _exit_arms(item.value)):
-            return True
-        if _delegated_exit(item.value, lookup, seen):
-            return True
-    return False
+        if isinstance(item, ast.Return):
+            hands_back = True
+            if item.value is None:
+                return True
+            if _calls_aggregate(item.value):
+                continue  # this return routes its own code through the map
+            if _constant_exit_zero(item.value) or any(
+                    _constant_exit_zero(arm) for arm in _exit_arms(item.value)):
+                return True
+            if _delegated_exit(item.value, lookup, seen):
+                return True
+        elif isinstance(item, ast.Raise) and _is_system_exit_raise(item):
+            hands_back = True
+            argument = item.exc.args[0] if item.exc.args else None
+            if argument is None or _constant_exit_zero(argument):
+                return True
+        elif isinstance(item, ast.Call) and _is_exit_call(item):
+            hands_back = True
+            argument = item.args[0] if item.args else None
+            if argument is None or _constant_exit_zero(argument):
+                return True
+    return not hands_back
 
 
 def _callee_names(call, bindings):
@@ -1839,7 +1866,7 @@ def _exit_provenance(argument, bindings, function, module, point):
             # P1-1).  A plain literal is still reported by the caller first.
             return True
         if isinstance(arm, ast.Name):
-            if _exit_name_violation(arm.id, bindings, function):
+            if _exit_name_violation(arm.id, bindings, function, module):
                 return True
             continue
         if (_container_holds_zero(arm, bindings)
@@ -1853,7 +1880,32 @@ def _exit_provenance(argument, bindings, function, module, point):
     return False
 
 
-def _exit_name_violation(name, bindings, function=None):
+def _module_delegated_exit(value, module, function, bindings):
+    """``code = _exit_code(report)`` where the helper lives at module level.
+
+    ``_delegated_exit`` judges the direct ``return _exit_code(report)``
+    spelling, and ``_nested_def_exits_zero`` the nested one, but the value of a
+    local name bound to a *module-level* helper had no branch at all: the same
+    family had three verdicts (MiniMax boundary r10 P1-2).  A callee that is a
+    nested def of this function stays with ``_nested_def_exits_zero`` so the two
+    rules cannot contradict each other.
+    """
+    if module is None or not isinstance(value, ast.Call):
+        return False
+    if _calls_aggregate(value):
+        # ``status, code = common.aggregate_status(...)``: the shared call is
+        # the proof, not a delegation to judge (the healthy tree binds the
+        # pair this way in five places, so this arm may not fire on it).
+        return False
+    if function is not None:
+        local = {node.name for node in ast.walk(function)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        if any(name in local for name in _callee_names(value, bindings)):
+            return False
+    return _delegated_exit(value, module, bindings=bindings)
+
+
+def _exit_name_violation(name, bindings, function=None, module=None):
     """Why an exit code travelling through *name* is inline, or None (#892 r3).
 
     A conditional expression that can produce 0 is always inline computation.
@@ -1862,8 +1914,9 @@ def _exit_name_violation(name, bindings, function=None):
     excuse it, because the zero branch still returns the default and the process
     exits 0 (DeepSeek boundary P0-1 / concurrency P1-1).  The same judgement is
     applied through plain reassignment chains, an ``int(...)`` computed into a
-    local, a zero read back out of a local dict, and a nested helper that returns
-    a constant zero (GLM concurrency P1-1 / MiniMax boundary P1-4).
+    local, a zero read back out of a local dict, a nested helper that returns a
+    constant zero (GLM concurrency P1-1 / MiniMax boundary P1-4), and a module
+    helper whose own code the local relays (MiniMax boundary r10 P1-2).
     """
     sites = {}
     terminals = _exit_terminal_bindings(name, bindings)
@@ -1898,6 +1951,8 @@ def _exit_name_violation(name, bindings, function=None):
             return 'subscript'
         if _nested_def_exits_zero(value, function):
             return 'nested def'
+        if _module_delegated_exit(value, module, function, bindings):
+            return 'delegated'
     return None
 
 
@@ -2162,7 +2217,7 @@ def unshared_status_slots(function, point=None, module=None):
                     # The exit code may travel through a local variable; a
                     # conditional that can yield 0 is inline computation
                     # (MiniMax boundary P0-2 / DeepSeek sibling P1-3).
-                    kind = _exit_name_violation(arm.id, bindings, function)
+                    kind = _exit_name_violation(arm.id, bindings, function, module)
                     if kind:
                         violations.append(f'inline exit code ({kind} relay) {arm.id} '
                                           f'at line {node.lineno}')
@@ -2215,12 +2270,37 @@ def _unproven_update_on_summary(call, bound, bindings):
     return _unproven_expansion(call, bindings)
 
 
+def _augassign_on_summary(node, bound, bindings):
+    """``report |= payload``: a status write the ``Assign`` family cannot see.
+
+    ``ast.AugAssign`` is a sibling of ``ast.Assign``, not a subclass, so the
+    enumeration never saw the ``|=`` family: a function whose only status
+    evidence was ``report |= {'status': 'PASS'}`` became no aggregation point at
+    all, was therefore never reported as unregistered and never audited, while
+    the slot layer's augmented-write rule only runs on points that are already
+    registered (MiniMax boundary r10 P0-1).
+    """
+    if not (isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)):
+        return False
+    if node.target.id not in bound:
+        return False
+    if isinstance(node.value, ast.Dict):
+        return _dict_has_status(node.value)
+    return not _proven_summary_source(node.value, bindings)
+
+
 def _has_exit_path(function):
-    """True when *function* can hand a value back or leave the process itself."""
+    """True when *function* can hand a value back or leave the process itself.
+
+    Any ``raise`` counts, not only ``raise SystemExit``: a propagating error
+    leaves non-zero (a traceback), which is not an optimistic exit, so a point
+    that ends in ``raise ValueError`` has an exit path and must not be reported
+    as "no return or exit path" (MiniMax boundary r10 P2-4).
+    """
     for node in _own_nodes(function):
         if isinstance(node, ast.Return) and node.value is not None:
             return True
-        if isinstance(node, ast.Raise) and _is_system_exit_raise(node):
+        if isinstance(node, ast.Raise):
             return True
         if isinstance(node, ast.Call) and _is_exit_call(node):
             return True
@@ -2280,6 +2360,11 @@ def aggregation_markers(function):
             # the function must still be enumerated and registered (MiniMax
             # sibling P1-1).
             markers.add('write-status')
+        elif _augassign_on_summary(node, dict_names, bindings):
+            # ``report |= {'status': 'PASS'}`` carries the same evidence as the
+            # ``update()`` spelling above and must enumerate the function too
+            # (MiniMax boundary r10 P0-1).
+            markers.add('write-status')
         elif _is_shared_call(node):
             markers.add('calls-aggregate')
     return markers
@@ -2337,10 +2422,12 @@ def aggregation_audit():
     cleanup_word = getattr(md, 'CLEANUP_UNVERIFIED_STATUS', None)
     if cleanup_word is not None:
         product_words.add(cleanup_word)
-    if product_words and product_words != set(STATUS_WORDS):
+    if product_words != set(STATUS_WORDS):
         # The copy is only safe while it mirrors the product enum: a word added
         # on one side would silently leave the other (GLM boundary r9 P2-4 /
-        # MiniMax simplify r9 P2-1).
+        # MiniMax simplify r9 P2-1).  An *empty* product enum is the direction
+        # that most needs the failure, so there is no ``product_words and``
+        # short-circuit in front of it (MiniMax boundary r10 P2-5).
         failures.append('#892 aggregation-audit: STATUS_WORDS '
                         f'{sorted(STATUS_WORDS)} no longer mirrors the product '
                         f'enumeration {sorted(product_words)}')
@@ -2681,7 +2768,25 @@ def aggregation_audit():
         "def _return_exit_call(report):\n"
         "    if report.get('special'):\n"
         "        return sys.exit(0)\n"
-        "    return common.aggregate_status(report['status'])[1]\n")
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _delegated_value_relay(report):\n"
+        "    code = _exit_code(report)\n"
+        "    return code\n"
+        "def _exit_bare(report):\n"
+        "    print(report)\n"
+        "def _bare_return_delegate(report):\n"
+        "    print(report)\n"
+        "    return _exit_bare(report)\n"
+        "def _exit_statement(report):\n"
+        "    sys.exit(0)\n"
+        "def _statement_delegate(report):\n"
+        "    return _exit_statement(report)\n"
+        "def _augassign_summary(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    report |= {'status': 'PASS'}\n"
+        "    return report\n"
+        "def _raising_only(report):\n"
+        "    raise ValueError('bad')\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -2935,6 +3040,34 @@ def aggregation_audit():
                                                  probe_modules)):
         failures.append('#892 aggregation-audit: detector self-test did not flag a '
                         'registered point with no return or exit path')
+    # #892 r11: the r10 reviews' delegation and enumeration holes, and the one
+    # false alarm the new no-exit-path rule could raise.
+    for probe_name, needle, message in (
+            ('_delegated_value_relay', '(delegated relay) code',
+             'an exit code relayed from a module-level helper through a local'),
+            ('_bare_return_delegate', 'inline exit code _exit_bare(report)',
+             'a module-level helper with a bare return (None exits 0)'),
+            ('_statement_delegate', 'inline exit code _exit_statement(report)',
+             'a module-level helper that exits with sys.exit(0) in statement position')):
+        probe = next((node for node in probe892.body
+                      if getattr(node, 'name', None) == probe_name), None)
+        found_slots = unshared_status_slots(probe, None, probe_modules) if probe else []
+        if not any(needle in slot for slot in found_slots):
+            failures.append(f'#892 aggregation-audit: detector self-test did not flag '
+                            f'{message} (found {found_slots!r})')
+    augassign = probe892_found.get(('<self-test-892>', '_augassign_summary'))
+    if (not augassign or 'write-status' not in augassign[0]
+            or not unshared_status_slots(augassign[1])):
+        failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
+                        'function whose only status evidence is an augmented |= write')
+    raising = next((node for node in probe892.body
+                    if getattr(node, 'name', None) == '_raising_only'), None)
+    if raising is not None and any(
+            'no return or exit path' in slot
+            for slot in unshared_status_slots(raising, ('probe', '_raising_only'),
+                                              probe_modules)):
+        failures.append('#892 aggregation-audit: detector self-test reported a point '
+                        'that raises (a propagating error is not an optimistic exit)')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,

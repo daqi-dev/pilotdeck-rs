@@ -37,6 +37,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -741,6 +742,66 @@ def calibrate_no_exit_path(rows):
     return True, 'aggregation-audit: no return or exit path flagged, passed=False'
 
 
+def calibrate_helper_bare_return(rows):
+    """#892 r11: a helper that falls off its end hands ``None`` back, so
+    ``return check_case(...)`` exits 0 one call away (GLM boundary r10 P0-1).
+
+    The helper is a real module-level function (``check_case`` ends in bare
+    ``return`` statements), not a nested one: an unknown callee already fails
+    closed in the delegation arm, so a nested definition would stay killed even
+    if the bare-return branch regressed.
+    """
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, reason = _point_failure(
+        row, 'scripts/gateway-parity/controls/session_domain.py', 'main',
+        'inline exit code check_case(args.case, args.output, args.source)',
+        'controls-main')
+    if not ok:
+        return ok, reason
+    return True, 'aggregation-audit: bare-return helper flagged, passed=False'
+
+
+def calibrate_helper_exit_call(rows):
+    """#892 r11: an exit spelling inside the helper body is the same exit 0 as
+    the point's own ``raise SystemExit`` (GLM boundary r10 P1-2)."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, reason = _point_failure(
+        row, 'scripts/gateway-parity/controls/session_domain.py', 'main',
+        'inline exit code _bail()', 'controls-main')
+    if not ok:
+        return ok, reason
+    return True, 'aggregation-audit: exit call inside a helper flagged, passed=False'
+
+
+def calibrate_augassign_unregistered(rows):
+    """#892 r11: ``report |= {'status': 'PASS'}`` is invisible to the ``Assign``
+    family (``ast.AugAssign`` is a sibling), so an unregistered function using
+    it was never enumerated (MiniMax boundary r10 P0-1)."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('unregistered aggregation point' in failure
+               and failure.rstrip().endswith(":publish markers=['write-status']")
+               for failure in failures):
+        return False, (f'failures={failures!r}, want the unregistered publish '
+                       "point with markers=['write-status']")
+    return True, 'aggregation-audit: augmented |= enumeration flagged, passed=False'
+
+
 def calibrate_delegated_attribute(rows):
     """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
     an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
@@ -1383,6 +1444,25 @@ MUTATIONS = [
     ('calibrate-status-update-kwarg', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update(status='PASS')\n"),
+    # #892 fix-r11: the r10-round P0/P1 shapes.
+    ('calibrate-helper-bare-return', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            return check_case(args.case, args.output, args.source)\n"
+     + CT_EXIT),
+    ('calibrate-helper-exit-call', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            def _bail():\n"
+     "                raise SystemExit(0)\n"
+     "            return _bail()\n" + CT_EXIT),
+    ('calibrate-augassign-unregistered', CONTROLS_SOURCE,
+     "def run_all(output, source=None):",
+     "def publish(rows):\n"
+     "    report = {'cases': rows}\n"
+     "    report |= {'status': 'PASS'}\n"
+     "    return report\n"
+     "def run_all(output, source=None):"),
 ]
 
 JUDGES = {
@@ -1626,6 +1706,12 @@ JUDGES = {
         'aggregation-audit', calibrate_walrus_exit, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
+    'calibrate-helper-bare-return': (
+        'aggregation-audit', calibrate_helper_bare_return, False, ()),
+    'calibrate-helper-exit-call': (
+        'aggregation-audit', calibrate_helper_exit_call, False, ()),
+    'calibrate-augassign-unregistered': (
+        'aggregation-audit', calibrate_augassign_unregistered, False, ()),
     'calibrate-clean-argument': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
@@ -1683,6 +1769,12 @@ def read_summary(case):
 LEASE_BUDGET_SECONDS = 900
 CHECK_TIMEOUT_SECONDS = 180
 KILL_GRACE_SECONDS = 10  # negative_process.KILL_TIMEOUT
+# Per-check overhead the reserve has to absorb besides the two timeouts: the
+# kill grace is charged twice by ``negative_process._collect`` (communicate +
+# collect) and the restore/digest of the source is charged once more, so a
+# reserve of exactly ``2 * (timeout + grace)`` undershot the real hold
+# (MiniMax concurrency r10 P2-2).
+TAIL_OVERHEAD_SECONDS = 20
 
 
 def lease_budget_left(started, now):
@@ -1693,8 +1785,20 @@ def lease_budget_left(started, now):
     last mutation could start at the edge of the budget and push the hold past
     ``LEASE_BUDGET_SECONDS`` (GLM boundary r9 P1-1).
     """
-    reserve = 2 * (CHECK_TIMEOUT_SECONDS + KILL_GRACE_SECONDS)
+    reserve = 2 * (CHECK_TIMEOUT_SECONDS + KILL_GRACE_SECONDS) + TAIL_OVERHEAD_SECONDS
     return LEASE_BUDGET_SECONDS - (now - started) - reserve
+
+
+def terminate_cleanly(signum, _frame):
+    """Unwind on SIGTERM/SIGHUP so the finally blocks restore the sources.
+
+    The default handler kills the interpreter on the spot: the mutated frozen
+    source stays in the tree and the host-wide parity lease is never released,
+    so the next suite waits out its own deadline and the tree is left dirty
+    (MiniMax concurrency r10 P1-1).  SIGKILL cannot be caught -- that residue
+    is bounded by ``parity_lock``'s stale-lease age and tracked in #1719.
+    """
+    raise SystemExit(128 + signum)
 
 
 def run_check(case, mode, timeout=CHECK_TIMEOUT_SECONDS):
@@ -1765,6 +1869,12 @@ def main():
     parser.add_argument('--only', action='append', default=[],
                         help='mutant name; repeat to select more (still runs the restored positive)')
     args = parser.parse_args()
+    # Spelled out one by one: the anchor selfcheck rejects ``getattr`` in a
+    # file that takes a snapshot, because a dynamic attribute lookup could also
+    # reach a mutating capability.
+    signal.signal(signal.SIGTERM, terminate_cleanly)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate_cleanly)
     known = {row[0] for row in MUTATIONS}
     if set(args.only) - known or len(args.only) != len(set(args.only)):
         common = committed_status_contract(ROOT)
@@ -1783,6 +1893,13 @@ def main():
                               lock_timeout=LEASE_BUDGET_SECONDS) as originals:
             # Import only after every source, including the verdict table, is pristine.
             common = load_pristine_common()
+            # The budget is only a promise while it stays below the age at
+            # which another apparatus may take the lease over: a drift in
+            # either constant would silently break it, so the two are checked
+            # against each other here (MiniMax boundary r10 P2-3).
+            assert LEASE_BUDGET_SECONDS + TAIL_OVERHEAD_SECONDS < common.MAX_AGE, (
+                f'LEASE_BUDGET_SECONDS {LEASE_BUDGET_SECONDS}s + overhead must stay '
+                f'below common.MAX_AGE {common.MAX_AGE}s')
             # INVALID remains BLOCKED, never a killed mutant or a passing batch.
             MUTATION_STATUS = common.MUTATION_STATUS
             digests = {source: hashlib.sha256(originals[source]).hexdigest()
