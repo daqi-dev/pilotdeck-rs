@@ -53,11 +53,14 @@ eq "两目录求和" "$(DU_BUILD_KIB=$((3 * GIB)) DU_TMP_KIB=$((2 * GIB)) pdrs_d
 
 # 3. 三档边界：等于阈值为低一档，超 1 KiB 才升级（容不得四舍五入）
 lv() { DU_BUILD_KIB=$1 DU_TMP_KIB=0 pdrs_disk_level "$T/root"; }
+lvk() { pdrs_disk_level_of_kib "$1"; }   # 生产调用方（pdrs-loop / new-tree）直接用的纯判定函数
 eq "159 GiB → ok" "$(lv $((159 * GIB)))" ok
 eq "160 GiB 整 → ok" "$(lv $((160 * GIB)))" ok
 eq "160 GiB + 1 KiB → warn" "$(lv $((160 * GIB + 1)))" warn
 eq "180 GiB 整 → warn" "$(lv $((180 * GIB)))" warn
 eq "180 GiB + 1 KiB → hard" "$(lv $((180 * GIB + 1)))" hard
+eq "level_of_kib 160 整 → ok（调用方入口）" "$(lvk $((160 * GIB)))" ok
+eq "level_of_kib 160 + 1 KiB → warn（调用方入口）" "$(lvk $((160 * GIB + 1)))" warn
 
 # 4. 目录不存在按 0（远端宿主的 target 不在 _build/_tmp）
 mkdir -p "$T/empty"
@@ -70,15 +73,23 @@ eq "du 失败 rc" "$rc" 2
 eq "du 失败无输出" "[$out]" "[]"
 out=$(DU_FAIL=1 pdrs_disk_level "$T/root" 2>/dev/null); rc=$?
 eq "du 失败 level rc" "$rc" 2
-eq "du 失败 level 无输出" "[$out]" "[]"
+# 失败必须给出显式值：空串等于「不是 hard」，`[ "$lvl" = hard ]` 形式的调用方会静默放行
+eq "du 失败 level 打印 unknown" "$out" "unknown"
+
+# 5a. 仓根不存在 = 前置错误（拼错路径不能读成 0 GiB 放行）；仓根在、但没有 _build/_tmp 仍按 0
+eq "仓根不存在 used rc" "$(pdrs_disk_used_kib /nonexistent/pdrs 2>/dev/null; echo "rc=$?")" "rc=2"
+eq "仓根不存在 level rc" "$(pdrs_disk_level /nonexistent/pdrs 2>/dev/null; echo "rc=$?")" "unknown
+rc=2"
 
 # 5b. 符号链接：`du -sk` 对命令行 symlink 不跟随（BSD 实测 0 KiB），lib 必须先 cd + pwd -P。
 #     本仓库的 runner 树确有 `_build` 指向外接卷的配置，量成 0 会让闸门静默失效。
 mkdir -p "$T/data/_build" "$T/rootlink"
-dd if=/dev/zero of="$T/data/_build/blob" bs=1m count=3 2>/dev/null
+dd if=/dev/zero of="$T/data/_build/blob" bs=1m count=3 2>/dev/null || bad "fixture 写入 3 MiB blob 失败"
 ln -s "$T/data/_build" "$T/rootlink/_build"
+# 阈值取 2 MiB 而不是 1 MiB：空目录本身约 4 KiB、ext4 快符号链接可能占 ≥4 KiB，
+# 门槛太低的话「漏掉 cd+pwd -P 的回归」在某些文件系统上仍会发绿（评审 P2）
 k=$(PATH=/usr/bin:/bin pdrs_disk_used_kib "$T/rootlink")
-[ "${k:-0}" -ge 1024 ] && ok "symlink 的 _build 量到实体（${k} KiB）" || bad "symlink 的 _build 量到 ${k:-?} KiB，应 ≥1024"
+[ "${k:-0}" -ge 2048 ] && ok "symlink 的 _build 量到实体（${k} KiB）" || bad "symlink 的 _build 量到 ${k:-?} KiB，应 ≥2048"
 
 # 5c. 断链：du 对它返回 0 KiB 且 rc=0，必须 fail-closed 而不是静默放行
 mkdir -p "$T/rootbroken"; ln -s /nonexistent/pdrs "$T/rootbroken/_build"

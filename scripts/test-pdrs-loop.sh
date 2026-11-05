@@ -148,6 +148,28 @@ printf '%s\n' '#!/usr/bin/env bash' 'echo "du: permission denied" >&2' 'exit 1' 
 run_loop
 check "⑬b du 失败：exit 1、runner 0 次、消息含 fail-closed" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "fail-closed" "$T/out.log"'
 
+# ⑬c/⑬d 钉死调用方边界：档位判定走 lib 的 pdrs_disk_level_of_kib（ok ≤160 GiB · warn >160 GiB）。
+# 没有这两条时把 `>` 改成 `>=` 不会让任何用例变红（评审 P2）。
+for spec in "167772160:⑬c 恰好 160 GiB：放行（exit 0、runner 被调用）:0" \
+            "167772161:⑬d 160 GiB+1 KiB：exit 1、runner 0 次:1"; do
+  kib=${spec%%:*}; rest=${spec#*:}; name=${rest%%:*}; want=${rest##*:}
+  setup progress
+  printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do last=$a; done' \
+    'case $last in' '  */_tmp) v=0 ;;' "  *) v=$kib ;;" 'esac' 'echo -e "$v\t$last"' > "$T/bin/du"; chmod +x "$T/bin/du"
+  run_loop
+  if [ "$want" = 0 ]; then
+    check "$name" '[ "$rc" = 0 ] && [ "$(calls)" -ge 1 ]'
+  else
+    check "$name" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "预警线" "$T/out.log"'
+  fi
+done
+
+# ⑬e du 退出 0 但输出不是数字：同样 fail-closed，不能解析成 0 放行
+setup progress
+printf '%s\n' '#!/usr/bin/env bash' 'echo "garbage"' 'exit 0' > "$T/bin/du"; chmod +x "$T/bin/du"
+run_loop
+check "⑬e du 输出非数字：exit 1、runner 0 次、消息含 fail-closed" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "fail-closed" "$T/out.log"'
+
 check "锁已释放" '[ ! -e "$T/lock" ]'
 echo "test-pdrs-loop: $([ "$fails" = 0 ] && echo OK || echo "$fails FAIL")"
 [ "$fails" = 0 ]
