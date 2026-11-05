@@ -35,6 +35,15 @@ const POLL: Duration = Duration::from_millis(25);
 const POLLS: usize = 200;
 /// The generator's `mapperFixedUuid` option.
 const FIXED_UUID: &str = "00000000-0000-4000-8000-000000000000";
+/// The 408 the body-read deadline writes before closing the connection.
+/// Node v22.22.0's raw `requestTimeoutResponse` is 51 bytes with no framing
+/// header (probe `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`);
+/// hyper's public API frames an unknown-length HTTP/1.1 body as chunked, so
+/// the wire adds `Transfer-Encoding: chunked` + `0\r\n\r\n` — the
+/// A8.4-NATIVE-HTTP-001 presentation-diff class, pinned here until a ledger
+/// entry registers it.
+const WEBHOOK_REQUEST_TIMEOUT_RESPONSE: &[u8] = b"HTTP/1.1 408 Request Timeout\r\nConnection: \
+     close\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
 
 fn oracle() -> Value {
     test_baseline::oracle(ORACLE);
@@ -580,6 +589,7 @@ async fn run_case(case: &Value) -> Value {
         mapper: (options["mapperFixedUuid"].as_bool() == Some(true))
             .then(|| WebhookSessionMapper::new(Arc::new(|| JsString::from(FIXED_UUID)))),
         now: None,
+        request_timeout: None,
     });
     let deps = ChannelStartDeps {
         config: None,
@@ -788,6 +798,7 @@ fn rate_ctx(limit: f64) -> Arc<Ctx> {
         global_secret: String::new(),
         rate_limit: limit,
         max_body_bytes: 1024.0,
+        request_timeout: DEFAULT_REQUEST_TIMEOUT,
         now: Arc::new(|| 0.0),
         mapper: Mutex::new(WebhookSessionMapper::new(
             WebhookSessionMapper::random_uuid(),
@@ -952,6 +963,61 @@ async fn stop_does_not_cancel_an_in_flight_turn() {
         recorder.has("webhook: response for webhook:main:d1: first reply"),
         "#1334 an in-flight turn delivers its reply after stop"
     );
+}
+
+/// #1334 fix-r1 S1: a partial body the client never completes is bounded by
+/// the body-read deadline (Node's default `requestTimeout`, probe-shortened
+/// here) — the connection is answered and closed, so a concurrent `stop()`
+/// resolves instead of waiting forever on the in-flight connection.
+#[tokio::test]
+async fn shutdown_with_partial_body_finishes_at_request_timeout() {
+    let gateway = Arc::new(MockGateway::from_scripts(&[]));
+    let recorder = Recorder::default();
+    let channel = WebhookChannel::new(WebhookChannelOptions {
+        port: Some(0.0),
+        routes: Some(insecure_routes()),
+        request_timeout: Some(Duration::from_millis(200)),
+        ..Default::default()
+    });
+    channel
+        .start(ChannelStartDeps {
+            log: Some(recorder.logger()),
+            gateway: Some(gateway.clone() as Arc<dyn ChannelGateway>),
+            ..Default::default()
+        })
+        .await
+        .expect("#1334 start for the partial-body requestTimeout test");
+    let port = channel
+        .bound_addr()
+        .expect("#1334 bound listener for the partial-body test")
+        .port();
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1334 connect to the partial-body listener");
+    stream
+        .write_all(
+            b"POST /webhooks/main HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+             Content-Length: 100\r\n\r\nhalf-body",
+        )
+        .await
+        .expect("#1334 send the partial body");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let stopping = tokio::spawn(async move { channel.stop_with_reason(Some("drain")).await });
+    let mut response = Vec::new();
+    timeout(DEADLINE, stream.read_to_end(&mut response))
+        .await
+        .expect("#1334 the requestTimeout closes the half-open body during stop")
+        .expect("#1334 read the partial-body response bytes");
+    negative_assert_eq!(
+        response.as_slice(),
+        WEBHOOK_REQUEST_TIMEOUT_RESPONSE,
+        "#1334 the body requestTimeout answers the Node 408 and closes"
+    );
+    timeout(DEADLINE, stopping)
+        .await
+        .expect("#1334 stop finishes after the body requestTimeout")
+        .expect("#1334 stop poll")
+        .expect("#1334 stop ok after the body requestTimeout");
 }
 
 #[tokio::test]

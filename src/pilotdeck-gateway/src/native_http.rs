@@ -535,7 +535,7 @@ impl hyper::body::Body for StreamedBody {
     }
 }
 
-fn streamed(body: Option<Bytes>) -> Body {
+pub(crate) fn streamed(body: Option<Bytes>) -> Body {
     StreamedBody(body)
         .map_err(|error: ProxyError| error)
         .boxed()

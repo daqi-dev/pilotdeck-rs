@@ -50,6 +50,10 @@ switches = [
     # stop must take the listener slot; keeping it answers the `refused`
     # cell instead of leaving ECONNREFUSED.
     ('webhook-stop-keeps-listener', SOURCE_WEBHOOK, 'stop_and_restart', '#1334 webhook oracle case stop-and-restart'),
+    # The body read must carry the requestTimeout deadline; without it a
+    # partial body that the client never completes hangs the connection and
+    # stop() never returns.
+    ('webhook-body-read-no-timeout', SOURCE_WEBHOOK, 'shutdown_with_partial_body_finishes_at_request_timeout', '#1334 the requestTimeout closes the half-open body during stop'),
     # A turn's reply log is truncated at 200 UTF-16 units, not 250.
     ('webhook-log-truncation-200', SOURCE_WEBHOOK, 'submit_and_render', '#1334 webhook oracle case submit-and-render'),
     # A failed-turn log is truncated at 100 UTF-16 units, not 150.
