@@ -288,12 +288,6 @@ python3 scripts/gateway-coverage/check_coverage_manifest.py
 | `set_mcp_permission_mode_override` | 15 | 15, 16 |
 | `set_session_thinking` | 15 | 15, 16 |
 
-### 第 9 跳缺口的构成：`normalizeModelError` 的 13 个 helper（2026-11-06 #91 实测）
-
-`normalizeModelError`（`B/src/model/errors/normalizeModelError.ts:26`–`:89`）在 `memory_list`、`memory_wipe`、`reload_extensions` 三项恰好落在第 **8** 跳，它的 13 个 helper 因此在第 **9** 跳：`classifyNetworkError`、`classifySemanticError`、`isRetryable`、`statusCodeToCode`、`resolveUserHint`、`parseTokenLimitError`、`parseRetryAfterFromMessage`、`firstErrorRecord`、`sanitizeErrorMessage`、`readString`、`readBoolean`、`readNumber`、`isRecord`。用同一扫描器把 `DEPTH` 临时改为 10 复算（产物 `_tmp/20261106-issue-91/source-graph-d10.json`），这三项第 9 跳新增（8 跳内没有）的码依次为 64、64、63 个，全部未登记；其中 **20** 个由上述 helper 带入（18 个只经由 helper，`overloaded_error`、`rate_limit_error` 也出现在别的第 9 跳函数）：`auth_error`、`connection_refused`、`connection_reset`、`dns_error`、`eai_again`、`invalid_request`、`max_output_reached`、`network_connection_refused`、`network_connection_reset`、`network_dns_error`、`network_proxy_error`、`network_rate_limited`、`network_server_error`、`network_tls_error`、`overloaded_error`、`payload_too_large`、`proxy_error`、`rate_limit_error`、`request_too_large`、`tls_error`。
-
-按本节规则这些码**不补登**：第 9 跳只进复核名单，不加范围、不改必需集合、不进 PASS 判据。它们也不以动态占位出现在账本里——这三项账本对上述码完全没有记录，`<dyn_*>` 占位只覆盖第 8 跳内真实出现的动态产码表达式。下游 A6.4 / A7 触及这三项时按本表复核回写。
-
 本轮账本仍为 101 项、46 READY / 55 BLOCKED，method–范围关联仍 16,816；仅必要的默认 metadata、optional 标记、消息误记及失去引用的 source_files 改动。完整逐项差异、对第3轮的严格展开对照与验证命令见 `_tmp/RESULT.md`「第5轮」及其 JSON 附件。GLM 第3轮已给出「无 P0/P1」，其三项 P2 留作下游复核。
 
 ## 第 6 轮：按回源形参定位错误码（2026-10-14）
@@ -358,3 +352,38 @@ GLM第7轮的 map 缺口也已纳入同一规则：B/src/cli/ProjectRuntimeRegis
 对象值递归也发现 B/src/tool/builtin/executeCode.ts:198 的 inputSchema.properties.code 是 Python 源码输入的 schema。它的 `type: string` 和 description 不是错误码，校验器按精确文件/产码行/值加入两项豁免并写明原因；没有忽略所有对象、所有 string 或所有 code 字段。既有三项豁免保留。
 
 账本仅新增上述错误记录，全部既有分支和非错误字段保持相同；默认 boot、routes、provider、构造点、函数边界/调用边、8跳边界和扫描范围均不变。错误记录6,352→7,117，method–范围关联仍16,816；101项、46 READY / 55 BLOCKED 不变。为维持1,500,000字节上限，确定性排版去除缩进，仍按行显示结构与原子表行；没有删字段、缩短既有说明或改变数组顺序。展开→compact逐字节一致，当前1,499,774字节。完整验证及相对第7轮的精确差异证明见 `_tmp/RESULT.md`「第8轮」。
+
+## 第 9 轮：detail 子码、第 9 跳缺口与 stopReason 映射（2026-11-06，issue #91）
+
+本轮处理 PR #79 第 8 轮评审留下的三条语义细节，均先在基线（`resources/PilotDeck`，cc7c4e6）实测复算再落账；不扩大扫描范围、不改 8 跳边界、不动必需集合、不动阈值与分母。复算脚本与原始输出在 `_tmp/20261106-issue-91/`（`probes/`、`raw/`）。
+
+### detail 子码：`details.errorCode` 的登记口径
+
+`PilotDeckToolRuntimeError` 第 3 参 options 里的 `errorCode` 是 **detail 子码**，抛出的 `error.code` 仍是主码 `tool_execution_failed`；全仓消费方取的是主码 `error.code`（`B/src/tool/execution/ToolRuntime.ts:470` 记审计、`B/src/web/client/webMessage.ts:319` 归一化展示），没有任何一处把 `details.errorCode` 提升成 RPC/WS 的 `error.code`。所以这些值不能直接认作 WS 顶层码，可达性与最终传播一律交下游复核。
+
+基线里 `{ errorCode: "字面量" }` 形态共 6 处，本轮按 8 跳可达性逐处定夺，不按「见到就登」的规则批量补：
+
+| 位置 | 值 | 所在函数 | 在 `memory_list` / `memory_wipe` / `reload_extensions` 的跳数 | 处置 |
+|---|---|---|---:|---|
+| `B/src/tool/builtin/agent.ts:388` | `subagent_depth_exceeded` | `runFullFork`（366–456） | 8 | 入账：三项各 +1 条 `observed: lexical` |
+| `B/src/tool/builtin/agent.ts:417` | `subagent_execution_failed` | `runFullFork` | 8 | 入账：同上 |
+| `B/src/tool/builtin/agent.ts:492` | `subagent_launch_failed` | `runBackgroundFork`（458–514） | 9 | 超 8 跳预算，不入账，仅在此留档 |
+| `B/src/mcp/runtime/PluginToToolBridge.ts:105` | `mcp_call_timeout` | `buildToolDefinition`（49–123） | 10（最深为 `submit_turn`） | 超预算，不入账，仅在此留档 |
+| `B/src/mcp/runtime/PluginToToolBridge.ts:112` | `mcp_session_expired` | `buildToolDefinition` | 10 | 超预算，不入账，仅在此留档 |
+| `B/src/mcp/runtime/PluginToToolBridge.ts:118` | `mcp_call_failed` | `buildToolDefinition` | 10 | 超预算，不入账，仅在此留档 |
+
+跳数用同一扫描器把 `DEPTH` 临时改为 10 复算（产物 `_tmp/20261106-issue-91/source-graph-d10.json`，与原脚本只差该常量）：改常量期间不得在同一工作树并发跑扫描器取 8 跳基线，复算后以 `git diff --exit-code scripts/gateway-coverage/source_graph.cjs` 留证已回滚；两份产物自带 `"depth"` 字段（8 / 10）可自证扫描深度，sha256 记在 `_tmp/20261106-issue-91/RESULT.md`。这三项里 `createAgentTool` 为第 7 跳、`runFullFork` 为第 8 跳，其余 method 的 `runFullFork` 均 ≥ 9 跳。因此这两条记录落在既有 8 跳预算内，仍受正向 `error_code_coverage` 核验；`coverage-manifest.json` 把它们投影进三项的 `branches.error.codes` 时不带「detail 子码」限定，读 manifest 时以本节为准。
+
+### 第 9 跳缺口的构成：`normalizeModelError` 的 13 个 helper
+
+`normalizeModelError`（`B/src/model/errors/normalizeModelError.ts:26`–`:89`）在上述三项恰好落在第 **8** 跳，它的 13 个 helper 因此在第 **9** 跳：`classifyNetworkError`、`classifySemanticError`、`isRetryable`、`statusCodeToCode`、`resolveUserHint`、`parseTokenLimitError`、`parseRetryAfterFromMessage`、`firstErrorRecord`、`sanitizeErrorMessage`、`readString`、`readBoolean`、`readNumber`、`isRecord`。用 DEPTH=10 的同一份复算产物统计（复算脚本 `_tmp/20261106-issue-91/probes/hop9-recount.py`，原始输出 `raw/hop9-recount.log`），这三项第 9 跳新增（8 跳内没有）的码依次为 **64、64、63** 个，全部未登记；其中 **20** 个由上述 helper 带入（18 个只经由 helper，`overloaded_error`、`rate_limit_error` 也出现在别的第 9 跳函数）：`auth_error`、`connection_refused`、`connection_reset`、`dns_error`、`eai_again`、`invalid_request`、`max_output_reached`、`network_connection_refused`、`network_connection_reset`、`network_dns_error`、`network_proxy_error`、`network_rate_limited`、`network_server_error`、`network_tls_error`、`overloaded_error`、`payload_too_large`、`proxy_error`、`rate_limit_error`、`request_too_large`、`tls_error`。其余 44 个（`reload_extensions` 43 个）来自别的第 9 跳函数（`EPIPE`、`IMAGE_SAFETY`、`MALFORMED_FUNCTION_CALL`、`MODULE_*`、`PROHIBITED_CONTENT` 等），与 `normalizeModelError` 无关。
+
+按「8 跳截断后的下游复核名单」规则这些码**不补登**：第 9 跳只进复核名单，不加范围、不改必需集合、不进 PASS 判据；它们也不以动态占位出现在账本里——这三个 method 对上述码完全没有记录，`<dyn_*>` 占位只覆盖第 8 跳内真实出现的动态产码表达式。只补 `normalizeModelError` 一条线会与仍在外的另外 44 个码造出新的不一致，故本轮只把实测构成写清。下游 A6.4 / A7 触及这三项时按本表复核回写。
+
+### `stopReason` → `payload.code` 是恒等投影
+
+`B/src/web/server/readSessionMessages.ts:1166`（`injectErrorTurnMessages`，1143–1175）写的是 `payload: { code: entry.result.stopReason, recoverable: false }`：逐字取 `stopReason`，不做码表转换、不改写、无兜底码；同一条消息的文本是 `Turn failed: <stopReason>`。运行时探针写 4 组 error `TurnResult` 再读回（`probes/p3-stopreason-code.mts`，原始输出 `raw/p3-stopreason.log`），`model_error`、`turn_timeout`、`aborted`、`max_turns` 四值均恒等。账本里该产码位置早已登记为动态记录 `<dyn_UXWHWQ>`（`dynamic: true`，origin 即 `entry.result.stopReason`），本轮只补 summary 说明恒等与文本形态；码值来源、`dynamic`、`refs` 均不动。`stopReason` 的取值域无法静态枚举，仍不臆造运行时码。
+
+### 本轮计数
+
+三项各新增 2 条 method–error 记录（`memory_list` 236→238、`memory_wipe` 237→239、`reload_extensions` 234→236），新组 `run_full_fork_Np8VXA` 的 source range 指既有 `qZliKg`（`agent.ts:366–456`），不新增范围；`coverage-manifest.json` 同步重投影这 4 行与 `source.ledger_sha256`。8 跳深度、必需范围集合、豁免清单、阈值、分母、场景集合与比较器均未改。
