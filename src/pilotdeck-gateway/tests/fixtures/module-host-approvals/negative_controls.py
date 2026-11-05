@@ -4,7 +4,7 @@ positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one module-host approvals transport or store gate and is
 killed by the replay cell that pins that gate's TS bytes or the fix-r1
-component test that pins its code (21 switches). Run one sample in the
+component test that pins its code (22 switches). Run one sample in the
 authoring session; the coordinator runs the complete list after the patch
 is committed.
 """
@@ -77,6 +77,10 @@ switches = [
     ('approvals-slots-merge-off', PENDING, 'resume_success_merges_the_slots', '#1473 the pre-resume slots must survive the merge'),
     # wait clear off: the session stays waiting after a successful resume.
     ('approvals-wait-clear-off', PENDING, 'resume_success_clears_the_wait', '#1473 the resumed store must clear the wait'),
+    # resume empty default on: the corrupted non-object state silently
+    # becomes an empty object, so the resume succeeds instead of answering
+    # the structured failure.
+    ('approvals-resume-empty-default-on', PENDING, 'resume_answers_sop_state_invalid_for_a_corrupted_non_object_state', '#1473 the corrupted non-object state must be rejected, not resumed'),
 ]
 GUARDED = [SOURCE, PENDING,
     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',

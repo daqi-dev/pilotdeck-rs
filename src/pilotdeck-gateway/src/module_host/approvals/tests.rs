@@ -1528,8 +1528,9 @@ fn seed_rejects_invalid_persisted_shapes() {
         "5",
         "\"text\"",
         "[1,2]",
-        // state not a record / absent
+        // state not a record / null / absent
         r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":{"sops":[]},"state":5}"#,
+        r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":{"sops":[]},"state":null}"#,
         r#"{"schemaVersion":3,"sessionId":"sess-shape","bundle":{"sops":[]}}"#,
         // schemaVersion outside 1..3 / not a number
         r#"{"schemaVersion":4,"sessionId":"sess-shape","bundle":{"sops":[]},"state":{}}"#,
@@ -1558,6 +1559,44 @@ fn seed_rejects_invalid_persisted_shapes() {
             "#1473 the invalid persisted shape must answer SOP_STATE_INVALID: {raw}"
         );
     }
+}
+
+/// #1473: the shape gate guards `seed`, but a corrupted in-memory state
+/// (non-object, swapped in behind the gate) must still answer with the
+/// structured `SOP_STATE_INVALID` failure — never a panic under the state
+/// lock, the pre-fix whole-store outage. The
+/// `approvals-resume-empty-default-on` mutant reinstates the historical
+/// silent empty-object default and is killed by this test.
+#[tokio::test]
+async fn resume_answers_sop_state_invalid_for_a_corrupted_non_object_state() {
+    let store = Arc::new(PendingSopStore::new(root1_resolver()));
+    // An external-task wait: the resume path runs past the authority checks
+    // and straight into the state mutation block.
+    seed_persisted(&store, "sess-corrupt", 1, Some(EXT_WAIT), EXT_STATE, BUNDLE);
+    super::pending::corrupt_seeded_state_for_test(&store, None, "sess-corrupt", json("5"));
+    let Err(failure) = ApprovalPendingStore::resume(
+        store.as_ref(),
+        &StoreResumeInput {
+            session_key: JsString::from("sess-corrupt"),
+            project_key: Some(JsValue::String(JsString::from("proj1"))),
+            request_id: JsString::from("req-corrupt"),
+            wait_id: JsString::from("wait-ext"),
+            message: JsString::from("approved"),
+            expected_revision: Some(1.0),
+            slot_updates: None,
+            source: ResumeSource::ExternalTask,
+            authority: None,
+        },
+    )
+    .await
+    else {
+        panic!("#1473 the corrupted non-object state must be rejected, not resumed");
+    };
+    assert_eq!(
+        failure_code(&failure),
+        "SOP_STATE_INVALID",
+        "#1473 the corrupted non-object state must answer SOP_STATE_INVALID, never panic"
+    );
 }
 
 /// #1473: a rejected seed must leave the store usable — the shape rejection
