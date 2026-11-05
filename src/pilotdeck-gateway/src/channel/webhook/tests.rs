@@ -214,6 +214,26 @@ impl TurnGateway for GatedGateway {
     }
 }
 
+/// A gateway whose `submit` rejects before producing any stream: the
+/// submit-failure arm of `process_message` that the three replay mocks never
+/// reach (`"<throw>"` fails the stream iteration, not the submit). #1614.
+struct FailingGateway {
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl TurnGateway for FailingGateway {
+    fn submit(
+        &self,
+        request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        self.calls
+            .lock()
+            .expect("#1614 failing gateway calls mutex")
+            .push(String::from_utf16_lossy(request.session_key.units()));
+        Box::pin(async move { Err(ChannelError::error("submit rejected")) })
+    }
+}
+
 /// The direct tests' channel log capture.
 #[derive(Default)]
 struct Recorder {
@@ -1093,6 +1113,52 @@ async fn handle_incoming_reentry_skips_active_chat() {
     );
     first.abort();
     second.abort();
+}
+
+/// #1614: a rejected `submit` must reach the reply and the log, must not be
+/// retried, and must not leave the chat marked active — the three things the
+/// success-only mocks left to static comparison.
+#[tokio::test]
+async fn submit_rejection_delivers_the_failure_without_retrying_or_leaking_the_active_chat() {
+    let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let gateway = Arc::new(FailingGateway {
+        calls: calls.clone(),
+    });
+    let recorder = Recorder::default();
+    let channel = WebhookChannel::new(test_options());
+    install(&channel, Some(gateway), recorder.logger());
+    let ctx = channel.ctx.clone();
+    handle_incoming(&ctx, "webhook:main:err", "hello".to_owned())
+        .await
+        .expect("#1614 a rejected submit is surfaced as a delivered failure reply");
+    // ① 错误传播：网关错误进日志，用户拿到失败文案而不是空回复。
+    negative_assert!(
+        recorder.has("webhook: submitTurn error: Error: submit rejected"),
+        "#1614 the gateway rejection reaches the channel log"
+    );
+    negative_assert!(
+        recorder.has(
+            "webhook: response for webhook:main:err: ⚠️ Failed to process this message. Please retry."
+        ),
+        "#1614 the rejected turn's failure reply is delivered"
+    );
+    // ② 不重试：一次投递只提交一次。
+    negative_assert_eq!(
+        calls.lock().expect("#1614 failing calls mutex").len(),
+        1,
+        "#1614 a rejected submit is not retried"
+    );
+    // ③ 状态不残留：拒绝后聊天不留在 active 集合里。
+    let active = ctx
+        .state
+        .lock()
+        .expect("#1334 webhook state mutex")
+        .active_chats
+        .contains("webhook:main:err");
+    negative_assert!(
+        !active,
+        "#1614 the rejected chat leaves no half-open session"
+    );
 }
 
 #[tokio::test]
