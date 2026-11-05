@@ -290,45 +290,34 @@ def publish_baseline():
     }, ensure_ascii=False, indent=2) + '\n')
 
 
-def withdraw_green_verdict(raised):
-    """#1538 fix-r4/r5: never leave a green verdict on a dirty tree.
+def record_failed_run():
+    """#1538 fix-r6: leave an explicit "not a verdict" record when a run dies.
 
-    fix-r3 moved the final `publish_summary(complete=True)` inside the
-    `mutating_sources` block so it lands while the tree lock is still held —
-    right, but it then lands *before* that block's own `finally` does the last
-    restore + byte-verify. If that verification fails (write error, unreadable
-    git object, bytes differ) the process dies with a traceback while
-    `summary.json` still says the run finished all-KILLED: a reader that only
-    polls the directory reads a clean verdict for a run that never restored the
-    source. Demote the flag on the way out and let the original error through.
+    fix-r4/r5 tried to publish `complete: true` inside the block and *withdraw*
+    it if the block's own restore + byte-verify failed. Both families showed
+    that withdrawal cannot be made safe: a second `KeyboardInterrupt` landing
+    between `publish_summary(complete=False)` and its `replace`, or inside the
+    `unlink` fallback, escapes the handler (`KeyboardInterrupt` is not an
+    `OSError`) and leaves the green file exactly where it was. The fix is not a
+    stronger handler but an ordering one: nothing green is written until
+    `mutating_sources` has restored and byte-verified every source (see the
+    publish at the end of this file), so the state this handler has to undo
+    never exists. What is left to do here is cosmetic: say `complete: false` in
+    the partial record, and drop a half-written file if even that fails.
 
-    #1538 fix-r5 (MiniMax boundary P1): this is a plain function called from an
-    `except BaseException` around the `with mutating_sources(...)` block, not a
-    wrapper context manager. Two reasons. (a) `anchor_selfcheck.py` only
-    accepts a with-item whose expression is `mutating_sources(...)` itself, so
-    a wrapper made the anchor checker report `unsupported snapshot binding` and
-    turned CI red. (b) A `KeyboardInterrupt` landing inside the restore is not
-    an `Exception`, and it is exactly the case where the source file may be
-    left truncated while `summary.json` still says `complete: true`.
-
-    `SystemExit` is the one thing not withdrawn: a run that reached its verdict
-    (`verdict_exit` -> 1, non-HEAD baseline -> 42) really did finish, and its
-    `complete: true` is the truth.
+    A signal inside this handler cannot expose a green verdict — there is none
+    on disk yet — which is why it does not need a signal mask.
     """
-    if not summary or isinstance(raised, SystemExit):
-        # Only a run that actually produced rows can have published a
-        # `complete: true` to withdraw; a failure before the first mutant
-        # leaves no `summary.json` at all, which the README promises.
+    if not summary:
+        # A run that died before its first mutant has no `summary.json` at all
+        # (the baseline-invalid path publishes only `baseline.json`), which the
+        # README documents.
         return
     try:
         publish_summary(complete=False)
     except OSError as error:
-        # #1538 fix-r5 (three roles): swallowing this left the stale
-        # `complete: true` in place — the exact state this function exists to
-        # prevent. Say so, and remove the file: `unlink` needs no space, so it
-        # still works on the full disk that caused the failure.
         print(f'#1538 could not rewrite summary.json ({error}); removing it so no '
-              f'reader can take the withdrawn verdict as final', file=sys.stderr)
+              f'reader can take the partial record as final', file=sys.stderr)
         try:
             (out / 'summary.json').unlink()
         except OSError:
@@ -451,45 +440,41 @@ try:
                 publish_baseline()
                 if not restored:
                     raise RuntimeError(f'#1318 restore failed: {filename}')
-        # #1538 fix-r3 (concurrency P2): the final verdict is published *inside*
-        # the `mutating_sources` block on purpose. Outside it the tree lock is
-        # already released, so another run may start mutating (and rewriting its
-        # own evidence) while this one is still writing `complete: true` — the
-        # reader would see a finished-looking summary whose tree is no longer the
-        # one that produced it.
-        # #1538 fix-r5 (concurrency P2): re-read every mutated path before saying
-        # the run finished. `mutating_sources` does the authoritative restore +
-        # verify in its own `finally`, and that runs *after* this point, so without
-        # this check a polling reader has a whole block's worth of window in which
-        # `complete: true` describes a tree that is not restored yet. This does not
-        # replace that check (a non-cooperating writer can still race us after it);
-        # it shrinks the window to a handful of syscalls.
-        for path, original in snapshots.items():
-            if path.read_bytes() != original:
-                raise RuntimeError(
-                    f'#1318 source changed before the verdict was published: {path}')
-        publish_summary(complete=True)
-        counts = {state: sum(row['status'] == state for row in summary)
-                  for state in ('KILLED', 'SURVIVED', 'INVALID')}
-        print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
-        # `verdict_exit` is the shared rule (a zero-row run is a zero denominator,
-        # never a pass), so this script cannot drift back to `if failures:` alone.
-        if verdict_exit(summary, key='status') != 0:
-            print(f'not killed: {", ".join(failures)}', file=sys.stderr)
-            sys.exit(1)
-        print(f'{len(summary)}/{len(rows)} selected ({REGISTERED_TOTAL} registered) killed; '
-              f'every source restored byte-for-byte '
-              f'against baseline {baseline_sha} ({baseline_source})', flush=True)
-        if baseline_source != 'HEAD':
-            # Even a fully-killed run against a non-HEAD baseline is not host
-            # evidence (review fix-r3): fail closed with the dedicated code and say
-            # so on stdout, so a sandbox stash-commit run can never exit like a
-            # green host run.
-            print(f'NON-HOST EVIDENCE (非宿主证据): baseline {baseline_sha} came from '
-                  f'{baseline_source}, not HEAD; the host gate only trusts HEAD '
-                  f'evidence; exit {NON_HEAD_EXIT}', flush=True)
-            sys.exit(NON_HEAD_EXIT)
-
-except BaseException as raised:
-    withdraw_green_verdict(raised)
+except BaseException:
+    record_failed_run()
     raise
+
+# #1538 fix-r6 (GLM concurrency P1 + MiniMax concurrency P0, same finding): the
+# green verdict is published *after* the `mutating_sources` block returned —
+# that is, only once its own `finally` has restored and byte-verified every
+# source. fix-r3/r4/r5 published it inside and tried to withdraw it on failure;
+# both families showed the withdrawal itself can be interrupted, which leaves
+# `complete: true` next to a tree that was never restored.
+#
+# The price is the window fix-r3 was worried about: a reader polling the
+# directory can see `complete: true` a few syscalls after the tree lock is
+# released, while another run may already be mutating. Both orderings cannot be
+# had at once, and the trade is deliberate: a record that is briefly late beats
+# a green record for a tree that was never restored. Out directories are
+# exclusive per run, the block above re-verifies the bytes it restored, and the
+# exit code remains the first discriminator (README).
+publish_summary(complete=True)
+counts = {state: sum(row['status'] == state for row in summary)
+          for state in ('KILLED', 'SURVIVED', 'INVALID')}
+print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
+# `verdict_exit` is the shared rule (a zero-row run is a zero denominator,
+# never a pass), so this script cannot drift back to `if failures:` alone.
+if verdict_exit(summary, key='status') != 0:
+    print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+    sys.exit(1)
+print(f'{len(summary)}/{len(rows)} selected ({REGISTERED_TOTAL} registered) killed; '
+      f'every source restored byte-for-byte '
+      f'against baseline {baseline_sha} ({baseline_source})', flush=True)
+if baseline_source != 'HEAD':
+    # Even a fully-killed run against a non-HEAD baseline is not host evidence
+    # (review fix-r3): fail closed with the dedicated code and say so on stdout,
+    # so a sandbox stash-commit run can never exit like a green host run.
+    print(f'NON-HOST EVIDENCE (非宿主证据): baseline {baseline_sha} came from '
+          f'{baseline_source}, not HEAD; the host gate only trusts HEAD '
+          f'evidence; exit {NON_HEAD_EXIT}', flush=True)
+    sys.exit(NON_HEAD_EXIT)

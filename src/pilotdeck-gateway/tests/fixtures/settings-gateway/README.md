@@ -103,13 +103,16 @@ nonce」，本轮没有 nonce 可对，所以目录里任何文件都不是本�
 `selectedTotal`、`complete`、`counts`、`results`；跑动中每轮都会原子重写一次且
 `complete: false`，轮询读者必须看到 `complete: true` 才算一份完整结论。
 
-发布 `complete: true` 之前，本脚本会把每个被变异的源文件再读一遍、与快照逐字节比对；
-退出 with 块时 `mutating_sources` 还会做一次权威的恢复 + 校验。**进程退出之后**，
-「目录里是 `complete: true`」与「树已按字节还原」是同一件事：收尾校验失败、或收尾期间
-收到 `KeyboardInterrupt`，脚本都会把已发布的 `complete: true` 改回 `false` 再抛；连这次
-改写本身都失败（例如磁盘满）时，它会删掉 `summary.json` 并在 stderr 说明，绝不把绿结论
-留在脏树上。运行**期间**仍有极短窗口（发布到退出 with 块之间），所以按目录轮询的读者应
-以「进程已退出」为前提——退出码是本脚本的第一判据。
+`complete: true` 只在 `mutating_sources` 块正常退出**之后**才发布，也就是只在它做完
+权威的恢复 + 逐字节校验之后。这条顺序是硬约束：在块内先发绿再「撤回」的写法（fix-r3–r5）
+被两家评审推翻——撤回本身可能被第二次信号打断，绿结论就留在脏树上。现在的形态下，
+块返回之前盘上最新的记录永远是 `complete: false`，没有可撤回的东西。
+代价是相反的窗口：树锁释放到发布之间还有几个系统调用，另一个运行可能已开始变异；
+两种顺序不可兼得，这里选「宁晚不假」。**进程退出之后**，「目录里是 `complete: true`」与
+「树已按字节还原」是同一件事；运行期间按目录轮询的读者应以「进程已退出」为前提，
+退出码仍是本脚本的第一判据。
+失败收尾只做一件事：把残卷标成 `complete: false`；连这次改写都失败（例如磁盘满）时，
+它会删掉 `summary.json` 并在 stderr 说明。
 `baseline.json` 记同一 `runId`、基线 SHA 与来源、`registeredTotal` /
 `selectedTotal` / `selected`（子集运行不再与全量同形）。
 所有证据文件（`summary.json` / `baseline.json` / `baseline-replay.log` / 逐变异 `.patch` / `.log`）
