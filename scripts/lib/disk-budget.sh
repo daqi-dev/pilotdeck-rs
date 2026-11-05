@@ -75,10 +75,29 @@ pdrs_disk_used_kib() {
   printf '%s\n' "$sum"
 }
 
+pdrs_disk_main_root() { # $1=起点目录；输出「该量的仓根」
+  # 「量哪个根」是策略，不是调用方的私事：从 linked worktree 里跑时量自己那棵（没有 _build/_tmp）
+  # 会恒判 ok，闸门静默失效。策略放这里，pdrs-loop.sh / new-tree.sh / 直接执行块都调它。
+  # 非 git 树（隔离测试 fixture）原样返回；解析不出主仓根、或主仓是裸仓（没有工作区）→ 返回 2（fail-closed）。
+  local d=${1:-$PWD} out first
+  [ -e "$d/.git" ] || { printf '%s\n' "$d"; return 0; }
+  out=$(git -C "$d" worktree list --porcelain 2>/dev/null) || return 2
+  first=$(printf '%s\n' "$out" | sed -n 's/^worktree //p' | head -n 1)
+  [ -n "$first" ] || return 2
+  # 裸主仓的首条是仓目录本身，其下没有工作区 → 量它必得 0（=闸门静默放行），宁可停机
+  printf '%s\n' "$out" | awk '/^$/{exit} $0=="bare"{f=1} END{exit !f}' && return 2
+  [ -d "$first" ] || return 2
+  printf '%s\n' "$first"
+}
+
 pdrs_disk_level_of_kib() { # $1=KiB 原值；三档判定只有这一处，调用方（pdrs-loop / new-tree）都用它
   # 入参必须是非负整数：`[ "" -gt N ]` 在 bash 里报错且两个分支都为假 → 落到 else 打印 ok，
   # 那会让「量失败但漏查 rc」的调用方静默放行（本文件其余路径全是 fail-closed，唯独判档放行）
   case "${1:-}" in '' | *[!0-9]*) printf 'unknown\n'; return 2 ;; esac
+  # 光「全是数字」不够：bash 的 [ ] 按 base0 解析，"08"/"09" 报语法错、"0x.." 与超 int64 的字面量
+  # 同样能让两个分支都为假 → 又落到 else 打印 ok。这里只认规范十进制且不超 int64 位宽。
+  case "$1" in 0?*) printf 'unknown\n'; return 2 ;; esac
+  [ "${#1}" -le 18 ] || { printf 'unknown\n'; return 2; }
   if [ "$1" -gt "$((PDRS_DISK_HARD_GIB * 1048576))" ]; then printf 'hard\n'
   elif [ "$1" -gt "$((PDRS_DISK_WARN_GIB * 1048576))" ]; then printf 'warn\n'
   else printf 'ok\n'; fi
@@ -90,9 +109,13 @@ pdrs_disk_level() { # 测量 + 判档一步到位；失败打印 unknown 并返�
   pdrs_disk_level_of_kib "$kib"
 }
 
-# 直接执行：打印三档阈值、当前测量值与级别（自测 / 排障用）
+# 直接执行：打印三档阈值、实测的仓根与测量值/级别（自测 / 排障用）
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  kib=$(pdrs_disk_used_kib "$PWD") || { echo "disk-budget: 测量失败" >&2; exit 2; }
+  # 排障时最常犯的错：在 linked worktree 里执行，量到自己那棵没有 _build/_tmp 的树 → 打 ok。
+  # 走与生产同一条 pdrs_disk_main_root，并把实测的根打出来，读数才和真闸一致。
+  root=$(pdrs_disk_main_root "$PWD") || { echo "disk-budget: 无法确定主仓根（fail-closed）" >&2; exit 2; }
+  kib=$(pdrs_disk_used_kib "$root") || { echo "disk-budget: 测量失败（${root}）" >&2; exit 2; }
   echo "disk-budget: 总量上限 ${PDRS_DISK_TOTAL_GIB} GiB / 硬闸 ${PDRS_DISK_HARD_GIB} GiB / WARN ${PDRS_DISK_WARN_GIB} GiB"
+  echo "disk-budget: 实测根 ${root}"
   echo "disk-budget: 当前 $((kib / 1048576)) GiB（${kib} KiB）→ $(pdrs_disk_level_of_kib "$kib")"
 fi

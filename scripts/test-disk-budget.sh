@@ -109,10 +109,36 @@ out=$(pdrs_disk_used_kib "$T/rootbroken" 2>/dev/null); rc=$?
 eq "断链 _build rc" "$rc" 2
 eq "断链 _build 无输出" "[$out]" "[]"
 
-# 6. 直接执行：打印三档与当前级别
+# 6. 判档入口拒绝「bash 解析不了的数字」：`[ 08 -gt N ]` / 超 int64 字面量都报错、两个分支都为假 → 落 else 打 ok
+for v in "" abc 08 016 0x10 1e9 99999999999999999999; do
+  o=$(pdrs_disk_level_of_kib "$v"); rc=$?
+  [ "$o" = unknown ] && [ "$rc" = 2 ] && ok "判档拒绝『${v}』（unknown/2）" || bad "判档『${v}』→ [${o}] rc=${rc}，期望 unknown/2"
+done
+
+# 7. 主仓根策略（pdrs_disk_main_root）：从 linked worktree 里跑必须量主仓，量自己会恒判 ok（评审 r5 P1 的正控）
+mkdir -p "$T/git/main"
+if git -C "$T/git/main" init -q 2>/dev/null &&
+  git -C "$T/git/main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null &&
+  git -C "$T/git/main" worktree add -q "$T/git/wt" 2>/dev/null; then
+  eq "linked 树 → 主仓根" "$(cd "$T/git/wt" && pdrs_disk_main_root "$PWD")" "$(cd "$T/git/main" && pwd -P)"
+  # 裸主仓没有工作区：首条 porcelain 是仓目录本身，量它必得 0 → 必须 fail-closed 而不是打 ok
+  if git clone -q --bare "$T/git/main" "$T/git/bare.git" 2>/dev/null &&
+    git -C "$T/git/bare.git" worktree add -q "$T/git/bwt" 2>/dev/null; then
+    o=$(cd "$T/git/bwt" && pdrs_disk_main_root "$PWD"); rc=$?
+    [ "$rc" = 2 ] && ok "裸主仓 → rc 2（${o}）" || bad "裸主仓 → rc=${rc} [${o}]，期望 2"
+  else
+    bad "fixture：裸主仓 + worktree 造不出来"
+  fi
+else
+  bad "fixture：主仓 + linked 树造不出来"
+fi
+eq "普通目录（非 git）→ 原样返回" "$(pdrs_disk_main_root "$T/root")" "$T/root"
+
+# 8. 直接执行：打印三档与当前级别，并打出实测的仓根（在 linked 树里排障不会误读成「闸显示 ok」）
 o=$(cd "$T/root" && DU_BUILD_KIB=$((170 * GIB)) bash "$LIB" 2>&1); rc=$?
 eq "直接执行 rc" "$rc" 0
 case $o in *"180 GiB"*"170 GiB"*warn*) ok "直接执行打印阈值与级别" ;; *) bad "直接执行输出：[$o]" ;; esac
+case $o in *"实测根"*"/root"*) ok "直接执行打印实测根" ;; *) bad "直接执行未打印实测根：[$o]" ;; esac
 
 echo "----"
 [ "$fail" = 0 ] && echo "PASS test-disk-budget" || echo "FAILED test-disk-budget"
