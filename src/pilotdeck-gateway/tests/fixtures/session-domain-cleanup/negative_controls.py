@@ -466,6 +466,60 @@ def calibrate_status_update(rows):
                   'passed=False')
 
 
+def calibrate_shared_excuse(rows):
+    """#892 r4: a zero branch is still inline when the other branch is shared
+    (DeepSeek boundary P0-1 / concurrency P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline exit code (literal relay) code', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: zero branch beside a shared branch flagged, '
+                  'passed=False')
+
+
+def calibrate_status_setdefault(rows):
+    """#892 r4: ``report.setdefault('status', 'PASS')`` writes the slot without
+    any subscript target (DeepSeek boundary P0-2)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "report.setdefault('status', 'PASS')", 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: setdefault() status write flagged, '
+                  'passed=False')
+
+
+def calibrate_status_update_kwarg(rows):
+    """#892 r4: ``report.update(status='PASS')`` passes the slot as a keyword
+    argument (DeepSeek boundary P0-2)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "report.update(status='PASS')", 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: update() keyword status write flagged, '
+                  'passed=False')
+
+
 def retirement_duplicate_status_key(rows):
     """#892 r3: ``{'status': 'BLOCKED', 'status': 'PASS'}`` reads as clean at
     runtime but the first key wins in the audit (DeepSeek boundary P2)."""
@@ -719,6 +773,16 @@ MUTATIONS = [
      "    def main():\n"
      "        return common.aggregate_status('PASS')\n"
      "    report['cleanup'] = cleanup\n"),
+    # #892 fix-r4: the three false-pass vectors the r3 reviews found.
+    ('calibrate-shared-excuse', SOURCE,
+     "                    _, code = common.aggregate_status(report['status'])\n",
+     "                    code = 0\n"),
+    ('calibrate-status-setdefault', SOURCE,
+     "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
+     "                report.setdefault('status', 'PASS')\n"),
+    ('calibrate-status-update-kwarg', SOURCE,
+     "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
+     "                report.update(status='PASS')\n"),
 ]
 
 JUDGES = {
@@ -888,6 +952,12 @@ JUDGES = {
         'aggregation-audit', retirement_duplicate_status_key, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
+    'calibrate-shared-excuse': (
+        'aggregation-audit', calibrate_shared_excuse, False, ()),
+    'calibrate-status-setdefault': (
+        'aggregation-audit', calibrate_status_setdefault, False, ()),
+    'calibrate-status-update-kwarg': (
+        'aggregation-audit', calibrate_status_update_kwarg, False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
