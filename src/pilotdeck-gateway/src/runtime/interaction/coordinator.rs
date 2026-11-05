@@ -153,12 +153,26 @@ impl GatewayInteractionCoordinator {
         (entry.resolve)(decision.to_value());
         true
     }
-    pub fn grant_session_permission(&self, owner: &JsString, entry: &JsString) -> JsValue {
+    /// `owner` is `None` when the wire `sessionKey` is not a non-blank string.
+    /// TS keys `permissionGrants` by the raw `input.sessionKey`, so `5` / `{}` /
+    /// `true` / `undefined` are entries of their own and never alias a real
+    /// session. This registry is keyed by the lossy string form instead, and a
+    /// turn sent without a `sessionKey` acquires the `""` entry
+    /// (`runtime/turn/submit.rs:330` → `native_process/assembly.rs:247`), so
+    /// storing a malformed grant there would put an allow rule in front of
+    /// unrelated sessionless turns. Such a grant still answers with the shape
+    /// the TS probe captures (`{granted:true, entry}`, #1465
+    /// `_tmp/20261106-issue-1465/ts-probe/output.txt` req-22 / req-6); only the
+    /// write is skipped, because no string key can reproduce a non-string
+    /// lookup anyway.
+    pub fn grant_session_permission(&self, owner: Option<&JsString>, entry: &JsString) -> JsValue {
         let rule = entry_to_rule(entry);
         if rule.tool_name.is_empty() {
             return object([("granted", JsValue::Bool(false))]);
         }
-        self.permission_grants.grant(owner, rule);
+        if let Some(owner) = owner {
+            self.permission_grants.grant(owner, rule);
+        }
         object([
             ("granted", JsValue::Bool(true)),
             ("entry", JsValue::String(entry.clone())),

@@ -919,6 +919,102 @@ async fn permission_errors_carry_domain_codes() {
         .expect("#1309 permission fixture project shutdown");
 }
 
+/// #1465 / #1593 gate: a grant whose `sessionKey` is not a non-blank string
+/// must not land in the `""` rule set. TS keys `permissionGrants` by the raw
+/// value, so `5` and `undefined` are entries of their own and never alias a
+/// real session. This registry is keyed by the lossy string form instead and a
+/// turn sent without a `sessionKey` acquires `""`
+/// (`runtime/turn/submit.rs:330` → `native_process/assembly.rs:247`), so
+/// writing there would let malformed input whitelist tools for unrelated
+/// sessionless turns (measured before the fix: the `""` allow list grew by one
+/// entry per malformed grant).
+#[tokio::test]
+async fn malformed_grant_does_not_reach_the_sessionless_bucket() {
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1465 malformed grant fixture setup");
+    let empty = pilotdeck_protocol::JsString::from("");
+    negative_assert_eq!(
+        requests
+            .interactions
+            .session_allow_rules(&empty)
+            .snapshot()
+            .len(),
+        0,
+        "#1465 the sessionless rule set starts empty"
+    );
+
+    for (label, session_key) in [
+        ("number", JsValue::Number(5.0)),
+        ("undefined", JsValue::Undefined),
+        ("bool", JsValue::Bool(true)),
+    ] {
+        let granted = requests
+            .permission_request(
+                "grant_session_permission".into(),
+                crate::metadata::object([("sessionKey", session_key), ("entry", "Bash".into())]),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("#1465 {label} grant keeps the TS response"));
+        negative_assert_eq!(
+            granted.get("granted"),
+            Some(&JsValue::Bool(true)),
+            "#1465 malformed grant still answers granted:true like TS"
+        );
+    }
+    negative_assert_eq!(
+        requests
+            .interactions
+            .session_allow_rules(&empty)
+            .snapshot()
+            .len(),
+        0,
+        "#1465 malformed grants must not reach the sessionless rule set"
+    );
+
+    // Blank entry is the `granted:false` arm (TS probe output.txt req-26).
+    let blank = requests
+        .permission_request(
+            "grant_session_permission".into(),
+            crate::metadata::object([("sessionKey", "s".into()), ("entry", "".into())]),
+        )
+        .await
+        .expect("#1465 blank entry answers");
+    negative_assert_eq!(
+        blank.get("granted"),
+        Some(&JsValue::Bool(false)),
+        "#1465 blank entry is not a grantable rule"
+    );
+
+    // A canonical string key still stores the rule in its own bucket.
+    let named = requests
+        .permission_request(
+            "grant_session_permission".into(),
+            crate::metadata::object([("sessionKey", "grant-ok".into()), ("entry", "Read".into())]),
+        )
+        .await
+        .expect("#1465 canonical grant answers");
+    negative_assert_eq!(
+        named.get("granted"),
+        Some(&JsValue::Bool(true)),
+        "#1465 canonical grant still grants"
+    );
+    negative_assert_eq!(
+        requests
+            .interactions
+            .session_allow_rules(&pilotdeck_protocol::JsString::from("grant-ok"))
+            .snapshot()
+            .len(),
+        1,
+        "#1465 canonical grant lands in its own session bucket"
+    );
+
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1465 malformed grant fixture shutdown");
+}
+
 /// #1465: every non-canonical input shape below is a verbatim TS probe frame
 /// (`_tmp/20261106-issue-1465/ts-probe/output.txt` and `output-2.txt`).
 /// `input.<key>?.trim()` has three outcomes: a nullish `params` object throws

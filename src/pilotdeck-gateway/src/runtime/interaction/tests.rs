@@ -356,7 +356,7 @@ impl Harness {
             "grant" => {
                 return Ok(self
                     .coordinator
-                    .grant_session_permission(&session, &field(step, "entry")));
+                    .grant_session_permission(Some(&session), &field(step, "entry")));
             }
             "schedule" => {
                 let deadline = self.now.load(Ordering::SeqCst)
@@ -769,7 +769,7 @@ fn interaction_injected_options_share_the_supplied_components() {
         "answer delivered"
     );
     assert!(answered);
-    let granted = coordinator.grant_session_permission(&"s".into(), &"Read".into());
+    let granted = coordinator.grant_session_permission(Some(&"s".into()), &"Read".into());
     assert_eq!(
         granted.get("granted").and_then(JsValue::as_bool),
         Some(true)
