@@ -9,6 +9,8 @@ Rust 泛型与 autolink 误伤、--recent 与显式参数的退出码。
 """
 
 import importlib.util
+import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -222,6 +224,41 @@ case("URL 后紧跟顿号枚举的 .rs 要计入", 1,
 case("URL 后紧跟分号枚举的 .rs 要计入", 1,
      "# #1\n- 见 https://example.com/a.md;" + ";".join(f"src/m{i}.rs" for i in range(8)), must=["分段交付"])
 
+case("围栏里的示例 scope 不许短路回退（9 个 .rs 仍判大包）", 1,
+     "# #1\n```\n<!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n```\n"
+     + "\n".join(f"- src/m{i}.rs" for i in range(9)), must=["分段交付"])
+case("围栏里的大值示例 scope 不把小包判成大包（正控）", 0,
+     SMALL + "\n```\n<!-- pdrs-scope: files=16 lines=1124 est_min=180 -->\n```\n")
+case("围栏里写坏的示例 scope 不再假 ERROR（正控）", 0,
+     SMALL + "\n```\n<!-- pdrs-scope: files=<待填> -->\n```\n")
+case("表头「预估工时」+ 裸数字按小时算", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 预估时长 |", "| 预估工时 |").replace("| 80 min |", "| 2 |"),
+     must=["120 min > 90 min"])
+case("表头「预估人日」+ 裸数字不许当 min", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 预估时长 |", "| 预估人日 |").replace("| 80 min |", "| 1 |"),
+     must=["读不出"])
+case("占位符 <...>（ASCII 三点）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "<...>"), must=["占位符"])
+case("占位符 {...}（ASCII 三点）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "{...}"), must=["占位符"])
+case("区间 + 明确加法：max(40,50)+20 = 70（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 40–50 min + 20 min |"))
+case("区间 + 明确加法超过上限：max(60,80)+20 = 100", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60–80 min + 20 min |"), must=["100 min > 90 min"])
+case("裸「增加」不是加法：60–80 min（增加 20 min 联调）取 80（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 60–80 min（增加 20 min 联调） |"))
+case("续跑写「无需恢复」不算交代失败续跑", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("第 N 段失败：读 progress.md 最后一个 done 段，从 N+1 继续。",
+                                     "无需恢复，每段独立做完即可。"), must=["第 N 段"])
+case("续跑写「不会失败」不算交代失败续跑", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("第 N 段失败：读 progress.md 最后一个 done 段，从 N+1 继续。",
+                                     "每段独立，不会失败。"), must=["第 N 段"])
+case("续跑写无 scheme 的 URL 不算本地进度文件", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
+                                     "example.com/2026/progress.md"), must=["进度文件路径"])
+case("人日回退认「工作量 N 人日」", 1, "# t\n\n工作量 3 人日\n", must=["分段交付"])
+case("人日回退认「共计 N 人日」", 1, "# t\n\n共计 2 人日\n", must=["分段交付"])
+
 
 def run():
     fails = 0
@@ -244,6 +281,14 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  非 UTF-8 任务书 → rc=2 读不了：rc={r['rc']}")
         fails += 0 if ok else 1
 
+        # FIFO 冒充 task.md：不许 open 阻塞（挂起级），直接 rc 2
+        fifo = Path(td) / "fifo.md"
+        os.mkfifo(fifo)
+        r = ctbs.check_file(fifo)
+        ok = r is not None and r["rc"] == 2 and "不是普通文件" in r["problems"][0]
+        print(f"{'PASS' if ok else 'FAIL'}  FIFO 不是普通文件 → rc=2 不阻塞：rc={r and r['rc']}")
+        fails += 0 if ok else 1
+
         # --recent 扫描期间树被回收：跳过，不报 ERROR
         r = ctbs.check_file(Path(td) / "gone.md", ignore_missing=True)
         ok = r is None
@@ -263,7 +308,6 @@ def run():
         fails += 0 if ok else 1
 
         # --recent 递归扫：修复轮的 fix-rN 下一层要扫得到；remote-run 派发副本不重复扫
-        import os
         import time
         base = Path(td) / "_build" / "wt-9999" / "_tmp" / "20261105-issue-9999"
         deep = base / "fix-r1"
@@ -290,6 +334,33 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  --recent 空扫描 --json 打 []：rc={rc} 输出={buf.getvalue()!r}")
         fails += 0 if ok else 1
 
+        # _is_dispatch_copy 只看 _tmp 之后：--root 前缀里叫 remote-run 也不能把全部任务书跳掉
+        ok = (ctbs._is_dispatch_copy(Path("/srv/remote-run/repo/_build/wt-1/_tmp/x/task.md")) is False
+              and ctbs._is_dispatch_copy(Path("/srv/_build/wt-1/_tmp/x/remote-run/stage/task.md")) is True
+              and ctbs._is_dispatch_copy(Path("/srv/_build/wt-1/_tmp/x/.prev-1/task.md")) is True)
+        print(f"{'PASS' if ok else 'FAIL'}  _is_dispatch_copy 只看 _tmp 之后的路径段")
+        fails += 0 if ok else 1
+
+        # 非空扫描的 --json 必须能被 json.loads；--explain 不许再打文本 SUMMARY
+        real = Path(td) / "real-small.md"
+        real.write_text(SMALL, encoding="utf-8")
+        buf = io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(io.StringIO()):
+            rc = ctbs.main(["x", str(real), "--json"])
+        try:
+            got = json.loads(buf.getvalue())
+            ok = rc == 0 and isinstance(got, list) and len(got) == 1 and got[0]["rc"] == 0
+        except Exception:
+            ok = False
+        print(f"{'PASS' if ok else 'FAIL'}  非空 --json 可 json.loads：rc={rc} 输出={buf.getvalue()[:60]!r}")
+        fails += 0 if ok else 1
+        buf = io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(io.StringIO()):
+            rc = ctbs.main(["x", str(real), "--explain"])
+        ok = rc == 0 and "SUMMARY" not in buf.getvalue() and "OK" in buf.getvalue()
+        print(f"{'PASS' if ok else 'FAIL'}  --explain 不打 SUMMARY：rc={rc} 输出={buf.getvalue()[:60]!r}")
+        fails += 0 if ok else 1
+
     # 命令行契约
     for name, argv, expect in (
             ("--print-skeleton 带文件参数", ["x", "--print-skeleton", "task.md"], 3),
@@ -306,7 +377,7 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    total = len(CASES) + 14   # 6 条独立检查（非 UTF-8 / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json）+ 7 条命令行契约
+    total = len(CASES) + 18   # 10 条独立检查（非 UTF-8 / FIFO / 树被回收 / --recent+显式缺文件 / 空扫描 / 递归扫 / 空扫描 --json / 派发副本判定 / 非空 --json / --explain）+ 8 条命令行契约
     print(f"SUMMARY cases={total} failed={fails}")
     return 1 if fails else 0
 

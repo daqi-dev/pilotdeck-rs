@@ -12,24 +12,29 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
   python3 scripts/check-taskbook-segments.py --print-skeleton     # 打印分段表骨架（派单被拒时贴进补充文件）
   python3 scripts/check-taskbook-segments.py --recent 24 [--root <主仓>]  # 扫最近 24 h 生成的任务书
 
-判定（阈值依据见 scripts/README.md「check-taskbook-segments.py」一节，原始对照表在
-scripts/README.md（阈值依据；一次性论证原件在 _tmp/20261105-taskbook-segments/SEGMENTS.md，回收后以 README 为准））：
+判定（阈值细节的唯一正本在 scripts/README.md「check-taskbook-segments.py」一节；
+一次性论证原件在 _tmp/20261105-taskbook-segments/SEGMENTS.md，回收后以 README 为准）：
   大包 = 任一条成立
     1) 任务书声明 `<!-- pdrs-scope: files=N lines=M est_min=K -->`（可多条，任一条达阈值即大包）
        且 files ≥ 8 或 lines ≥ 1500 或 est_min > 90；
-    2) 没有可解析的 scope 行时，正文出现「约/估 … 人日」→ 人日 × 480 min > 90（历史任务书的回退信号，
-       多条取最大值）；
-    3) 仍判不出时，正文点名的 `*.rs` 路径 ≥ 8 个（回退启发式）。
+    2) 没有可解析的 scope 行时，出现「约/估/预计/大约/工作量/共计/合计/总计/共 … 人日」→ 人日 × 480 min > 90
+       （历史任务书的回退信号，多条取最大值）；
+    3) 仍判不出时，点名的 `*.rs` 路径 ≥ 8 个（回退启发式）。
+  scope 行只认**围栏外的正文**；人日与 .rs 回退看原文（围栏里出现的证据也算，宁可判大）——
+  围栏里贴的示例 scope 既不参与分类，也不会把后面的回退信号短路成「小包」。
   scope 行写坏（占位符 / 非整数 / 没写阈值键 / 没收到 `-->` / 没写进 `<!-- -->`）→ 退出 2，不静默退回启发式。
-  代码围栏（``` / ~~~）里的内容一律不算数：贴「上一单的示例分段表」不能当成本包的分段表，
+  代码围栏（``` / ~~~）里的分段表与占位符不算数：贴「上一单的示例分段表」不能当成本包的分段表，
   里面残留的 `<段名>` 也不该把合规任务书打回。
 
 分段表要求（`## 分段交付` 一节里的 markdown 表，≥2 段）：
   列：段名 / 涉及文件 / 交付物（含该段自己的 RESULT 片段）/ 预估时长 / 段间依赖（列序不限，按表头定位）
   每段预估 ≤ 90 min：单位认 min/分钟/m/h/小时，区间（`–`/`~`/`至`/`/`/`上限`）取最大值，
-  明确加法（`+`/`加`）或连写（`1 h 30 min`、`1h30m`）按总时长相加（加法优先于「最多 / 上限」措辞）；不认的单位按「读不出」报错；
+  明确加法（`+`/`＋`/另加/再加/再补）按子表达式相加、每段内部再取 max（`40–50 min + 20 min` = 70，
+  裸「增加 / 加班」不算加法），连写（`1 h 30 min`、`1h30m`）也相加；表头写 `(h)` / `(hrs)` / `工时` 时
+  裸数字按小时算，`(人日)` / `工作日` 报「读不出」；不认的单位按「读不出」报错；
   另需 `## 续跑` 一节：具体的进度文件路径（带目录的 `…progress.md` / `…进度.md`，不许留 `<…>` / `{…}` / `…`，
-  不许写成「无需 / 不用 …」）+「第 N 段失败从哪继续」的最小学样（失败 / 继续 / 接续 / 恢复 / resume）。
+  不许写成「无需 / 不用 / 不会 …」这类否定句，也不许写 URL 片段）+「第 N 段失败从哪继续」的最小学样
+  （失败 / 继续 / 接续 / 恢复 / resume；同样不许写在否定句里）。
 
 退出码：0 通过（含「小包，无需分段」，`--recent` 没扫到也算 0）· 1 命中大包但分段表缺失/不全 ·
 2 任务书读不了、为空、读取期间被改写或 scope 行写坏 · 3 用法错误
@@ -39,6 +44,7 @@ scripts/README.md（阈值依据；一次性论证原件在 _tmp/20261105-taskbo
 import json
 import math
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -71,6 +77,8 @@ def _looks_placeholder(content):
         return True
     if CJK.search(c):
         return True
+    if set(c) <= set(".．。…·"):   # `<...>` / `{…}` / `<。。。>`：纯点号就是占位
+        return True
     return c.lower() in PLACEHOLDER_WORDS
 
 
@@ -95,7 +103,8 @@ DASHES = r"[\s_\-－—‐‑]"
 SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
 COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
 SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
-PERSON_DAY = re.compile(r"(?:约|估|预计|预计约)\s*([0-9]+(?:\.[0-9]+)?)\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
+PERSON_DAY = re.compile(r"(?:约|估|预计|预计约|大约|工作量|共计|合计|总计|共)\s*"
+                        r"([0-9]+(?:\.[0-9]+)?)\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
 # URL 只吃 ASCII URL 字符：中文顿号/逗号/分号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
 RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
@@ -191,10 +200,16 @@ def rs_paths(text):
     return {p for p in RS_PATH.findall(text) if not p.startswith("//") and "://" not in p}
 
 
-def classify(text):
-    """返回 dict：big(True/False/None) / reason / metrics。"""
+def classify(text, fallback_text=None):
+    """返回 dict：big(True/False/None) / reason / metrics。
+
+    `text` 找 scope 声明——调用方传**去掉代码围栏**的正文：围栏里贴的是示例，不是本包的声明，
+    否则一段示例 `<!-- pdrs-scope: files=2 -->` 会把后面的回退信号整段短路（假 PASS）。
+    `fallback_text`（默认同 text）找人日与 .rs 路径：回退方向取「宁可判大」，围栏里出现的证据也算数。
+    """
+    fb = text if fallback_text is None else fallback_text
     scopes, errors = parse_scopes(text)
-    metrics = {"scopes": scopes, "scope_errors": errors, "rs_paths": len(rs_paths(text))}
+    metrics = {"scopes": scopes, "scope_errors": errors, "rs_paths": len(rs_paths(fb))}
     if errors:
         return {"big": None, "reason": "；".join(dict.fromkeys(errors)), "metrics": metrics}
     if scopes:
@@ -211,7 +226,7 @@ def classify(text):
         return {"big": False, "reason": "scope 声明未达阈值", "metrics": metrics}
     # 人日估算可能写多条（前置准备 + 主体）：取最大值，不能只看第一条（前小后大会漏判大包）
     best = None
-    for m in PERSON_DAY.finditer(text):
+    for m in PERSON_DAY.finditer(fb):
         val = max(float(m.group(1)), float(m.group(2)) if m.group(2) else 0.0)
         if not math.isfinite(val):
             return {"big": None, "reason": "人日估算数值过大/非法，读不出", "metrics": metrics}
@@ -269,9 +284,10 @@ COMPACT_UNIT = re.compile(
     r"(?:minutes?|mins?|min|m|分钟|分)?(?!\s*[0-9])", re.I)
 # 区间 / 上限语义取最大值：`80–120 min`、`80/90 min`、`80 min（上限 90 min）`
 RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=\d)\s*-\s*(?=\d)")
-# 只有 `+` / `＋` / `加` 是明确加法；`、，,` 是列表分隔符，`含` 常是「含联调」、`和` 常是
-# 「S1 和 S2」——把这些当加法会把 `60–80 min，含联调` 加成 140（假 FAIL）。
-ADD_MARK = re.compile(r"\+|＋|加")
+# 只有 `+` / `＋` / `另加` / `再加` / `再补` 是明确加法；`、，,` 是列表分隔符，`含` 常是「含联调」、
+# `和` 常是「S1 和 S2」——把这些当加法会把 `60–80 min，含联调` 加成 140（假 FAIL）。
+# 裸「加」是「增加 / 加班」的子串（`60–80 min（增加 20 min 联调）`），不当加法。
+ADD_MARK = re.compile(r"\+|＋|另加|再加|再补")
 UNIT_MIN = ("", "min", "mins", "minute", "minutes", "m", "分", "分钟")
 UNIT_HOUR = ("h", "hr", "hrs", "hour", "hours", "时", "小时", "个小时")
 UNIT_DAY = ("d", "day", "days", "天", "日")
@@ -291,10 +307,16 @@ def _header_unit(header_cell):
     与单元格同一张单位表（此前只硬编码 `(h|hr|小时)`，`(hrs)` 的裸数字被当 min 放行）。
     认不出的写法按 min —— 只有括号/斜杠里的独立词才算，`预估时长` 里的「时」不算。
     """
-    for tok in re.findall(r"[a-z一-鿿]+", header_cell.lower()):
-        if tok in UNIT_HOUR or tok == "工时":
+    low = header_cell.lower()
+    # 连续中文会被 findall 并成一个 token（`预估工时` != `工时`），所以中文单位按子串判。
+    if "人日" in low or "工作日" in low:
+        return "d"         # _unit_minutes 会判「读不出」
+    if "工时" in low:
+        return "h"
+    for tok in re.findall(r"[a-z一-鿿]+", low):
+        if tok in UNIT_HOUR:
             return "h"
-        if tok in UNIT_DAY or tok in ("人日", "工作日"):
+        if tok in UNIT_DAY:
             return "d"     # _unit_minutes 会判「读不出」
         if tok in UNIT_MIN:
             return ""
@@ -310,6 +332,18 @@ def parse_est(cell, default_unit=""):
     认不出的单位返回 None（报「读不出」），不许默默当 min。
     """
     cell = COMPACT_UNIT.sub(lambda m: f"{m.group('h')} h {m.group('m')} min", cell)
+    # 明确加法先切段：`40–50 min + 20 min` 是 max(40,50)+20=70，不是 40+50+20=110。
+    parts = [x for x in ADD_MARK.split(cell) if x.strip()]
+    if len(parts) > 1:
+        total, seen = 0, False
+        for part in parts:
+            got = parse_est(part, default_unit)   # 每段内部再按区间 / 并列规则算
+            if got is None and EST_TOKEN.search(part):
+                return None                        # 段里有数字但读不出单位：整格报「读不出」
+            if got is not None:
+                total += got
+                seen = True
+        return total if seen else None
     toks = [(float(m.group(1)), m.group(2).lower()) for m in EST_TOKEN.finditer(cell)]
     if not toks:
         return None
@@ -326,19 +360,25 @@ def parse_est(cell, default_unit=""):
         resolved.append(mins)
     if len(resolved) == 1:
         return resolved[0]
-    if ADD_MARK.search(cell):   # `+` / `加` 是明确加法：后面再写「最多 / 上限」也要求和
-        return sum(resolved)
     if RANGE_MARK.search(cell):
         return max(resolved)    # 区间 / 上限：按最大值判（「60–80 min，含联调」里的逗号不算并列）
     return sum(resolved)
 
 
-NEGATION = re.compile(r"不要|不用|不必|无需|无须|不许|不能|不需要|别写|勿写")
+NEGATION = re.compile(r"不要|不用|不必|无需|无须|不许|不能|不会|不需要|别写|勿写")
 RESUME_FAIL_WORDS = ("失败", "继续", "接续", "恢复", "重跑", "resume")
 # 路径允许中文（`…/进度.md`、`…/评审记录/progress.md`）；把 `<>{}}…` 也吃进来，占位形态才能整串识别
 PATH_TOKEN = re.compile(r"[A-Za-z0-9_./㐀-鿿<>{}…-]+\.md")
 NEG_WINDOW = 30         # 只看路径所在分句（路径前 30 字符里最后一个句读之后）：
                         # 「不需要在这里写 progress.md」命中，「…progress.md（不要提交进 git）」不命中
+
+
+def _looks_url(p):
+    """`https://…` 的片段之外，`example.com/2026/progress.md` 这类无 scheme URL 也不算本地路径。"""
+    if "://" in p:
+        return True
+    first = p.split("/", 1)[0]
+    return bool(re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}", first))
 
 
 def resume_problems(resume):
@@ -356,7 +396,7 @@ def resume_problems(resume):
                 bad = "还是占位符"
             elif "/" not in p:
                 bad = "只有文件名、没有目录"
-            elif p.startswith("//"):
+            elif p.startswith("//") or _looks_url(p):
                 bad = "是 URL 里的片段，不是本地路径"
             elif NEGATION.search(re.split(r"[，。；、：,;]", line[max(0, m.start() - NEG_WINDOW):m.start()])[-1]):
                 bad = "写在否定句里"
@@ -369,7 +409,12 @@ def resume_problems(resume):
         problems.append("`## 续跑` 里没写具体的进度文件路径（要带目录的实例路径，如 "
                         "`_tmp/20261105-issue-1316/progress.md`；不许留 <…> / {…} / …，"
                         f"不许只写文件名，也不许写在「无需 / 不用」这类否定句里）{detail}")
-    if not any(w in resume.lower() for w in RESUME_FAIL_WORDS):
+    positive = []
+    for line in resume.splitlines():
+        for clause in re.split(r"[，。；、：,;]", line):
+            if not NEGATION.search(clause):
+                positive.append(clause)
+    if not any(w in "\n".join(positive).lower() for w in RESUME_FAIL_WORDS):
         problems.append("`## 续跑` 里没写「第 N 段失败从哪继续」（要有 失败 / 继续 / 接续 / 恢复 / 重跑 之一的说明）")
     return problems
 
@@ -467,6 +512,9 @@ def check_file(path, ignore_missing=False):
         return _err(path, f"读不了：找不到 {path}")
     except OSError as e:
         return _err(path, f"读不了：{e}")
+    if not stat.S_ISREG(st1.st_mode):
+        # FIFO / 设备文件在这里 open("rb") 会无限阻塞（没有写端），派单闸门会整条挂住。
+        return _err(path, "不是普通文件（FIFO / 设备文件），不读")
     if st1.st_size > MAX_BYTES:
         return _err(path, f"任务书 {st1.st_size} 字节超过 {MAX_BYTES}（不整文件读进内存；先删生成物）")
     # 限长读：stat 与 read 之间文件继续增长时不至于把几百 MB 读进内存（TOCTOU）
@@ -491,7 +539,12 @@ def check_file(path, ignore_missing=False):
         st2 = p.stat()
     except OSError:
         st2 = None
-    if st2 is not None and (st2.st_size != st1.st_size or st2.st_mtime != st1.st_mtime):
+    if st2 is None:
+        # 读完之后文件没了（被删 / 被 remove 后重建）：不能拿旧内容当结论。
+        if ignore_missing:
+            return None
+        return _err(path, f"读不了：读到一半文件被删了（{path}），稍后重跑")
+    if st2.st_size != st1.st_size or st2.st_mtime != st1.st_mtime:
         # 不静默跳过：跳过等于「本轮没检查也算过」（fail-open）。写方补完后重跑即可。
         return _err(path, "任务书在读取过程中被改写（可能还在写），稍后重跑")
     if all(ch.isspace() or ch in "﻿\x00" for ch in text):
@@ -501,7 +554,8 @@ def check_file(path, ignore_missing=False):
     body = strip_fences(text)
     if not body.strip():
         return _err(path, "任务书去掉代码围栏后没有正文（不是「小包」）")
-    cls = classify(text)   # 分类用原文：围栏里列的文件清单 / scope 行也算数（fail-safe 方向）
+    # scope 只认正文（围栏里的示例不算声明）；人日 / .rs 回退用原文（围栏里的证据也算，fail-safe）
+    cls = classify(body, text)
     if cls["big"] is None:
         return {"file": str(path), "rc": 2, "problems": [cls["reason"]], "class": cls}
     if not cls["big"]:
@@ -512,8 +566,17 @@ def check_file(path, ignore_missing=False):
 
 
 def _is_dispatch_copy(p):
-    """`remote-run/stage|artifacts` 里是同一份任务书的派发副本，`.prev-*` 是旧轮次备份：都不重复检查。"""
-    return any(part == "remote-run" or part.startswith(".prev") for part in p.parts[:-1])
+    """`remote-run/stage|artifacts` 里是同一份任务书的派发副本，`.prev-*` 是旧轮次备份：都不重复检查。
+
+    只看 `_tmp` 之后的路径段：`--root` 前缀里正好有叫 `remote-run` 的目录时不能把全部任务书跳掉。
+    """
+    parts = p.parts
+    try:
+        i = parts.index("_tmp")
+    except ValueError:
+        return False
+    return any(part == "remote-run" or part.startswith("remote-run.") or part.startswith(".prev")
+               for part in parts[i + 1:-1])
 
 
 def find_recent(root, hours):
