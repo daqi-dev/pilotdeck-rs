@@ -144,7 +144,8 @@ def negctl_restore():
         relative, original_path, marked_path = spec.split('\x1f')
         target = root / relative
         if target.read_bytes() != Path(marked_path).read_bytes():
-            return 'left untouched: the bytes are not this control\'s marker'
+            return ('left untouched: the bytes are not this control\'s '
+                    'marker'), False
         # Read the mode before writing, but a failed read must not abandon the
         # restore: leaving the marker on disk is worse (it is process-tagged,
         # so no other control will clear it). The loss is reported instead, in
