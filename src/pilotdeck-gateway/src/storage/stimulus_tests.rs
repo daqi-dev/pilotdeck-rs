@@ -901,6 +901,94 @@ async fn failed_barrier_releases_its_hold_before_later_entries() {
     );
 }
 
+// Matrix 12e: a witnessed append keeps its FIFO slot. Its job is queued on the
+// entry tick like every other append; only its execution waits for the receipt.
+// Queueing it after the receipt settles instead lets a later plain append (one
+// that owes no receipt, because the hold is gone) overtake it, and the durable
+// order stops matching the host's call order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
+    use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
+    let scratch = Scratch::new();
+    let control = scratch.control();
+    let port = Arc::new(
+        FileRegistry::new(
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    port.accept(&accept_input()).await.unwrap();
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            "registry",
+            "q1",
+            "agent_status:turn_timeout",
+            HELD_BOUND_MS,
+        )]),
+    );
+    let blocked = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.append(&run(), &agent_status_event("turn_timeout"))
+                .await
+        })
+    };
+    let block = wait_receipt(
+        &control,
+        "registry",
+        "block",
+        "agent_status:turn_timeout",
+        "#1370 fifo fixture blocks the first append",
+    );
+    // Entry tick while the barrier is held: this append owes a receipt, and its
+    // job takes the slot right behind the blocked one. The future is kept
+    // unpolled on purpose — the slot must not depend on when it is first polled.
+    let witnessed = port.append(&run(), &agent_status_event("input_accepted"));
+    release(&control, seq_of(&block));
+    wait_receipt(
+        &control,
+        "registry",
+        "release",
+        "agent_status:turn_timeout",
+        "#1370 fifo fixture releases the barrier",
+    );
+    // The hold is gone with the release, so this append owes no receipt and is
+    // queued on its own tick — behind the witnessed one only if that one was
+    // queued at entry.
+    let plain = port.append(&run(), &agent_status_event("cancelled"));
+    tokio::time::timeout(OBSERVE, blocked)
+        .await
+        .expect("#1370 fifo blocked append finishes within the observation cap")
+        .expect("#1370 fifo blocked append did not panic")
+        .expect("#1370 fifo blocked append persists");
+    witnessed
+        .await
+        .expect("#1370 fifo witnessed append persists after the blocked one");
+    plain.await.expect("#1370 fifo plain append persists");
+    let events = port.events(&run()).await.unwrap();
+    let names: Vec<String> = events
+        .iter()
+        .map(|event| {
+            field(event, "event")
+                .as_string()
+                .expect("#1370 fifo event name")
+                .to_utf8()
+                .expect("#1370 fifo event name is UTF-8")
+        })
+        .collect();
+    negative_assert_eq!(
+        names,
+        vec![
+            "turn_timeout".to_string(),
+            "input_accepted".to_string(),
+            "cancelled".to_string()
+        ],
+        "#1370 a witnessed append keeps its FIFO slot before a later plain append"
+    );
+}
+
 // Matrix 13: two site barriers held at once release by their own block receipt
 // sequence numbers and never release each other.
 #[test]

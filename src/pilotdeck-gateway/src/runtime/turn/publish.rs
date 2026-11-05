@@ -18,6 +18,7 @@ use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use pilotdeck_protocol::{JsString, JsValue};
 use tokio::sync::{Notify, oneshot};
@@ -87,7 +88,30 @@ impl FileRegistry {
                 .map_err(|_| RunRegistryError::Invalid("Run registry worker stopped.".into()))?
         })
     }
+    /// Queue a job behind the caller's slot that only runs once the receipt it
+    /// is stamped with settled; an unwritten or abandoned receipt keeps the
+    /// durable write from happening at all.
+    fn witnessed(
+        jobs: mpsc::Sender<RegistryJob>,
+        gate: mpsc::Receiver<bool>,
+        run: RunRef,
+        event: JsValue,
+    ) -> RegistryFuture<()> {
+        Self::dispatch(jobs, move |registry| {
+            match gate.recv_timeout(WITNESS_SETTLE) {
+                Ok(true) => registry.append(&run, &event),
+                _ => Err(RunRegistryError::Invalid(
+                    "Storage stimulus queued witness failed.".into(),
+                )),
+            }
+        })
+    }
 }
+
+/// Bound on how long a witnessed job waits for its own receipt. The receipt is
+/// dispatched on the entry tick, so this only trips when a caller holds the
+/// append future without ever polling it.
+const WITNESS_SETTLE: Duration = Duration::from_secs(60);
 impl TurnRunRegistry for FileRegistry {
     fn accept(&self, input: &RunAcceptInput) -> RegistryFuture<bool> {
         let input = input.clone();
@@ -116,18 +140,22 @@ impl TurnRunRegistry for FileRegistry {
         );
         let run = run.clone();
         let event = event.clone();
-        let jobs = self.jobs.clone();
-        let append = move || Self::dispatch(jobs, move |registry| registry.append(&run, &event));
-        match witness {
-            None => append(),
-            // The receipt is evidence for the write that follows it, so settle
-            // it first: a witness failure then fails the append before the job
-            // reaches the worker, as the synchronous writer site does.
-            Some(witness) => Box::pin(async move {
-                witness.await?;
-                append().await
-            }),
-        }
+        let Some(witness) = witness else {
+            return self.call(move |registry| registry.append(&run, &event));
+        };
+        // The job keeps this invocation's FIFO slot: it is queued on the same
+        // tick as every other append. Deferring the queueing instead would let a
+        // plain append overtake it, and the worker order would stop matching the
+        // host's call order. The job itself waits for the receipt it owes, so a
+        // witness failure still fails the append before anything is written.
+        let (settled, gate) = mpsc::channel::<bool>();
+        let append = Self::witnessed(self.jobs.clone(), gate, run, event);
+        Box::pin(async move {
+            let outcome = witness.await;
+            let _ = settled.send(outcome.is_ok());
+            outcome?;
+            append.await
+        })
     }
 }
 
