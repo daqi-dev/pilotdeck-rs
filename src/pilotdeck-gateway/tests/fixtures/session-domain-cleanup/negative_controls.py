@@ -599,6 +599,38 @@ def calibrate_verdict_dict(rows):
                   'passed=False')
 
 
+def calibrate_conditional_summary(rows):
+    """#892 r7: a summary dict inside a conditional arm is still a summary
+    (GLM r6 boundary P0-1)."""
+    return _controls_main_needle(
+        rows, "found status slot 'PASS'",
+        'aggregation-audit: conditional summary dict flagged, passed=False')
+
+
+def calibrate_update_expansion(rows):
+    """#892 r7: ``update(**name)`` writes slots the audit cannot see, so it
+    fails closed (GLM r6 boundary P1-2)."""
+    return _controls_main_needle(
+        rows, 'report.update(**extra)',
+        'aggregation-audit: unprovable keyword expansion flagged, passed=False')
+
+
+def calibrate_exit_conditional(rows):
+    """#892 r7: ``sys.exit(0 if cond else 1)`` has a zero arm
+    (GLM r6 sibling P1-1)."""
+    return _controls_main_needle(
+        rows, 'inline exit code 0 if',
+        'aggregation-audit: conditional exit argument flagged, passed=False')
+
+
+def calibrate_return_exit_call(rows):
+    """#892 r7: ``return sys.exit(0)`` leaves the process with 0
+    (GLM r6 sibling P1-2)."""
+    return _controls_main_needle(
+        rows, 'inline optimistic exit (sys.exit(0))',
+        'aggregation-audit: exit call in return position flagged, passed=False')
+
+
 def calibrate_early_return_branch(rows):
     """#892 r5: a zero branch that returns before the shared rebind is inline
     even though a later sibling overwrites the name (MiniMax boundary P0-1)."""
@@ -1118,6 +1150,24 @@ MUTATIONS = [
      "    payload = {'verdict': 'PASS', 'rows': rows}\n"
      "    print(json.dumps(payload))\n"
      "    return 0\n\n\n" + CT_MAIN),
+    # #892 fix-r7: the return-path shapes that still walked through in r6.
+    ('calibrate-conditional-summary', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            return {'status': 'PASS'} if report.get('cells') else report\n"
+     + CT_EXIT),
+    ('calibrate-update-expansion', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            report.update(**extra)\n" + CT_EXIT),
+    ('calibrate-exit-conditional', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            sys.exit(0 if report.get('cells') else 1)\n" + CT_EXIT),
+    ('calibrate-return-exit-call', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            return sys.exit(0)\n" + CT_EXIT),
     ('calibrate-status-update-kwarg', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update(status='PASS')\n"),
@@ -1326,6 +1376,14 @@ JUDGES = {
         'aggregation-audit', calibrate_alias_cycle, False, ()),
     'calibrate-verdict-dict': (
         'aggregation-audit', calibrate_verdict_dict, False, ()),
+    'calibrate-conditional-summary': (
+        'aggregation-audit', calibrate_conditional_summary, False, ()),
+    'calibrate-update-expansion': (
+        'aggregation-audit', calibrate_update_expansion, False, ()),
+    'calibrate-exit-conditional': (
+        'aggregation-audit', calibrate_exit_conditional, False, ()),
+    'calibrate-return-exit-call': (
+        'aggregation-audit', calibrate_return_exit_call, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
     'calibrate-clean-argument': (
