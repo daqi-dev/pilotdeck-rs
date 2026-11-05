@@ -34,18 +34,21 @@ impl Requests {
             // authority/subject override guard): a request carrying an
             // override or racing an active turn still fails with
             // CAPABILITY_UNAVAILABLE, like a TS gateway whose resumeSop
-            // callback is absent. The busy and override guards return
-            // together with a wired SOP runtime (#1313 and follow-ups).
+            // callback is absent. These guards are documented to come back
+            // with a wired SOP runtime; tracking lives in #1313 and
+            // follow-ups, and the gate order must be re-verified against TS
+            // when they return.
             //
             // The capability gate also precedes every params guard, including
             // the required sessionKey: the TS connection layer has no runtime
             // schema parsing for params (GatewayWsConnection.ts:630-637
-            // isRequestFrame validates only type/id/method and dispatch passes
-            // `frame.params as never`), and the InProcessGateway.ts:636/:640
-            // capability check is the first statement of sopStatus/resumeSop,
-            // so the callback's schema parse is never reached. A frame missing
-            // sessionKey — or any other required field — therefore answers
-            // CAPABILITY_UNAVAILABLE, not a validation error.
+            // isRequestFrame validates only type/id/method, and dispatch hands
+            // `frame.params as never` to the gateway), and the
+            // InProcessGateway.ts:635/:640 capability check is the first
+            // statement of sopStatus/resumeSop, so any field access or
+            // validation in the downstream callback is never reached. A frame
+            // missing sessionKey — or any other required field — therefore
+            // answers CAPABILITY_UNAVAILABLE, not a validation error.
             Err(unavailable(
                 "StaffDeck SOP is not configured on this isolated native process.",
             ))
@@ -60,7 +63,7 @@ mod tests {
 
     // sop_status: sessionKey missing → CAPABILITY_UNAVAILABLE, not a validation
     // error. In TS the capability gate is the first statement of sopStatus
-    // (InProcessGateway.ts:636) and the connection layer never schema-parses
+    // (InProcessGateway.ts:635) and the connection layer never schema-parses
     // params, so the required-field check is unreachable.
     #[tokio::test]
     async fn sop_status_missing_session_key_hits_capability_gate_first() {
@@ -84,7 +87,7 @@ mod tests {
     // sop_status: valid sessionKey + wrong projectKey → shared entry gate in
     // Requests::request rejects before sop_request runs, code is gateway_request_failed.
     // The per-method guard that used to live in sop_request was dead code because
-    // requests.rs:88-97 always intercepts first with a different error code.
+    // native_process/requests.rs:179-188 always intercepts first with a different error code.
     #[tokio::test]
     async fn sop_status_rejects_wrong_project() {
         let (_scratch, requests) =
@@ -220,6 +223,31 @@ mod tests {
             result.unwrap_err().code.as_str(),
             "CAPABILITY_UNAVAILABLE",
             "#1312 sop_resume no runtime"
+        );
+        requests.owner.shutdown().await.expect("#1312 sop shutdown");
+        requests
+            .project
+            .dispose()
+            .await
+            .expect("#1312 sop project dispose");
+    }
+
+    // sop_resume: every required field — sessionKey, message, requestId,
+    // waitId, source — missing. TS still answers CAPABILITY_UNAVAILABLE: the
+    // capability gate is the first statement of resumeSop
+    // (InProcessGateway.ts:640) and nothing above it parses params, so a
+    // single-field validation added for sop_resume ahead of the capability
+    // return would drift from TS to gateway_request_failed.
+    #[tokio::test]
+    async fn sop_resume_missing_required_fields_hits_capability_gate_first() {
+        let (_scratch, requests) =
+            std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
+        let params = pilotdeck_protocol::JsValue::Object(Default::default());
+        let result = requests.sop_request("sop_resume".into(), params).await;
+        negative_assert_eq!(
+            result.unwrap_err().code.as_str(),
+            "CAPABILITY_UNAVAILABLE",
+            "#1312 sop_resume missing all required fields still hits capability gate first"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
