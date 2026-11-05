@@ -631,48 +631,7 @@ async fn production_host_management_and_restart() {
             .map(|value| value.as_str().expect("#1231 capability string"))
             .collect();
         capabilities.sort_unstable();
-        let mut expected = [
-            "run_get",
-            "run_events",
-            "run_reattach",
-            "project_files_list",
-            "project_file_read",
-            "model_catalog_list",
-            "session_model_get",
-            "supported_agents",
-            "snapshot_list",
-            "snapshot_get",
-            "snapshot_restore",
-            "manager_sessions",
-            "commands_list",
-            "usage_snapshot",
-            "model_usage_snapshot",
-            "mcp_server_status",
-            "rewind_files",
-            #[cfg(unix)]
-            "background_task_stop",
-            #[cfg(unix)]
-            "background_tasks",
-            "set_mcp_servers",
-            "mcp_server_reconnect",
-            "mcp_server_toggle",
-            "set_mcp_permission_mode_override",
-            // TS advertises both in every config state (oracle.json:2801-2802,
-            // 2855-2856, 2956-2957); user_dialog_list runtime availability is
-            // still gated on the bus being connected (#1445 on_change staging).
-            "user_dialog_list",
-            "permission_list",
-            "upload_create",
-            "upload_get",
-            "upload_part",
-            "upload_complete",
-            "upload_cancel",
-            // #1316: served for real and TS-advertised (oracle.json).
-            "permission_decide",
-            "async_hook_result",
-            "delete_session",
-        ];
-        expected.sort_unstable();
+        let expected = expected_capabilities(true);
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
         assert_ts_capability_subset(&expected);
         negative_assert!(
@@ -1051,45 +1010,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             })
             .collect();
         capabilities.sort_unstable();
-        let mut expected = [
-            "run_get",
-            "run_events",
-            "run_reattach",
-            "project_files_list",
-            "project_file_read",
-            "model_catalog_list",
-            "session_model_get",
-            "supported_agents",
-            "manager_sessions",
-            "commands_list",
-            "usage_snapshot",
-            "model_usage_snapshot",
-            "mcp_server_status",
-            "rewind_files",
-            #[cfg(unix)]
-            "background_task_stop",
-            #[cfg(unix)]
-            "background_tasks",
-            "set_mcp_servers",
-            "mcp_server_reconnect",
-            "mcp_server_toggle",
-            "set_mcp_permission_mode_override",
-            // TS advertises both in every config state (oracle.json:2801-2802,
-            // 2855-2856, 2956-2957); user_dialog_list runtime availability is
-            // still gated on the bus being connected (#1445 on_change staging).
-            "user_dialog_list",
-            "permission_list",
-            "upload_create",
-            "upload_get",
-            "upload_part",
-            "upload_complete",
-            "upload_cancel",
-            // #1316: served for real and TS-advertised (oracle.json).
-            "permission_decide",
-            "async_hook_result",
-            "delete_session",
-        ];
-        expected.sort_unstable();
+        let expected = expected_capabilities(false);
         negative_assert_eq!(
             capabilities,
             expected,
@@ -1110,6 +1031,59 @@ async fn missing_storage_environment_disables_snapshots() {
 #[tokio::test]
 async fn empty_storage_environment_disables_snapshots() {
     assert_storage_disabled(Some(""), "emptyStorage").await;
+}
+
+/// The exact capability set `describe_server` must advertise (#1231).
+///
+/// The four call sites differ only in whether snapshot storage is wired, so
+/// they share one list: adding or removing a wired capability must not have to
+/// be repeated four times, where a missed copy would be a false FAIL (#1632
+/// item 7, from the MiniMax simplify role). Expectations must stay byte-equal
+/// to the TS baseline; this only removes the duplication.
+fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
+    let mut expected = vec![
+        "run_get",
+        "run_events",
+        "run_reattach",
+        "project_files_list",
+        "project_file_read",
+        "model_catalog_list",
+        "session_model_get",
+        "supported_agents",
+        "manager_sessions",
+        "commands_list",
+        "usage_snapshot",
+        "model_usage_snapshot",
+        "mcp_server_status",
+        "rewind_files",
+        #[cfg(unix)]
+        "background_task_stop",
+        #[cfg(unix)]
+        "background_tasks",
+        "set_mcp_servers",
+        "mcp_server_reconnect",
+        "mcp_server_toggle",
+        "set_mcp_permission_mode_override",
+        // TS advertises both in every config state (oracle.json:2801-2802,
+        // 2855-2856, 2956-2957); user_dialog_list runtime availability is
+        // still gated on the bus being connected (#1445 on_change staging).
+        "user_dialog_list",
+        "permission_list",
+        "upload_create",
+        "upload_get",
+        "upload_part",
+        "upload_complete",
+        "upload_cancel",
+        // #1316: served for real and TS-advertised (oracle.json).
+        "permission_decide",
+        "async_hook_result",
+        "delete_session",
+    ];
+    if with_snapshots {
+        expected.extend(["snapshot_list", "snapshot_get", "snapshot_restore"]);
+    }
+    expected.sort_unstable();
+    expected
 }
 
 fn assert_ts_capability_subset(expected: &[&str]) {
@@ -1216,46 +1190,7 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     })
                     .collect();
                 capabilities.sort_unstable();
-                let mut expected = [
-                    "run_get",
-                    "run_events",
-                    "run_reattach",
-                    "project_files_list",
-                    "project_file_read",
-                    "model_catalog_list",
-                    "session_model_get",
-                    "supported_agents",
-                    "manager_sessions",
-                    "commands_list",
-                    "usage_snapshot",
-                    "model_usage_snapshot",
-                    "mcp_server_status",
-                    "rewind_files",
-                    #[cfg(unix)]
-                    "background_task_stop",
-                    #[cfg(unix)]
-                    "background_tasks",
-                    "set_mcp_servers",
-                    "mcp_server_reconnect",
-                    "mcp_server_toggle",
-                    "set_mcp_permission_mode_override",
-                    // TS advertises both in every config state (oracle.json:
-                    // 2801-2802, 2855-2856, 2956-2957); user_dialog_list
-                    // runtime availability is still gated on the bus being
-                    // connected (#1445 on_change staging).
-                    "user_dialog_list",
-                    "permission_list",
-                    "upload_create",
-                    "upload_get",
-                    "upload_part",
-                    "upload_complete",
-                    "upload_cancel",
-                    // #1316: served for real and TS-advertised (oracle.json).
-                    "permission_decide",
-                    "async_hook_result",
-                    "delete_session",
-                ];
-                expected.sort_unstable();
+                let expected = expected_capabilities(false);
                 negative_assert_eq!(
                     capabilities,
                     expected,
@@ -1438,47 +1373,7 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         .map(|v| v.as_str().expect("#1323 capability string"))
         .collect();
     capabilities.sort_unstable();
-    let mut expected = [
-        "run_get",
-        "run_events",
-        "run_reattach",
-        "project_files_list",
-        "project_file_read",
-        "model_catalog_list",
-        "session_model_get",
-        "supported_agents",
-        "snapshot_list",
-        "snapshot_get",
-        "snapshot_restore",
-        "manager_sessions",
-        "commands_list",
-        "usage_snapshot",
-        "model_usage_snapshot",
-        "mcp_server_status",
-        "rewind_files",
-        #[cfg(unix)]
-        "background_task_stop",
-        #[cfg(unix)]
-        "background_tasks",
-        "set_mcp_servers",
-        "mcp_server_reconnect",
-        "mcp_server_toggle",
-        "set_mcp_permission_mode_override",
-        // TS advertises both in every config state (oracle.json: 2801-2802,
-        // 2855-2856, 2956-2957); same union as the production-entry list above.
-        "user_dialog_list",
-        "permission_list",
-        "upload_create",
-        "upload_get",
-        "upload_part",
-        "upload_complete",
-        "upload_cancel",
-        // #1316: served for real and TS-advertised (oracle.json).
-        "permission_decide",
-        "async_hook_result",
-        "delete_session",
-    ];
-    expected.sort_unstable();
+    let expected = expected_capabilities(true);
     negative_assert_eq!(
         capabilities,
         expected,
