@@ -189,11 +189,20 @@ python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另�
   ui-server-parity 的 `invalid path/hash: <name>`）；首次登记的新文件
   （`A2 apparatus missing FROZEN hash` 与新文件的 `lacks exact new event chain`）
   在新增事件文件里有 `Change: - <当前字节 sha256> <路径>` 行时。
+- 首次登记不总是写在失败列表里：parity 只说 hash list differs 并把跳过的文件放进
+  `unregistered_skipped`，gateway-parity 只说生成的清单不同。预检因此另扫交付分支上
+  各装置 `--write` 范围内的新增文件（`scripts/<装置>/`，gateway 另含 `scripts/a5-19/`，
+  parity 另含 `specs/parity/` 顶层文件），同样要求精确的
+  `Change: - <sha256> <路径>` 链——否则记为阻塞：`--write` 登记后
+  `check_frozen.py --base` 必然拒绝。
 - 阻塞：其余全部。尤其「改了冻结字节却没有对应事件行」的
   `hash change lacks exact new event chain`、未登记文件、事件文件缺 `Change:`
   行或四字段（`Calibration-Evidence` / `Independent-Reviews` / `Approved-By` /
   `Approval-Basis`）、报告无法解析或无法读取；认不出的失败一律按阻塞
   （fail-closed，不把未知消息当通过）。
+- 证据只取 **HEAD**：没提交的事件文件、工作树里的未提交字节都不能让分支显得可交付
+  （未提交的事件文件直接报阻塞）；工作树有未提交的已跟踪改动时打印提示行，
+  因为子装置读的是工作树。
 
 `Independent-Reviews: Pending: ...` 占位**不阻塞**，但输出单列
 `PENDING-REVIEWS`：协调者可以先 `--write`，最终登记仍须回填两家非作者的真实评审。

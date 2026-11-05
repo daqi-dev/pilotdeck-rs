@@ -29,6 +29,15 @@ failure:
   blocking     anything not recognised (fail-closed: an unknown message is a
                blocker, never a silent pass)
 
+A first registration is not always named in the report: parity only says the
+hash list differs and lists the files it skipped in ``unregistered_skipped``;
+gateway-parity only says the generated inventory differs.  So the tool also
+scans the files added on the branch inside each apparatus's ``--write`` scope
+(``scripts/<kind>/`` and, for gateway-parity, ``scripts/a5-19/``; plus the
+top-level files of ``specs/parity/``).  Each one needs the same exact
+``Change: - <sha256> <path>`` chain, otherwise it is a blocker: after
+``--write`` the registration check would reject it.
+
 On top of the apparatus checks it inspects the event files added on the branch
 (``specs/<kind>/frozen/``, merge-base..HEAD): each must carry at least one
 ``Change:`` row and the four fields ``Calibration-Evidence``,
@@ -36,6 +45,10 @@ On top of the apparatus checks it inspects the event files added on the branch
 ``Independent-Reviews: Pending: ...`` placeholder is reported as
 ``PENDING-REVIEWS`` and is *not* blocking: the coordinator may ``--write``,
 while final registration still waits for real reviews.
+
+All evidence is read from HEAD: an event file that was never committed, or a
+working-tree edit, cannot make the branch look ready.  A dirty tree is reported
+as a note because the apparatus itself reads the working tree.
 
 Read-only.  It never runs ``--write`` and never edits the tree.
 
@@ -50,9 +63,11 @@ import sys
 # Same isolation rule as the frozen entries this tool calls: keep PYTHONPATH,
 # user site and the script directory out of module resolution.
 if not sys.flags.isolated:
-    raise SystemExit(f'run with -I: python3 -I {__file__}')
+    print(f'run with -I: python3 -I {__file__}', file=sys.stderr)
+    raise SystemExit(2)
 if sys.version_info < (3, 11):  # the frozen entries require CPython 3.11+
-    raise SystemExit('CPython 3.11+ required (frozen apparatus contract)')
+    print('CPython 3.11+ required (frozen apparatus contract)', file=sys.stderr)
+    raise SystemExit(2)
 sys.dont_write_bytecode = True
 
 import argparse
@@ -75,17 +90,33 @@ EVENT_NAME = re.compile(r'[0-9]{8}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.md')
 EVENT_CHANGE = re.compile(r'Change: ([0-9a-f]{64}|-) ([0-9a-f]{64}|-) ([\w./-]+)')
 ADDED_EVENT = re.compile(r'specs/([^/]+)/frozen/([^/]+\.md)$')
 BARE_PATH = re.compile(r'(?:\.\./\.\./)?[\w./-]+')
+BYTECODE = re.compile(r'(?:^|/)__pycache__(?:/|$)|\.py[co]$')
+# Where each apparatus's ``--write`` takes its rows from.  parity walks
+# ``scripts/parity/`` recursively and takes every top-level file of
+# ``specs/parity/``; gateway-parity keeps an explicit inventory, all of it under
+# these two directories.  A file added on the branch inside one of these scopes
+# is a first registration --write will settle, so it needs an event chain.
+WRITE_SCOPES = {
+    'parity': (('scripts/parity/', True), ('specs/parity/', False)),
+    'gateway-parity': (('scripts/gateway-parity/', True), ('scripts/a5-19/', True)),
+}
 CHECK_TIMEOUT = 300
+GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 
 
 # ---------------------------------------------------------------- git helpers
 def git(root, *args):
-    """Return (returncode, stdout, stderr); never raises for a git failure."""
+    """Return (returncode, stdout, stderr); never raises for a git failure.
+
+    ``GIT_ERROR`` marks a call that could not run at all, so callers can tell
+    "the answer is no" from "there is no answer" (fail-closed instead of
+    treating a transient fork/exec failure as a missing file).
+    """
     try:
         proc = subprocess.run(['git', '-C', str(root), *args], capture_output=True,
-                              text=True, timeout=CHECK_TIMEOUT)
+                              text=True, errors='replace', timeout=CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
-        return 1, '', str(error)
+        return GIT_ERROR, '', str(error)
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -95,7 +126,7 @@ def git_bytes(root, *args):
         proc = subprocess.run(['git', '-C', str(root), *args], capture_output=True,
                               timeout=CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
-        return 1, b'', str(error).encode()
+        return GIT_ERROR, b'', str(error).encode()
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -107,20 +138,36 @@ def merge_base(root, base):
 
 
 def exists_at(root, commit, path):
-    code, _, _ = git(root, 'cat-file', '-e', f'{commit}:{path}')
-    return code == 0
+    """True/False/None -- None when the question cannot be answered.
+
+    ``git cat-file -e`` returns the same status for "path absent" and "commit
+    unknown", so the commit is resolved first and an uninterrogable tree is an
+    error (None), never a silent "not there".
+    """
+    code, _, _ = git(root, 'rev-parse', '--verify', '--quiet', f'{commit}^{{commit}}')
+    if code != 0:
+        return None
+    code, _, _ = git(root, 'rev-parse', '--verify', '--quiet', f'{commit}:{path}')
+    if code == 0:
+        return True
+    return None if code == GIT_ERROR else False
 
 
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def blob_at(root, commit, path):
+    """(exists, sha256) for <commit>:<path>; sha256 is None when unreadable."""
+    state = exists_at(root, commit, path)
+    if state is not True:
+        return state, None
+    code, data, _ = git_bytes(root, 'cat-file', 'blob', f'{commit}:{path}')
+    return True, (hashlib.sha256(data).hexdigest() if code == 0 else None)
 
 
 def base_digest(root, mb, path):
-    """sha256 of <mb>:<path>, or '-' when the file does not exist there."""
-    if not exists_at(root, mb, path):
-        return '-'
-    code, data, _ = git_bytes(root, 'cat-file', 'blob', f'{mb}:{path}')
-    return hashlib.sha256(data).hexdigest() if code == 0 else None
+    """sha256 of <mb>:<path>, '-' when absent there, None when unknowable."""
+    state, value = blob_at(root, mb, path)
+    if state is None or (state is True and value is None):
+        return None
+    return value if state else '-'
 
 
 # ------------------------------------------------------------ discovery
@@ -144,9 +191,14 @@ def discover(root):
 
 # ------------------------------------------------------------ report parsing
 def normalise(report):
-    """Map the three report shapes onto (status, failures, reason)."""
+    """Map the three report shapes onto (status, failures, reason, unregistered).
+
+    parity is the only apparatus that publishes files it skipped because no
+    FROZEN row covers them (``unregistered_skipped``); dropping that field made
+    a first registration without an event chain look READY.
+    """
     if not isinstance(report, dict):
-        return 'FAIL', ['report is not a JSON object'], None
+        return 'FAIL', ['report is not a JSON object'], None, []
     status = report.get('status') or report.get('verdict')
     failures = report.get('failures')
     if failures is None:
@@ -154,22 +206,27 @@ def normalise(report):
     if failures is None:
         failures = []
     if not isinstance(failures, list) or not all(isinstance(item, str) for item in failures):
-        return 'FAIL', ['report failures/errors is not a list of strings'], None
+        return 'FAIL', ['report failures/errors is not a list of strings'], None, []
     if status is None and 'ok' in report:
         status = 'PASS' if report.get('ok') else 'FAIL'
     if status is None:
-        return 'FAIL', ['report has no status/verdict/ok field'], None
+        return 'FAIL', ['report has no status/verdict/ok field'], None, []
     reason = report.get('reason')
-    return str(status), failures, reason if isinstance(reason, str) else None
+    unregistered = report.get('unregistered_skipped')
+    if not isinstance(unregistered, list) or not all(isinstance(item, str) for item in unregistered):
+        unregistered = []
+    return str(status), failures, reason if isinstance(reason, str) else None, unregistered
 
 
 # ------------------------------------------------------------ event evidence
 def event_evidence(root, kind, mb):
-    """Event rows added since the merge-base, plus Pending: placeholders.
+    """Event rows added on the branch (HEAD), plus Pending: placeholders.
 
     Returns (edges, pending, issues); ``edges`` are (path, old, new) from event
-    files that do not exist at the merge-base, exactly the events
-    check_frozen.check_registration treats as new.
+    files that exist at HEAD and not at the merge-base, exactly the events
+    check_frozen.check_registration treats as new.  A working-tree event file
+    that was never committed is *not* evidence: the branch is what gets
+    received, and a false READY there is what this precheck exists to stop.
     """
     folder = root / 'specs' / kind / 'frozen'
     edges, pending, issues = [], set(), []
@@ -181,8 +238,21 @@ def event_evidence(root, kind, mb):
         if not path.is_file() or path.is_symlink() or not EVENT_NAME.fullmatch(path.name):
             continue
         relative = path.relative_to(root).as_posix()
-        if mb and exists_at(root, mb, relative):
-            continue  # historical event; append-only, not this delivery's
+        if mb:
+            state = exists_at(root, mb, relative)
+            if state is None:
+                issues.append(f'{relative}: cannot tell whether it exists at the merge-base')
+                continue
+            if state:
+                continue  # historical event; append-only, not this delivery's
+        head = exists_at(root, 'HEAD', relative)
+        if head is None:
+            issues.append(f'{relative}: cannot tell whether it is committed')
+            continue
+        if not head:
+            issues.append(f'{relative}: event file is not committed '
+                          '(git add/commit required before delivery)')
+            continue
         try:
             text = path.read_text(encoding='utf-8')
         except (OSError, UnicodeError) as error:
@@ -206,13 +276,12 @@ def chain_backed(root, edges, path, mb):
     at most once, no edge may remain unused, and the path must actually differ
     from the merge-base.  A bare "one matching edge exists" test would accept
     duplicate/extra edges that ``--write`` cannot clear (a false PASS).
+
+    Bytes come from HEAD, not the working tree: an uncommitted edit must not be
+    able to complete a chain the branch does not contain.
     """
-    target = root / path
-    if not target.is_file() or target.is_symlink():
-        return False
-    try:
-        actual = digest(target)
-    except OSError:
+    state, actual = blob_at(root, 'HEAD', path)
+    if state is not True or actual is None:
         return False
     if not mb:
         return False
@@ -260,9 +329,19 @@ def spec_path(root, kind, name):
     return root / 'specs' / kind / relative
 
 
+def head_tracked(root, path):
+    """True when ``path`` is a file committed at HEAD (working tree aside)."""
+    try:
+        relative = Path(path).relative_to(root).as_posix()
+    except ValueError:
+        return False
+    return exists_at(root, 'HEAD', relative) is True
+
+
 def existing_file(root, kind, name):
     path = spec_path(root, kind, name)
-    return path is not None and path.is_file() and not path.is_symlink()
+    return (path is not None and path.is_file() and not path.is_symlink()
+            and head_tracked(root, path))
 
 
 def bare_manifest_file(root, kind, name):
@@ -273,7 +352,34 @@ def bare_manifest_file(root, kind, name):
     if Path(relative).is_absolute() or '..' in Path(relative).parts:
         return False
     path = root / relative
-    return path.is_file() and not path.is_symlink()
+    return path.is_file() and not path.is_symlink() and head_tracked(root, path)
+
+
+def unregistered_added(root, kind, mb):
+    """Files added on the branch that this apparatus's --write would register.
+
+    These never appear in a pre-write failure list of their own: parity only
+    says the hash list differs, gateway-parity only says the generated
+    inventory differs.  Without this scan a new file with no event row reads as
+    READY here and is rejected by check_frozen --base right after --write.
+    """
+    scopes = WRITE_SCOPES.get(kind)
+    if not scopes or not mb:
+        return [], []
+    added, issues = [], []
+    for prefix, recursive in scopes:
+        code, out, err = git(root, 'diff', '--name-only', '--diff-filter=A', '-z',
+                             mb, 'HEAD', '--', prefix)
+        if code:
+            issues.append(f'cannot list files added under {prefix}: {err.strip()}')
+            continue
+        for name in filter(None, out.split('\0')):
+            if not name.startswith(prefix) or BYTECODE.search(name):
+                continue
+            if not recursive and '/' in name[len(prefix):]:
+                continue
+            added.append(name)
+    return sorted(set(added)), issues
 
 
 def classify(ctx, item):
@@ -341,8 +447,8 @@ def run_apparatus(root, kind, entry, base, mb):
         return result
     try:
         proc = subprocess.run([sys.executable, '-I', str(entry), '--base', base],
-                              capture_output=True, text=True, cwd=str(root),
-                              timeout=CHECK_TIMEOUT)
+                              capture_output=True, text=True, errors='replace',
+                              cwd=str(root), timeout=CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
         result['blocking'].append(('blocking', f'cannot run {entry}: {error}', None))
         return result
@@ -353,7 +459,7 @@ def run_apparatus(root, kind, entry, base, mb):
         result['blocking'].append(('blocking', 'check_frozen did not emit parseable JSON '
                                                f'(rc={proc.returncode}): ' + ' | '.join(tail), None))
         return result
-    status, failures, reason = normalise(report)
+    status, failures, reason, unregistered = normalise(report)
     result['note'] = reason
     edges, pending, issues = event_evidence(root, kind, mb)
     result['pending_events'] = sorted(pending)
@@ -377,6 +483,25 @@ def run_apparatus(root, kind, entry, base, mb):
             result['pending'].append(item)
         else:
             result['blocking'].append((why, item, detail))
+    # First registrations: the apparatus lists them only as "the hash list
+    # differs" (or not at all), so check every new file in its --write scope and
+    # everything parity skipped for lack of a FROZEN row.  Each needs the exact
+    # ``Change: - <sha256>`` chain --write will rely on.
+    new_files, new_issues = unregistered_added(root, kind, mb)
+    result['blocking'].extend(('blocking', message, None) for message in new_issues)
+    reported = set()
+    for name in sorted(set(new_files) | set(unregistered)):
+        if BYTECODE.search(name) or name in reported:
+            continue  # bytecode is already an apparatus error
+        reported.add(name)
+        if exists_at(root, 'HEAD', name) is not True:
+            result['blocking'].append(('blocking', f'{name}: unregistered file is not '
+                                                   'committed (git add/commit required)', None))
+        elif not chain_backed(root, edges, name, mb):
+            result['blocking'].append(('blocking', f'{name}: first registration without an '
+                                                   'exact Change: - <sha256> event chain '
+                                                   '(--write would register it and check_frozen '
+                                                   '--base would then reject)', None))
     return result
 
 
@@ -401,10 +526,15 @@ def event_chain_issues(root, base, kinds, mb=None):
             continue
         kind = match.group(1)
         added.append((kind, path))
+        # Read the committed bytes, not the working tree: the delivery is HEAD.
+        code, data, err = git_bytes(root, 'cat-file', 'blob', f'HEAD:{path}')
+        if code:
+            issues.append((kind, f'{path}: cannot read from HEAD: {err.decode(errors="replace").strip()}'))
+            continue
         try:
-            text = (root / path).read_text(encoding='utf-8')
-        except (OSError, UnicodeError) as error:
-            issues.append((kind, f'{path}: cannot read: {error}'))
+            text = data.decode('utf-8')
+        except UnicodeError as error:
+            issues.append((kind, f'{path}: cannot decode as UTF-8: {error}'))
             continue
         if not any(line.startswith('Change:') for line in text.splitlines()):
             issues.append((kind, f'{path}: missing Change: row'))
@@ -459,6 +589,11 @@ def main(argv=None):
         print(f'  BLOCK[blocking] {mb_error}')
         print('BLOCKED 1 / READY 0')
         return 1
+
+    code, dirty, _ = git(root, 'status', '--porcelain', '--untracked-files=no')
+    if code == 0 and dirty.strip():
+        print('  note: working tree has uncommitted tracked changes; event evidence and '
+              'target bytes are read from HEAD, while the apparatus reads the working tree')
 
     # Pin the resolved SHA: pass it (not the symbolic ref) to every apparatus so
     # a concurrent ``git fetch`` cannot move the base between classification and
