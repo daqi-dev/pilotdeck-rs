@@ -830,6 +830,27 @@ impl ExecutionFactory for OriginalAgentFactory {
                     boundary: BoundarySnapshot::capture(&request.boundary),
                 }
             })?;
+        // #1371: the env-armed controlled loop entry. Inert (unset, or armed
+        // without a plan) keeps the production path byte for byte; a malformed
+        // plan fails closed instead of quietly running a real turn.
+        if let Some(stimulus) = crate::loop_stimulus::LoopStimulus::global() {
+            match stimulus.plan() {
+                Ok(None) => {}
+                Ok(Some(plan)) => {
+                    return crate::controlled_loop::run(
+                        stimulus.as_ref(),
+                        plan,
+                        &decoded.input,
+                        context,
+                    );
+                }
+                Err(message) => {
+                    return Err(PortError::InvalidResponse {
+                        message: message.into(),
+                    });
+                }
+            }
+        }
         let identity = context.identity(
             decoded.input.session_id.clone(),
             decoded.input.turn_id.clone(),
