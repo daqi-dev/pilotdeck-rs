@@ -737,24 +737,40 @@ class R11Tests(unittest.TestCase):
                   for event in row[side]['durableStatus']}
         self.assertEqual(labels, set(c.SESSION_TERMINAL_DURABLE_EVENTS), marker)
 
+    BAD_EXPECTATION_SHAPES = ('empty', 'duplicate', 'drift', 'missing-side', 'missing-frames',
+                              'missing-registry', 'bad-applicable', 'non-string-status',
+                              'unparsable')
+
     def bad_expectation_root(self, name):
         """Materialise a mutated copy of the frozen fixture and return its root."""
-        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json').read_text())
+        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json')
+                              .read_text(encoding='utf-8'))
         body = json.loads(json.dumps(document))
         if name == 'empty':
             body['cases'] = []
         elif name == 'duplicate':
             body['cases'] = body['cases'] + [body['cases'][0]]
-        else:
+        elif name == 'missing-side':
+            del body['cases'][0]['rust']
+        elif name == 'missing-frames':
+            del body['cases'][0]['rust']['frames']
+        elif name == 'missing-registry':
+            body['cases'][0]['ts'].pop('registry')
+        elif name == 'bad-applicable':
+            body['cases'][0]['rust']['registry']['applicable'] = 0
+        elif name == 'non-string-status':
+            body['cases'][0]['ts']['durableStatus'].append(1)
+        elif name != 'unparsable':
             body['cases'][0]['rust']['durableStatus'] = ['turn_cancelled']
         fixture = Path(self.temp.name) / ('exp-' + name) / 'scripts/gateway-parity/fixtures'
         fixture.mkdir(parents=True, exist_ok=True)
-        (fixture / 'session-expectations.json').write_text(json.dumps(body))
+        text = '{"cases": [' if name == 'unparsable' else json.dumps(body)
+        (fixture / 'session-expectations.json').write_text(text, encoding='utf-8')
         return fixture.parent.parent.parent
 
     def test_expectations_reject_bad_fixtures(self):
         marker = '#1363 expectations fixture must be non-empty, unique and label-stable'
-        for name in ('empty', 'duplicate', 'drift'):
+        for name in self.BAD_EXPECTATION_SHAPES:
             root = self.bad_expectation_root(name)
             module_file = root / 'scripts' / 'native-witness' / 'collect.py'
             caught = None
@@ -769,7 +785,7 @@ class R11Tests(unittest.TestCase):
         marker = '#1363 collector and mock gateway read the same expectations'
         self.assertEqual(c.session_expectations(), mock_gateway.load_expectations(ROOT), marker)
         # The mock replay is driven on its own by the e2e suite, so it must not
-        # silently collapse the two malformed shapes that change the mapping.
+        # silently collapse the malformed shapes that change the mapping.
         for name in ('empty', 'duplicate'):
             caught = None
             try:

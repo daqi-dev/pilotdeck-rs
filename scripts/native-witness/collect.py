@@ -237,22 +237,36 @@ def session_expectations():
 
     #1363 (#7, #10): the fixture is read as UTF-8, must be a non-empty table of
     unique string case keys, and every ts/rust side must carry the three fields
-    the consumer dereferences (``frames`` list, ``registry.applicable`` boolean,
-    ``durableStatus`` list of strings). Its durable label family must equal
-    SESSION_TERMINAL_DURABLE_EVENTS. A fixture that drifts fails closed here
-    instead of silently collapsing duplicate keys, crashing on an unknown
-    manifest case, or stranding inapplicable-registry cases at NOT_RUN.
+    the replay consumer dereferences (``frames`` list of non-empty strings,
+    ``registry.applicable`` boolean, ``durableStatus`` list of strings). Its
+    durable label family must equal SESSION_TERMINAL_DURABLE_EVENTS. A fixture
+    that drifts fails closed here instead of silently collapsing duplicate
+    keys, crashing on an unknown manifest case, or stranding
+    inapplicable-registry cases at NOT_RUN.
     """
     path = Path(__file__).resolve().parents[1] / 'gateway-parity/fixtures/session-expectations.json'
-    document = json.loads(path.read_text(encoding='utf-8'))
+    try:
+        document = json.loads(path.read_text(encoding='utf-8'))
+    except ValueError as error:
+        # A truncated or zero-byte fixture must fail closed like any other
+        # structural drift, not escape as JSONDecodeError (a ValueError the
+        # caller's Blocked handler does not catch).
+        raise w.Incomplete('#1140 session expectations is not readable JSON: ' + repr(error)) from error
     rows = document.get('cases') if isinstance(document, dict) else None
     w.need(isinstance(rows, list) and bool(rows), 'session expectations is empty or malformed')
     keys = [row.get('case') if isinstance(row, dict) else None for row in rows]
     w.need(all(isinstance(key, str) for key in keys), 'session expectations case key must be a string')
     w.need(len(set(keys)) == len(keys), 'session expectations has duplicate cases')
-    sides = [row[side] for row in rows for side in ('ts', 'rust')]
-    w.need(all(isinstance(side, dict) and isinstance(side.get('frames'), list) for side in sides),
+    # ``row.get`` not ``row[side]``: a missing side must reach the w.need below
+    # as a structured Incomplete instead of a bare KeyError.
+    sides = [row.get(side) for row in rows for side in ('ts', 'rust')]
+    w.need(all(isinstance(side, dict) for side in sides),
+           'session expectations row is missing ts/rust side')
+    w.need(all(isinstance(side.get('frames'), list) for side in sides),
            'session expectations row is missing ts/rust frames list')
+    w.need(all(isinstance(item, str) and bool(item)
+               for side in sides for item in side['frames']),
+           'session expectation frames entry must be a non-empty string')
     w.need(all(isinstance(side.get('registry'), dict)
                and isinstance(side['registry'].get('applicable'), bool) for side in sides),
            'session expectations row is missing ts/rust registry.applicable boolean')
@@ -379,9 +393,9 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
                 # the case must not settle (test_settle_inapplicable_transcript_pending).
                 # Known boundary: a terminal registry can now satisfy this
                 # branch before the transcript's durable entries land; the
-                # three-sample window (>=0.15 s of unchanged bytes) is what
-                # keeps that narrow, and a late entry shows as an ordered
-                # product difference rather than NOT_RUN.
+                # three-sample window (two 0.05 s intervals, i.e. >=0.10 s of
+                # unchanged bytes) is what keeps that narrow, and a late entry
+                # shows as an ordered product difference rather than NOT_RUN.
                 terminal = (terminal or not expectation['durableStatus'] or any(
                     entry.get('event') in SESSION_TERMINAL_DURABLE_EVENTS
                     for entry in observation['durableStatus']['entries']) or any(

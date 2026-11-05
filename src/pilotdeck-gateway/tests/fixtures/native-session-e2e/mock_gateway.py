@@ -33,11 +33,14 @@ def raw(label):
 def load_expectations(root):
     """The registered rust expectations the replay scores against.
 
-    #1363 (#10): mirror of the collector's structural checks for the two shapes
-    that change the mapping itself (empty table, duplicate case keys). The
-    collector's reader is the one on the scoring path and validates the full
-    row shape; this mirror keeps the replay from silently collapsing keys when
-    it is driven on its own.
+    #1363 (#10): mirror of the collector's structural checks for the three
+    shapes that change the case->rust mapping itself (empty table, non-string
+    case key, duplicate case keys). The collector's reader is the one on the
+    scoring path and validates the full row shape; this replay dereferences
+    ``frames``/``registry``/``durableStatus`` directly, so a missing field
+    fails loudly inside the serving thread (``self.errors`` -> ``close()``
+    False) rather than silently changing the mapping.  Messages keep the
+    ``#1140`` prefix because the collector's ``w.need`` prepends the same one.
     """
     document = json.loads(
         (Path(root) / 'scripts/gateway-parity/fixtures/session-expectations.json').read_text(encoding='utf-8'))
