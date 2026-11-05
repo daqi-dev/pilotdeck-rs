@@ -562,8 +562,12 @@ class EnvironmentControls(unittest.TestCase):
                          '#1632 a restored target hands back a stale scanner binary')
         # 按路径语义钉，而不是只查一个缓存动作的名字：手写 actions/cache 把 target
         # 塞进 path 的写法与 rust-cache 一样危险，禁用名单抓不到（#1632 评审 P2）。
-        caches = [step for step in steps if 'actions/cache@v4' in step]
-        self.assertEqual(len(caches), 1, '#1632 the job caches the cargo registry and git sources')
+        # 按动作语义收全部拼写：`actions/cache/restore@v4` / `save@v4` 同样吃 `path:`，
+        # 只认标准写法会漏掉「拆成 restore + save 两步」的复发（两家 r6 评审 P2）。
+        caches = [step for step in steps
+                  if self.ci_step_fields(step, '#1632').get('uses', ('', []))[0]
+                  .startswith('actions/cache')]
+        self.assertEqual(len(caches), 1, '#1632 exactly one cache action feeds the job')
         cache = self.ci_step_fields(caches[0], '#1632')
         self.assertEqual(cache.get('uses'), ('actions/cache@v4', []),
                          '#1632 the cache is declared on the cache action itself')
@@ -636,7 +640,21 @@ class EnvironmentControls(unittest.TestCase):
                '      - uses: actions/cache@v4\n        with:\n'
                '          path: |\n            ~/.cargo/registry\n            ~/.cargo/git\n'
                "          key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}\n",
-               '', '#1632 the job caches the cargo registry and git sources')
+               '', '#1632 exactly one cache action feeds the job')
+        change('cache-restore-action-added',
+               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n',
+               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n'
+               '      - uses: actions/cache/restore@v4\n        with:\n'
+               '          path: _build/cargo-target\n          key: negctl-restore\n',
+               '#1632 exactly one cache action feeds the job')
+        change('cache-key-drift',
+               "          key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}\n",
+               '          key: negctl-cargo\n',
+               '#1632 the cache key follows the committed lockfile')
+        change('cache-path-inline-scalar',
+               '          path: |\n            ~/.cargo/registry\n            ~/.cargo/git\n',
+               '          path: ~/.cargo/registry\n',
+               '#1632 the cache declares its paths as a block')
         change('job-timeout-removed', '    timeout-minutes: 120\n', '',
                '#1632 the job bounds its own wall clock')
         change('evidence-upload-conditional', '        if: ${{ always() }}\n',
@@ -726,11 +744,70 @@ class EnvironmentControls(unittest.TestCase):
 
         pinned = rows(source)
         self.assertEqual(len(pinned), 11, '#1632 eleven mutations cover the wire-up')
+        # 只钉行数等于允许「换掉一条真变异、行数不变」：名字逐一钉死（GLM r7 sibling P2），
+        # 换成一条平凡可杀的变异同样会红。
+        self.assertEqual([ast.literal_eval(row)[0] for row in pinned],
+                         ['registry-drops-reconnect-interaction',
+                          'describe-drops-permission-decide',
+                          'registry-drops-always-on',
+                          'http-store-branch-removed',
+                          'registry-drops-elicitation-respond',
+                          'registry-drops-permission-decide',
+                          'always-on-abort-copies-apply-message',
+                          'always-on-rerun-copies-apply-message',
+                          'always-on-apply-copies-abort-message',
+                          'describe-drops-async-hook-result',
+                          'describe-drops-delete-session'],
+                         '#1632 the eleven mutations are exactly these, not merely eleven rows')
         dropped = ast.get_source_segment(source, pinned[0])
         mutant = source.replace(dropped + ',', '', 1)
         self.assertEqual(mutant.count(dropped), 0, '#1632 the mutant row really left the table')
         self.assertEqual(len(rows(mutant)), 10,
                          '#1632 dropping a row must change the pinned count')
+
+    def slot_guard_cases(self, source, script):
+        """按 `scripts/cargo-slots.sh` 的退出码契约核夹具的槽位守卫用例表。"""
+        for node in ast.walk(ast.parse(source)):
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+                    and any(isinstance(target, ast.Name) and target.id == 'gates'
+                            for target in node.targets)):
+                cases = node.value
+                break
+        else:
+            self.fail('#1632 the fixture must define a literal slot-guard case table')
+        codes = {'free': 0, 'busy': 1, 'invalid-cap': 2, 'ps-failed': 3}
+        self.assertEqual([key.value for key in cases.keys], list(codes),
+                         '#1632 the slot guard cases are exactly the documented states')
+        # 契约的生产方是 shell 脚本而不是这张表：脚本的用法行给出权威码集，脚本多/少一个码
+        # 而夹具与测试一起没跟，就是自指的假 PASS（#1632 r7 评审 MiniMax sibling / boundary P1）。
+        contract = re.search(r'退出码[：:](.+)', script)
+        self.assertIsNotNone(contract, '#1632 cargo-slots.sh documents its exit codes')
+        documented = {int(code) for code in re.findall(r'\d+', contract[1])}
+        self.assertEqual(documented, set(codes.values()),
+                         '#1632 every documented cargo-slots.sh exit code has a slot-guard case')
+        self.assertLessEqual({int(code) for code in re.findall(r'\bexit (\d+)', script)}, documented,
+                             '#1632 every exit in cargo-slots.sh is a documented code')
+        gates = {key.value: ast.literal_eval(value)
+                 for key, value in zip(cases.keys, cases.values)}
+        for name, code in codes.items():
+            text, expected, needle = gates[name]
+            self.assertEqual(int(re.search(r'\bexit (\d+)', text)[1]), code,
+                             f'#1632 the {name} fake gate really exits {code}')
+            self.assertEqual(expected, 0 if code == 0 else 1,
+                             f'#1632 a {code} gate is not a free slot')
+            if code > 1:
+                self.assertIn(f'rc={code}', needle, f'#1632 the {code} gate is reported by code')
+        # 消费方也要钉：表再全，`self_check` 不遍历它就等于没测。
+        loops = [node for node in ast.walk(ast.parse(source))
+                 if isinstance(node, ast.For) and isinstance(node.iter, ast.Call)
+                 and isinstance(node.iter.func, ast.Attribute)
+                 and node.iter.func.attr == 'items'
+                 and isinstance(node.iter.func.value, ast.Name)
+                 and node.iter.func.value.id == 'gates']
+        self.assertEqual(len(loops), 1, '#1632 --self-check iterates the gate table')
+        self.assertEqual(len(loops[0].target.elts), 2,
+                         '#1632 each gate case yields a name and its (script, rc, needle)')
+        return cases
 
     def test_slot_guard_case_table_cannot_shrink_silently(self):
         # #1632 r6 评审（sibling，P1）：`--self-check` 的分支表与变异表是同一类洞——
@@ -738,32 +815,39 @@ class EnvironmentControls(unittest.TestCase):
         # 上面那条 ast 扫描只认 List/Tuple，捞不到这里的 Dict。
         source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
                   'negative_controls.py').read_text()
-
-        def table(text):
-            for node in ast.walk(ast.parse(text)):
-                if (isinstance(node, ast.Assign)
-                        and isinstance(node.value, ast.Dict)
-                        and any(isinstance(target, ast.Name) and target.id == 'gates'
-                                for target in node.targets)):
-                    return node.value
-            self.fail('#1632 the fixture must define a literal slot-guard case table')
-
-        cases = table(source)
-        self.assertEqual([key.value for key in cases.keys],
-                         ['free', 'busy', 'invalid-cap', 'ps-failed'],
-                         '#1632 the slot guard covers every cargo-slots.sh exit code')
-        lines = source.splitlines(keepends=True)
+        script = (Path(__file__).resolve().parents[3]/'scripts/cargo-slots.sh').read_text()
+        cases = self.slot_guard_cases(source, script)
+        # 每条新断言各配一条内存内变异，证明它们真能杀（不落盘，不改夹具字节）。
+        for label, old, new in (
+                ('gate-exits-free', r"exit 2\n'", r"exit 0\n'"),
+                ('gate-expectation-drift', "1, 'cargo slot gate failed with rc=3'",
+                 "0, 'cargo slot gate failed with rc=3'"),
+                ('gate-needle-loses-code', "'cargo slot gate failed with rc=3'",
+                 "'cargo slot gate failed'"),
+                ('consumer-ignores-table', 'in gates.items():', 'in {}.items():'),
+                ('script-gains-a-code', '· 3 无法取样', '· 4 无法取样')):
+            in_source = source.count(old) == 1
+            self.assertEqual(source.count(old) + script.count(old), 1,
+                             f'#1632 unique slot-guard anchor: {label}')
+            with self.assertRaises(AssertionError, msg=f'#1632 {label} must be caught'):
+                self.slot_guard_cases(source.replace(old, new, 1) if in_source else source,
+                                      script if in_source else script.replace(old, new, 1))
+            print(f'#1632 slot-guard mutant {label}: KILLED', flush=True)
+        # ast 的 col_offset 是 UTF-8 字节偏移，跨行累加也要按字节算，否则表里出现中文
+        # （'ps 取样失败'）时切片会错位（GLM r7 boundary P3）。
+        data = source.encode()
+        lines = [line.encode() for line in source.splitlines(keepends=True)]
 
         def offset(lineno, column):
             return sum(len(line) for line in lines[:lineno - 1]) + column
 
         start = offset(cases.keys[-1].lineno, cases.keys[-1].col_offset)
         end = offset(cases.values[-1].end_lineno, cases.values[-1].end_col_offset)
-        mutant = source[:start] + source[end + 1:]  # 连同分隔逗号一起删掉整格
+        mutant = (data[:start] + data[end + 1:]).decode()  # 连同分隔逗号一起删掉整格
         self.assertNotIn("'ps-failed'", mutant, '#1632 the mutant case really left the table')
-        self.assertEqual([key.value for key in table(mutant).keys],
-                         ['free', 'busy', 'invalid-cap'],
-                         '#1632 dropping a case must change the pinned table')
+        with self.assertRaises(AssertionError, msg='#1632 dropping a case must be caught'):
+            self.slot_guard_cases(mutant, script)
+        print('#1632 slot-guard mutant case-removed: KILLED', flush=True)
 
     def test_nextest_keeps_workspace_doctests_and_failure_semantics(self):
         jobs = self.ci_jobs(issue='#922')
