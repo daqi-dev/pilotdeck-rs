@@ -2495,6 +2495,12 @@ impl HeaderGuard {
         if let Some(start) = self.drop_start.take() {
             self.dropped.push((start, index));
         }
+        // #1555 fix-r2: this byte is not droppable leading OWS, so the
+        // after-colon window closes here. Leaving it open across a CR let the
+        // guard strip the spaces behind it and hand hyper the *valid* empty
+        // value `X:\r\n` (`X: \r  \n`), while Node answers those bytes with
+        // its 47-byte 400 (llhttp: expected LF after CR).
+        self.droppable_ows = false;
         self.raw_bytes = self.raw_bytes.saturating_add(1);
         if self.raw_bytes >= self.raw_limit {
             self.active = false;

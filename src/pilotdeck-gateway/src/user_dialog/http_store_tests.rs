@@ -897,6 +897,40 @@ async fn leading_ows_head_still_parses_a_valid_request() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// #1555 fix-r2: a CR inside a field value must never be "repaired" by the
+/// leading-OWS drop. The window opened by the colon used to stay armed across
+/// the CR, so the guard stripped the spaces behind it and handed hyper the
+/// valid empty value `X:\r\n` — the request reached the handler (405) while
+/// Node v22.22.0 answers both shapes with its 47-byte 400 (raw-socket probe
+/// `_tmp/20261106-1576-review/raw/cr-ows-probe.out`: `X: \r  \n` and
+/// `X:\r \r\n`, bytes=47). httparse 1.10.1 rejects a CR followed by a
+/// non-LF in a value (`Err(HeaderValue)`), so the guard must forward these
+/// bytes untouched.
+#[tokio::test]
+async fn cr_in_value_is_rejected_like_node() {
+    let (store, directory) = file_store("cr-in-value");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    for shape in ["X: \r  \n", "X:\r \r\n"] {
+        let request = format!(
+            "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n{shape}Connection: close\r\n\r\n"
+        );
+        let (response, closed) =
+            exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
+        assert_eq!(
+            status(&response),
+            400,
+            "#1555 a CR inside a field value must be rejected like Node ({shape:?}): {}",
+            String::from_utf8_lossy(&response)
+        );
+        assert!(
+            closed,
+            "#1555 the parser 400 must end the connection ({shape:?})"
+        );
+    }
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// Node's `maxHeaderSize` counts the request target plus field name and value
 /// bytes, not the raw `name: value\r\n` line. 2,000 fields of `aaaaa: x`
 /// (20,000 raw bytes but only 12,000 counted bytes) are inside the 16 KiB
@@ -2110,6 +2144,22 @@ fn header_guard_replays_node_field_budget() {
     assert!(
         guard.push(request_line.as_bytes()),
         "uncounted but forwarded separators are still bounded by the raw cap"
+    );
+
+    // #1555 fix-r2: a byte that is not droppable OWS closes the after-colon
+    // window. A CR used to leave it open, so the spaces behind it were dropped
+    // too and the guard handed hyper the *valid* empty value `X:\r\n`; the
+    // line must instead reach hyper unchanged and be rejected like Node's
+    // llhttp (`header_value_discard_ws_almost_done` expects LF after CR).
+    let mut guard = HeaderGuard::new(max);
+    assert!(!guard.push(b"GET / HTTP/1.1\r\n"));
+    let mut chunk = b"X: \r  \n".to_vec();
+    assert!(!guard.push(&chunk));
+    let kept = guard.kept_prefix(&mut chunk);
+    assert_eq!(
+        &chunk[..kept],
+        b"X:\r  \n",
+        "#1555 a CR must close the leading-OWS window"
     );
 }
 
