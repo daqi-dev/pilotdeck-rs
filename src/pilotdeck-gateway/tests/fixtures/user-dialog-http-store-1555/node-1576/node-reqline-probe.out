@@ -1,5 +1,5 @@
 {"node":"v22.22.0"}
-{"case":"reqline-90000-spaces-before-target","status":"200","bytes":141,"why":"EOF","head":"HTTP/1.1 200 OK"}
-{"case":"reqline-90000-spaces-after-target","status":"200","bytes":141,"why":"EOF","head":"HTTP/1.1 200 OK"}
-{"case":"reqline-short-double-space","status":"200","bytes":141,"why":"EOF","head":"HTTP/1.1 200 OK"}
-{"case":"plain","status":"200","bytes":141,"why":"EOF","head":"HTTP/1.1 200 OK"}
+{"case":"reqline-90000-spaces-before-target","status":"200","bytes":141,"head":"HTTP/1.1 200 OK"}
+{"case":"reqline-90000-spaces-after-target","status":"200","bytes":141,"head":"HTTP/1.1 200 OK"}
+{"case":"reqline-short-double-space","status":"200","bytes":141,"head":"HTTP/1.1 200 OK"}
+{"case":"plain","status":"200","bytes":141,"head":"HTTP/1.1 200 OK"}

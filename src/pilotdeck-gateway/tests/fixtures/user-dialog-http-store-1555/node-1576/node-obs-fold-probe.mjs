@@ -28,11 +28,14 @@ for (const [name, payload] of cases) {
   const r = await once(port, Buffer.from(payload, 'latin1'));
   console.log('\n=== ' + name + ' ===');
   // Date makes a 2xx response differ between runs; print the stable projection
-  // (size, close reason, status line) and keep the full bytes only when the
-  // response carries no Date header, so the file can be re-derived byte for
-  // byte a week later.
+  // (size, status line) and keep the full bytes only when the response carries
+  // no Date header, so the file can be re-derived byte for byte a week later.
+  // `why` (EOF vs ECONNRESET) is deliberately NOT printed: it depends on how the
+  // rejected connection is torn down and jitters between runs (the committed
+  // file already shows both spellings), which would make a byte-for-byte
+  // re-derivation fail for a reason unrelated to the server's behaviour.
   const dated = /(^|\r\n)Date: /.test(r.text);
-  console.log(JSON.stringify({bytes: r.bytes, why: r.why,
+  console.log(JSON.stringify({bytes: r.bytes,
     head: r.text.split('\r\n')[0], hex: dated ? undefined : r.hex}));
 }
 server.close();

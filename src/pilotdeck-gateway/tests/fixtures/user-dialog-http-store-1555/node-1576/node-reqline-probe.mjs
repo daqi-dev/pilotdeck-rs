@@ -26,6 +26,8 @@ const port = server.address().port;
 console.log(JSON.stringify({node: process.version}));
 for (const [name, payload] of cases) {
   const r = await once(port, Buffer.from(payload, 'latin1'));
-  console.log(JSON.stringify({case: name, status: (r.text.match(/^HTTP\/1\.1 (\d{3})/)||[null,null])[1], bytes: r.bytes, why: r.why, head: r.text.split('\r\n')[0]}));
+  // No `why` field: EOF vs ECONNRESET is a teardown-timing detail, not server
+  // behaviour, and it jitters between runs (see node-obs-fold-probe.mjs).
+  console.log(JSON.stringify({case: name, status: (r.text.match(/^HTTP\/1\.1 (\d{3})/)||[null,null])[1], bytes: r.bytes, head: r.text.split('\r\n')[0]}));
 }
 server.close();

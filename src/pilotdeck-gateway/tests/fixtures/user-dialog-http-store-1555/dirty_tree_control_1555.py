@@ -10,7 +10,9 @@ Two checks, one per half of the fix:
    a real minimum (`positive` below, so a driver that merely refuses everything
    cannot pass this control). The control then takes the same lock and starts
    the driver: it prints `starting`, then `lock-requested` immediately before
-   the blocking `flock`, then `lock-acquired` as the first statement after the
+   the blocking `flock` (stamped with the driver's own `time.monotonic()`, so
+   the measured wait is not inflated by the control's polling delay), then
+   `lock-acquired` as the first statement after the
    request returns. Seeing the request without the acquisition at the end of
    the hold is a state proof that it is blocked -- the only code between the
    two is the request itself, so neither a slow interpreter nor a git-heavy
@@ -22,27 +24,44 @@ Two checks, one per half of the fix:
    the lock*, and the driver is started inside that same hold, so it is already
    blocked on the lock when the bytes change and finds them dirty the instant it
    is released. There is no window in which it could build. Delete the dirty
-   gate and it builds and measures: SURVIVED. The refusal must name the dirty
-   tree, so an unrelated driver failure cannot pass for a killed mutation.
-   Known seam: between the release and this driver's own acquisition a sibling
-   runner can win the lock and see the marker; that run reports its own
-   `src/ is dirty` INVALID and must be retried. It is a false FAIL of the
-   sibling, never a false PASS here.
+   gate and it builds and measures: SURVIVED. The refusal must be the driver's
+   own `src_dirty` bit (a machine field), so an unrelated build failure cannot
+   pass for a killed mutation. The marker is undone by the *driver*, still
+   inside the lock, before it returns (`negctl_restore` in
+   `rss_probe_1555.py`): a restore issued here after the driver exits would
+   race every runner queued behind it, and the winner would see a marked
+   source and record a false `src/ is dirty` (fix-r5 review, concurrency P1).
+   The fallback here only covers a driver that never reached the dirty branch.
 
-The source is restored and byte-verified in a `finally`. The restore re-takes
-the tree lock with a bounded wait (fix-r4): releasing the lock while the source
-still carries the marker let a sibling runner acquire a dirty tree and record a
-false INVALID. A sibling that holds the lock for longer than the bound cannot
-skip the restore, so the wait falls back to the unlocked path and says so in
-the complaint. The restore only writes when the bytes on disk are still exactly
-what this process wrote: a file that is neither HEAD nor HEAD+marker is
-somebody else's uncommitted work and is left untouched, with the run reported
-as INVALID. The restore itself goes through a temp file and `os.replace`, so a
-concurrent reader sees either the old bytes or the old bytes plus marker, never
-a truncated source. The temp file lives in the worktree root, outside the
-guarded `src/`: a `src/`-local temp that survived a kill between write and
-replace would be an untracked build input and every later guard run would fail
-closed on a file that is not source at all.
+The lock check does not trust the driver's own markers alone (fix-r5). A mutant
+that deletes the whole `with tree_lock(...)` block *including* the
+`lock-acquired` print would also show "requested, never acquired" and would
+build for longer than the hold, which is indistinguishable from a blocked
+driver by the two markers alone -- the exact false PASS the fix-r4 P1 was
+about. Two independent state checks close it:
+
+* the driver must not have produced `build.log` or `summary.json` while the
+  control held the lock (a driver that is not blocked builds there), and
+* after the release, its **full** output must contain `lock-acquired`: a real
+  driver acquires the lock the moment it is released, so a run that finished
+  `status=OK` without ever printing that line never took the lock at all.
+
+The marker is normally undone by the driver itself, inside the lock (see
+`negctl_restore` in `rss_probe_1555.py`); this file's `restore_locked` is the
+fallback for a driver that never reached the dirty branch, and the final
+byte-verification. It re-takes the tree lock with a bounded wait (fix-r4) and
+falls back to the unlocked path -- saying so in the complaint -- if a sibling
+holds it longer than the bound or the lock cannot be opened at all. The restore
+only writes when the bytes on disk are still exactly this process's marker
+(HEAD or a marker with the same pid; a bare constant let one concurrent control
+undo another's marker): anything else is somebody else's uncommitted work, left
+untouched with the run reported as INVALID. The write goes through a temp file
+and `os.replace`, so a concurrent reader sees either the old bytes or the old
+bytes plus marker, never a truncated source, and the temp is removed if the
+replace fails. The temp file lives in the worktree root, outside the guarded
+`src/` and under the `.negctl-*` ignore rule: a `src/`-local temp that survived
+a kill would be an untracked build input, and one left in the root would dirty
+`git status --porcelain` and block the frozen-ledger re-registration.
 
     CARGO_TARGET_DIR=... python3 dirty_tree_control_1555.py NEW_OUTPUT_DIR
 """
@@ -60,7 +79,9 @@ root = Path(__file__).resolve().parents[5]
 RELATIVE = 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
 source = root / RELATIVE
 probe = Path(__file__).resolve().parent / 'rss_probe_1555.py'
-MARKER = b'\n// #1555 fix-r2 dirty-tree control\n'
+# Process-unique: two controls in the same worktree write the same file, and a
+# bare constant let one restore the other's marker (review, concurrency P2).
+MARKER = f'\n// #1555 fix-r2 dirty-tree control pid={os.getpid()}\n'.encode()
 HOLD_SECONDS = 10.0
 # The driver must have been inside the request for at least this long when the
 # lock is released; a request that lands in the last moment of the hold is a
@@ -104,6 +125,31 @@ def launch(out, env, name, log):
         stderr=subprocess.STDOUT, text=True, start_new_session=True)
 
 
+def requested_clock(text):
+    """Return the driver's own monotonic timestamp from its `lock-requested` line.
+
+    Stamping the request with the control's read time biases the measured wait
+    *late*: the control polls every 50 ms and `read_log` can be delayed further
+    on a cold cache, so a slow start can read as a proven wait (fix-r5 boundary
+    P2). The driver prints `time.monotonic()` on the same line and both
+    processes read the host's monotonic clock, so the difference is the real
+    wait. `None` when the line carries no parseable number -- an older driver,
+    or a driver whose marker line was rewritten -- and the caller falls back to
+    its read time, which is the pre-fix behaviour and never turns a wait into a
+    pass on its own.
+    """
+    for line in text.splitlines():
+        if line.startswith('lock-requested'):
+            fields = line.split()
+            if len(fields) == 2:
+                try:
+                    return float(fields[1])
+                except ValueError:
+                    return None
+            return None
+    return None
+
+
 def watch(process, path):
     """Return what the driver printed while the caller still holds the lock.
 
@@ -125,7 +171,8 @@ def watch(process, path):
     while True:
         text = read_log(path)
         if requested_at is None and 'lock-requested' in text:
-            requested_at = time.monotonic()
+            stamp = requested_clock(text)
+            requested_at = stamp if stamp is not None else time.monotonic()
         if 'lock-acquired' in text or process.poll() is not None:
             return text, requested_at
         if time.monotonic() >= deadline:
@@ -146,25 +193,42 @@ def settle(process, log):
     return process.returncode
 
 
-def restore(path, original):
+def restore(path, original, marked=None):
     """Undo this process's marker only; never overwrite someone else's bytes.
 
     Returns `(restored, complaint)`. `restored` is False when the bytes are not
-    HEAD and not HEAD+marker, i.e. another writer touched the file while the
-    control held the lock: the run must not report success and must not clobber
-    that work. The write is a temp file plus `os.replace`, which is atomic for a
-    reader on the same filesystem.
+    HEAD and not *this* process's marker (the marker carries our pid, so a
+    concurrent control's marker is not mistaken for ours): another writer
+    touched the file and the run must neither report success nor clobber that
+    work. The write is a temp file plus `os.replace`, which is atomic for a
+    reader on the same filesystem, and the temp file is removed if the replace
+    itself fails.
     """
-    current = path.read_bytes()
+    marked = original + MARKER if marked is None else marked
+    try:
+        current = path.read_bytes()
+    except OSError as error:
+        return False, f'{type(error).__name__}: {error} (could not read the source back)'
     if current == original:
         return True, ''
-    if current != original + MARKER:
+    if current != marked:
         return False, ('the product source no longer matches HEAD or this '
                        'control\'s marker; left untouched for inspection')
     temp = scratch('restore')
-    temp.write_bytes(original)
-    os.replace(temp, path)
-    if path.read_bytes() == original:
+    try:
+        temp.write_bytes(original)
+        os.replace(temp, path)
+    except OSError as error:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
+        return False, f'{type(error).__name__}: {error} (the rewrite failed)'
+    try:
+        readback = path.read_bytes()
+    except OSError as error:
+        return False, f'{type(error).__name__}: {error} (rewrite not readable)'
+    if readback == original:
         return True, ''
     return False, 'the restore did not read back as HEAD bytes'
 
@@ -172,16 +236,22 @@ def restore(path, original):
 def restore_locked(path, original):
     """Restore the marker under the tree lock, bounded, then release.
 
-    Releasing the lock while the marker is still on disk lets a sibling runner
-    acquire a dirty tree and record a false INVALID (fix-r4). A sibling that
-    holds the lock for longer than the bound must not be able to skip the
-    restore, so the timeout falls back to the unlocked path and says so.
+    The primary path is now the driver's own restore (`negctl_restore` in
+    `rss_probe_1555.py`): it undoes the marker while it still holds the lock,
+    so no runner queued behind can see it. This function is the fallback for a
+    driver that never got that far (a mutant without the dirty gate, a crash),
+    and for the second call from `main`. It re-takes the tree lock with a
+    bounded wait; a sibling that holds the lock for longer than the bound must
+    not be able to skip the restore, so the timeout falls back to the unlocked
+    path and says so. Any `OSError` from the lock itself (EMFILE, ENOSPC, a
+    missing worktree) takes the same fallback: a restore that silently did not
+    happen would leave the product source marked forever.
     """
     try:
         with tree_lock(root, timeout=RESTORE_LOCK_TIMEOUT):
-            return restore(path, original)
-    except TimeoutError as error:
-        restored, complaint = restore(path, original)
+            return restore(path, original, original + MARKER)
+    except OSError as error:
+        restored, complaint = restore(path, original, original + MARKER)
         return restored, (f'{type(error).__name__}: {error} '
                           f'(restored without the lock); {complaint}')
 
@@ -208,6 +278,7 @@ def lock_check(out, env):
     requested_at = None
     held = 0.0
     blocked = 0.0
+    progressed = False
     try:
         with tree_lock(root, timeout=LOCK_TIMEOUT):
             started = time.monotonic()
@@ -215,8 +286,21 @@ def lock_check(out, env):
             early, requested_at = watch(process, path)
             released = time.monotonic()
             held = released - started
+            # A lower bound on the true wait: the driver stamps the request
+            # microseconds before the blocking call and the release is sampled
+            # after the hold. A cold start that reaches the request in the last
+            # two seconds of the hold therefore lands under MIN_BLOCK_SECONDS
+            # and is reported INVALID -- fail-closed on purpose, because the
+            # same shortfall would otherwise be the shape of a slow no-lock
+            # mutant. The verdict does not rest on this number alone: the two
+            # independent state checks below (`progressed`, `acquired`) hold it
+            # even when the timing band is unusable (fix-r5 boundary P2).
             if requested_at is not None:
                 blocked = released - requested_at
+            # A driver that is not blocked builds while the control still holds
+            # the lock; those files are created only after the acquisition.
+            progressed = ((out / 'probe-lock' / 'build.log').exists()
+                          or (out / 'probe-lock' / 'summary.json').exists())
         returncode = settle(process, log)
     except (subprocess.TimeoutExpired, OSError) as error:
         reason = f'{type(error).__name__}: {error}'
@@ -226,11 +310,18 @@ def lock_check(out, env):
         log.close()
         returncode = None
     summary = read_summary(out / 'probe-lock' / 'summary.json')
+    # The full output, not just the hold window: a real driver prints
+    # `lock-acquired` as soon as the control releases the lock.
+    acquired = 'lock-acquired' in read_log(path)
     exited_early = process is not None and process.returncode is not None and not early
     status = 'KILLED'
     if 'lock-acquired' in early:
         status = 'SURVIVED'
         reason = 'the driver acquired the shared lock while the control held it'
+    elif progressed:
+        status = 'SURVIVED'
+        reason = ('the driver built while the control held the lock '
+                  '(build.log or summary.json appeared during the hold)')
     elif not positive_ok:
         status = 'INVALID'
         reason = (f'clean-tree positive control failed: {positive_error} '
@@ -253,8 +344,13 @@ def lock_check(out, env):
     elif summary.get('status') != 'OK':
         status = 'INVALID'
         reason = f'driver status {summary.get("status")!r} after the release'
+    elif not acquired:
+        status = 'SURVIVED'
+        reason = ('the driver finished without ever taking the shared lock '
+                  '(no lock-acquired anywhere in its output)')
     return dict(control='lock-held-during-driver', status=status,
                 held_seconds=round(held, 3), blocked_seconds=round(blocked, 3),
+                progressed_under_hold=progressed, acquired_after_release=acquired,
                 positive=dict(returncode=None if positive is None else positive.returncode,
                               status=positive_summary.get('status'),
                               minima=positive_summary.get('minima')),
@@ -275,10 +371,21 @@ def dirty_check(out, env, original):
         with tree_lock(root, timeout=LOCK_TIMEOUT):
             if source.read_bytes() != original:
                 raise RuntimeError('product source differs from HEAD before the dirty check')
+            marked = original + MARKER
             temp = scratch('marker')
-            temp.write_bytes(original + MARKER)
+            temp.write_bytes(marked)
             os.replace(temp, source)
-            process = launch(out, env, 'probe-dirty', log)
+            # The driver undoes the marker itself, under the lock, before it
+            # returns (`negctl_restore` in rss_probe_1555.py): a restore issued
+            # after this process exits would race the runners queued behind the
+            # driver and let them see a marked source.
+            original_file, marked_file = out / 'restore-original', out / 'restore-marked'
+            original_file.write_bytes(original)
+            marked_file.write_bytes(marked)
+            driver_env = dict(env)
+            driver_env['PDRS_NEGCTL_RESTORE'] = '\x1f'.join(
+                (RELATIVE, str(original_file), str(marked_file)))
+            process = launch(out, driver_env, 'probe-dirty', log)
             early, _requested_at = watch(process, path)
         returncode = settle(process, log)
     except (subprocess.TimeoutExpired, OSError, RuntimeError) as error:
@@ -292,11 +399,16 @@ def dirty_check(out, env, original):
         restored, complaint = restore_locked(source, original)
     summary = read_summary(out / 'probe-dirty' / 'summary.json')
     failures = [str(item) for item in (summary.get('failures') or [])]
+    provenance = summary.get('provenance') or {}
+    # The driver's own machine field, not a human-readable message prefix: the
+    # wording of the refusal drifts between rounds, and `rc=2 + INVALID + no
+    # build.log` is also the shape of a plain build failure (which reports
+    # `src_dirty=false`). `provenance.src_dirty` separates the two.
     refused = (returncode == 2
                and summary.get('status') == 'INVALID'
                and not summary.get('minima')
                and not (out / 'probe-dirty' / 'build.log').exists()
-               and any(item.startswith('src/ is dirty') for item in failures))
+               and provenance.get('src_dirty') is True)
     if not restored:
         status = 'INVALID'
         reason = complaint
@@ -307,13 +419,15 @@ def dirty_check(out, env, original):
     else:
         status = 'SURVIVED'
         reason = (f'rc={returncode} status={summary.get("status")!r} '
+                  f'src_dirty={provenance.get("src_dirty")!r} '
                   f'failures={failures[:1]} '
                   f'built={(out / "probe-dirty" / "build.log").exists()}')
     return dict(control='dirty-src-driver-refused', status=status,
                 returncode=returncode, driver_status=summary.get('status'),
                 built=(out / 'probe-dirty' / 'build.log').exists(),
                 early_output=early.strip().splitlines()[:3],
-                failures=summary.get('failures'), restored=restored, reason=reason)
+                failures=summary.get('failures'), restored=restored,
+                restore_complaint=complaint, reason=reason)
 
 
 def main():

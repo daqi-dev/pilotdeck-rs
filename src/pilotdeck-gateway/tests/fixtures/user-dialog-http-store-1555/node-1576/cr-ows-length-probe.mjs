@@ -16,6 +16,11 @@ const cases = {
   // The cr-* rows above stay 400 at any length because llhttp stops at the CR
   // inside the value, before the overflow accounting; a whitespace-only value
   // is not counted at all (the ows row below is 200 at 90,000 bytes).
+  // The two long-value-1635x rows bracket the threshold from both sides on this
+  // exact request shape (value 16,357 -> 200, 16,358 -> 431): the limit is a
+  // property of the whole header block, not of the value's length alone.
+  'long-value-16357':    'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + 'a'.repeat(16357) + '\r\nConnection: close\r\n\r\n',
+  'long-value-16358':    'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + 'a'.repeat(16358) + '\r\nConnection: close\r\n\r\n',
   'long-value-16380':    'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + 'a'.repeat(16380) + '\r\nConnection: close\r\n\r\n',
   'long-value-20000':    'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + 'a'.repeat(20000) + '\r\nConnection: close\r\n\r\n',
   'ows-90000-control':   'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + pad(90000) + 'ok\r\nConnection: close\r\n\r\n',
@@ -29,7 +34,12 @@ for (const [name, raw] of Object.entries(cases)) {
     s.on('error', () => resolve(buf));
     setTimeout(() => s.destroy(), 4000);
   });
-  const head = out.subarray(0, out.indexOf('\r\n')).toString('latin1');
+  // An empty buffer means no response arrived at all (the server may reset
+  // before the client reads). Say so explicitly: a bare `bytes=0 head=""`
+  // looks like a normal row when the recompute diff shows a change.
+  const cut = out.indexOf('\r\n');
+  const head = out.length === 0 ? 'NO-RESPONSE'
+    : out.subarray(0, cut === -1 ? out.length : cut).toString('latin1');
   console.log(`${name}\treq_len=${Buffer.byteLength(raw)}\tbytes=${out.length}\thead=${JSON.stringify(head)}`);
 }
 server.close(); process.exit(0);
