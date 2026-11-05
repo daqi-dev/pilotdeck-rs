@@ -292,9 +292,18 @@ fn symlinked_project_spelling_keeps_lease_attachments() {
         Some(JsValue::Array(files)) => files.clone(),
         _ => Vec::new(),
     };
+    // registered allowedReadFiles carry the post-open canonical spelling, not
+    // the client's (services.rs: `RegisteredAttachment.resolved`); under a
+    // symlinked project the two spellings differ, so the expectation is the
+    // physical one.
+    let physical = std::fs::canonicalize(&path)
+        .expect("#1618 alias lease file canonicalization")
+        .to_str()
+        .expect("#1618 canonical lease UTF-8")
+        .to_owned();
     negative_assert!(
-        allowed == vec![JsValue::from(logical.as_str())],
-        "#1618 a lease attachment under a symlinked project must be registered"
+        allowed == vec![JsValue::from(physical.as_str())],
+        "#1618 a lease attachment under a symlinked project must be registered under its canonical spelling, got: {allowed:?}"
     );
     negative_assert!(
         !diagnostics_block(&blocks).contains("not found"),
