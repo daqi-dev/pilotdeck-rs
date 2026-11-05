@@ -5,6 +5,9 @@ mod baseline;
 #[path = "../src/mutants.rs"]
 mod mutants;
 #[allow(dead_code)]
+#[path = "../src/process_group.rs"]
+mod process_group;
+#[allow(dead_code)]
 #[path = "common/negative_receipt.rs"]
 mod test_negative_receipt;
 #[allow(dead_code)]

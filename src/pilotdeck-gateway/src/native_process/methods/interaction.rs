@@ -85,14 +85,14 @@ impl Requests {
                 InteractionBinding::from_value(value).unwrap_or_else(|_| never_matching())
             });
         let Some(owner) = params.get("sessionKey").and_then(JsValue::as_string) else {
-            // The port's owner domain is the TS `string` type (JsString); a
-            // non-string sessionKey is a never-seen Map key in TS. Such an
-            // owner never holds bindings or pending requests here either, so it
-            // walks the fresh-owner path without storing state.
-            return Ok(match previous {
-                Some(_) => reconnect_result("stale_binding", None, vec![]),
-                None => reconnect_result("no_pending", Some(&next), vec![]),
-            });
+            // A non-string sessionKey is outside the port's string owner
+            // domain; the runtime port owns that outcome rule (#1632 item 8,
+            // A7.8-INTERACTION-NONSTRING-OWNER-001). The adapter only maps the
+            // owner, it does not decide what the miss looks like.
+            return self
+                .interactions
+                .reconnect_unkeyed(next, previous.as_ref())
+                .map_err(RequestError::new);
         };
         self.interactions
             .reconnect(owner, Some(next), previous.as_ref())
@@ -516,9 +516,18 @@ mod tests {
         teardown(&requests).await;
     }
 
-    // A non-string sessionKey is a never-seen Map key in TS: the port walks
-    // its fresh-owner path (no stored binding, no pending requests) and never
-    // persists state under such an owner in the Rust port's string domain.
+    // A non-string sessionKey has no representation in the port's string key
+    // domain, so the port walks its fresh-owner path (no stored binding, no
+    // pending requests) and never persists state under such an owner.
+    //
+    // This is the *Rust* side of an unapproved divergence. The recorded TS
+    // oracle for the same input (`tests/fixtures/connection-context/
+    // oracle.json`, scenario `session-key-5`) answers `reconnected`: TS keys
+    // the binding by the raw value, so a `submit_turn` under `sessionKey: 5`
+    // makes even the first `reconnect_interaction(5)` reconnect. Registered as
+    // A7.8-INTERACTION-NONSTRING-OWNER-001 (correction in #1703), tracked in
+    // #1465. Closing the divergence means widening the owner key domain, which
+    // is that ledger round's decision, not this port extraction's.
     #[tokio::test]
     async fn reconnect_interaction_non_string_session_key_stays_fresh() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1316 fixture setup");
@@ -566,5 +575,45 @@ mod tests {
             "#1316 non-string sessionKey with previous is stale"
         );
         teardown(&requests).await;
+    }
+
+    /// Pins the *evidence* of the divergence above, not the Rust behaviour:
+    /// the recorded TS frames for scenario `session-key-5` answer the first
+    /// `reconnect_interaction(5)` after a `submit_turn(sessionKey: 5)` with
+    /// `reconnected`.
+    ///
+    /// If the fixture is ever re-recorded and TS stops storing a binding for a
+    /// non-string key, the divergence is gone — and this test says so instead
+    /// of leaving the claim to prose (#1465 / #1703).
+    #[test]
+    fn recorded_ts_oracle_reconnects_a_non_string_session_key() {
+        let oracle: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/connection-context/oracle.json"
+            ))
+            .expect("#1703 the connection-context oracle fixture"),
+        )
+        .expect("#1703 the oracle fixture is JSON");
+        let scenario = oracle["scenarios"]
+            .as_array()
+            .expect("#1703 oracle scenarios")
+            .iter()
+            .find(|scenario| scenario["name"] == "session-key-5")
+            .expect("#1703 the session-key-5 scenario");
+        let frame = scenario["results"]
+            .as_array()
+            .expect("#1703 scenario results")
+            .iter()
+            .filter_map(|result| result["framesText"].as_array())
+            .flatten()
+            .filter_map(|text| text.as_str())
+            .find(|text| text.contains("\"id\":\"reconnect_interaction\""))
+            .expect("#1703 the recorded reconnect response");
+        negative_assert_eq!(
+            frame.contains("\"outcome\":\"reconnected\""),
+            true,
+            "#1703 TS reconnects a non-string sessionKey by raw value"
+        );
     }
 }

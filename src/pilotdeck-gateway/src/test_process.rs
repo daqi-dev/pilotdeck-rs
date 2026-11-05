@@ -4,11 +4,236 @@ use std::{
     collections::BTreeSet,
     io::{self, Read},
     os::fd::AsFd,
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     time::{Duration, Instant},
 };
 const LIMIT: usize = 64 * 1024;
 const DEADLINE: Duration = Duration::from_secs(30);
+
+/// Deadline for an owned rerun of a whole test case (#1632). The audit cases
+/// build a real fixture before they can fail, so this is generous but finite:
+/// the old `Command::output()` had no bound at all, and a descendant holding
+/// the stream write ends could keep the parent test blocked forever.
+pub(crate) const RERUN_LIMIT: Duration = Duration::from_secs(300);
+const RERUN_POLL: Duration = Duration::from_millis(10);
+/// Per-file cap for the rerun's captured streams. A descendant that keeps
+/// writing is exactly the regression the audit hunts, so the capture must not
+/// be able to fill the host: the wait below stops the group once either file
+/// passes the cap, and the read truncates.
+#[cfg(unix)]
+const RERUN_OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
+
+/// Size of a captured stream, or 0 while it does not exist yet.
+///
+/// A missing file is "not written yet"; any other error is *not* a zero. The
+/// old `unwrap_or(0)` would read a failing `metadata` as an empty stream on
+/// every poll, so a runaway writer could grow the file without ever tripping
+/// the cap — the cap would be silently off.
+#[cfg(unix)]
+fn stream_len(path: &std::path::Path) -> io::Result<u64> {
+    match std::fs::metadata(path) {
+        Ok(meta) => Ok(meta.len()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(error),
+    }
+}
+
+/// Read a rerun stream. A read failure is reported, never swallowed into an
+/// empty string: an audit that fails must still show its evidence.
+///
+/// The read is capped *while* reading (`take`), not after: `fs::read` would
+/// allocate the whole file first and then truncate, so a capture that outgrew
+/// the cap between two polls could still cost unbounded memory.
+#[cfg(unix)]
+fn read_capped(path: &std::path::Path) -> String {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) => return format!("<rerun output unreadable: {error}>"),
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = file.take(RERUN_OUTPUT_LIMIT + 1).read_to_end(&mut bytes) {
+        return format!("<rerun output unreadable: {error}>");
+    }
+    let truncated = bytes.len() as u64 > RERUN_OUTPUT_LIMIT;
+    let end = bytes.len().min(RERUN_OUTPUT_LIMIT as usize);
+    let mut text = String::from_utf8_lossy(&bytes[..end]).into_owned();
+    if truncated {
+        text.push_str("\n<rerun output truncated at 64 MiB>");
+    }
+    text
+}
+
+/// Result of [`rerun_exact`]. `stdout`/`stderr` are returned even on timeout so
+/// a stuck rerun still reports what it managed to print.
+pub(crate) struct RerunOutput {
+    pub status: std::process::ExitStatus,
+    pub stdout: String,
+    pub stderr: String,
+    /// The deadline expired and the whole process group was killed.
+    pub timed_out: bool,
+    /// A captured stream passed [`RERUN_OUTPUT_LIMIT`]; the group was stopped
+    /// so a runaway writer cannot fill the host.
+    pub overflow: bool,
+}
+
+/// Run one test case in an owned rerun of this binary, bounded in both
+/// directions that used to hang the parent:
+///
+/// * `Command::output()` blocked until every write end of its pipes closed, so
+///   a grandchild that inherited stdout/stderr (the regression the audit is
+///   meant to catch) kept the parent blocked forever. Here both streams go to
+///   files, which never block on a lingering writer.
+/// * The rerun gets its own process group (`process_group(0)`); when the
+///   deadline expires the whole group is killed, not just the leader, and the
+///   leader is reaped so the captured bytes survive the failure.
+///
+/// This mirrors `tests/fixtures/negative_process.py` `run_owned` (start a new
+/// session, bounded wait, group kill, always keep the output).
+#[cfg(unix)]
+pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) -> RerunOutput {
+    use std::os::unix::process::CommandExt;
+    let scratch = crate::test_scratch::Scratch::new("rerun");
+    let stdout_path = scratch.path().join("stdout");
+    let stderr_path = scratch.path().join("stderr");
+    let mut command = Command::new(std::env::current_exe().expect("rerun test binary path"));
+    command
+        // `--include-ignored` keeps the control worker cases selectable under
+        // `--exact`; the audits themselves are not ignored.
+        .args([
+            "--exact",
+            test,
+            "--include-ignored",
+            "--nocapture",
+            "--test-threads=2",
+        ])
+        .envs(envs.iter().copied())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(
+            std::fs::File::create(&stdout_path).expect("rerun stdout file"),
+        ))
+        .stderr(Stdio::from(
+            std::fs::File::create(&stderr_path).expect("rerun stderr file"),
+        ))
+        // The rerun owns its group so the deadline can kill the descendants
+        // the case spawned, not only the leader. That also detaches it from
+        // the test host's group: a ^C aimed at the host does not reach the
+        // rerun, and if the host dies first only the parent's own wait ends it
+        // (the workspace forbids the `unsafe` a `PR_SET_PDEATHSIG` would
+        // need). The parent stays the only reaper by design — a cancellation
+        // path that outlives the parent is tracked in #1708.
+        .process_group(0);
+    let mut child = command.spawn().expect("spawn the owned rerun");
+    let group =
+        rustix::process::Pid::from_raw(child.id() as i32).expect("the rerun leader has a pid");
+    // Kills the group on every way out of this function, panic included: a
+    // leader reaped by `Child::wait` does not take its descendants with it,
+    // and the capture files disappear with the scratch dir.
+    let mut guard = crate::process_group::GroupGuard(Some(group));
+    // `true` once either capture passes the cap. An unmeasurable stream counts
+    // as over the cap: it cannot be bounded, and quietly polling a zero would
+    // switch the cap off.
+    let oversized = || {
+        [&stdout_path, &stderr_path]
+            .iter()
+            .any(|path| match stream_len(path) {
+                Ok(len) => len > RERUN_OUTPUT_LIMIT,
+                Err(_) => true,
+            })
+    };
+    let started = Instant::now();
+    let mut timed_out = false;
+    let mut overflow = false;
+    // `Some` once the leader was reaped inside the loop: the stop path below,
+    // or a platform whose only way to observe the exit also reaps.
+    let mut reaped: Option<ExitStatus> = None;
+    loop {
+        // Observe the leader *without* reaping it: the zombie keeps the pgid
+        // reserved until the final group signal. Reaping first frees the pgid,
+        // and an unrelated `process_group(0)` leader could claim it between
+        // the reap and `kill_process_group` — the final kill would then hit a
+        // stranger's whole group (#1632 r3, both reviewers).
+        #[cfg(not(any(
+            target_os = "cygwin",
+            target_os = "horizon",
+            target_os = "openbsd",
+            target_os = "redox",
+            target_os = "wasi"
+        )))]
+        match crate::process_group::leader_exited_unreaped(group) {
+            Ok(true) => break,
+            Ok(false) => {}
+            Err(error) => panic!("observe the owned rerun leader: {error:?}"),
+        }
+        // Those targets cannot wait without reaping; `try_wait` reaps, so the
+        // final group signal is skipped there rather than aimed at a pgid that
+        // is free again.
+        #[cfg(any(
+            target_os = "cygwin",
+            target_os = "horizon",
+            target_os = "openbsd",
+            target_os = "redox",
+            target_os = "wasi"
+        ))]
+        if let Some(status) = child.try_wait().expect("poll the owned rerun") {
+            reaped = Some(status);
+            break;
+        }
+        // The workspace forbids `unsafe`, so the child cannot be given
+        // `RLIMIT_FSIZE` through `pre_exec`; the cap is enforced here instead:
+        // a runaway writer is stopped as soon as either file passes it.
+        let expired = started.elapsed() > limit;
+        let too_big = oversized();
+        if expired || too_big {
+            timed_out = expired;
+            overflow = too_big;
+            // The leader is still alive, so the group id is still ours.
+            guard.signal(rustix::process::Signal::KILL);
+            let direct = child.kill();
+            let reap = child.wait();
+            guard.disarm();
+            eprintln!(
+                "PDRS_RERUN_STOPPED {test}: timeout={timed_out} overflow={overflow} group kill sent, direct kill {direct:?}, reap {reap:?}"
+            );
+            reaped = Some(reap.expect("reap the owned rerun after the group kill"));
+            break;
+        }
+        std::thread::sleep(RERUN_POLL);
+    }
+    let status = match reaped {
+        Some(status) => {
+            // Reaped already: nothing to reap, and no group signal — its pgid
+            // may have been handed to an unrelated group.
+            guard.disarm();
+            status
+        }
+        None => {
+            // The leader exited on its own and is still a zombie, so the group
+            // id is still ours: kill the descendants it left behind, then reap.
+            guard.signal(rustix::process::Signal::KILL);
+            let status = child.wait().expect("reap the owned rerun");
+            guard.disarm();
+            status
+        }
+    };
+    // A rerun that ran away and then exited is still an overflow: the loop
+    // breaks on `try_wait` before it looks at the files, so without this last
+    // look a writer that filled the capture and exited would report success
+    // with a silently truncated stdout.
+    overflow |= oversized();
+    // The deadline can fire in the same poll window in which the leader
+    // finished on its own. Nothing was stopped in that case, and reporting a
+    // timeout would fail a clean rerun.
+    if status.success() && !overflow {
+        timed_out = false;
+    }
+    RerunOutput {
+        status,
+        stdout: read_capped(&stdout_path),
+        stderr: read_capped(&stderr_path),
+        timed_out,
+        overflow,
+    }
+}
 
 pub(crate) fn json_env(value: &serde_json::Value) -> Vec<(String, String)> {
     value
@@ -36,7 +261,8 @@ pub(crate) fn run_cases(test: &str, cases: Vec<(String, Vec<(String, String)>)>)
         .collect();
     assert_eq!(receipts, expected);
 }
-struct Worker(Child);
+/// Owns a child process so a panic cannot leave it running or unreaped.
+pub(crate) struct Worker(pub(crate) Child);
 impl Drop for Worker {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -163,9 +389,193 @@ fn control_worker() {
             receipt(&control);
         }
         "failure" => panic!("controlled failure"),
+        // #1632: a descendant that outlives this worker while inheriting its
+        // stdout/stderr is what blocks a pipe-based rerun after the worker
+        // exits. `sh` forks the sleep into the background and exits at once,
+        // so the write end is held by the grandchild, not by this worker.
+        "grandchild" => {
+            let mut sh = Command::new("sh")
+                .arg("-c")
+                .arg("sleep 6 &")
+                .spawn()
+                .expect("control grandchild");
+            // `sh` exits at once and is reaped here; the `sleep` it
+            // backgrounded keeps this worker's stdout/stderr open and outlives
+            // it, which is the lingering writer under test.
+            sh.wait().expect("reap the control grandchild shell");
+            receipt(&control);
+        }
+        // #1632: a worker that never exits and leaves a descendant behind, so
+        // the deadline has to kill the whole process group, not just the
+        // leader.
+        "tree" => {
+            // The published pid is the *grandchild* (`sleep`), not `sh`'s own:
+            // `sh` is a direct child, so a rerun that killed only the leader
+            // and its direct children would still look correct. What has to be
+            // proven dead is the process that inherited the streams.
+            // `echo $!` writes once and `mv` renames atomically, so the reader
+            // never sees a half-written pid file.
+            let marker = std::env::var_os("PDRS_CONTROL_TREE_PID")
+                .expect("the control tree publishes its descendant pid");
+            let mut sh = Command::new("sh")
+                .arg("-c")
+                .arg("sleep 60 & echo $! > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait")
+                .arg("sh")
+                .arg(&marker)
+                .spawn()
+                .expect("control tree descendant");
+            // Neither this worker nor its descendant ends on its own: only the
+            // deadline's group kill stops them.
+            let _ = sh.wait();
+            std::thread::sleep(Duration::from_secs(60));
+        }
         "ok" => receipt(&control),
         other => panic!("unknown control {other}"),
     }
+}
+
+/// #1632: a rerun whose descendant inherits stdout/stderr must not block the
+/// parent test. The pre-fix shape (`Command::output()`, pipes) only returns
+/// once every write end closes, i.e. after the descendant's whole lifetime —
+/// here bounded by the 6 s control grandchild, in the audit regression
+/// unbounded. The file-backed, group-owned rerun returns with the owned case.
+/// The 4 s margin below is deliberate: a loaded host inflates the binary
+/// startup of both runs, and a tight absolute bound would report a correct
+/// owned rerun as failing (r3 concurrency).
+#[cfg(unix)]
+#[test]
+fn owned_rerun_is_not_blocked_by_a_grandchild_holding_the_streams() {
+    let control = "test_process::control_worker";
+    let envs = [("PDRS_PROCESS_CONTROL", "grandchild")];
+    let started = Instant::now();
+    let legacy = Command::new(std::env::current_exe().expect("legacy rerun binary"))
+        .args([
+            "--exact",
+            control,
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .envs(envs)
+        .output()
+        .expect("legacy pipe rerun");
+    let blocked = started.elapsed();
+    assert!(
+        legacy.status.success(),
+        "legacy rerun failed:\n{}\n{}",
+        String::from_utf8_lossy(&legacy.stdout),
+        String::from_utf8_lossy(&legacy.stderr)
+    );
+    assert!(
+        blocked >= Duration::from_secs(2),
+        "the pipe-based rerun should wait for the grandchild, returned after {blocked:?}"
+    );
+    let started = Instant::now();
+    let rerun = rerun_exact(control, &envs, RERUN_LIMIT);
+    let bounded = started.elapsed();
+    println!("PDRS_RERUN_TIMING legacy_pipe={blocked:?} owned_files={bounded:?}");
+    assert!(
+        !rerun.timed_out && !rerun.overflow,
+        "the owned rerun was stopped (timeout={} overflow={}):\n{}\n{}",
+        rerun.timed_out,
+        rerun.overflow,
+        rerun.stdout,
+        rerun.stderr
+    );
+    assert!(
+        rerun.status.success(),
+        "the owned rerun failed:\n{}\n{}",
+        rerun.stdout,
+        rerun.stderr
+    );
+    assert!(
+        rerun.stdout.contains("PDRS_CASE_OK grandchild"),
+        "the owned rerun lost its receipt:\n{}\n{}",
+        rerun.stdout,
+        rerun.stderr
+    );
+    assert!(
+        bounded + Duration::from_secs(2) < blocked,
+        "the owned rerun waited {bounded:?}, close to the pipe rerun's {blocked:?} for the descendant"
+    );
+}
+
+/// #1632: at the deadline the rerun's whole process group dies, not just the
+/// leader — otherwise a stuck audit would leave its descendants running and
+/// the failure evidence could still be held open.
+///
+/// The worker publishes its descendant's pid before the deadline, so this
+/// cannot pass by killing a group that never had a descendant (a short deadline
+/// that fires before the worker spawns would only exercise the direct kill).
+/// The probe is the recorded pid, not `kill(-pgid, 0)`: a zombie keeps the
+/// group alive in environments whose init does not reap promptly, and a
+/// SIGKILLed process that still shows as `Z` has already been reached.
+#[cfg(target_os = "linux")]
+#[test]
+fn owned_rerun_kills_the_whole_group_at_the_deadline() {
+    use std::os::unix::process::ExitStatusExt;
+    let scratch = crate::test_scratch::Scratch::new("1632-tree");
+    let marker = scratch.path().join("descendant.pid");
+    let rerun = rerun_exact(
+        "test_process::control_worker",
+        &[
+            ("PDRS_PROCESS_CONTROL", "tree"),
+            (
+                "PDRS_CONTROL_TREE_PID",
+                marker
+                    .to_str()
+                    .expect("the descendant marker path is utf-8"),
+            ),
+        ],
+        // Long enough that rerun startup + libtest init + the worker's
+        // marker publication cannot lose the race on a loaded host: a marker
+        // that never appears fails the test instead of proving the group kill
+        // (r3 concurrency).
+        Duration::from_secs(10),
+    );
+    assert!(
+        rerun.timed_out,
+        "the owned rerun did not hit its deadline:\n{}\n{}",
+        rerun.stdout, rerun.stderr
+    );
+    assert_eq!(
+        rerun.status.signal(),
+        Some(rustix::process::Signal::KILL.as_raw()),
+        "the leader was not SIGKILLed at the deadline"
+    );
+    let descendant: i32 = std::fs::read_to_string(&marker)
+        .expect("the worker published its descendant before the deadline")
+        .trim()
+        .parse()
+        .expect("the published descendant pid");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match std::fs::read_to_string(format!("/proc/{descendant}/stat")) {
+            // Gone: reaped by whoever adopted it after the group kill.
+            Err(_) => break,
+            Ok(stat) => {
+                let state = stat
+                    .rsplit_once(')')
+                    .and_then(|(_, rest)| rest.split_whitespace().next())
+                    .unwrap_or_default()
+                    .to_owned();
+                // A zombie has already been killed; only its reaping is
+                // pending, and that is not this test's subject.
+                if state == "Z" {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "descendant {descendant} survived the group kill (state {state})"
+                );
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    println!(
+        "PDRS_RERUN_GROUP_KILL descendant={descendant} status={:?}",
+        rerun.status
+    );
 }
 #[test]
 fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
@@ -211,4 +621,228 @@ fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
         .is_err()
     );
     println!("PDRS_REJECTED_CHILD zero-match");
+}
+
+// ---------------------------------------------------------------------------
+// `/proc` audit toolkit shared by the process audits (#1316, #1349, #1632).
+//
+// Two snapshots (before/after) cannot see a child that lives and dies between
+// them, and a "before" snapshot taken after the window opened can miss a child
+// that exits in the gap. Both audits therefore open the window with the
+// sampler's first sweep and judge the accumulated sets.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "linux")]
+pub(crate) fn child_processes() -> Vec<(i32, Option<std::path::PathBuf>)> {
+    let me = std::process::id() as i32;
+    let mut children = Vec::new();
+    let entries = std::fs::read_dir("/proc").expect("#1316 the audit reads /proc");
+    for entry in entries {
+        let entry = entry.expect("#1316 the audit reads a /proc entry");
+        let Some(pid) = entry.file_name().to_string_lossy().parse::<i32>().ok() else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        let Some((_, rest)) = stat.rsplit_once(')') else {
+            continue;
+        };
+        // After `comm)` come state and ppid.
+        let Some(ppid) = rest
+            .split_whitespace()
+            .nth(1)
+            .and_then(|value| value.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if ppid == me {
+            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+            children.push((pid, exe));
+        }
+    }
+    children.sort();
+    children
+}
+
+#[cfg(target_os = "linux")]
+fn foreign_data_dir_holders(root: &std::path::Path) -> Vec<i32> {
+    let me = std::process::id() as i32;
+    let mut holders = Vec::new();
+    let entries = std::fs::read_dir("/proc").expect("#1316 the audit reads /proc");
+    for entry in entries {
+        let entry = entry.expect("#1316 the audit reads a /proc entry");
+        let Some(pid) = entry.file_name().to_string_lossy().parse::<i32>().ok() else {
+            continue;
+        };
+        if pid == me {
+            continue;
+        }
+        let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+            continue;
+        };
+        for fd in fds {
+            let Ok(fd) = fd else {
+                continue;
+            };
+            if let Ok(target) = std::fs::read_link(fd.path())
+                && target.starts_with(root)
+            {
+                holders.push(pid);
+                break;
+            }
+        }
+    }
+    holders.sort();
+    holders
+}
+
+/// Everything the sampler observed inside the write window. A named alias keeps
+/// the `JoinHandle` field and the `finish` return type under
+/// `clippy::type_complexity` (CI runs clippy with `-D warnings`).
+#[cfg(target_os = "linux")]
+pub(crate) type TransientObservations = (TransientChildren, std::collections::BTreeSet<i32>);
+
+/// The child set of one `/proc` sweep, keyed by pid.
+#[cfg(target_os = "linux")]
+pub(crate) type TransientChildren = std::collections::BTreeMap<i32, Option<std::path::PathBuf>>;
+
+/// Children `seen` reports that the window did not open with, as
+/// `pid:exe` strings ready for a failure message.
+///
+/// This is the audit predicate, shared so the two audits cannot drift: an
+/// **exit** is not a spawn, so the end snapshot is judged as a subset of the
+/// before-set, not by equality. Applying the same function to the sampler's
+/// accumulated set also covers a child that lived and died between two
+/// snapshots.
+#[cfg(target_os = "linux")]
+pub(crate) fn unknown_children(
+    seen: &TransientChildren,
+    before: &TransientChildren,
+) -> Vec<String> {
+    seen.iter()
+        .filter(|(pid, _)| !before.contains_key(pid))
+        .map(|(pid, exe)| format!("{pid}:{exe:?}"))
+        .collect()
+}
+
+/// Children this window *added* that run a node executable, as `pid:exe`
+/// strings. Filtered to the added set for the same reason as
+/// [`unknown_children`]: a node child that already existed when the window
+/// opened and exited inside it did not participate in the audited writes.
+#[cfg(target_os = "linux")]
+pub(crate) fn node_children(seen: &TransientChildren, before: &TransientChildren) -> Vec<String> {
+    seen.iter()
+        .filter(|(pid, _)| !before.contains_key(pid))
+        .filter(|(_, exe)| {
+            exe.as_ref()
+                .is_some_and(|path| path.to_string_lossy().to_lowercase().contains("node"))
+        })
+        .map(|(pid, exe)| format!("{pid}:{exe:?}"))
+        .collect()
+}
+
+/// Poll `/proc` for the whole audited write window.
+///
+/// Two snapshots (before/after) say nothing about a child or fd holder whose
+/// lifetime is shorter than the gap between them, so a transient writer would
+/// slip through both and leave the audit green. This sampler keeps running
+/// until `finish`, accumulating every child pid and every foreign fd holder it
+/// ever observes; the assertions then judge the accumulated sets.
+///
+/// Coverage is bracketed on both ends, not assumed: `start` returns only after
+/// the first full sweep has completed, together with that sweep's child set
+/// (the window's "before" snapshot, see [`TransientAudit::start`]), and
+/// `finish` sets the stop flag *before*
+/// the worker takes its last sweep (`done` is read at the top of the cycle, so a
+/// stop request during a sweep still buys one more), which means the worker
+/// always sweeps once after the last write. The residual blind spot is the gap
+/// between two consecutive sweeps — one `/proc` pass pair plus the 1 ms sleep,
+/// i.e. proportional to the host's process and fd count, not 1 ms. A writer
+/// whose entire lifetime fits inside one such gap is invisible to this audit.
+#[cfg(target_os = "linux")]
+pub(crate) struct TransientAudit {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<TransientObservations>>,
+}
+
+#[cfg(target_os = "linux")]
+impl TransientAudit {
+    /// Open the sampling window and return the first sweep's child set.
+    ///
+    /// The "before" snapshot and the opening of the window must be the same
+    /// observation. Taking `child_processes()` *after* `start` returns leaves a
+    /// gap in which a child that already existed when the window opened can
+    /// exit; the sampler has it in `children_seen` but the late snapshot does
+    /// not, so the audit reports it as a transient writer and fails a run in
+    /// which nothing regressed (#1632). Returning the first sweep removes that
+    /// gap: the returned set is exactly what the sampler saw when the window
+    /// opened.
+    pub(crate) fn start(root: std::path::PathBuf) -> (Self, TransientChildren) {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        // `start` must not hand control back before the first sweep has run:
+        // otherwise the write could begin during the thread's scheduling delay
+        // and the opening of the window would be unsampled.
+        let (swept, first_sweep) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut children = TransientChildren::new();
+            let mut holders = std::collections::BTreeSet::new();
+            let mut announced = false;
+            loop {
+                // Read the flag before sweeping: a stop request that lands while
+                // this sweep runs still leaves one more sweep after the writes.
+                let done = flag.load(std::sync::atomic::Ordering::SeqCst);
+                for (pid, exe) in child_processes() {
+                    children.insert(pid, exe);
+                }
+                for pid in foreign_data_dir_holders(&root) {
+                    holders.insert(pid);
+                }
+                if !announced {
+                    announced = true;
+                    // The first sweep is the window's opening snapshot. A
+                    // closed receiver only means `start` was abandoned; keep
+                    // sampling, `Drop` still stops this thread.
+                    let _ = swept.send(children.clone());
+                }
+                if done {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            (children, holders)
+        });
+        let children_before = first_sweep
+            .recv()
+            .expect("#1316 the audit sampler completes its first sweep");
+        (
+            Self {
+                stop,
+                worker: Some(worker),
+            },
+            children_before,
+        )
+    }
+
+    pub(crate) fn finish(mut self) -> TransientObservations {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.worker
+            .take()
+            .expect("#1316 the audit sampler is running")
+            .join()
+            .expect("#1316 the audit sampler joins")
+    }
+}
+
+/// A panic before `finish` must not leave a spinning sampler in the test
+/// process; stopping it here also keeps the owned rerun process bounded.
+#[cfg(target_os = "linux")]
+impl Drop for TransientAudit {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
