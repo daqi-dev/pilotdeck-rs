@@ -11,8 +11,8 @@ mod metadata;
 mod runs;
 mod session_dir;
 mod sop;
-mod tools;
 mod steer;
+mod tools;
 
 type Response = Result<JsValue, RequestError>;
 type RequestHandler = for<'a> fn(&'a Requests, String, JsValue) -> Call<'a, Response>;

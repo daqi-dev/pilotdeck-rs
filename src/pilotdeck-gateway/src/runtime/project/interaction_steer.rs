@@ -13,7 +13,8 @@ use crate::{
     runtime::{
         hooks::Cancellation,
         steer::{
-            CancelResult, EnqueueResult, MutationRecorder, SteerMailbox, SteerMessage, TurnSteers,
+            CancelResult, EnqueueResult, MutationRecorder, SteerMailbox, SteerMessage, SteerReason,
+            TurnSteers,
         },
     },
 };
@@ -124,6 +125,14 @@ pub struct ActiveSteerInfo {
     /// `SteerMailbox::enqueue` / `cancel` and as `AsyncHookTurn::run_id`.
     pub turn_id: JsString,
     pub mailbox: SteerMailbox,
+    /// Identity for the admission-locked enqueue/cancel path: the owning
+    /// registry, the session binding, and the exact `Run` this info was
+    /// captured from. Private on purpose — callers must go through
+    /// `enqueue`/`cancel`, which re-check identity under the registry lock.
+    owner: InteractionSteer,
+    session_key: JsString,
+    session_identity: Arc<()>,
+    run: Arc<Run>,
 }
 
 /// Shared admission lookup for the native gateway's steer/cancel handlers and
@@ -157,13 +166,87 @@ pub fn active_turn_for(
     Some(info)
 }
 
+impl ActiveSteerInfo {
+    /// Same admission guards as `TurnSteer::check`: the session binding is
+    /// unchanged and its current run is still exactly this run. Identity is
+    /// compared with `Arc::ptr_eq`, never by run/turn ID text — a retrying
+    /// client may reuse the same textual IDs across runs.
+    fn check(&self, state: &State) -> Result<(), HostError> {
+        let session = state
+            .sessions
+            .get(&self.session_key)
+            .filter(|session| Arc::ptr_eq(&session.identity, &self.session_identity))
+            .ok_or_else(stale)?;
+        let run = session
+            .run
+            .as_ref()
+            .filter(|run| Arc::ptr_eq(run, &self.run))
+            .ok_or_else(stale)?;
+        if run.closed.load(Ordering::SeqCst) || run.external.is_cancelled() {
+            return Err(stale());
+        }
+        Ok(())
+    }
+    /// Enqueue a steer message through the admission-locked path.
+    ///
+    /// Mirrors `TurnSteer::mutate`: the run-identity re-check and the mailbox
+    /// mutation-queue placeholder share one critical section with the
+    /// external-cancel monitor's `Run::close` ("Same admission lock as
+    /// mutate: close must not pass the check -> mailbox queue insertion
+    /// critical section"). `mutate`'s post-await re-check only repairs the
+    /// response — the insertion side effect has already happened — so the
+    /// placeholder is taken while the lock is still held: once enqueued, the
+    /// mutation is ordered before any later `close` in the mailbox queue.
+    /// A turn that closed and restarted under the same textual turn ID is
+    /// rejected here by run identity, so the message cannot cross runs.
+    /// The rejection stays in-band (`accepted: false`, `turn_closing`)
+    /// instead of reaching the mailbox: the mailbox keys turns by textual
+    /// turn ID and cannot tell the restarted turn from the captured one.
+    pub fn enqueue(&self, message: SteerMessage) -> HostFuture<EnqueueResult> {
+        let future = {
+            let state = self.owner.0.lock().unwrap();
+            self.check(&state)
+                .ok()
+                .map(|()| self.mailbox.enqueue(self.turn_id.clone(), message))
+        };
+        future.unwrap_or_else(|| {
+            Box::pin(async {
+                Ok(EnqueueResult {
+                    accepted: false,
+                    reason: Some(SteerReason::TurnClosing),
+                })
+            })
+        })
+    }
+    /// Cancel a queued steer item through the admission-locked path; see
+    /// `enqueue` for the critical-section argument.
+    pub fn cancel(&self, item_id: JsString) -> HostFuture<CancelResult> {
+        let future = {
+            let state = self.owner.0.lock().unwrap();
+            self.check(&state)
+                .ok()
+                .map(|()| self.mailbox.cancel(self.turn_id.clone(), item_id))
+        };
+        future.unwrap_or_else(|| {
+            Box::pin(async {
+                Ok(CancelResult {
+                    cancelled: false,
+                    reason: Some(SteerReason::TurnClosing),
+                })
+            })
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct InteractionSteer(Arc<Mutex<State>>);
 impl InteractionSteer {
     /// Returns steer info for the session's current (non-closed) turn, if any.
     ///
-    /// Callers are responsible for verifying that the returned `run_id` still
-    /// matches the admission slot before enqueueing or cancelling.
+    /// The guards live elsewhere and are already complete: the run-ID guard
+    /// against the admission slot in `active_turn_for`, and the run-identity
+    /// re-check under the admission lock in `ActiveSteerInfo::enqueue` /
+    /// `cancel`. Callers need not (and must not) re-verify run IDs by text.
     pub fn active_steer_info(&self, session_key: &JsString) -> Option<ActiveSteerInfo> {
         let state = self.0.lock().unwrap();
         if state.closed {
@@ -178,6 +261,10 @@ impl InteractionSteer {
                     run_id: run.id.clone(),
                     turn_id: run.turn_id.clone(),
                     mailbox: session.mailbox.clone(),
+                    owner: self.clone(),
+                    session_key: session_key.clone(),
+                    session_identity: session.identity.clone(),
+                    run: run.clone(),
                 })
         })
     }
