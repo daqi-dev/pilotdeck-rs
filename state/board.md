@@ -4,11 +4,11 @@
 updated: 2026-11-06 00:29 · by Claude Code 状态维护子代理（READY 块按 00:29 实测重写：18 张 PR 已合出队 #1546 #1547 #1548 #1549 #1559 #1560 #1562 #1563 #1564 #1565 #1568 #1572 #1578 #1405 #1531 #1532 #1542 #1545；#1467 #1453 #1522 #1258 关单出队；merge queue 2 张 #1573 #1577）· 45 条（doing 23 / ready 7 / blocked 14 / human 1）· 磁盘 178.3/200 GiB · worktree 37/40
 - #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：#1498 人 20:06 回复 B（waiter 断链自动 resume + 证据轮次号，AI 可实施，待排）；#1475（#1313 重划，question）待人复核；#144 P0 候选待补决策卡；#401 实测无剩余工作、建议关单待人点头；待批口径 PR #1580（worktree 上限 40→60）。本轮资源：磁盘 178.3/200 GiB（距 185 开树硬闸约 7 GiB，先回收再开新树）、worktree 37/40、merge queue 2 张 #1573 #1577
 - #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412）已合；s3 #1370 已开 PR #1561 draft；s4/s5 #1371/#1372 顺次；#1408 前置于本单关单
-- #1355 | impl | doing | E1 --suite retirement 冻结装置：PR #1515 draft（head 132805fab，fix-r4f 冻结重登记）；r4b 增量双家 anthropic P0/P1=0/0（P2=6）+ minimax P0/P1=0/1（P2=10）→ 剩 1 条 P1（第 1/5 类缺 send 帧仍记 PASS 的无凭 PASS）待修或仲裁；冻结 P1 不适用第 3 轮放行；收货后 check_frozen --write 由协调者执行；跟进 #1524
+- #1355 | impl | doing | E1 --suite retirement 冻结装置：PR #1515 已转非 draft、「待评审」（head 132805fab，fix-r4f 冻结重登记）；r4b 增量双家 anthropic P0/P1=0/0（P2=6）+ minimax P0/P1=0/1（P2=10）→ 剩 1 条 P1（第 1/5 类缺 send 帧仍记 PASS 的无凭 PASS）待修或仲裁；冻结 P1 不适用第 3 轮放行；收货后 check_frozen --write 由协调者执行；跟进 #1524
 - #1365 | impl | doing | P1-跟进 #1245 ClosingGuard settle 写入无判据 + panic 先结算：PR #1413 draft（head f6a28b745）；fix-r1 b2e4450be 已推，待四角色闸门 + 宿主负控；与 #996（M6 车道）同改 owner.rs 族串行
 - #1328 | impl | doing | channel weixin：mbp2 worker 续跑（树 wt-1328），无 PR；与 #1329 的 native_http 串行已随 #1292 合入解除
 - #1339 | impl | doing | A8.3-ch-sms：PR #1526 draft（MERGEABLE，head ee6dec0a2），linux 负控 + 三通道评审证据在 _tmp/20261105-issue-1339-*，待评审收口入队
-- #1333 | impl | doing | channel 三角实测真冲突、必须串行（先到先得，后到者 rebase 删自己重复定义，入队前 cargo test --no-run）：#1333 api-server（PR #1584 已开 MERGEABLE，pr-gate FAILURE + rust E0061 待核）/ #1334 webhook（PR #1534 draft，head da05c8c49）/ #1336 wecom-callback（无 PR，树内 7 提交 ORPHAN-DEAD）；#1333×#1336 合并必 E0428（两边各自定义 TurnEventStream）
+- #1333 | impl | doing | channel 三角实测真冲突、必须串行（先到先得，后到者 rebase 删自己重复定义，入队前 cargo test --no-run）：#1333 api-server（PR #1584 已开 MERGEABLE，pr-gate FAILURE + rust E0061 待核）/ #1334 webhook（PR #1534 draft，head dc5902b53）/ #1336 wecom-callback（无 PR，树内 7 提交 ORPHAN-DEAD）；#1333×#1336 合并必 E0428（两边各自定义 TurnEventStream）
 - #1316 | impl | doing | A7.8-pr1 会话域整域装配：PR #1558 draft、已由 CONFLICTING 转 MERGEABLE（head 255209f44）；合入解锁 #1317、#589、#590、#727、#19
 - #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：mbp2 worker（树 wt-1325），无 PR；上游 #1324 已合
 - #1233 | review | doing | PR #1257（A6.5 background 持久化）draft；r3 已作废并归因完毕，分支已 rebase 到 main 并修好断言顺序，新 head f8c58c191，r4 全量宿主已重新派出；cb8 同 SHA A/B 臂并行；含 #1276、#953
@@ -19,7 +19,7 @@ updated: 2026-11-06 00:29 · by Claude Code 状态维护子代理（READY 块按
 - #132 | review | blocked | PR #1235 draft + CONFLICTING、长期无活动且树干净（ORPHAN）：前置 = rebase 合 main 后交评审；前置于 A8 退役（#1357）
 - #1386 | impl | blocked | A8.3 未迁 13 个 channel 登记差异并让 Rust 明确拒绝启动（#1302 B）：PR #1579 draft 已开（head 1d7e5ba43）；前置 = channel 五单（#1328/#1333/#1334/#1336/#1339）收口，同改 channel/mod.rs；前置于 #1357
 - #1495 | impl | doing | 批次 B10 flaky 测试三项（#978 #1297 #1400）：PR #1567 draft + CONFLICTING（wip S2 #1400 探针改 mkdir 同形）；远端 worker 在跑，树 wt-1495 已落续跑 WIP 提交
-- #1370 | impl | doing | #1242-s3 writer append / registry persist barrier 与 EIO 见证：fix-r1 已交付，PR #1561 draft（head a43d4cded）；后续 #1371、#1372 顺次
+- #1370 | impl | doing | #1242-s3 writer append / registry persist barrier 与 EIO 见证：fix-r1 已交付，PR #1561 draft（head bb3f920b0）；后续 #1371、#1372 顺次
 - #1363 | impl | ready | #1140 收口剩余 P2：改冻结装置走冻结程序；与 #1355 是不同文件，只按冻结程序串行
 - #1398 | impl | doing | A5 冻结装置跟进：非冻结切片 #1519 的 PR #1577 已开（非 draft、MERGEABLE，queue 2）；剩余冻结件（round.py / calibrate.sh）走冻结程序，_shared 部分经 M6 车道 #1099；前置于 #590
 - #892 | impl | ready | session-domain 清理装置汇总枚举测试（A5.4 收尾）：触冻结件走冻结程序
