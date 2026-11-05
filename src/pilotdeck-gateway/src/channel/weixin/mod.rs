@@ -99,33 +99,14 @@ const VISIBLE_FAILURE_STATUS_EVENTS: &[&str] = &[
     "content_filter_stop",
     "unknown_finish_reason",
 ];
-/// `VISIBLE_FAILURE_STATUS_EVENTS` plus `structured_output_completed` and
-/// `turn_aborted` (ImLiveReplyController.ts `WARNING_STATUS_EVENTS`).
-const WARNING_STATUS_EVENTS: &[&str] = &[
-    "model_empty_response_exhausted",
-    "max_turns_reached",
-    "max_output_recovery_exhausted",
-    "model_request_failed",
-    "tool_call_recovery_exhausted",
-    "tool_error_loop",
-    "lifecycle_blocked",
-    "turn_failed",
-    "turn_timeout",
-    "gateway_submit_failed",
-    "session_busy",
-    "gateway_bridge_error",
-    "gateway_stream_ended_without_completion",
-    "web_http_request_failed",
-    "project_unavailable",
-    "config_invalid",
-    "gateway_unavailable",
-    "channel_submit_failed",
-    "subagent_failed",
-    "content_filter_stop",
-    "unknown_finish_reason",
-    "structured_output_completed",
-    "turn_aborted",
-];
+/// ImLiveReplyController.ts:110-114 — `WARNING_STATUS_EVENTS` is
+/// `new Set([...VISIBLE_FAILURE_STATUS_EVENTS, "structured_output_completed",
+/// "turn_aborted"])`: derive it from the same list instead of repeating the
+/// 21 entries, so the two can never drift.
+const WARNING_STATUS_EVENTS_EXTRA: &[&str] = &["structured_output_completed", "turn_aborted"];
+fn is_warning_status_event(name: &str) -> bool {
+    VISIBLE_FAILURE_STATUS_EVENTS.contains(&name) || WARNING_STATUS_EVENTS_EXTRA.contains(&name)
+}
 
 /// TS `CREDENTIALS_PATH = join(homedir(), ".pilotdeck", "weixin-credentials.json")`;
 /// `saveCredentials` always mkdirs `homedir()/.pilotdeck`.
@@ -222,6 +203,13 @@ pub type WeixinStateChange = Arc<dyn Fn(&JsValue) + Send + Sync>;
 #[derive(Clone)]
 pub struct WeixinChannelOptions {
     pub credentials_path: PathBuf,
+    /// The directory `saveCredentials` mkdirs before writing
+    /// (`PilotDeckServerShutdownBundle`-era TS: `join(homedir(), ".pilotdeck")`,
+    /// WeixinChannel.ts:990-998). Defaults to the process `HOME`; tests point it
+    /// inside their scratch directory — the TS generator does the same by
+    /// overriding `process.env.HOME` — so a replay never writes into the
+    /// machine's real `~/.pilotdeck`.
+    pub credentials_dir: Option<PathBuf>,
     pub mapper: Arc<WeixinSessionMapper>,
     pub client_factory: WeixinClientFactory,
     pub login: WeixinLogin,
@@ -240,6 +228,7 @@ impl WeixinChannelOptions {
     pub fn with_login_base_url(base_url: String) -> Self {
         Self {
             credentials_path: default_credentials_path(),
+            credentials_dir: None,
             mapper: Arc::new(WeixinSessionMapper::new()),
             client_factory: default_client_factory(),
             login: Arc::new(move |callbacks| {
@@ -362,6 +351,7 @@ struct Inner {
 struct Shared {
     key: ChannelKey,
     credentials_path: PathBuf,
+    credentials_dir: PathBuf,
     mapper: Arc<WeixinSessionMapper>,
     client_factory: WeixinClientFactory,
     login: WeixinLogin,
@@ -382,6 +372,7 @@ impl WeixinChannel {
         Self(Arc::new(Shared {
             key: ChannelKey::new(CHANNEL_KEY),
             credentials_path: options.credentials_path,
+            credentials_dir: options.credentials_dir.unwrap_or_else(home_pilotdeck_dir),
             mapper: options.mapper,
             client_factory: options.client_factory,
             login: options.login,
@@ -474,7 +465,7 @@ impl WeixinChannel {
     fn save_credentials(&self, creds: &SavedCredentials) {
         let write = (|| -> std::io::Result<()> {
             // TS mkdirs `homedir()/.pilotdeck` regardless of credentialsPath.
-            std::fs::create_dir_all(home_pilotdeck_dir())?;
+            std::fs::create_dir_all(&self.0.credentials_dir)?;
             let mut object = JsObject::new();
             object.insert("baseUrl".into(), JsValue::from(creds.base_url.as_str()));
             object.insert("botToken".into(), JsValue::from(creds.bot_token.as_str()));
@@ -1530,7 +1521,7 @@ impl<'a> WeixinReplyBuffer<'a> {
             self.append_str(&format!("\n⚠️ {text}\n"));
             return;
         }
-        if (WARNING_STATUS_EVENTS.contains(&name.as_str()) || severity_error)
+        if (is_warning_status_event(name.as_str()) || severity_error)
             && let Some(message) = detail_message()
         {
             self.append_str(&format!("\n⚠️ {message}\n"));

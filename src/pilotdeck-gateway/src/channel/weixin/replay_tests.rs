@@ -696,6 +696,10 @@ async fn replay_case(case: &Value) -> Value {
                 let config = js_event(&step["config"]);
                 let weixin = super::WeixinChannelOptions {
                     credentials_path: credentials_path.clone(),
+                    // generate.mts points `HOME` at the scenario directory;
+                    // the Rust port redirects the mkdir target instead so a
+                    // replay never touches the machine's real `~/.pilotdeck`.
+                    credentials_dir: Some(scenario_dir.join(".pilotdeck")),
                     mapper: Arc::new(super::WeixinSessionMapper::new()),
                     client_factory: {
                         let fake_shared = fake.shared.clone();

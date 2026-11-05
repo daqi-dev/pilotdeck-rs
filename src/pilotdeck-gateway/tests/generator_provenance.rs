@@ -658,6 +658,7 @@ regeneration!(
     edgeclaw_service_orchestration_regenerates_identically,
     "edgeclaw-service-orchestration"
 );
+regeneration!(weixin_channel_regenerates_identically, "weixin-channel");
 
 #[test]
 fn regeneration_layout_rejects_missing_ambiguous_and_symlink_outputs() {

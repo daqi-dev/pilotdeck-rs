@@ -443,7 +443,11 @@ impl WeixinIlinkClient for IlinkHttpClient {
                 }
                 Err(error) => return Err(error),
             };
-            if let Some(buffer) = string_field(&response, "get_updates_buf") {
+            // client.js:26-28 — `if (resp.get_updates_buf)`: an empty buffer is
+            // falsy and must not clear the cursor.
+            if let Some(buffer) =
+                string_field(&response, "get_updates_buf").filter(|b| !b.units().is_empty())
+            {
                 *this.cursor.lock().unwrap_or_else(|e| e.into_inner()) =
                     String::from_utf16_lossy(buffer.units());
             }
@@ -492,7 +496,11 @@ impl WeixinIlinkClient for IlinkHttpClient {
         let context_token = context_token.clone();
         Box::pin(async move {
             let config = this.get_config(&user_id, &context_token).await?;
-            let Some(ticket) = string_field(&config, "typing_ticket") else {
+            // client.js:81 — `if (config.typing_ticket)`: an empty ticket is
+            // falsy, so no sendtyping request is made.
+            let Some(ticket) =
+                string_field(&config, "typing_ticket").filter(|ticket| !ticket.units().is_empty())
+            else {
                 return Ok(());
             };
             let mut payload = JsObject::new();
