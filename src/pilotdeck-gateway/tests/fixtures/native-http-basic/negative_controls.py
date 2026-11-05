@@ -200,6 +200,20 @@ switches = [
     ('native-http-headers-grid-inclusive', SOURCE_PROXY,
      'first_head_delayed_anchors_at_its_first_byte_like_ts',
      '#1292 the delayed first head stays unanswered past both the head\'s on-grid +90 s deadline and the connect anchor\'s +90 s landing'),
+    # #1383: the borrow premise behind expected_response's reuse of the
+    # static-upper golden — .txt stays out of CONTENT_TYPES on both spellings,
+    # so the case-insensitive upper.txt lookup keeps the golden's
+    # octet-stream content type; the mutant adds a .txt mapping to
+    # content_type_for, so the pinned premise fails at its own assertion.
+    ('native-http-content-type-txt', SOURCE, 'static_upper_borrow_premise_holds',
+     "#1383 borrow premise: CONTENT_TYPES has no .txt, so upper.txt keeps the golden's application/octet-stream content type"),
+    # #1383: static-upper-lower is the only routed cell whose path
+    # case-collides with a fixture file; the mutant routes one more
+    # case-variant cell (/APP.JS against app.js), so the completeness guard
+    # fails at its own assertion.
+    ('native-http-case-variant-extra-cell', SOURCE_TESTS,
+     'only_the_registered_cell_has_a_case_variant_fixture_hit',
+     '#1383 static-upper-lower is the only routed cell whose path case-collides with a fixture file'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

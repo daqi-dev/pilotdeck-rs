@@ -86,30 +86,41 @@ struct Fixture {
     root2: PathBuf,
 }
 
+/// #1383: the first static root's fixture files, relative to the root. One
+/// shared table: `roots()` writes from it and the case-variant completeness
+/// guard (`only_the_registered_cell_has_a_case_variant_fixture_hit`) reads
+/// it, so a file added here without a registered expectation fails that
+/// guard instead of silently shifting the replay's premise.
+const ROOT_FILES: &[(&str, &str)] = &[
+    ("index.html", "<!doctype html><html>index</html>\n"),
+    ("app.js", "console.log(1)\n"),
+    ("style.css", "body{}\n"),
+    ("data.json", "{\"a\":1}\n"),
+    ("logo.svg", "<svg/>\n"),
+    ("bin.bin", "0,1,2,255,254\n"),
+    ("noext", "no extension\n"),
+    ("upper.TXT", "upper\n"),
+    ("sub/page.html", "sub page\n"),
+    ("enc%20oded", "encoded-name\n"),
+];
+
+/// #1383: the second (index-less) static root's files, shared the same way
+/// as [`ROOT_FILES`].
+const ROOT2_FILES: &[(&str, &str)] = &[("only.txt", "only file\n")];
+
 fn roots() -> Fixture {
     let parent = std::env::temp_dir().join(format!("pdrs-1209-{}", uuid::Uuid::new_v4()));
     let root = parent.join("root");
     let root2 = parent.join("root2");
-    std::fs::create_dir_all(root.join("sub")).expect("#1209 fixture root directory");
-    std::fs::create_dir_all(&root2).expect("#1209 fixture root2 directory");
-    let files = [
-        (
-            root.join("index.html"),
-            "<!doctype html><html>index</html>\n",
-        ),
-        (root.join("app.js"), "console.log(1)\n"),
-        (root.join("style.css"), "body{}\n"),
-        (root.join("data.json"), "{\"a\":1}\n"),
-        (root.join("logo.svg"), "<svg/>\n"),
-        (root.join("bin.bin"), "0,1,2,255,254\n"),
-        (root.join("noext"), "no extension\n"),
-        (root.join("upper.TXT"), "upper\n"),
-        (root.join("sub").join("page.html"), "sub page\n"),
-        (root.join("enc%20oded"), "encoded-name\n"),
-        (root2.join("only.txt"), "only file\n"),
-    ];
-    for (path, content) in files {
-        std::fs::write(path, content).expect("#1209 fixture static file");
+    for (files, base) in [(ROOT_FILES, &root), (ROOT2_FILES, &root2)] {
+        for (relative, content) in files {
+            let path = base.join(relative);
+            // Sub-directories come from the relative path (`sub/page.html`).
+            if let Some(directory) = path.parent() {
+                std::fs::create_dir_all(directory).expect("#1209 fixture directory");
+            }
+            std::fs::write(path, content).expect("#1209 fixture static file");
+        }
     }
     Fixture {
         parent,
@@ -268,21 +279,143 @@ fn expected_response(replayed: &Cell, fixture: &Fixture) -> String {
 
 /// Whether the static root would serve `/upper.txt` by case-insensitive
 /// resolution: the fixture wrote `upper.TXT`, and this is the same
-/// `is_file(candidate)` lookup `serve_static` performs for that request, so
-/// the probe decides with the exact evidence the router itself will use.
+/// `node_join` + `contained` + `is_file` lookup `serve_static` performs for
+/// that request, so the probe decides with the exact evidence the router
+/// itself will use. Sharing the route also means the probe only requires
+/// the fixture root to be normalized — `roots()` builds it from
+/// `temp_dir()`, absolute and free of `..`.
 /// The `native-http-static-case-probe-inverted` negative-control switch
 /// flips the answer, which must fail the `static-upper-lower` replay at its
 /// own assertion on every host.
 fn serves_upper_txt(root: &std::path::Path) -> bool {
-    let lookup = root
-        .join("upper.txt")
-        .metadata()
-        .is_ok_and(|metadata| metadata.is_file());
+    let candidate = node_join(root, "/upper.txt");
+    let lookup = contained(root, &candidate)
+        && std::fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file());
     if crate::mutants::on("native-http-static-case-probe-inverted") {
         !lookup
     } else {
         lookup
     }
+}
+
+/// #1383: `expected_response` borrows the `static-upper` golden on a
+/// case-insensitive host under the premise that `.txt` stays out of
+/// `CONTENT_TYPES` — otherwise the borrowed bytes' content-type would no
+/// longer be what the host serves for the resolved `upper.TXT` file. The
+/// premise is pinned explicitly instead of holding by coincidence. Binds the
+/// negative control `native-http-content-type-txt`, which simulates the
+/// mapping gaining a `.txt` entry.
+#[test]
+fn static_upper_borrow_premise_holds() {
+    let golden = cell("static-upper").response;
+    assert!(
+        golden.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1383 the borrowed static-upper golden is a 200"
+    );
+    assert!(
+        golden.contains("content-type: application/octet-stream\r\n"),
+        "#1383 the borrowed static-upper golden carries the octet-stream content type"
+    );
+    assert!(
+        golden.ends_with("\r\n\r\n6\r\nupper\n\r\n0\r\n\r\n"),
+        "#1383 the borrowed static-upper golden is the upper\\n bytes in one size-6 chunk"
+    );
+    assert_eq!(
+        content_type_for(std::path::Path::new("upper.txt")),
+        "application/octet-stream",
+        "#1383 borrow premise: CONTENT_TYPES has no .txt, so upper.txt keeps the golden's application/octet-stream content type"
+    );
+    assert_eq!(
+        content_type_for(std::path::Path::new("upper.TXT")),
+        "application/octet-stream",
+        "#1383 borrow premise: .TXT misses the case-sensitive extension map and stays octet-stream"
+    );
+}
+
+/// #1383: every routed cell as `(id, server, WHATWG-path)`, the path taken
+/// from the raw request line's second token through the production
+/// `whatwg_path()` — the exact path the static fallback would look up, never
+/// an independent normalization. Cells whose request line has no target
+/// (`empty-request`, `garbage`) are skipped; a parse failure maps to `/`
+/// like the router's own fallback.
+fn routed_cells() -> Vec<(String, String, String)> {
+    let recorded = oracle();
+    let mut cells = Vec::new();
+    for entry in recorded["cells"]
+        .as_array()
+        .expect("#1209 oracle cells array")
+    {
+        let request = entry["request"]
+            .as_str()
+            .expect("#1209 oracle cell request");
+        let request_line = request.split("\r\n").next().unwrap_or("");
+        let Some(target) = request_line.split(' ').nth(1) else {
+            continue;
+        };
+        if target.is_empty() {
+            continue;
+        }
+        cells.push((
+            entry["id"]
+                .as_str()
+                .expect("#1209 oracle cell id")
+                .to_owned(),
+            entry["server"]
+                .as_str()
+                .expect("#1209 oracle cell server")
+                .to_owned(),
+            whatwg_path(target),
+        ));
+    }
+    if crate::mutants::on("native-http-case-variant-extra-cell") {
+        cells.push(("static-appjs-upper".into(), "a".into(), "/APP.JS".into()));
+    }
+    cells
+}
+
+/// #1383: a routed path hits a fixture file as a case variant when it equals
+/// the file name ignoring ASCII case but not byte for byte — the only shape
+/// whose served bytes depend on the host filesystem's case sensitivity.
+fn case_variant_hit(path: &str, files: &[(&str, &str)]) -> bool {
+    let name = path.strip_prefix('/').unwrap_or(path);
+    files
+        .iter()
+        .any(|(file, _)| name.eq_ignore_ascii_case(file) && name.as_bytes() != file.as_bytes())
+}
+
+/// #1383: the routed cells whose path case-collides with that server's
+/// fixture table — `a`/`c` share the first root, `b` serves the index-less
+/// root, `d` has no static root and is skipped.
+fn case_variant_ids(cells: &[(String, String, String)]) -> Vec<String> {
+    cells
+        .iter()
+        .filter(|(_, server, _)| server != "d")
+        .filter(|(_, server, path)| {
+            let files = if server == "b" {
+                ROOT2_FILES
+            } else {
+                ROOT_FILES
+            };
+            case_variant_hit(path, files)
+        })
+        .map(|(id, _, _)| id.clone())
+        .collect()
+}
+
+/// #1383: `static-upper-lower` is the only cell whose result depends on the
+/// host filesystem — every other routed path either matches a fixture file
+/// byte-for-byte or has no case-variant file to collide with. The fixture
+/// tables are the same constants `roots()` writes from, so a file added
+/// there without a registered expectation fails here. Binds the negative
+/// control `native-http-case-variant-extra-cell`, which routes one more
+/// case-variant cell (`/APP.JS` against `app.js`).
+#[test]
+fn only_the_registered_cell_has_a_case_variant_fixture_hit() {
+    assert_eq!(
+        case_variant_ids(&routed_cells()),
+        ["static-upper-lower"],
+        "#1383 static-upper-lower is the only routed cell whose path case-collides with a fixture file"
+    );
 }
 
 macro_rules! replay_tests {
