@@ -206,7 +206,11 @@ def mask_inline_code(text):
     return "".join(out)
 SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
 # 关键字与数字之间允许标点（`工作量：3 人日` / `预计,2 人日`）；「估计」要单列（裸「估」后跟「计」不匹配）。
-PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|估算|估|工作量|共计|合计|总计|共)\s*[:：,，]?\s*"
+# `需(要|投入)?` 跟着关键词：`预计需要 2 人日` / `共需投入 3 人日` 修前接不上数字，人日证据整路丢掉
+# → 退到 `.rs` 回退把大包判成小包（gate19 MiniMax boundary P2）。
+# `预期` 与 `预计` 同义，一并收（此前只认后者）。
+PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|预期|估算|估|工作量|共计|合计|总计|共)"
+                        r"(?:需(?:要|投入)?)?\s*[:：,，]?\s*"
                         r"([0-9]+(?:\.[0-9]+)?)\s*(?:个)?\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
 # URL 只吃 ASCII URL 字符：中文顿号/逗号/分号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
@@ -396,7 +400,10 @@ def _indent_kind(text, pos):
         if ch == "\n":
             break
         if not ch.isspace():
-            return "flat"       # 行首到 pos 里有正文：不是缩进行
+            # 行首到 pos 里有正文：scope 注释和正文在同一行（`写法参考 <!-- pdrs-scope … --> 这样写`）。
+            # 修前当「顶格声明」收下：一条 files=2 的示例把 `if scopes:` 之后的人日 / `.rs` 回退
+            # 整段短路 → 9 个 `.rs` 的包 rc 0 小包（gate19 MiniMax boundary P0 实测）。
+            return "inline"
         i -= 1
     if len(text[i:pos].expandtabs(4)) < CODE_INDENT:
         return "flat"           # 缩进不到 4 格：仍按顶格声明算
@@ -447,6 +454,11 @@ def parse_scopes(text):
         kind = _indent_kind(text, a)
         if kind == "example":
             continue            # 列表项下贴的示例，不是本包声明
+        if kind == "inline":
+            line = bisect.bisect_right(nl, a) + 1
+            errors.append(f"第 {line} 行的 scope 注释和正文在同一行（多半是贴示例）："
+                          "要当声明请顶格独占一行，要当示例请放进行内代码 / 围栏 / 列表项下的缩进示例")
+            continue
         if kind == "prose":
             line = bisect.bisect_right(nl, a) + 1
             errors.append(f"第 {line} 行的 scope 缩进在正文下面（既不是代码块里的示例、也不是顶格声明）："
@@ -538,6 +550,19 @@ def classify(text, fallback_text=None):
             "metrics": metrics}
 
 
+SECTION_TAIL = re.compile(r"^[\s（(：:·—–\-]|$")
+
+
+def _section_matches(title, keyword):
+    """标题是否就是这一节：`分段交付` / `分段交付（大包必填）` / `续跑（每段一行）` 算，
+    `为什么要分段交付`（抢在真节前面 → 假 FAIL）、`分段交付的背景`（贴旧表顶替 → 假 PASS）不算。
+    允许前面的编号前缀（`1.` / `一、`），关键词后面只许是行尾、空白或标点。"""
+    t = re.sub(r"^(?:\d+[.、)]|[（(]?[一二三四五六七八九十]+[)）、.])\s*", "", title.strip())
+    if not t.startswith(keyword):
+        return False
+    return bool(SECTION_TAIL.match(t[len(keyword):]))
+
+
 def section_text(text, keyword):
     """取以 keyword 开头的 ## 一级小节的正文（到下一个同级或更高级标题为止）。"""
     out, grab, level = [], False, 0
@@ -546,7 +571,7 @@ def section_text(text, keyword):
         if m:
             if grab and len(m.group(1)) <= level:
                 break
-            if not grab and keyword in m.group(2):
+            if not grab and _section_matches(m.group(2), keyword):
                 grab, level = True, len(m.group(1))
                 continue
         if grab:
@@ -703,7 +728,10 @@ def _header_unit(header_cell):
             return ""
     # 认得出的「时长类」表头按 min；**认不出的返回 None**：裸数字不许默默当 min 放行
     # （`预估人天` 曾被读成 min，2 人天=960 min 的段判成 2 min 通过）。
-    if any(w in low for w in ("时长", "时间", "耗时", "估时", "分钟")):
+    # `用时` 与 `时长 / 耗时` 同类（都是时长），裸数字按 min；`工作量` / `投入` **不在此列**：
+    # 裸数字可能是人日，按 min 收会低估（gate19 MiniMax boundary P2 里建议也按 min 认，
+    # 但低估是假 PASS 方向，宁可留「读不出」——见 SEGMENTS.md §6 第 23 条）。
+    if any(w in low for w in ("时长", "时间", "耗时", "估时", "分钟", "用时")):
         return ""
     return None
 
@@ -858,7 +886,7 @@ def _looks_url(p):
 def resume_problems(resume):
     """`## 续跑` 的最小检查：具体进度文件路径 + 「第 N 段失败从哪继续」的学样。"""
     problems = []
-    path, bad_paths = None, []
+    path, bad_paths, hard_bad = None, [], []
     for line in resume.splitlines():
         for m in PATH_TOKEN.finditer(line):
             p = m.group(0)
@@ -879,8 +907,16 @@ def resume_problems(resume):
                 bad = "写在否定句里"
             if bad:
                 bad_paths.append(f"{_clip(p)}（{bad}）")
+                if "占位" in bad:
+                    hard_bad.append(f"{_clip(p)}（{bad}）")
             elif path is None:
                 path = p
+    if hard_bad:
+        # 合规路径与占位路径并存时修前静默丢掉坏的那条：骨架 `_tmp/<日期>-issue-<N>/progress.md`
+        # 原样留在派单里也 rc 0（gate19 MiniMax boundary P2 实测）。只把**占位符**这一类升成硬问题：
+        # 「读 progress.md 最后一个 done 段」这种裸文件名的正文引用是常态写法，不能因此假 FAIL。
+        problems.append("`## 续跑` 里的进度文件路径还留着占位：" + "、".join(hard_bad)
+                        + "（要写带目录的实例路径，骨架只许出现在示例 / 围栏里）")
     if not path:
         detail = f"；看到的不合规路径：{'、'.join(bad_paths)}" if bad_paths else ""
         problems.append("`## 续跑` 里没写具体的进度文件路径（要带目录的实例路径，如 "
@@ -950,7 +986,8 @@ def check_segments(text):
             owner = {}
             for i, r in enumerate(data, 1):
                 if "files" in col:      # 段间不共写同一文件：共写 = 两段不能各自独立收货
-                    for tok_ in FILE_TOKEN.findall(r[col["files"]] if col["files"] < len(r) else ""):
+                    files_cell = r[col["files"]] if col["files"] < len(r) else ""
+                    for tok_ in FILE_TOKEN.findall(files_cell) + BARE_FILE.findall(files_cell):
                         key = _file_key(tok_)
                         if key in owner and owner[key] != i:
                             problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {_clip(tok_)}"
@@ -1012,8 +1049,15 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 # 不同文件的键撞成一个，报「共写 events.js」（假 FAIL，报错里的文件名也是错的）。
 FILE_TOKEN = re.compile(
     r"[A-Za-z0-9_./-]*[A-Za-z0-9_-]\."
-    r"(?:jsonl|json|js|tsx|ts|mjs|rs|py|md|toml|ya?ml|sh|txt|lock|proto|sql|html|css)"
-    r"(?![A-Za-z0-9])")
+    r"(?:jsonl|json|js|tsx|ts|mjs|cjs|rs|py|md|toml|ya?ml|sh|txt|lock|proto|sql|html|css"
+    r"|xml|svg|ipynb|patch|diff|c|h|cc|cpp|hpp|go|java|kt|rb|php|swift|csv|tsv|ini|cfg"
+    r"|conf|properties|gradle|env)"
+    r"(?![A-Za-z0-9])", re.IGNORECASE)   # `SRC/A.RS` 与 `src/a.rs` 是同一个文件：键已 casefold，别在识别处漏掉
+# 无扩展名的常见构建文件（`Dockerfile` 两段各改一次同样是共写）
+# 目录前缀要一起收（`deploy/Dockerfile` 与 `ci/Dockerfile` 是两个文件，键要带目录）
+BARE_FILE = re.compile(r"(?<![A-Za-z0-9_./-])(?:[A-Za-z0-9_./-]*/)?"
+                       r"(?:Dockerfile|Containerfile|Makefile|Justfile)"
+                       r"(?![A-Za-z0-9_])", re.IGNORECASE)
 
 
 def _file_key(tok_):
