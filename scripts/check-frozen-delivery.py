@@ -354,17 +354,21 @@ def chain_backed(root, kind, edges, path, mb):
     able to complete a chain the branch does not contain.
     """
     state, actual = blob_at(root, 'HEAD', path)
-    if state is not True or actual is None:
+    if state is None or (state is True and actual is None):
         return False
+    # A deleted member is a registration change too: --write drops its row and
+    # the real gate wants ``Change: <old> -``.  Target '-' mirrors
+    # ``new_hashes.get(name, '-')``.
+    target = actual if state else '-'
     if not mb:
         return False
     base = base_digest(root, kind, mb, path)
-    if base is None or base == actual:
+    if base is None or base == target:
         return False
     remaining = [(old, new) for _, name, old, new in edges if name == path]
     current = base
     visited = set()
-    while current != actual and current not in visited:
+    while current != target and current not in visited:
         visited.add(current)
         matches = [edge for edge in remaining if edge[0] == current]
         if len(matches) != 1:
@@ -372,7 +376,7 @@ def chain_backed(root, kind, edges, path, mb):
         edge = matches[0]
         remaining.remove(edge)
         current = edge[1]
-    return current == actual and not remaining
+    return current == target and not remaining
 
 
 # ------------------------------------------------------------ classification
@@ -461,8 +465,12 @@ def gateway_inventory(root, commit='HEAD'):
         body = re.search(r'^def manifest_inventory\(.*?(?=^def |\Z)', frozen, re.S | re.M)
         if scripts and body:
             literals = re.findall(r"'([^']+)'", body.group(0))
+            # ``f'scripts/a5-19/{name}'`` is the template form: the directory is
+            # the prefix even though the literal does not end in '/'.
             prefixes = {item for item in literals if item.endswith('/')}
-            full = {item for item in literals if '/' in item and not item.endswith('/')}
+            prefixes |= {item.split('{name}')[0] for item in literals if '{name}' in item}
+            full = {item for item in literals
+                    if '/' in item and not item.endswith('/') and '{name}' not in item}
             bare = {item for item in literals if '/' not in item and '.' in item}
             inventory = set(full)
             inventory.update(f'specs/gateway-parity/{name}' for name in bare)
@@ -591,7 +599,14 @@ def classify(ctx, item):
     match = LACKS_CHAIN.match(item)
     if match:
         name = match.group(1)
-        if registrable(root, kind, name) and chain_backed(root, kind, edges, name, mb):
+        # The name must be in the *old or the new* manifest.  The apparatus also
+        # emits this for a path that only an event row mentions (an unused row
+        # --write cannot clear), and blessing that is a dead end: --write would
+        # never register it.  A member dropped from the inventory is in the old
+        # manifest, so deletions still pass.
+        in_old = registered_at(root, kind, name, mb) is True
+        if (in_old or registrable(root, kind, name)) \
+                and chain_backed(root, kind, edges, name, mb):
             return 'ok', None, None
         return 'block', 'blocking', None
     # A Pending: placeholder can fail the two-family rule; that is expected.
@@ -803,6 +818,17 @@ def main(argv=None):
     results = [run_apparatus(root, kind, entry, mb, mb)
                for kind, entry in apparatuses]
     issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
+
+    # Re-sample the working tree: the first sample is taken before the apparatus
+    # runs, so a file written during the run (editor auto-save, a leftover
+    # checkout) would otherwise be hashed by the apparatus while the tree looked
+    # clean here -- the same false READY, just inside the window.
+    code, dirty_after, dirty_err_after = git(root, 'status', '--porcelain',
+                                             '--untracked-files=no')
+    if tree_block is None and (code != 0 or dirty_after.strip()):
+        tree_block = ('working tree changed during the run: the apparatus hashed bytes '
+                      'that are not what HEAD will be judged on'
+                      + (f' ({dirty_err_after.strip()})' if code != 0 else ''))
 
     if tree_block:
         results.insert(0, {'kind': 'worktree',
