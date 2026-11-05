@@ -124,7 +124,11 @@ async fn persistence_real_recorder_survives_runtime_restart_and_isolates_session
         .unwrap();
     assert_eq!(bytes(&restored.restored.entries), original);
     assert_eq!(fs::read(&path).unwrap(), original);
-    let parent = restored.recorder.snapshot_state().1.unwrap();
+    let parent = restored
+        .recorder
+        .snapshot_state()
+        .1
+        .expect("#297 the reopened session writer must retain the persisted parent chain");
     assert!(matches!(
         restored.recorder.start_turn(&"s".into(), &"t1".into()),
         Err(RecorderError::Domain {
