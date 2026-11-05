@@ -84,3 +84,19 @@ scripts/delivery-orphan.py --claims                                             
 
 已知边界：远端 worker 默认直接 ssh 问 cb8/mbp2/macmini-01（`--no-check-remote` 关掉），另外兜底本机的 `remote-wait` 等待进程与 `waiter.pid`；**远端有主机没核过就只报 NO-PR、不判 DEAD**——11-05 实测踩过两次：只查本机会把 cb8 上正在跑的 #1473 误判成「没人会再来处理它」，而远端 `pgrep` 的模式若原样写进命令又会自匹配、把每条都判成「有人在跑」（模式末位写成 `[3]` 断开）。A 类只按 mtime 判交付时间，**不读 exit 内容判成败**（exit 文件内容不可信，且失败交付同样要有人处理）。**`waiter.pid` 只 `kill(pid,0)`**：PID 被无关进程复用时会把死等待判成「有人在跑」，漏报 DEAD（失败方向朝静默，不是假告警）；要堵需在 pid 文件里同时记进程起始时间，见闸门 P2，未在本轮修。
 
+## check-taskbook-segments.py — 大包任务书必须切段
+
+踩过的坑：**2026-11-05 夜 #1316** 跑满 7200 s 被 kill，16 个文件写完但 RESULT / 负控 / final.patch 全缺，只能靠 WIP 补丁续跑；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
+「每 30 分钟 WIP 提交」只防丢进度，**不防「一整段跑不完」**——所以要在大包派单前就按文件切段。
+
+判据来自最近 10 个超时单与 10 个一次跑完的单：**手写改动文件 ≥ 8 或 手写 diff ≥ 1500 行**（召回 9/10，误报 3/10，且误报的三个分别是 95 min 逼近上限、478k 行生成金样、接续轮）。
+派单前拿不到真实改动量，所以任务书写 `<!-- pdrs-scope: files=N lines=M est_min=K -->` 声明；没写才退回「约 N 人日」与点名 `*.rs` 路径数。
+
+```bash
+python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过 / 1 大包缺分段表 / 2 读不了或 scope 写坏
+python3 -I scripts/check-taskbook-segments.py --print-skeleton
+python3 -I scripts/test-check-taskbook-segments.py        # 14 条正控 / 负控
+```
+
+命中大包的任务书必须含 `## 分段交付`（段名 / 涉及文件 / 交付物 / 预估时长 ≤90 min / 段间依赖，≥2 段）与 `## 续跑`（进度文件 + 第 N 段失败从哪继续）。
+`~/ws/pdrs-ops` 的 `dispatch-issue` / `dispatch-fix` / `fix-assemble` 已强制：不合规不启动 worker；`dispatch-resume` 只告警；`round-start` 9d 段每轮兜底。模板见 `~/ws/pdrs-ops/templates/taskbook-segments.md`。
