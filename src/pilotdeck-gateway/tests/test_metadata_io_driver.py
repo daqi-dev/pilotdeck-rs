@@ -779,6 +779,7 @@ class EnvironmentControls(unittest.TestCase):
             'python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_negative_controls.py',
             'python3 -I scripts/test-approval-provenance.py',
             'python3 -I scripts/test-review-deepseek.py',
+            'python3 -I scripts/test-review-minimax.py',
             'python3 -I scripts/test-review-roles.py',
             'bash scripts/test-pdrs-loop.sh',
             'python3 -I scripts/check-approval-provenance.py',
