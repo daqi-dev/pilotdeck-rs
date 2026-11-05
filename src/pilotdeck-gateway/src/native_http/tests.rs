@@ -2499,6 +2499,40 @@ async fn headers_timeout_408_arrives(client: &mut tokio::io::DuplexStream, what:
     }
 }
 
+/// #1292 fix-r2: the mid-stream close-only expiry — the stream ends at the
+/// deadline's grid landing with no 408 bytes in front of the EOF, Node's
+/// `socketOnError` destroying a socket whose in-flight response already sent
+/// its head (`probe-g2.out`/`probe-c2.out`). A stray 408 (the
+/// `native-http-408-into-started-response` mutant) fails with the bytes read;
+/// a missing close (the `native-http-mid-stream-head-anchor-off` and
+/// `native-http-headers-timeout-busy-blocks-head` mutants) fails at the
+/// window budget.
+async fn stream_ends_silently_at_grid_point(client: &mut tokio::io::DuplexStream, what: &str) {
+    let mut buffer = Vec::new();
+    for _ in 0..16 {
+        let mut chunk = [0u8; 64];
+        let pending = timeout(Duration::from_millis(50), client.read(&mut chunk));
+        tokio::time::advance(Duration::from_millis(60)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        match pending.await {
+            Ok(Ok(0)) => {
+                assert!(
+                    buffer.is_empty(),
+                    "#1292 {what}: the close-only end must carry no bytes, got {:?}",
+                    latin1_string(&buffer)
+                );
+                return;
+            }
+            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Ok(Err(error)) => panic!("#1292 {what}: {error}"),
+            Err(_open) => {}
+        }
+    }
+    panic!("#1292 {what}: the streaming connection was never closed at the grid point");
+}
+
 /// #1292: the connection future's own result once the 408 close (or a peer
 /// disconnect, the same event in production) ended the connection: a head
 /// that had started arriving is reported as `IncompleteMessage`, a connection
@@ -2549,8 +2583,9 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 .await
                 .expect("#1292 write the partial first head");
             // Let the serve task run once before the advance: the deadline is
-            // armed at the connection's first poll (Node counts the 60 s from
-            // the connection's start), so advancing first would push it out to
+            // anchored at the head's first byte (fix-r2 `probe-c1.out` —
+            // Node's `on_message_begin`; here it coincides with the
+            // connection's start), so advancing first would push it out to
             // advance + 60 s and the 408 would never land.
             for _ in 0..8 {
                 tokio::task::yield_now().await;
@@ -2589,9 +2624,10 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 None,
             ));
             // Let the serve task run once before the advance: the deadline is
-            // armed at the connection's first poll (Node counts the 60 s from
-            // the connection's start), so advancing first would push it out to
-            // advance + 60 s and the 408 would never land.
+            // armed at the connection's first poll (a zero-byte connection
+            // has no first byte to anchor, so Node counts the 60 s from the
+            // connection's accept — `b1-T1b.out`), so advancing first would
+            // push it out to advance + 60 s and the 408 would never land.
             for _ in 0..8 {
                 tokio::task::yield_now().await;
             }
@@ -2879,6 +2915,381 @@ async fn headers_timeout_lands_on_checker_grid_like_ts() {
         ended_by_408_close(
             served,
             "the phase-shifted connection future ends at the 408 close",
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r2 (review #1, probe `probe-c1.out`): the connection's *first*
+/// request head anchors its own `headersTimeout` at its first byte — Node's
+/// `on_message_begin` — not at the connection's accept. Connect, stay silent
+/// for 30 s, then send an incomplete head: the head's deadline (+90 s) lands
+/// exactly on the checker's grid, so the strictly-greater comparison holds it
+/// for the next point and the 51-byte 408 arrives at +120 s (`probe-c1.out`:
+/// Node answered at connect + 120.001 s, head age 90.001 s). The probes
+/// bracket the deadline instant, the grid point both anchors' deadlines
+/// quantize around, and the landing. Binds the negative control
+/// `native-http-first-head-anchor-off` (the pre-fix-r2 connect anchor for the
+/// first head: its on-grid +60 s deadline lands the 408 at +90 s, where the
+/// probe reads it) and kills `native-http-headers-grid-inclusive` (ceil
+/// semantics fire the head's on-grid +90 s deadline at +90 s itself).
+#[tokio::test(start_paused = true)]
+async fn first_head_delayed_anchors_at_its_first_byte_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                async move { serve(&request, &config).await }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        // Let the serve task arm the connect-anchored deadline first (t = 0),
+        // so the 30 s silence that follows is part of the head's wait, not of
+        // the connection setup.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the delayed partial first head");
+        // Let the serve task read the segment: the head's first byte is its
+        // own headersTimeout start (+30 s + 60 s = +90 s, on-grid → the
+        // strictly-greater comparison lands it at +120 s).
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +59.4 s: before either anchor's deadline instant.
+        tokio::time::advance(Duration::from_millis(29_340)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the delayed first head stays unanswered before the 60 s deadline instants",
+        )
+        .await;
+        // t = +90.6 s: past the connect anchor's on-grid landing (+90 s) and
+        // past the head's own on-grid deadline (+90 s) — both must stay
+        // silent; only the next point answers.
+        tokio::time::advance(Duration::from_millis(31_200)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the delayed first head stays unanswered past both the head's on-grid +90 s deadline and the connect anchor's +90 s landing",
+        )
+        .await;
+        // t = +119.4 s: just before the head's own grid landing.
+        tokio::time::advance(Duration::from_millis(28_740)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the delayed first head stays unanswered just before its +120 s grid landing",
+        )
+        .await;
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "delayed first head").await;
+        let served = task.await.expect("#1292 delayed-first-head task join");
+        ended_by_408_close(
+            served,
+            "the delayed-first-head connection future ends at the 408 close",
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r2 (review #2, probes `probe-g2.out`/`probe-c2.out`): a follow-up
+/// head that starts arriving while the previous response is still streaming is
+/// bounded from its own first byte — and when that deadline expires
+/// mid-stream, Node's `socketOnError` destroys the socket without the
+/// 51-byte 408, because the in-flight response has already sent its head
+/// (`!_httpMessage._headerSent`). Here the response holds mid-body from +1 s
+/// — where the half head arrives — and the head's deadline (+61 s) quantizes
+/// to the +90 s grid point: the stream must end there silently, with no 408
+/// bytes in front of the EOF. Binds the negative control
+/// `native-http-mid-stream-head-anchor-off` (no mid-stream anchor: nothing
+/// ever fires and the close-only window budget fails), kills
+/// `native-http-headers-timeout-busy-blocks-head` (the in-flight check
+/// disarming the started head's deadline: the stream is never closed) and
+/// `native-http-408-into-started-response` (the 408 written into the started
+/// response: the EOF read sees its bytes).
+#[tokio::test(start_paused = true)]
+async fn mid_stream_head_timeout_closes_stream_silently_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                async {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", "part2", release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the streaming request");
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "streaming first chunk").await;
+        // t = +1 s: the follow-up head's first byte, while the response body
+        // is held mid-stream. Its deadline (+61 s) quantizes to +90 s.
+        tokio::time::advance(Duration::from_millis(1_000)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the mid-stream half head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +60.5 s: just before the mid-stream head's own deadline.
+        tokio::time::advance(Duration::from_millis(59_440)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the streaming response is not interrupted before the mid-stream head's deadline",
+        )
+        .await;
+        // t ≈ +89.4 s: past the deadline, the stream still runs — the landing
+        // is the +90 s grid point.
+        tokio::time::advance(Duration::from_millis(28_780)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the streaming response runs on past the deadline, until its +90 s grid landing",
+        )
+        .await;
+        stream_ends_silently_at_grid_point(
+            &mut client,
+            "the mid-stream head's deadline closes the streaming connection without a 408",
+        )
+        .await;
+        // The release sender outlives the connection (it drops at scope end):
+        // dropping it earlier would fail the held body's wait instead of
+        // leaving the grid-point close as the cell's verdict.
+        let _release_hold = release_tx;
+        let served = task.await.expect("#1292 mid-stream-head task join");
+        ended_by_408_close(
+            served,
+            "the mid-stream-head connection future ends at the silent close",
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r2 (review #2 corollary, probe `probe-g4.out`): the same
+/// mid-stream half head against a response that has written nothing — Node's
+/// `socketOnError` guard is `_headerSent`, not "a response exists": the
+/// 51-byte 408 is written at the +90 s grid landing. The handler holds the
+/// first request's response from +0 s; the half head arrives at +1 s and is
+/// still the one bounded (its deadline +61 s → +90 s). Re-kills
+/// `native-http-mid-stream-head-anchor-off` and
+/// `native-http-headers-timeout-busy-blocks-head` (no 408 ever arrives).
+#[tokio::test(start_paused = true)]
+async fn held_response_mid_stream_head_still_408s_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (_release_tx, release_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                let mut release = release_rx.clone();
+                async move {
+                    release
+                        .wait_for(|released| *released)
+                        .await
+                        .expect("#1292 hold signal intact");
+                    serve(&request, &config).await
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the held request");
+        // Let the serve task parse the head before the advance: the handler
+        // holds with no bytes written, so the in-flight response has not sent
+        // its head.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +1 s: the follow-up head's first byte, while the held request
+        // is still in service. Its deadline (+61 s) quantizes to +90 s.
+        tokio::time::advance(Duration::from_millis(1_000)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the mid-stream half head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +60.5 s: just before the mid-stream head's own deadline.
+        tokio::time::advance(Duration::from_millis(59_440)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the held response is not interrupted before the mid-stream head's deadline",
+        )
+        .await;
+        // t ≈ +89.4 s: past the deadline, still nothing — the landing is the
+        // +90 s grid point.
+        tokio::time::advance(Duration::from_millis(28_780)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the held request stays unanswered past the deadline, until its +90 s grid landing",
+        )
+        .await;
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "mid-stream head against a held response").await;
+        let served = task.await.expect("#1292 held-response task join");
+        ended_by_408_close(
+            served,
+            "the held-response connection future ends at the 408 close",
+        );
+    })
+    .await;
+}
+
+/// #1292 fix-r2 (DS r2 leftover ①, three-request pipeline): the middle
+/// request's response streams across the third head's deadline — the third
+/// request's half head anchors at its own first byte (+25 s → +85 s → the
+/// +90 s grid point), and when the second response finishes at +88 s the
+/// re-arm must keep that deadline (Node's `last_message_start_` was set at the
+/// head's first byte; the response ending does not move it): the 51-byte 408
+/// arrives at +90 s, before the response-2 finish's idle close (+94 s). The
+/// pre-fix-r2 re-arm-from-finish would push the deadline to +148 s → +150 s,
+/// and the idle close would own the connection at +94 s with no 408 at all.
+/// Binds the negative control `native-http-rearm-resets-started-head` and
+/// re-kills `native-http-mid-stream-head-anchor-off` (no mid-stream anchor:
+/// the finish at +88 s arms from its own instant instead).
+#[tokio::test(start_paused = true)]
+async fn pipelined_mid_stream_head_keeps_own_deadline_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let config = Config {
+            token: "fixture-token".into(),
+            loopback: true,
+            static_root: None,
+        };
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |request, _lease| {
+                let config = config.clone();
+                let release = release_rx.clone();
+                async move {
+                    if request.uri().path() == "/held" {
+                        hyper::Response::builder()
+                            .status(hyper::StatusCode::OK)
+                            .header(hyper::header::CONTENT_TYPE, "text/plain")
+                            .body(held_body("part1-", "part2", release))
+                            .map_err(std::io::Error::other)
+                    } else {
+                        serve(&request, &config).await
+                    }
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        // Request 1: served and read at t ≈ 0.
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the first health request");
+        read_response(&mut client, "pipeline first health").await;
+        // t = +20 s: request 2, whose response streams one chunk and then
+        // holds mid-body.
+        tokio::time::advance(Duration::from_secs(20)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1292 write the streaming second request");
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "pipeline second chunk").await;
+        // t = +25 s: the third request's half head, while the second response
+        // is held mid-stream. Its deadline (+85 s) quantizes to +90 s.
+        tokio::time::advance(Duration::from_secs(5)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1292 write the mid-stream third half head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +85.5 s: the third head's own deadline instant — nothing fires
+        // there, the landing is the +90 s grid point.
+        tokio::time::advance(Duration::from_millis(60_380)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the second response streams on past the third head's deadline instant",
+        )
+        .await;
+        // t = +88 s: release the second response. Its finish must keep the
+        // third head's deadline, not re-arm from its own instant — the idle
+        // close it arms (+94 s) must never get near the +90 s landing.
+        tokio::time::advance(Duration::from_millis(2_560)).await;
+        release_tx.send_replace(true);
+        let mut tail = Vec::new();
+        read_until(&mut tail, &mut client, "0\r\n\r\n", "pipeline second end").await;
+        // t ≈ +89.2 s: just before the grid landing, with the second response
+        // fully delivered.
+        tokio::time::advance(Duration::from_millis(1_200)).await;
+        probe_still_open(
+            &mut client,
+            "#1292 the finished pipeline stays unanswered just before the third head's +90 s grid landing",
+        )
+        .await;
+        tokio::time::advance(Duration::from_millis(740)).await;
+        headers_timeout_408_arrives(&mut client, "pipelined mid-stream third head").await;
+        let served = task.await.expect("#1292 pipeline task join");
+        ended_by_408_close(
+            served,
+            "the pipeline connection future ends at the 408 close",
         );
     })
     .await;

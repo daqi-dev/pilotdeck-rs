@@ -504,6 +504,9 @@ fn cancelling_service_lease_wakes_paused_reader() {
         None,
         tokio::sync::watch::channel(0usize).1,
         Arc::new(AtomicUsize::new(0)),
+        // #1292 fix-r2: no body pending in this gate-level test — it pins
+        // the lease wake path, not the mid-stream anchoring.
+        Arc::new(std::sync::atomic::AtomicI64::new(0)),
     );
     let lease = ReadLease(state.clone());
     let mut bytes = [0; 1];
