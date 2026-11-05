@@ -3,6 +3,8 @@
 
 CARGO_TARGET_DIR=... python3 negative_controls.py NEW_OUTPUT_DIR [name ...]
 Every mutant must compile before its bound runtime assertion can kill it.
+A mutation registered in pending-reanchor.txt is skipped, never executed
+(#1048 protocol, same semantics as negative_suite.run_cases).
 """
 import argparse
 import os
@@ -10,10 +12,12 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pending_reanchor as pending
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, classify, passed, invalidate_completed, publish_summary
 
-root = Path(__file__).resolve().parents[5]
+script = Path(__file__).resolve()
+root = script.parents[5]
 source = root / 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
 tests = root / 'src/pilotdeck-gateway/src/user_dialog/http_store_park_tests.rs'
 PREFIX = 'user_dialog::http_store::http_store_park_tests::'
@@ -95,8 +99,20 @@ def main():
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
-        with mutating_sources(root, [source, tests]) as snapshots:
+        registrations = pending.for_script(root, script)
+        guarded = [source, tests]
+        if registrations:
+            # Guard the registry too, like negative_suite.run_cases: a mid-run
+            # edit must invalidate every row instead of silently re-reading it.
+            guarded.append(root / pending.FIXTURES / pending.REGISTRY)
+        with mutating_sources(root, guarded) as snapshots:
             for name, path, old, new, full, assertion in selected:
+                entry = pending.match(registrations, name)
+                if entry is not None:
+                    # Skip before anchor check, mutation, and cargo
+                    # (negative_suite.py:148-151 semantics).
+                    record(name, full, assertion, pending.SKIPPED, entry.reason())
+                    continue
                 status, reason, compiled = 'INVALID', 'not run', False
                 try:
                     original = snapshots[path].decode()
@@ -136,8 +152,14 @@ def main():
 
 if __name__ == '__main__':
     if sys.argv[1:] == ['--check-anchors']:
+        registrations = pending.for_script(root, script)
         stale = []
         for name, path, old, _new, _test, _assertion in cases:
+            if pending.match(registrations, name) is not None:
+                # Same as negative_suite.matrix_main --check: a registered
+                # pending mutation is reported and the check fails closed.
+                stale.append((name, pending.SKIPPED))
+                continue
             count = path.read_text().count(old)
             if count != ANCHOR_COUNTS.get(name, 1):
                 stale.append((name, count))
