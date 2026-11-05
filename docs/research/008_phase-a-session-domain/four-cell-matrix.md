@@ -128,7 +128,7 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 | 装置 | 结果 | 证据 |
 |---|---|---|
 | `native-topology/run.py` 的 `Rust-sidecar-native` 格 | `status=PASS`，同 4 案 × 5 轮 | 同上 |
-| `session_domain.py --suite deadline --native-capture` | 采集 `WITNESS_CAPTURED`；打分 72/72 `NOT_RUN`（`rule=COVERAGE`），批 `NOT_RUN` / exit 3 | `_tmp/20261106-issue-590/deadline-native-001/report.json`（详见第四节） |
+| `session_domain.py --suite deadline --native-capture` | 采集 `WITNESS_CAPTURED`；打分 72/72 `NOT_RUN`（`rule=COVERAGE`），批 `NOT_RUN` / exit 3 | `_tmp/20261106-issue-590/deadline-native-002/report.json`（详见第四节；-001 为同命令首次运行） |
 
 ③ 与 ④ 在同一装置、同一 4 案、同一 5 轮下**同为 PASS**，即该 4 案范围内宿主换 Rust、sidecar 换 Rust 各自都保持一致；
 这**不能**外推成"Rust 宿主 + Rust sidecar 语义等价于 TS"，4 案 ≠ 53 场景 ≠ 72 case。
