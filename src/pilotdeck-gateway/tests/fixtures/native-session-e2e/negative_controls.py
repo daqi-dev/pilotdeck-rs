@@ -4,6 +4,7 @@ import sys
 if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
+import ast
 import json
 import importlib.machinery
 import importlib.util
@@ -71,6 +72,8 @@ cases = [
     ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
+    ('port-lease-not-exclusive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\n', 'test_port_reservation_is_exclusive_across_processes'),
+    ('provider-lease-dropped', fixture, '        provider_lease = _acquire_port_lease(candidate + 1)\n', '        provider_lease = _acquire_port_lease(candidate + 100)\n', 'test_port_reservation_is_exclusive_across_processes'),
 ]
 messages = {
     'decoder-frame-for-send-rows': '#1140 e2e real capture scores 72/72 per-case PASS',
@@ -99,20 +102,52 @@ messages = {
     'lease-bound-erased': '#1402 the per-case lease bound is composed and below the stale-lease age',
     'lease-cancel-swallowed': '#1402 a cancelled case must release the parity lease and stay loud',
     'memory-rehearsal-without-lock': '#1398 e2e memory rehearsal holds the source tree lock',
+    'port-lease-not-exclusive': '#1510 the closed-guard handoff window stays exclusive via the port lease',
+    'provider-lease-dropped': '#1510 the closed-guard handoff window stays exclusive via the port lease',
 }
 
 
+def _test_classes():
+    """Map every `test_*` name in the fixture to the class that defines it.
+
+    A prefix table drifts silently: #1510's
+    `test_port_reservation_is_exclusive_across_processes` lives in
+    LifecycleTests, but no prefix rule can say so, and a wrong class turns the
+    control into a loader ERROR (INVALID) instead of a verdict.  Parsed once at
+    import, before any case mutates a source.
+    """
+    mapping = {}
+    for node in ast.parse(fixture.read_text()).body:
+        if isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef) and item.name.startswith('test_'):
+                    mapping[item.name] = node.name
+    return mapping
+
+
+TEST_CLASSES = _test_classes()
+
+
 def bound(test):
-    classname = ('LifecycleTests' if test.startswith('test_collector_profile_')
-                 else 'NegativeRunnerTests' if test.startswith('test_negative_')
-                 else 'E2ETests')
+    # Real rows must be resolved by the fixture itself (see _test_classes);
+    # the prefix table only remains for rows that do not exist in the fixture,
+    # i.e. the synthetic rows NegativeRunnerTests patches in.  preflight()
+    # rejects a real row whose test is not defined there, so the fallback can
+    # never silently mask a wrong class.
+    classname = TEST_CLASSES.get(test)
+    if classname is None:
+        classname = ('LifecycleTests' if test.startswith('test_collector_profile_')
+                     else 'NegativeRunnerTests' if test.startswith('test_negative_')
+                     else 'E2ETests')
     return classname + '.' + test
 
 
 def preflight():
     # Read-only: this never executes a mutant or bypasses the HEAD guard.
     errors = []
-    for name, path, before, after, _ in cases:
+    for name, path, before, after, test in cases:
+        if test not in TEST_CLASSES:
+            errors.append(f'UNKNOWN TEST {name}: {test} is not defined in {fixture.name}')
         text = path.read_text()
         if text.count(before) != 1:
             errors.append(f'STALE ANCHOR {name}: {text.count(before)} matches')
