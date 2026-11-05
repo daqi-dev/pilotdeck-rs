@@ -1045,9 +1045,12 @@ impl Ticket {
 }
 impl Drop for Ticket {
     fn drop(&mut self) {
+        self.done.send_replace(true);
+        // #1365: recorded only after the release write, so the probe
+        // witnesses the write instead of merely the drop's entry — a removed
+        // write must not keep a green event sequence.
         #[cfg(test)]
         settle_order::record("ticket-released");
-        self.done.send_replace(true);
     }
 }
 
