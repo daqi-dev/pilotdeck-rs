@@ -108,6 +108,14 @@ fn registry_matches_current_methods() {
         "user_dialog_claim",
         "user_dialog_release",
         "user_dialog_respond",
+        // #1310 A7-W5 S5 session configuration methods
+        "session_model_set",
+        "session_model_clear",
+        "set_permission_mode",
+        "set_session_thinking",
+        "output_styles_list",
+        "set_output_style",
+        "seed_read_state",
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();

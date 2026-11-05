@@ -4,6 +4,7 @@ use crate::runtime::connection::{Call, RequestError};
 use pilotdeck_protocol::{JsString, JsValue};
 
 mod active_turn;
+mod config;
 mod history;
 mod management;
 mod mcp;
@@ -53,6 +54,8 @@ register_families! {
     steer: steer::METHODS,
     permission: permission::METHODS,
     user_dialog: user_dialog::METHODS,
+    // A new family: one declaration above and one registration here.
+    config: config::METHODS,
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.
