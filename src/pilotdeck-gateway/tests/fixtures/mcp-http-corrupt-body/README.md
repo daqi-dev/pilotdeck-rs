@@ -15,7 +15,7 @@ Node 全局 fetch + undici + eventsource）。原始 TCP socket、仅本机回�
 | clean-eof-data-before-endpoint | 合法 gzip 的 `data: hello` 后 clean EOF | 拒绝 `SSE error: undefined` | 先触发 JSON SyntaxError（SDK 把 message 行当 JSON 解析）再 SSE error |
 | wire-interrupt-before-endpoint | CL 声明完整 gzip 成员但只发 18 字节后 destroy | 拒绝 `SSE error: TypeError: terminated: Response body length does not match content-length header` | onerror 同文 |
 | abort-before-endpoint | 挂起的 body（发 10 字节后不再发） | pending-3000ms | **close() 之后仍 pending-1000ms** |
-| endpoint-then-cut | endpoint 事件后 CL: 50 只送 26 字节即 FIN | **成功** | onerror 报 content-length 原因；**4s 窗口内重连（connections: 2）** |
+| endpoint-then-cut | endpoint 事件后 CL: 50 只送 29 字节即 FIN | **成功** | onerror 报 content-length 原因；**4s 窗口内重连（connections: 2）** |
 | corrupt-after-endpoint-staged | 合法 endpoint 成员 500ms 后追加损坏成员 | **成功** | **损坏永远不上浮**：无 onerror、无重连（connections: 1），读挂起 |
 
 原始 JSONL 输出见运行记录（每行含 name/code/message 原文，不统一形状）。
@@ -26,7 +26,13 @@ Node 全局 fetch + undici + eventsource）。原始 TCP socket、仅本机回�
   逐字对上（也是 mcp-http-encoding oracle legacy-start/corrupt 金样，本单 #1553 的核心修复）。
   BodyFailure::Decode 携带 codec cause（zlib/brotli 文案映射见 model/http/encoding.rs
   `decode_failure`），legacy_stream 在首个 endpoint 之前读体失败时 settle start。
+  该格重放金样同一 23 字节 wire，`Content-Length` 由 body 长度生成。
 - **endpoint-then-cut 对齐两点**：start 成功 + 4s 内重连计数 2。
+- **abort-before-endpoint 的 wire 与屏障**：与上表 TS 行同形（gzip 成员只发前 10 字节、
+  `Content-Length` 取整成员长度、socket 持住不关），成员在运行时生成而非钉死字节。
+  「客户端已进入读体」不靠固定睡眠判定：`read_events` 入口在 `#[cfg(test)]` 下自增
+  `body_reads_started`，测试在 2 s 有界循环里等它变化，等不到即失败（abort 落在响应头之前时
+  该计数不变，而两条路径的 settle 值相同，只有这个观测能区分）；随后才断言 start 仍 pending 并 `close()`。
 
 ## 登记差异（未接受，协调者跟进；不据此声称更大范围完成）
 
@@ -41,6 +47,10 @@ Node 全局 fetch + undici + eventsource）。原始 TCP socket、仅本机回�
 4. **endpoint 之后staged 损坏**：TS 的损坏永远不上浮（无错、无重连、读挂起）；Rust 读体
    失败进入既有重连。Rust 行为同样为既有生命周期。
 5. **endpoint-then-cut 的 onerror 文案**：TS onerror 报 content-length 原因（同差异 2 族）。
+
+对位范围说明：上表 `wire-interrupt-before-endpoint` 与 `corrupt-after-endpoint-staged` 两行
+**没有** Rust 对位行，差异 2 / 4 里写的 Rust 行为来自读码与既有生命周期，没有测试见证；
+`mcp_legacy_start_failure_matrix` 覆盖的是 corrupt / abort-stall / clean EOF / endpoint-then-cut 四态。
 
 ## 运行
 

@@ -348,6 +348,10 @@ async fn mcp_get_sse_decodes() {
     replay("get-sse", "#886 GET SSE decoding", false).await;
 }
 
+/// Bytes of the stalled gzip member that reach the wire (the TS probe's
+/// `validEndpointGzip.subarray(0, 10)`).
+const STALL_PREFIX: usize = 10;
+
 /// #1553 legacy start determinism matrix, against the real socket path.
 /// The TS rows were measured with `tests/fixtures/mcp-http-corrupt-body/process.mts`
 /// (Node v22.22.0, the baseline SDK): a corrupt gzip member rejects start
@@ -361,18 +365,27 @@ async fn mcp_get_sse_decodes() {
 #[tokio::test]
 async fn mcp_legacy_start_failure_matrix() {
     let tag = "#1553 legacy start failure matrix";
-    let corrupt = concat!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n",
-        "Content-Encoding: gzip\r\nContent-Length: 21\r\nConnection: close\r\n\r\n"
-    )
-    .as_bytes()
-    .to_vec();
-    let corrupt = [corrupt, b"invalid compressed body".to_vec()].concat();
-    // Same wire shape as the TS row (`process.mts`: gzip member, only its
-    // first 10 bytes written, Content-Length left at the full member size), so
-    // the client is blocked inside the gzip decode of the body, not on a plain
-    // read. The member is produced here instead of pinned as hex so it stays a
-    // valid stream for whatever encoder the product links.
+    // The 23 bytes of the golden `legacy-start/corrupt` wire, declared with
+    // their own length: the TS probe writes `Content-Length: corrupt.length`
+    // and the replay helper does the same, so pinning `21` here made this row
+    // the one place the replayed length disagreed with the body.
+    let corrupt_body = b"invalid compressed body".to_vec();
+    let corrupt = [
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            corrupt_body.len()
+        )
+        .into_bytes(),
+        corrupt_body,
+    ]
+    .concat();
+    // Same wire shape as the TS row (`process.mts:121-131`): a gzip member of
+    // which only the first `STALL_PREFIX` bytes are written, Content-Length
+    // left at the full member size. What that buys is shape fidelity, not a
+    // distinct blocking mechanism — the client waits in the body read and is
+    // therefore suspended mid-member. The member is produced here instead of
+    // pinned as hex so it stays a valid stream for whatever encoder the
+    // product links.
     let stalled_body = {
         use async_compression::tokio::write::GzipEncoder;
         let mut encoder = GzipEncoder::new(Vec::new());
@@ -387,8 +400,8 @@ async fn mcp_legacy_start_failure_matrix() {
         encoder.into_inner()
     };
     assert!(
-        stalled_body.len() > 10,
-        "{tag}: the stalled row sends a 10-byte prefix of a longer member"
+        stalled_body.len() > STALL_PREFIX,
+        "{tag}: the stalled row sends a {STALL_PREFIX}-byte prefix of a longer member"
     );
     let stalled = [
         format!(
@@ -396,7 +409,7 @@ async fn mcp_legacy_start_failure_matrix() {
             stalled_body.len()
         )
         .into_bytes(),
-        stalled_body[..10].to_vec(),
+        stalled_body[..STALL_PREFIX].to_vec(),
     ]
     .concat();
     let clean_eof = concat!(
@@ -445,6 +458,10 @@ async fn mcp_legacy_start_failure_matrix() {
     // Abort: start stays pending while the SSE body stalls; close() settles
     // it with Connection closed (TS keeps start pending forever — registered).
     {
+        // Baseline before this cell opens its connection: the wake order
+        // below is not ours to choose, so the client may already have reached
+        // the body read by the time the server's signal arrives.
+        let baseline = body_reads_started();
         let mut server = scripted_server(vec![(stalled, true)], tag).await;
         let wire = Wire::http(HttpLink::new(
             HttpKind::LegacySse,
@@ -477,12 +494,25 @@ async fn mcp_legacy_start_failure_matrix() {
         bounded(held.recv(), tag)
             .await
             .unwrap_or_else(|| panic!("{tag}: the server must reach the stalled body"));
-        // The signal only proves the server wrote. Park the runtime so the I/O
-        // driver delivers that read and the event source consumes the headers,
-        // which puts it inside the body read; without a real yield this
-        // single-threaded test task is re-queued ahead of hyper's connection
-        // task and `close()` lands while the response is still being awaited.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // That signal only proves the server wrote. The client-side probe is
+        // what makes the cell falsifiable: `body_reads_started` bumps inside
+        // `read_events`, so an abort that lands before the response settles
+        // `start()` exactly like one inside the body (`Connection closed`,
+        // same shape) but leaves the counter untouched. Waiting on the
+        // counter — with a deadline instead of a guessed sleep — turns the
+        // degenerate path into a failure rather than a silent pass. Each
+        // step of the wait is still a sleep because this current_thread
+        // runtime only drives I/O when it parks, so a bare `yield_now` loop
+        // would never deliver the headers; how long each step takes no
+        // longer carries the assertion.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while body_reads_started() == baseline {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "{tag}: the client never entered the body read"
+            );
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
         std::future::poll_fn(|cx| {
             assert!(
                 pending.as_mut().poll(cx).is_pending(),
