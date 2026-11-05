@@ -2,6 +2,7 @@
 import ast
 import importlib.util
 import os
+from collections import Counter
 from pathlib import Path
 import re
 import subprocess
@@ -766,6 +767,42 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(rows(mutant)), 10,
                          '#1632 dropping a row must change the pinned count')
 
+    def documented_exit_codes(self, script):
+        """脚本头部「退出码…」那张表的码集（#1556 后是多行表，续行不算新码）。"""
+        lines = script.splitlines()
+        header = next((i for i, line in enumerate(lines)
+                       if re.match(r'#\s*退出码', line)), None)
+        self.assertIsNotNone(header, '#1632 cargo-slots.sh documents its exit codes')
+        codes = set()
+        for line in lines[header + 1:]:
+            # 表以单独一行 `#` 与后文分段；不越过它，免得把正文里「# 180 s」之类读成码。
+            if not line.startswith('#') or line.strip() == '#':
+                break
+            found = re.match(r'#\s+(\d+)\s+\S', line)
+            if found:
+                codes.add(int(found[1]))
+            elif codes:
+                continue  # 续行：解释上一格，不引入新码
+        return codes
+
+    def script_guards(self, script):
+        """每处 `cargo-slots:` 诊断 + 紧随其后的 `exit N` 算一条守卫（同行或后三行都认）。"""
+        lines = script.splitlines()
+        guards = []
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith('#'):
+                continue
+            message = re.search(r'echo "(cargo-slots: [^"\n]*)"', line)
+            if not message:
+                continue
+            code = next((found[1] for found in
+                         (re.search(r'\bexit (\d+)', follow) for follow in lines[index:index + 4])
+                         if found), None)
+            # 码 0 是 --refresh-cap 的成功提示、无 exit 的是状态输出，都不是守卫。
+            if code is not None and code != '0':
+                guards.append((message[1], code))
+        return guards
+
     def slot_guard_cases(self, source, script):
         """按 `scripts/cargo-slots.sh` 的退出码契约核夹具的槽位守卫用例表。"""
         for node in ast.walk(ast.parse(source)):
@@ -779,28 +816,32 @@ class EnvironmentControls(unittest.TestCase):
         codes = {'free': 0, 'busy': 1, 'invalid-cap': 2, 'ps-failed': 3}
         self.assertEqual([key.value for key in cases.keys], list(codes),
                          '#1632 the slot guard cases are exactly the documented states')
-        # 契约的生产方是 shell 脚本而不是这张表：脚本的用法行给出权威码集，脚本多/少一个码
+        # 契约的生产方是 shell 脚本而不是这张表：脚本自己文档化的码集是权威，脚本多/少一个码
         # 而夹具与测试一起没跟，就是自指的假 PASS（#1632 r7 评审 MiniMax sibling / boundary P1）。
-        contract = re.search(r'退出码[：:](.+)', script)
-        self.assertIsNotNone(contract, '#1632 cargo-slots.sh documents its exit codes')
-        documented = {int(code) for code in re.findall(r'\d+', contract[1])}
-        self.assertEqual(documented, set(codes.values()),
-                         '#1632 every documented cargo-slots.sh exit code has a slot-guard case')
+        # #1556 之后脚本把退出码改成了一张多行表（0/1/2/3/4/64/69），夹具仍只建模消费方必须
+        # 分流的四态 0/1/2/3，所以口径是「夹具建模的每一态都被脚本文档化」，不是两边码集相等。
+        documented = self.documented_exit_codes(script)
+        self.assertLessEqual(set(codes.values()), documented,
+                             '#1632 every exit code the fixture models is documented by the script')
         self.assertLessEqual({int(code) for code in re.findall(r'\bexit (\d+)', script)}, documented,
                              '#1632 every exit in cargo-slots.sh is a documented code')
         # 上面两条只覆盖「不多出一个码」这一向（#1632 r8 评审 MiniMax boundary P1）：
-        # 把「ps 输出为空」那条 `exit 3` 整行删掉后，剩下的 `exit 3` 仍让码集自洽，
-        # 两条断言照绿，而空输出会重新变成「在跑 0 → 放行」的假 PASS——正是脚本
-        # 自己注释禁掉的那一格。所以把每条「先报诊断、再退出」的守卫逐条钉死：
-        # 增删任意一条守卫，或把某条守卫的码改掉，都必须红。
-        guards = re.findall(r'echo "(cargo-slots: [^"\n]*)"[^\n]*?\bexit (\d+)', script)
-        self.assertEqual(guards,
-                         [('cargo-slots: 上限必须是正整数（参数或 PDRS_CARGO_SLOTS），实际「${CAP}」', '2'),
-                          ('cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）', '3'),
-                          ('cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）', '3')],
-                         '#1632 every cargo-slots.sh guard: its diagnostic and its exit code')
-        self.assertEqual({int(code) for _, code in guards}, documented - {0, 1},
+        # 把「ps 输出为空」那条守卫整行删掉后，剩下的 `exit 3` 仍让码集自洽，两条断言照绿，
+        # 而空输出会重新变成「在跑 0 → 放行」的假 PASS——正是脚本自己注释禁掉的那一格。
+        # 所以把每条「先报诊断、再退出」的守卫逐条钉死（诊断与 `exit` 同行或下一行都认，
+        # #1556 后的守卫多数是分行写的）：增删任意一条守卫、把某条守卫的码改掉，都必须红。
+        # 码 2 是文档化的「保留、脚本从不主动使用」，所以守卫码集是 documented - {0, 1, 2}
+        # （0 是 --refresh-cap 的成功提示，不是守卫）；口径重写见 #1692 §10。
+        guards = self.script_guards(script)
+        self.assertEqual(Counter(int(code) for _, code in guards),
+                         Counter({3: 2, 4: 9, 64: 1, 69: 2}),
+                         '#1632 every cargo-slots.sh guard: how many guards exit with which code')
+        self.assertEqual({int(code) for _, code in guards}, documented - {0, 1, 2},
                          '#1632 the guards above are the documented non-trivial codes')
+        self.assertEqual([msg for msg, _ in guards if msg.startswith('cargo-slots: ps ')],
+                         ['cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）',
+                          'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）'],
+                         '#1632 the two sampling guards keep their diagnostics, in order')
         gates = {key.value: ast.literal_eval(value)
                  for key, value in zip(cases.keys, cases.values)}
         for name, code in codes.items():
@@ -839,7 +880,8 @@ class EnvironmentControls(unittest.TestCase):
                 ('gate-needle-loses-code', "'cargo slot gate failed with rc=3'",
                  "'cargo slot gate failed'"),
                 ('consumer-ignores-table', 'in gates.items():', 'in {}.items():'),
-                ('script-gains-a-code', '· 3 无法取样', '· 4 无法取样')):
+                # 脚本头部把取样失败文档化成 3；改成 5 后夹具建模的 3 不再被文档化。
+                ('script-doc-changes-a-code', '#   3   取样失败', '#   5   取样失败')):
             in_source = source.count(old) == 1
             self.assertEqual(source.count(old) + script.count(old), 1,
                              f'#1632 unique slot-guard anchor: {label}')
@@ -876,14 +918,24 @@ class EnvironmentControls(unittest.TestCase):
         print('#1632 slot-guard mutant case-removed: KILLED', flush=True)
 
     def run_cargo_slots(self, script, tmp, ps_body):
-        """把假 `ps` 前置进 PATH，真跑一遍 `cargo-slots.sh`。"""
-        fake = Path(tmp)/'ps'
-        fake.write_text(ps_body)
-        fake.chmod(0o755)
-        return subprocess.run(['bash', str(script), '4'], capture_output=True, text=True,
+        """假 `ps` + 桩闸 + 独立名额缓存，真跑一遍 `cargo-slots.sh`。
+
+        #1556 起脚本不接受上限参数（传了就是 rc=64 用法错误），名额由统一闸决定，
+        所以用 `PDRS_CARGO_SLOT_BIN` 指一个立刻答「名额 0/4」的桩闸、把名额缓存指到
+        临时目录（否则会读到本机的真缓存，根本走不到取样那一步），再靠 PATH 前置假 `ps`。
+        """
+        ps = Path(tmp)/'ps'
+        ps.write_text(ps_body)
+        ps.chmod(0o755)
+        gate = Path(tmp)/'cargo-slot'
+        gate.write_text('#!/bin/sh\n[ "$1" = --status ] && echo "名额 0/4 有空位"\nexit 0\n')
+        gate.chmod(0o755)
+        return subprocess.run(['bash', str(script)], capture_output=True, text=True,
                               timeout=120,
                               env={**os.environ,
-                                   'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}'})
+                                   'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}',
+                                   'PDRS_CARGO_SLOT_BIN': str(gate),
+                                   'PDRS_CARGO_SLOTS_CACHE_DIR': str(Path(tmp)/'cache')})
 
     def assert_cargo_slots_fails_closed(self, script, tmp, label):
         """取样不可用时必须 rc=3，且绝不打印「在跑 N」——打印了就是把空样本读成 0 放行。"""
