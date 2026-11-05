@@ -7,6 +7,28 @@ use crate::storage::{
 use pilotdeck_protocol::{parse_json, stringify_json};
 use std::fs;
 
+/// The `io::Error` behind a recorder store error, so a test can assert the
+/// syscall/path stage its fs call site recorded, plus Node's `code`/`errno`
+/// (`node_io::staged_fields` / `lookup` / `os_errno`, #1554).
+fn io_error(error: &RecorderError) -> &std::io::Error {
+    let RecorderError::Store(LedgerError::Io(error)) = error else {
+        panic!("expected a storage io failure: {error:?}");
+    };
+    error
+}
+
+/// `(sequence, lastEntryId)` rendered the way the TS probe logged it.
+fn state_text(state: &(u64, Option<pilotdeck_protocol::JsString>)) -> String {
+    match &state.1 {
+        Some(id) => format!(
+            "({}, Some({:?}))",
+            state.0,
+            id.to_utf8().expect("entry ids are UTF-8")
+        ),
+        None => format!("({}, None)", state.0),
+    }
+}
+
 fn oracle() -> Value {
     serde_json::from_str(include_str!(
         "../../../tests/fixtures/project-persistence/oracle.json"
@@ -252,26 +274,67 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
         .start_turn(&"s".into(), &"failed".into())
         .unwrap_err();
     eprintln!("native append error: {error:?}; display={error}");
-    assert!(matches!(
-        error,
-        RecorderError::Store(crate::storage::LedgerError::Io(_))
-    ));
+    let source = io_error(&error);
+    let (syscall, blocked_path) =
+        crate::node_io::staged_fields(source).expect("the mkdir call site labels its failure");
+    eprintln!(
+        "native append shape: code={:?} errno={:?} syscall={syscall:?} path={blocked_path:?}",
+        crate::node_io::lookup(source).map(|(code, _)| code),
+        crate::node_io::os_errno(source).map(|errno| -errno)
+    );
+    assert_eq!(
+        crate::node_io::lookup(source).map(|(code, _)| code),
+        Some("EEXIST")
+    );
+    // Node reports the negative OS errno (`EEXIST` is -17).
+    assert_eq!(
+        crate::node_io::os_errno(source).map(|errno| -errno),
+        Some(-17)
+    );
+    assert_eq!(syscall, "mkdir");
+    let blocker = blocked_path.expect("mkdir diagnostic names its path");
+    assert!(blocker.ends_with("parent"), "unexpected path {blocker:?}");
+    // Node's fs error message, byte for byte: code, description, syscall, path.
+    assert_eq!(
+        error.to_string(),
+        format!("EEXIST: file already exists, mkdir '{blocker}'")
+    );
     assert_eq!(session.recorder.snapshot_state(), (0, None));
     assert_eq!(oracle()["events"]["stateAfterFailure"]["sequence"], 0);
+    eprintln!(
+        "cell 1 first-failure: error={:?} state={}",
+        crate::node_io::lookup(source).map(|(code, _)| code),
+        state_text(&session.recorder.snapshot_state())
+    );
     fs::remove_file(path.parent().unwrap()).unwrap();
     fs::rename(scratch.0.join("initial-parent"), path.parent().unwrap()).unwrap();
     session
         .recorder
         .start_turn(&"s".into(), &"ok".into())
         .unwrap();
+    eprintln!(
+        "cell 2 first-retry: error=None state={}",
+        state_text(&session.recorder.snapshot_state())
+    );
     let before = fs::read(&path).unwrap();
     // Actual mid-session IO failure after a successful write, with recoverable evidence.
     fs::rename(path.parent().unwrap(), scratch.0.join("saved")).unwrap();
     fs::write(path.parent().unwrap(), "blocker").unwrap();
-    assert!(matches!(
-        session.recorder.start_turn(&"s".into(), &"retry".into()),
-        Err(RecorderError::Store(_))
-    ));
+    let mid = session
+        .recorder
+        .start_turn(&"s".into(), &"retry".into())
+        .unwrap_err();
+    eprintln!("native mid append error: {mid:?}; display={mid}");
+    let mid_source = io_error(&mid);
+    let (mid_syscall, mid_path) =
+        crate::node_io::staged_fields(mid_source).expect("the mkdir call site labels its failure");
+    assert_eq!(mid_syscall, "mkdir");
+    let mid_path = mid_path.expect("mkdir diagnostic names its path");
+    assert!(mid_path.ends_with("parent"), "unexpected path {mid_path:?}");
+    assert_eq!(
+        mid.to_string(),
+        format!("EEXIST: file already exists, mkdir '{mid_path}'")
+    );
     assert_eq!(
         session.recorder.snapshot_state().0,
         oracle()["events"]["midSequence"].as_u64().unwrap()
@@ -279,6 +342,11 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
     assert_eq!(
         fs::read(scratch.0.join("saved/events.jsonl")).unwrap(),
         before
+    );
+    eprintln!(
+        "cell 3 mid-failure: error={:?} state={}",
+        crate::node_io::lookup(mid_source).map(|(code, _)| code),
+        state_text(&session.recorder.snapshot_state())
     );
     fs::remove_file(path.parent().unwrap()).unwrap();
     fs::rename(scratch.0.join("saved"), path.parent().unwrap()).unwrap();
@@ -291,6 +359,11 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
         oracle()["events"]["retrySequence"].as_u64().unwrap()
     );
     assert_eq!(session.read().unwrap().entries.len(), 2);
+    eprintln!(
+        "cell 4 read-after-retry: state={} entries={}",
+        state_text(&session.recorder.snapshot_state()),
+        session.read().unwrap().entries.len()
+    );
     drop((session, handle, lease));
     bounded(registry.dispose()).await.unwrap();
 }

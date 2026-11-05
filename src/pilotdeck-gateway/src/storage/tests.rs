@@ -1476,3 +1476,37 @@ fn writable_transcript_checks_the_matching_diagnostic_not_the_first() {
     read.diagnostics.clear();
     read.ensure_writable().unwrap();
 }
+
+/// #1554: a labelled fs failure renders Node's message; an unlabelled one keeps
+/// Rust's own text, because Display must not invent a syscall.
+#[test]
+fn ledger_io_display_uses_the_labelled_syscall_and_never_guesses() {
+    let labelled = LedgerError::Io(crate::node_io::path_error(
+        io::Error::from_raw_os_error(17),
+        "mkdir",
+        std::path::Path::new("/tmp/parent"),
+    ));
+    assert_eq!(
+        labelled.to_string(),
+        "EEXIST: file already exists, mkdir '/tmp/parent'"
+    );
+    let LedgerError::Io(labelled) = &labelled else {
+        unreachable!()
+    };
+    assert_eq!(
+        crate::node_io::staged_fields(labelled),
+        Some(("mkdir", Some("/tmp/parent")))
+    );
+    assert_eq!(
+        crate::node_io::os_errno(labelled).map(|errno| -errno),
+        Some(-17)
+    );
+
+    let bare = LedgerError::Io(io::Error::from_raw_os_error(17));
+    assert_eq!(bare.to_string(), "File exists (os error 17)");
+    let LedgerError::Io(bare) = &bare else {
+        unreachable!()
+    };
+    assert_eq!(crate::node_io::staged_fields(bare), None);
+    assert_eq!(crate::node_io::staged_diagnostic(bare), None);
+}

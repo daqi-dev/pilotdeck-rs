@@ -17,7 +17,11 @@ use super::{
         LedgerLock, create_temporary, private_dirs, private_open, read_transcript_limited_at, uuid,
     },
 };
-use crate::{js_value, runtime::memory::js_trim_units};
+use crate::{
+    js_value,
+    node_io::{descriptor_error, path_error},
+    runtime::memory::js_trim_units,
+};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     collections::HashSet,
@@ -229,14 +233,21 @@ impl JsonlTranscriptStore {
             .read(true)
             .append(true)
             .create(true)
-            .open(path)?;
-        let size = file.metadata()?.len();
+            .open(path)
+            .map_err(|e| path_error(e, "open", path))?;
+        let size = file
+            .metadata()
+            .map_err(|e| descriptor_error(e, "fstat"))?
+            .len();
         if size > 0 {
             let mut last = [0u8; 1];
-            file.seek(SeekFrom::Start(size - 1))?;
-            file.read_exact(&mut last)?;
+            file.seek(SeekFrom::Start(size - 1))
+                .map_err(|e| descriptor_error(e, "lseek"))?;
+            file.read_exact(&mut last)
+                .map_err(|e| descriptor_error(e, "read"))?;
             if last[0] != b'\n' {
-                file.write_all(b"\n")?;
+                file.write_all(b"\n")
+                    .map_err(|e| descriptor_error(e, "write"))?;
             }
         }
         Ok(())
@@ -296,10 +307,15 @@ impl TranscriptStore for JsonlTranscriptStore {
             }
             None => false,
         };
-        let mut file = private_open().append(true).create(true).open(path)?;
-        file.write_all(line.as_bytes())?;
+        let mut file = private_open()
+            .append(true)
+            .create(true)
+            .open(path)
+            .map_err(|e| path_error(e, "open", path))?;
+        file.write_all(line.as_bytes())
+            .map_err(|e| descriptor_error(e, "write"))?;
         if flush {
-            file.sync_all()?;
+            file.sync_all().map_err(|e| descriptor_error(e, "fsync"))?;
         }
         if let Some(stimulus) = &stimulus
             && blocked
@@ -325,7 +341,9 @@ impl TranscriptStore for JsonlTranscriptStore {
     }
     fn delete(&self, key: &TranscriptKey) -> Option<StoreResult<()>> {
         Some(match fs::remove_file(&key.transcript_path) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e.into()),
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                Err(path_error(e, "unlink", &key.transcript_path).into())
+            }
             _ => Ok(()),
         })
     }
@@ -341,9 +359,12 @@ impl TranscriptStore for JsonlTranscriptStore {
             let path = &key.transcript_path;
             let _guard = self.lock(path)?;
             let (mut file, cleanup) = create_temporary(path)?;
-            file.write_all(lines.as_bytes())?;
-            file.sync_all()?;
-            fs::rename(&cleanup.0, path)?;
+            file.write_all(lines.as_bytes())
+                .map_err(|e| descriptor_error(e, "write"))?;
+            file.sync_all().map_err(|e| descriptor_error(e, "fsync"))?;
+            // The sibling temp name is a Rust atomicity detail; the diagnostic
+            // names the transcript the caller asked to replace (TS writeFile).
+            fs::rename(&cleanup.0, path).map_err(|e| path_error(e, "rename", path))?;
             Ok(())
         }))
     }
