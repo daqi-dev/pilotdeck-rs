@@ -30,7 +30,7 @@
 踩过的坑：**#1333** 交付完成、树上有 commit，却没人开 PR，躺到另一个代理顺路看见；**#1355** 19:22 交付，空等 58 分钟无人接手，靠 20:20 守望扫描才发现。两次都是「靠人记得」，所以固化成确定性检查。
 
 ```bash
-python3 -I scripts/delivery-orphan.py        # 巡检：有孤儿 → 逐行打印并退出 1，无 → 退出 0，自身出错 → 2
+python3 -I scripts/delivery-orphan.py        # 巡检：有孤儿 → 逐行打印并退出 1，无 → 退出 0，自身出错/没核成 → 2
 ~/ws/pdrs-ops/bin/delivery-orphan            # 同上（ops 薄封装，可换当前目录跑）
 ~/ws/pdrs-ops/bin/round-start --only-orphans # 只跑 round-start 第 9c 段
 ```
@@ -49,14 +49,19 @@ python3 -I scripts/delivery-orphan.py        # 巡检：有孤儿 → 逐行打�
 - `PDRS_ORPHAN_UNCLAIMED_MIN=15`：正常收货是「轮询 + auto-receive 数分钟 + 开 PR 数分钟」，15 min 是它的 20 倍余量；今天两次事故的间隔是 58 min，15 min 能在空等半小时内报出来。
 - `PDRS_ORPHAN_STALLED_MIN=45`：认领后 45 min 还是 `claimed`，等于一次正常收货加一次重试都没落地。
 - `PDRS_ORPHAN_PR_TTL=300`：同一分支的 PR 查询缓存 5 分钟（每分支一次 `gh` 调用；30 棵树冷启动约 20 s，热启动约 3 s）。
+- `PDRS_ORPHAN_LEDGER_TTL=5`：认领表快照 5 秒后重读。巡检要跑几分钟，而 `--claim` 恰恰是有人在响应告警时才写的；只读一次会把刚认领的单继续报成 `ORPHAN-UNCLAIMED`/`ORPHAN-STALLED`（假告警）。
 - `PDRS_ORPHAN_MAX_AGE_HOURS=72`：A 类只看三天内的交付（更老的流水该显式标 `parked`）；全量翻旧账用 `--max-age-hours 0`。B 类不看年龄，那是仓库状态不是流水。
-- `PDRS_ORPHAN_HOSTS=cb8,mbp2,macmini-01`：必查的远端 worker 主机。加机器时改这里，否则新机上正在跑的单会被判成 `ORPHAN-DEAD`。
+- `PDRS_ORPHAN_HOSTS=cb8,mbp2,macmini-01`：必查的远端 worker 主机。加机器时改这里，否则新机上正在跑的单会被判成 `ORPHAN-DEAD`；设成空串/全逗号按默认表处理（`VAR=` 是 shell 里「恢复默认」的写法，静默清零会让每棵树直接判 DEAD）。
 
 免误报的闸（都是为了不把「已处理」当成「没人管」）：
 
 1. **交付之后这棵树上又出现提交 = 已收货**（`--no-commit-check` 可关）。#1355 的事故形态是 19:22 交付、20:25 才有人提交——那 58 分钟空档里本脚本照样会报，收货后自动静默。认领后停滞（`ORPHAN-STALLED`）同样吃这道闸：代理收了货但忘了回写 `--status pr-opened` 时，不会把已收的货报成「无人推进」。
 2. **「有人在跑」只认 runner 签名**（cargo/rustc/worker/评审/remote-wait/宿主链/auto-receive/负控）。单纯的 `find`、`grep`、`git status` 提到树名不算——否则任何一次巡检自己扫树都会把 DEAD 误判成 NO-PR（11-05 真实现场实测踩到过）。
-3. **远端没核过就不判 DEAD**：定不出单号（树名与分支名都不是数字）时把三台主机全记成「未核」，只报 `ORPHAN-NO-PR`。11-05 实测踩过：只查本机会把 cb8 上正在跑的 #1473 误判成「没人会再来处理它」。
+3. **没核成 ≠ 没有**：远端把 `pgrep` 自己的退出码回传（`pgrep -f … >/dev/null 2>&1; echo rc=$?`，不再走 `| wc -l`——管线退出码是 `wc` 的 0，远端没装 pgrep(127) 或报权限错(2) 都会打印 `0` 被当成「核过且没人」，三台都这样就是假 `ORPHAN-DEAD`）。`rc=1` 才算「核过、没人」，其余与 ssh 本身失败、输出不成形一律记「未核」，只报 `ORPHAN-NO-PR`。本机同理：`pgrep` 只有 `rc=1` 算「没人」，超时(124)/不可用(127) 记「本机未核」。定不出单号（树名与分支名都不是数字）时把三台主机全记成「未核」——11-05 实测踩过：只查本机会把 cb8 上正在跑的 #1473 误判成「没人会再来处理它」。
+
+```bash
+python3 -I scripts/test-delivery-orphan.py   # 正控/负控逐条钉住三条不变量（条数以脚本输出为准）
+```
 
 **已知豁免（11-05 闸门 P1，不在本脚本修）**：ops 侧守望 `watch-deliveries10.sh` 的扫描 glob 仍是 `_tmp/2026102[6-9]-issue-*`（只到 10-29），11 月起的交付**不会触发 auto-receive**。本脚本是报警端、不依赖守望，故不受影响；守望换 glob 要另起 v11 并先把存量 11 月交付播种进状态文件，否则会一次性全部 auto-receive——单独 ops 跟进，不借本 PR 改运行中的脚本。
 
@@ -73,6 +78,9 @@ scripts/delivery-orphan.py --claims                                             
 ```
 
 `pr-opened` / `merged` / `parked` 三态都算「已了结」，A 类不再报；`merged`/`pr-opened` 也会让同一单的 B 类静默。
+没有单号的树（`wt-tools-main`、`wt-frozen-batch` 这类工具树）按**树名归属**对 B 类静默，`parked` 同样有效——否则它们永远报 `ORPHAN-NO-PR`、退出码恒为 1，真孤儿被噪音稀释。
 
-已知边界：远端 worker 默认直接 ssh 问 cb8/mbp2/macmini-01（`--no-check-remote` 关掉），另外兜底本机的 `remote-wait` 等待进程与 `waiter.pid`；**远端有主机没核过就只报 NO-PR、不判 DEAD**——11-05 实测踩过两次：只查本机会把 cb8 上正在跑的 #1473 误判成「没人会再来处理它」，而远端 `pgrep` 的模式若原样写进命令又会自匹配、把每条都判成「有人在跑」（模式末位写成 `[3]` 断开）。A 类只按 mtime 判交付时间，**不读 exit 内容判成败**（exit 文件内容不可信，且失败交付同样要有人处理）。
+退出码契约：`0` 无孤儿 · `1` 有孤儿 · `2` 自身出错**或没核成**（有树因 gh/git 探测失败被跳过、而其余又没命中时，不能报「无孤儿」）。
+
+已知边界：远端 worker 默认直接 ssh 问 cb8/mbp2/macmini-01（`--no-check-remote` 关掉），另外兜底本机的 `remote-wait` 等待进程与 `waiter.pid`；**远端有主机没核过就只报 NO-PR、不判 DEAD**——11-05 实测踩过两次：只查本机会把 cb8 上正在跑的 #1473 误判成「没人会再来处理它」，而远端 `pgrep` 的模式若原样写进命令又会自匹配、把每条都判成「有人在跑」（模式末位写成 `[3]` 断开）。A 类只按 mtime 判交付时间，**不读 exit 内容判成败**（exit 文件内容不可信，且失败交付同样要有人处理）。**`waiter.pid` 只 `kill(pid,0)`**：PID 被无关进程复用时会把死等待判成「有人在跑」，漏报 DEAD（失败方向朝静默，不是假告警）；要堵需在 pid 文件里同时记进程起始时间，见闸门 P2，未在本轮修。
 
