@@ -66,12 +66,17 @@ EVENT_FIELDS = ("Calibration-Evidence: test fixture\n"
                 "Approval-Basis: test fixture\n")
 
 
-def delivery(root, kind, payload, files=(), events=(), source="", dirty=None):
-    """base 提交（含两侧装置）→ 交付提交（files/events）→ 可选工作树脏改动。"""
+def delivery(root, kind, payload, files=(), events=(), source="", dirty=None,
+             base_files=(), moves=()):
+    """base 提交（含两侧装置）→ 交付提交（files/events/moves）→ 可选工作树脏改动。"""
     init_repo(root)
     fake_apparatus(root, kind, payload, source)
+    for name, text in base_files:
+        write(root, name, text)
     commit(root, "base")
     git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+    for old, new in moves:
+        git(root, "mv", old, new)
     for name, text in files:
         write(root, name, text)
     for name, text in events:
@@ -249,7 +254,45 @@ def run():
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode}")
 
+    with tempfile.TemporaryDirectory() as td:
+        # 改名进装置目录：git 默认 rename detection 记成 R，--diff-filter=A 过滤掉，
+        # 但 --write 会登记改名目的地 → 旧实现假 READY（第四轮 P0）。
+        proc = delivery(Path(td), "gateway-parity",
+                        {"status": "FAIL", "failures": [HASH_LIST]},
+                        base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n")],
+                        moves=[("scripts/gateway-parity/fixtures/old.json",
+                                "scripts/gateway-parity/fixtures/new.json")],
+                        source="# inventory names fixtures/new.json\n")
+        case("gateway 同前缀改名的目的地无事件链 → BLOCKED（旧实现假 READY）",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = delivery(Path(td), "gateway-parity",
+                        {"status": "FAIL", "failures": [HASH_LIST]},
+                        base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n")],
+                        moves=[("scripts/gateway-parity/fixtures/old.json",
+                                "scripts/gateway-parity/fixtures/new.json")],
+                        events=[("specs/gateway-parity/frozen/20260101-r.md",
+                                 f"Change: - {sha('{}\n')} "
+                                 "scripts/gateway-parity/fixtures/new.json\n"
+                                 + EVENT_FIELDS)],
+                        source="# inventory names fixtures/new.json\n")
+        case("gateway 改名目的地有 Change: - 事件链 → READY",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
     # ------------------------------------------------------- fail-closed
+    with tempfile.TemporaryDirectory() as td:
+        # 子装置运行期间 HEAD 移动（并发 amend/commit）：证据与目标字节会跨两个
+        # 提交，旧实现照样判 READY。装置源码在打印报告后提交一次。
+        drift = ("import subprocess\n"
+                 "subprocess.run(['git', 'commit', '--allow-empty', '-qm', 'drift'])\n")
+        proc = delivery(Path(td), "ui-server-parity", {"verdict": "PASS", "errors": []},
+                        source=drift)
+        case("运行期间 HEAD 移动 → BLOCKED（快照不一致）",
+             proc.returncode == 1 and "=== snapshot === BLOCKED" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         proc = delivery(root, "parity", {"status": "FAIL", "failures": []})
