@@ -362,14 +362,22 @@ def _iter_comments(text):
         i = b + 3
 
 
-def _line_indent_example(text, pos):
-    """pos 所在行从行首到 pos 全是空白且缩进 ≥ 4 格（或一个 tab）：这是缩进块里的裸示例。
+def _indent_kind(text, pos):
+    """pos 所在行的缩进性质：`"flat"`（顶格）/ `"example"`（列表项下贴的示例）/ `"prose"`（判不准）。
 
     `- scope 写法示例：` 下一行缩进 4 格的 `<!-- pdrs-scope … -->` 修前被当成本包声明，
     一条 files=2 的示例就把后面 9 个 `.rs` 的包短路成小包 rc 0（假 PASS）。声明必须顶格写。
     修前切 `text[行首:pos]` 判空：无换行的长行上 `nl` 为空、行首恒为 0，每条 scope 都拷一遍前缀，
     单行 2 MiB 任务书退化成 O(n²)（实测 6.5 s，README 承诺 <1 s）。反向逐字符扫到非空白即返回，
     只在「整段前缀确实全是空白」时才切那一小段，总代价 O(前缀)，全文件线性。
+
+    **前置空行的缩进代码块在 `strip_fences` 里已经抹掉**，走到这里的缩进行只剩两种：
+      ① 列表项下面贴的示例（上一个非空行是 `- …` / `1. …`）——按示例忽略；
+      ② 段落懒续行（正文下一行缩进 4 格）——CommonMark 里是正文、不是代码块，作者写了 scope
+         却被静默丢掉，启发式回退把 est_min=300 的包当小包放行（gate14 GLM P1 实测：
+         `# t\\n一些正文\\n    <!-- pdrs-scope: files=6 est_min=300 -->` → scopes=[] rc 0 假 PASS）。
+         判不准的一律报 `"prose"`，由调用方报 rc 2（既不静默忽略也不静默采纳）。
+    回看上一个非空行最多 4096 字符（够越过任意正常空行段），超了按 `"prose"` 处理。
     """
     i = pos
     while i > 0:
@@ -377,9 +385,24 @@ def _line_indent_example(text, pos):
         if ch == "\n":
             break
         if not ch.isspace():
-            return False        # 行首到 pos 里有正文：不是缩进示例
+            return "flat"       # 行首到 pos 里有正文：不是缩进行
         i -= 1
-    return len(text[i:pos].expandtabs(4)) >= 4
+    if len(text[i:pos].expandtabs(4)) < CODE_INDENT:
+        return "flat"           # 缩进不到 4 格：仍按顶格声明算
+    # 往回找上一个非空行，看它是不是列表项
+    j, budget = i - 1, 4096
+    while j > 0 and budget > 0:
+        a = text.rfind("\n", max(0, j - budget), j) + 1
+        if text[a:j].strip():
+            return "example" if LIST_ITEM.match(text[a:j]) else "prose"
+        budget -= j - a + 1
+        j = a - 1
+    return "prose"              # 到文档开头都是空行：判不准（正常任务书不会这样）
+
+
+def _line_indent_example(text, pos):
+    """缩进行是不是「列表项下贴的示例」——只有这一种可以静默忽略。"""
+    return _indent_kind(text, pos) == "example"
 
 
 def parse_scopes(text):
@@ -396,8 +419,14 @@ def parse_scopes(text):
         if body is None:
             continue            # 没收到 `-->`：交给下面的 SCOPEISH 兜底报错（带行号）
         spans.append((a, b))    # 先登记：缩进示例**在**注释里，不能反被报成「没写进注释」
-        if _line_indent_example(text, a):
-            continue            # 缩进块里的裸示例，不是本包声明
+        kind = _indent_kind(text, a)
+        if kind == "example":
+            continue            # 列表项下贴的示例，不是本包声明
+        if kind == "prose":
+            line = bisect.bisect_right(nl, a) + 1
+            errors.append(f"第 {line} 行的 scope 缩进在正文下面（既不是代码块里的示例、也不是顶格声明）："
+                          "要当声明请顶格写，要当示例请放进列表项或空行之后的缩进块")
+            continue
         sm = SCOPE_BODY.match(body)
         if not sm:
             if SCOPEISH.search(body):
@@ -423,6 +452,10 @@ def parse_scopes(text):
         if _line_indent_example(text, pos):
             continue
         line = bisect.bisect_right(nl, pos) + 1
+        if _indent_kind(text, pos) == "prose":
+            errors.append(f"第 {line} 行的 scope 缩进在正文下面（既不是代码块里的示例、也不是顶格声明）："
+                          "要当声明请顶格写，要当示例请放进列表项或空行之后的缩进块")
+            continue
         errors.append(f"第 {line} 行的 scope 标记没写进 `<!-- -->` 注释（或注释没收到 `-->`），"
                       "不能静默忽略——写坏了按「读不了」处理")
     return scopes, errors
@@ -627,7 +660,7 @@ def parse_est(cell, default_unit=""):
                 seen = True
         return total if seen else None
     # 括注里的数字多半是说明（`90 min（含 10 min 缓冲）`、`80 min（2 个文件）`、`（S1 和 S2 各 30 min）`），
-    # 既不是并列也不是区间：`含 / 各 / 其中 / 包括 / 内含 / 外加` 之后的数字不计入，「（…）」里单位不是
+    # 既不是并列也不是区间：`含 / 各 / 其中 / 包括 / 内含 / 外加` 之后的数字不计入（`不含` 除外），「（…）」里单位不是
     # 时长数字的跳过而不是整格报「读不出」（旧行为会把 90 min 的合规段判成 100 → 拒派）。
     # 回看窗口的边界字符位置表：每个数字 6 次 rfind 是 O(n²)（纯数字长格上尤其明显），
     # 一次列出再用二分取「最近的一个」。
@@ -638,7 +671,9 @@ def parse_est(cell, default_unit=""):
         # `含` 与 `10` 隔 6 字符，旧窗口看不到 → 10 被计入求和 → 100 > 90 → 合规段被拒（假 FAIL）。
         k = bisect.bisect_left(breaks, m.start())
         head = cell[(breaks[k - 1] if k else -1) + 1:m.start()]
-        if re.search(r"[含各]|其中|包括|内含|外加", head):
+        # `不含 / 未含 / 无含 / 除…含` 是**排除**：那段时间不在主估时里，必须计入（`90 min（不含 30 min 测试）`
+        # 真值 120）；写成裸 `[含各]` 会把否定句也跳过 → 边界上的段假 PASS。
+        if re.search(r"(?<![不未无除])含|各|其中|包括|内含|外加", head):
             continue
         toks.append((float(m.group(1)), m.group(2).lower(), m.start()))
     if not toks:
@@ -659,14 +694,25 @@ def parse_est(cell, default_unit=""):
             if inside[pos]:
                 continue    # `（2 个文件）` 这类括注不是时长，跳过；整格没有时长数字时才报「读不出」
             return None
-        resolved.append(mins)
+        resolved.append((mins, pos))
     if not resolved:
         return None
     if len(resolved) == 1:
-        return resolved[0]
+        return resolved[0][0]
     if RANGE_MARK.search(cell):
-        return max(resolved)    # 区间 / 上限：按最大值判（「60–80 min，含联调」里的逗号不算并列）
-    return sum(resolved)
+        # 区间 / 上限取最大值（「60–80 min，含联调」里的逗号不算并列）。**区间的每一侧自己可能
+        # 就是连写**：`1h30m–1h45m` 是 max(90, 105)=105。一律 `max(所有 token)` 只取到 60，
+        # 105 min 的段被当成 60 → rc 0 假 PASS（gate14 DeepSeek P0 实测）。按区间符号的位置分组，
+        # 组内求和、组间取最大；纯区间 `80–120 min` 每组一个数，行为不变。
+        # 分组边界 = 区间符号 + 句读 / 括注开头：`1h30m–1h45m` 两侧各自求和（105）；
+        # `60–80 min（增加 20 min 联调）` 里括注里的 20 是另一句说明，不能并进右侧（仍取 80）。
+        marks = sorted([m.start() for m in RANGE_MARK.finditer(cell)] + breaks)
+        groups = {}
+        for mins, pos in resolved:
+            k = bisect.bisect_right(marks, pos)   # pos 落在第几个区间符号之后
+            groups[k] = groups.get(k, 0) + mins
+        return max(groups.values())
+    return sum(mins for mins, _pos in resolved)
 
 
 NEGATION = re.compile(r"不要|不用|不必|无需|无须|不许|不能|不会|不需要|别写|勿写")
@@ -693,7 +739,7 @@ def resume_problems(resume):
         for m in PATH_TOKEN.finditer(line):
             p = m.group(0)
             name = p.rsplit("/", 1)[-1]
-            if not re.search(r"progress|进度", name):
+            if not re.search(r"progress|进度", name, re.I):   # `PROGRESS.md` / `Progress.md` 同样是进度文件
                 continue
             bad = None
             if any(ch in p for ch in "{}<>…＜＞｛｝【】〈〉") or "..." in p:
