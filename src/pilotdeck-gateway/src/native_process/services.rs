@@ -605,15 +605,29 @@ pub(super) fn compose_attachment_turn(
             }
             continue;
         }
+        // TS composer :229-233 never routes audio to the resolver, and
+        // `collectRegisteredAttachmentReadFiles` (:171-190) swallows a
+        // stat/realpath failure silently: no diagnostic, no turn failure.
+        // Mirror that on every path-inspection failure below while leaving
+        // the success path's open-first revalidation order unchanged.
+        let audio = is_audio_attachment(entry);
         let resolved = match lease_guard(&entry.path, &lease_lexical, lease_canon.as_deref()) {
             Ok(LeaseGuard::Resolved(resolved)) => resolved,
             Ok(LeaseGuard::Unresolved(error)) => {
+                if audio {
+                    continue;
+                }
                 // A lease TTL cleanup race becomes a TS-shaped not-found
                 // diagnostic, not a whole-turn failure.
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error));
                 continue;
             }
-            Err(rejected) => return Err(rejected),
+            Err(rejected) => {
+                if audio {
+                    continue;
+                }
+                return Err(rejected);
+            }
         };
         let route = attachment_route(entry, &entry.path);
         // P0 fix-r4 (codex): open-first revalidation. The previous order
@@ -642,6 +656,9 @@ pub(super) fn compose_attachment_turn(
         let mut file = match File::open(&resolved) {
             Ok(file) => file,
             Err(error) => {
+                if audio {
+                    continue;
+                }
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error));
                 continue;
             }
@@ -656,6 +673,9 @@ pub(super) fn compose_attachment_turn(
                 // no valid root left, P0-a). No read, no registration —
                 // the TS-shaped not-found diagnostic.
                 _ => {
+                    if audio {
+                        continue;
+                    }
                     let error = std::io::Error::new(
                         std::io::ErrorKind::NotFound,
                         "attachment resolved outside the lease root after open",
@@ -669,6 +689,9 @@ pub(super) fn compose_attachment_turn(
             // not-found diagnostic, never a whole-turn failure (#1459 owns
             // the hard-failure shapes).
             Err(error) => {
+                if audio {
+                    continue;
+                }
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error));
                 continue;
             }
@@ -678,6 +701,9 @@ pub(super) fn compose_attachment_turn(
         let path_stat = match fs::metadata(&resolved) {
             Ok(metadata) => metadata,
             Err(error) => {
+                if audio {
+                    continue;
+                }
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error));
                 continue;
             }
@@ -685,11 +711,17 @@ pub(super) fn compose_attachment_turn(
         let metadata = match file.metadata() {
             Ok(metadata) => metadata,
             Err(error) => {
+                if audio {
+                    continue;
+                }
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error));
                 continue;
             }
         };
         if !attachment_identity_matches(&path_stat, &metadata) {
+            if audio {
+                continue;
+            }
             let error = std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "attachment resolved to a different file between revalidation and read",
@@ -709,7 +741,7 @@ pub(super) fn compose_attachment_turn(
         }
         // TS composer :230-233 — audio stays a registered path reference for
         // the FunASR MCP consumer; it is never read here.
-        if is_audio_attachment(entry) {
+        if audio {
             continue;
         }
         match route {
