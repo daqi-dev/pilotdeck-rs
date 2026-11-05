@@ -70,7 +70,8 @@ BRACE = re.compile(r"\{([^{}\n]{0,80})\}")
 FW_ANGLE = re.compile(r"[＜〈]([^＜＞〈〉\n]{0,200})[＞〉]")
 # 中文方括号里可能是正文（`【重要】`），只认明确的占位词，不套「含中文即占位」
 CJK_BRACKET = re.compile(r"【([^【】\n]{0,80})】")
-PLACEHOLDER_HINT = re.compile(r"待|填写|占位|省略|略|tbd|todo|xxx", re.I)
+# 只认明确的占位词：单字「待」「略」会把 `【策略】` / `【等待】` / `【忽略】` 这类正文判成占位符。
+PLACEHOLDER_HINT = re.compile(r"待填|待补|待定|待完善|待补充|填写|占位|省略号|略去|tbd|todo|xxx", re.I)
 PLACEHOLDER_WORDS = {
     "n", "n+1", "n-1", "nn", "tbd", "todo", "xxx", "yyy", "???", "待填", "待补", "空",
     "date", "name", "dir", "path", "head", "sha", "reason", "file", "id", "num", "idx", "x",
@@ -140,6 +141,10 @@ URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
 RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
 # 代码围栏：整段（含内容）抹成空行，行数不变
 FENCE = re.compile(r"(?ms)^[ \t]*(?P<f>```+|~~~+)[^\n]*\n.*?(?:^[ \t]*(?P=f)[^\n]*$|\Z)")
+# 引用块与缩进代码块是 Markdown 的另两种「贴示例」形态：里面出现的 scope 同样是示例，不是本包声明。
+# 只抹成空格（行数、偏移不变），人日 / `.rs` 回退仍看原文（宁可判大）。
+QUOTED = re.compile(r"(?m)^[ \t]*>.*$")
+INDENTED = re.compile(r"(?m)^(?: {4,}|\t).*$")
 
 SECTION = re.compile(r"^(#{2,3})\s+(.*)$")
 # 顺序有讲究：`段间依赖` 里也有「段」，dep 必须先认领，seg 才不会绑到依赖列。
@@ -155,8 +160,16 @@ COL_NAMES = {"seg": "段名", "files": "涉及文件", "deliver": "交付物", "
 
 
 def strip_fences(text):
-    """抹掉代码围栏里的内容（保留行数）。围栏里的示例表既不算合规，也不该被当占位符打回。"""
-    return FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    """抹掉代码围栏 / 引用块 / 缩进代码块里的内容（保留行数与偏移）。
+
+    围栏里贴的是示例：既不算合规分段表，也不该被当占位符打回。引用块（`> …`）与 4 空格缩进块
+    是另外两种贴示例的标准写法——修前它们里的示例 scope 会被当成本包声明，把 9 个 `.rs` 的包
+    短路成小包 rc 0（与 fix-r6 的围栏示例同一条失效类）。
+    """
+    blank = lambda m: " " * len(m.group(0))   # noqa: E731 —— 行内不换行，行数不变
+    out = FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    out = QUOTED.sub(blank, out)
+    return INDENTED.sub(blank, out)
 
 
 def fence_unclosed(text):
