@@ -97,17 +97,29 @@ impl TurnRunRegistry for FileRegistry {
         })
     }
     fn append(&self, run: &RunRef, event: &JsValue) -> RegistryFuture<()> {
-        // #1370 FIFO witness at the `runRegistry.append` port: publish a
-        // queued receipt before the job enters the single worker, so the
-        // collector sees what queued behind a held registry barrier.
-        if let Err(error) =
-            crate::storage::stimulus::registry_stimulus_queued(self.stimulus.as_ref(), event)
-        {
-            return Box::pin(std::future::ready(Err(error)));
-        }
+        // #1370 FIFO witness at the `runRegistry.append` port: the queued
+        // receipt is decided and dispatched here, on the caller's tick and
+        // before the job enters the single worker, so the collector sees what
+        // queued behind a held registry barrier. The receipt itself is written
+        // on the blocking pool — this adapter never performs disk I/O on a
+        // Tokio executor thread — and its failure still fails the append.
+        let witness = crate::storage::stimulus::registry_stimulus_queued_pending(
+            self.stimulus.as_ref(),
+            event,
+        );
         let run = run.clone();
         let event = event.clone();
-        self.call(move |registry| registry.append(&run, &event))
+        let append = self.call(move |registry| registry.append(&run, &event));
+        match witness {
+            None => append,
+            Some(witness) => {
+                let queued: RegistryFuture<()> = Box::pin(async move {
+                    witness.await?;
+                    append.await
+                });
+                queued
+            }
+        }
     }
 }
 
