@@ -484,11 +484,13 @@ fn io_code(error: &std::io::Error) -> String {
     }
 }
 
-fn parse_raw_response(raw: &[u8]) -> Value {
-    let header_end = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .expect("#1336 response header end");
+fn parse_raw_response(context: &str, raw: &[u8]) -> Value {
+    // A mutation that stops a response from arriving at all must fail on the
+    // case marker, not on an unnamed helper expect (host matrix: INVALID).
+    let header_end = crate::test_negative_receipt::expect_some(
+        raw.windows(4).position(|window| window == b"\r\n\r\n"),
+        &format!("#1336 {context} matches the TS oracle"),
+    );
     let head = String::from_utf8_lossy(&raw[..header_end]).into_owned();
     let body = String::from_utf8_lossy(&raw[header_end + 4..]).into_owned();
     let mut lines = head.split("\r\n");
@@ -510,7 +512,13 @@ fn parse_raw_response(raw: &[u8]) -> Value {
     json!({"status": status, "contentType": content_type, "body": body})
 }
 
-async fn http_request(port: u16, method: &str, path: &str, body: Option<&str>) -> Value {
+async fn http_request(
+    context: &str,
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Value {
     let mut stream = match TcpStream::connect(("127.0.0.1", port)).await {
         Ok(stream) => stream,
         Err(error) => return json!({"error": io_code(&error)}),
@@ -527,7 +535,7 @@ async fn http_request(port: u16, method: &str, path: &str, body: Option<&str>) -
     let _ = stream.write_all(request.as_bytes()).await;
     let mut raw = Vec::new();
     let _ = stream.read_to_end(&mut raw).await;
-    parse_raw_response(&raw)
+    parse_raw_response(context, &raw)
 }
 
 // ---------------------------------------------------------------- replay
@@ -647,6 +655,7 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
             }
             "http" => {
                 let result = http_request(
+                    &context,
                     case_port(),
                     step["method"].as_str().expect("#1336 http method"),
                     step["path"].as_str().expect("#1336 http path"),
@@ -741,7 +750,7 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
                     .lock()
                     .expect("#1336 record mutex")
                     .http
-                    .push(parse_raw_response(&raw));
+                    .push(parse_raw_response(&context, &raw));
             }
             "occupy" => {
                 let port = case_port();

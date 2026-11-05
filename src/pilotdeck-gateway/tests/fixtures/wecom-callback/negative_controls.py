@@ -30,10 +30,12 @@ MUTATIONS = [
      '.half_close(false)',
      'channel_matches_real_ts', '#1336 case stop-drains-inflight matches the TS oracle'),
     # The 16-byte random prefix must be skipped before the 4-byte length.
+    # First cell to notice is the GET echostr decrypt (http-get-faces), not the
+    # POST dispatch cell: echostr decryption runs through the same helper.
     ('decrypt-prefix-kept', source / 'crypto.rs',
      'let content = &raw[16.min(end)..end];',
      'let content = &raw[..end];',
-     'channel_matches_real_ts', '#1336 case post-dispatches-turn matches the TS oracle'),
+     'channel_matches_real_ts', '#1336 case http-get-faces matches the TS oracle'),
     # JavaScript sort is UTF-16 code-unit order; a Rust byte-order sort is
     # the exact mistake the component pin exists to catch.
     ('signature-byte-order', source / 'crypto.rs',
@@ -53,10 +55,12 @@ MUTATIONS = [
      'if trimmed == "/new" || trimmed.starts_with("/new ") {',
      'if trimmed.starts_with("/new ") {',
      'channel_matches_real_ts', '#1336 case mapper-commands matches the TS oracle'),
-    # The outbound body truncates at 2048 UTF-16 units, not bytes.
+    # The outbound body truncates at exactly 2048 UTF-16 units, not bytes.
+    # Mutating the limit itself (rather than taking N+1) keeps the emitted body
+    # valid JSON, so the pin's own assertion fires instead of the parse helper.
     ('truncate-past-limit', source / 'mod.rs',
-     'let units: Vec<u16> = text.encode_utf16().take(MAX_MESSAGE_LENGTH).collect();',
-     'let units: Vec<u16> = text.encode_utf16().take(MAX_MESSAGE_LENGTH + 1).collect();',
+     'const MAX_MESSAGE_LENGTH: usize = 2048;',
+     'const MAX_MESSAGE_LENGTH: usize = 2046;',
      'message_body_truncates_at_2048_utf16_units',
      '#1336 3000 UTF-16 units truncate to 2048 (1024 surrogate pairs)'),
     # Dropping a case from the parsed oracle must trip the count declaration,
