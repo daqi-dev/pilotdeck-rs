@@ -44,12 +44,20 @@ mutations = [
      '                            "async_hook_result",',
      'native_process::management_tests::production_host_management_and_restart',
      '#1231 exact wired capability set'),
+    # Dropping the registry entry sends `always_on_apply` to the
+    # `metadata::unavailable` fallback, whose code is the SAME
+    # CAPABILITY_UNAVAILABLE the family returns (metadata.rs:69). The code
+    # assertion therefore passes on this mutant; the family-specific message
+    # assertion is the discriminator that must panic, so the required marker
+    # names it. The test still asserts the code first for every other mutant
+    # (the marker here is evidence, not a weakening: any registry drop still
+    # fails the run).
     ('registry-drops-always-on',
      'native_process/methods/mod.rs',
      '    interaction: interaction::METHODS,\n    always_on: always_on::METHODS,',
      '    interaction: interaction::METHODS,',
      'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
-     '#1316 always_on_apply code'),
+     '#1316 always_on_apply message'),
     ('http-store-branch-removed',
      'native_http.rs',
      '    if path.starts_with(crate::user_dialog::http_store::STORE_PATH_PREFIX) {\n'
@@ -155,8 +163,15 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _, 
         finally:
             path.write_bytes(original)
             assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-            (out / 'summary.json').write_text(
-                json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+# The guarded window closed here: `mutating_sources` restored and re-verified
+# every source on context exit. Only now publish the single summary, atomically
+# (temp + rename, #166 r8), so no reader can see a completed-looking KILLED
+# list while a later mutant is still applied or a restore is still unverified
+# (#979 P0 / #1076). A cancellation before this point leaves no summary at all,
+# and a missing summary is fail-closed.
+temporary = out / 'summary.json.tmp'
+temporary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+temporary.replace(out / 'summary.json')
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)

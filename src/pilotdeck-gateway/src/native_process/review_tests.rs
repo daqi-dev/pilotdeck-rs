@@ -860,6 +860,10 @@ async fn session_writes_have_no_ts_writers() {
     )
     .join("a8-session.jsonl");
     let before = std::fs::read_to_string(&transcript).expect("#1316 seeded transcript");
+    // Sample `/proc` for the whole write window, not only before and after it:
+    // a child or fd holder that appears and exits between two snapshots would
+    // otherwise leave the audit green (false PASS).
+    let audit = TransientAudit::start(root);
     let children_before = child_processes();
     let status = crate::runtime::turn::gateway::GatewayRequests::request(
         &requests,
@@ -901,6 +905,9 @@ async fn session_writes_have_no_ts_writers() {
             "#1316 {method} writes metadata"
         );
     }
+    // The guarded writes are over: stop the sampler and collect everything it
+    // ever observed inside the window.
+    let (children_seen, holders_seen) = audit.finish();
     let after = std::fs::read_to_string(&transcript).expect("#1316 audited transcript");
     negative_assert!(
         after.len() > before.len(),
@@ -918,7 +925,18 @@ async fn session_writes_have_no_ts_writers() {
         children_before,
         "#1316 session writes spawn no child processes"
     );
-    for (pid, exe) in &children_after {
+    // The before/after snapshots cannot see a child that lived only inside the
+    // window; the continuous sampler keeps every pid it ever observed.
+    let transient: Vec<String> = children_seen
+        .iter()
+        .filter(|(pid, _)| !children_before.iter().any(|(before, _)| before == *pid))
+        .map(|(pid, exe)| format!("{pid}:{exe:?}"))
+        .collect();
+    negative_assert!(
+        transient.is_empty(),
+        "#1316 session writes spawn no child processes, even transiently ({transient:?})"
+    );
+    for (pid, exe) in &children_seen {
         let exe = exe
             .as_ref()
             .map(|exe| exe.to_string_lossy().into_owned())
@@ -929,8 +947,8 @@ async fn session_writes_have_no_ts_writers() {
         );
     }
     negative_assert!(
-        foreign_data_dir_holders(&root).is_empty(),
-        "#1316 no other process holds the native data dir open"
+        holders_seen.is_empty(),
+        "#1316 no other process holds the native data dir open, even transiently ({holders_seen:?})"
     );
     requests
         .owner
@@ -1015,4 +1033,76 @@ fn foreign_data_dir_holders(root: &std::path::Path) -> Vec<i32> {
     }
     holders.sort();
     holders
+}
+
+/// Poll `/proc` for the whole audited write window.
+///
+/// Two snapshots (before/after) say nothing about a child or fd holder whose
+/// lifetime is shorter than the gap between them, so a transient writer would
+/// slip through both and leave the audit green. This sampler keeps running
+/// until `finish`, accumulating every child pid and every foreign fd holder it
+/// ever observes; the assertions then judge the accumulated sets. The residual
+/// blind spot is one 1 ms sampling interval, far below the lifetime of any node
+/// writer this audit exists to catch.
+#[cfg(target_os = "linux")]
+struct TransientAudit {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<
+        std::thread::JoinHandle<(
+            std::collections::BTreeMap<i32, Option<std::path::PathBuf>>,
+            std::collections::BTreeSet<i32>,
+        )>,
+    >,
+}
+
+#[cfg(target_os = "linux")]
+impl TransientAudit {
+    fn start(root: std::path::PathBuf) -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let worker = std::thread::spawn(move || {
+            let mut children = std::collections::BTreeMap::new();
+            let mut holders = std::collections::BTreeSet::new();
+            while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                for (pid, exe) in child_processes() {
+                    children.insert(pid, exe);
+                }
+                for pid in foreign_data_dir_holders(&root) {
+                    holders.insert(pid);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            (children, holders)
+        });
+        Self {
+            stop,
+            worker: Some(worker),
+        }
+    }
+
+    fn finish(
+        mut self,
+    ) -> (
+        std::collections::BTreeMap<i32, Option<std::path::PathBuf>>,
+        std::collections::BTreeSet<i32>,
+    ) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.worker
+            .take()
+            .expect("#1316 the audit sampler is running")
+            .join()
+            .expect("#1316 the audit sampler joins")
+    }
+}
+
+/// A panic before `finish` must not leave a spinning sampler in the test
+/// process; stopping it here also keeps the owned rerun process bounded.
+#[cfg(target_os = "linux")]
+impl Drop for TransientAudit {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
