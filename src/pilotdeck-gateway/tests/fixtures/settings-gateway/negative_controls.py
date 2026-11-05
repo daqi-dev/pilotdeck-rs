@@ -106,7 +106,11 @@ MARKERS = {
 selected = sys.argv[2:]
 if selected:
     mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
+    # #1538: an explicit check, not `assert`: under `python3 -O` an assert is
+    # stripped entirely and a misspelt name silently selected nothing, so the
+    # loop below ran zero mutants, printed `0/0 killed` and exited 0.
+    if len(mutations) != len(selected):
+        sys.exit(f'#1318 unknown mutation name: {selected}')
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -136,8 +140,9 @@ if baseline_source != 'HEAD':
 oracle = json.loads((Path(__file__).with_name('oracle.json')).read_text(encoding='utf-8'))
 case_ids = {case['id'] for case in oracle['cases']}
 for marker in MARKERS.values():
-    if marker.startswith('case '):
-        assert marker[5:] in case_ids, f'marker {marker!r} names no oracle case id'
+    if marker.startswith('case ') and marker[5:] not in case_ids:
+        # #1538: explicit, so `-O` cannot strip the check.
+        sys.exit(f'#1318 marker {marker!r} names no oracle case id')
 summary = []
 failures = []
 slot_script = root / 'scripts/cargo-slots.sh'
@@ -172,7 +177,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
         try:
             content = original.decode()
             # An expired anchor is an error exit, never a SURVIVED verdict.
-            assert content.count(old) == 1, (name, content.count(old))
+            # #1538: explicit, so `-O` cannot strip the check.
+            if content.count(old) != 1:
+                raise RuntimeError(
+                    f'#1318 {name}: expected one anchor, found {content.count(old)}')
             changed = content.replace(old, new, 1)
             (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True),
@@ -210,7 +218,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, *_ in mut
             failures.append(name)
         finally:
             path.write_bytes(original)
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+            # #1538: explicit, so `-O` cannot strip the byte-for-byte restore
+            # proof and let a dirty tree exit 0.
+            if hashlib.sha256(path.read_bytes()).hexdigest() != before:
+                raise RuntimeError(f'#1318 restore failed: {filename}')
             (out / 'summary.json').write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
             (out / 'baseline.json').write_text(json.dumps(
