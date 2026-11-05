@@ -58,7 +58,7 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex, Weak},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 mod mcp;
@@ -137,6 +137,23 @@ pub(super) type CleanupObserver =
 pub(super) async fn start_observed(
     options: Options,
     env: Env,
+    cleanup_observer: CleanupObserver,
+    cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
+) -> Result<TurnGateway, ProxyError> {
+    start_observed_with_upload_cleanup(
+        options,
+        env,
+        crate::upload::CLEANUP_INTERVAL,
+        cleanup_observer,
+        cleanup_diagnostic,
+    )
+    .await
+}
+
+pub(super) async fn start_observed_with_upload_cleanup(
+    options: Options,
+    env: Env,
+    upload_cleanup_interval: Duration,
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> Result<TurnGateway, ProxyError> {
@@ -432,6 +449,9 @@ pub(super) async fn start_observed(
             return Err(error);
         }
     };
+    // TS ui/server/routes/uploads.js:73-76: the store sweeps its own TTLs on a
+    // detached schedule (#1439); the JoinHandle is dropped, not awaited.
+    crate::upload::spawn_cleanup(&upload_store, upload_cleanup_interval);
     let cleanup_factory = factory.clone();
     let cleanup_project = project.clone();
     let build_factory = factory.clone();
