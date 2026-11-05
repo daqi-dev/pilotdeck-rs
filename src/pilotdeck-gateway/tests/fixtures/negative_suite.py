@@ -2,6 +2,7 @@
 """Run every selected control without treating harness failures as kills."""
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -133,13 +134,9 @@ def publish_summary(out, results):
     exit. The payload shape is unchanged; the temp-and-rename write keeps a
     reader from observing a half-written JSON document (#166 r8).
     """
-    target = Path(out) / 'summary.json'
-    temporary = target.with_name(target.name + '.tmp')
-    temporary.write_text(json.dumps({
-        'controls': results,
-        'counts': pending.counts(results),
-    }, indent=2) + '\n')
-    temporary.replace(target)
+    _publish_json(Path(out) / 'summary.json',
+                  {'controls': results, 'counts': pending.counts(results)},
+                  overwrite=True)
 
 
 def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', script=None,
@@ -399,20 +396,30 @@ def _write_new(path, text):
         stream.write(text)
 
 
-def _publish_json(path, payload):
-    """Publish one JSON evidence file atomically (temp-and-rename).
+def _publish_json(path, payload, *, overwrite=False):
+    """Publish one JSON evidence file atomically; refuse by default.
 
     `_write_new` creates the file empty and then writes, so a reader that
-    tails the evidence directory can observe a half-written document. The
-    summary is a cross-process contract (`_negkit/compare_verdicts.py` reads
-    it directly), so the final write matches `publish_summary`'s temp-and-
-    rename (#166 r8).
+    tails the evidence directory can observe a half-written document. Both
+    write paths share this one implementation:
+
+    * `matrix_main` publishes into a directory it created exclusively, so the
+      historical `open('x')` refusal is kept — `os.link` installs the finished
+      document or fails with `FileExistsError`, never replacing a file that
+      appeared while the temporary one was being written.
+    * `publish_summary` (the `run_cases` path) re-publishes into an existing
+      output directory, so it opts into `overwrite=True` and gets the same
+      temp-file write with a `replace` (#166 r8).
     """
-    if path.exists():
-        raise FileExistsError(f'refusing to overwrite evidence: {path}')
     temporary = path.with_name(path.name + '.tmp')
-    temporary.write_text(json.dumps(payload, indent=2) + '\n')
-    temporary.replace(path)
+    try:
+        temporary.write_text(json.dumps(payload, indent=2) + '\n')
+        if overwrite:
+            temporary.replace(path)
+        else:
+            os.link(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 # The `controls[]` row schema published to `_negkit/compare_verdicts.py`
@@ -601,7 +608,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         except Exception as error:
             item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         results.append(item)
-        _write_new(out / f'{name}.result.json', json.dumps(item, indent=2) + '\n')
+        _publish_json(out / f'{name}.result.json', item)
         print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
     counts = pending.counts(results, ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
     _publish_json(out / 'summary.json', {'controls': results, 'counts': counts})

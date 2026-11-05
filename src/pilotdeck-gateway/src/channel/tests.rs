@@ -1245,6 +1245,27 @@ fn unmigrated_loader_channels_use_js_truthiness() {
     }
 }
 
+// #1579 r3 P1: both suites above derive their key set from the constant, so a
+// wrong membership flips the TS-parity property with every test still green
+// (drop `qq` and the strict suite simply stops looking at it; add `telegram`
+// and the truthiness suite skips it). Pin the membership and the 2/11 split.
+#[test]
+fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
+    let expected: &[&str] = &["qq", "wecom"];
+    crate::negative_assert!(
+        STRICT_TRUE_CHANNEL_KEYS == expected,
+        "#1386 strict-true channel key set must be exactly qq and wecom"
+    );
+    let loader_keys = UNMIGRATED_CHANNEL_KEYS
+        .iter()
+        .filter(|key| !STRICT_TRUE_CHANNEL_KEYS.contains(key))
+        .count();
+    crate::negative_assert!(
+        loader_keys == 11,
+        "#1386 eleven loader keys keep JS truthiness next to the two strict keys"
+    );
+}
+
 #[test]
 fn unmigrated_subset_channels_stay_loadable() {
     for key in SUBSET_CHANNEL_KEYS {
