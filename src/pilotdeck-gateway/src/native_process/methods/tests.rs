@@ -2510,6 +2510,30 @@ async fn user_dialog_claim_ttlms_bounds() {
             "#1437 {label} ttlMs message"
         );
     }
+    // The non-number arm (user_dialog.rs `_ =>`) is a separate guard from the
+    // range/fraction check and must carry the same domain code and message.
+    register_dialog_1437(&requests, &session, "1437-ttl-type", &resolved);
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1437-ttl-type".into()),
+                ("ttlMs", "1000".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1437 a non-number ttlMs is rejected");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_CLAIM",
+        "#1437 non-number ttlMs keeps the domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "ttlMs must be a safe integer between 1000 and 300000.",
+        "#1437 non-number ttlMs message"
+    );
     for (label, ttl_ms, request_id) in [
         ("minimum", 1_000.0, "1437-ttl-min"),
         ("maximum", 300_000.0, "1437-ttl-max"),
@@ -2565,7 +2589,7 @@ async fn user_dialog_claim_release_domain_codes() {
         ("missing sessionKey", crate::metadata::object([])),
         (
             "blank sessionKey",
-            crate::metadata::object([("requestId", "1437-r".into())]),
+            crate::metadata::object([("sessionKey", "   ".into()), ("requestId", "1437-r".into())]),
         ),
         (
             "missing requestId",
@@ -2614,8 +2638,42 @@ async fn user_dialog_claim_release_domain_codes() {
     for (label, params) in [
         ("missing sessionKey", crate::metadata::object([])),
         (
+            "blank sessionKey",
+            crate::metadata::object([
+                ("sessionKey", "   ".into()),
+                ("requestId", "1437-rel".into()),
+                ("leaseId", "1437-lease".into()),
+            ]),
+        ),
+        (
             "missing requestId",
             crate::metadata::object([("sessionKey", JsValue::String(session.clone()))]),
+        ),
+        (
+            "blank requestId",
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "   ".into()),
+                ("leaseId", "1437-lease".into()),
+            ]),
+        ),
+        // release requires all three fields (user_dialog.rs release guard):
+        // unlike claim/respond, a missing or blank leaseId is a domain reject
+        // with the same message, not a default/no-op.
+        (
+            "missing leaseId",
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1437-rel".into()),
+            ]),
+        ),
+        (
+            "blank leaseId",
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1437-rel".into()),
+                ("leaseId", "   ".into()),
+            ]),
         ),
     ] {
         let error = requests
