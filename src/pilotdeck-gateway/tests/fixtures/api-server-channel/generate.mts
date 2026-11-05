@@ -366,38 +366,46 @@ await surfaceCase('gateway-missing', {}, [
 
 // 10. Over the 1 MB cap the baseline destroys the request: the client sees a
 // zero-byte close, never a 413. Three runs pin the observed shape.
+//
+// #1606 fix-r3: the body actually sent and the `<N bytes>` placeholder recorded
+// next to it come from one constant. Written as two literals they could drift
+// apart, and the Rust replay pins the placeholder — not the TS side — to
+// `MAX_REQUEST_BYTES`, so a generator that sent a different length would be
+// checked against itself and still look green.
+const OVER_CAP_BYTES = 1_000_001;
 for (let run = 0; run < 3; run += 1) {
   const started = await startChannel({}, undefined);
   const result = await send(started.port, {
     method: 'POST',
     path: '/v1/chat/completions',
-    body: 'x'.repeat(1_000_001),
+    body: 'x'.repeat(OVER_CAP_BYTES),
   });
   await started.handle.stop('surface-done');
   cases.push({
     id: `oversized-${run}`,
     options: {},
-    requests: [{ method: 'POST', path: '/v1/chat/completions', body: '<1000001 bytes>' }],
+    requests: [{ method: 'POST', path: '/v1/chat/completions', body: `<${OVER_CAP_BYTES} bytes>` }],
     expect: [result],
   });
 }
 
 // 10b. Exactly at the 1 MB cap the baseline reads the whole body and then
-// fails in JSON.parse: 400 invalid_json. The 1,000,001 cells above cannot
-// tell `>` from `>=`; this one can. The recorded request keeps a byte-count
-// placeholder instead of 1 MB of text.
+// fails in JSON.parse: 400 invalid_json. The `OVER_CAP_BYTES` cells above
+// cannot tell `>` from `>=`; this one can. The recorded request keeps a
+// byte-count placeholder instead of 1 MB of text.
+const AT_CAP_BYTES = 1_000_000;
 {
   const started = await startChannel({}, undefined);
   const result = await send(started.port, {
     method: 'POST',
     path: '/v1/chat/completions',
-    body: 'x'.repeat(1_000_000),
+    body: 'x'.repeat(AT_CAP_BYTES),
   });
   await started.handle.stop('surface-done');
   cases.push({
     id: 'body-limit-exact',
     options: {},
-    requests: [{ method: 'POST', path: '/v1/chat/completions', body: '<1000000 bytes>' }],
+    requests: [{ method: 'POST', path: '/v1/chat/completions', body: `<${AT_CAP_BYTES} bytes>` }],
     expect: [result],
   });
 }

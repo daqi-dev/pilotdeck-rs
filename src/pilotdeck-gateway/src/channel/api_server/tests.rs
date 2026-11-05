@@ -129,6 +129,18 @@ fn req_spec_refuses_a_non_string_body() {
 }
 
 #[test]
+#[should_panic(expected = "must be a string")]
+fn req_spec_refuses_a_non_string_header() {
+    // `unwrap_or("")` here would send an empty `connection` and quietly turn a
+    // keep-alive cell into a close cell.
+    ReqSpec::from_json(&json!({
+        "method": "GET",
+        "path": "/health",
+        "headers": { "connection": true },
+    }));
+}
+
+#[test]
 #[should_panic(expected = "does not expand to a byte count")]
 fn recorded_body_refuses_a_malformed_placeholder() {
     // A near-miss placeholder must not fall back to replaying 15 literal
@@ -154,12 +166,23 @@ struct ReqSpec {
 
 impl ReqSpec {
     fn from_json(value: &Value) -> Self {
-        let headers = value["headers"]
+        // #1606 r3: headers were the last field still parsed with
+        // `unwrap_or("")` while `body` / `method` / `path` had already been
+        // made fail-closed. A non-string header value (say
+        // `"connection": true`) silently replayed as an empty header and
+        // flipped `keep_alive` to false, so the request that reached the
+        // server was not the one the oracle recorded.
+        let headers: Vec<(String, String)> = value["headers"]
             .as_object()
             .map(|headers| {
                 headers
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.as_str().unwrap_or("").to_owned()))
+                    .map(|(name, value)| {
+                        let value = value.as_str().unwrap_or_else(|| {
+                            panic!("#1333 header {name:?} must be a string, found {value:?}")
+                        });
+                        (name.clone(), value.to_owned())
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -171,10 +194,11 @@ impl ReqSpec {
             Some(other) => panic!("#1333 request body must be a string, found {other:?}"),
             None => Vec::new(),
         };
-        let keep_alive = value["headers"]["connection"]
-            .as_str()
-            .map(|value| value.eq_ignore_ascii_case("keep-alive"))
-            .unwrap_or(false);
+        // Read back off the parsed headers rather than the raw JSON, so the
+        // two can never disagree about which connection mode was requested.
+        let keep_alive = headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("connection") && value.eq_ignore_ascii_case("keep-alive")
+        });
         // #1606 r2: every oracle request carries both fields, so a missing one
         // is fixture drift, not a defaultable cell.
         let method = value["method"]
@@ -737,6 +761,17 @@ async fn replays_real_ts_api_server_cells() {
         let id = case["id"].as_str().expect("#1333 case id");
         // Runs for the boundary cells only; a no-op everywhere else.
         assert_boundary_body_len(id, case);
+        // #1606 r3: `compare_response` walks `expect` by request index, so a
+        // cell that records *more* responses than requests would leave the
+        // surplus never compared — a TS surface silently skipped while the
+        // cell stays green. Fewer responses already panics on the index; this
+        // closes the other direction for every cell, not just boundary ones.
+        let recorded_requests = case["requests"].as_array().expect("#1333 requests");
+        assert_eq!(
+            case["expect"].as_array().map(Vec::len),
+            Some(recorded_requests.len()),
+            "#1333 {id}: every recorded TS response must pair with a recorded request"
+        );
         if id.starts_with("oversized-") {
             // The three oversized cells record the same request; one of them is
             // replayed for real by `oversized_body_closes_without_response`
@@ -753,8 +788,7 @@ async fn replays_real_ts_api_server_cells() {
             .get("gateway")
             .map(|_| gateway_from(case, None, dropped.clone()) as Arc<dyn TurnGateway>);
         let started = start(options(case, None), gateway.clone()).await;
-        let requests = case["requests"].as_array().expect("#1333 requests");
-        for (index, request) in requests.iter().enumerate() {
+        for (index, request) in recorded_requests.iter().enumerate() {
             let spec = ReqSpec::from_json(request);
             let response = exchange(started.addr, &spec).await;
             compare_response(id, index, &case["expect"][index], &response);
