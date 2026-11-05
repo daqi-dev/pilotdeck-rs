@@ -58,8 +58,10 @@ MUTANT_ROWS = [
     (
         'runner-publish-before-verify',
         SUITE,
-        "        print(f'{case.mutation}: {status}: {reason}', flush=True)",
-        "        print(f'{case.mutation}: {status}: {reason}', flush=True)\n"
+        # #1413 fix-r3 renamed the console stem to ``stem(case)``; the anchor
+        # has to follow the source it mutates or this control goes INVALID.
+        "        print(f'{stem(case)}: {status}: {reason}', flush=True)",
+        "        print(f'{stem(case)}: {status}: {reason}', flush=True)\n"
         "        publish_summary(out, results)",
         'test_negative_suite.CancellationTests.'
         'test_guard_systemexit_256_voids_last_kill_and_exits_2',

@@ -57,7 +57,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed, run_cases, short_test
+from negative_suite import Case, case_labels, classify, passed, run_cases
 
 root = Path(__file__).resolve().parents[5]
 assert os.environ.get("CARGO_TARGET_DIR"), "caller must set CARGO_TARGET_DIR"
@@ -464,10 +464,13 @@ def check_registries():
     """
     problems = []
     for name, (test, _reason) in EQUIVALENT.items():
-        row = MUTATIONS.get(name)
-        if row is None:
+        # #1413 fix-r4: plain membership + index access. anchor_selfcheck
+        # rejects every method call on a TABLES dict (MUTATIONS is one), and
+        # ``MUTATIONS.get(name)`` tripped the preflight on this file.
+        if name not in MUTATIONS:
             problems.append(f'{name}: registered equivalent has no MUTATIONS row')
             continue
+        row = MUTATIONS[name]
         if not row[3]:
             problems.append(f'{name}: equivalent row binds no test')
         elif test not in row[3]:
@@ -512,7 +515,23 @@ def cases_for(names):
     return bound
 
 
-def run_equivalent_cases(selected, out):
+def equivalent_bound(names):
+    """Every test an equivalent row binds, each with its ``Case``.
+
+    #1413 fix-r4: the caller computes evidence stems once over the must-kill
+    and equivalent Cases together, so no two Cases across the two phases share
+    a ``-positive``/``-equivalent`` file stem.
+    """
+    bound = []
+    for name in names:
+        row = MUTATIONS[name]
+        for test in dict.fromkeys(row[3]):
+            bound.append((Case(name, row[0], row[1], row[2], test, row[4],
+                               extra_pairs(name)), test))
+    return bound
+
+
+def run_equivalent_cases(bound, out, labels):
     """Re-measure every registered equivalent row; a stale claim fails the run.
 
     An equivalent mutation must compile and leave every test its row binds
@@ -521,8 +540,7 @@ def run_equivalent_cases(selected, out):
     of silently rotting in the registry.
     """
     check_registries()
-    names = [name for name in selected if name in EQUIVALENT]
-    if not names:
+    if not bound:
         return 0
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
@@ -558,56 +576,47 @@ def run_equivalent_cases(selected, out):
                         'reason': detail, 'restored': status == 'EQUIVALENT'})
         print(f'{label}: {status}: {detail}', flush=True)
 
-    def bound_cases(name):
-        """Every test the row binds, each with the label its evidence uses."""
-        row = MUTATIONS[name]
-        tests = list(dict.fromkeys(row[3]))
-        labels = {test: (name if len(tests) == 1 else f'{name}-{short_test(test)}')
-                  for test in tests}
-        return [(Case(name, row[0], row[1], row[2], test, row[4], extra_pairs(name)),
-                 test, labels[test]) for test in tests]
-
-    paths = list(dict.fromkeys(MUTATIONS[name][0] for name in names))
+    paths = list(dict.fromkeys(case.path for case, _test in bound))
     try:
         with mutating_sources(root, paths) as pristine:
-            for name in names:
-                reason = EQUIVALENT[name][1]
-                for case, test, label in bound_cases(name):
-                    status, detail = 'INVALID', ''
-                    try:
-                        if not passed(run(f'{label}-positive', test), test):
-                            detail = 'positive control did not pass the bound test'
+            for case, test in bound:
+                reason = EQUIVALENT[case.mutation][1]
+                label = labels[id(case)]
+                status, detail = 'INVALID', ''
+                try:
+                    if not passed(run(f'{label}-positive', test), test):
+                        detail = 'positive control did not pass the bound test'
+                    else:
+                        case.path.write_text(mutate(pristine[case.path].decode(),
+                                                    case.scope,
+                                                    [(case.old, case.new)]))
+                        measured, measured_reason = classify(
+                            run(f'{label}-equivalent', test), case)
+                        if measured == 'SURVIVED':
+                            status = 'EQUIVALENT'
+                            detail = f'registered equivalent survives: {reason}'
+                        elif measured == 'KILLED':
+                            detail = ('registered equivalent is now killed by its bound '
+                                      'test; promote it to the must-kill set: '
+                                      + measured_reason)
                         else:
-                            case.path.write_text(mutate(pristine[case.path].decode(),
-                                                        case.scope,
-                                                        [(case.old, case.new)]))
-                            measured, measured_reason = classify(
-                                run(f'{label}-equivalent', test), case)
-                            if measured == 'SURVIVED':
-                                status = 'EQUIVALENT'
-                                detail = f'registered equivalent survives: {reason}'
-                            elif measured == 'KILLED':
-                                detail = ('registered equivalent is now killed by its bound '
-                                          'test; promote it to the must-kill set: '
-                                          + measured_reason)
-                            else:
-                                detail = f'equivalent row not measurable: {measured_reason}'
-                    except Exception as error:
-                        status, detail = 'INVALID', f'{type(error).__name__}: {error}'
-                    finally:
-                        # Restore before the restored check, also on timeout or bad anchors.
-                        case.path.write_bytes(pristine[case.path])
-                        if case.path.read_bytes() != pristine[case.path]:
-                            raise RuntimeError(f'byte restoration failed: {case.path}')
-                    if status == 'EQUIVALENT':
-                        try:
-                            if not passed(run(f'{label}-restored', test), test):
-                                status = 'INVALID'
-                                detail += '; restored bound test did not pass'
-                        except Exception as error:
+                            detail = f'equivalent row not measurable: {measured_reason}'
+                except Exception as error:
+                    status, detail = 'INVALID', f'{type(error).__name__}: {error}'
+                finally:
+                    # Restore before the restored check, also on timeout or bad anchors.
+                    case.path.write_bytes(pristine[case.path])
+                    if case.path.read_bytes() != pristine[case.path]:
+                        raise RuntimeError(f'byte restoration failed: {case.path}')
+                if status == 'EQUIVALENT':
+                    try:
+                        if not passed(run(f'{label}-restored', test), test):
                             status = 'INVALID'
-                            detail += f'; restored: {type(error).__name__}: {error}'
-                    record(case, label, status, detail)
+                            detail += '; restored bound test did not pass'
+                    except Exception as error:
+                        status = 'INVALID'
+                        detail += f'; restored: {type(error).__name__}: {error}'
+                record(case, label, status, detail)
     except BaseException as error:
         # #1365 fix-r3: a guard failure inside the equivalent window must never
         # leave the must-kill phase's all-green summary.json as the only file on
@@ -620,10 +629,9 @@ def run_equivalent_cases(selected, out):
             row.update(status='INVALID', reason=row['reason'] + '; ' + guard,
                        restored=False)
         done = {(row['mutation'], row['test']) for row in results}
-        for name in names:
-            for case, test, label in bound_cases(name):
-                if (case.mutation, test) not in done:
-                    record(case, label, 'INVALID', guard)
+        for case, test in bound:
+            if (case.mutation, test) not in done:
+                record(case, labels[id(case)], 'INVALID', guard)
         publish()
         raise
     publish()
@@ -709,16 +717,22 @@ def main():
     if args.compile_only:
         return compiled
     kill = must_kill(selected)
+    kill_cases = cases_for(kill)
+    bound = equivalent_bound([name for name in selected if name in EQUIVALENT])
+    # #1413 fix-r4: one label pass over both phases, so their evidence files
+    # cannot overwrite each other in the shared output directory.
+    labels = case_labels(kill_cases + [case for case, _test in bound])
     runtime = run_cases(
         root,
-        cases_for(kill),
+        kill_cases,
         args.out,
         os.environ.copy(),
         mutate,
         timeout=1800,
+        labels=labels,
     ) if kill else 0
     try:
-        equivalent = run_equivalent_cases(selected, args.out)
+        equivalent = run_equivalent_cases(bound, args.out, labels)
     except Exception as error:
         print(f'equivalent guard: {type(error).__name__}: {error}', flush=True)
         equivalent = 1
