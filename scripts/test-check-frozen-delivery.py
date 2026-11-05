@@ -632,6 +632,31 @@ def run():
                                            "from evil import Path") + _gw_tail) is None)
     case("gateway common 在块外二次绑定 → 不可判定",
          gw_inventory(GW_BOOTSTRAP + "common = other\n" + _gw_tail) is None)
+    case("gateway 块外 global 重绑 common（函数体内赋值）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _r():\n    global common\n"
+                        "    common = _load('common', Path('/tmp/shared/common.py'))\n"
+                        "_r()\n" + _gw_tail) is None)
+    case("gateway 块外 except ... as common → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "try:\n    pass\nexcept Exception as common:\n    pass\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 del common → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "del common\n" + _gw_tail) is None)
+    case("gateway 块外写 common.A2_SCRIPTS（属性目标）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "common.A2_SCRIPTS = ('evil.py',)\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 sys.modules 注入 guard（下标目标）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "sys.modules['_guard'] = None\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 setattr(common, ...)（反射写）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "setattr(common, 'A2_SCRIPTS', ('evil.py',))\n"
+                      + _gw_tail) is None)
+    case("第二个 bootstrap 起始锚点 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "# >>> apparatus bootstrap\n" + _gw_tail) is None)
+    case("bootstrap 助手来源名单覆盖模型块的每个导入（增删都要红）",
+         {name for name, _ in cfd._BOOTSTRAP_HELPERS}
+         == cfd._import_names(cfd._parse('\n'.join(cfd._GATEWAY_BOOTSTRAP))))
     _real_ui = (HERE / 'ui-server-parity' / 'check_frozen.py').read_text(encoding='utf-8')
     case("真装置 ui bootstrap 与模型常量整块一致",
          cfd._bootstrap_lines(_real_ui, cfd._UI_BOOTSTRAP_ANCHORS)
@@ -1309,6 +1334,24 @@ def run():
          ui_registrable(UI_APPARATUS, UI_FROZEN.replace(
              "ROOT = Path(__file__).resolve().parents[2]",
              "ROOT = Path(__file__).resolve().parent.parent.parent")) is None)
+    case("ui 块外二次绑定 _boot_dir → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\n_boot_dir = '/tmp/shared'\n") is None)
+    case("ui 块外 global 重绑 _boot_sys → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\ndef _f():\n    global _boot_sys\n    _boot_sys = None\n") is None)
+    case("ui 块外 sys.modules['apparatus'] 注入 → 不可判定",
+         ui_registrable(UI_APPARATUS,
+                        UI_FROZEN + "\nimport sys\nsys.modules['apparatus'] = None\n") is None)
+    case("ui 第二个 preflight 结束锚点 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_boot_namespace['preflight'](_boot_dir)\n") is None)
+    case("函数体内同名局部变量不影响模块级清单（不误判二次绑定）",
+         ui_registrable(UI_APPARATUS.replace(
+             "SPEC_FILES = ('acceptance.md',)",
+             "SPEC_FILES = ('acceptance.md',)\n"
+             "def _local():\n    SPEC_FILES = ()\n    return SPEC_FILES\n"),
+             UI_FROZEN) is not None)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
