@@ -922,6 +922,23 @@ NON_AGGREGATION_POINTS = {
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'replay'):
         'test-only batch replay returning observed fields, not a batch summary',
+    # #892 r3: assigning a clean status to an arbitrary name now counts as a
+    # summary marker; these five build per-case / synthetic verdicts that never
+    # claim to summarise a child batch.
+    ('scripts/gateway-parity/run_round.py', 'run_round'):
+        'runtime driver tracking its own RUNNING/DONE/ERROR round lifecycle, not a batch verdict',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'census_enumeration_failure_control'):
+        'test-only synthetic census payload ({status: None}); the control asserts the fixture fails closed',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'census_snapshot_race_control'):
+        'test-only synthetic census snapshot used to force the race; not a batch summary',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'negative_restored_replays'):
+        'test-only replay rows carrying deliberately restored statuses, not a batch summary',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'wiring_control'):
+        'test-only wiring probe whose dict is the injected stub payload, not a batch summary',
 }
 
 
@@ -953,7 +970,15 @@ def _is_status_target(target):
 
 
 def _is_report_status(target, value):
-    return (isinstance(target, ast.Name) and target.id in ('report', 'summary', 'result')
+    """A name assigned a dict that carries a ``status`` key (#892 r3).
+
+    The old three-name whitelist (``report``/``summary``/``result``) let
+    ``payload = {'status': 'PASS'}`` stay invisible, so a summary built under
+    any other name never became an aggregation point at all (MiniMax sibling
+    P1-1 / DeepSeek sibling P2-2).  The return side already accepts any name;
+    the assignment side now does too.
+    """
+    return (isinstance(target, ast.Name) and target.id != 'status'
             and isinstance(value, ast.Dict)
             and any(isinstance(key, ast.Constant) and key.value == 'status'
                     for key in value.keys))
@@ -971,21 +996,65 @@ def _returned_summary_dicts(value):
         dicts = [element for element in value.elts if isinstance(element, ast.Dict)]
     else:
         return []
-    return [item for item in dicts
-            if any(isinstance(key, ast.Constant) and key.value == 'status'
-                   for key in item.keys)]
+    return [item for item in dicts if _dict_has_status(item)]
 
 
-def _status_slot(summary):
+def _dict_pairs(summary):
+    """Every ``(key, value)`` pair, expanding ``{**literal}`` in place (#892 r3).
+
+    A ``**{'status': 'PASS'}`` entry has ``key=None``; the previous code only
+    looked at constant ``'status'`` keys, so the whole expansion was invisible
+    (DeepSeek boundary P2-4).
+    """
     for key, value in zip(summary.keys, summary.values):
-        if isinstance(key, ast.Constant) and key.value == 'status':
-            return value
-    return None
+        if key is None and isinstance(value, ast.Dict):
+            yield from _dict_pairs(value)
+        else:
+            yield key, value
+
+
+# #892 r3: the keys that claim a batch verdict.  ``verdict`` is the spelling a
+# summary could use instead of ``status``; a sub-status such as
+# ``structureStatus`` is a per-cell value, not a batch claim.
+_STATUS_KEYS = frozenset({'status', 'verdict'})
+
+
+def _dict_has_status(summary):
+    return any(isinstance(key, ast.Constant) and key.value in _STATUS_KEYS
+               for key, _value in _dict_pairs(summary))
+
+
+def _status_slot_values(summary):
+    """Every value bound to a constant ``'status'`` key (#892 r3).
+
+    All of them, not just the first: Python keeps the *last* duplicate key at
+    runtime, so ``{'status': 'BLOCKED', 'status': 'PASS'}`` would otherwise be
+    read as fail-closed while the process reports PASS (DeepSeek boundary P2-2).
+    """
+    return [value for key, value in _dict_pairs(summary)
+            if isinstance(key, ast.Constant) and key.value == 'status']
+
+
+def _is_shared_call(node):
+    """A call to the one shared ``common.aggregate_status`` (#892 r3).
+
+    Substring matching let a local ``def aggregate_status`` stand in for the
+    shared map; the shared call is the qualified attribute, never a bare local
+    name (MiniMax boundary P1-5 / DeepSeek boundary P2-5).
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if not (isinstance(func, ast.Attribute) and func.attr == 'aggregate_status'):
+        return False
+    base = func.value
+    if isinstance(base, ast.Name):
+        return base.id == 'common'
+    return isinstance(base, ast.Attribute) and base.attr == 'common'
 
 
 def _calls_aggregate(node):
-    return any(isinstance(n, ast.Call) and 'aggregate_status' in ast.unparse(n.func)
-               for n in ast.walk(node))
+    return any(_is_shared_call(n) for n in ast.walk(node))
 
 
 # #892 r1: a hard-coded status literal may only be *fail-closed*.  ``'PASS'`` /
@@ -995,48 +1064,92 @@ def _calls_aggregate(node):
 _FAIL_CLOSED_LITERALS = frozenset({'BLOCKED', 'FAIL', 'NOT_RUN'})
 
 
-def _relays_status(node, bindings):
+def _relays_status(node, bindings, seen=None):
     """A slot that carries an already-aggregated value.
 
     Names / attributes / subscripts relay whatever the shared call produced, but
     a Name is only trusted when every local assignment to it comes from the
     shared call — ``status = 'PASS' if ... else 'FAIL'`` followed by
     ``report = {'status': status}`` is the same bypass as writing the literal
-    into the dict (MiniMax P0-1).  Literals are accepted only when fail-closed.
+    into the dict (MiniMax P0-1).  A subscript whose base *is* locally bound is
+    traced the same way: ``local = {'status': 'PASS'}`` then
+    ``{'status': local['status']}`` is not a relay (DeepSeek sibling P1-1).
+    Literals are accepted only when fail-closed.
     """
     if isinstance(node, ast.Constant):
         return isinstance(node.value, str) and node.value in _FAIL_CLOSED_LITERALS
     if isinstance(node, (ast.Attribute, ast.Subscript)):
-        return True
+        return _container_relays(node, bindings, seen)
     if isinstance(node, ast.Name):
-        return _name_relays(node.id, bindings)
+        return _name_relays(node.id, bindings, seen)
     return False
 
 
+def _container_relays(node, bindings, seen=None):
+    """``x['status']`` / ``x.status`` relays only when ``x`` itself relays.
+
+    *seen* breaks the cycle ``report = {'status': report['status']}``: a name
+    already being traced cannot prove anything, so the slot stays flagged
+    instead of exhausting the interpreter stack.
+    """
+    seen = set() if seen is None else seen
+    base = node.value
+    if isinstance(base, ast.Call):
+        return _is_shared_call(base)
+    if isinstance(base, (ast.Attribute, ast.Subscript)):
+        return _container_relays(base, bindings, seen)
+    if not isinstance(base, ast.Name):
+        return False
+    if base.id in seen:
+        return False
+    seen.add(base.id)
+    values = bindings.get(base.id)
+    if not values:
+        return True  # a parameter / module global: nothing local to prove
+    for _lineno, value in values:
+        if _calls_aggregate(value):
+            continue
+        if isinstance(value, ast.Dict):
+            slots = _status_slot_values(value)
+            if slots and all(_relays_status(slot, bindings, seen) or _calls_aggregate(slot)
+                             for slot in slots):
+                continue
+        if isinstance(value, (ast.Attribute, ast.Subscript)) \
+                and _container_relays(value, bindings, seen):
+            continue
+        if isinstance(value, ast.Name) and _name_relays(value.id, bindings, seen):
+            continue
+        return False
+    return True
+
+
 def _name_bindings(function):
-    """Every value assigned to a local name inside *function* (#892 r1)."""
+    """Every value assigned to a local name inside *function* (#892 r1).
+
+    Each entry keeps its line number: the exit-code rule needs the binding that
+    can reach a given ``return`` (nearest preceding), not every binding ever
+    made (MiniMax boundary P0-2).
+    """
     bindings = {}
     for node in _own_nodes(function):
         if isinstance(node, ast.AnnAssign):
             if node.value is not None:
-                _bind_values(node.target, node.value, bindings)
+                _bind_values(node.target, node.value, bindings, node.lineno)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
-                _bind_values(target, node.value, bindings)
-        elif isinstance(node, (ast.For, ast.AsyncFor)):
-            _bind_values(node.target, node.iter, bindings)
+                _bind_values(target, node.value, bindings, node.lineno)
     return bindings
 
 
-def _bind_values(target, value, bindings):
+def _bind_values(target, value, bindings, lineno):
     if (isinstance(target, (ast.Tuple, ast.List))
             and isinstance(value, (ast.Tuple, ast.List))
             and len(target.elts) == len(value.elts)):
         for element_target, element_value in zip(target.elts, value.elts):
-            _bind_values(element_target, element_value, bindings)
+            _bind_values(element_target, element_value, bindings, lineno)
         return
     for name in _target_names(target):
-        bindings.setdefault(name, []).append(value)
+        bindings.setdefault(name, []).append((lineno, value))
 
 
 def _name_relays(name, bindings, seen=None):
@@ -1048,15 +1161,31 @@ def _name_relays(name, bindings, seen=None):
     values = bindings.get(name)
     if not values:
         return False  # nothing in this function proves where it came from
-    for value in values:
+    for _lineno, value in values:
         if _calls_aggregate(value):
             continue
-        if isinstance(value, (ast.Attribute, ast.Subscript)):
+        if isinstance(value, (ast.Attribute, ast.Subscript)) \
+                and _container_relays(value, bindings, seen):
             continue
         if isinstance(value, ast.Name) and _name_relays(value.id, bindings, seen):
             continue
         return False
     return True
+
+
+def _nearest_binding(name, bindings, lineno):
+    """The local assignment that can reach ``lineno`` (nearest preceding)."""
+    entries = [item for item in bindings.get(name, ()) if item[0] <= lineno]
+    return max(entries, key=lambda item: item[0])[1] if entries else None
+
+
+def _name_is_optimistic(name, bindings, lineno):
+    value = _nearest_binding(name, bindings, lineno)
+    if value is None:
+        return False
+    if _constant_exit_zero(value):
+        return True
+    return isinstance(value, ast.Name) and _name_is_optimistic(value.id, bindings, lineno)
 
 
 def _own_nodes(function):
@@ -1143,17 +1272,33 @@ def _returned_summary_names(value, bound):
 
 
 def _optimistic_exit(node):
-    """A bare ``return`` or a literal ``0`` claims a clean run (#892 r1).
+    """A literal ``0`` claims a clean run (#892 r1).
 
-    A bare return hands back ``None`` and ``SystemExit(None)`` exits 0, so the
-    return statement itself is judged by the caller.  An explicit ``return
-    None`` / ``return False`` is *not* flagged: ``_guard._failure`` uses ``None``
-    as its "propagate unchanged" sentinel and the caller re-raises, so the value
-    never becomes an exit code.  Fail-closed literals (``return 2`` for BLOCKED,
-    ``return 3`` for NOT_RUN) stay legal.
+    ``None`` / ``False`` are judged by the caller, which knows whether the
+    point is the ``_guard._failure`` sentinel: ``SystemExit(None)`` and
+    ``SystemExit(False)`` both exit 0, so anywhere else they are optimistic
+    exits too (DeepSeek boundary P0-1).  Fail-closed literals (``return 2`` for
+    BLOCKED, ``return 3`` for NOT_RUN) stay legal.
     """
     return (isinstance(node, ast.Constant) and isinstance(node.value, int)
             and not isinstance(node.value, bool) and node.value == 0)
+
+
+def _constant_exit_zero(node):
+    """``None`` / ``False`` / ``0``: every one of them exits 0."""
+    return (isinstance(node, ast.Constant)
+            and (node.value is None or node.value is False
+                 or (isinstance(node.value, int) and not isinstance(node.value, bool)
+                     and node.value == 0)))
+
+
+def _name_is_optimistic(name, bindings, lineno):
+    value = _nearest_binding(name, bindings, lineno)
+    if value is None:
+        return False
+    if _constant_exit_zero(value):
+        return True
+    return isinstance(value, ast.Name) and _name_is_optimistic(value.id, bindings, lineno)
 
 
 def _exit_arms(node):
@@ -1185,7 +1330,13 @@ _CLEAN_STATUS_LITERALS = frozenset({'PASS', 'PASS_WITH_SKIPS'})
 
 
 def _writes_status_slot(target):
-    """True when *target* assigns the ``'status'`` key of a dict (#892 r2)."""
+    """True when *target* assigns a status slot (#892 r2/r3).
+
+    ``status = 'PASS'`` (the bare variable) and ``x['status']`` are the same
+    write family; only the subscript form used to be seen (MiniMax boundary P0-1).
+    """
+    if isinstance(target, ast.Name):
+        return target.id == 'status'
     if isinstance(target, ast.Subscript):
         return isinstance(target.slice, ast.Constant) and target.slice.value == 'status'
     if isinstance(target, (ast.Tuple, ast.List)):
@@ -1232,10 +1383,73 @@ def _name_assigns_clean(name, bindings, seen=None):
         return False
     seen.add(name)
     return any(_assigns_clean_status(value, bindings, seen)
-               for value in bindings.get(name, ()))
+               for _lineno, value in bindings.get(name, ()))
 
 
-def unshared_status_slots(function):
+_SENTINEL_POINTS = frozenset({('scripts/gateway-parity/_guard.py', '_failure')})
+
+
+def _summary_slot_violations(summary, bindings, lineno):
+    """Judge every entry of a summary dict (#892 r3).
+
+    Covers duplicate ``status``/``verdict`` keys and ``{**literal}`` expansions:
+    both read as clean to a report consumer while the old code ignored them.
+    """
+    problems = []
+    for key, value in _dict_pairs(summary):
+        if key is None:
+            if _relays_status(value, bindings) or _calls_aggregate(value):
+                continue
+            problems.append(f'summary unpack {ast.unparse(value)[:60]} at line {lineno}')
+            continue
+        if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+            if _relays_status(value, bindings) or _calls_aggregate(value):
+                continue
+            problems.append(f'status slot {ast.unparse(value)[:60]} at line {lineno}')
+    return problems
+
+
+def _name_feeds_shared(name, function):
+    """True when *name* is handed to the shared call (#892 r3).
+
+    ``result = {'status': 'PASS', 'rule': None}`` in a per-case verdict is a
+    legitimate value as long as the batch routes it through
+    ``common.aggregate_status(result['status'])``; the same literal in a summary
+    that is printed and never aggregated is the bypass.
+    """
+    for node in ast.walk(function):
+        if _is_shared_call(node):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and child.id == name:
+                    return True
+    return False
+
+
+def _exit_name_violation(name, bindings):
+    """Why an exit code travelling through *name* is inline, or None (#892 r3).
+
+    A plain ``code = 0`` default is legal when the name is also assigned from
+    the shared call (the apparatus raises before any default can escape); a
+    conditional expression that can produce 0, or a lone default with no shared
+    assignment at all, is an inline exit computation.
+    """
+    values = [value for _lineno, value in bindings.get(name, ())]
+    if not values:
+        return None
+    shared = any(_calls_aggregate(value)
+                 or (isinstance(value, (ast.Attribute, ast.Subscript))
+                     and _container_relays(value, bindings))
+                 for value in values)
+    for value in values:
+        if isinstance(value, (ast.IfExp, ast.BoolOp)) and any(
+                _constant_exit_zero(arm) for arm in _exit_arms(value)):
+            return 'conditional'
+        if _constant_exit_zero(value) and not shared:
+            return 'literal'
+    return None
+
+
+def unshared_status_slots(function, point=None):
     """Status/exit computations a registered point must route through the
     shared function, per return path (#892).
 
@@ -1246,29 +1460,56 @@ def unshared_status_slots(function):
     call itself; any other returned expression that mentions a batch status
     word or aggregates ``passed`` rows must be the shared call's own result;
     and once a return path is an aggregation pair (a summary dict or a status
-    word), its int-shaped exit-code element must come from the shared call.
+    word), its int-shaped exit-code element must come from the shared call —
+    including when the code travels through a local variable.
     Returns a list of one-line violation descriptions.
     """
     violations = []
     bound = _bound_summary_dicts(function)
     bindings = _name_bindings(function)
     for node in _own_nodes(function):
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             # Incremental report writes (``report['status'] = overall``) never
-            # appear in a Return (#892 r2, DeepSeek sibling P1-2).
-            if isinstance(node, ast.Assign):
-                write_targets, write_value = node.targets, node.value
-            elif node.value is not None:
-                write_targets, write_value = [node.target], node.value
-            else:
-                continue
+            # appear in a Return (#892 r2, DeepSeek sibling P1-2); ``status =
+            # 'PASS'``, ``report |= {...}`` and ``report.update({...})`` are the
+            # same write family (#892 r3).
             written = []
-            for write_target in write_targets:
-                _status_write_values(write_target, write_value, written)
+            if isinstance(node, ast.Assign):
+                for write_target in node.targets:
+                    _status_write_values(write_target, node.value, written)
+                    for name in _target_names(write_target):
+                        if _name_feeds_shared(name, function):
+                            continue
+                        for summary in _returned_summary_dicts(node.value):
+                            written.extend(_status_slot_values(summary))
+            elif isinstance(node, ast.AnnAssign):
+                if node.value is None:
+                    continue
+                _status_write_values(node.target, node.value, written)
+                if not any(_name_feeds_shared(name, function)
+                           for name in _target_names(node.target)):
+                    for summary in _returned_summary_dicts(node.value):
+                        written.extend(_status_slot_values(summary))
+            elif isinstance(node.op, ast.BitOr):
+                for summary in _returned_summary_dicts(node.value):
+                    written.extend(_status_slot_values(summary))
+                _status_write_values(node.target, node.value, written)
             if any(_assigns_clean_status(item, bindings) for item in written):
                 violations.append(
-                    f'inline status/exit assignment {ast.unparse(write_value)[:60]} '
+                    f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
                     f'at line {node.lineno}')
+            continue
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+            call = node.value
+            if isinstance(call.func, ast.Attribute) and call.func.attr in ('update', 'setdefault'):
+                written = []
+                for argument in call.args:
+                    for summary in _returned_summary_dicts(argument):
+                        written.extend(_status_slot_values(summary))
+                if any(_assigns_clean_status(item, bindings) for item in written):
+                    violations.append(
+                        f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
+                        f'at line {node.lineno}')
             continue
         if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
             # ``raise SystemExit(0)`` leaves the process with 0 and never
@@ -1277,7 +1518,9 @@ def unshared_status_slots(function):
             if not (isinstance(exc.func, ast.Name) and exc.func.id == 'SystemExit'):
                 continue
             argument = exc.args[0] if exc.args else None
-            if argument is None or _optimistic_exit(argument):
+            if argument is None or _constant_exit_zero(argument) or (
+                    isinstance(argument, ast.Name)
+                    and _name_is_optimistic(argument.id, bindings, node.lineno)):
                 violations.append(f'inline optimistic exit (SystemExit) at line {node.lineno}')
             elif (_status_literals(argument) or _has_passed_aggregate(argument)) \
                     and not _calls_aggregate(argument):
@@ -1291,6 +1534,13 @@ def unshared_status_slots(function):
             # A bare ``return`` hands back None, and SystemExit(None) exits 0.
             violations.append(f'inline optimistic exit (bare return) at line {node.lineno}')
             continue
+        if _constant_exit_zero(value) and point not in _SENTINEL_POINTS:
+            # Explicit ``return None`` / ``return False`` exits 0 too; only
+            # ``_guard._failure`` uses None as its "propagate unchanged"
+            # sentinel and the caller re-raises (DeepSeek boundary P0-1).
+            violations.append(f'inline optimistic exit {ast.unparse(value)[:60]} '
+                              f'at line {node.lineno}')
+            continue
         dicts = _returned_summary_dicts(value)
         # ``report = {...}; return report`` is the dominant shape here; resolve
         # the returned name back to the dict built inside this function.
@@ -1298,10 +1548,7 @@ def unshared_status_slots(function):
             dicts.extend(bound.get(name, []))
         is_pair = bool(dicts) or _status_literals(value) or _has_passed_aggregate(value)
         for summary in dicts:
-            slot = _status_slot(summary)
-            if slot is not None and not (_relays_status(slot, bindings)
-                                         or _calls_aggregate(slot)):
-                violations.append(f'status slot {ast.unparse(slot)[:60]} at line {node.lineno}')
+            violations.extend(_summary_slot_violations(summary, bindings, node.lineno))
         elements = value.elts if isinstance(value, ast.Tuple) else [value]
         for element in elements:
             if any(element is summary for summary in dicts):
@@ -1312,6 +1559,14 @@ def unshared_status_slots(function):
                 if (_status_literals(arm) or _has_passed_aggregate(arm)):
                     if not (_calls_aggregate(arm) or isinstance(arm, ast.Dict)):
                         violations.append(f'inline status/exit {ast.unparse(arm)[:60]} '
+                                          f'at line {node.lineno}')
+                elif isinstance(arm, ast.Name):
+                    # The exit code may travel through a local variable; a
+                    # conditional that can yield 0 is inline computation
+                    # (MiniMax boundary P0-2 / DeepSeek sibling P1-3).
+                    kind = _exit_name_violation(arm.id, bindings)
+                    if kind:
+                        violations.append(f'inline exit code ({kind} relay) {arm.id} '
                                           f'at line {node.lineno}')
                 elif (not _calls_aggregate(arm)
                         and (_optimistic_exit(arm)
@@ -1338,9 +1593,10 @@ def aggregation_markers(function):
                 if _is_status_target(target) and (
                         _status_literals(value)
                         or _has_passed_aggregate(value)
-                        or 'aggregate_status' in ast.unparse(value)):
+                        or _calls_aggregate(value)):
                     markers.add('assign-status')
-                elif _is_report_status(target, value):
+                elif (_is_report_status(target, value)
+                      and not _name_feeds_shared(target.id, function)):
                     markers.add('assign-report-status')
         elif isinstance(node, ast.Return) and node.value is not None:
             value = node.value
@@ -1350,7 +1606,7 @@ def aggregation_markers(function):
                     and value.func.id == 'int' and _status_literals(value)):
                 markers.add('return-int-status')
             if (isinstance(value, ast.Subscript) and isinstance(value.value, ast.Call)
-                    and 'aggregate_status' in ast.unparse(value.value.func)):
+                    and _is_shared_call(value.value)):
                 markers.add('return-aggregate-code')
             if isinstance(value, ast.IfExp) and (
                     _status_literals(value) or _has_passed_aggregate(value)):
@@ -1360,26 +1616,37 @@ def aggregation_markers(function):
               and node.exc.args and (_status_literals(node.exc.args[0])
                                      or _has_passed_aggregate(node.exc.args[0]))):
             markers.add('raise-exit-status')
-        elif isinstance(node, ast.Call) and 'aggregate_status' in ast.unparse(node.func):
+        elif _is_shared_call(node):
             markers.add('calls-aggregate')
     return markers
 
 
 def calls_shared(function):
-    return any(isinstance(node, ast.Call)
-               and 'aggregate_status' in ast.unparse(node.func)
-               for node in ast.walk(function))
+    return any(_is_shared_call(node) for node in ast.walk(function))
 
 
 def scan_aggregation_tree(tree, rel):
+    """Aggregation points of *tree*, keyed by ``(rel, function name)``.
+
+    A nested ``def`` with the same name as a top-level point used to overwrite
+    the registered entry (``ast.walk`` is BFS, so the nested one won), leaving
+    the real point unaudited (MiniMax boundary P2-6 / DeepSeek boundary P2-6).
+    Duplicates are reported instead of silently replacing.
+    """
     found = {}
+    duplicates = []
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         markers = aggregation_markers(function)
-        if markers:
-            found[(rel, function.name)] = (markers, function)
-    return found
+        if not markers:
+            continue
+        key = (rel, function.name)
+        if key in found:
+            duplicates.append(key)
+            continue
+        found[key] = (markers, function)
+    return found, duplicates
 
 
 def aggregation_audit():
@@ -1402,13 +1669,24 @@ def aggregation_audit():
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
     for path in files:
+        rel = path.relative_to(ROOT).as_posix()
         try:
             tree = ast.parse(path.read_text(encoding='utf-8'))
         except (OSError, SyntaxError) as error:
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
-                            f'{path.relative_to(ROOT).as_posix()}: {type(error).__name__}: {error}')
+                            f'{rel}: {type(error).__name__}: {error}')
             continue
-        found.update(scan_aggregation_tree(tree, path.relative_to(ROOT).as_posix()))
+        for node in ast.walk(tree):
+            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == 'aggregate_status'
+                    and rel != 'scripts/gateway-parity/common.py'):
+                failures.append(f'#892 aggregation-audit: {rel} defines its own '
+                                'aggregate_status; only common.py may implement it')
+        scanned, duplicates = scan_aggregation_tree(tree, rel)
+        for duplicate in duplicates:
+            failures.append(f'#892 aggregation-audit: duplicate aggregation point '
+                            f'name {duplicate[0]}:{duplicate[1]}')
+        found.update(scanned)
 
     points = {}
     for key, point_id in sorted(AGGREGATION_POINTS.items()):
@@ -1420,7 +1698,7 @@ def aggregation_audit():
             continue
         markers, function = found[key]
         shared = calls_shared(function) and 'return-int-status' not in markers
-        slots = unshared_status_slots(function)
+        slots = unshared_status_slots(function, key)
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers), 'unsharedSlots': slots}
         if not shared:
@@ -1450,7 +1728,7 @@ def aggregation_audit():
         "def _shared(rows):\n"
         "    status, code = common.aggregate_status('PASS', 'PASS_WITH_SKIPS')\n"
         "    return status, code\n")
-    probe_found = scan_aggregation_tree(probe, '<self-test>')
+    probe_found, _probe_duplicates = scan_aggregation_tree(probe, '<self-test>')
     bypass = probe_found.get(('<self-test>', '_bypass'))
     shared = probe_found.get(('<self-test>', '_shared'))
     if not bypass or calls_shared(bypass[1]):
@@ -1504,8 +1782,38 @@ def aggregation_audit():
         "    return common.aggregate_status(report['status'])[1]\n"
         "def _assigned_status(report, rows):\n"
         "    report['status'] = 'PASS' if all(row['passed'] for row in rows) else 'FAIL'\n"
-        "    return common.aggregate_status(report['status'])[1]\n")
-    probe892_found = scan_aggregation_tree(probe892, '<self-test-892>')
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _none_exit(report):\n"
+        "    if report.get('special'):\n"
+        "        return None\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _system_exit_none(report):\n"
+        "    if report.get('special'):\n"
+        "        raise SystemExit(None)\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _relayed_exit(report):\n"
+        "    code = 0 if report.get('special') else 1\n"
+        "    return code\n"
+        "def _subscript_slot(rows):\n"
+        "    local = {'status': 'PASS'}\n"
+        "    return {'status': local['status'], 'rows': rows}\n"
+        "def _lookalike(report):\n"
+        "    def aggregate_status(*children):\n"
+        "        return 'PASS', 0\n"
+        "    status, code = aggregate_status(report['status'])\n"
+        "    return {'status': status}, code\n"
+        "def _updated_slot(report):\n"
+        "    report.update({'status': 'PASS'})\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _duplicate_key(rows):\n"
+        "    return {'status': 'BLOCKED', 'status': 'PASS', 'rows': rows}\n"
+        "def _unpacked(rows):\n"
+        "    return {**{'status': 'PASS'}, 'rows': rows}\n"
+        "def _assign_only(rows):\n"
+        "    payload = {'status': 'PASS', 'rows': rows}\n"
+        "    print(payload)\n"
+        "    return 0\n")
+    probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
         failures.append('#892 aggregation-audit: detector self-test did not flag a '
@@ -1539,6 +1847,19 @@ def aggregation_audit():
             or not unshared_status_slots(payload[1])):
         failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
                         'summary dict returned under an arbitrary name')
+    arm = probe892_found.get(('<self-test-892>', '_conditional_arm'))
+    if not arm or not unshared_status_slots(arm[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag an '
+                        'optimistic exit inside a conditional arm')
+    bare_return = probe892_found.get(('<self-test-892>', '_bare_return'))
+    if not bare_return or not unshared_status_slots(bare_return[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'bare return (SystemExit(None) exits 0)')
+    payload = probe892_found.get(('<self-test-892>', '_payload_name'))
+    if (not payload or 'return-report-status' not in payload[0]
+            or not unshared_status_slots(payload[1])):
+        failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
+                        'summary dict returned under an arbitrary name')
     relayed = probe892_found.get(('<self-test-892>', '_relayed_status'))
     if not relayed or not unshared_status_slots(relayed[1]):
         failures.append('#892 aggregation-audit: detector self-test did not follow a status '
@@ -1551,6 +1872,50 @@ def aggregation_audit():
     if not assigned_status or not unshared_status_slots(assigned_status[1]):
         failures.append('#892 aggregation-audit: detector self-test did not flag a clean '
                         "verdict written into a report['status'] slot")
+    assigned_status = probe892_found.get(('<self-test-892>', '_assigned_status'))
+    if not assigned_status or not unshared_status_slots(assigned_status[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a clean '
+                        "verdict written into a report['status'] slot")
+    # #892 r3: each remaining bypass family gets its own probe, so deleting the
+    # matching rule turns the audit red instead of silently reopening the hole.
+    none_exit = probe892_found.get(('<self-test-892>', '_none_exit'))
+    if not none_exit or not unshared_status_slots(none_exit[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag '
+                        'return None from a registered exit point')
+    system_exit_none = probe892_found.get(('<self-test-892>', '_system_exit_none'))
+    if not system_exit_none or not unshared_status_slots(system_exit_none[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag '
+                        'raise SystemExit(None)')
+    relayed_exit = next((node for node in probe892.body
+                         if getattr(node, 'name', None) == '_relayed_exit'), None)
+    if not relayed_exit or not unshared_status_slots(relayed_exit):
+        failures.append('#892 aggregation-audit: detector self-test did not follow an '
+                        'exit code back through its local variable')
+    subscript_slot = probe892_found.get(('<self-test-892>', '_subscript_slot'))
+    if not subscript_slot or not unshared_status_slots(subscript_slot[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not follow a '
+                        "status slot through a local dict's subscript")
+    lookalike = probe892_found.get(('<self-test-892>', '_lookalike'))
+    if not lookalike or not unshared_status_slots(lookalike[1]):
+        failures.append('#892 aggregation-audit: detector self-test accepted a local '
+                        'aggregate_status lookalike as the shared call')
+    updated_slot = probe892_found.get(('<self-test-892>', '_updated_slot'))
+    if not updated_slot or not unshared_status_slots(updated_slot[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a clean '
+                        'verdict written through dict.update()')
+    duplicate_key = probe892_found.get(('<self-test-892>', '_duplicate_key'))
+    if not duplicate_key or not unshared_status_slots(duplicate_key[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'duplicate status key whose runtime value is clean')
+    unpacked = probe892_found.get(('<self-test-892>', '_unpacked'))
+    if not unpacked or not unshared_status_slots(unpacked[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'clean status hidden in a {**...} expansion')
+    assign_only = probe892_found.get(('<self-test-892>', '_assign_only'))
+    if (not assign_only or 'assign-report-status' not in assign_only[0]
+            or not unshared_status_slots(assign_only[1])):
+        failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
+                        'summary dict assigned under an arbitrary name')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,

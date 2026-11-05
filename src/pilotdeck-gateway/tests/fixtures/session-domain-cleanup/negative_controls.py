@@ -220,7 +220,8 @@ def bare_exit_zero(rows):
     if not any(failure.startswith(
             '#892 aggregation-audit: '
             'scripts/gateway-parity/controls/session_domain.py:main ')
-            and 'inline exit code 0' in failure
+            and ('inline exit code 0' in failure
+                 or 'inline optimistic exit 0' in failure)
             for failure in failures):
         return False, f'failures={failures!r}, want the #892 main bare exit-code failure'
     slots = (row.get('points', {}).get('controls-main', {}) or {}).get('unsharedSlots')
@@ -237,6 +238,19 @@ def _main_failure(row, needle, point='controls-main', function='main'):
             f'scripts/gateway-parity/controls/session_domain.py:{function} ')
             and needle in failure for failure in failures):
         return False, f'failures={failures!r}, want the #892 {function} failure with {needle!r}'
+    slots = (row.get('points', {}).get(point, {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, f'points.{point}.unsharedSlots is empty, want it flagged'
+    return True, None
+
+
+def _point_failure(row, file, function, needle, point):
+    """The #892 *function* failure in *file* whose text contains *needle*."""
+    failures = row.get('failures') or []
+    if not any(failure.startswith(f'#892 aggregation-audit: {file}:{function} ')
+               and needle in failure for failure in failures):
+        return False, (f'failures={failures!r}, want the #892 {file}:{function} '
+                       f'failure with {needle!r}')
     slots = (row.get('points', {}).get(point, {}) or {}).get('unsharedSlots')
     if not slots:
         return False, f'points.{point}.unsharedSlots is empty, want it flagged'
@@ -315,7 +329,9 @@ def calibrate_bare_zero(rows):
     failures = row.get('failures') or []
     if not any(failure.startswith(
             '#892 aggregation-audit: scripts/gateway-parity/session_domain.py:main ')
-            and 'inline exit code 0' in failure for failure in failures):
+            and ('inline exit code 0' in failure
+                 or 'inline optimistic exit 0' in failure)
+            for failure in failures):
         return False, f'failures={failures!r}, want the #892 calibrate-main bare exit failure'
     slots = (row.get('points', {}).get('calibrate-main', {}) or {}).get('unsharedSlots')
     if not slots:
@@ -343,6 +359,147 @@ def calibrate_status_write_pass(rows):
     if not slots:
         return False, 'points.calibrate-main.unsharedSlots is empty, want the status write'
     return True, ('aggregation-audit: inline report-status write flagged, '
+                  'passed=False')
+
+
+def controls_return_none(rows):
+    """#892 r3: ``return None`` from a registered point is exit 0 to the shell
+    (DeepSeek boundary P0-1); only ``_guard._failure`` keeps the sentinel."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _main_failure(row, 'inline optimistic exit None')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: explicit return None flagged, passed=False'
+
+
+def controls_system_exit_none(rows):
+    """#892 r3: ``raise SystemExit(None)`` is exit 0 too (DeepSeek P0-2)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _main_failure(row, 'inline optimistic exit (SystemExit)')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: raise SystemExit(None) flagged, '
+                  'passed=False')
+
+
+def calibrate_exit_code_relayed(rows):
+    """#892 r3: an exit code computed into a local variable and returned by
+    name is judged by how the variable is bound, not by its name."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline exit code (conditional relay)', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: relayed exit code flagged, '
+                  'passed=False')
+
+
+def controls_status_slot_subscript(rows):
+    """#892 r3: a status slot filled from a local dict subscript hides the
+    clean verdict from the literal rule (DeepSeek boundary P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _main_failure(
+        row, "status slot local['status']", 'controls-run-all', 'run_all')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: subscript status slot flagged, '
+                  'passed=False')
+
+
+def controls_aggregate_lookalike(rows):
+    """#892 r3: only ``common.aggregate_status`` counts; a local function with
+    the same name must not satisfy the shared-call rule (MiniMax P1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: '
+            'scripts/gateway-parity/controls/session_domain.py defines its own '
+            'aggregate_status')
+            for failure in failures):
+        return False, f'failures={failures!r}, want the local aggregate_status failure'
+    return True, ('aggregation-audit: local aggregate_status lookalike flagged, '
+                  'passed=False')
+
+
+def calibrate_status_update(rows):
+    """#892 r3: ``report.update({'status': 'PASS'})`` writes the slot without a
+    ``Subscript`` target (MiniMax P1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "inline status/exit assignment report.update({'status': 'PASS'})",
+        'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: update() status write flagged, '
+                  'passed=False')
+
+
+def retirement_duplicate_status_key(rows):
+    """#892 r3: ``{'status': 'BLOCKED', 'status': 'PASS'}`` reads as clean at
+    runtime but the first key wins in the audit (DeepSeek boundary P2)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "status slot 'PASS'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: duplicate status key flagged, '
+                  'passed=False')
+
+
+def controls_nested_same_name(rows):
+    """#892 r3: a nested ``def main`` must not shadow or duplicate the
+    registered point name (MiniMax/DeepSeek boundary P2)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: duplicate aggregation point name '
+            'scripts/gateway-parity/controls/session_domain.py:main')
+            for failure in failures):
+        return False, f'failures={failures!r}, want the duplicate point-name failure'
+    return True, ('aggregation-audit: nested same-name def flagged, '
                   'passed=False')
 
 
@@ -520,6 +677,48 @@ MUTATIONS = [
      "                restored_summary.get('status') if restored_ok else 'FAIL')",
      "            top_status, exit_code = common.aggregate_status(\n"
      "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary))"),
+    # #892 fix-r3: the eight false-pass vectors the r2 reviews found.
+    ('controls-return-none', CONTROLS_SOURCE,
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return common.aggregate_status(report['status'])[1]\n",
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return None\n"),
+    ('controls-system-exit-none', CONTROLS_SOURCE,
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return common.aggregate_status(report['status'])[1]\n",
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        raise SystemExit(None)\n"),
+    ('calibrate-exit-code-relayed', SOURCE,
+     "                    _, code = common.aggregate_status(report['status'])\n",
+     "                    code = 0 if report['status'] == 'PASS' else 1\n"),
+    ('controls-status-slot-subscript', CONTROLS_SOURCE,
+     "    report = {'status': status,\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n",
+     "    local = {'status': 'PASS'}\n"
+     "    report = {'status': local['status'],\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n"),
+    ('controls-aggregate-lookalike', CONTROLS_SOURCE,
+     "    status, _ = common.aggregate_status(\n"
+     "        'PASS' if all(r['passed'] for r in results) else 'FAIL',\n"
+     "        'PASS_WITH_SKIPS' if not_run else None,\n"
+     "        cleanup['status'])\n",
+     "    def aggregate_status(*children):\n"
+     "        return 'PASS', 0\n"
+     "    status, _ = aggregate_status(\n"
+     "        'PASS' if all(r['passed'] for r in results) else 'FAIL',\n"
+     "        'PASS_WITH_SKIPS' if not_run else None,\n"
+     "        cleanup['status'])\n"),
+    ('calibrate-status-update', SOURCE,
+     "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
+     "                report.update({'status': 'PASS'})\n"),
+    ('retirement-duplicate-status-key', SOURCE,
+     "        'status': overall,\n",
+     "        'status': 'BLOCKED', 'status': 'PASS',\n"),
+    ('controls-nested-same-name', CONTROLS_SOURCE,
+     "    report['cleanup'] = cleanup\n",
+     "    def main():\n"
+     "        return common.aggregate_status('PASS')\n"
+     "    report['cleanup'] = cleanup\n"),
 ]
 
 JUDGES = {
@@ -673,6 +872,22 @@ JUDGES = {
     'conditional-arm-exit': ('aggregation-audit', conditional_arm_exit, False, ()),
     'calibrate-bare-zero': ('aggregation-audit', calibrate_bare_zero, False, ()),
     'calibrate-status-write-pass': ('aggregation-audit', calibrate_status_write_pass, False, ()),
+    'controls-return-none': (
+        'aggregation-audit', controls_return_none, False, ()),
+    'controls-system-exit-none': (
+        'aggregation-audit', controls_system_exit_none, False, ()),
+    'calibrate-exit-code-relayed': (
+        'aggregation-audit', calibrate_exit_code_relayed, False, ()),
+    'controls-status-slot-subscript': (
+        'aggregation-audit', controls_status_slot_subscript, False, ()),
+    'controls-aggregate-lookalike': (
+        'aggregation-audit', controls_aggregate_lookalike, False, ()),
+    'calibrate-status-update': (
+        'aggregation-audit', calibrate_status_update, False, ()),
+    'retirement-duplicate-status-key': (
+        'aggregation-audit', retirement_duplicate_status_key, False, ()),
+    'controls-nested-same-name': (
+        'aggregation-audit', controls_nested_same_name, False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
