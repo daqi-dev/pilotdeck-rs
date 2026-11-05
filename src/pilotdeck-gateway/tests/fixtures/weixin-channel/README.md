@@ -7,7 +7,7 @@
 原样转译执行。`weixin-ilink` 用真 npm 包；其 HTTP 端点全部指向本地 loopback
 假服务端（`FakeIlink`），不接触任何真实账号或外网。
 
-## 11 个场景（`oracle.json`，输入步骤 + TS 期望同录）
+## 15 个场景（`oracle.json`，输入步骤 + TS 期望同录）
 
 1. prepare 三形状（无 server → unsupported；有 server → QR 登录 → requested:true）
    + 消息回复；
@@ -22,7 +22,14 @@
 9. QR 登录失败（confirmed 缺 bot_token）→ failed 报告 → 2s 凭证监视器恢复；
 10. config 停用（config-disabled）+ close 幂等（memoized null）；
 11. 回复发送失败（sendmessage 500）入 pendingReplies，下一 poll 先 flush 队列
-    再派发后续 turn（3 次 sendmessage：失败/重发/新回复）。
+    再派发后续 turn（3 次 sendmessage：失败/重发/新回复）；
+12. confirmed 但 `bot_token:""`（JS falsy）→ 登录失败 → 凭证监视器恢复；
+13. confirmed 但 `ilink_bot_id:""` → 同上（auth.js:81 的另一半）；
+14. 响应 `get_updates_buf:""` 不清游标：后续 poll 体仍带持久化 cursor；
+15. `typing_ticket:""` 时仍取 getconfig 但不发 sendtyping。
+
+12–15 是 JS 真值语义（`if (x)` 对空串为假）的金样钉子：去掉 Rust 侧的空串
+`filter`，第 12–15 格与负控 `empty-*` 三条变异同时变红。
 
 ## 确定性
 

@@ -69,9 +69,29 @@ MUTATIONS = [
      '    for case in oracle_cases(&trimmed) {',
      REPLAY, '#1328 weixin oracle case count'),
     ('oracle-wrong-declaration', fixtures / 'weixin-channel/oracle.json',
-     '  "expectedCaseCount": 11,',
-     '  "expectedCaseCount": 10,',
+     '  "expectedCaseCount": 15,',
+     '  "expectedCaseCount": 14,',
      REPLAY, '#1328 weixin generator declaration'),
+    # JS truthiness (`if (x)` is false for ""): each of the three filters has
+    # its own golden case, so dropping the filter must turn the replay red.
+    ('empty-buffer-clears-cursor', weixin / 'client.rs',
+     'string_field(&response, "get_updates_buf").filter(|b| !b.units().is_empty())',
+     'string_field(&response, "get_updates_buf")',
+     REPLAY, '#1328 weixin replay oracle'),
+    ('empty-ticket-sends-typing', weixin / 'client.rs',
+     'string_field(&config, "typing_ticket").filter(|ticket| !ticket.units().is_empty())',
+     'string_field(&config, "typing_ticket")',
+     REPLAY, '#1328 weixin replay oracle'),
+    ('empty-bot-token-accepted', weixin / 'client.rs',
+     '                let bot_token =\n'
+     '                    string_field(&status, "bot_token").filter(|token| '
+     '!token.units().is_empty());\n'
+     '                let account_id =\n'
+     '                    string_field(&status, "ilink_bot_id").filter(|id| '
+     '!id.units().is_empty());',
+     '                let bot_token = string_field(&status, "bot_token");\n'
+     '                let account_id = string_field(&status, "ilink_bot_id");',
+     REPLAY, '#1328 weixin replay oracle'),
 ]
 
 
