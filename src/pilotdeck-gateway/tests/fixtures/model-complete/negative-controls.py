@@ -733,9 +733,11 @@ def slots_from_pgrep() -> tuple[int | None, str]:
 
 def cargo_slots() -> tuple[int, str, str]:
     # Documented gate; under a denied `ps` it misreports 0, so its output is
-    # logged but never trusted as the count.
+    # logged but never trusted as the count. 11-05：名额改由统一闸
+    # (~/ws/pdrs-ops/bin/cargo-slot) 决定，脚本不再接受上限参数；本文件的
+    # CARGO_CAP 只作负控自己的节流口径。
     script = subprocess.run(
-        ["bash", "scripts/cargo-slots.sh", str(CARGO_CAP)],
+        ["bash", "scripts/cargo-slots.sh"],
         cwd=ROOT,
         capture_output=True,
         text=True,
