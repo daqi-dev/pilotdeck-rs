@@ -3118,3 +3118,28 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 6. 挂起：scripts/review-minimax.py 单独 PR；远端三台 ssh 不可达（需人处理，最大提速项）。
 
 资源：磁盘约 171 GiB / 200；worktree 23/40；cargo 1/4（fix-r1 agent 在用）；在审 2（#1470/#1472 queue 中）。谱系提醒：#1350/#1310/#1321 作者线 GLM，评审 = DS + anthropic（codex 后端实为 GLM 只作补充）。
+
+### 14:4x（两小时交接）
+
+13:4x 以来做了什么（持有人：协调者本会话）：
+
+- **人四件新指令落账**：① 远端三台接入、统筹规划发挥最大效果；② 人为限制（在审/worktree 等）按实际资源调整；③ 按最长链动态调整优先级；④ 评审通道切换——DS/MiniMax 可放进 Claude Code 跑（带工具），codex 谱系待实测（gpt-6.1-terra/sol、astra）。均已在执行（见下）。
+- **远端三台全回**（ssh BatchMode 全 ✓，fleet 四机 OK）：盘点报告 `_tmp/20261105-remote-capacity/report.md`——cb8 20 核全闲/2.8T 盘/114G 内存、mbp2 3 车道空且 DarkWake=0、macmini 可达但内置盘仅 49G 须先清。调度执行代理在途：在审 16→20、cb8 车道 5→8 / cargo 10→12、本机加 185 GiB 磁盘闸、#1327 mbp2 macOS 轮派出、macmini 可删清单（只列不删）。
+- **评审通道切换启动**（人令）：`run-review-roles.py` 加 `--runner minimax` + `--runner deepseek`（都是 claude -p 外壳接 Anthropic 兼容端点，DS 从纯静态升级为带 Read/Grep/Glob 工具）——实现代理在途，冒烟通过后新优先序：**DS-in-CC 优先 → MiniMax 轮换 → codex（若实测独立谱系）→ Opus 只留仲裁/双家分歧实测/DS 复读兜底**。在途两个 anthropic 闸门重跑不动（出块就用）。codex 谱系探针代理在跑（gpt-5.6-sol 已知 GLM 对照 + 三个候选实测）。
+- **#1313 always-on 暂缓重划落卡**（AI 代批待人复核）：决策卡 `state/decisions-20261105-1313-rescope.md`（单独 PR 走全量）；question 单 #1475（选项 A/B/C + 用户感知表）；差异登记单 #1476；#1316/#1317 正文已按 A 更新（摘除 #1313 硬依赖、47+3 口径）；#1313 加 [A 之后] 标记不关单；#1157 待拍板表已加行。
+- **#1355 双家评审收敛并裁定**：DS P0=2 P1=3 P2=6 P3=8、Opus 实测 P0=1 P1=2 P2=2 P3=3。裁定：F1 timeout 零背书（Opus 实测复现 101 全 timeout 判 PASS）+ F2 入口漏 2 路由当轮必修；F3 换路径宿主盲区 / F4 网络单快照 / F5 unavailable 占比无界（TS 基线自身 6 个合法 unavailable，「任一即 FAIL」会假 FAIL 基线）登记为残余 + 跟进 #1477（Rust 侧逐方法对照，P1）/ #1478（census/采样，P2）；仲裁记录：DS 推断 control#3 双触发被 Opus 实测反驳（单规则 `['UNIFORM_UNAVAILABLE']`）。**fix-r1 已派**（任务书 `_tmp/20261105-issue-1355/task-fix-r1.md`，修后重跑 k=5 + 冻结事件 + --write 走协调者）。
+- **#1350 fix-r1 双家复核收敛无 P0/P1**：DS P0=0 P1=0 P2=2 P3=3（P2 均需实测项）、Opus 实测 P0=0 P1=0 P2=0 P3=0（测试独立复跑 103/0/1 与 3587/0、重生成独立复跑、oracle 纯新增、isDeepStrictEqual 实查 TS 源码）。分支 ec5937bc3 已 safe-push；PR 正文备好（/tmp/pr1350.md），等闸门（新 runner 落地后跑）再开 PR。
+- **#1417/#1392 闸门 TIMEOUT 重跑在途**：#1392 补 concurrency（2400s）；#1417 concurrency（--paths 分批 3600s）+ simplify（3600s）并行；事件率判慢滴流非卡死（memory「opus-timeout-stream-starvation」）。
+- **#1369（PR #1412，#1242 判分链头）插队 rebase**：CONFLICTING → 收口代理在跑（wt-1369，逐块真合并 + lib 全测 + safe-push --force-with-lease）；完成后接 #1370 起改派 cb8。
+
+下一步（就绪序）：
+
+1. 闸门重跑出块（#1392 → PR + 入队；#1417 → 推 9f86cfedf + 换块 + 入队 → #1418 接续净合并）。
+2. runner 扩展（minimax+deepseek）落地 → #1350 闸门（新 runner）→ PR → 入队；后续所有闸门按新优先序。
+3. 调度执行代理回来：核限制改动 + mbp2 轮链 ID + macmini 清单按授权处理；#1392 Linux 补跑草稿核后发 cb8。
+4. codex 谱系探针结果 → 更新评审轮换规则（记 memory）。
+5. #1355 fix-r1 收货 → 两家复核 → 冻结事件文件 + check_frozen --write + test_safety 自愈 → 闸门 → PR。
+6. #1369 rebase 收货 → 评审（DS + 新第二家）→ 合入 → 派 #1370（cb8）。
+7. #1470/#1472 queue 状态核（MERGED 后核邮箱、回收 wt-ds-official-cleanup）。
+
+资源：本机磁盘 191.9/200 GiB（WARN，wt-1310+wt-1321 合入后回收约 76 GiB）；worktree 23/40；在审 15/16（拟 20）；三台全回。谱系提醒：协调者/GLM 作者线评审 = DS + MiniMax/codex（若独立）/Opus（兜底）；DS 大 diff 复读循环前科，大 diff 用 MiniMax。
