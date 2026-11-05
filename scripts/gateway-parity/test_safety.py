@@ -2672,7 +2672,7 @@ class RetirementScoring(unittest.TestCase):
         controls = self.session._retirement_controls(row, expected)
         classes = {c['class']: c for c in controls['classes']}
         self.assertEqual(classes['TS_FALLBACK']['status'], 'NOT_APPLICABLE', controls)
-        self.assertIn('no wire frame', classes['TS_FALLBACK']['reason'])
+        self.assertIn('no send frame', classes['TS_FALLBACK']['reason'])
         # The request method's own outcome is already unbacked, so the round
         # itself fails; the control face must not claim a proof it never ran.
         self.assertNotEqual(classes['TS_FALLBACK']['status'], 'PASS')
@@ -2739,6 +2739,42 @@ class RetirementScoring(unittest.TestCase):
             self.assertEqual(classes[name]['status'], 'PASS', f'#36b {name}: {controls}')
         self.assertIn("'run_get'", classes['TS_FALLBACK']['injection'])
         self.assertIn("'submit_turn'", classes['STREAM_OK_NON_FINAL']['injection'])
+
+    def test_uniform_unavailable_control_unavailable_when_round_already_matches(self):
+        # P1 (#1355 fix-r4c, anthropic sibling #1): a round that already
+        # answered every method CAPABILITY_UNAVAILABLE with matching wire is
+        # unchanged by the class-3 rewrite, so a PASS would only re-report the
+        # round's own violation.  The class is NOT_APPLICABLE, never PASS.
+        expected = ['run_get']
+        row = self._with_round_faces(self._round_row(
+            [{'method': 'run_get', 'outcome': 'error', 'errorCode': 'CAPABILITY_UNAVAILABLE',
+              'shape': 'request'}],
+            [{'seq': 1, 'connection': 1, 'direction': 'send',
+              'frame': {'type': 'request', 'id': 'id-get', 'method': 'run_get'}},
+             {'seq': 2, 'connection': 1, 'direction': 'receive',
+              'frame': {'type': 'response', 'id': 'id-get', 'ok': False,
+                        'error': {'code': 'CAPABILITY_UNAVAILABLE', 'message': 'x'}}}]), 'round-01')
+        controls = self.session._retirement_controls(row, expected)
+        class3 = next(c for c in controls['classes'] if c['class'] == 'UNIFORM_UNAVAILABLE')
+        self.assertEqual(class3['status'], 'NOT_APPLICABLE', class3)
+        self.assertIn('already answered', class3['reason'])
+        report = self._assert_full_faces(self._report_for(row, expected), '#37 uniform-noop')
+
+    def test_host_census_control_unavailable_without_gateway_pid(self):
+        # P2a (#1355 fix-r4c, anthropic sibling #2): the class-2 injection is
+        # "the gateway pid stays in the census but leaves the declared set".
+        # Without that pid in the census rows the mutation proves nothing: an
+        # empty census made the class FAIL (false FAIL) and a census holding
+        # only some other pid made it PASS off a pre-existing undeclared row.
+        expected = ['submit_turn', 'run_get']
+        for tag, census_rows in (('empty census', []), ('other pid only', [{'pid': 999}])):
+            row = self._stream_ok_round_row()
+            row['census'] = {'rows': census_rows, 'declared': [7], 'declaredAlive': True}
+            controls = self.session._retirement_controls(row, expected)
+            class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+            self.assertEqual(class2['status'], 'NOT_APPLICABLE', f'#38 {tag}: {class2}')
+            self.assertIn('absent from the census rows', class2['reason'])
+            self._assert_full_faces(self._report_for(row, expected), f'#38 {tag}')
 
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for

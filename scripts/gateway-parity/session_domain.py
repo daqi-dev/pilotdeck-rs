@@ -1965,7 +1965,7 @@ def _retirement_strip_receive(mutated, method):
 
 
 def _retirement_controls(round_row, expected):
-    """Five mutation classes over the real round evidence; each must FAIL.
+    """Six mutation classes over the real round evidence; each must FAIL.
 
     The controls only prove the scorer catches injected fakes; they are never
     evidence of retirement (memory ruler-real-data).  R4 (#1355 fix-r2): each
@@ -1975,6 +1975,11 @@ def _retirement_controls(round_row, expected):
     no ok stream outcome to mutate) is reported NOT_APPLICABLE with its
     reason, never raised as EvidenceError — raising collapsed the whole
     16-face report into a 5-key stub.
+    P1 (#1355 fix-r4c): an injection that changes nothing on this round proves
+    nothing either — the round's own pre-existing violation would be credited
+    to the control as a PASS.  Every round-mutating class therefore requires
+    its mutation to land (``mutated != round_row``); otherwise the class is
+    NOT_APPLICABLE.  The census class needs its gateway pid in the census.
     """
     controls = []
 
@@ -2010,12 +2015,12 @@ def _retirement_controls(round_row, expected):
         before = len(mutated['frames'])
         mutated = _retirement_strip_wire(mutated, victim)
         if len(mutated['frames']) == before:
-            # P1 (#1355 fix-r4b, both families): the victim has no wire frame
+            # P1 (#1355 fix-r4b, both families): the victim has no send frame
             # to strip, so the injection is a no-op and the round's own
             # pre-existing "send frame missing" violation would be credited to
             # this control as a PASS.  An unestablished control is never PASS.
             unavailable('TS_FALLBACK', injection, 'EVIDENCE_BACKING',
-                        f"executed method {victim!r} has no wire frame in the control round, "
+                        f"executed method {victim!r} has no send frame in the control round, "
                         'so stripping its frames removes nothing and the injection cannot be '
                         'established')
         else:
@@ -2025,9 +2030,23 @@ def _retirement_controls(round_row, expected):
                    {'detail': next((p['detail'] for p in verdict['rules']
                                     if p['rule'] == 'EVIDENCE_BACKING'), None)})
     # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
-    census_verdict = _retirement_census_verdict({'rows': round_row['census']['rows'], 'declared': []})
-    record('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
-           'HOST_CENSUS', census_verdict, {})
+    census_rows = round_row['census']['rows']
+    gateway_pid = round_row.get('listeners', {}).get('pid')
+    if gateway_pid is None or not any(row.get('pid') == gateway_pid for row in census_rows):
+        # P2a (#1355 fix-r4c, anthropic sibling #2): the injection is "the
+        # gateway pid stays in the census but leaves the declared set".  With
+        # the pid absent from the census the mutation proves nothing — it
+        # either fails the class on a pre-existing undeclared row (false PASS)
+        # or on an empty census (false FAIL).  Report it as unestablished.
+        unavailable('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
+                    'HOST_CENSUS',
+                    f"gateway listener pid {gateway_pid!r} is absent from the census rows "
+                    f'({len(census_rows)} sampled), so the undeclared-host mutation cannot be '
+                    'established')
+    else:
+        census_verdict = _retirement_census_verdict({'rows': census_rows, 'declared': []})
+        record('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
+               'HOST_CENSUS', census_verdict, {})
     # 3. 全走 unavailable: every outcome becomes CAPABILITY_UNAVAILABLE, wire kept consistent.
     mutated = json.loads(json.dumps(round_row))
     for outcome_row in mutated['outcomes']:
@@ -2039,9 +2058,19 @@ def _retirement_controls(round_row, expected):
             frame['ok'] = False
             frame.pop('result', None)
             frame['error'] = {'code': 'CAPABILITY_UNAVAILABLE', 'message': 'controlled mutation'}
-    verdict = score_retirement_round(mutated, expected)
-    record('UNIFORM_UNAVAILABLE', 'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
-           'UNIFORM_UNAVAILABLE', verdict, {})
+    if mutated == round_row:
+        # P1 (#1355 fix-r4c, anthropic sibling #1): a round that is already
+        # uniformly CAPABILITY_UNAVAILABLE with matching wire is not mutated at
+        # all, so a PASS here would only re-report the round's own violation.
+        unavailable('UNIFORM_UNAVAILABLE',
+                    'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
+                    'UNIFORM_UNAVAILABLE',
+                    'every outcome already answered error CAPABILITY_UNAVAILABLE with matching '
+                    'wire, so the rewrite changes nothing and the injection cannot be established')
+    else:
+        verdict = score_retirement_round(mutated, expected)
+        record('UNIFORM_UNAVAILABLE', 'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
+               'UNIFORM_UNAVAILABLE', verdict, {})
     # 4. 假 local 实透传: an undeclared non-loopback established peer appears.
     network_verdict = _retirement_network_verdict(
         {'rows': round_row['connections']['rows'] + [{'peer': '203.0.113.7:443', 'raw': 'controlled mutation'}]})
