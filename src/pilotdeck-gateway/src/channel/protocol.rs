@@ -1,7 +1,10 @@
-//! Minimal channel lifecycle contract. Inbound turn submission is a later unit.
+//! Minimal channel lifecycle contract. Inbound turn submission enters through
+//! the [`TurnGateway`] port (A7 submitTurn shape; first consumer: #1334).
 use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
 use pilotdeck_protocol::{JsString, JsValue};
+
+use super::im_cron::CronResultDelivery;
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
@@ -128,6 +131,11 @@ pub trait ChannelAdapter: Send + Sync {
         &self,
         deps: ChannelStartDeps,
     ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>>;
+    /// TS optional `deliverCronResult`. The default is the absent method:
+    /// the channel did not take the delivery.
+    fn deliver_cron_result(&self, _delivery: &CronResultDelivery) -> BoxFuture<bool> {
+        Box::pin(async { false })
+    }
 }
 
 /// Only the shutdown ordering of the enclosing host is needed in this component.

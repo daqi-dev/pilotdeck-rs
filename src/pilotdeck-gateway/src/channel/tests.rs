@@ -241,6 +241,7 @@ async fn replay_with_claim_race(case: &Value, claim_race: bool) -> Value {
     let close_error = case["closeError"].as_str().map(str::to_owned);
     let server = ChannelServer::new(
         ChannelStartDeps {
+            gateway: None,
             config: Some(config.clone()),
             report_status: Some(Arc::new(move |update| {
                 let state = match update.state {
