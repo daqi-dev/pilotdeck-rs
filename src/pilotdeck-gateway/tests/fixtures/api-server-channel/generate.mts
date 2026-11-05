@@ -381,6 +381,16 @@ for (let run = 0; run < 3; run += 1) {
     body: 'x'.repeat(OVER_CAP_BYTES),
   });
   await started.handle.stop('surface-done');
+  // #1606 fix-r4: the Rust replay never re-sends these cells (the connection
+  // dies mid-write), so nothing else compares the recorded response against
+  // the baseline. If the baseline cap ever rose above OVER_CAP_BYTES this
+  // would record `400 invalid_json` and every other assertion would still
+  // pass. Refuse to record anything but the zero-byte close.
+  if (result.bytes !== 0 || result.status !== undefined || typeof result.error !== 'string') {
+    throw new Error(
+      `#1333 oversized-${run}: the baseline must close without a response, got ${JSON.stringify(result)}`,
+    );
+  }
   cases.push({
     id: `oversized-${run}`,
     options: {},
