@@ -1094,3 +1094,220 @@ async fn stop_prefix_can_reenter_close() {
         .await
         .expect("#1327 prefix reentry memoized close");
 }
+
+// #1386 A8.3 (#1302 B): the 13 unmigrated channels refuse native startup
+// through `reject_unmigrated_channels`, the single seam the future production
+// assembly calls before `load_enabled_channels` (assembly wiring is a separate
+// unit). The seam takes no mounts and no console callback, so a rejection can
+// never come after an adapter construction or a `console.error` line — there
+// is nothing to construct or log through.
+const UNMIGRATED_REJECTION_PHRASE: &str = "未迁移到 Rust，需继续使用 TS gateway";
+/// The six subset keys #1302 B keeps in Rust; enabling them must stay `Ok`.
+const SUBSET_CHANNEL_KEYS: [&str; 6] = [
+    "weixin",
+    "feishu",
+    "apiServer",
+    "webhook",
+    "wecomCallback",
+    "sms",
+];
+
+fn adapters_config(entries: &str) -> JsValue {
+    pilotdeck_protocol::parse_json(entries).expect("#1386 adapters config JSON")
+}
+
+fn enabled_adapters(keys: &[&str]) -> JsValue {
+    adapters_config(&format!(
+        "{{{}}}",
+        keys.iter()
+            .map(|key| format!("\"{key}\":{{\"enabled\":true}}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    ))
+}
+
+fn rejection_of(adapters: &JsValue, assertion: &'static str) -> String {
+    let result = reject_unmigrated_channels(Some(adapters));
+    crate::negative_assert!(result.is_err(), "{assertion}");
+    result
+        .expect_err("#1386 checked unmigrated rejection")
+        .to_js_string()
+}
+
+fn assert_rejects_unmigrated(key: &str) {
+    let message = rejection_of(
+        &enabled_adapters(&[key]),
+        "#1386 unmigrated channel must reject startup",
+    );
+    crate::negative_assert!(
+        message.contains(&format!("channel \"{key}\"")),
+        "#1386 rejection names the channel key"
+    );
+    crate::negative_assert!(
+        message.contains(UNMIGRATED_REJECTION_PHRASE),
+        "#1386 rejection carries the unmigrated phrase"
+    );
+    crate::negative_assert_eq!(
+        message,
+        format!("Error: [adapters] channel \"{key}\" {UNMIGRATED_REJECTION_PHRASE}"),
+        "#1386 rejection message shape"
+    );
+}
+
+#[test]
+fn rejects_unmigrated_telegram() {
+    assert_rejects_unmigrated("telegram");
+}
+#[test]
+fn rejects_unmigrated_discord() {
+    assert_rejects_unmigrated("discord");
+}
+#[test]
+fn rejects_unmigrated_slack() {
+    assert_rejects_unmigrated("slack");
+}
+#[test]
+fn rejects_unmigrated_matrix() {
+    assert_rejects_unmigrated("matrix");
+}
+#[test]
+fn rejects_unmigrated_mattermost() {
+    assert_rejects_unmigrated("mattermost");
+}
+#[test]
+fn rejects_unmigrated_signal() {
+    assert_rejects_unmigrated("signal");
+}
+#[test]
+fn rejects_unmigrated_whatsapp() {
+    assert_rejects_unmigrated("whatsapp");
+}
+#[test]
+fn rejects_unmigrated_bluebubbles() {
+    assert_rejects_unmigrated("bluebubbles");
+}
+#[test]
+fn rejects_unmigrated_dingtalk() {
+    assert_rejects_unmigrated("dingtalk");
+}
+#[test]
+fn rejects_unmigrated_email() {
+    assert_rejects_unmigrated("email");
+}
+#[test]
+fn rejects_unmigrated_homeassistant() {
+    assert_rejects_unmigrated("homeassistant");
+}
+#[test]
+fn rejects_unmigrated_qq() {
+    assert_rejects_unmigrated("qq");
+}
+#[test]
+fn rejects_unmigrated_wecom() {
+    assert_rejects_unmigrated("wecom");
+}
+
+#[test]
+fn unmigrated_subset_channels_stay_loadable() {
+    for key in SUBSET_CHANNEL_KEYS {
+        let result = reject_unmigrated_channels(Some(&enabled_adapters(&[key])));
+        crate::negative_assert!(result.is_ok(), "#1386 subset channel must not be rejected");
+    }
+    let all = enabled_adapters(&SUBSET_CHANNEL_KEYS);
+    crate::negative_assert!(
+        reject_unmigrated_channels(Some(&all)).is_ok(),
+        "#1386 subset channel must not be rejected"
+    );
+    // Subset channels enabled next to disabled unmigrated keys still start.
+    let mut mixed = String::new();
+    for key in SUBSET_CHANNEL_KEYS {
+        mixed.push_str(&format!("\"{key}\":{{\"enabled\":true}},"));
+    }
+    for key in UNMIGRATED_CHANNEL_KEYS {
+        mixed.push_str(&format!("\"{key}\":{{\"enabled\":false}},"));
+    }
+    let mixed = adapters_config(&format!("{{{}}}", mixed.trim_end_matches(',')));
+    crate::negative_assert!(
+        reject_unmigrated_channels(Some(&mixed)).is_ok(),
+        "#1386 subset channel must not be rejected"
+    );
+}
+
+#[test]
+fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
+    // The empty config object and missing adapters are the TS
+    // `if (!adapters) return []` no-configuration path.
+    let empty = adapters_config("{}");
+    crate::negative_assert!(
+        reject_unmigrated_channels(Some(&empty)).is_ok(),
+        "#1386 disabled unmigrated channel must not reject"
+    );
+    crate::negative_assert!(
+        reject_unmigrated_channels(None).is_ok(),
+        "#1386 disabled unmigrated channel must not reject"
+    );
+    // Every falsy `enabled` spelling of the `cfg?.enabled` gate, and a key
+    // present with `enabled` absent entirely.
+    for falsy in ["false", "0", "-0", "\"\"", "null"] {
+        for key in UNMIGRATED_CHANNEL_KEYS {
+            let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{falsy}}}}}"));
+            crate::negative_assert!(
+                reject_unmigrated_channels(Some(&adapters)).is_ok(),
+                "#1386 disabled unmigrated channel must not reject"
+            );
+        }
+    }
+    let absent = adapters_config(
+        "{\"telegram\":{},\"discord\":{},\"slack\":{},\"matrix\":{},\"mattermost\":{},\
+         \"signal\":{},\"whatsapp\":{},\"bluebubbles\":{},\"dingtalk\":{},\"email\":{},\
+         \"homeassistant\":{},\"qq\":{},\"wecom\":{}}",
+    );
+    crate::negative_assert!(
+        reject_unmigrated_channels(Some(&absent)).is_ok(),
+        "#1386 disabled unmigrated channel must not reject"
+    );
+}
+
+#[test]
+fn unmigrated_rejection_order_is_deterministic() {
+    // All 13 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
+    // reverse CHANNEL_LOADER_KEYS order, then `qq`, then `wecom` — is
+    // reported.
+    let all = enabled_adapters(UNMIGRATED_CHANNEL_KEYS);
+    let message = rejection_of(&all, "#1386 unmigrated rejection order");
+    crate::negative_assert!(
+        message.contains("channel \"homeassistant\""),
+        "#1386 unmigrated rejection order"
+    );
+    // `qq` and `wecom` sit outside CHANNEL_LOADER_KEYS; alone they still
+    // reject, and `qq` is reported before `wecom`.
+    let pair = enabled_adapters(&["qq", "wecom"]);
+    let message = rejection_of(&pair, "#1386 unmigrated rejection order");
+    crate::negative_assert!(
+        message.contains("channel \"qq\""),
+        "#1386 unmigrated rejection order"
+    );
+    // An in-table key wins over the out-of-table `wecom`.
+    let mixed = enabled_adapters(&["wecom", "email"]);
+    let message = rejection_of(&mixed, "#1386 unmigrated rejection order");
+    crate::negative_assert!(
+        message.contains("channel \"email\""),
+        "#1386 unmigrated rejection order"
+    );
+    // The reverse of a CHANNEL_LOADER_KEYS adjacency: `mattermost` is
+    // reported before `matrix` even though the loader table lists
+    // `matrix` first.
+    let reversed = enabled_adapters(&["matrix", "mattermost"]);
+    let message = rejection_of(&reversed, "#1386 unmigrated rejection order");
+    crate::negative_assert!(
+        message.contains("channel \"mattermost\""),
+        "#1386 unmigrated rejection order"
+    );
+    // The table's tail: `discord` is reported before `telegram`.
+    let tail = enabled_adapters(&["discord", "telegram"]);
+    let message = rejection_of(&tail, "#1386 unmigrated rejection order");
+    crate::negative_assert!(
+        message.contains("channel \"discord\""),
+        "#1386 unmigrated rejection order"
+    );
+}

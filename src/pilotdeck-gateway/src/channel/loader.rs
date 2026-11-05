@@ -33,6 +33,60 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
     "webhook",
 ];
 
+/// The 13 channel config keys not migrated to Rust (#1302 B, #1386): enabling
+/// any of them must abort native startup. The set is the eleven
+/// `CHANNEL_LOADER_KEYS` members plus `qq` and `wecom`, which TS builds
+/// through `ChannelAdapterBundle` instead of the loader table. The order is
+/// deterministic — reverse `CHANNEL_LOADER_KEYS` order, then `qq`, then
+/// `wecom`; the first enabled key in this order is the one reported. Reverse
+/// order on purpose: a table that repeats `CHANNEL_LOADER_KEYS`'s own
+/// adjacent key pairs (e.g. `"telegram",\n    "discord",`) would make the
+/// byte anchors other fixtures pin on that table ambiguous
+/// (`channel-core`'s `config-order` mutation expects exactly one match).
+pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
+    "homeassistant",
+    "email",
+    "dingtalk",
+    "bluebubbles",
+    "whatsapp",
+    "signal",
+    "mattermost",
+    "matrix",
+    "slack",
+    "discord",
+    "telegram",
+    "qq",
+    "wecom",
+];
+
+/// `#1302 B`: a config that enables a channel Rust does not implement
+/// refuses startup — never a silent skip, a downgrade to disabled, or a
+/// fallback to the TS gateway. The gate reads the config object's own keys
+/// (`wecom`/`qq` are absent from `CHANNEL_LOADER_KEYS`, so iterating the
+/// loader table alone would miss them); `enabled` uses the same truthiness
+/// as the TS `cfg?.enabled` gate, and `None` adapters is the TS
+/// `if (!adapters) return []` no-configuration path. Production assembly
+/// calls this seam before [`load_enabled_channels`]; the assembly unit
+/// itself is separate work, which is why the seam takes no mounts and no
+/// console callback — a rejection can never follow an adapter construction
+/// or a `console.error` line.
+pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), ChannelError> {
+    let Some(adapters) = adapters else {
+        return Ok(());
+    };
+    for key in UNMIGRATED_CHANNEL_KEYS {
+        let Some(cfg) = adapters.get(key) else {
+            continue;
+        };
+        if js_truthy(cfg.get("enabled")) {
+            return Err(ChannelError::error(format!(
+                "[adapters] channel \"{key}\" 未迁移到 Rust，需继续使用 TS gateway"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// One mount point: constructs the channel from its option object.
 pub type ChannelAdapterConstructor =
     Arc<dyn Fn(&JsObject) -> Result<Arc<dyn ChannelAdapter>, ChannelError> + Send + Sync>;
