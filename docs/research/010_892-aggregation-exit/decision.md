@@ -4,8 +4,8 @@ number: "010"
 date: 2026-10-31
 title: "#1140 包三：deadline native 接线不新增聚合出口（#892 运行时观测口径）决策卡"
 tags: [phase-a, decision, session, aggregation, #892, #1140]
-status: AI 代批，待人复核；#892 本体仍挂起（decisions-20261028-892-suspend.md 方向 A）
-related: [research/009_a19-host-expectations/decision, state/decisions-20261028-892-suspend.md, specs/gateway-parity/frozen/20261031-1140.md]
+status: AI 代批，待人复核；#892 本体仍挂起（decisions-20261028-892-suspend.md 方向 A），2026-11-06 起由 state/decisions-20261106-892-resume.md 接续（AI 代批，待人复核；冲突时以该卡为准，本卡 D1/D2 只约束 #1140 包三当时的接线）
+related: [research/009_a19-host-expectations/decision, state/decisions-20261028-892-suspend.md, state/decisions-20261106-892-resume.md, specs/gateway-parity/frozen/20261031-1140.md]
 ---
 
 # 010 · 决策卡（#1140 包三的聚合出口不扩张）
