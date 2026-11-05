@@ -296,10 +296,10 @@ impl SubmitHostServices for Services {
             // For each lease attachment we emit a `file` or `image` block using the
             // leased path (hard-linked, stable for the duration of the turn).
             let mut blocks: Vec<JsValue> = Vec::new();
-            if let JsValue::String(text) = message {
-                if !text.is_empty() {
-                    blocks.push(object([("type", "text".into()), ("text", message.clone())]));
-                }
+            if let JsValue::String(text) = message
+                && !text.is_empty()
+            {
+                blocks.push(object([("type", "text".into()), ("text", message.clone())]));
             }
             // Build the attachment path note so the agent can use read_file.
             // P1-1: Only paths under the project's lease directory are permitted.
@@ -312,7 +312,6 @@ impl SubmitHostServices for Services {
             // then read files in a blocking task so the async executor is not blocked.
             struct AttachEntry {
                 path: String,
-                name: String,
                 mime: String,
             }
             let mut entries: Vec<AttachEntry> = Vec::new();
@@ -346,28 +345,28 @@ impl SubmitHostServices for Services {
                     }
                     allowed_paths.push(JsValue::from(path.as_str()));
                     note_lines.push(format!("- {name}: {path}"));
-                    entries.push(AttachEntry { path, name, mime });
+                    entries.push(AttachEntry { path, mime });
                 }
             }
             // P1-3: Read image bytes on a blocking thread (mirrors resolve_attachments).
             let image_blocks: Vec<JsValue> = tokio::task::spawn_blocking(move || {
                 let mut out = Vec::new();
                 for entry in &entries {
-                    if entry.mime.starts_with("image/") {
-                        if let Ok(bytes) = std::fs::read(&entry.path) {
-                            let encoded = base64_encode(&bytes);
-                            out.push(object([
-                                ("type", "image".into()),
-                                (
-                                    "source",
-                                    object([
-                                        ("type", "base64".into()),
-                                        ("media_type", JsValue::from(entry.mime.as_str())),
-                                        ("data", JsValue::from(encoded.as_str())),
-                                    ]),
-                                ),
-                            ]));
-                        }
+                    if entry.mime.starts_with("image/")
+                        && let Ok(bytes) = std::fs::read(&entry.path)
+                    {
+                        let encoded = base64_encode(&bytes);
+                        out.push(object([
+                            ("type", "image".into()),
+                            (
+                                "source",
+                                object([
+                                    ("type", "base64".into()),
+                                    ("media_type", JsValue::from(entry.mime.as_str())),
+                                    ("data", JsValue::from(encoded.as_str())),
+                                ]),
+                            ),
+                        ]));
                     }
                 }
                 out
@@ -390,10 +389,10 @@ impl SubmitHostServices for Services {
                 ("type", "blocks".into()),
                 ("content", JsValue::Array(blocks)),
             ]);
-            if !allowed_paths.is_empty() {
-                if let JsValue::Object(ref mut o) = result {
-                    o.insert("allowedReadFiles".into(), JsValue::Array(allowed_paths));
-                }
+            if !allowed_paths.is_empty()
+                && let JsValue::Object(ref mut o) = result
+            {
+                o.insert("allowedReadFiles".into(), JsValue::Array(allowed_paths));
             }
             Ok(result)
         })
