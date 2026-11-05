@@ -7,8 +7,13 @@ slow-timeout = { period = "60s" }
 # 失败用例的输出——通过用例里的 `skip:` 行（无论 eprintln! 还是直写 stderr 句柄）
 # 在 CI 日志里都看不见，等于静默绿。只对这几个可能跳过的用例打开成功输出，避免
 # 整个 workspace 的日志膨胀。实测 nextest 0.9.148：`success-output` 只在此 override
-# 命中的用例上生效，`pilotdeck` 其余用例保持默认。名单里的每个名字都必须真实存在，
-# 改名即由 test_metadata_io_driver.py 的守卫判红。
+# 命中的用例上生效，`pilotdeck` 其余用例保持默认。
+#
+# fix-r3：`test(=名字)` 是对 nextest 可见**全名**的精确匹配，单元测试的全名带模块路径
+# （libtest `--list` 同形），裸叶子名永远选不中（实测 nextest 0.9.150：
+# `test(=bar)` 对 `foo::tests::bar` 零命中，`test(=foo::tests::bar)` 命中）。
+# 因此 `src/` 里的单元测试必须写全名，`tests/*.rs` 的集成测试才用裸名。
+# test_metadata_io_driver.py 的守卫按「定义文件在 src/ 还是 tests/」推出应有全名并逐字比对。
 [[profile.ci.overrides]]
-filter = 'test(=case_insensitive_cwd_spelling_writes_and_edits) | test(=nfd_directory_with_nfc_cwd_writes_and_edits) | test(=permission_denied_is_not_reported_as_outside) | test(=grep_outputs_match_real_ts) | test(=clear_failing_inside_delete_entries_rearms_indexed_rows) | test(=dump_request_write_failure_semantics) | test(=committed_marker_with_unreadable_manifest_republishes) | test(=unreadable_scan_child_matches_real_ts_before_denial_and_after_restore) | test(=files_sort_keeps_submillisecond_mtime_precision)'
+filter = 'test(=case_insensitive_cwd_spelling_writes_and_edits) | test(=nfd_directory_with_nfc_cwd_writes_and_edits) | test(=permission_denied_is_not_reported_as_outside) | test(=grep_outputs_match_real_ts) | test(=clear_failing_inside_delete_entries_rearms_indexed_rows) | test(=dump_request_write_failure_semantics) | test(=committed_marker_with_unreadable_manifest_republishes) | test(=scenarios_match_ts_outcomes_and_trees) | test(=real_ts_tool_budget_and_apply_tool_results_replay) | test(=skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore) | test(=runtime::tools::builtin::grep::tests::files_sort_keeps_submillisecond_mtime_precision)'
 success-output = "final"
