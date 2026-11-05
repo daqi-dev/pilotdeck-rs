@@ -433,21 +433,53 @@ async fn ensure_replay_port_free(port: u16) {
     // neither problem: a live listener answers, a lingering `TIME_WAIT` socket
     // refuses.
     //
-    // #1339 fix-r8 (P1, Codex): what this probe does *not* see, and what that
-    // costs:
-    //   * a socket that is bound but never listens — the replay's own
-    //     `127.0.0.1` bind then fails, so the run stops on a bind error and
-    //     only the dedicated message is lost;
-    //   * a v6-only listener on the same port — the replay's `::` bind fails,
-    //     `bind_listener` falls back to `0.0.0.0`, and the IPv4 probes every
-    //     oracle cell sends still reach *our* listener, so the recording is not
-    //     corrupted; only the IPv6 side stays foreign, and no cell probes it.
-    //     What is lost there is the guarantee that the whole port is ours.
-    if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
-        panic!(
+    // #1339 fix-r9 (P0, Codex): the IPv4 probe alone could not see a
+    // *v6-only* listener on the same port, and that is the one shape the guard
+    // must catch — measured on this host (`_tmp/20261106-issue-1339-fix-r6/
+    // v6only_probe.log`): with `[::]:P` held by a v6-only listener, a v4
+    // connect to `127.0.0.1:P` is refused, our `::` bind gets `EADDRINUSE`,
+    // `v4_port_state` reports `Unshared`, and `bind_listener` falls back to
+    // `0.0.0.0:P` and serves every IPv4 probe the oracle records. The replay
+    // then passes in an environment where the TS baseline cannot start at all,
+    // i.e. a silently weaker check. Probing `::1` closes it: the same v6-only
+    // listener answers there.
+    //
+    // #1339 fix-r9 (P2, four roles): both probes now carry the same shape as
+    // the generator's `portIsFree` — `bounded` caps the wait, `ConnectionRefused`
+    // is the only proof of a free port, and anything else aborts the run
+    // instead of being read as "free".
+    match bounded(
+        "port guard 127.0.0.1",
+        TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    {
+        Ok(_) => panic!(
             "#1339 port {port} already in use; a concurrent channel-sms replay would corrupt the oracle"
-        );
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+        Err(error) => {
+            panic!("#1339 cannot prove port {port} is free on IPv4 ({error}); refusing to replay")
+        }
     }
+    if host_has_ipv6_loopback().await {
+        match bounded("port guard [::1]", TcpStream::connect(("::1", port))).await {
+            Ok(_) => panic!(
+                "#1339 port {port} already in use on IPv6; the `::` bind would fail and fall back to IPv4-only"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+            Err(error) => panic!(
+                "#1339 cannot prove port {port} is free on IPv6 ({error}); refusing to replay"
+            ),
+        }
+    }
+}
+
+/// `true` when this host has an IPv6 loopback to probe at all. A host without
+/// one cannot be contaminated on the v6 side, so the guard skips that half
+/// instead of reporting an unreachable address as an unexpected error.
+async fn host_has_ipv6_loopback() -> bool {
+    TcpListener::bind(("::1", 0)).await.is_ok()
 }
 
 /// #1339 fix-r2 (P1): compare the responses recorded so far against the
@@ -1162,6 +1194,50 @@ fn port_busy_preflight_fails_fast() {
         payload.contains(&format!("#1339 port {port} already in use")),
         "#1339 port-busy preflight marker: {payload}"
     );
+}
+
+/// #1339 fix-r9 (P0): the IPv4 half of the guard cannot see a listener that
+/// only serves IPv6, and that shape makes the replay pass in an environment
+/// where the TS baseline cannot start (`v6only_probe.log`). Removing the `::1`
+/// probe from `ensure_replay_port_free` turns this test red.
+#[test]
+fn port_busy_on_ipv6_preflight_fails_fast() {
+    let Ok(busy) = std::net::TcpListener::bind(("::1", 0)) else {
+        eprintln!("#1339 skipped: host has no IPv6 loopback");
+        return;
+    };
+    let port = busy.local_addr().expect("#1339 v6 busy local addr").port();
+    // The guard's v4 half must see a free port, otherwise this test would
+    // assert on the wrong panic. `bind` + immediate drop leaves no `TIME_WAIT`.
+    let Ok(v4_free) = std::net::TcpListener::bind(("127.0.0.1", port)) else {
+        eprintln!("#1339 skipped: 127.0.0.1:{port} is taken as well");
+        return;
+    };
+    drop(v4_free);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("#1339 preflight runtime build")
+            .block_on(ensure_replay_port_free(port))
+    }));
+    let payload = match result {
+        Err(payload) => payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|text| (*text).to_owned())
+            })
+            .unwrap_or_else(|| "#1339 non-string panic payload".to_owned()),
+        Ok(()) => "#1339 replay unexpectedly completed".to_owned(),
+    };
+    crate::negative_assert!(
+        payload.contains(&format!("#1339 port {port} already in use on IPv6")),
+        "#1339 v6 port-busy preflight marker: {payload}"
+    );
+    drop(busy);
 }
 
 /// #1339 fix-r1 (P2 #15): the mapped Node `listen` error texts (probed on
