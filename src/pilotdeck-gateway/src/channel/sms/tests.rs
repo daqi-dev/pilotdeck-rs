@@ -441,12 +441,18 @@ async fn ensure_replay_port_free(port: u16) {
 /// panics without the case's bound assertion, which the negative-control
 /// suite judges INVALID instead of KILLED. Asserting as the responses land
 /// keeps every divergence at the case's own anchor.
-fn assert_responses_so_far(record: &Record, case: &Value, name: &str) {
+///
+/// #1339 fix-r3 (P2): takes a snapshot instead of the live `Record`. Asserting
+/// while holding the record mutex poisons it when the assertion fails; the
+/// channel's logger then panics on `PoisonError` from a detached task, adding
+/// an unnamed panic header that the negative-control contract rejects
+/// (`tests/common/baseline.rs`), which turns a KILLED back into an INVALID.
+fn assert_responses_so_far(responses: &[Value], case: &Value, name: &str) {
     let expected = case["expected"]["responses"]
         .as_array()
-        .map(|values| values[..values.len().min(record.responses.len())].to_vec())
+        .map(|values| values[..values.len().min(responses.len())].to_vec())
         .unwrap_or_default();
-    crate::negative_assert_eq!(record.responses, expected, "#1339 sms oracle: {name}");
+    crate::negative_assert_eq!(responses, &expected[..], "#1339 sms oracle: {name}");
 }
 
 async fn replay_named(name: &str) {
@@ -549,22 +555,28 @@ async fn replay_named(name: &str) {
                 let raw = build_raw(&step);
                 let half_close = step["halfClose"].as_bool().unwrap_or(false);
                 let outcome = bounded("probe response", raw_request(port, &raw, half_close)).await;
-                let mut record = record.lock().expect("#1339 record mutex");
-                record.responses.push(match outcome {
-                    Ok(value) => value,
-                    // The generator's connect refused mapping; the probe client
-                    // reports ECONNREFUSED the same way for raw requests.
-                    Err(_) => json!({"refused": true}),
-                });
-                assert_responses_so_far(&record, &case, name);
+                let seen = {
+                    let mut record = record.lock().expect("#1339 record mutex");
+                    record.responses.push(match outcome {
+                        Ok(value) => value,
+                        // The generator's connect refused mapping; the probe client
+                        // reports ECONNREFUSED the same way for raw requests.
+                        Err(_) => json!({"refused": true}),
+                    });
+                    record.responses.clone()
+                };
+                assert_responses_so_far(&seen, &case, name);
             }
             "connect" => {
                 let refused = bounded("connect probe", TcpStream::connect(("127.0.0.1", port)))
                     .await
                     .is_err();
-                let mut record = record.lock().expect("#1339 record mutex");
-                record.responses.push(json!({"refused": refused}));
-                assert_responses_so_far(&record, &case, name);
+                let seen = {
+                    let mut record = record.lock().expect("#1339 record mutex");
+                    record.responses.push(json!({"refused": refused}));
+                    record.responses.clone()
+                };
+                assert_responses_so_far(&seen, &case, name);
             }
             "wait-log" => {
                 let level = step["level"].as_str().unwrap_or_default().to_owned();
@@ -643,6 +655,9 @@ async fn replay_named(name: &str) {
 
 macro_rules! replay_cases {
     ($($case:literal => $test:ident),* $(,)?) => {
+        /// #1339 fix-r3 (P2): the case names bound to replay cells, emitted by
+        /// the same macro that defines the cells so the two cannot drift.
+        const REPLAY_CELL_NAMES: &[&str] = &[$($case),*];
         $(
             #[tokio::test]
             async fn $test() {
@@ -716,6 +731,31 @@ fn oracle_case_count_is_recorded() {
         oracle_cases().len(),
         EXPECTED_CASE_COUNT,
         "#1339 oracle case array length"
+    );
+}
+
+/// #1339 fix-r3 (P2): the ledger claims 54 of the 55 oracle cases are compared
+/// against a replay cell on every run. The total is pinned by
+/// `EXPECTED_CASE_COUNT` on both sides, but nothing tied the *names* together:
+/// a case added without a cell would keep both counts in step and its
+/// `expected` would silently stop being compared. Pin the name sets instead.
+#[test]
+fn every_oracle_case_has_a_replay_cell() {
+    // The one case with no replay cell of its own: it only carries the port
+    // that `port_busy_preflight_fails_fast` holds busy.
+    const WITHOUT_CELL: &[&str] = &["port-busy-preflight"];
+    let cases = oracle_cases();
+    let mut oracle: Vec<&str> = cases
+        .iter()
+        .filter_map(|case| case["name"].as_str())
+        .filter(|name| !WITHOUT_CELL.contains(name))
+        .collect();
+    let mut cells: Vec<&str> = REPLAY_CELL_NAMES.to_vec();
+    oracle.sort_unstable();
+    cells.sort_unstable();
+    assert_eq!(
+        cells, oracle,
+        "#1339 every oracle case needs exactly one replay cell"
     );
 }
 

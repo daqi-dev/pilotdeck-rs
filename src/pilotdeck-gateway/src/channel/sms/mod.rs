@@ -545,20 +545,50 @@ async fn bind_listener(host: &str, port: u16) -> std::io::Result<TcpListener> {
         // #1339 fix-r2 (P2): `"[::]"` is not a host Rust resolves (the
         // bracket form only parses as a socket-address string, not through
         // `ToSocketAddrs`), so the dual-stack bind has to spell `"::"`.
-        // The switch pins loopback instead: the pre-fix shape bound the empty
-        // host, whose lookup fails on macOS but resolves to 127.0.0.1 on
-        // Linux — a platform-dependent kill.
-        let all: &str = if crate::mutants::on("sms-empty-host-bind-all") {
-            "::1"
-        } else {
-            "::"
-        };
-        if let Ok(listener) = TcpListener::bind((all, port)).await {
+        //
+        // #1339 fix-r3 (P2): but `TcpListener::bind(("::", port))` honours
+        // the host's `net.ipv6.bindv6only`, while Node's `listen` forces
+        // `ipv6Only=false`. On a host that sets it the wildcard binds but
+        // serves IPv6 only, the 127.0.0.1 probe is refused and
+        // `empty-webhook-host` fails as a false positive — so build the v6
+        // socket explicitly instead of relying on the default.
+        if crate::mutants::on("sms-empty-host-bind-all") {
+            // The switch makes the empty-host mapping fail outright. The
+            // pre-fix shape bound the empty host, whose lookup fails on macOS
+            // but resolves to 127.0.0.1 on Linux — a platform-dependent kill.
+            // Returning the failure keeps the control's verdict the same on
+            // every platform (binding `::1` instead degraded to the positive
+            // run's `0.0.0.0` fallback on hosts without IPv6, where the
+            // mutant SURVIVED).
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "#1339 sms-empty-host-bind-all",
+            ));
+        }
+        if let Ok(listener) = bind_dual_stack(port).await {
             return Ok(listener);
         }
         return TcpListener::bind(("0.0.0.0", port)).await;
     }
     TcpListener::bind((host, port)).await
+}
+
+/// #1339 fix-r3 (P2): `::` is dual-stack only while the host keeps
+/// `net.ipv6.bindv6only` at 0 — Rust std does not clear `IPV6_V6ONLY` the way
+/// Node's `listen` does. Verify it instead of assuming: a dual-stack wildcard
+/// already owns the IPv4 port, so a second bind to `127.0.0.1` collides. If it
+/// succeeds, the wildcard serves IPv6 only, the 127.0.0.1 probe would be
+/// refused, and the caller falls back to `0.0.0.0`.
+async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
+    let listener = TcpListener::bind(("::", port)).await?;
+    let shared_with_v4 = TcpListener::bind(("127.0.0.1", port)).await.is_err();
+    if shared_with_v4 {
+        return Ok(listener);
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AddrInUse,
+        "#1339 `::` is IPv6-only on this host",
+    ))
 }
 
 /// Node's `Error: listen <CODE>: <message> <host>:<port>` line for the bind
