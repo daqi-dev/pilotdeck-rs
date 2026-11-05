@@ -75,11 +75,29 @@ UI_APPARATUS = ("APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008'
                 "SPEC_FILES = ('acceptance.md',)\n"
                 "TOOLCHAIN_FILES = ()\n")
 
+# 真装置的另一半：真实登记范围来自 check_frozen.py 的 SPEC 与 apparatus_files()，
+# 预检会与 apparatus.py 的 APPARATUS_PATHS 交叉核对，两边不一致即「不可判定」。
+UI_FROZEN = ("\nSPEC = ROOT / 'specs/ui-server-parity'\n"
+             "\n\ndef apparatus_files(root):\n"
+             "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}\n"
+             "    files.update(Path(p) for p in scan(root / 'scripts/exp008'))\n"
+             "    return files\n")
+
 
 def gw_source(*names):
-    """假 gateway 装置源：与真装置同形的 ``manifest_inventory`` 字面量清单。"""
-    items = ", ".join(f"'scripts/gateway-parity/{name}'" for name in names)
-    return "\ndef manifest_inventory(root):\n    return [" + items + "]\n"
+    """假 gateway 装置源：与真装置同形的 ``manifest_inventory``。
+
+    模板 ``f'scripts/gateway-parity/{name}'`` 遍历 ``A2_SCRIPTS``，a5-19 用内联
+    元组模板，额外成员写成完整路径字面量，spec 名是裸名元组——预检按这些表达式
+    重建清单，而不是把函数体里所有字符串常量都当成成员。
+    """
+    extra = "".join(f"    paths.append('scripts/gateway-parity/{name}')\n" for name in names)
+    return ("\ndef manifest_inventory(root):\n"
+            "    names = ('acceptance.md', 'normalization.md', 'accepted-diffs.md')\n"
+            "    paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+            + extra +
+            "    paths += [f'scripts/a5-19/{name}' for name in ('run.py',)]\n"
+            "    return {name: name for name in names}\n")
 
 
 HASH_LIST = "hash list differs from generated inventory; run check_frozen.py --write"
@@ -190,6 +208,7 @@ def run():
         init_repo(root)
         row(root, "fake", "scripts/ui-server-parity/x.py", sha("A\n"), "A\n")
         write(root, "scripts/ui-server-parity/apparatus.py", UI_APPARATUS)
+        write(root, "scripts/ui-server-parity/check_frozen.py", UI_FROZEN)
         write(root, "specs/ui-server-parity/FROZEN.md",
               f"# fake FROZEN\n\n{sha('A\n')}  ../../scripts/ui-server-parity/x.py\n")
         commit(root, "base")
@@ -458,12 +477,8 @@ def run():
         # 靠 dropped_rows 自己枚举（第七轮两家 P0/P1：手写 LACKS_CHAIN 报文是伪造对）。
         payload = {"status": "FAIL", "failures": [HASH_LIST]}
         common_src = "A2_SCRIPTS = (\n    'check_frozen.py', 'common.py',\n)\n"
-        base_inventory = ("\ndef manifest_inventory(root):\n"
-                          "    paths = ['scripts/gateway-parity/fixtures/x.json']\n"
-                          "    return paths\n")
-        head_inventory = ("\ndef manifest_inventory(root):\n"
-                          "    paths = []\n"
-                          "    return paths\n")
+        base_inventory = gw_source("fixtures/x.json")
+        head_inventory = gw_source()
         base_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + base_inventory
         head_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + head_inventory
         frozen = ("# fake FROZEN\n\n"
@@ -489,12 +504,8 @@ def run():
         # 靠 dropped_rows 自己枚举（第七轮两家 P0/P1：手写 LACKS_CHAIN 报文是伪造对）。
         payload = {"status": "FAIL", "failures": [HASH_LIST]}
         common_src = "A2_SCRIPTS = (\n    'check_frozen.py', 'common.py',\n)\n"
-        base_inventory = ("\ndef manifest_inventory(root):\n"
-                          "    paths = ['scripts/gateway-parity/fixtures/x.json']\n"
-                          "    return paths\n")
-        head_inventory = ("\ndef manifest_inventory(root):\n"
-                          "    paths = []\n"
-                          "    return paths\n")
+        base_inventory = gw_source("fixtures/x.json")
+        head_inventory = gw_source()
         base_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + base_inventory
         head_body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + head_inventory
         frozen = ("# fake FROZEN\n\n"
@@ -533,6 +544,7 @@ def run():
                   f"{sha(base_apparatus)}  ../../scripts/ui-server-parity/apparatus.py\n"
                   f"{sha(body)}  ../../scripts/ui-server-parity/check_frozen.py\n")
         return delivery(Path(td), "ui-server-parity", payload,
+                        source=UI_FROZEN,
                         base_files=[("specs/ui-server-parity/multimodal.md", "OLD\n"),
                                     ("scripts/ui-server-parity/apparatus.py", base_apparatus),
                                     ("specs/ui-server-parity/FROZEN.md", frozen)],
@@ -556,6 +568,117 @@ def run():
                                         + EVENT_FIELDS)])
         case("ui-server 成员移出 SPEC_FILES、旧→新链 → BLOCKED",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 同名二次绑定：解释器生效的是末值，只认字面量首值会留下错误的 True。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        twice = "A2_SCRIPTS = ('check_frozen.py',)\nA2_SCRIPTS += ('common.py',)\n"
+        proc = delivery(Path(td), "gateway-parity", payload, source=gw_source(),
+                        base_files=[("scripts/gateway-parity/common.py", twice)])
+        case("清单源被二次赋值 → BLOCKED（不可判定，不取首个）",
+             proc.returncode == 1 and "cannot tell" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 同名函数定义两次：生效的是后一个，取第一个会模拟错清单。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        twice = (gw_source()
+                 + "\ndef manifest_inventory(root):\n"
+                 "    return ['scripts/gateway-parity/other.py']\n")
+        proc = delivery(Path(td), "gateway-parity", payload, source=twice,
+                        base_files=[("scripts/gateway-parity/common.py", GW_COMMON)])
+        case("manifest_inventory 定义两次 → BLOCKED（不可判定）",
+             proc.returncode == 1 and "cannot tell" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 装置两侧的目录清单必须一致：只有一侧改了就是「认不出」，不能按位置猜。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/ui-server-parity/apparatus.py", UI_APPARATUS)
+        write(root, "scripts/ui-server-parity/check_frozen.py",
+              UI_FROZEN.replace("scan(root / 'scripts/exp008')",
+                                "scan(root / 'scripts/exp007')"))
+        commit(root, "base")
+        case("ui 两侧清单源不一致 → 不可判定（不按位置猜）",
+             cfd.registrable(root, "ui-server-parity",
+                             "specs/ui-server-parity/acceptance.md") is None)
+        case("ui 位置猜错的目录不参与登记",
+             cfd.registrable(root, "ui-server-parity",
+                             "scripts/ui-server-parity/x.py") is None)
+
+    with tempfile.TemporaryDirectory() as td:
+        # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
+        root = Path(td)
+        init_repo(root)
+        row(root, "ui-server-parity", "specs/ui-server-parity/multimodal.md", sha("OLD\n"), "OLD\n")
+        write(root, "scripts/ui-server-parity/apparatus.py",
+              UI_APPARATUS.replace("'acceptance.md',)", "'acceptance.md', 'multimodal.md')"))
+        write(root, "scripts/ui-server-parity/check_frozen.py", UI_FROZEN)
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        write(root, "specs/ui-server-parity/multimodal.md", "NEW\n")
+        write(root, "specs/ui-server-parity/frozen/20260101-v.md",
+              f"Change: {sha('OLD\n')} {sha('NEW\n')} "
+              "specs/ui-server-parity/multimodal.md\n" + EVENT_FIELDS)
+        commit(root, "delivery")
+        edges, _, _ = cfd.event_evidence(root, "ui-server-parity", base)
+        ctx = {"root": root, "kind": "ui-server-parity", "mb": base,
+               "edges": edges, "pending": set()}
+        case("unexpected registered file 在仓外 → block",
+             cfd.classify(ctx, "unexpected registered file: /etc/passwd")[0] == "block")
+        case("unexpected registered file 在 base 无行 → block",
+             cfd.classify(ctx, f"unexpected registered file: "
+                               f"{root.resolve()}/specs/ui-server-parity/fresh.md")[0] == "block")
+        case("unexpected registered file 有行且有链 → ok",
+             cfd.classify(ctx, "unexpected registered file: "
+                               f"{root.resolve()}/specs/ui-server-parity/multimodal.md")[0] == "ok")
+
+    with tempfile.TemporaryDirectory() as td:
+        # toolchain 文件按存在与否登记：删掉并写 Change: <old> - 才是合法交接。
+        apparatus = UI_APPARATUS.replace("TOOLCHAIN_FILES = ()",
+                                         "TOOLCHAIN_FILES = ('rust-toolchain',)")
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + UI_FROZEN
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('1.90.0\\n')}  ../../rust-toolchain\n"
+                  f"{sha(apparatus)}  ../../scripts/ui-server-parity/apparatus.py\n"
+                  f"{sha(body)}  ../../scripts/ui-server-parity/check_frozen.py\n")
+
+        def toolchain_delivery(td, events):
+            return delivery(Path(td), "ui-server-parity", payload,
+                            base_files=[("rust-toolchain", "1.90.0\n"),
+                                        ("scripts/ui-server-parity/apparatus.py", apparatus),
+                                        ("specs/ui-server-parity/FROZEN.md", frozen)],
+                            removes=["rust-toolchain"], events=events,
+                            source=UI_FROZEN)
+
+        proc = toolchain_delivery(td, [])
+        case("toolchain 删除、无删除链 → BLOCKED",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        apparatus = UI_APPARATUS.replace("TOOLCHAIN_FILES = ()",
+                                         "TOOLCHAIN_FILES = ('rust-toolchain',)")
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + UI_FROZEN
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('1.90.0\\n')}  ../../rust-toolchain\n"
+                  f"{sha(apparatus)}  ../../scripts/ui-server-parity/apparatus.py\n"
+                  f"{sha(body)}  ../../scripts/ui-server-parity/check_frozen.py\n")
+        proc = delivery(Path(td), "ui-server-parity", payload,
+                        base_files=[("rust-toolchain", "1.90.0\n"),
+                                    ("scripts/ui-server-parity/apparatus.py", apparatus),
+                                    ("specs/ui-server-parity/FROZEN.md", frozen)],
+                        removes=["rust-toolchain"],
+                        source=UI_FROZEN,
+                        events=[("specs/ui-server-parity/frozen/20260101-t.md",
+                                 f"Change: {sha('1.90.0\n')} - rust-toolchain\n"
+                                 + EVENT_FIELDS)])
+        case("toolchain 删除、Change: <old> - 链 → READY",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
@@ -657,6 +780,27 @@ def run():
         case("运行期间 HEAD 移动 → BLOCKED（快照不一致）",
              proc.returncode == 1 and "=== snapshot === BLOCKED" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        # 内部读取钉住起跑 SHA：HEAD 已前进到 C，判定仍按 A（防 A→C→A 抖动）。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", "A2_SCRIPTS = ('alpha.py',)\n")
+        write(root, "scripts/gateway-parity/check_frozen.py", gw_source())
+        commit(root, "base")
+        pinned = git(root, "rev-parse", "HEAD")
+        write(root, "scripts/gateway-parity/common.py", "A2_SCRIPTS = ('beta.py',)\n")
+        commit(root, "moved")
+        cfd._PINNED_HEAD["sha"] = pinned
+        try:
+            at_pin = cfd.registrable(root, "gateway-parity",
+                                     "scripts/gateway-parity/alpha.py")
+            at_head = cfd.registrable(root, "gateway-parity",
+                                      "scripts/gateway-parity/beta.py")
+        finally:
+            cfd._PINNED_HEAD["sha"] = None
+        case("内部读取钉住起跑 SHA（不吃运行后的 HEAD）",
+             at_pin is True and at_head is False, f"pin={at_pin} head={at_head}")
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         proc = delivery(root, "parity", {"status": "FAIL", "failures": []})
