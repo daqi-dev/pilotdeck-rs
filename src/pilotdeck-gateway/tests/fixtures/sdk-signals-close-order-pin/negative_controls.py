@@ -16,14 +16,26 @@ half of that pin:
     the #1382 pin can fail — the single-edit equivalent of the historical
     "raise the ledger, the whitelist and EXPECTED_TOTAL together" hole;
   - unordered-close-boundary-dropped: the boundary registration loses one
-    entry, so a whole-scope control is mistaken for a per-ID one;
+    entry and the matching mutation row disappears with it, so the name set
+    and the registered-ID pin no longer agree (the content-table
+    consistency check is exercised by the two retargeting controls above);
   - unordered-close-content-retargeted: a row keeps its per-ID name but its
-    anchor, mutant value and assertion are pointed at another registered ID,
-    so the name-set comparison still passes while the named ID has no
-    independent control and the other ID's mutation runs twice;
+    anchor and mutant value are pointed at another registered ID (the
+    assertion half is covered by the next control), so the name-set
+    comparison still passes while the named ID has no independent control and
+    the other ID's mutation runs twice;
   - unordered-close-assertion-retargeted: only the bound assertion names
     another registered ID, leaving the anchor and mutant value intact, so the
-    assertion half of the content pin cannot be left untested.
+    assertion half of the content pin cannot be left untested;
+  - unordered-close-test-retargeted: only the bound test name is swapped for
+    another test under an allowed prefix, so the test half of the content pin
+    cannot be left untested;
+  - unordered-close-boundary-content-retargeted: a whole-scope boundary row
+    keeps its name but takes a sibling's assertion, so the boundary content
+    pin must fail even though every name check still passes;
+  - unordered-close-boundary-key-renamed: the expected-content table renames
+    one key, so the name tuple and the table disagree and the consistency
+    check between them must fire before any per-row content comparison.
 
 The "ledger gains one ID" direction is the same set difference as
 unordered-close-row-removed (a registered ID without a mutation); the
@@ -56,12 +68,16 @@ from negative_process import (
 root = Path(__file__).resolve().parents[5]
 catalog_relative = "src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py"
 catalog = root / catalog_relative
-# The catalog's #1382 pin reads this frozen ledger from the working tree, but
-# mutating_sources' workspace guard only covers src/.cargo/toolchain. Name the
-# ledger explicitly so an uncommitted edit cannot move the comparison baseline
-# behind our back (the #1145 catalog runner already guards it).
+# The catalog preflight reads two frozen ledgers from the working tree: the
+# #1382 close-order pin reads the first, and the #1145 anchor count for the
+# rejection row reads the second. mutating_sources' workspace guard only
+# covers src/.cargo/toolchain, so name both explicitly: an uncommitted edit
+# must not move the comparison baseline behind our back (the #1145 catalog
+# runner already guards both).
 ledger_relative = "specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md"
 ledger = root / ledger_relative
+d1_ledger_relative = "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
+d1_ledger = root / d1_ledger_relative
 
 # (name, path, before, after, expected fragment of the dedicated failure)
 mutations = [
@@ -102,6 +118,29 @@ mutations = [
         "#1252 unordered close swap must pass: run--second-sigint'),",
         "wrong content: run--query-resume-hold-sigint",
     ),
+    (
+        "unordered-close-test-retargeted",
+        catalog_relative,
+        "signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', "
+        "'#1252 unordered close swap must pass: run--query-resume-hold-sigint'",
+        "signal_replay::comparison_tests::unordered_close_scope_equals_registration', "
+        "'#1252 unordered close swap must pass: run--query-resume-hold-sigint'",
+        "wrong content: run--query-resume-hold-sigint",
+    ),
+    (
+        "unordered-close-boundary-content-retargeted",
+        catalog_relative,
+        "#1252 stable close swap must fail:'",
+        "#1252 non-array closes must fail:'",
+        "wrong content: unordered-close-overbroad",
+    ),
+    (
+        "unordered-close-boundary-key-renamed",
+        catalog_relative,
+        '    "unordered-close-overbroad": (\n',
+        '    "unordered-close-overbroad-renamed": (\n',
+        "boundary name list and expected-content table disagree",
+    ),
 ]
 
 if len(sys.argv) < 2:
@@ -139,7 +178,7 @@ def run_check(label):
 
 
 results = []
-with mutating_sources(root, [catalog, ledger]) as snapshots:
+with mutating_sources(root, [catalog, ledger, d1_ledger]) as snapshots:
     positive = run_check("positive-before")
     if not preflight_passed(positive):
         raise SystemExit(
@@ -184,6 +223,8 @@ with mutating_sources(root, [catalog, ledger]) as snapshots:
                         "#1382 unordered-close controls must equal the"
                         " registered close-order IDs",
                         "#1382 unordered-close rows must bind their own ID",
+                        "#1382 whole-scope boundary rows must keep their own content",
+                        "#1382 boundary name list and expected-content table disagree",
                     )
                     if (
                         result.returncode != 0
