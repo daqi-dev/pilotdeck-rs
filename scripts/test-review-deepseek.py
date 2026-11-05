@@ -97,10 +97,13 @@ def ok_body(content, finish="end_turn", model="fake", usage=None, thinking=False
                        "stop_reason": finish, "usage": usage}).encode()
 
 
-def run(tmp: Path, api: str, *extra, key=FAKE_KEY, out="out.md", script=SCRIPT):
-    env = {k: v for k, v in os.environ.items() if k != "DEEPSEEK_API_KEY"}
+def run(tmp: Path, api: str, *extra, key=FAKE_KEY, out="out.md", script=SCRIPT, env_extra=None):
+    # PDRS_DEEPSEEK_CHANNEL 一并剔除：宿主环境若残留已废弃的 official 值，会让被测脚本 argparse 报错、整套测试误红
+    env = {k: v for k, v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "PDRS_DEEPSEEK_CHANNEL")}
     if key is not None:
         env["DEEPSEEK_API_KEY"] = key
+    if env_extra:
+        env.update(env_extra)
     cmd = [sys.executable, "-I", str(script), "--prompt", str(tmp / "task.md"), "--out", str(tmp / out),
            "--api", api, "--timeout", "5", *extra]
     return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=tmp)
@@ -113,7 +116,7 @@ def main() -> int:
     fails = 0
 
     def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None, expect_msg=None,
-             secret=None, check=None, not_msg=()):
+             secret=None, check=None, not_msg=(), env_extra=None):
         secret = secret or (key.strip() if isinstance(key, str) and len(key.strip()) > 4 else FAKE_KEY)
         nonlocal fails
         with tempfile.TemporaryDirectory() as d:
@@ -128,7 +131,7 @@ def main() -> int:
                 (tmp / "scripts").mkdir()
                 script = tmp / "scripts" / SCRIPT.name
                 script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
-            r = run(tmp, api, *extra, key=key, script=script)
+            r = run(tmp, api, *extra, key=key, script=script, env_extra=env_extra)
             out = tmp / "out.md"
             got = out.read_text(encoding="utf-8") if out.exists() else None
             bad = []
@@ -279,6 +282,8 @@ def main() -> int:
     ok = r.returncode == 2 and "本机测试地址" in r.stderr
     print(f"{'PASS' if ok else 'FAIL'} --api 非本机拒绝 exit={r.returncode}")
     fails += not ok
+    case("PDRS_DEEPSEEK_CHANNEL 残留已废弃 official 值被 argparse 拒绝", (200, ok_body("x")), 2,
+         env_extra={"PDRS_DEEPSEEK_CHANNEL": "official"})
 
     # stdout 消费者提前关闭：已发布的结果仍以 0 退出
     with tempfile.TemporaryDirectory() as d:
