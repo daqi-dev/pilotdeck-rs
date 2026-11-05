@@ -748,6 +748,13 @@ def run():
          gw_inventory(GW_BOOTSTRAP
                       + "def _swap():\n    import sys as _s\n"
                         "    _s.modules['_guard'] = None\n_swap()\n" + _gw_tail) is None)
+    # 别名导入这条由 `_alias_roots` 兜住（`_s` 从 `sys` 换名而来）；换成
+    # `from sys import modules as _m` 时别名不重复种子名，只有 `_sys_roots`
+    # 全树扫才看得见函数体里的这次导入。
+    case("gateway 函数体内 from sys import modules as _m 后注入 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap():\n    from sys import modules as _m\n"
+                        "    _m['_guard'] = None\n_swap()\n" + _gw_tail) is None)
     case("gateway 块外 from sys import * 后按裸名注入 → 不可判定",
          gw_inventory(GW_BOOTSTRAP + "from sys import *\nmodules['_guard'] = None\n"
                       + _gw_tail) is None)
@@ -794,19 +801,94 @@ def run():
          gw_inventory(GW_BOOTSTRAP
                       + "factory()(common, 'A2_SCRIPTS', ('evil.py',))\n"
                       + _gw_tail) is None)
-    case("清单函数里嵌套 def 的模板不算清单成员（同一套作用域口径）",
+    case("清单函数里嵌套 def → 清单来源不可判定（作用域认不出就不猜）",
          gw_inventory(gw_source().replace(
              "    return {name: name for name in names}",
              "    def _helper():\n"
              "        extra = ('evil.md',)\n"
              "        return [f'scripts/a5-19/{name}' for name in extra]\n"
-             "    return {name: name for name in names}"))
-         == gw_inventory(gw_source()))
+             "    return {name: name for name in names}")) is None)
     case("同名 def 只在嵌套作用域里出现也算二次定义 → 不可判定",
          cfd._function_node(cfd._parse(
              "def required_files(root):\n    pass\n"
              "class _A:\n    def required_files(self):\n        pass\n"),
              'required_files') is None)
+
+    # ---------------------------------------------------------------- r23 负控
+    # 别名闭包要覆盖每一种把对象换个名字的绑定形态，并且走遍所有作用域：函数体
+    # 里的 `_c = common` 与模块级的那句等价；链式赋值、解包、`for` 目标、海象、
+    # 改名导入都是同一件事。另一端由「按形参位置判定」守住：把值交给不碰它的
+    # 那个形参不是写，`check_append_only(ROOT, base, notes)` 就是这种调用。
+    case("gateway 函数体内 _c = common 后写属性 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap():\n    _c = common\n"
+                        "    _c.A2_SCRIPTS = ('evil.py',)\n_swap()\n" + _gw_tail) is None)
+    case("gateway 块外链式赋值 _c = _d = common → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_c = _d = common\n_d.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 块外解包 _c, _x = (common, None) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_c, _x = (common, None)\n_c.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 for 目标取到 common → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "for _c in (common,):\n    _c.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 块外海象绑定 common → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "if (_c := common):\n    _c.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 from apparatus import common as _c → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "from apparatus import common as _c\n"
+                      "_c.A2_SCRIPTS = ()\n" + _gw_tail) is None)
+    case("gateway 块外 _p = sys.path；_p.insert(...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_p = sys.path\n_p.insert(0, '/tmp/x')\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 sys.meta_path.append(...) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "sys.meta_path.append(None)\n" + _gw_tail) is None)
+    case("gateway 块外 from operator import setitem 后调用 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "from operator import setitem\n"
+                      "setitem(sys.modules, '_guard', None)\n" + _gw_tail) is None)
+    case("gateway 块外 from builtins import setattr as _f → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "from builtins import setattr as _f\n"
+                      "_f(common, 'A2_SCRIPTS', ())\n" + _gw_tail) is None)
+    case("gateway 块外 getattr(common, <变量名>) → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "_n = '__dict__'\ngetattr(common, _n)\n"
+                      + _gw_tail) is None)
+    case("形参就地改按位置判：改的是第二个形参 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(_keep, x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "_swap(None, common)\n" + _gw_tail) is None)
+    case("把 common 交给不碰它的那个形参 → 仍可判定（位置判定不放宽）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _keep(notes, folder):\n    notes.append(folder)\n"
+                        "_keep([], common)\n" + _gw_tail) is not None)
+    case("形参就地改的函数只用非块对象调用 → 仍可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "_swap(object())\n" + _gw_tail) is not None)
+    case("两跳传参：_a 把 common 交给就地改的形参 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "def _a(y):\n    _swap(y)\n_a(common)\n" + _gw_tail) is None)
+    case("两跳传参按关键字对形参：common 落在被改的形参 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(keep, x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "def _a(y):\n    _swap(x=y, keep=None)\n_a(common)\n"
+                      + _gw_tail) is None)
+    case("两跳传参按关键字对形参：改的形参没拿到 common → 仍可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(keep, x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "def _a(y):\n    _swap(keep=y, x=None)\n_a(common)\n"
+                      + _gw_tail) is not None)
+    case("两跳传参：common 落在不被改的那个形参 → 仍可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _keep(notes, folder):\n    notes.append(folder)\n"
+                        "def _a(y):\n    _keep([], y)\n_a(common)\n"
+                      + _gw_tail) is not None)
+    case("三跳传参（定义倒序）：链要跟到不动点才拦得住 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _a(y):\n    _b(y)\n"
+                        "def _b(z):\n    _swap(z)\n"
+                        "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "_a(common)\n" + _gw_tail) is None)
 
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
@@ -1543,6 +1625,31 @@ def run():
     case("ui 块外只读 REQUIRED（推导式里遍历）→ 仍可判定",
          ui_registrable(UI_APPARATUS, UI_FROZEN
                         + "\nNAMES = [name for name in REQUIRED]\n") is not None)
+
+    # ---------------------------------------------------------------- r23 ui 负控
+    # 与 gateway 侧同一批形态：sys 表先取别名再改、REQUIRED 的别名在函数体里就地
+    # 改（`difference_update` 是 update 的另一种拼写），以及三处清单读取器遇到
+    # 嵌套 def 时按「作用域认不出」阻塞。
+    case("ui 块外 _p = _boot_sys.path 后 append → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_p = _boot_sys.path\n_p.append('/tmp/x')\n") is None)
+    case("ui 块外 _m = _boot_sys.modules 后 update → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_m = _boot_sys.modules\n_m.update({'apparatus': None})\n") is None)
+    case("ui 函数体内 _s = REQUIRED 后 difference_update → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\ndef _r():\n    _s = REQUIRED\n"
+                          "    _s.difference_update({'evil.md'})\n_r()\n") is None)
+    case("ui 清单函数里嵌套 def → exp008 目录不可判定",
+         cfd._ui_exp008_dir(cfd._parse(UI_FROZEN.replace(
+             "    return ({folder / name for name in REQUIRED}",
+             "    def _extra():\n        return None\n"
+             "    return ({folder / name for name in REQUIRED}"))) is None)
+    case("ui 扫描函数里嵌套 def → 扫描目录不可判定",
+         cfd._ui_scan_dirs(cfd._parse(UI_FROZEN.replace(
+             "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}",
+             "    def _extra():\n        return None\n"
+             "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}"))) is None)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
