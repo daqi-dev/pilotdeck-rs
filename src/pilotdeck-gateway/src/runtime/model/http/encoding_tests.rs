@@ -1015,3 +1015,160 @@ async fn interrupted_compressed_wire_is_not_a_truncated_representation() {
             .expect("#867 interrupted server task");
     }
 }
+
+/// #1553: a codec's own rejection keeps the cause text Node v22.22.0 reports
+/// as the `error.cause` of `TypeError: terminated` (measured:
+/// `_tmp/20261105-issue-1553/zlib-cause-probe.log` and
+/// `node-brotli-probe.log`), while a wire failure stays the bare
+/// `Terminated` even when it surfaces through the decoder chain. flate2's
+/// single zlib/deflate message cannot reproduce Node's data-dependent text,
+/// so those keep no cause.
+#[tokio::test]
+async fn codec_rejections_keep_the_zlib_cause() {
+    // The corpus' complete gzip member of "first" (endings[0].prefix).
+    let member = unhex(&corpus()["endings"][0]["prefix"]);
+    let flip = |offset: usize| {
+        let mut wire = member.clone();
+        let index = wire.len() - offset;
+        wire[index] ^= 0xff;
+        wire
+    };
+    for (name, encoding, wire, expect_data, expected) in [
+        (
+            "gzip garbage",
+            "gzip",
+            b"invalid compressed body".to_vec(),
+            false,
+            BodyFailure::Decode("incorrect header check"),
+        ),
+        (
+            "gzip bad crc",
+            "gzip",
+            flip(8),
+            true,
+            BodyFailure::Decode("incorrect data check"),
+        ),
+        (
+            "gzip bad isize",
+            "gzip",
+            flip(1),
+            true,
+            BodyFailure::Decode("incorrect length check"),
+        ),
+        (
+            "brotli garbage",
+            "br",
+            b"not brotli".to_vec(),
+            false,
+            BodyFailure::Decode("Decompression failed"),
+        ),
+        (
+            "deflate garbage",
+            "deflate",
+            b"invalid compressed body".to_vec(),
+            false,
+            BodyFailure::Terminated,
+        ),
+    ] {
+        let case = json!({
+            "name": "codec-rejection",
+            "encoding": encoding,
+            "wire": hex(&wire),
+            "method": "GET",
+            "status": 200,
+            "result": {},
+        });
+        let peer = server(&case, false).await;
+        let mut body = response(&peer.url, "GET").await.into_body();
+        if expect_data {
+            let first = bounded(data_frame(&mut body))
+                .await
+                .unwrap_or_else(|| panic!("#1553-1 {name}: member decodes before the trailer"))
+                .unwrap_or_else(|error| panic!("#1553-1 {name}: member decodes: {error:?}"));
+            assert_eq!(
+                first.as_ref(),
+                b"first".as_ref(),
+                "#1553-2 {name}: decoded member bytes"
+            );
+        }
+        let failure = bounded(data_frame(&mut body))
+            .await
+            .unwrap_or_else(|| {
+                panic!("#1553-3 {name}: the rejection must surface as a frame error")
+            })
+            .expect_err("#1553-4 {name}: rejection is an error");
+        assert_eq!(
+            failure, expected,
+            "#1553-5 {name}: the codec cause text matches Node"
+        );
+        bounded(peer.task)
+            .await
+            .unwrap_or_else(|error| panic!("#1553-6 {name}: server task: {error:?}"));
+    }
+    // A wire failure through the decoder chain keeps the bare Terminated:
+    // the shared decoder passes the wire error along untouched, so it must
+    // not adopt the codec's cause text.
+    let case = json!({
+        "encoding": "gzip",
+        "prefix": hex(&member),
+        "tail": "",
+        "finish": "disconnect",
+        "status": 200,
+        "result": {},
+    });
+    let peer = server(&case, true).await;
+    let mut body = response(&peer.url, "GET").await.into_body();
+    let first = bounded(data_frame(&mut body))
+        .await
+        .expect("#1553-7 wire cell: member frame")
+        .expect("#1553-8 wire cell: member data");
+    assert_eq!(
+        first.as_ref(),
+        b"first".as_ref(),
+        "#1553-9 wire cell: decoded member bytes"
+    );
+    peer.release
+        .send(true)
+        .expect("#1553-10 wire cell: disconnect signal");
+    let failure = bounded(data_frame(&mut body))
+        .await
+        .expect("#1553-11 wire cell: disconnect error")
+        .expect_err("#1553-12 wire cell: disconnect is an error");
+    assert_eq!(
+        failure,
+        BodyFailure::Terminated,
+        "#1553-13 wire failure through the decoder stays Terminated"
+    );
+    bounded(peer.task)
+        .await
+        .expect("#1553-14 wire cell: server task");
+}
+
+/// #1553: `response.text()` on a corrupt gzip body keeps Node's bare
+/// `TypeError: terminated` — the codec cause lives on `error.cause`, which
+/// the corpus' message-only goldens do not record. This is the arm that
+/// keeps the #867 corrupt-gzip projections unchanged after `Decode` was
+/// introduced.
+#[tokio::test]
+async fn response_text_keeps_terminated_on_codec_rejection() {
+    let case = json!({
+        "name": "corrupt-gzip-body",
+        "encoding": "gzip",
+        "wire": hex(b"invalid compressed body"),
+        "method": "POST",
+        "status": 200,
+        "result": {},
+    });
+    let peer = server(&case, false).await;
+    let mut body = response(&peer.url, "POST").await.into_body();
+    let error = bounded(response_text(&mut body, &StreamOptions::default(), false))
+        .await
+        .err()
+        .unwrap_or_else(|| panic!("#1553-15 corrupt gzip must fail response.text()"));
+    assert!(
+        error.name().equals_str("TypeError") && error.message().equals_str("terminated"),
+        "#1553-16 response.text() keeps the bare terminated message: name={:?} message={:?}",
+        error.name().units(),
+        error.message().units()
+    );
+}

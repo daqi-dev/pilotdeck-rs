@@ -1133,13 +1133,15 @@ where
 }
 
 /// Reads an event stream to its end (or until the transport aborts).
-/// Returns `false` when it ended because of an abort or a read error.
+/// Returns `Ok(false)` when it ended because of an abort, the body idle
+/// timeout or an over-limit line, and the frame error when the body itself
+/// failed (`Some(Err(_))` used to be flattened into the same `false`).
 async fn read_events<B: hyper::body::Body<Data = Bytes>>(
     body: B,
     aborted: &ToolCancellation,
     mut continuation: bool,
     mut on_item: impl FnMut(SseItem),
-) -> bool {
+) -> Result<bool, B::Error> {
     let mut body = std::pin::pin!(body);
     let mut decoder = Utf8Stream::default();
     let mut parser = SseParser::default();
@@ -1153,21 +1155,21 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
         .await
         {
             Exchange::Response(frame, _) => frame,
-            Exchange::Aborted | Exchange::Timeout { .. } => return false,
+            Exchange::Aborted | Exchange::Timeout { .. } => return Ok(false),
         };
         match frame {
-            None => return true,
-            Some(Err(_)) => return false,
+            None => return Ok(true),
+            Some(Err(error)) => return Err(error),
             Some(Ok(frame)) => {
                 if let Ok(data) = frame.into_data() {
                     let mut items = Vec::new();
                     if !parser.feed_limited(&decoder.push(&data), &mut items, string_limit()) {
-                        return false;
+                        return Ok(false);
                     }
                     for item in items {
                         on_item(item);
                         if !continuation && aborted.is_cancelled() {
-                            return false;
+                            return Ok(false);
                         }
                     }
                 }
@@ -1593,7 +1595,7 @@ async fn handle_sse_stream(
     let mut last_event_id: Option<String> = None;
     let mut primed = false;
     let mut received_response = false;
-    read_events(body, &aborted, before_abort, |item| {
+    let _ = read_events(body, &aborted, before_abort, |item| {
         let Some(wire) = wire.upgrade() else {
             return;
         };
@@ -1773,17 +1775,21 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
 
 /// Handle one EventSource body. Endpoint errors close immediately, including
 /// after the initial endpoint has resolved start().
-async fn legacy_stream<B: hyper::body::Body<Data = Bytes>>(
+async fn legacy_stream<B>(
     wire: &Weak<Wire>,
     body: B,
     aborted: &ToolCancellation,
     base: &Url,
     ready: &mut Option<oneshot::Sender<Result<(), McpClientError>>>,
     before_abort: bool,
-) -> Option<f64> {
+) -> Option<f64>
+where
+    B: hyper::body::Body<Data = Bytes>,
+    B::Error: Into<BodyFailure>,
+{
     let mut retry = None;
     let mut endpoint_failure = None;
-    read_events(body, aborted, before_abort, |item| {
+    let outcome = read_events(body, aborted, before_abort, |item| {
         let Some(wire) = wire.upgrade() else {
             return;
         };
@@ -1836,6 +1842,27 @@ async fn legacy_stream<B: hyper::body::Body<Data = Bytes>>(
         if let Some(wire) = wire.upgrade() {
             wire.close().await;
         }
+    }
+    // A body read failure before the first endpoint settles start() with the
+    // rejection TS's EventSource reports — flattenError prints
+    // `TypeError: terminated` plus the codec cause when one is known
+    // (#1553 matrix-probe). The EventSource itself keeps reconnecting, so
+    // only the pending start is settled here; the caller's reconnect wait
+    // still runs below.
+    if let Err(error) = outcome
+        && ready.is_some()
+    {
+        let cause = match error.into() {
+            BodyFailure::Decode(cause) => format!(": {cause}"),
+            _ => String::new(),
+        };
+        settle(
+            ready,
+            Err(McpClientError::plain(
+                "Error",
+                format!("SSE error: TypeError: terminated{cause}"),
+            )),
+        );
     }
     retry
 }
@@ -2138,6 +2165,7 @@ mod tests {
                 |_| panic!("no event")
             )
             .await
+            .unwrap()
         );
         assert!(
             !read_events(
@@ -2147,6 +2175,7 @@ mod tests {
                 |_| panic!("no event")
             )
             .await
+            .unwrap()
         );
         // Each frame is below the bound, but data accumulates across frames.
         // Seven emoji plus two inserted newlines are exactly 16 UTF-16 units.
@@ -2164,7 +2193,8 @@ mod tests {
             assert_eq!(
                 read_events(EventBody(receiver), &signal, false, |item| events
                     .push(item))
-                .await,
+                .await
+                .unwrap(),
                 !overflow
             );
             if overflow {
@@ -2348,7 +2378,7 @@ mod tests {
         tokio::time::advance(Duration::from_millis(599_999)).await;
         poll_pending(pending.as_mut()).await;
         tokio::time::advance(Duration::from_millis(1)).await;
-        assert!(!poll_ready(pending.as_mut()).await);
+        assert!(!poll_ready(pending.as_mut()).await.unwrap());
     }
 
     #[tokio::test(start_paused = true)]
@@ -2359,7 +2389,7 @@ mod tests {
         }));
         poll_pending(pending.as_mut()).await;
         signal.cancel_synchronously();
-        assert!(!poll_ready(pending.as_mut()).await);
+        assert!(!poll_ready(pending.as_mut()).await.unwrap());
         let mut parser = SseParser::default();
         let mut out = Vec::new();
         assert!(parser.feed_limited("1234", &mut out, 4));
@@ -2426,7 +2456,7 @@ mod tests {
         tokio::time::advance(Duration::from_millis(599_999)).await;
         poll_pending(pending.as_mut()).await;
         tokio::time::advance(Duration::from_millis(1)).await;
-        assert!(!poll_ready(pending.as_mut()).await);
+        assert!(!poll_ready(pending.as_mut()).await.unwrap());
     }
 
     fn retry_outcome(status_retry: bool) -> Result<hyper::Response<()>, McpClientError> {
@@ -2869,7 +2899,7 @@ mod tests {
                 let task = tokio::spawn(async move {
                     legacy_stream(
                         &weak,
-                        EventBody(body),
+                        EventBody(body).map_err(|never| -> BodyFailure { match never {} }),
                         &aborted,
                         &url,
                         &mut Some(ready),

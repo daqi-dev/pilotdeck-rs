@@ -58,7 +58,7 @@ CASES = [
     ('gzip-members', source, 'decoder.multiple_members(true);', 'decoder.multiple_members(false);', 'decoded_wire_matches_node'),
     ('truncated-tail', source, 'error.kind() == io::ErrorKind::UnexpectedEof', 'false && error.kind() == io::ErrorKind::UnexpectedEof', 'decoded_wire_matches_node'),
     ('empty-body', source, 'return Poll::Ready(Ok(()));\n            };\n            let input', 'return Poll::Ready(Err(io::Error::other("#867 mutant empty")));\n            };\n            let input', 'decoded_wire_matches_node'),
-    ('swallow-decode-error', source, 'Poll::Ready(Some(Err(BodyFailure::Terminated)))', 'Poll::Ready(None)', 'decoded_wire_matches_node'),
+    ('swallow-decode-error', source, 'Poll::Ready(Some(Err(decode_failure(error))))', 'Poll::Ready(None)', 'decoded_wire_matches_node'),
     ('header-utf8', http, 'hyper::header::HeaderValue::from_bytes(bytes).map_err(|_| failed())?', 'hyper::header::HeaderValue::from_bytes(bytes.iter().map(|b| char::from(*b)).collect::<String>().as_bytes()).map_err(|_| failed())?', 'header_byte_string_matches_node'),
     ('header-wide', http, 'u8::try_from(unit).map_err', 'u8::try_from(unit.min(255)).map_err', 'header_byte_string_matches_node'),
     ('header-surrogate-loss', http, 'header_byte_string(&units)?', 'header_byte_string(&String::from_utf16_lossy(&units).encode_utf16().collect::<Vec<_>>())?', 'header_byte_string_matches_node'),

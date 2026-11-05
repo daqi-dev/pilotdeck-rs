@@ -202,11 +202,6 @@ async fn replay(mode: &str, tag: &'static str, layers_only: bool) {
         if layers_only && !matches!(name, "five" | "six" | "unknown-six") {
             continue;
         }
-        // The one supplemental legacy corruption gap is replayed and
-        // reported by mcp_legacy_corrupt_gap_is_observed below, not accepted.
-        if name == "corrupt" && mode == "legacy-start" {
-            continue;
-        }
         let mut server = server(case, tag).await;
         let kind = if mode.starts_with("legacy") {
             HttpKind::LegacySse
@@ -307,7 +302,7 @@ async fn replay(mode: &str, tag: &'static str, layers_only: bool) {
     let expected = if layers_only {
         3
     } else if mode == "legacy-start" {
-        10
+        11
     } else {
         11
     };
@@ -359,76 +354,268 @@ async fn mcp_get_sse_decodes() {
     replay("get-sse", "#886 GET SSE decoding", false).await;
 }
 
-/// Supplemental evidence, explicitly NOT an accepted TS parity result.
-/// Changing shared decoder error detail or legacy reconnect lifetime is
-/// outside the visibility-only #867 reuse authorized for this change.
+/// #1553 legacy start determinism matrix, against the real socket path.
+/// The TS rows were measured with `tests/fixtures/mcp-http-corrupt-body/process.mts`
+/// (Node v22.22.0, the baseline SDK): a corrupt gzip member rejects start
+/// immediately with the codec cause (the replayed corpus golden); a clean EOF
+/// before the endpoint reconnects without settling (TS rejects with
+/// `SSE error: undefined` — registered divergence); abort leaves start pending
+/// while the body stalls (TS keeps it pending even after close() — registered);
+/// a wire failure after the endpoint keeps start resolved and reconnects
+/// (TS: start ok and 2 connections — aligned on both observables; the TS
+/// onerror cause text is the registered wire-cause divergence).
 #[tokio::test]
-async fn mcp_legacy_corrupt_gap_is_observed() {
-    let tag = "#886 legacy corrupt diagnostic";
-    let corpus: Value =
-        serde_json::from_str(ORACLE).expect("#886 legacy corrupt diagnostic: corpus");
-    let case = corpus["cases"]
-        .as_array()
-        .expect("#886 legacy corrupt diagnostic: cases")
-        .iter()
-        .find(|case| case["mode"] == "legacy-start" && case["name"] == "corrupt")
-        .expect("#886 legacy corrupt diagnostic: retained TS case");
-    let server = server(case, tag).await;
-    let wire = Wire::http(HttpLink::new(
-        HttpKind::LegacySse,
-        server.url.clone(),
-        vec![],
-        2000.0,
-        2000.0,
-    ));
-    let link = wire
-        .http_link()
-        .expect("#886 legacy corrupt diagnostic: HTTP link");
-    let response = bounded(
-        network_fetch(
-            &link.client,
-            None,
-            Method::GET,
-            &server.url,
-            &HeaderList::default(),
-            None,
-            Fetch::Plain,
-            &link.aborted,
-            false,
-        ),
-        tag,
+async fn mcp_legacy_start_failure_matrix() {
+    let tag = "#1553 legacy start failure matrix";
+    let corrupt = concat!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n",
+        "Content-Encoding: gzip\r\nContent-Length: 21\r\nConnection: close\r\n\r\n"
     )
-    .await
-    .expect("#886 legacy corrupt diagnostic: headers accepted");
-    let (body, continuation) = response.into_body();
-    let (ready, mut outcome) = oneshot::channel();
-    let mut ready = Some(ready);
-    bounded(
-        legacy_stream(
-            &Arc::downgrade(&wire),
-            body,
-            &link.aborted,
-            &server.url,
-            &mut ready,
-            continuation,
-        ),
-        tag,
+    .as_bytes()
+    .to_vec();
+    let corrupt = [corrupt, b"invalid compressed body".to_vec()].concat();
+    let stalled = concat!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n",
+        "Content-Length: 10\r\nConnection: close\r\n\r\n"
     )
-    .await;
-    assert!(
-        matches!(outcome.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
-        "#886 legacy corrupt diagnostic: existing legacy body failure leaves start unsettled"
-    );
-    assert_eq!(
-        case["result"]["error"]["message"],
-        "SSE error: TypeError: terminated: incorrect header check",
-        "#886 legacy corrupt diagnostic: TS rejects immediately"
-    );
-    println!(
-        "#886 SUPPLEMENTAL GAP legacy-start/corrupt: TS={} Rust=start remains unsettled after body read failure (existing reconnect loop)",
-        case["result"]
-    );
-    wire.close().await;
+    .as_bytes()
+    .to_vec();
+    let clean_eof = concat!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n",
+        "Content-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec();
+    // The endpoint event with a Content-Length longer than what is sent: the
+    // endpoint settles start, then the wire itself fails.
+    let endpoint_cut = concat!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n",
+        "Content-Length: 50\r\nConnection: close\r\n\r\n",
+        "event: endpoint\ndata: /post\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+
+    // Corrupt gzip before the endpoint rejects start with the exact TS
+    // golden (mcp-http-encoding oracle, legacy-start/corrupt).
+    {
+        let server = scripted_server(vec![(corrupt.clone(), false)], tag).await;
+        let wire = Wire::http(HttpLink::new(
+            HttpKind::LegacySse,
+            server.url.clone(),
+            vec![],
+            2000.0,
+            2000.0,
+        ));
+        let link = wire
+            .http_link()
+            .unwrap_or_else(|| panic!("{tag}: HTTP link"));
+        let error = bounded(link.start(&wire), tag)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{tag}: corrupt gzip must reject start"));
+        assert_eq!(
+            error_shape(error),
+            json!({"error": {"name": "Error", "code": null,
+                   "message": "SSE error: TypeError: terminated: incorrect header check"}}),
+            "{tag}: corrupt gzip rejection shape"
+        );
+        wire.close().await;
+    }
+
+    // Abort: start stays pending while the SSE body stalls; close() settles
+    // it with Connection closed (TS keeps start pending forever — registered).
+    {
+        let server = scripted_server(vec![(stalled, true)], tag).await;
+        let wire = Wire::http(HttpLink::new(
+            HttpKind::LegacySse,
+            server.url.clone(),
+            vec![],
+            2000.0,
+            2000.0,
+        ));
+        let link = wire
+            .http_link()
+            .unwrap_or_else(|| panic!("{tag}: HTTP link"));
+        let mut pending = Box::pin(link.start(&wire));
+        std::future::poll_fn(|cx| {
+            assert!(
+                pending.as_mut().poll(cx).is_pending(),
+                "{tag}: start stays pending while the body stalls"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
+        wire.close().await;
+        let error = bounded(pending, tag)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{tag}: close settles the stalled start"));
+        assert_eq!(
+            error_shape(error),
+            json!({"error": {"name": "McpError", "code": -32000,
+                   "message": "MCP error -32000: Connection closed"}}),
+            "{tag}: close settles the stalled start with Connection closed"
+        );
+    }
+
+    // Clean EOF before the endpoint: no settle, the EventSource reconnects
+    // (TS rejects start with `SSE error: undefined` — registered divergence).
+    {
+        let mut server = scripted_server(vec![(clean_eof.clone(), false)], tag).await;
+        let wire = Wire::http(HttpLink::new(
+            HttpKind::LegacySse,
+            server.url.clone(),
+            vec![],
+            2000.0,
+            2000.0,
+        ));
+        let link = wire
+            .http_link()
+            .unwrap_or_else(|| panic!("{tag}: HTTP link"));
+        let mut pending = Box::pin(link.start(&wire));
+        std::future::poll_fn(|cx| {
+            assert!(
+                pending.as_mut().poll(cx).is_pending(),
+                "{tag}: start stays pending before the endpoint"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let mut connections = server
+            .connections
+            .take()
+            .unwrap_or_else(|| panic!("{tag}: connection counter"));
+        let first = bounded(connections.recv(), tag)
+            .await
+            .unwrap_or_else(|| panic!("{tag}: first SSE connection"));
+        let reconnect = bounded(connections.recv(), tag)
+            .await
+            .unwrap_or_else(|| panic!("{tag}: clean EOF reconnects the EventSource"));
+        assert_eq!((first, reconnect), (1, 2), "{tag}: reconnect count");
+        std::future::poll_fn(|cx| {
+            assert!(
+                pending.as_mut().poll(cx).is_pending(),
+                "{tag}: clean EOF leaves start pending across the reconnect"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
+        wire.close().await;
+        let _ = bounded(pending, tag).await;
+    }
+
+    // A wire failure after the endpoint: start stays resolved and the
+    // EventSource reconnects (TS: start ok and 2 connections in a 4s window —
+    // aligned; the TS onerror cause text is the registered wire-cause
+    // divergence).
+    {
+        let mut server = scripted_server(vec![(endpoint_cut.clone(), false)], tag).await;
+        let wire = Wire::http(HttpLink::new(
+            HttpKind::LegacySse,
+            server.url.clone(),
+            vec![],
+            2000.0,
+            2000.0,
+        ));
+        let link = wire
+            .http_link()
+            .unwrap_or_else(|| panic!("{tag}: HTTP link"));
+        bounded(link.start(&wire), tag)
+            .await
+            .unwrap_or_else(|_| panic!("{tag}: endpoint resolves start before the cut"));
+        let mut connections = server
+            .connections
+            .take()
+            .unwrap_or_else(|| panic!("{tag}: connection counter"));
+        let first = bounded(connections.recv(), tag)
+            .await
+            .unwrap_or_else(|| panic!("{tag}: first SSE connection"));
+        let reconnect = bounded(connections.recv(), tag)
+            .await
+            .unwrap_or_else(|| panic!("{tag}: post-endpoint failure reconnects the EventSource"));
+        assert_eq!(
+            (first, reconnect),
+            (1, 2),
+            "{tag}: post-endpoint failure reconnect count"
+        );
+        wire.close().await;
+    }
+}
+
+/// A loopback server with one scripted response per connection; the last
+/// script repeats for reconnects. `stall` keeps a connection open without
+/// sending its body, so the client's read blocks until the task aborts.
+async fn scripted_server(responses: Vec<(Vec<u8>, bool)>, tag: &'static str) -> ScriptedServer {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
+    let address = listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("{tag}: address: {error}"));
+    let url = Url::parse(&format!("http://{address}/mcp"))
+        .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
+    let (connections, reported) = mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        let mut sockets = JoinSet::new();
+        let mut index = 0usize;
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (socket, _) = accepted
+                        .unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
+                    let (bytes, stall) = responses[index.min(responses.len() - 1)].clone();
+                    sockets.spawn(async move {
+                        let mut socket = socket;
+                        let mut request = Vec::new();
+                        loop {
+                            let mut buf = [0; 1024];
+                            let n = match bounded(socket.read(&mut buf), tag).await {
+                                Ok(n) => n,
+                                Err(_) => return,
+                            };
+                            if n == 0 {
+                                return;
+                            }
+                            request.extend_from_slice(&buf[..n]);
+                            if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        if socket.write_all(&bytes).await.is_err() {
+                            return;
+                        }
+                        if stall {
+                            let mut buf = [0; 1024];
+                            let _ = bounded(socket.read(&mut buf), tag).await;
+                        }
+                    });
+                    index += 1;
+                    let _ = connections.send(index);
+                }
+                result = sockets.join_next(), if !sockets.is_empty() => {
+                    result
+                        .unwrap_or_else(|| panic!("{tag}: connection task"))
+                        .unwrap_or_else(|error| panic!("{tag}: connection panic: {error}"));
+                }
+            }
+        }
+    });
+    ScriptedServer {
+        url,
+        connections: Some(reported),
+        task,
+    }
+}
+struct ScriptedServer {
+    url: Url,
+    connections: Option<mpsc::UnboundedReceiver<usize>>,
+    task: JoinHandle<()>,
+}
+impl Drop for ScriptedServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 // #1114: the detached-continuation dispatch-order contract. The baseline

@@ -26,14 +26,17 @@ McpClient.buildTransport 同形（测试缩短 timeout）。legacy 使用 Node �
 redirect 的中间响应始终带六层 Content-Encoding，必须跳过；终点仍执行自己的解码/上限。
 Rust 直接跑 HttpLink/Wire 与真实 TCP socket，无注入替代解码器。
 
-**70 个核心编码格 + 6 个附加载荷损坏格对齐，共 76 格。** 第 77 格 legacy-start/corrupt
-保留原始 TS 金样并由 `mcp_legacy_corrupt_gap_is_observed` 单独重放，不计对齐：
-TS 立即拒绝 `SSE error: TypeError: terminated: incorrect header check`；Rust 既有
-legacy_stream 在读体失败后留下未 settle 的 start，进入既有重连循环。
-共享 #867 decoder 只暴露 BodyFailure::Terminated，未保留具体 codec cause。
-本单不修改 decoder 语义和 legacy 重连生命周期；此差异**未获接受、待协调者跟进**，
-不能据此声称整个损坏压缩体范围已完成。测试用真实失败 body 返回作为确定性观测点，
-不靠固定睡眠猜测 pending；外层 10 s watchdog 保证测试终止。
+**70 个核心编码格 + 6 个附加载荷损坏格对齐，共 76 格；#1553 后 77 格全对齐。**
+第 77 格 legacy-start/corrupt 曾不计对齐（#886 时 TS 立即拒绝
+`SSE error: TypeError: terminated: incorrect header check`，Rust 的 start 永不 settle）。
+#1553 修复后该格进入 `mcp_legacy_sse_decodes` 的 11 格 legacy-start 重放并逐字对齐：
+BodyFailure 新增 `Decode(&'static str)` cause 载体（append-only），共享 #867 decoder
+把 codec 拒绝的 zlib/brotli 文案传到 legacy_stream，首个 endpoint 之前读体失败即以
+`SSE error: TypeError: terminated: <cause>` settle start。其余失败时序（abort / 干净
+EOF / endpoint 后出错 / staged 损坏）的 TS 实测矩阵与登记差异见
+`tests/fixtures/mcp-http-corrupt-body/`（process.mts 探针 + README）。
+测试用真实失败 body 返回作为确定性观测点，不靠固定睡眠猜测 pending；外层 10 s
+watchdog 保证测试终止。
 
 GET SSE 测试先注册请求，收到 server POST 屏障后发送 initialized，再自动 GET，
 避免响应早于 pending 注册；每条请求 500 ms，其他测试 I/O 有 10 s watchdog。
