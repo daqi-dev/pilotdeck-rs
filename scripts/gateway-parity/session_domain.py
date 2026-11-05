@@ -1837,7 +1837,7 @@ def _retirement_channel_listeners(baseline):
     channel_dir = baseline / 'src/adapters/channel'
     require(channel_dir.is_dir(), 'ENTRY_SOURCE', f'baseline channel dir missing: {channel_dir}')
     entries = []
-    for path in sorted(channel_dir.glob('*.ts')):
+    for path in sorted(channel_dir.rglob('*.ts')):
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
             if 'createServer(' in line:
                 entries.append({'file': f'src/adapters/channel/{path.name}:{lineno}', 'line': line.strip()[:200]})
