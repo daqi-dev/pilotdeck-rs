@@ -908,6 +908,7 @@ async fn requests_registry_switch_gates_run_reads() {
                 ),
             )),
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
+            prepare_weixin_login: None,
         };
         let described = requests
             .describe_server()
