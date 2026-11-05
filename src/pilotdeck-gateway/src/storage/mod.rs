@@ -65,8 +65,9 @@ impl fmt::Display for LedgerError {
             // Node's `code: description, syscall 'path'` shape from the measured
             // libuv table. An error nobody labelled keeps Rust's own text: the
             // syscall cannot be recovered from a bare `io::Error`, and Display
-            // must not guess one. `errno` is the negative OS errno Node reports
-            // (`EEXIST` is -17), which `node_io::os_errno` exposes.
+            // must not guess one. The OS errno behind it is positive here;
+            // Node reports the same number negated (`EEXIST` is -17), so
+            // `node_io::os_errno` hands back the positive form.
             Self::Io(e) => match crate::node_io::staged_diagnostic(e) {
                 Some((_, message)) => f.write_str(&message),
                 None => e.fmt(f),

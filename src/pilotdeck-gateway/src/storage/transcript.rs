@@ -104,7 +104,9 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(missing_transcript(diagnostic_path));
         }
-        Err(error) => return Err(path_error(error, "stat", path).into()),
+        // Leave this unlabelled: Node's readFile has no stat boundary, and the
+        // reader's `node_io::read_file` maps the raw errno to the same text.
+        Err(error) => return Err(error.into()),
     };
     if metadata.len() > max_bytes {
         return Ok((
@@ -128,7 +130,10 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(missing_transcript(diagnostic_path));
         }
-        Err(error) => return Err(path_error(error, "open", path).into()),
+        // Unlabelled on purpose: POSIX opens a directory fine and fails in
+        // read(2), so the failure belongs to `read_file`'s EISDIR special case
+        // ("... , read", no path). Labelling it "open" here would pre-empt it.
+        Err(error) => return Err(error.into()),
     };
     let mut read = TranscriptRead {
         entries: vec![],
@@ -296,7 +301,9 @@ impl JsonlLedgerStore {
         let current = match fs::read(&self.path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
-            Err(e) => return Err(path_error(e, "open", &self.path).into()),
+            // Unlabelled: this re-read is the Rust-side "did anyone else
+            // touch it" check before our own replace, with no Node counterpart.
+            Err(e) => return Err(e.into()),
         };
         if current != self.bytes {
             return Err(invalid(
@@ -406,7 +413,9 @@ pub(super) fn create_temporary(path: &Path) -> Result<(File, Temporary)> {
         .write(true)
         .create_new(true)
         .open(&temporary)
-        .map_err(|e| path_error(e, "open", &temporary))?;
+        // Report the transcript the caller asked to replace, not our private
+        // sibling name: Node's writeFile never surfaces a staging file.
+        .map_err(|e| path_error(e, "open", path))?;
     Ok((file, Temporary(temporary)))
 }
 pub(super) fn private_open() -> OpenOptions {
@@ -471,8 +480,9 @@ impl LedgerLock {
             .read(true)
             .write(true)
             .create(true)
-            .open(&lock_path)
-            .map_err(|e| path_error(e, "open", &lock_path))?;
+            // Unlabelled on purpose: this is the Rust-only fence inode; TS has
+            // no lock syscall, so there is no Node shape to imitate.
+            .open(&lock_path)?;
         // Rust-only single-writer fence: TS has no lock syscall, and the
         // WouldBlock rejection is synthetic, so neither is rendered as a
         // Node fs error.
