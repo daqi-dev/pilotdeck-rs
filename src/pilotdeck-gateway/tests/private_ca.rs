@@ -26,6 +26,7 @@ use std::{path::Path, process::Stdio, time::Duration};
 use tokio::io::AsyncBufReadExt;
 
 const ORACLE: &str = include_str!("fixtures/private-ca/oracle.json");
+const OPENSSL_CASES: &str = include_str!("fixtures/private-ca/openssl-cases.json");
 
 async fn hook(url: &str) -> bool {
     HttpHookExecutor::new()
@@ -147,9 +148,10 @@ async fn private_ca_matrix() {
     // baseline (cc7c4e65 / Node v22.22.0 / linux) by `generate.mts` with
     // `PDRS_MODES=openssl-dir,openssl-file,openssl-plain`. The cells and their
     // provenance live in `fixtures/private-ca/openssl-cases.json`.
-    let openssl: Value =
-        serde_json::from_str(include_str!("fixtures/private-ca/openssl-cases.json"))
-            .expect("#1552 openssl cases JSON");
+    // Same provenance guard as the frozen oracle: a wrong commit or an empty
+    // hash table must fail here, not silently trust stale expectations.
+    baseline::oracle(OPENSSL_CASES);
+    let openssl: Value = serde_json::from_str(OPENSSL_CASES).expect("#1552 openssl cases JSON");
     let openssl_cases = openssl["cases"]
         .as_array()
         .expect("#1552 openssl cases array");
@@ -347,10 +349,11 @@ async fn private_ca_matrix() {
         // A6.4-TLS-CA-SOURCES-001-R1 / issue #1640: the frozen Homebrew oracle
         // and the project baseline (Node v22.22.0 source build, cc7c4e65)
         // disagree on these cells and the口径 is not decided yet. Rust follows
-        // the frozen oracle for `dir-unflagged` / `system-dir` and the source
-        // build for `early-file`; none of them is counted as parity.
-        // `forced-bundled` / `bundled-system` do match both readings.
-        let difference = ["dir-unflagged", "system-dir", "early-file"].contains(&mode.as_str());
+        // the frozen oracle for `dir-unflagged` and the source build for
+        // `early-file`; neither is counted as parity. `system-dir` is not here:
+        // the source build measured all-true on cb8 (logs/gen-modes-cb8.log),
+        // the same as the frozen oracle and as Rust.
+        let difference = ["dir-unflagged", "early-file"].contains(&mode.as_str());
         let ts_oracle = expected.clone();
         if difference && !mismatch {
             for value in expected
@@ -385,12 +388,12 @@ async fn private_ca_matrix() {
     // `cases` array must not pass silently.
     assert_eq!(skipped, 2, "#1552 only the two late-env cells are skipped");
     assert_eq!(
-        diverged, 6,
-        "#1552 registered differences are three modes x two hostnames"
+        diverged, 4,
+        "#1552 registered differences are two modes x two hostnames"
     );
     assert_eq!(
-        aligned, 54,
-        "#1552 aligned cells: 56 frozen - 2 late-env - 6 registered differences + 6 openssl"
+        aligned, 56,
+        "#1552 aligned cells: 56 frozen - 2 late-env - 4 registered differences + 6 openssl"
     );
     assert!(
         failures.is_empty(),
