@@ -702,10 +702,10 @@ class R11Tests(unittest.TestCase):
                 result = self.wait(deadline=1.0)
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
-        # One iteration performs one stat-bracketed read (two read_observation
-        # calls); the invariant under test is "no iteration skipped, no retry
-        # loop", so assert a read happened and no sleep was attempted.
-        self.assertTrue(calls and self.sleeps == [] and result[0] is None, marker)
+        # One iteration performs one stat-bracketed read: the stat bracket plus
+        # the read itself, i.e. exactly two read_observation calls.  The
+        # invariant under test is "no iteration skipped, no retry loop".
+        self.assertTrue(len(calls) == 2 and self.sleeps == [] and result[0] is None, marker)
 
     def test_settle_keeps_last_error(self):
         marker = '#1363 a swallowed structural Incomplete keeps its last cause'
@@ -737,21 +737,26 @@ class R11Tests(unittest.TestCase):
                   for event in row[side]['durableStatus']}
         self.assertEqual(labels, set(c.SESSION_TERMINAL_DURABLE_EVENTS), marker)
 
+    def bad_expectation_root(self, name):
+        """Materialise a mutated copy of the frozen fixture and return its root."""
+        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json').read_text())
+        body = json.loads(json.dumps(document))
+        if name == 'empty':
+            body['cases'] = []
+        elif name == 'duplicate':
+            body['cases'] = body['cases'] + [body['cases'][0]]
+        else:
+            body['cases'][0]['rust']['durableStatus'] = ['turn_cancelled']
+        fixture = Path(self.temp.name) / ('exp-' + name) / 'scripts/gateway-parity/fixtures'
+        fixture.mkdir(parents=True, exist_ok=True)
+        (fixture / 'session-expectations.json').write_text(json.dumps(body))
+        return fixture.parent.parent.parent
+
     def test_expectations_reject_bad_fixtures(self):
         marker = '#1363 expectations fixture must be non-empty, unique and label-stable'
-        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json').read_text())
         for name in ('empty', 'duplicate', 'drift'):
-            fixture = Path(self.temp.name) / ('exp-' + name) / 'scripts/gateway-parity/fixtures'
-            fixture.mkdir(parents=True)
-            body = json.loads(json.dumps(document))
-            if name == 'empty':
-                body['cases'] = []
-            elif name == 'duplicate':
-                body['cases'] = body['cases'] + [body['cases'][0]]
-            else:
-                body['cases'][0]['rust']['durableStatus'] = ['turn_cancelled']
-            (fixture / 'session-expectations.json').write_text(json.dumps(body))
-            module_file = fixture.parent.parent / 'native-witness' / 'collect.py'
+            root = self.bad_expectation_root(name)
+            module_file = root / 'scripts' / 'native-witness' / 'collect.py'
             caught = None
             try:
                 with patch.object(c, '__file__', str(module_file)):
@@ -763,6 +768,15 @@ class R11Tests(unittest.TestCase):
     def test_expectations_mirror_mock_gateway(self):
         marker = '#1363 collector and mock gateway read the same expectations'
         self.assertEqual(c.session_expectations(), mock_gateway.load_expectations(ROOT), marker)
+        # The mock replay is driven on its own by the e2e suite, so it must not
+        # silently collapse the two malformed shapes that change the mapping.
+        for name in ('empty', 'duplicate'):
+            caught = None
+            try:
+                mock_gateway.load_expectations(self.bad_expectation_root(name))
+            except BaseException as error:
+                caught = error
+            self.assertTrue(isinstance(caught, ValueError), marker + ': mock ' + name)
 
 
 if __name__ == '__main__':
