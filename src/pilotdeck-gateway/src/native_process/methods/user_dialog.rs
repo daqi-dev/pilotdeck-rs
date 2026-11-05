@@ -298,13 +298,6 @@ impl Requests {
                             "sessionKey and requestId are required.",
                         )
                     })?;
-                    let lease_id = optional_nonempty_string(&params, "leaseId").map_err(|_| {
-                        domain_error(
-                            "INVALID_USER_DIALOG_RESPONSE",
-                            "leaseId must be a non-empty string when provided.",
-                        )
-                    })?;
-
                     let result_val = params.get("result").ok_or_else(|| {
                         domain_error(
                             "INVALID_USER_DIALOG_RESPONSE",
@@ -365,6 +358,15 @@ impl Requests {
                             "result.behavior must be answered or cancelled.",
                         ));
                     };
+
+                    // TS validates result/behavior/value/reason before leaseId
+                    // (InProcessGateway.ts:2646-2655), including when both are invalid.
+                    let lease_id = optional_nonempty_string(&params, "leaseId").map_err(|_| {
+                        domain_error(
+                            "INVALID_USER_DIALOG_RESPONSE",
+                            "leaseId must be a non-empty string when provided.",
+                        )
+                    })?;
 
                     let mut bus = self
                         .user_dialog_bus
