@@ -18,16 +18,26 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # ok ≤160 GiB · warn (160,180] · hard >180 GiB。本循环在 WARN 线就停派新活，比开树硬闸保守一档。
 # shellcheck source=lib/disk-budget.sh
 . "$ROOT/scripts/lib/disk-budget.sh" || { echo "pdrs-loop: 缺 or 无法读 scripts/lib/disk-budget.sh" >&2; exit 1; }
-# 磁盘闸量的是**主仓**：从 worktree 里跑循环时本树没有 _build/_tmp，量自己会恒判 ok（闸门静默失效）
-DISK_ROOT="$ROOT"
-_main_root="$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)" || _main_root=""
-[ -n "$_main_root" ] && DISK_ROOT="$_main_root"
 LOCK_DIR=/tmp/pdrs-loop.lock
 STOP_FILE=/tmp/pdrs-loop.stop
 # 测试注入：只在没有 .git 的隔离 fixture 根里允许改锁/stop 路径；真实仓库与 worktree 一律拒绝（防误删、防绕开单实例锁）
 if [ -n "${PDRS_LOOP_LOCK:-}${PDRS_LOOP_STOP:-}" ]; then
   if [ -e "$ROOT/.git" ]; then echo "pdrs-loop: PDRS_LOOP_LOCK/STOP 只许测试 fixture 使用，真实仓库拒绝" >&2; exit 1; fi
   LOCK_DIR="${PDRS_LOOP_LOCK:-$LOCK_DIR}"; STOP_FILE="${PDRS_LOOP_STOP:-$STOP_FILE}"
+fi
+# 磁盘闸量的是**主仓**：从 worktree 里跑循环时本树没有 _build/_tmp，量自己会恒判 ok（闸门静默失效）。
+# 解析失败一律 fail-closed：绝不回落到 worktree 根把闸门关掉（两家评审 r5 的 P1）。
+# 管道写法照 scripts/lib/worktree-count.sh：先收全量输出再判 rc，别让 `head` 吞掉 git 的退出码。
+DISK_ROOT="$ROOT"
+if [ -e "$ROOT/.git" ]; then   # 没有 .git 的是隔离测试 fixture，量它自己（用例里 du 桩按 root 返回）
+  if ! _wt_out="$(git -C "$ROOT" worktree list --porcelain)"; then
+    echo "pdrs-loop: git worktree list 失败，无法确定主仓根（磁盘闸 fail-closed）" >&2; exit 1
+  fi
+  _main_root="$(printf '%s\n' "$_wt_out" | sed -n 's/^worktree //p' | head -n 1)" || _main_root=""
+  if [ -z "$_main_root" ]; then
+    echo "pdrs-loop: 主仓根解析为空（磁盘闸 fail-closed）" >&2; exit 1
+  fi
+  DISK_ROOT="$_main_root"
 fi
 RUNNER=opencode
 MAX_ITER=50
