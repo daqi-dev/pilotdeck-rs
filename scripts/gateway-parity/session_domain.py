@@ -2045,10 +2045,12 @@ webui:
         with deferred_signals():
             row['audit'] = run_round_module.cleanup_owned(processes)
             row['elapsedSeconds'] = time.monotonic() - start_time
+            row['processes'] = [item[2] for item in processes]
             save(folder / 'processes.json', [item[2] for item in processes])
             save(folder / 'round.json', {key: row[key] for key in
                                          ('label', 'status', 'ports', 'runtime', 'driverExitCode',
-                                          'listeners', 'census', 'connections', 'audit', 'elapsedSeconds')
+                                          'listeners', 'census', 'connections', 'processes',
+                                          'audit', 'elapsedSeconds')
                                          if key in row})
     require(row['audit']['allStopped'], 'CLEANUP', f"round {index}: owned process-group cleanup unverified: "
                                                   f"{row['audit']}")
