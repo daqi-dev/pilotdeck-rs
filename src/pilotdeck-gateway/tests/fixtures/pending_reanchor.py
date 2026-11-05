@@ -95,9 +95,12 @@ def counts(rows, states=('KILLED', 'SURVIVED', 'INVALID')):
 # Audited #1048 callers: every execution mode reaches one shared skip entry,
 # with the same mutation names as anchor_selfcheck. New clients need that
 # audit before enrollment; a dead/imported call is not an execution guarantee.
+# #1395 fix-r1 audited http-store-park/negative_controls.py: its hand-rolled
+# main loop and --check-anchors both reach pending.for_script/pending.match.
 TEXT_HOSTS = {
     'file-history-cwd/negative_controls.py',
     'flake-progress/negative_controls.py',
+    'http-store-park/negative_controls.py',
     'live-session/negative_controls.py',
     'locked-storage/negative_controls.py',
     'metadata-from-env/negative_controls.py',
