@@ -1510,3 +1510,33 @@ fn ledger_io_display_uses_the_labelled_syscall_and_never_guesses() {
     assert_eq!(crate::node_io::staged_fields(bare), None);
     assert_eq!(crate::node_io::staged_diagnostic(bare), None);
 }
+
+/// #1554: a failed staging-file create must name the transcript the caller
+/// asked to replace, never our private `.ledger-<uuid>.tmp` sibling.
+#[test]
+#[cfg(unix)]
+fn temporary_create_failure_reports_the_transcript_not_the_staging_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let original = fs::metadata(&scratch.0).unwrap().permissions();
+    let mut readonly = original.clone();
+    readonly.set_mode(0o500);
+    fs::set_permissions(&scratch.0, readonly).unwrap();
+    let error = match transcript::create_temporary(&path) {
+        Ok(_) => panic!("a read-only parent must fail the staging create"),
+        Err(error) => error,
+    };
+    fs::set_permissions(&scratch.0, original).unwrap();
+    let LedgerError::Io(error) = error else {
+        panic!("expected an io failure: {error:?}")
+    };
+    let (syscall, reported) =
+        crate::node_io::staged_fields(&error).expect("the staging create labels its syscall");
+    assert_eq!(syscall, "open");
+    assert_eq!(reported, Some(path.to_string_lossy().as_ref()));
+    assert_eq!(
+        LedgerError::Io(error).to_string(),
+        format!("EACCES: permission denied, open '{}'", path.display())
+    );
+}

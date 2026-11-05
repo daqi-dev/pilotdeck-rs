@@ -125,16 +125,19 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
             },
         ));
     }
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
+    let mut file = match File::open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(missing_transcript(diagnostic_path));
         }
-        // Unlabelled on purpose: POSIX opens a directory fine and fails in
-        // read(2), so the failure belongs to `read_file`'s EISDIR special case
-        // ("... , read", no path). Labelling it "open" here would pre-empt it.
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(path_error(error, "open", path).into()),
     };
+    let mut bytes = Vec::new();
+    // The read stage is descriptor-bound: Node reports it as `read` with no
+    // path. POSIX opens a directory fine and only fails here (EISDIR), which
+    // is exactly the shape `node_io::read_file` documents for that case.
+    file.read_to_end(&mut bytes)
+        .map_err(|error| descriptor_error(error, "read"))?;
     let mut read = TranscriptRead {
         entries: vec![],
         diagnostics: vec![],
@@ -480,9 +483,19 @@ impl LedgerLock {
             .read(true)
             .write(true)
             .create(true)
-            // Unlabelled on purpose: this is the Rust-only fence inode; TS has
-            // no lock syscall, so there is no Node shape to imitate.
-            .open(&lock_path)?;
+            // Rust-only fence inode: TS has no lock syscall. Keep the errno out
+            // of the error so the wire layer cannot blame the transcript for a
+            // failure that belongs to `<transcript>.lock`; Rust text is honest.
+            .open(&lock_path)
+            .map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "Could not open session ledger lock {}: {error}",
+                        lock_path.display()
+                    ),
+                )
+            })?;
         // Rust-only single-writer fence: TS has no lock syscall, and the
         // WouldBlock rejection is synthetic, so neither is rendered as a
         // Node fs error.
