@@ -295,6 +295,29 @@ def run():
              f"rc={proc.returncode}")
 
     with tempfile.TemporaryDirectory() as td:
+        # 清单名字自带 specs/ 前缀时住在两个被扫描目录之外：registrable 按原样
+        # 认它（--write 会登记），首登记扫描也必须在场，否则两问不一致 → 假 READY。
+        proc = delivery(Path(td), "parity", parity_payload,
+                        source=PARITY_MANIFEST.replace("'multimodal.md')",
+                                                       "'multimodal.md', 'specs/shared/glossary.md')"),
+                        files=[("specs/shared/glossary.md", "GLOSSARY\n")])
+        case("parity 清单指向两目录之外的路径、无事件链 → BLOCKED（扫描范围与 registrable 一致）",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = delivery(Path(td), "parity", parity_payload,
+                        source=PARITY_MANIFEST.replace("'multimodal.md')",
+                                                       "'multimodal.md', 'specs/shared/glossary.md')"),
+                        files=[("specs/shared/glossary.md", "GLOSSARY\n")],
+                        events=[("specs/parity/frozen/20260101-g.md",
+                                 f"Change: - {sha('GLOSSARY\n')} specs/shared/glossary.md\n"
+                                 + EVENT_FIELDS)])
+        case("parity 清单指向两目录之外的路径、有 Change: - <hash> → READY（端到端正控）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
         payload = dict(parity_payload, unregistered_skipped=["scripts/parity/scratch.txt"])
         proc = delivery(Path(td), "parity", payload, dirty=[("scripts/parity/scratch.txt", "x\n")])
@@ -817,6 +840,23 @@ def run():
         case("parity names 二次 += → 不可判定（不取首个字面量）",
              cfd.registrable(root, "parity", "specs/parity/README.md") is None)
 
+    with tempfile.TemporaryDirectory() as td:
+        # walrus 也是 Store，但值提取只认 Assign/AnnAssign。若此时回退到 external
+        # （模块级 A2_SCRIPTS），解释器用函数内的新元组、解析器看到旧值 →
+        # 新增成员漏判。Store 对不上就只能是「不可判定」。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/gateway-parity/common.py", "A2_SCRIPTS = ('check_frozen.py',)\n")
+        write(root, "scripts/gateway-parity/check_frozen.py",
+              "\ndef manifest_inventory(root):\n"
+              "    if (A2_SCRIPTS := ('check_frozen.py', 'extra.py')):\n"
+              "        paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]\n"
+              "        return {name: name for name in paths}\n"
+              "    return {}\n")
+        commit(root, "base")
+        case("gateway A2_SCRIPTS 走 walrus 绑定 → 不可判定（不回退外部值）",
+             cfd.gateway_inventory(root) is None)
+
     # 下面四条都是「认不出就阻塞」：任何一种静默退出都会让模型漂移变成假 READY。
     case("装置源解析不出（NUL 字节）→ 不可判定，不按子串猜",
          ui_registrable(UI_APPARATUS + "\x00", UI_FROZEN) is None)
@@ -955,6 +995,19 @@ def run():
                                  + EVENT_FIELDS)])
         case("清单来源不可读 → BLOCKED（不可判定不折算成 '-'）",
              proc.returncode == 1 and "cannot tell whether --write still registers it"
+             in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 装置源认不出 → 连「该扫哪些目录」都不可判定：扫描范围为空不能静默 READY。
+        payload = {"verdict": "PASS", "errors": []}
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('GONE\\n')}  ../../scripts/ui-server-parity/apparatus.py\n")
+        proc = delivery(Path(td), "ui-server-parity", payload, source=UI_FROZEN,
+                        base_files=[("scripts/ui-server-parity/apparatus.py", "GONE\n"),
+                                    ("specs/ui-server-parity/FROZEN.md", frozen)])
+        case("ui 清单源认不出 → BLOCKED（扫描范围不可判定不静默）",
+             proc.returncode == 1 and "cannot tell ui-server-parity's inventory"
              in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
