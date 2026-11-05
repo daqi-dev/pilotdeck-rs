@@ -91,15 +91,21 @@ impl Requests {
                     Some(JsValue::String(value)) => value.clone(),
                     Some(_) => return Err(RequestError::new("entry.trim is not a function")),
                 };
-                // TS keys the grant Map by the raw sessionKey. A non-string key
-                // can never be reached again through the string-keyed
-                // permission RPCs, so it collapses to the empty owner here and
-                // the observable response matches `{granted:true, entry}`.
-                let owner = match params.get("sessionKey") {
-                    Some(JsValue::String(value)) => value.clone(),
-                    _ => JsString::from(""),
-                };
-                Ok(self.interactions.grant_session_permission(&owner, &entry))
+                // TS keys the grant Map by the raw sessionKey, so a malformed
+                // value (`5`, `{}`, `true`, missing) is its own entry and can
+                // never reach a real session. This registry is keyed by the
+                // lossy string form and a sessionless turn acquires the `""`
+                // entry, so only a non-blank string owner may store the rule;
+                // everything else keeps the TS response without writing
+                // (`coordinator.rs:grant_session_permission`).
+                let owner = params
+                    .get("sessionKey")
+                    .and_then(JsValue::as_string)
+                    .filter(|value| {
+                        !crate::metadata::js_trim(&String::from_utf16_lossy(value.units()))
+                            .is_empty()
+                    });
+                Ok(self.interactions.grant_session_permission(owner, &entry))
             }
         })
     }
