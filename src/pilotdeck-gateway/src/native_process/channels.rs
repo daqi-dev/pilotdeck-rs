@@ -107,6 +107,11 @@ impl NativeChannels {
                     config: Some(options.config.clone()),
                     report_status: Some(report_status),
                     log: options.log,
+                    // The weixin adapter submits turns through its own
+                    // `WeixinChannelOptions.gateway` port (set by
+                    // `set_gateway_port`), not through the channel-server
+                    // `turn_gateway` the webhook/api-server adapters use.
+                    turn_gateway: None,
                 },
                 options.close_host.unwrap_or_else(noop_close_host),
             ),
