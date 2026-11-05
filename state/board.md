@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-06 03:5x · by Claude Code 协调者（孤儿分诊收口：16 条逐条判定，改 READY 6 行 + 记录 round-start 已修）· 41 条（doing 26 / ready 3 / blocked 11 / human 1）· 磁盘 148.2/200 GiB（du 03:5x 实测，已回收 wt-1333）· worktree 47/60 · merge queue 空
+updated: 2026-11-06 03:2x · by Claude Code 协调者（孤儿分诊收口：16 条逐条判定，改 READY 6 行 + 记录 round-start 已修）· 41 条（doing 26 / ready 3 / blocked 11 / human 1）· 磁盘 148.2/200 GiB（du 03:2x 实测，已回收 wt-1333）· worktree 47/60 · merge queue 空
 - #1157 | coord | doing | 待人决策总表（置顶，协调者每两小时更新）：01:34 已发评论更新。待人：#401 建议关单 / #1475（#1313 重划）待人复核 / #1498-B（waiter 断链 resume 已实施）待人复核后关单 / #1571 已吸收 #1590 并合入 / #1569 cargo-slots 默认上限 / #1544 主实现方口径 / 本单 worktree 40→60 已落地待认可关单。本轮资源：磁盘 du 188.2/200 GiB（fleet 02:13 报 190.8）；worktree 44/60（`new-tree`#1580 生效，fleet 旧常量报 WARN 44/40）；merge queue 1 张 #1584
 - #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412）已合；s3 #1370 已开 PR #1561 draft；s4/s5 #1371/#1372 顺次；#1408 前置于本单关单
 - #1355 | impl | doing | E1 --suite retirement 冻结装置：**PR #1515 已合入（02:10:57Z）**，冻结重登记 `--write` 已由协调者落 commit；决策卡 #1598 已合入（02:48Z）**待人复核**；跟进 #1524
@@ -10,7 +10,7 @@ updated: 2026-11-06 03:5x · by Claude Code 协调者（孤儿分诊收口：16 
 - #1339 | impl | doing | A8.3-ch-sms：PR #1526 draft（head 096bdb0e4），channel 同文件串行待一家合入；linux 负控 + 三通道评审证据在 _tmp/20261105-issue-1339-*，待评审收口入队
 - #1333 | impl | doing | **#1333 api-server 已合入（PR #1584，02:27Z）→ channel 三角解锁**；`_build/wt-1333` 已核（11 提交 patch-id 全在 main）并**回收归档**；余 #1334 webhook（PR #1534 draft，r22 四角色在跑）/ #1336 wecom-callback（7 提交已归档，需 rebase 后开 PR，排在 #1534 之后）；#1334 入队前须删自己在 channel/mod.rs 的重复注册点并 cargo test --no-run
 - #1316 | impl | doing | A7.8-pr1 会话域整域装配：PR #1558 draft、MERGEABLE；fix-r1 三条 P1 已修（必杀标记不可达 / summary.json 逐变异覆写 / /proc 只采样两次），r5 在 cb8 跑、结果块须在新 head 重出；合入解锁 #1317、#589、#590、#727、#19
-- #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：**mbp2 worker 已死**；树 wt-1325 有 8 项未提交改动 / 6430 行（存活）；**03:5x 已派抢救代理**（先保 WIP 再续做）；上游 #1324 已合
+- #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：**mbp2 worker 已死**；树 wt-1325 有 8 项未提交改动 / 6430 行（存活）；**03:2x 已派抢救代理**（先保 WIP 再续做）；上游 #1324 已合
 - #1233 | review | doing | PR #1257（A6.5 background 持久化）draft（head f8c58c191）；macmini r4 全量宿主链 1h26；13 组里 2 组（background-output / network-timing）用陈旧二进制全 INVALID，链结束补跑该 2 组 + targeted + lib，K/I/S 全表齐才入队；含 #1276、#953
 - #1382 | review | doing | PR #1493 MERGED；issue 待收尾自查后关单（#1252 关闭顺序收口）
 - #132 | review | blocked | PR #1235 draft + CONFLICTING、长期无活动且树干净（ORPHAN）：前置 = rebase 合 main 后交评审；前置于 A8 退役（#1357）
@@ -21,7 +21,7 @@ updated: 2026-11-06 03:5x · by Claude Code 协调者（孤儿分诊收口：16 
 - #1398 | impl | doing | A5 冻结装置跟进：非冻结切片 #1519 的 PR #1577 已合（00:45），#1519 待收尾关单；剩余冻结件（round.py / calibrate.sh）走冻结程序，_shared 部分经 M6 车道 #1099；前置于 #590
 - #892 | impl | doing | session-domain 清理装置汇总枚举测试（A5.4 收尾）：**已派 cb8 GLM（03:0x 起）**，触冻结件走冻结程序，`--write` 留协调者
 - #91 | impl | ready | 账本 detail 子码 / stopReason（账本已越 1.5 MB）：改冻结账本走冻结程序
-- #1552 | impl | doing | 差异族 A6.4-TLS-CA-SOURCES-001（SSL_CERT_DIR 来源 / --use-*-ca 启动模式未对齐）：**cb8 worker 已死、原登记作废**；03:5x 复判为孤儿，`exit=0` 跑完无人收，patch 已归档；**已派收货代理**（先做本条再做 #1553）
+- #1552 | impl | doing | 差异族 A6.4-TLS-CA-SOURCES-001（SSL_CERT_DIR 来源 / --use-*-ca 启动模式未对齐）：**cb8 worker 已死、原登记作废**；03:2x 复判为孤儿，`exit=0` 跑完无人收，patch 已归档；**已派收货代理**（先做本条再做 #1553）
 - #1553 | impl | doing | 差异族 A6.5-MCP-HTTP-ENCODING-BODY-001（legacy SSE 首包损坏 gzip 不结算握手）：**cb8 worker 已死、原登记作废**；复判为孤儿，patch 已归档；排在 #1552 之后由同一收货代理处理
 - #1555 | impl | doing | 差异族 A7.4-HTTPSTORE-431-408-SHAPE-001（前导 OWS / 超 4096 小字段头资源上限）：PR #1576 draft；fix-r2 修三条 P1（CR/OWS 复位、RSS 探针改 fcntl.flock、-R7 更正文件），等两家增量评审；**`check_frozen --write` 由协调者跑**
 - #1554 | impl | blocked | 差异族 A6.9-PERSISTENCE-IO-001（+ 同族 #1550/#1551 A6.2 两族）：同改 transcript_adapter.rs，前置 = #1370 收口；#297 同文件随后
@@ -3423,7 +3423,7 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 
 **待人（AI 队列外，只列有 issue 的）**：① **#1157** 待人决策总表（本段已更新：含 #401 建议关单 / #1475 #1313 重划 / #1498-B 待人复核后关单 / #1569 cargo-slots 默认上限（#1556 修） / #1544 主实现方口径 / worktree 40→60 待认可关单）；② **#1598**（#1515 冻结重登记决策卡）待人复核；③ #1569 / #1544 / #1475 / #1498 / #1571 各按上述状态。
 
-### 03:5x（孤儿分诊收口 + round-start 已修）
+### 03:2x（孤儿分诊收口 + round-start 已修）
 
 **16 条孤儿逐条判定完毕**（`_tmp/20261106-orphan-triage/triage.md`，patch 归档 17 件在 `archive/` 含 SHA256SUMS）。三台远端均已无活 worker，**READY 里「cb8/mbp2 worker 在跑」的写法对这一批已全部作废**。
 
