@@ -58,15 +58,21 @@ fn cases(oracle: &Value) -> &Vec<Value> {
 }
 
 async fn bounded<T>(context: &str, future: impl std::future::Future<Output = T>) -> T {
-    timeout(DEADLINE, future)
-        .await
-        .unwrap_or_else(|_| panic!("#1336 {context} matches the TS oracle"))
+    match timeout(DEADLINE, future).await {
+        Ok(value) => value,
+        // Route through the receipt emitter: a plain panic yields no receipt
+        // and the host matrix reports INVALID instead of KILLED.
+        Err(_) => crate::test_negative_receipt::expect_some(
+            None,
+            &format!("#1336 {context} matches the TS oracle"),
+        ),
+    }
 }
 
 async fn until(context: &str, predicate: impl Fn() -> bool) {
     let started = Instant::now();
     while !predicate() {
-        assert!(
+        crate::negative_assert!(
             started.elapsed() < DEADLINE,
             "#1336 {context} matches the TS oracle"
         );
