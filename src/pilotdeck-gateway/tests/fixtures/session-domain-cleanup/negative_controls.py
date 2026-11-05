@@ -323,6 +323,29 @@ def calibrate_bare_zero(rows):
     return True, 'aggregation-audit: calibrate bare optimistic exit flagged, passed=False'
 
 
+def calibrate_status_write_pass(rows):
+    """#892 r2: an incremental ``report['status'] = 'PASS'`` write inside a
+    registered point never appears in a Return, so the per-return-path audit
+    must scan the assignment itself (DeepSeek sibling P1-2)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: scripts/gateway-parity/session_domain.py:main ')
+            and "inline status/exit assignment 'PASS'" in failure
+            for failure in failures):
+        return False, f'failures={failures!r}, want the #892 calibrate status-write failure'
+    slots = (row.get('points', {}).get('calibrate-main', {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, 'points.calibrate-main.unsharedSlots is empty, want the status write'
+    return True, ('aggregation-audit: inline report-status write flagged, '
+                  'passed=False')
+
+
 # (name, source, old, new).  Every old block must occur once.  Per-mutant
 # judge metadata (mode, judge, uses_launcher, allowed_probe_errors) lives in
 # JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
@@ -488,6 +511,9 @@ MUTATIONS = [
     ('calibrate-bare-zero', SOURCE,
      "            return code\n",
      "            return 0\n"),
+    ('calibrate-status-write-pass', SOURCE,
+     "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
+     "                report['status'] = 'PASS'\n"),
     ('restored-skip-accepted', NEGATIVE,
      "            top_status, exit_code = common.aggregate_status(\n"
      "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
@@ -646,6 +672,7 @@ JUDGES = {
     'bare-return-exit': ('aggregation-audit', bare_return_exit, False, ()),
     'conditional-arm-exit': ('aggregation-audit', conditional_arm_exit, False, ()),
     'calibrate-bare-zero': ('aggregation-audit', calibrate_bare_zero, False, ()),
+    'calibrate-status-write-pass': ('aggregation-audit', calibrate_status_write_pass, False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
