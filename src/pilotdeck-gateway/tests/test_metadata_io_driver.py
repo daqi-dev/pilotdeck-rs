@@ -787,6 +787,19 @@ class EnvironmentControls(unittest.TestCase):
                          '#1632 every documented cargo-slots.sh exit code has a slot-guard case')
         self.assertLessEqual({int(code) for code in re.findall(r'\bexit (\d+)', script)}, documented,
                              '#1632 every exit in cargo-slots.sh is a documented code')
+        # 上面两条只覆盖「不多出一个码」这一向（#1632 r8 评审 MiniMax boundary P1）：
+        # 把「ps 输出为空」那条 `exit 3` 整行删掉后，剩下的 `exit 3` 仍让码集自洽，
+        # 两条断言照绿，而空输出会重新变成「在跑 0 → 放行」的假 PASS——正是脚本
+        # 自己注释禁掉的那一格。所以把每条「先报诊断、再退出」的守卫逐条钉死：
+        # 增删任意一条守卫，或把某条守卫的码改掉，都必须红。
+        guards = re.findall(r'echo "(cargo-slots: [^"\n]*)"[^\n]*?\bexit (\d)', script)
+        self.assertEqual(guards,
+                         [('cargo-slots: 上限必须是正整数（参数或 PDRS_CARGO_SLOTS），实际「${CAP}」', '2'),
+                          ('cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）', '3'),
+                          ('cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）', '3')],
+                         '#1632 every cargo-slots.sh guard: its diagnostic and its exit code')
+        self.assertEqual({int(code) for _, code in guards}, documented - {0, 1},
+                         '#1632 the guards above are the documented non-trivial codes')
         gates = {key.value: ast.literal_eval(value)
                  for key, value in zip(cases.keys, cases.values)}
         for name, code in codes.items():
@@ -833,6 +846,17 @@ class EnvironmentControls(unittest.TestCase):
                 self.slot_guard_cases(source.replace(old, new, 1) if in_source else source,
                                       script if in_source else script.replace(old, new, 1))
             print(f'#1632 slot-guard mutant {label}: KILLED', flush=True)
+        # 契约核的双向性（r8 评审 P1）：删掉「ps 输出为空」那一整行守卫后，脚本仍会发
+        # `exit 3`（取样失败那条），documented 与 exit 集合双双自洽 —— 只有逐条守卫的
+        # 钉死能杀它。
+        empty_guard = next(line for line in script.splitlines(keepends=True)
+                           if 'ps 输出为空' in line)
+        self.assertEqual(script.count(empty_guard), 1,
+                         '#1632 unique anchor: the empty-sample guard line')
+        with self.assertRaises(AssertionError,
+                               msg='#1632 dropping the empty-sample guard must be caught'):
+            self.slot_guard_cases(source, script.replace(empty_guard, '', 1))
+        print('#1632 slot-guard mutant script-drops-empty-output-guard: KILLED', flush=True)
         # ast 的 col_offset 是 UTF-8 字节偏移，跨行累加也要按字节算，否则表里出现中文
         # （'ps 取样失败'）时切片会错位（GLM r7 boundary P3）。
         data = source.encode()
