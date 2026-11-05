@@ -1138,6 +1138,11 @@ def _name_bindings(function):
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 _bind_values(target, node.value, bindings, node.lineno)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            # ``for report in rows:`` binds a loop variable whose value is not
+            # proven; without this the subscript path would treat it as a
+            # module global and trust it (DeepSeek boundary P1-4).
+            _bind_values(node.target, node.iter, bindings, node.lineno)
     return bindings
 
 
@@ -1417,7 +1422,7 @@ def _name_feeds_shared(name, function):
     ``common.aggregate_status(result['status'])``; the same literal in a summary
     that is printed and never aggregated is the bypass.
     """
-    for node in ast.walk(function):
+    for node in _own_nodes(function):
         if _is_shared_call(node):
             for child in ast.walk(node):
                 if isinstance(child, ast.Name) and child.id == name:
@@ -1425,28 +1430,139 @@ def _name_feeds_shared(name, function):
     return False
 
 
-def _exit_name_violation(name, bindings):
+def _direct_bindings(stmt, name):
+    """Values *stmt* itself assigns to *name*, without entering nested blocks."""
+    found = {}
+    if isinstance(stmt, ast.AnnAssign):
+        if stmt.value is not None:
+            _bind_values(stmt.target, stmt.value, found, stmt.lineno)
+    elif isinstance(stmt, ast.Assign):
+        for target in stmt.targets:
+            _bind_values(target, stmt.value, found, stmt.lineno)
+    elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+        _bind_values(stmt.target, stmt.iter, found, stmt.lineno)
+    return found.get(name, ())
+
+
+def _child_blocks(stmt):
+    """Statement lists nested directly inside *stmt*."""
+    blocks = [value for _field, value in ast.iter_fields(stmt)
+              if isinstance(value, list) and value and isinstance(value[0], ast.stmt)]
+    blocks.extend(handler.body for handler in getattr(stmt, 'handlers', ()))
+    blocks.extend(case.body for case in getattr(stmt, 'cases', ()))
+    return blocks
+
+
+def _statement_rebinds_shared(stmt, name):
+    """True when running *stmt* always leaves *name* bound by the shared call."""
+    direct = _direct_bindings(stmt, name)
+    if direct:
+        return all(_calls_aggregate(value) for _lineno, value in direct)
+    if isinstance(stmt, ast.If):
+        return bool(stmt.orelse) and _block_rebinds_shared(stmt.body, name) \
+            and _block_rebinds_shared(stmt.orelse, name)
+    if isinstance(stmt, (ast.With, ast.AsyncWith)):
+        return _block_rebinds_shared(stmt.body, name)
+    if isinstance(stmt, ast.Try):
+        if stmt.finalbody:
+            return _block_rebinds_shared(stmt.finalbody, name)
+        return _block_rebinds_shared(stmt.body, name) and all(
+            _block_rebinds_shared(handler.body, name) for handler in stmt.handlers)
+    return False
+
+
+def _block_rebinds_shared(stmts, name):
+    """True when some statement of *stmts* rebinds *name* from the shared call.
+
+    A later constant rebinding inside the same block cannot hide behind this:
+    that binding is judged on its own, and its own tail has no shared rebind.
+    """
+    return any(_statement_rebinds_shared(stmt, name) for stmt in stmts)
+
+
+def _optimistic_binding_sites(function, name):
+    """Linenos where a constant-zero binding of *name* can reach the return.
+
+    ``code = 0`` as an initializer that every following path overwrites with the
+    shared result is not an optimistic exit; ``code = 0`` inside one branch,
+    while another branch is shared, still is (DeepSeek boundary P0-1 /
+    concurrency P1-1: the earlier "any shared assignment excuses the name" rule
+    was a real bypass).
+    """
+    sites = set()
+
+    def visit(stmts, outer_safe):
+        for index, stmt in enumerate(stmts):
+            safe = outer_safe or any(_statement_rebinds_shared(later, name)
+                                     for later in stmts[index + 1:])
+            for lineno, value in _direct_bindings(stmt, name):
+                if _constant_exit_zero(value) and not safe:
+                    sites.add(lineno)
+            for block in _child_blocks(stmt):
+                visit(block, safe)
+
+    visit(function.body, False)
+    return sites
+
+
+def _exit_name_violation(name, bindings, function=None):
     """Why an exit code travelling through *name* is inline, or None (#892 r3).
 
-    A plain ``code = 0`` default is legal when the name is also assigned from
-    the shared call (the apparatus raises before any default can escape); a
-    conditional expression that can produce 0, or a lone default with no shared
-    assignment at all, is an inline exit computation.
+    A conditional expression that can produce 0 is always inline computation.
+    A plain ``code = 0`` is inline too unless every following path overwrites it
+    with the shared result: a shared assignment in *another* branch does not
+    excuse it, because the zero branch still returns the default and the process
+    exits 0 (DeepSeek boundary P0-1 / concurrency P1-1).
     """
-    values = [value for _lineno, value in bindings.get(name, ())]
-    if not values:
-        return None
-    shared = any(_calls_aggregate(value)
-                 or (isinstance(value, (ast.Attribute, ast.Subscript))
-                     and _container_relays(value, bindings))
-                 for value in values)
-    for value in values:
+    sites = None
+    for lineno, value in bindings.get(name, ()):
         if isinstance(value, (ast.IfExp, ast.BoolOp)) and any(
                 _constant_exit_zero(arm) for arm in _exit_arms(value)):
             return 'conditional'
-        if _constant_exit_zero(value) and not shared:
+        if _constant_exit_zero(value):
+            if function is not None:
+                if sites is None:
+                    sites = _optimistic_binding_sites(function, name)
+                if lineno not in sites:
+                    continue  # an initializer that a later statement overwrites
             return 'literal'
     return None
+
+
+def _call_written_values(call):
+    """Values a ``update(...)`` / ``setdefault(...)`` call writes into a slot.
+
+    Every argument shape counts: a dict literal, a list/tuple of ``(key,
+    value)`` pairs, keyword arguments (``update(status='PASS')``) and a keyword
+    expansion (``update(**{'status': 'PASS'})``).  ``setdefault`` carries the
+    key and the value as two positionals, so it is read directly instead of
+    through ``_returned_summary_dicts`` (DeepSeek boundary P0-2 / sibling P1-2:
+    the earlier code only saw dict literals, leaving the documented
+    ``setdefault`` support as dead code).
+    """
+    written = []
+    if call.func.attr == 'setdefault':
+        if len(call.args) > 1:
+            key = call.args[0]
+            if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+                written.append(call.args[1])
+        return written
+    for argument in call.args:
+        for summary in _returned_summary_dicts(argument):
+            written.extend(_status_slot_values(summary))
+        if isinstance(argument, (ast.List, ast.Tuple)):
+            for element in argument.elts:
+                if isinstance(element, (ast.Tuple, ast.List)) and len(element.elts) == 2:
+                    key = element.elts[0]
+                    if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+                        written.append(element.elts[1])
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            for summary in _returned_summary_dicts(keyword.value):
+                written.extend(_status_slot_values(summary))
+        elif keyword.arg in _STATUS_KEYS:
+            written.append(keyword.value)
+    return written
 
 
 def unshared_status_slots(function, point=None):
@@ -1502,10 +1618,7 @@ def unshared_status_slots(function, point=None):
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
             call = node.value
             if isinstance(call.func, ast.Attribute) and call.func.attr in ('update', 'setdefault'):
-                written = []
-                for argument in call.args:
-                    for summary in _returned_summary_dicts(argument):
-                        written.extend(_status_slot_values(summary))
+                written = _call_written_values(call)
                 if any(_assigns_clean_status(item, bindings) for item in written):
                     violations.append(
                         f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
@@ -1564,12 +1677,14 @@ def unshared_status_slots(function, point=None):
                     # The exit code may travel through a local variable; a
                     # conditional that can yield 0 is inline computation
                     # (MiniMax boundary P0-2 / DeepSeek sibling P1-3).
-                    kind = _exit_name_violation(arm.id, bindings)
+                    kind = _exit_name_violation(arm.id, bindings, function)
                     if kind:
                         violations.append(f'inline exit code ({kind} relay) {arm.id} '
                                           f'at line {node.lineno}')
                 elif (not _calls_aggregate(arm)
-                        and (_optimistic_exit(arm)
+                        and ((_constant_exit_zero(arm)
+                              and point not in _SENTINEL_POINTS)
+                             or _optimistic_exit(arm)
                              or (_exit_code_shaped(arm)
                                  and (is_pair or isinstance(arm, ast.Call))))):
                     violations.append(f'inline exit code {ast.unparse(arm)[:60]} '
@@ -1812,7 +1927,20 @@ def aggregation_audit():
         "def _assign_only(rows):\n"
         "    payload = {'status': 'PASS', 'rows': rows}\n"
         "    print(payload)\n"
-        "    return 0\n")
+        "    return 0\n"
+        "def _shared_excuse(report):\n"
+        "    if report.get('special'):\n"
+        "        code = 0\n"
+        "    else:\n"
+        "        _, code = common.aggregate_status(report['status'])\n"
+        "    return code\n"
+        "def _code_initializer(report):\n"
+        "    code = 0\n"
+        "    if report.get('special'):\n"
+        "        _, code = common.aggregate_status('BLOCKED')\n"
+        "    else:\n"
+        "        _, code = common.aggregate_status(report['status'])\n"
+        "    return code\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -1916,6 +2044,18 @@ def aggregation_audit():
             or not unshared_status_slots(assign_only[1])):
         failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
                         'summary dict assigned under an arbitrary name')
+    # #892 r4: a shared assignment in the other branch must not excuse a zero
+    # branch, while an initializer that every following path overwrites is fine
+    # (the healthy ``session_domain.py:main`` shape — false-positiving it would
+    # force a real exclusion instead of a judged exemption).
+    shared_excuse = probe892_found.get(('<self-test-892>', '_shared_excuse'))
+    if not shared_excuse or not unshared_status_slots(shared_excuse[1]):
+        failures.append('#892 aggregation-audit: detector self-test let a shared '
+                        'assignment in another branch excuse a literal exit code')
+    code_initializer = probe892_found.get(('<self-test-892>', '_code_initializer'))
+    if not code_initializer or unshared_status_slots(code_initializer[1]):
+        failures.append('#892 aggregation-audit: detector self-test flagged a zero '
+                        'initializer that every following path overwrites')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,
