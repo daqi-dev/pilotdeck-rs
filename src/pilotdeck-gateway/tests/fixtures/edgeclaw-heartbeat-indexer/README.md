@@ -116,8 +116,16 @@ that starts while the clear is parked at the `L0IdsSelected` seam lands
 between them and is deleted unrecorded) and reverting the per-row generation
 map to the accumulating set (a row whose deleting clear predates the
 baseline reads as cleared-since it), plus a third that drops the baseline
-comparison outright — the re-captured turn is silently dropped behind the
-stale entry. The #1207 fix-r1 review adds a fourth: dropping the re-arm from
+comparison outright — a row whose deleting clear predates the baseline reads
+as cleared-since it. #1246 rebinds that third mutant to the absent-row
+incarnation: `session_clear_removed_since` now also qualifies the record
+with a live-row lookup (`get_l0_by_ids`), so a same-id re-capture that still
+sits in `l0_sessions` is rescued even without the baseline comparison
+(the end-to-end recapture cell survives the mutant), and only the
+non-bumping-repair-removed row keeps the comparison load-bearing
+(`stale_removed_entry_after_later_clear_keeps_since_semantics` is the bound
+test; `issue-1246/negative_controls.py` guards the live-row qualifier
+itself). The #1207 fix-r1 review adds a fourth: dropping the re-arm from
 the clear's abort path (`clear-abort-rearm-dropped`), so an indexed row whose
 file the failed clear already removed is never re-listed and the file is
 lost. The fix-r2 review adds a fifth (`clear-abort-delete-rearm-dropped`):
