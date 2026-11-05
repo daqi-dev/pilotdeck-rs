@@ -68,6 +68,20 @@ def fake_apparatus(root, kind, payload, source=""):
           f"# fake FROZEN\n\n{sha(body)}  ../../scripts/{kind}/check_frozen.py\n")
 
 
+GW_COMMON = "A2_SCRIPTS = ('check_frozen.py',)\n"
+
+UI_APPARATUS = ("APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008', "
+                "'specs/ui-server-parity')\n"
+                "SPEC_FILES = ('acceptance.md',)\n"
+                "TOOLCHAIN_FILES = ()\n")
+
+
+def gw_source(*names):
+    """假 gateway 装置源：与真装置同形的 ``manifest_inventory`` 字面量清单。"""
+    items = ", ".join(f"'scripts/gateway-parity/{name}'" for name in names)
+    return "\ndef manifest_inventory(root):\n    return [" + items + "]\n"
+
+
 HASH_LIST = "hash list differs from generated inventory; run check_frozen.py --write"
 
 EVENT_FIELDS = ("Calibration-Evidence: test fixture\n"
@@ -175,8 +189,7 @@ def run():
         root = Path(td)
         init_repo(root)
         row(root, "fake", "scripts/ui-server-parity/x.py", sha("A\n"), "A\n")
-        write(root, "scripts/ui-server-parity/apparatus.py",
-              "SPEC_FILES = ('acceptance.md',)\n")
+        write(root, "scripts/ui-server-parity/apparatus.py", UI_APPARATUS)
         write(root, "specs/ui-server-parity/FROZEN.md",
               f"# fake FROZEN\n\n{sha('A\n')}  ../../scripts/ui-server-parity/x.py\n")
         commit(root, "base")
@@ -256,9 +269,8 @@ def run():
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
                         files=[("scripts/gateway-parity/fixtures/new.json", "{}\n")],
-                        source="# inventory names fixtures/new.json\n",
-                        base_files=[("scripts/gateway-parity/common.py",
-                                     "# inventory names fixtures/new.json\n")])
+                        source=gw_source("fixtures/new.json"),
+                        base_files=[("scripts/gateway-parity/common.py", GW_COMMON)])
         case("gateway 清单成员无事件链 → BLOCKED",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
              f"rc={proc.returncode}")
@@ -267,8 +279,8 @@ def run():
         # 装置源码没提到的文件不在清单里：--write 不登记，不能误拦。
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
-                        base_files=[("scripts/gateway-parity/common.py",
-                                     "A2_SCRIPTS = ('check_frozen.py',)\n")],
+                        base_files=[("scripts/gateway-parity/common.py", GW_COMMON)],
+                        source=gw_source("fixtures/other.json"),
                         files=[("scripts/a5-19/extra.mjs", "x\n")])
         case("gateway 清单外的 a5-19 新文件不误拦",
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
@@ -280,11 +292,10 @@ def run():
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
                         base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n"),
-                                    ("scripts/gateway-parity/common.py",
-                                     "# inventory names fixtures/new.json\n")],
+                                    ("scripts/gateway-parity/common.py", GW_COMMON)],
                         moves=[("scripts/gateway-parity/fixtures/old.json",
                                 "scripts/gateway-parity/fixtures/new.json")],
-                        source="# inventory names fixtures/new.json\n")
+                        source=gw_source("fixtures/new.json"))
         case("gateway 同前缀改名的目的地无事件链 → BLOCKED（旧实现假 READY）",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
@@ -293,22 +304,21 @@ def run():
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
                         base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n"),
-                                    ("scripts/gateway-parity/common.py",
-                                     "# inventory names fixtures/new.json\n")],
+                                    ("scripts/gateway-parity/common.py", GW_COMMON)],
                         moves=[("scripts/gateway-parity/fixtures/old.json",
                                 "scripts/gateway-parity/fixtures/new.json")],
                         events=[("specs/gateway-parity/frozen/20260101-r.md",
                                  f"Change: - {sha('{}\n')} "
                                  "scripts/gateway-parity/fixtures/new.json\n"
                                  + EVENT_FIELDS)],
-                        source="# inventory names fixtures/new.json\n")
+                        source=gw_source("fixtures/new.json"))
         case("gateway 改名目的地有 Change: - 事件链 → READY",
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     # --------------------------------- 既有文件被本分支加进清单＝首登记
     gw_payload = {"status": "FAIL", "failures": [HASH_LIST]}
-    new_source = "# inventory names fixtures/x.json\n"
+    new_source = gw_source("fixtures/x.json")
     named = "import json\nprint(json.dumps(" + repr(gw_payload) + "))\n" + new_source
 
     with tempfile.TemporaryDirectory() as td:
@@ -316,7 +326,8 @@ def run():
         # 把它加进清单 → --write 会加行，链必须从 '-' 起。旧实现只扫 diff 的 A，
         # 该文件不是 A → 只剩「hash list differs」→ 假 READY。
         proc = delivery(Path(td), "gateway-parity", gw_payload,
-                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n")],
+                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n"),
+                                    ("scripts/gateway-parity/common.py", GW_COMMON)],
                         files=[("scripts/gateway-parity/check_frozen.py", named)])
         case("既有文件被加进清单、无事件链 → BLOCKED（旧实现假 READY）",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
@@ -325,7 +336,8 @@ def run():
     with tempfile.TemporaryDirectory() as td:
         # 正控：按真实闸门的语义写 Change: - <sha>（起点是清单行缺失，不是旧 blob）。
         proc = delivery(Path(td), "gateway-parity", gw_payload,
-                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n")],
+                        base_files=[("scripts/gateway-parity/fixtures/x.json", "{}\n"),
+                                    ("scripts/gateway-parity/common.py", GW_COMMON)],
                         files=[("scripts/gateway-parity/check_frozen.py", named)],
                         events=[("specs/gateway-parity/frozen/20260101-s.md",
                                  f"Change: - {sha('{}\n')} "
@@ -506,9 +518,15 @@ def run():
     # ui-server：SPEC_FILES 是从 apparatus.py 解析的字面量，成员被移出清单时
     # 终点同样取 '-'（第七轮两家 P1）。
     def ui_delivery(td, *, events):
-        payload = {"verdict": "FAIL", "errors": [HASH_LIST]}
-        base_apparatus = "SPEC_FILES = ('acceptance.md', 'multimodal.md')\n"
-        head_apparatus = "SPEC_FILES = ('acceptance.md',)\n"
+        # 真实 pre-write 报文：成员移出 SPEC_FILES、行还在 → ui 装置报
+        # `unexpected registered file: <绝对路径>`（check_frozen.py:276）。
+        payload = {"verdict": "FAIL", "errors": [
+            HASH_LIST,
+            "unexpected registered file: "
+            f"{Path(td).resolve()}/specs/ui-server-parity/multimodal.md"]}
+        base_apparatus = UI_APPARATUS.replace(
+            "'acceptance.md',)", "'acceptance.md', 'multimodal.md')")
+        head_apparatus = UI_APPARATUS
         body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
         frozen = ("# fake FROZEN\n\n"
                   f"{sha('OLD\\n')}  ../../specs/ui-server-parity/multimodal.md\n"
@@ -558,6 +576,74 @@ def run():
         case("清单来源不可读 → BLOCKED（不可判定不折算成 '-'）",
              proc.returncode == 1 and "cannot tell whether --write still registers it"
              in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 注释掉的成员不算登记：按正则抽字面量会把它当「仍在清单」，掉行被漏报。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        base_common = "A2_SCRIPTS = ('check_frozen.py', 'common.py', 'observer.py')\n"
+        head_common = ("A2_SCRIPTS = ('check_frozen.py', 'common.py',\n"
+                       "              # 'observer.py',  # retired)\n"
+                       "              )\n")
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('OBS\n')}  ../../scripts/gateway-parity/observer.py\n"
+                  f"{sha(base_common)}  ../../scripts/gateway-parity/common.py\n"
+                  f"{sha(body)}  ../../scripts/gateway-parity/check_frozen.py\n")
+        base_files = [("scripts/gateway-parity/observer.py", "OBS\n"),
+                      ("scripts/gateway-parity/common.py", base_common),
+                      ("specs/gateway-parity/FROZEN.md", frozen)]
+        event = ("specs/gateway-parity/frozen/20260101-c.md",
+                 f"Change: {sha('OBS\n')} - scripts/gateway-parity/observer.py\n"
+                 + EVENT_FIELDS)
+        proc = delivery(Path(td), "gateway-parity", payload, base_files=base_files,
+                        source=gw_source(),
+                        files=[("scripts/gateway-parity/common.py", head_common)])
+        case("清单里注释掉的成员、无掉行链 → BLOCKED",
+             proc.returncode == 1 and "row dropped from the new manifest" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        base_common = "A2_SCRIPTS = ('check_frozen.py', 'common.py', 'observer.py')\n"
+        head_common = ("A2_SCRIPTS = ('check_frozen.py', 'common.py',\n"
+                       "              # 'observer.py',  # retired)\n"
+                       "              )\n")
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('OBS\n')}  ../../scripts/gateway-parity/observer.py\n"
+                  f"{sha(base_common)}  ../../scripts/gateway-parity/common.py\n"
+                  f"{sha(body)}  ../../scripts/gateway-parity/check_frozen.py\n")
+        proc = delivery(Path(td), "gateway-parity", payload,
+                        base_files=[("scripts/gateway-parity/observer.py", "OBS\n"),
+                                    ("scripts/gateway-parity/common.py", base_common),
+                                    ("specs/gateway-parity/FROZEN.md", frozen)],
+                        source=gw_source(),
+                        files=[("scripts/gateway-parity/common.py", head_common)],
+                        events=[("specs/gateway-parity/frozen/20260101-c.md",
+                                 f"Change: {sha('OBS\n')} - "
+                                 "scripts/gateway-parity/observer.py\n"
+                                 + EVENT_FIELDS)])
+        case("清单里注释掉的成员、Change: <old> - 链 → READY",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 清单形态认不出（非字面量元组）：不可判定，不能猜成「仍登记」或「已掉行」。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        base_common = "A2_SCRIPTS = ('check_frozen.py',)\n"
+        head_common = "A2_SCRIPTS = tuple(['check_frozen.py'])\n"
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha(base_common)}  ../../scripts/gateway-parity/common.py\n"
+                  f"{sha(body)}  ../../scripts/gateway-parity/check_frozen.py\n")
+        proc = delivery(Path(td), "gateway-parity", payload,
+                        base_files=[("scripts/gateway-parity/common.py", base_common),
+                                    ("specs/gateway-parity/FROZEN.md", frozen)],
+                        source=gw_source(),
+                        files=[("scripts/gateway-parity/common.py", head_common)])
+        case("清单形态认不出 → BLOCKED（不猜 True）",
+             proc.returncode == 1 and "cannot tell" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     # ------------------------------------------------------- fail-closed
