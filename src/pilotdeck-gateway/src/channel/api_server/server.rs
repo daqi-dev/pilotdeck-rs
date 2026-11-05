@@ -570,10 +570,14 @@ fn normalize_content(content: Option<&JsValue>) -> JsString {
                             .map(|value| value.equals_str("text") || value.equals_str("input_text"))
                             .unwrap_or(false);
                         if kind {
+                            // TS keeps `item.text` verbatim and lets
+                            // `.filter(Boolean)` drop it, so a falsy `text`
+                            // (`0`, `false`, `NaN`, `null`) is an empty part —
+                            // not the truthy strings "0"/"false"/"NaN", which
+                            // would turn a 400 `empty_message` into a turn.
                             match part.get("text") {
-                                Some(JsValue::Undefined) | Some(JsValue::Null) | None => {
-                                    Some(JsString::default())
-                                }
+                                None => Some(JsString::default()),
+                                Some(text) if !js_truthy(Some(text)) => Some(JsString::default()),
                                 Some(text) => Some(render::js_string_of(text)),
                             }
                         } else {
@@ -728,6 +732,25 @@ async fn chat_completions(
         return Ok(session_busy_response());
     }
 
+    // The `contains` check above is an advisory fast path: two requests with
+    // the same chat id can both pass it before either admits. `admit_chat` is
+    // the single authoritative admission, so a rejected duplicate never
+    // reaches the gateway — or the shared `SessionMapper`, whose routing a
+    // rejected `/new` would otherwise rewrite (#1333 concurrency review). It
+    // runs before `mapper.resolve` for that reason; the guard releases the id
+    // on the early returns below, exactly like TS's `finally { delete }`.
+    if !admit_chat(&shared.active, &chat_id) {
+        shared.log(
+            "info",
+            &format!("api-server: chat {chat_id} already active, rejecting"),
+        );
+        return Ok(session_busy_response());
+    }
+    let guard = ActiveChat {
+        active: shared.active.clone(),
+        chat_id: chat_id.clone(),
+    };
+
     let user_text_utf8 = user_text
         .to_utf8()
         .unwrap_or_else(|_| String::from_utf16_lossy(user_text.units()));
@@ -759,22 +782,6 @@ async fn chat_completions(
     };
     let session_key = JsString::from(mapped.session_key);
     let message = JsString::from(mapped.message);
-
-    // The `contains` check above is an advisory fast path: two requests with
-    // the same chat id can both pass it before either admits. `admit_chat` is
-    // the single authoritative admission, so a rejected duplicate never
-    // reaches the gateway (#1333 concurrency review).
-    if !admit_chat(&shared.active, &chat_id) {
-        shared.log(
-            "info",
-            &format!("api-server: chat {chat_id} already active, rejecting"),
-        );
-        return Ok(session_busy_response());
-    }
-    let guard = ActiveChat {
-        active: shared.active.clone(),
-        chat_id: chat_id.clone(),
-    };
 
     if streaming {
         let (sender, receiver) = mpsc::unbounded_channel();
