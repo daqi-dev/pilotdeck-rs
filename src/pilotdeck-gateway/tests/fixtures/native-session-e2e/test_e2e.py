@@ -18,6 +18,7 @@ if not sys.flags.isolated:
 sys.dont_write_bytecode = True
 import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import shutil
@@ -69,6 +70,11 @@ def load_frozen():
     module = importlib.util.module_from_spec(spec)
     exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
     return module
+
+
+def manifest_case_count():
+    """#1402 the scored denominator is the calibration manifest length."""
+    return len(c.session_manifest())
 
 
 def hex_string(text):
@@ -198,7 +204,7 @@ class E2ETests(unittest.TestCase):
         try:
             rows = json.loads((folder / 'session-domain/cases.json').read_text())['cases']
             sources = json.loads((folder / 'session-domain/sources.json').read_text())
-            self.assertTrue(len(rows) == len(sources) == 72
+            self.assertTrue(len(rows) == len(sources) == manifest_case_count()
                             and all(isinstance(source['transcriptText'], str)
                                     and Path(source['transcriptPath']).is_file() for source in sources)
                             and all(row['stimulus']['status'] == 'NOT_RUN' and row['stimulus']['missing']
@@ -209,7 +215,7 @@ class E2ETests(unittest.TestCase):
         candidates = [cell for cell in report['cells'] if cell.get('cases')]
         self.assertTrue(len(candidates) == 1, '#1368 NOT_RUN retains exactly one native candidate')
         cell = candidates[0]
-        self.assertTrue(len(cell['cases']) == 72
+        self.assertTrue(len(cell['cases']) == manifest_case_count()
                         and all(row['status'] == 'NOT_RUN' for row in cell['cases']), marker)
         self.assertTrue(cell['executedCases'] == [], '#1368 unwitnessed stimuli never count as executed')
 
@@ -261,8 +267,8 @@ class E2ETests(unittest.TestCase):
         report = self._score(self.output, '#1140 e2e real capture scores 72/72 per-case PASS')
         cell = self._native_cell(report)
         verdicts = cell['cases']
-        self.assertTrue(len(verdicts) == 72
-                        and [row['status'] for row in verdicts] == ['PASS'] * 72,
+        self.assertTrue(len(verdicts) == manifest_case_count()
+                        and [row['status'] for row in verdicts] == ['PASS'] * manifest_case_count(),
                         '#1140 e2e real capture scores 72/72 per-case PASS')
         self.assertTrue(all(row['rule'] is None for row in verdicts),
                         '#1140 e2e a healthy case carries no failing rule')
@@ -313,7 +319,7 @@ class E2ETests(unittest.TestCase):
         self.assertTrue(isinstance(witness, dict) and witness.get('complete') is True
                         and witness.get('source') == 'strace-openat'
                         and isinstance(witness.get('opens'), list)
-                        and [row['afterExecs'] for row in witness['opens']] == list(range(1, 73)),
+                        and [row['afterExecs'] for row in witness['opens']] == list(range(1, manifest_case_count() + 1)),
                         '#1140 e2e the transcript witness interleaves one open per session with the exec order')
 
     def test_e2e_parallel_suites(self):
@@ -441,7 +447,7 @@ class E2ETests(unittest.TestCase):
         self.assertTrue({row['case'] for row in cell['cases'] if row['status'] == 'FAIL'} == required
                         and all(row['surfaces'] == ['provider.requests']
                                 for row in cell['cases'] if row['case'] in required)
-                        and len(cell['cases']) == 72 and cell['executedCases'] == cell['expectedCases'], marker)
+                        and len(cell['cases']) == manifest_case_count() and cell['executedCases'] == cell['expectedCases'], marker)
 
     def test_e2e_data_control_missing_record_state(self):
         folder = self._mutated('missing-record-state')
@@ -472,7 +478,7 @@ class E2ETests(unittest.TestCase):
                         '#1140 e2e a missing observation stays NOT_RUN')
         self.assertTrue(case not in cell['executedCases'],
                         '#1140 e2e a NOT_RUN case is not executed')
-        self.assertTrue(len(cell['executedCases']) == 71,
+        self.assertTrue(len(cell['executedCases']) == manifest_case_count() - 1,
                         '#1140 e2e the other 71 cases stay executed')
 
     def test_e2e_data_control_observation_missing(self):
@@ -492,7 +498,7 @@ class E2ETests(unittest.TestCase):
                         '#1140 e2e a row without the observation key scores NOT_RUN (no batch KeyError)')
         self.assertTrue(case not in cell['executedCases'],
                         '#1140 e2e a NOT_RUN case is not executed')
-        self.assertTrue(len(cell['executedCases']) == 71,
+        self.assertTrue(len(cell['executedCases']) == manifest_case_count() - 1,
                         '#1140 e2e the other 71 cases stay executed')
 
     def test_e2e_data_control_frames_without_type(self):
@@ -718,6 +724,267 @@ class LifecycleTests(unittest.TestCase):
             self.fail(marker + ': ' + repr(error))
         finally:
             harness.doClassCleanups()
+
+
+class NegativeRunnerTests(unittest.TestCase):
+    """#1402 the e2e runner takes the global parity lease per case, not per run.
+
+    ``_drive`` runs the real ``main`` of ``negative_controls.py`` with only the
+    guard and the subprocesses mocked; the lease protocol, the stage order and
+    the restore proof under test are the runner's own code. The synthetic rows
+    mutate a scratch file, and the lease gap control uses a private lock
+    directory, so the real /tmp/pdrs-parity.lock is never touched.
+    """
+
+    MARKER = '#1402 synthetic marker'
+    SYNTHETIC_TEST = 'test_negative_synthetic_bound'
+    PRISTINE = 'x = 0\ny = 1\n'
+    OK_LOG = 'Ran 1 test in 0.001s\n\nOK\n'
+    KILLED_LOG = ('FAIL: test_negative_synthetic_bound '
+                  '(__main__.NegativeRunnerTests.test_negative_synthetic_bound)\n'
+                  'AssertionError: #1402 synthetic marker\n'
+                  'Ran 1 test in 0.001s\n\nFAILED (failures=1)\n')
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-1402-runner-')
+        self.addCleanup(self.tmp.cleanup)
+        self.folder = Path(self.tmp.name)
+        self.source = self.folder / 'mutant_source.py'
+        self.source.write_text(self.PRISTINE)
+        self.out = self.folder / 'results'
+        self.events = []
+        self.timeouts = []
+        self.disks = []
+        c.common.LIVE_GROUPS.clear()
+        self.addCleanup(c.common.LIVE_GROUPS.clear)
+
+    def load_runner(self):
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_negative_controls', path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as error:
+            self.fail('#1402 the e2e negative runner must load by explicit path: '
+                      + str(path) + ': ' + repr(error))
+        return module
+
+    def _drive(self, runner, *, run_effect=None, slot_error=None, gap=0.0,
+               lease=None, window=0.0):
+        """Run the real e2e main(); record stage events, timeouts, disk bytes.
+
+        Stage labels come from the runner's own calls (passed/classify/with),
+        never from call counting, so injected failures cannot mislabel a stage.
+        """
+        events, timeouts, disks = self.events, self.timeouts, self.disks
+        originals = {self.source: self.source.read_bytes()}
+        ok = subprocess.CompletedProcess([], 0, '', self.OK_LOG)
+        killed = subprocess.CompletedProcess([], 1, '', self.KILLED_LOG)
+        real_passed = runner.passed
+
+        @contextlib.contextmanager
+        def mutating(root, paths, **_kwargs):
+            if lease is None:
+                events.append('acquire')
+                try:
+                    yield dict(originals)
+                finally:
+                    events.append('release')
+            else:
+                # The real lease protocol on a private directory: the drive is
+                # evidence that a second host can take the between-case gap.
+                with c.common.parity_lock(timeout=2, lock=lease):
+                    events.append(('acquire', time.monotonic()))
+                    if window:
+                        time.sleep(window)
+                    try:
+                        yield dict(originals)
+                    finally:
+                        events.append(('release', time.monotonic()))
+
+        def run_owned(command, **kwargs):
+            # cargo is the only command that names its stage; a Python bound
+            # call runs against the mutant only for the negative control.
+            stage = 'cargo' if command and command[0] == 'cargo' else (
+                'negative' if self.source.read_text() != self.PRISTINE else 'bound')
+            timeouts.append((stage, kwargs.get('timeout')))
+            if stage in ('cargo', 'negative'):
+                events.append(stage)
+                disks.append((stage, self.source.read_text()))
+            error = run_effect(stage) if run_effect is not None else None
+            if error is not None:
+                raise error
+            return killed if stage == 'negative' else ok
+
+        def passed(result):
+            if result.returncode != 0:
+                # classify probes the negative result internally through the
+                # module-global passed; that is not a stage of its own.
+                return real_passed(result)
+            # positive precedes the lease; restored is the first Python stage
+            # after a release -- a plain string without a lease, a timestamped
+            # tuple when the real lease protocol records the event.
+            last = events[-1] if events else None
+            stage = 'restored' if (last == 'release' or
+                                   (isinstance(last, tuple) and last[0] == 'release')) else 'positive'
+            events.append(stage)
+            disks.append((stage, self.source.read_text()))
+            if stage == 'restored' and gap:
+                time.sleep(gap)
+            return real_passed(result)
+
+        def slot(_script, **kwargs):
+            if slot_error is not None:
+                raise slot_error
+            events.append('slot')
+            timeouts.append(('slot', kwargs.get('timeout')))
+            return ok
+
+        rows = [('first', self.source, 'x = 0', 'x = 1', self.SYNTHETIC_TEST),
+                ('second', self.source, 'y = 1', 'y = 2', self.SYNTHETIC_TEST)]
+        with mock.patch.object(runner, 'cases', rows), \
+                mock.patch.object(runner, 'messages', {row[0]: self.MARKER for row in rows}), \
+                mock.patch.object(runner, 'preflight'), \
+                mock.patch.object(runner, 'execution_environment', return_value={}), \
+                mock.patch.object(runner, 'run_owned', run_owned), \
+                mock.patch.object(runner, 'wait_for_slot', slot), \
+                mock.patch.object(runner, 'mutating_sources', mutating), \
+                mock.patch.object(runner, 'passed', passed), \
+                mock.patch.object(sys, 'argv',
+                                  [str(Path(__file__).with_name('negative_controls.py')),
+                                   str(self.out)]):
+            code = runner.main()
+        return code, json.loads((self.out / 'summary.json').read_text())
+
+    def test_negative_lease_taken_and_released_per_case(self):
+        marker = '#1402 each case takes and releases the parity lease exactly once'
+        runner = self.load_runner()
+        code, summary = self._drive(runner)
+        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release', 'restored']
+        self.assertTrue(code == 0 and self.events == expected * 2, marker)
+        self.assertTrue(all(row['status'] == 'KILLED' and row['compiled'] for row in summary['controls']), marker)
+        self.assertTrue(self.events.count('acquire') == 2 and self.events.count('release') == 2, marker)
+        for stage, text in self.disks:
+            self.assertTrue((text != self.PRISTINE) == (stage in ('cargo', 'negative')),
+                            marker + ': the mutant is on disk only inside the lease (' + stage + ')')
+
+    def test_negative_lease_gap_admits_second_host(self):
+        marker = '#1402 a second process acquires the parity lease in the between-case gap'
+        runner = self.load_runner()
+        lease = self.folder / 'parity.lock'
+        marker_path = self.folder / 'second-host-acquired'
+        poller_script = self.folder / 'poller.py'
+        poller_script.write_text(
+            'import importlib.util\n'
+            'import sys\n'
+            'import time\n'
+            'from pathlib import Path\n'
+            'lock, common, acquired = (Path(argument) for argument in (sys.argv[1], sys.argv[2], sys.argv[4]))\n'
+            'hold = float(sys.argv[3])\n'
+            'spec = importlib.util.spec_from_file_location("poller_common", common)\n'
+            'module = importlib.util.module_from_spec(spec)\n'
+            'spec.loader.exec_module(module)\n'
+            'Path(sys.argv[5]).write_text("ready")\n'
+            'deadline = time.monotonic() + 30\n'
+            'while not lock.exists() and time.monotonic() < deadline:\n'
+            '    time.sleep(0.02)\n'
+            'with module.parity_lock(timeout=30, lock=lock):\n'
+            '    acquired.write_text(str(time.monotonic()))\n'
+            '    time.sleep(hold)\n')
+        ready = self.folder / 'second-host-ready'
+        poller = subprocess.Popen([sys.executable, '-I', '-B', str(poller_script), str(lease),
+                                   str(ROOT / 'scripts/gateway-parity/common.py'), '0.2',
+                                   str(marker_path), str(ready)])
+        try:
+            deadline = time.monotonic() + 30
+            while not ready.is_file() and poller.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(ready.is_file(), marker + ': the second host must reach the lease loop')
+            # window holds the first lease open long enough for the second
+            # host to observe it; gap is the between-case window it must win.
+            code, summary = self._drive(runner, lease=lease, gap=0.6, window=1.0)
+            self.assertTrue(poller.wait(60) == 0, marker + ': the poller itself must exit cleanly')
+        finally:
+            if poller.poll() is None:
+                poller.kill()
+                poller.wait(10)
+        acquires = [entry[1] for entry in self.events
+                    if isinstance(entry, tuple) and entry[0] == 'acquire']
+        releases = [entry[1] for entry in self.events
+                    if isinstance(entry, tuple) and entry[0] == 'release']
+        self.assertTrue(code == 0 and len(acquires) == len(releases) == 2 and marker_path.is_file()
+                        and summary['controls'][0]['status'] == 'KILLED', marker)
+        self.assertTrue(releases[0] < float(marker_path.read_text()) < acquires[1],
+                        marker + ': the second host holds the lease only inside the gap')
+
+    def test_negative_lease_bound_composition(self):
+        marker = '#1402 the per-case lease bound is composed and below the stale-lease age'
+        runner = self.load_runner()
+        self.assertTrue(runner.PER_CASE_LEASE_SECONDS == runner.BUILD_SECONDS + runner.BOUND_TEST_SECONDS
+                        and min(runner.BUILD_SECONDS, runner.BOUND_TEST_SECONDS, runner.SLOT_WAIT_SECONDS) > 0
+                        and runner.PER_CASE_LEASE_SECONDS < c.common.MAX_AGE, marker)
+        code, _summary = self._drive(runner)
+        expected = {'slot': runner.SLOT_WAIT_SECONDS, 'cargo': runner.BUILD_SECONDS,
+                    'bound': runner.BOUND_TEST_SECONDS, 'negative': runner.BOUND_TEST_SECONDS}
+        self.assertTrue(code == 0 and all(timeout == expected[stage]
+                                          for stage, timeout in self.timeouts), marker)
+
+    def test_negative_lease_released_on_case_failure(self):
+        marker = '#1402 a failed case releases the lease and the next case continues'
+        runner = self.load_runner()
+
+        def effect(stage):
+            return subprocess.TimeoutExpired(['python'], 300) if stage == 'negative' else None
+
+        code, summary = self._drive(runner, run_effect=effect)
+        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release', 'restored']
+        self.assertTrue(code == 1 and self.events == expected * 2, marker)
+        self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls'])
+                        and all('timed out' in row['reason'] for row in summary['controls']), marker)
+        self.assertTrue(self.events.count('release') == self.events.count('acquire') == 2, marker)
+
+    def test_negative_lease_released_and_loud_on_cancellation(self):
+        marker = '#1402 a cancelled case must release the parity lease and stay loud'
+        runner = self.load_runner()
+
+        def effect(stage):
+            return KeyboardInterrupt('#1402 injected cancellation') if stage == 'negative' else None
+
+        with self.assertRaises(KeyboardInterrupt, msg=marker):
+            self._drive(runner, run_effect=effect)
+        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release']
+        self.assertTrue(self.events == expected, marker + ': the lease must be released on the way out')
+        summary = json.loads((self.out / 'summary.json').read_text())
+        self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls'])
+                        and len(summary['controls']) == 2, marker)
+        self.assertTrue(self.source.read_text() == self.PRISTINE,
+                        marker + ': the cancelled case must restore the mutated bytes')
+
+    def test_negative_lease_not_taken_before_slot(self):
+        marker = '#1402 the lease is never taken while waiting for a cargo slot'
+        runner = self.load_runner()
+        code, summary = self._drive(runner,
+                                     slot_error=RuntimeError('#1402 no cargo slot'))
+        self.assertTrue(code == 1 and 'acquire' not in self.events
+                        and 'cargo' not in self.events and 'negative' not in self.events, marker)
+        self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls']), marker)
+
+    def test_negative_chain_denominators_derived(self):
+        marker = '#1402 chain denominators derive from the calibration manifest'
+        path = Path(__file__).resolve().parent.parent / 'native-witness/test_chain.py'
+        try:
+            spec = importlib.util.spec_from_file_location('chain_denominators', path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as error:
+            self.fail(marker + ': ' + str(path) + ': ' + repr(error))
+        suite = unittest.defaultTestLoader.loadTestsFromNames([
+            'ChainTests.test_provider_case_missing',
+            'ChainTests.test_provider_optional_case_missing',
+            'ChainTests.test_no_provider_traffic_is_scored'], module)
+        log = io.StringIO()
+        result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
+        self.assertTrue(result.wasSuccessful(), marker + ': ' + log.getvalue())
 
 
 if __name__ == '__main__':

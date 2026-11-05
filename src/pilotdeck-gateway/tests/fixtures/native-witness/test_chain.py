@@ -34,6 +34,10 @@ class ChainTests(unittest.TestCase):
         self.assertTrue(c.control_deadline_report(self.folder)['cells'][-1]['status'] == 'PASS',
                         '#1140 r8 chain healthy labelled control')
 
+    def manifest_case_count(self):
+        """#1402 chain denominators derive from the calibration manifest."""
+        return len(self.healthy['expected'])
+
     def read(self, name):
         return json.loads((self.folder / name).read_text())
 
@@ -284,7 +288,7 @@ class ChainTests(unittest.TestCase):
         self.assertTrue(failed == [{'case': case, 'status': 'FAIL', 'rule': 'EXPECTATION_MISMATCH',
                                     'surfaces': ['provider.requests']}]
                         and cell['executedCases'] == cell['expectedCases']
-                        and len(cell['cases']) == 72, marker)
+                        and len(cell['cases']) == self.manifest_case_count(), marker)
 
     def test_provider_optional_case_missing(self):
         marker = '#1140 r10 non-model expectations do not require provider requests'
@@ -296,7 +300,7 @@ class ChainTests(unittest.TestCase):
             cell = c.control_deadline_report(self.folder)['cells'][-1]
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
-        self.assertTrue(cell['status'] == 'PASS' and len(cell['cases']) == 72, marker)
+        self.assertTrue(cell['status'] == 'PASS' and len(cell['cases']) == self.manifest_case_count(), marker)
 
     def test_provider_requirement_derived_from_expectations(self):
         marker = '#1140 r10 provider requirement follows expectation frame changes'
@@ -333,7 +337,7 @@ class ChainTests(unittest.TestCase):
             self.fail(marker + ': ' + repr(error))
         required = n.required_provider_cases(c.read(s.SCRIPT / 'fixtures/session-expectations.json'))
         self.assertTrue({row['case'] for row in cell['cases'] if row['status'] == 'FAIL'} == required
-                        and len(cell['cases']) == 72 and cell['executedCases'] == cell['expectedCases']
+                        and len(cell['cases']) == self.manifest_case_count() and cell['executedCases'] == cell['expectedCases']
                         and all(row['surfaces'] == ['provider.requests']
                                 for row in cell['cases'] if row['case'] in required), marker)
 
