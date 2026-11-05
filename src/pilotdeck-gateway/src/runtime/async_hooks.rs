@@ -1,8 +1,9 @@
 //! Gateway async-hook ownership, expiry and result delivery (InProcessGateway).
 //! Timers are injected independently of the wall clock: a delayed timer and an
 //! explicit deadline check have different observable behavior in the TS host.
-use super::steer::{SteerMailbox, SteerMessage};
+use super::steer::{EnqueueResult, SteerMessage};
 use crate::host::{HostError, HostFuture, ModuleError};
+use crate::runtime::project::interaction_steer::ActiveSteerInfo;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::{HashMap, VecDeque},
@@ -61,10 +62,68 @@ impl AsyncHookClock for TokioHookClock {
 }
 pub use pilotdeck_protocol::timer_delay_ms;
 
+/// One live turn as captured when an async hook registers.
+///
+/// Delivery must re-check run identity and enqueue through the same
+/// admission-locked path as `steer_turn`. A bare `SteerMailbox` is keyed by
+/// the textual turn ID, so a restarted run that reuses that ID would claim the
+/// previous run's pending result.
+pub trait AsyncHookTurnHandle: Send + Sync {
+    /// External run ID; empty when the turn carries none.
+    fn run_id(&self) -> &JsString;
+    /// Opaque run identity. Handles captured from the same run share the same
+    /// `Arc`; a restarted run with equal textual IDs gets a fresh one.
+    fn identity(&self) -> &Arc<()>;
+    /// True while the captured run is still the session's current, open run.
+    fn is_live(&self) -> bool;
+    /// Enqueue as a mid-turn steer, refusing a captured run that has ended.
+    fn enqueue(&self, message: SteerMessage) -> HostFuture<EnqueueResult>;
+}
+
 #[derive(Clone)]
 pub struct AsyncHookTurn {
-    pub run_id: JsString,
-    pub mailbox: SteerMailbox,
+    handle: Arc<dyn AsyncHookTurnHandle>,
+    run_id: JsString,
+}
+impl AsyncHookTurn {
+    pub fn new(handle: impl AsyncHookTurnHandle + 'static) -> Self {
+        let run_id = handle.run_id().clone();
+        Self {
+            handle: Arc::new(handle),
+            run_id,
+        }
+    }
+    pub fn run_id(&self) -> &JsString {
+        &self.run_id
+    }
+    fn identity(&self) -> &Arc<()> {
+        self.handle.identity()
+    }
+    fn is_live(&self) -> bool {
+        self.handle.is_live()
+    }
+    fn enqueue(&self, message: SteerMessage) -> HostFuture<EnqueueResult> {
+        self.handle.enqueue(message)
+    }
+}
+
+/// Production handle: the gateway's admission-locked steer path. `enqueue`
+/// re-checks run identity under the registry lock and takes the mailbox tail
+/// placeholder in the same critical section, so delivery cannot slip into a
+/// restarted run.
+impl AsyncHookTurnHandle for ActiveSteerInfo {
+    fn run_id(&self) -> &JsString {
+        &self.run_id
+    }
+    fn identity(&self) -> &Arc<()> {
+        ActiveSteerInfo::identity(self)
+    }
+    fn is_live(&self) -> bool {
+        ActiveSteerInfo::is_live(self)
+    }
+    fn enqueue(&self, message: SteerMessage) -> HostFuture<EnqueueResult> {
+        ActiveSteerInfo::enqueue(self, message)
+    }
 }
 #[derive(Clone, Debug)]
 pub struct AsyncHookRegistration {
@@ -110,7 +169,7 @@ type TurnLookup = dyn Fn(&JsString) -> Option<AsyncHookTurn> + Send + Sync;
 type EventSink = dyn Fn(&JsString, JsObject) + Send + Sync;
 struct Pending {
     input: AsyncHookRegistration,
-    run_id: JsString,
+    turn: AsyncHookTurn,
     expires_at: f64,
     timer: Mutex<Option<Box<dyn AsyncHookTimer>>>,
     delivery: Mutex<Option<DeliveryReceiver>>,
@@ -182,7 +241,8 @@ impl AsyncHookRegistry {
         }))
     }
     pub fn register(&self, input: AsyncHookRegistration) -> Result<(), HostError> {
-        let Some(turn) = (self.0.turn)(&input.session_key).filter(|t| !t.run_id.is_empty()) else {
+        let Some(turn) = (self.0.turn)(&input.session_key).filter(|t| !t.run_id().is_empty())
+        else {
             return Ok(());
         };
         if blank(&input.invocation_id) {
@@ -190,7 +250,11 @@ impl AsyncHookRegistry {
         }
         let mut state = self.0.state.lock().unwrap();
         if let Some(existing) = state.pending(&input.invocation_id) {
-            if existing.input.session_key == input.session_key && existing.run_id == turn.run_id {
+            // Same run identity, not equal text: a retried run may reuse the
+            // invocation and turn IDs.
+            if existing.input.session_key == input.session_key
+                && Arc::ptr_eq(existing.turn.identity(), turn.identity())
+            {
                 return Ok(());
             }
             return Err(error(
@@ -206,7 +270,7 @@ impl AsyncHookRegistry {
         };
         let pending = Arc::new(Pending {
             input,
-            run_id: turn.run_id,
+            turn,
             expires_at: self.0.clock.now_ms() + timeout,
             timer: Mutex::new(None),
             delivery: Mutex::new(None),
@@ -279,11 +343,14 @@ impl AsyncHookRegistry {
             Ok(context) => context,
             Err(error) => return ready(Err(error)),
         };
-        // Empty context still has a run fence, but never enters steer.
-        let turn = (self.0.turn)(&pending.input.session_key)
-            .filter(|t| !t.run_id.is_empty() && t.run_id == pending.run_id);
+        // Empty context still has a run fence, but never enters steer. The
+        // fence is run identity, never the textual turn/run ID: a restarted
+        // run may reuse both.
+        let turn = (self.0.turn)(&pending.input.session_key).filter(|t| {
+            !t.run_id().is_empty() && Arc::ptr_eq(t.identity(), pending.turn.identity())
+        });
         if context.is_empty() || turn.is_none() {
-            let status = if turn.is_some() {
+            let status = if turn.is_some() && pending.turn.is_live() {
                 // TS settles synchronously here, so no timer can run between
                 // admission and settlement. With threaded timers, re-check
                 // ownership under the state lock instead of overwriting an
@@ -312,7 +379,6 @@ impl AsyncHookRegistry {
             };
             return ready(Ok(result(status)));
         }
-        let turn = turn.unwrap();
         let item_id = concat(&[&"async-hook:".into(), &invocation_id]);
         let message = object([
             ("role", "user".into()),
@@ -331,14 +397,14 @@ impl AsyncHookRegistry {
                 ]),
             ),
         ]);
-        let delivery = turn.mailbox.enqueue(
-            pending.run_id.clone(),
-            SteerMessage {
-                item_id,
-                message,
-                allowed_read_files: Some(Vec::new()),
-            },
-        );
+        // Admission-locked enqueue on the captured run: identity is re-checked
+        // under the registry lock and the tail placeholder is taken in the
+        // same critical section, so a restarted run cannot claim this result.
+        let delivery = pending.turn.enqueue(SteerMessage {
+            item_id,
+            message,
+            allowed_read_files: Some(Vec::new()),
+        });
         let (sender, receiver) = watch::channel(None);
         *in_flight = Some(receiver.clone());
         drop(in_flight);
@@ -373,7 +439,7 @@ impl AsyncHookRegistry {
         let entries = state
             .pending
             .iter()
-            .filter(|p| &p.input.session_key == session_key && &p.run_id == run_id)
+            .filter(|p| &p.input.session_key == session_key && p.turn.run_id() == run_id)
             .cloned()
             .collect::<Vec<_>>();
         for pending in &entries {
@@ -677,8 +743,43 @@ pub(super) mod spawn_test;
 mod spawn_tests {
     use super::spawn_test::{Port, Wait, Work, bounded};
     use super::*;
+    use crate::runtime::steer::SteerMailbox;
     use std::future::Future;
     use tokio::sync::oneshot;
+
+    /// Delivery handle over a bare mailbox for the registry mechanics tests.
+    /// Production uses `ActiveSteerInfo`; this one keeps the mailbox observable
+    /// without an admission registry.
+    struct BareHandle {
+        run_id: JsString,
+        identity: Arc<()>,
+        mailbox: SteerMailbox,
+        turn_id: JsString,
+    }
+    impl AsyncHookTurnHandle for BareHandle {
+        fn run_id(&self) -> &JsString {
+            &self.run_id
+        }
+        fn identity(&self) -> &Arc<()> {
+            &self.identity
+        }
+        fn is_live(&self) -> bool {
+            true
+        }
+        fn enqueue(&self, message: SteerMessage) -> HostFuture<EnqueueResult> {
+            self.mailbox.enqueue(self.turn_id.clone(), message)
+        }
+    }
+    fn bare_turn() -> AsyncHookTurn {
+        let mailbox = SteerMailbox::new(None);
+        mailbox.start("r".into());
+        AsyncHookTurn::new(BareHandle {
+            run_id: "r".into(),
+            identity: Arc::new(()),
+            mailbox,
+            turn_id: "r".into(),
+        })
+    }
 
     fn pending_entry() -> Arc<Pending> {
         Arc::new(Pending {
@@ -690,7 +791,7 @@ mod spawn_tests {
                 timeout_ms: None,
                 include_hook_events: false,
             },
-            run_id: "r".into(),
+            turn: bare_turn(),
             expires_at: f64::INFINITY,
             timer: Mutex::new(None),
             delivery: Mutex::new(None),
@@ -795,13 +896,16 @@ mod spawn_tests {
     async fn submit_sink_panic_clears_delivery() {
         let mailbox = SteerMailbox::new(None);
         mailbox.start("r".into());
+        let identity = Arc::new(());
         let registry = AsyncHookRegistry::new(
             Arc::new(TokioHookClock),
             move |_| {
-                Some(AsyncHookTurn {
+                Some(AsyncHookTurn::new(BareHandle {
                     run_id: "r".into(),
+                    identity: identity.clone(),
                     mailbox: mailbox.clone(),
-                })
+                    turn_id: "r".into(),
+                }))
             },
             |_, _| panic!("injected sink panic"),
         );

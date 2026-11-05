@@ -667,22 +667,48 @@ async fn hook_async_result_blank_id_error_shape_is_pinned_across_registry_states
     // (InProcessGateway.ts:1896-1899, re-read this round). Pin the complete
     // error shape in both registry states: the blank-id validation runs
     // before any registry lookup, so neither state may reshape it.
-    use crate::runtime::async_hooks::{AsyncHookRegistry, AsyncHookTurn, TokioHookClock};
-    use crate::runtime::steer::SteerMailbox;
+    use crate::runtime::async_hooks::{
+        AsyncHookRegistry, AsyncHookTurn, AsyncHookTurnHandle, TokioHookClock,
+    };
+    use crate::runtime::steer::{EnqueueResult, SteerMailbox, SteerMessage};
     use crate::runtime::turn::gateway::GatewayRequests;
+
+    // A bare-mailbox delivery handle; this test only pins the blank-id error
+    // shape, so the registry lookup never runs.
+    struct BareTurn {
+        run_id: pilotdeck_protocol::JsString,
+        identity: std::sync::Arc<()>,
+        mailbox: SteerMailbox,
+    }
+    impl AsyncHookTurnHandle for BareTurn {
+        fn run_id(&self) -> &pilotdeck_protocol::JsString {
+            &self.run_id
+        }
+        fn identity(&self) -> &std::sync::Arc<()> {
+            &self.identity
+        }
+        fn is_live(&self) -> bool {
+            true
+        }
+        fn enqueue(&self, message: SteerMessage) -> crate::host::HostFuture<EnqueueResult> {
+            self.mailbox.enqueue(self.run_id.clone(), message)
+        }
+    }
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1307 registry fixture setup");
     let mut with_registry = requests.clone();
     let mailbox = SteerMailbox::new(None);
     mailbox.start("t".into());
+    let identity = std::sync::Arc::new(());
     with_registry.async_hook_registry = Some(std::sync::Arc::new(AsyncHookRegistry::new(
         std::sync::Arc::new(TokioHookClock),
         move |_: &pilotdeck_protocol::JsString| {
-            Some(AsyncHookTurn {
+            Some(AsyncHookTurn::new(BareTurn {
                 run_id: "t".into(),
+                identity: identity.clone(),
                 mailbox: mailbox.clone(),
-            })
+            }))
         },
         |_, _| unreachable!("blank ids must never reach the registry sink"),
     )));

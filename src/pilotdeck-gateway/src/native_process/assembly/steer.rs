@@ -42,10 +42,10 @@ pub(super) fn build_async_hook_registry(
                         session_key,
                         Some(&run_id),
                     )?;
-                    Some(AsyncHookTurn {
-                        run_id: info.turn_id,
-                        mailbox: info.mailbox,
-                    })
+                    // Keep the full admission-locked handle: the registry must
+                    // fence delivery by run identity, not by the textual turn
+                    // ID a restarted run may reuse.
+                    Some(AsyncHookTurn::new(info))
                 },
                 move |session_key, event| {
                     reg_coordinator.emit(session_key, &JsValue::Object(event));
@@ -55,4 +55,156 @@ pub(super) fn build_async_hook_registry(
         });
     let _ = &async_hook_registry;
     async_hook_registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        host::modules::ModuleRouter,
+        runtime::{
+            async_hooks::{AsyncHookRegistration, AsyncHookStatus},
+            hooks::Cancellation,
+            project::{
+                ProjectResources, ProjectRuntimeRegistry, Resource,
+                interaction_steer::InteractionSteer,
+            },
+        },
+    };
+    use pilotdeck_protocol::{JsObject, JsString, JsValue};
+
+    fn steer_resource(project: &Arc<ProjectRuntimeRegistry>) -> InteractionSteer {
+        let lease = project.acquire(None).expect("#1450 project lease");
+        lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .expect("#1450 project resources")
+            .context()
+            .resource(Resource::InteractionSteer)
+            .expect("#1450 interaction steer resource")
+            .as_any()
+            .downcast_ref::<InteractionSteer>()
+            .expect("#1450 steer resource type")
+            .clone()
+    }
+
+    /// Gate finding (P1-跟进 #1425 / #1307): the registry used to keep only
+    /// the textual turn ID and a bare `SteerMailbox`, so a pending async-hook
+    /// result from run r1 was delivered into a restarted run r2 that reused
+    /// the same turn ID. Delivery must be fenced by run identity and go
+    /// through the admission-locked `ActiveSteerInfo::enqueue`.
+    #[tokio::test]
+    async fn async_hook_result_cannot_cross_runs_after_a_same_text_turn_restart() {
+        let (_scratch, requests) =
+            std::panic::catch_unwind(crate::native_process::management_tests::setup)
+                .expect("#1450 registry fixture setup");
+        let session = JsString::from("hook-race");
+        let reservation = requests
+            .owner
+            .begin_turn(&session, &"r1".into())
+            .expect("#1450 admission slot");
+        let steer = steer_resource(&requests.project);
+        let binding = steer
+            .bind_session(session.clone(), None)
+            .expect("#1450 steer session binding");
+        let first = binding
+            .start_turn(
+                "t".into(),
+                "r1".into(),
+                vec![],
+                Cancellation::new(),
+                &mut ModuleRouter::default(),
+            )
+            .expect("#1450 first steer turn start");
+        let registry =
+            build_async_hook_registry(&requests.project, &requests.owner, &requests.coordinator)
+                .expect("#1450 async hook registry");
+        registry
+            .register(AsyncHookRegistration {
+                session_key: session.clone(),
+                invocation_id: "inv".into(),
+                hook_name: "hook".into(),
+                hook_event: "PreToolUse".into(),
+                timeout_ms: Some(60_000.0),
+                include_hook_events: true,
+            })
+            .expect("#1450 async hook registration");
+        // r1 ends; the retry restarts a turn under the same textual turn ID.
+        first.close().await.expect("#1450 first turn closed");
+        requests
+            .owner
+            .end_turn(&session, Some(&"r1".into()), Some(&reservation));
+        let _restarted_slot = requests
+            .owner
+            .begin_turn(&session, &"r2".into())
+            .expect("#1450 restarted admission slot");
+        let _second = binding
+            .start_turn(
+                "t".into(),
+                "r2".into(),
+                vec![],
+                Cancellation::new(),
+                &mut ModuleRouter::default(),
+            )
+            .expect("#1450 restarted steer turn start");
+        let output = crate::metadata::object([(
+            "hookSpecificOutput",
+            crate::metadata::object([
+                ("hookEventName", "PreToolUse".into()),
+                ("additionalContext", "old-run context".into()),
+            ]),
+        )]);
+        let result = registry
+            .submit(session.clone(), "inv".into(), output)
+            .await
+            .expect("#1450 stale async hook result settles");
+        assert_eq!(
+            result.status,
+            AsyncHookStatus::Expired,
+            "#1450 an old run's async hook result must expire, not deliver"
+        );
+        let drained = steer
+            .mailbox_for_test(&session)
+            .expect("#1450 session mailbox")
+            .drain(&"t".into());
+        assert!(
+            drained.is_empty(),
+            "#1450 the restarted run received nothing"
+        );
+        // Positive control: r2's own hook still delivers.
+        registry
+            .register(AsyncHookRegistration {
+                session_key: session.clone(),
+                invocation_id: "fresh".into(),
+                hook_name: "hook".into(),
+                hook_event: "PreToolUse".into(),
+                timeout_ms: Some(60_000.0),
+                include_hook_events: false,
+            })
+            .expect("#1450 fresh registration");
+        let fresh = registry
+            .submit(
+                session.clone(),
+                "fresh".into(),
+                JsValue::Object(JsObject::new()),
+            )
+            .await
+            .expect("#1450 fresh result settles");
+        assert_eq!(
+            fresh.status,
+            AsyncHookStatus::Delivered,
+            "#1450 the restarted run's own hook still delivers"
+        );
+        requests
+            .owner
+            .shutdown()
+            .await
+            .expect("#1450 registry fixture owner shutdown");
+        requests
+            .project
+            .dispose()
+            .await
+            .expect("#1450 registry fixture project shutdown");
+    }
 }
