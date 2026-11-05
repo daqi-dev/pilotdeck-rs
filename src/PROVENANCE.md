@@ -27,6 +27,8 @@ ICU 78.2 中导出基线运行时数据。目录 fixture 与诊断原件通过�
 
 搬入范围：`rust/crates/{pilotdeck-agent,pilotdeck-transport,pilotdeck-protocol,pilotdeck-tokenizer}` → `src/<crate>`；`rust/vendor/tiktoken-rs` → `src/vendor/tiktoken-rs`。vendor 的 `LICENSE` 原样保留。所有搬入文件在原样阶段均逐字节核对源 commit。
 
+`#132` 另从本机已有的 crates.io 源码缓存取 `icu_collator=2.1.1` 增补副本到 `src/vendor/icu_collator`（未下载预编译产物）：来源包 SHA-256、25 个导入原件的 `UPSTREAM.sha256`、算法差量（仅 `comparison.rs` / `elements.rs`）与 lib-only 发布裁剪都记在该目录的 `UPSTREAM.md`，此处只留指针，不抄副本。
+
 ## 适配例外
 
 - `src/Cargo.toml`：合并旧 workspace 的 resolver、edition、rust-version 1.93、version、license-file 与 lint 表；成员只登记本次四个 crate 和保留的 CLI；exclude vendor；保留本仓 `publish = false` 和 CLI 继承的 AGPL 标识。只搬入四个 crate 用到的 workspace 依赖，版本保持旧钉死值；`pilotdeck-protocol` 的 path 改为本仓布局。crate 中直接声明的 uuid、chrono、base64、rustc-hash 等依赖维持原值。
@@ -358,6 +360,12 @@ THIS SOFTWARE.
 `icu_provider_source=2.1.1`、`icu_provider_export=2.1.1`，完整源码依赖和 SHA-256
 锁定在 `../tools/collation-datagen/Cargo.lock`，不进入主 workspace。
 
+**D6 补记（#132，2026-11-01）**：上面「只替换数据来源」说的是 D6 当时的范围。
+#132 另在 `src/Cargo.toml` 的 `[patch.crates-io]` 加了第二项 `icu_collator =
+{ path = "vendor/icu_collator" }`：版本仍钉 2.1.1，源码是带算法差量的增补副本
+（孤代理按 implicit weight 原生比较），来源与差量见 `vendor/icu_collator/UPSTREAM.md`。
+数据 crate 的 patch 行不变。
+
 ### 源数据
 
 | 官方下载 URL | 版本 | 字节数 | SHA-256 |
@@ -397,7 +405,9 @@ python3 tools/collation-datagen/regenerate.py --output _tmp/d6/new-collation-dat
 去重、不导出 search。gateway locale 来自环境，没有缩成 en/zh/ja 白名单。
 输出标准 baked provider，静态加载，无运行时数据文件、blob 解码依赖或额外
 主工程 crate。主 Cargo 的 `[patch.crates-io]` 将现有 data crate 指向
-`data/icu_collator_data`，原 `Collator::try_new` 构造器读取这些宏。
+`data/icu_collator_data`，原 `Collator::try_new` 构造器读取这些宏。`#132` 起同一张
+patch 表还有第二项指向 `vendor/icu_collator`（见「D6 补记」），补丁表以
+`src/Cargo.toml` 为准。
 
 生成物共 12 文件、4,535,991 bytes，所有文件哈希在
 [data/icu_collator_data/SHA256SUMS](data/icu_collator_data/SHA256SUMS)。清单自身
