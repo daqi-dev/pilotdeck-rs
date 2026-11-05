@@ -511,6 +511,7 @@ regeneration!(
     "web-conversion-lifecycle"
 );
 regeneration!(webhook_channel_regenerates_identically, "webhook-channel");
+regeneration!(wecom_callback_regenerates_identically, "wecom-callback");
 // #283: not the shared macro — the committed oracle carries the non-utf8
 // scenario (a raw `bad-\xff.txt` beside `ok.txt`), which only a
 // byte-transparent filesystem can generate: the generator probes and drops

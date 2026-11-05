@@ -20,6 +20,10 @@ libc = "=0.2.190"
 sha2.workspace = true
 # FileMemoryStore hashText uses Node crypto SHA-1 (10 hex digits).
 sha1 = "=0.10.7"
+# #1336: WeCom callback envelope is AES-256-CBC with PKCS#7 (Node crypto).
+# Pure-Rust RustCrypto crates; decryption only, already in the local cache.
+aes = "=0.8.4"
+cbc = "=0.1.2"
 icu_collator = "=2.1.1"
 icu_casemap = "=2.1.1"
 # #345 B6: full NFKC via the normalizer already locked by url/idna.
