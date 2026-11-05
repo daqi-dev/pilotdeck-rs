@@ -955,18 +955,21 @@ fn migration_blocked_dir_tasks_eacces_matches_ts() {
         // chmod 000 cannot make the tasks file unreadable for root: the cell
         // would fail on its recorded warning/tree, not on parity. The read
         // error itself is still covered by the EISDIR cell below.
-        //
-        // #1400 review (sibling): this is the same "absent cell reads as a
-        // passing one" hazard the non-UTF-8 guard above just closed, so the
-        // skip is printed the same way — straight to the stderr handle,
-        // because the print-family macros are captured by the test harness
-        // and a passing (skipping) test's captured output never reaches the
-        // log. A root-hosted run of the migration matrix is 22/23 cells,
-        // and the log now says so instead of reporting a clean sweep.
-        let _ = std::io::stderr().write_all(
-            b"migration_blocked_dir_tasks_eacces_matches_ts: skipped, running as root \
-              (chmod 000 is not a read error for root); the read-error branch stays \
-              covered by blocked-dir-tasks-isdir\n",
+        // #1400 review (sibling) + #1525/#1263: a root-hosted run of the
+        // migration matrix is 22/23 cells, so the skip must say so instead of
+        // reporting a clean sweep — and it goes straight to the stderr handle
+        // (the print-family macros are captured by the harness, so a passing
+        // test's note never reaches the log). The CI switch turns the same
+        // skip into a failure; the read-error branch stays covered by
+        // blocked-dir-tasks-isdir.
+        assert!(
+            !crate::test_permission_faults::require_permission_faults(),
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but this caller is root; the \
+             migration/blocked-dir-tasks-eacces cell needs an unprivileged host (需要非特权宿主)"
+        );
+        crate::test_skip_line::stderr_skip_line(
+            "#1263 skip: migration/blocked-dir-tasks-eacces: chmod(0) does not deny access \
+             to root; the EACCES cell needs an unprivileged host\n",
         );
         return;
     }
@@ -1110,9 +1113,11 @@ fn migration_non_utf8_home_keeps_one_physical_key() {
         // (measured: plain `--exact` runs showed nothing until this write
         // bypassed the capture) — which would make the skip exactly as
         // silent as the pass it must distinguish itself from.
-        let _ = std::io::stderr().write_all(
-            b"migration_non_utf8_home_keeps_one_physical_key: skipped, \
-              filesystem rejects non-UTF-8 file names\n",
+        // #1525: same writer as the rest of the crate, and registered in the
+        // nextest success-output list so CI replays this line.
+        crate::test_skip_line::stderr_skip_line(
+            "migration_non_utf8_home_keeps_one_physical_key: skipped, \
+             filesystem rejects non-UTF-8 file names\n",
         );
         return;
     }

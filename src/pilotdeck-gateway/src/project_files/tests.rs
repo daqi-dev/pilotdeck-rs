@@ -1023,6 +1023,19 @@ fn node_round4_unreadable_huge_file_reports_open_error_first() {
         fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
         // Root cannot reproduce EACCES. Non-root runs exercise both responses.
         if mode == 0 && File::open(&path).is_ok() {
+            // #1525 / #1263: the Node `denied` record could not be compared at
+            // all; say so and fail when the CI switch says it is mandatory.
+            assert!(
+                !crate::test_permission_faults::require_permission_faults(),
+                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a chmod(0) huge file is \
+                 still readable (root or CAP_DAC_OVERRIDE); the Node largeFile/denied \
+                 open-error record needs an unprivileged host (需要非特权宿主)"
+            );
+            crate::test_skip_line::stderr_skip_line(
+                "#1263 skip: largeFile/denied: a chmod(0) huge file is still readable (root \
+                 or CAP_DAC_OVERRIDE); the Node open-error record needs an unprivileged \
+                 host\n",
+            );
             continue;
         }
         let expected: Value = serde_json::from_str(
