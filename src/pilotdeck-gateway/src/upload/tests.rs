@@ -1040,9 +1040,12 @@ async fn cleanup_schedule_pins_the_ts_interval_and_ends_with_the_store() {
         tokio::task::yield_now().await;
     }
     // `await` (not `is_finished`) so a task that died by panic is a failure
-    // rather than a clean-looking exit.
-    handle
+    // rather than a clean-looking exit. The timeout bounds the other failure
+    // mode: a regression that keeps the store alive would tick forever here,
+    // and a hung suite never reports anything.
+    tokio::time::timeout(Duration::from_secs(10), handle)
         .await
+        .expect("the detached loop exits once the store is dropped")
         .expect("the detached loop exits cleanly once the store is dropped");
     assert!(
         uploads.join("upload-gone").exists(),
