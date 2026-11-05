@@ -207,4 +207,103 @@ mod tests {
             .await
             .expect("#1450 registry fixture project shutdown");
     }
+
+    /// P2-a (review 2026-11-06): positive control for the admission-locked
+    /// delivery path. The cross-run test above only proves the fence rejects a
+    /// restarted run; its "fresh" branch submits an empty context, which
+    /// settles without entering the mailbox. Without a success case that runs
+    /// `ActiveSteerInfo::enqueue` with a non-empty context, an `enqueue` that
+    /// always rejected would still leave that test green. Assert the result is
+    /// `Delivered` *and* that the steer message landed in the live run's
+    /// mailbox carrying the hook's context.
+    #[tokio::test]
+    async fn async_hook_result_delivers_non_empty_context_through_real_enqueue() {
+        let (_scratch, requests) =
+            std::panic::catch_unwind(crate::native_process::management_tests::setup)
+                .expect("#1450 registry fixture setup");
+        let session = JsString::from("hook-delivery");
+        let _slot = requests
+            .owner
+            .begin_turn(&session, &"r1".into())
+            .expect("#1450 admission slot");
+        let steer = steer_resource(&requests.project);
+        let binding = steer
+            .bind_session(session.clone(), None)
+            .expect("#1450 steer session binding");
+        let _turn = binding
+            .start_turn(
+                "t".into(),
+                "r1".into(),
+                vec![],
+                Cancellation::new(),
+                &mut ModuleRouter::default(),
+            )
+            .expect("#1450 steer turn start");
+        let registry =
+            build_async_hook_registry(&requests.project, &requests.owner, &requests.coordinator)
+                .expect("#1450 async hook registry");
+        registry
+            .register(AsyncHookRegistration {
+                session_key: session.clone(),
+                invocation_id: "inv".into(),
+                hook_name: "hook".into(),
+                hook_event: "PreToolUse".into(),
+                timeout_ms: Some(60_000.0),
+                include_hook_events: false,
+            })
+            .expect("#1450 async hook registration");
+        let output = crate::metadata::object([(
+            "hookSpecificOutput",
+            crate::metadata::object([
+                ("hookEventName", "PreToolUse".into()),
+                ("additionalContext", "live context".into()),
+            ]),
+        )]);
+        let result = registry
+            .submit(session.clone(), "inv".into(), output)
+            .await
+            .expect("#1450 live async hook result settles");
+        assert_eq!(
+            result.status,
+            AsyncHookStatus::Delivered,
+            "#1450 a live run's non-empty context must deliver"
+        );
+        let drained = steer
+            .mailbox_for_test(&session)
+            .expect("#1450 session mailbox")
+            .drain(&"t".into());
+        assert_eq!(
+            drained.len(),
+            1,
+            "#1450 delivery must enter the live run's mailbox through real enqueue"
+        );
+        assert_eq!(drained[0].item_id, JsString::from("async-hook:inv"));
+        let text = drained[0]
+            .message
+            .get("content")
+            .and_then(|content| match content {
+                JsValue::Array(items) => items.first(),
+                _ => None,
+            })
+            .and_then(|item| item.get("text"))
+            .and_then(JsValue::as_string)
+            .expect("#1450 delivered steer carries the hook context");
+        assert_eq!(
+            text,
+            &JsString::from(
+                "<async_hook_context event=\"PreToolUse\">\nlive context\n</async_hook_context>"
+            ),
+            "#1450 delivered steer carries the hook context"
+        );
+        requests
+            .owner
+            .shutdown()
+            .await
+            .expect("#1450 registry fixture owner shutdown");
+        requests
+            .project
+            .dispose()
+            .await
+            .expect("#1450 registry fixture project shutdown");
+    }
 }
