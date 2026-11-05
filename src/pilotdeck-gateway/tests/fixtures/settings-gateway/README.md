@@ -80,6 +80,23 @@ all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle
 每轮 finally 恢复原始源码并核 SHA-256；输出每条补丁、原始日志、失败摘要，
 结束后应重跑正常测试和 fmt/clippy。
 
+退出码与证据（宿主按此分诊，`summary.json` 的 `complete` 是判定完成与否的唯一标志）：
+
+| 退出码 | 含义 |
+|---|---|
+| `0` | 本次选中的变异全部 KILLED（`summary.json` 此时 `complete: true`） |
+| `1` | 有变异 SURVIVED / INVALID，或恢复校验失败（证据已先落盘） |
+| `2` | 从未真正开跑：变异名非法（选择失败）。表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7`）或 `MARKERS` 与变异表不互相覆盖，按 `1` 退出并在 stderr 写明原因 |
+| `42` | 全杀但基线不是 HEAD，非宿主证据 |
+
+`summary.json` 是对象：`runId`（与 `baseline.json` 同代）、`registeredTotal`、
+`selectedTotal`、`complete`、`counts`、`results`；跑动中每轮都会原子重写一次且
+`complete: false`，轮询读者必须看到 `complete: true` 才算一份完整结论。
+`baseline.json` 记同一 `runId`、基线 SHA 与来源、`registeredTotal` /
+`selectedTotal` / `selected`（子集运行不再与全量同形）。
+所有证据文件（`summary.json` / `baseline.json` / 逐变异 `.patch` / `.log`）
+一律 `.tmp` + `rename` 原子发布。
+
 本组件未接线 `dispatch.rs` / `native_process`（归 #1320）；registry 的
 `applyFlagSettingsForSdk` / `reloadOutputStylesForSdk` 与
 `updatePilotLocalSettings` 生产写盘件为镜像端口（`MirrorWriter` 保持同一
