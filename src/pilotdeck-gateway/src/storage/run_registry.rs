@@ -17,7 +17,7 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex, PoisonError},
+    sync::{Arc, LazyLock, Mutex, PoisonError},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -224,18 +224,43 @@ pub struct FileRunRegistry {
     lock_path: PathBuf,
     chain: Mutex<()>,
     lock_timeout: Duration,
+    /// #1370 controlled stimulus: resolved once at open, so a stimulus armed
+    /// for this registry can never be observed by another component's
+    /// persists in the same process. `None` (env unset) stays inert.
+    stimulus: Option<Arc<super::stimulus::StorageStimulus>>,
     #[cfg(test)]
     pub(super) fail_persist: std::sync::atomic::AtomicBool,
 }
 impl FileRunRegistry {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with(path.as_ref(), FILE_LOCK_TIMEOUT)
+        Self::open_with(
+            path.as_ref(),
+            FILE_LOCK_TIMEOUT,
+            super::stimulus::StorageStimulus::global(),
+        )
     }
     #[cfg(test)]
     pub(super) fn open_for_test(path: impl AsRef<Path>, lock_timeout: Duration) -> Result<Self> {
-        Self::open_with(path.as_ref(), lock_timeout)
+        Self::open_with(
+            path.as_ref(),
+            lock_timeout,
+            super::stimulus::StorageStimulus::global(),
+        )
     }
-    fn open_with(path: &Path, lock_timeout: Duration) -> Result<Self> {
+    /// #1370 test support: open wired to an injected controlled stimulus
+    /// instead of the process-wide env-resolved entry.
+    #[cfg(test)]
+    pub(super) fn open_with_stimulus(
+        path: impl AsRef<Path>,
+        stimulus: Option<Arc<super::stimulus::StorageStimulus>>,
+    ) -> Result<Self> {
+        Self::open_with(path.as_ref(), FILE_LOCK_TIMEOUT, stimulus)
+    }
+    fn open_with(
+        path: &Path,
+        lock_timeout: Duration,
+        stimulus: Option<Arc<super::stimulus::StorageStimulus>>,
+    ) -> Result<Self> {
         let mut lock_path = path.as_os_str().to_os_string();
         lock_path.push(".lock");
         let registry = Self {
@@ -243,6 +268,7 @@ impl FileRunRegistry {
             lock_path: lock_path.into(),
             chain: Mutex::new(()),
             lock_timeout,
+            stimulus,
             #[cfg(test)]
             fail_persist: Default::default(),
         };
@@ -251,6 +277,12 @@ impl FileRunRegistry {
     }
     pub fn path(&self) -> &Path {
         &self.path
+    }
+    /// #1370: the controlled stimulus this registry's persists witness, so the
+    /// async port adapter can capture the same entry once at its own
+    /// construction.
+    pub(crate) fn stimulus(&self) -> Option<&Arc<super::stimulus::StorageStimulus>> {
+        self.stimulus.as_ref()
     }
 
     /// RunRegistry.ts:211-234.
@@ -496,7 +528,7 @@ impl FileRunRegistry {
         if changed {
             let mut blocked = None;
             if let Some(key) = stimulus_key
-                && let Some(stimulus) = super::stimulus::StorageStimulus::global()
+                && let Some(stimulus) = self.stimulus.as_ref()
                 && stimulus.before_write(super::stimulus::Site::Registry, key)?
                     == super::stimulus::Applied::Blocked
             {

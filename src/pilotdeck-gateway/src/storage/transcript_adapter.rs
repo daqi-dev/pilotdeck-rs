@@ -145,6 +145,14 @@ pub trait TranscriptStore: Send + Sync {
     fn replace(&self, _key: &TranscriptKey, _entries: &[JsValue]) -> Option<StoreResult<()>> {
         None
     }
+    /// #1370 controlled stimulus: the entry this store's writes witness. The
+    /// default resolves the process-wide env entry, so every implementation
+    /// keeps the production default; `JsonlTranscriptStore` overrides it with
+    /// the instance handle captured at construction, which is how the
+    /// stimulus tests arm one store without reaching any other.
+    fn stimulus(&self) -> Option<&Arc<super::stimulus::StorageStimulus>> {
+        super::stimulus::StorageStimulus::global_ref()
+    }
 }
 
 /// Gateway-local JSONL host store with the TS default provider's bytes:
@@ -171,10 +179,24 @@ pub struct JsonlTranscriptStore {
     /// A project-owned store serves one canonical transcript; diagnostics keep
     /// the original spelling supplied when that writer acquired its fence.
     diagnostic_path: Option<PathBuf>,
+    /// #1370 controlled stimulus: resolved once at construction, so arming a
+    /// stimulus for this store can never be observed by another component's
+    /// writes. `None` (env unset) keeps the production default inert.
+    stimulus: Option<Arc<super::stimulus::StorageStimulus>>,
 }
 impl JsonlTranscriptStore {
     pub fn new() -> Self {
-        Self::default()
+        Self::with_stimulus(super::stimulus::StorageStimulus::global())
+    }
+    /// #1370: construct wired to a specific controlled stimulus — the
+    /// production `new` passes the process-wide env-resolved entry, while the
+    /// stimulus tests inject a dedicated instance so arming can never reach
+    /// another component's store.
+    pub(crate) fn with_stimulus(stimulus: Option<Arc<super::stimulus::StorageStimulus>>) -> Self {
+        Self {
+            stimulus,
+            ..Self::default()
+        }
     }
     pub(crate) fn open_locked(path: &Path) -> StoreResult<(Self, PathBuf)> {
         let diagnostic_path = path.to_path_buf();
@@ -183,7 +205,7 @@ impl JsonlTranscriptStore {
             Self {
                 owner: Mutex::new(Some(owner)),
                 diagnostic_path: Some(diagnostic_path),
-                ..Self::default()
+                ..Self::with_stimulus(super::stimulus::StorageStimulus::global())
             },
             path,
         ))
@@ -230,6 +252,9 @@ fn json_line(entry: &JsValue) -> StoreResult<String> {
     Ok(line)
 }
 impl TranscriptStore for JsonlTranscriptStore {
+    fn stimulus(&self) -> Option<&Arc<super::stimulus::StorageStimulus>> {
+        self.stimulus.as_ref()
+    }
     fn append(&self, key: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
         let line = json_line(entry)?;
         let path = &key.transcript_path;
@@ -257,10 +282,11 @@ impl TranscriptStore for JsonlTranscriptStore {
             && is_str(field(boundary, "kind"), "compact")
             && is_str(field(boundary, "subtype"), "compact_boundary");
         // #1370 controlled stimulus: the real writer's underlying append, with
-        // the caller's commit lock (the TS writeTail) held. Inert unless the
-        // process-wide controlled entry is armed; the bounded barrier holds the
-        // writeTail, and the single EIO fails the append before any bytes.
-        let stimulus = super::stimulus::StorageStimulus::global();
+        // the caller's commit lock (the TS writeTail) held. Inert unless this
+        // store was constructed with the controlled entry armed; the bounded
+        // barrier holds the writeTail, and the single EIO fails the append
+        // before any bytes.
+        let stimulus = self.stimulus.clone();
         let blocked = match &stimulus {
             Some(stimulus) => {
                 stimulus.before_write(
@@ -825,7 +851,8 @@ impl TranscriptWriter {
             return Ok(());
         }
         // #1370 stimulus entry witness, same position as append_with above.
-        super::stimulus::writer_stimulus_queued_entry(entry).map_err(AdapterError::Store)?;
+        super::stimulus::writer_stimulus_queued_entry(self.base.store.stimulus(), entry)
+            .map_err(AdapterError::Store)?;
         let mut inner = self.lock();
         self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
@@ -874,7 +901,9 @@ impl TranscriptWriter {
         // #1370 stimulus entry witness: this append queues behind the commit
         // lock (the TS writeTail) — record what arrived while a barrier holds
         // the underlying append, before blocking on the lock below.
-        if let Err(error) = super::stimulus::writer_stimulus_queued_draft(&draft) {
+        if let Err(error) =
+            super::stimulus::writer_stimulus_queued_draft(self.base.store.stimulus(), &draft)
+        {
             return Err(E::from(AdapterError::Store(error)));
         }
         let mut inner = self.lock();

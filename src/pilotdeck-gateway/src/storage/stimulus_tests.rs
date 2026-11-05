@@ -10,7 +10,7 @@ use pilotdeck_protocol::{JsValue, parse_json};
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -23,23 +23,11 @@ const POLL: Duration = Duration::from_millis(10);
 /// short enough that a broken release fails fast instead of wedging.
 const HELD_BOUND_MS: f64 = 3000.0;
 
-fn serial() -> &'static Mutex<()> {
-    static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
-    SERIAL.get_or_init(|| Mutex::new(()))
-}
-/// Re-arms the process-wide controlled entry for one test and restores the
-/// previous value on drop, so parallel tests can never observe it.
-struct GlobalGuard(Option<Arc<StorageStimulus>>);
-impl Drop for GlobalGuard {
-    fn drop(&mut self) {
-        let _ = StorageStimulus::override_global(self.0.take());
-    }
-}
-fn arm_global(dir: Option<&Path>) -> GlobalGuard {
-    let previous = StorageStimulus::override_global(
-        dir.map(|dir| Arc::new(StorageStimulus::control(dir.to_path_buf()))),
-    );
-    GlobalGuard(previous)
+/// The controlled entry for one test: a dedicated instance injected into the
+/// test's own writer and registry stores at construction, so an armed
+/// stimulus can never be observed by any other test in the same process.
+fn armed(dir: &Path) -> Arc<StorageStimulus> {
+    Arc::new(StorageStimulus::control(dir))
 }
 
 struct Scratch(PathBuf);
@@ -135,8 +123,12 @@ fn count_receipts(dir: &Path, site: &str, phase: &str, key: &str) -> usize {
 }
 
 /// The real session writer over the real JsonlTranscriptStore, keyed like the
-/// adapter tests (the store creates its own parent directories).
-fn writer_fixture(root: &Path) -> (Arc<TranscriptWriter>, PathBuf) {
+/// adapter tests (the store creates its own parent directories). The stimulus
+/// handle is injected into the store, so only this writer witnesses it.
+fn writer_fixture(
+    root: &Path,
+    stimulus: Option<Arc<StorageStimulus>>,
+) -> (Arc<TranscriptWriter>, PathBuf) {
     let path = root.join("chat/s1.jsonl");
     let key = TranscriptKey {
         project_root: PathBuf::from("/pdrs-fixture/project"),
@@ -145,7 +137,7 @@ fn writer_fixture(root: &Path) -> (Arc<TranscriptWriter>, PathBuf) {
         transcript_path: path.clone(),
     };
     let writer = Arc::new(TranscriptWriter::for_store(
-        Arc::new(JsonlTranscriptStore::new()),
+        Arc::new(JsonlTranscriptStore::with_stimulus(stimulus)),
         key,
     ));
     (writer, path)
@@ -219,13 +211,12 @@ fn config_text(fragments: &[String]) -> String {
 // itself stays unarmed, no control files are read, no receipts are published.
 #[test]
 fn stimulus_unset_is_inert() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     negative_assert!(
         StorageStimulus::global().is_none(),
         "#1370 unset stimulus keeps the production default"
     );
-    let (writer, path) = writer_fixture(&scratch.0);
+    let (writer, path) = writer_fixture(&scratch.0, None);
     let written =
         writer.record_agent_status_message(&"s1".into(), &"t1".into(), &status("turn_timeout"));
     negative_assert!(
@@ -265,7 +256,6 @@ fn stimulus_unset_is_inert() {
 // unblocks exactly the blocked write and file order is the queue order.
 #[test]
 fn writer_barrier_blocks_underlying_append() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
     arm(
@@ -277,8 +267,7 @@ fn writer_barrier_blocks_underlying_append() {
             HELD_BOUND_MS,
         )]),
     );
-    let _global = arm_global(Some(&control));
-    let (writer, path) = writer_fixture(&scratch.0);
+    let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
     let blocked = {
         let writer = writer.clone();
         thread::spawn(move || {
@@ -363,15 +352,13 @@ fn writer_barrier_blocks_underlying_append() {
 // Matrix 6: without a release the barrier self-releases at the bound.
 #[test]
 fn writer_barrier_bound_releases_without_release_file() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
     arm(
         &control,
         r#"{"writer":{"barrier":{"id":"b1","key":"turn_timeout","boundMs":150}}}"#,
     );
-    let _global = arm_global(Some(&control));
-    let (writer, path) = writer_fixture(&scratch.0);
+    let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
     let blocked = thread::spawn(move || {
         writer
             .record_agent_status_message(&"s1".into(), &"t1".into(), &status("turn_timeout"))
@@ -414,15 +401,13 @@ fn writer_barrier_bound_releases_without_release_file() {
 // consumed barrier never re-blocks; a new id re-arms.
 #[test]
 fn barrier_and_fault_ids_are_single_shot() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
     arm(
         &control,
         &config_text(&[fault_fragment("writer", "f1", "session_metadata")]),
     );
-    let _global = arm_global(Some(&control));
-    let (writer, path) = writer_fixture(&scratch.0);
+    let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
     let error = writer
         .record_session_metadata(&"s1".into(), &"t1".into(), metadata_value(1))
         .unwrap_err();
@@ -497,10 +482,11 @@ fn barrier_and_fault_ids_are_single_shot() {
 // mutation chain and the file lock; disk and later reads stay unchanged.
 #[test]
 fn registry_fault_is_single_eio_in_lock() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
-    let registry = FileRunRegistry::open(scratch.0.join("runs.json")).unwrap();
+    let registry =
+        FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+            .unwrap();
     registry.accept(&accept_input()).unwrap();
     let before = fs::read(scratch.0.join("runs.json")).unwrap();
     arm(
@@ -511,7 +497,6 @@ fn registry_fault_is_single_eio_in_lock() {
             "agent_status:turn_timeout",
         )]),
     );
-    let _global = arm_global(Some(&control));
     let error = registry.append(&run(), &agent_status_event("turn_timeout"));
     negative_assert!(
         matches!(&error, Err(RunRegistryError::Io(e)) if e.raw_os_error() == Some(5)),
@@ -552,10 +537,12 @@ fn registry_fault_is_single_eio_in_lock() {
 // (which shares the chain lock) cannot proceed until the release.
 #[test]
 fn registry_barrier_holds_chain_lock() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
-    let registry = Arc::new(FileRunRegistry::open(scratch.0.join("runs.json")).unwrap());
+    let registry = Arc::new(
+        FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+            .unwrap(),
+    );
     registry.accept(&accept_input()).unwrap();
     arm(
         &control,
@@ -566,7 +553,6 @@ fn registry_barrier_holds_chain_lock() {
             HELD_BOUND_MS,
         )]),
     );
-    let _global = arm_global(Some(&control));
     let blocked = {
         let registry = registry.clone();
         thread::spawn(move || {
@@ -621,18 +607,17 @@ fn registry_barrier_holds_chain_lock() {
 }
 
 // Matrix 12: the runRegistry.append port publishes the queued witness at entry
-// and the single worker preserves completion order behind a held barrier.
-// The serial mutex is a std lock held across awaits on purpose: it excludes
-// the sync sibling tests that re-arm the same process-wide stimulus entry.
-#[allow(clippy::await_holding_lock)]
+// and the single worker preserves completion order behind a held barrier. The
+// stimulus is injected into the wrapped registry, so the port captures the
+// same instance handle at construction and no other test can observe it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn registry_port_appends_queue_with_witness_receipts() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
     let port = Arc::new(
         crate::runtime::turn::publish::FileRegistry::new(
-            FileRunRegistry::open(scratch.0.join("runs.json")).unwrap(),
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+                .unwrap(),
         )
         .unwrap(),
     );
@@ -647,7 +632,6 @@ async fn registry_port_appends_queue_with_witness_receipts() {
             HELD_BOUND_MS,
         )]),
     );
-    let _global = arm_global(Some(&control));
     let blocked = {
         let port = port.clone();
         tokio::spawn(async move {
@@ -718,10 +702,13 @@ async fn registry_port_appends_queue_with_witness_receipts() {
 // sequence numbers and never release each other.
 #[test]
 fn two_site_barriers_release_by_sequence() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
-    let registry = Arc::new(FileRunRegistry::open(scratch.0.join("runs.json")).unwrap());
+    let stimulus = armed(&control);
+    let registry = Arc::new(
+        FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(stimulus.clone()))
+            .unwrap(),
+    );
     registry.accept(&accept_input()).unwrap();
     arm(
         &control,
@@ -730,8 +717,7 @@ fn two_site_barriers_release_by_sequence() {
             barrier_fragment("registry", "r1", "agent_status:turn_timeout", HELD_BOUND_MS),
         ]),
     );
-    let _global = arm_global(Some(&control));
-    let (writer, path) = writer_fixture(&scratch.0);
+    let (writer, path) = writer_fixture(&scratch.0, Some(stimulus));
     let writer_blocked = {
         let writer = writer.clone();
         thread::spawn(move || {
@@ -805,16 +791,17 @@ fn two_site_barriers_release_by_sequence() {
 // both fail the controlled operation closed.
 #[test]
 fn invalid_control_directory_fails_closed() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let scratch = Scratch::new();
     let control = scratch.control();
-    let (writer, _path) = writer_fixture(&scratch.0);
-    let registry = FileRunRegistry::open(scratch.0.join("runs.json")).unwrap();
-    registry.accept(&accept_input()).unwrap();
     // Malformed JSON: both sites fail closed with a stimulus-marked error.
     arm(&control, "{ not json");
     {
-        let _global = arm_global(Some(&control));
+        let stimulus = armed(&control);
+        let (writer, _path) = writer_fixture(&scratch.0, Some(stimulus.clone()));
+        let registry =
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(stimulus))
+                .unwrap();
+        registry.accept(&accept_input()).unwrap();
         let writer_error = writer
             .record_session_metadata(&"s1".into(), &"t1".into(), metadata_value(1))
             .err()
@@ -838,7 +825,12 @@ fn invalid_control_directory_fails_closed() {
     }
     // The directory disappearing mid-run fails closed with an io error.
     {
-        let _global = arm_global(Some(&scratch.0.join("missing-control")));
+        let stimulus = armed(&scratch.0.join("missing-control"));
+        let (writer, _path) = writer_fixture(&scratch.0, Some(stimulus.clone()));
+        let registry =
+            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(stimulus))
+                .unwrap();
+        registry.accept(&accept_input()).unwrap();
         let writer_error =
             writer.record_session_metadata(&"s1".into(), &"t2".into(), metadata_value(2));
         negative_assert!(
@@ -856,7 +848,6 @@ fn invalid_control_directory_fails_closed() {
 // Apparatus unit checks: the key derivation the #1368 stimulus plan declares.
 #[test]
 fn stimulus_keys_derive_as_declared() {
-    let _serial = serial().lock().unwrap_or_else(|e| e.into_inner());
     let entry = |json: &str| parse_json(json).unwrap();
     let keys: Vec<String> = [
         r#"{"type":"agent_status_message","event":"turn_timeout"}"#,
