@@ -196,9 +196,9 @@ aed0bb648789e449a75a7a5f7ecee1fbb97bd036420c6fdbbdd310b863c6d907  ../../scripts/
 9752548d9c3a26783e13d449ad7f52f4a84f7b5526076cdc544f43b522dbede8  ../../scripts/gateway-parity/observer.py
 5c503d1d6dd90394821fad87b7469d4ef1fc182f86da073b97357fec7eeef88c  ../../scripts/gateway-parity/retirement_driver.mts
 0ea4fb1ff42bf4a72e6e69ad788bfdfd2f4771d57059817f12f58cd550fc7b49  ../../scripts/gateway-parity/run_round.py
-dd10ab85aacf6d935df1e0d813dde4758166826b345975b4fe726704a6f653a6  ../../scripts/gateway-parity/session_domain.py
+3f0bec5c74872094c4af7b36ea3730dffcdf21e220109095927f2fa3d0c000b6  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-5cc5034deead3afc4bbf95559e7550277456fd7b0bb5597d18a111cdff9fb464  ../../scripts/gateway-parity/test_safety.py
+77c655242da9a64eaf931af41f63bfdae36af3da1f0d5de248fa40a2a4c988f6  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
