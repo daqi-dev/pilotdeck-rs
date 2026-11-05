@@ -45,7 +45,8 @@
 - **A2 不打架且链可被机器接受**：单元之间文件面不冲突；同文件面的单元按顺序叠加成链，每个单元的增量 diff 可独立复核。**上车前须核该文件的整条链机器可接受**：不得回环、不得净零变化（同文件 `a→b→a` 会让新增事件变成陈旧边而被 `check_frozen.py --base` 判 FAIL）；不满足就改单或拆车，不能靠「顺序叠加」的措辞兜底。
 - **A3 同语义域**：都在 `gateway-parity` 装置内。跨装置（`scripts/parity`、`scripts/ui-server-parity`）不得同车——三套登记按 #1089 各自独立。
 - **A4 判分语义**：改变判分语义的单元必须已有明确批准记录并写进事件的 `Approval-Basis`；**未获批的判分语义变更禁止上车**（先写决策卡）。即使已获批，改判分语义的单元也**独占一车**，不与其它单混装。
-- **A5 规则语义独占**：改 `check_frozen.py` 的**检查规则语义**（新增 / 收紧 / 放宽检查）的单元独占一车，不与其它单混装。
+- **A5 规则语义独占**：改 `check_frozen.py` 的**检查规则语义**（新增 / 收紧 / 放宽检查）的单元独占一车，不与其它单混装。这里的规则语义单指**只动本装置检查器、不需要三套同步**的情形。
+- **A5b 三套同步的规则变更不组车**：改三套检查器共享函数的语义时，`frozen/README.md` 要求同步改三套、跑三套登记单测（`test_manifest.py` 比 AST，CI 在跑），拆成三个单装置车次会留下中间态红——这类单按原冻结批准程序**一次性原子交付**（三套各自登记、各自复算、同一合并），不适用车次机制。车次只承载本装置内、无需跨装置同步的单元。
 - **A6 并发/生命周期不同车**：CLAUDE.md 人定「并发包不合成 PR」继续生效。
 - **A7 规模 1–5 单元**：超过 5 拆车（冻结窗口越长，后续单被拖得越久）；全部单元都下车（0 单元）时取消车次，不发空车。
 
@@ -57,7 +58,7 @@
 4. **写事件**：每单元一个 `frozen/<YYYYMMDD>-<单号>.md`（模板见 `frozen/README.md`）。`Change:` 的 old/new 分两种情况：**单一变化**（该文件在本车次只有一个单元改）old 取 `merge-base(origin/main)` 的 blob 完整 SHA256、new 取当前树；**同文件多单元**按落地顺序形成 `a→b→c` 唯一链——链首单元 old 取 merge-base 的 blob，后续单元 old 取前一单元落地后的树摘要（即前一单元 new）、new 取本单元落地后的树。新增文件 old 用 `-`，删除用 new `-`。两条边共用同一个 old 会被机器判重复边而 FAIL。
 5. **一次 `--write`**：`python3 -I scripts/gateway-parity/check_frozen.py --write`（车长执行；`--write` 不能与 `--base` / `--print-ledger` 组合）。
 6. **自检**：`check_frozen.py`（无 `--base`）、`check_frozen.py --base origin/main`、`test_safety.py` 全过；装置目录无 `__pycache__`。
-7. **一次车次复算**：在车次 HEAD 跑一次全量真实复算（本装置当前口径：`check_ruler.py` k=5 + E1 `--suite calibrate`），产物落车次证据目录。每单元从这份产物摘自己的判据切片，写进事件的 `Calibration-Evidence` 与单的证据文件。多车次 / 多装置同时复算共用 `/tmp/pdrs-parity.lock`，但两个入口的等锁能力不同：`check_ruler.py` 一次复算在**同一把锁里串 6 轮**（单轮 timeout 上限 900 s、默认 180 s，整程无机器封顶），等锁默认 600 s、可用 `--lock-timeout` 调大；E1 `--suite calibrate` 的等锁**硬编码 30 s 且无旗标**，并行时只能错峰。其它装置同样抢这把锁，且合法持锁时间可能更长：`scripts/parity`（A1）、`cli-parity`（整批）、`fe-parity`（裸 `mkdir /tmp/pdrs-parity.lock` 形态）、`scripts/ui-server-parity`（`calibrate.sh` 26 遍采集 + 两轮 `check_ruler`，很可能是最大竞争者）。`--lock-timeout` 应按最大竞争者持锁时间设置。等锁超时按失败处置（换证据目录重跑），不改判据。**楔锁**：等锁超时先读 `owner.json`——带 `cleanupPending` 的锁机器永不自动接管（原持有者可能被硬杀或断电），不得当作陈旧锁循环重试；须先按死锁持有者输出目录里的 `run.json` / `isolation.json` 的 `audit.remaining`（未停的 pgid）**逐组**确认已停止——端口检查只作辅助：`run_round.py` 允许任意 28xxx 端口，只扫默认 28791–28794 会漏掉改端口跑出来的孤儿（与 cli-parity README 的回收程序对齐）；确认无人持有后，再由人明确授权删锁。复算收尾核对 `ruler.json` 的 `lock_takeovers` 为空（有接管即说明本次编排撞锁，需记录）。
+7. **一次车次复算**：在车次 HEAD 跑一次全量真实复算（本装置当前口径：`check_ruler.py` k=5 + E1 `--suite calibrate`），产物落车次证据目录。每单元从这份产物摘自己的判据切片，写进事件的 `Calibration-Evidence` 与单的证据文件。多车次 / 多装置同时复算共用 `/tmp/pdrs-parity.lock`，但两个入口的等锁能力不同：`check_ruler.py` 一次复算在**同一把锁里串 6 轮**（单轮 timeout 上限 900 s、默认 180 s，整程无机器封顶），等锁默认 600 s、可用 `--lock-timeout` 调大；E1 `--suite calibrate` 的等锁**硬编码 30 s 且无旗标**，并行时只能错峰。其它装置同样抢这把锁，且合法持锁时间可能更长：`scripts/parity`（A1）、`cli-parity`（整批）、`fe-parity`（裸 `mkdir /tmp/pdrs-parity.lock` 形态）、`scripts/ui-server-parity`（`calibrate.sh` 26 遍采集 + 两轮 `check_ruler`，很可能是最大竞争者）。`--lock-timeout` 应按最大竞争者持锁时间设置。等锁超时按失败处置（换证据目录重跑），不改判据。**楔锁**：等锁超时先读 `owner.json`——带 `cleanupPending` 的锁机器永不自动接管（原持有者可能被硬杀或断电），不得当作陈旧锁循环重试；须先按死锁持有者输出目录里的 `run.json` / `isolation.json` 的 `audit.remaining`（未停的 pgid）**逐组**确认已停止——端口检查只作辅助：`run_round.py` 允许任意 28xxx 端口，只扫默认 28791–28794 会漏掉改端口跑出来的孤儿（与 cli-parity README 的回收程序对齐）；还要核本轮进程组是否全部停止（`README.md` 的回收程序）与锁内 `owner.json` 是否仍是原持有者（有没有别的装置正在持锁）——证据不足就**保留锁、把车次挂起**，不赌。确认无人持有后，再由人明确授权删锁。复算收尾核对 `ruler.json` 的 `lock_takeovers` 为空（有接管即说明本次编排撞锁，需记录）。
 8. **提交登记**：事件文件 + `FROZEN.md` 作为一个独立提交（例：`chore(frozen) 车次 <n>：N 单登记`），提交信息逐个列单号。此后进入冻结窗口。
 9. **出车**：PR 正文列单元表（单号 / 改动文件 / old→new 摘要 / 两家评审引用 / 复算切片路径），过常规合并闸门（两家非作者覆盖当前 head；登记正确性按 §6 增量复核）后入 merge queue。
 
@@ -95,7 +96,8 @@
 |---|---|
 | 只新增 `diffs/<ID>.md` | 不用，直接按账本规则提 PR |
 | 改 `compare.py` / `session_domain.py` / `common.py` 等 A2 脚本 | 上车 |
-| 改 `check_frozen.py` 的检查规则语义 | 上车，且独占一车 |
+| 改 `check_frozen.py` 的检查规则语义（只动本装置） | 上车，且独占一车 |
+| 改三套检查器共享函数的语义（须三套同步） | 不组车，按原冻结程序三套原子交付 |
 | 改 `scripts/parity/` 或 `scripts/ui-server-parity/` | 不上这车，走各自装置 |
 | 改判分阈值 / 分母 / 映射 | 先决策卡；未获批不上车 |
 | 改 `FROZEN.md` 叙述或 `accepted-diffs.md` 字节 | 不上车，原字节冻结，按既有冻结批准程序另办 |
