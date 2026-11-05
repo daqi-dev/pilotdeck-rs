@@ -13,10 +13,12 @@
 //! functions below for the wiring that installs them.
 use super::super::requests::Requests;
 use crate::runtime::connection::{Call, RequestError};
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 
 // Wire names from the gateway frames registry. All 7 pass through admission
-// as ordinary session requests; 5 additionally check for an active turn.
+// as ordinary session requests; set_permission_mode and seed_read_state
+// additionally check for an active turn (the other 5 answer the capability
+// gate before any busy gate, mirroring IPG.ts:2192,2202,2365,2375,2380).
 pub(super) const METHODS: &[&str] = &[
     "session_model_set",
     "session_model_clear",
@@ -47,11 +49,23 @@ fn error(code: &str, message: &str) -> RequestError {
     }
 }
 
-/// Return `true` if a JsString value is present and non-empty after JS trim.
+/// True when a JS string is non-empty after JS trim — the shared shape of the
+/// TS `input.X?.trim()` required-string gates (IPG.ts:2191,2202,2366,2381,
+/// 2427). Lone surrogates survive the TS check, so the conversion is lossy:
+/// `to_utf8` would reject a key that TS accepts (#1455 probe4, PilotDeck
+/// cc7c4e65: `{"label":"thinking-lone-surrogate-key","value":{"applied":"callback"}}`).
+/// Session configuration and session directory share this one implementation
+/// (#1455 G7); it lives here rather than in `methods/mod.rs` because the
+/// sibling #1465/#1316 PRs are rewriting that file's declaration block.
+pub(super) fn trimmed_string_is_non_empty(value: &JsString) -> bool {
+    !crate::metadata::js_trim(&String::from_utf16_lossy(value.units())).is_empty()
+}
+
+/// True when `value` is a present string that is non-empty after JS trim.
 fn is_trimmed_non_empty(value: Option<&JsValue>) -> bool {
     value
         .and_then(JsValue::as_string)
-        .is_some_and(|s| !crate::metadata::js_trim(&String::from_utf16_lossy(s.units())).is_empty())
+        .is_some_and(trimmed_string_is_non_empty)
 }
 
 // Params guards retained for the wiring that installs the SDK session
@@ -72,7 +86,13 @@ fn require_session_key(params: &JsValue) -> Result<(), RequestError> {
     Ok(())
 }
 
-/// `name` must be null/absent or a non-blank string (IPG.ts:2383).
+/// `name` must be null/absent or a non-blank string (IPG.ts:2383). TS has no
+/// clean error for non-string names — `input.name.trim` throws a bare
+/// TypeError, and an absent `name` property also TypeErrors
+/// (`input.name !== null && !input.name.trim()`), so this guard only mirrors
+/// the one DialogGatewayError the TS method can raise (#1455 probe2, Node
+/// v22.22.0 / PilotDeck cc7c4e65). The non-string/absent shapes are
+/// registered in A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2.
 #[cfg_attr(not(test), allow(dead_code))]
 fn require_output_style_name(params: &JsValue) -> Result<(), RequestError> {
     match params.get("name") {
@@ -110,7 +130,13 @@ impl Requests {
                 // The isolated native process never wires the callbacks, so
                 // the gate always fires here; the params guards are
                 // retained in `require_session_key` /
-                // `require_output_style_name` above.
+                // `require_output_style_name` above. session_model_set and
+                // session_model_clear carry no hasActiveTurn gate in TS
+                // either (IPG.ts:2192-2207; #1455 probe3 busyCalls=0) —
+                // their busy semantics is the turn-replacement transcript
+                // write reservation, which this process does not assemble
+                // (registered as unimplemented in
+                // A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2).
                 "session_model_set"
                 | "session_model_clear"
                 | "set_session_thinking"
@@ -119,7 +145,16 @@ impl Requests {
 
                 "set_permission_mode" => {
                     // Mode must be one of the three allowed values before the
-                    // busy gate (IPG.ts:2321-2330 checks mode first, then hasActiveTurn).
+                    // busy gate (IPG.ts:2321-2330 checks mode first, then
+                    // hasActiveTurn; #1455 probe1 confirms the order under an
+                    // active turn). TS never validates sessionKey here: a
+                    // missing, blank or non-string key still reaches
+                    // `hasActiveTurn(input.sessionKey)` — which receives the
+                    // raw value — and then the permission-mode store
+                    // (#1455 probe1). The Rust side skips the busy lookup
+                    // only when the key is absent or not a string, which no
+                    // turn can ever be reserved under, so the observable
+                    // outcome matches: no busy, fall through to unavailable.
                     let mode = params.get("mode").and_then(JsValue::as_string);
                     let mode_ok = mode.is_some_and(|m| {
                         m.equals_str("default")
@@ -181,7 +216,7 @@ impl Requests {
                         .get("sessionKey")
                         .and_then(JsValue::as_string)
                         .cloned()
-                        .unwrap();
+                        .expect("#1455 seed_read_state sessionKey present after the gate");
                     if self.owner.has_active_turn(&session_key) {
                         return Err(error(
                             "SESSION_BUSY",
@@ -319,8 +354,9 @@ mod tests {
         let result = r
             .session_config_request("set_permission_mode".into(), params)
             .await;
+        let err = result.expect_err("#1310 set_permission_mode rejects invalid mode");
         negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
+            err.code.as_str(),
             "INVALID_PERMISSION_MODE",
             "#1310 set_permission_mode invalid mode"
         );
@@ -335,11 +371,128 @@ mod tests {
         let result = r
             .session_config_request("set_permission_mode".into(), params)
             .await;
+        let err = result.expect_err("#1310 set_permission_mode unavailable");
         negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
+            err.code.as_str(),
             "CAPABILITY_UNAVAILABLE",
             "#1310 set_permission_mode unavailable"
         );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 G1: TS never validates sessionKey in setPermissionMode — a
+    // missing key still reaches hasActiveTurn and then the permission-mode
+    // store and answers {applied:true} (probe1: missing-key → applied, no
+    // INVALID_SESSION_KEY). The isolated process has no store, so the wire
+    // answer is the unavailable shape; it must never become
+    // INVALID_SESSION_KEY.
+    #[tokio::test]
+    async fn set_permission_mode_missing_session_key_hits_unavailable() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let params = object([("mode", "plan".into())]);
+        let result = r
+            .session_config_request("set_permission_mode".into(), params)
+            .await;
+        let err = result.expect_err("#1455 set_permission_mode missing sessionKey");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "CAPABILITY_UNAVAILABLE",
+            "#1455 set_permission_mode missing sessionKey is unavailable, not INVALID_SESSION_KEY"
+        );
+        negative_assert_eq!(
+            err.message.equals_str(
+                "Permission mode configuration is not installed on this isolated native process."
+            ),
+            true,
+            "#1455 set_permission_mode terminal message matches the unavailable shape"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 G5/G6: the busy gate must fire under a reserved turn
+    // (TS probe3: SESSION_BUSY "Cannot change permission mode during an
+    // active turn.").
+    #[tokio::test]
+    async fn set_permission_mode_busy_during_active_turn() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let key: pilotdeck_protocol::JsString = "s1".into();
+        let run: pilotdeck_protocol::JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&key, &run)
+            .expect("#1455 begin turn reservation");
+        let params = object([("sessionKey", "s1".into()), ("mode", "plan".into())]);
+        let result = r
+            .session_config_request("set_permission_mode".into(), params)
+            .await;
+        let err = result.expect_err("#1455 set_permission_mode busy during active turn");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "SESSION_BUSY",
+            "#1455 set_permission_mode active turn answers SESSION_BUSY"
+        );
+        negative_assert_eq!(
+            err.message
+                .equals_str("Cannot change permission mode during an active turn."),
+            true,
+            "#1455 set_permission_mode busy message matches the TS shape"
+        );
+        r.owner.end_turn(&key, Some(&run), Some(&reservation));
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 G5: the mode gate precedes the busy gate (probe1: invalid mode
+    // under an active turn answers INVALID_PERMISSION_MODE, busyKeys=[]).
+    #[tokio::test]
+    async fn set_permission_mode_invalid_mode_wins_over_busy() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let key: pilotdeck_protocol::JsString = "s1".into();
+        let run: pilotdeck_protocol::JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&key, &run)
+            .expect("#1455 begin turn reservation");
+        let params = object([("sessionKey", "s1".into()), ("mode", "admin".into())]);
+        let result = r
+            .session_config_request("set_permission_mode".into(), params)
+            .await;
+        let err = result.expect_err("#1455 set_permission_mode invalid mode under turn");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "INVALID_PERMISSION_MODE",
+            "#1455 set_permission_mode mode gate precedes the busy gate"
+        );
+        r.owner.end_turn(&key, Some(&run), Some(&reservation));
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 G1: a blank "  " key still reaches the busy gate on the TS side
+    // (probe1: busyKeys:["  "] → SESSION_BUSY), so the Rust gate must look
+    // the trimmed-looking key up instead of treating it as absent.
+    #[tokio::test]
+    async fn set_permission_mode_blank_session_key_with_active_turn_is_busy() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let key: pilotdeck_protocol::JsString = "  ".into();
+        let run: pilotdeck_protocol::JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&key, &run)
+            .expect("#1455 begin turn on the blank key");
+        let params = object([("sessionKey", "  ".into()), ("mode", "plan".into())]);
+        let result = r
+            .session_config_request("set_permission_mode".into(), params)
+            .await;
+        let err = result.expect_err("#1455 set_permission_mode blank key busy");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "SESSION_BUSY",
+            "#1455 set_permission_mode blank sessionKey still consults the busy gate"
+        );
+        r.owner.end_turn(&key, Some(&run), Some(&reservation));
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }
@@ -510,8 +663,9 @@ mod tests {
         let result = r
             .session_config_request("seed_read_state".into(), params)
             .await;
+        let err = result.expect_err("#1310 seed_read_state missing sessionKey");
         negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
+            err.code.as_str(),
             "INVALID_SESSION_KEY",
             "#1310 seed_read_state missing sessionKey"
         );
@@ -529,8 +683,9 @@ mod tests {
         let result = r
             .session_config_request("seed_read_state".into(), params)
             .await;
+        let err = result.expect_err("#1310 seed_read_state missing path");
         negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
+            err.code.as_str(),
             "INVALID_FILE_PATH",
             "#1310 seed_read_state missing path"
         );
@@ -549,8 +704,9 @@ mod tests {
         let result = r
             .session_config_request("seed_read_state".into(), params)
             .await;
+        let err = result.expect_err("#1310 seed_read_state negative mtime");
         negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
+            err.code.as_str(),
             "INVALID_FILE_MTIME",
             "#1310 seed_read_state negative mtime"
         );
@@ -569,8 +725,9 @@ mod tests {
         let result = r
             .session_config_request("seed_read_state".into(), params)
             .await;
+        let err = result.expect_err("#1310 seed_read_state fractional mtime");
         negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
+            err.code.as_str(),
             "INVALID_FILE_MTIME",
             "#1310 seed_read_state fractional mtime"
         );
@@ -592,11 +749,112 @@ mod tests {
         let result = r
             .session_config_request("seed_read_state".into(), params)
             .await;
+        let err = result.expect_err("#1310 seed_read_state unavailable");
         negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
+            err.code.as_str(),
             "CAPABILITY_UNAVAILABLE",
             "#1310 seed_read_state unavailable"
         );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 G3/G5: mtime 0.0 is the `n >= 0.0` boundary — valid on the TS
+    // side (probe4: mtime-0 → seeded) and must reach the unavailable terminal
+    // here, not INVALID_FILE_MTIME.
+    #[tokio::test]
+    async fn seed_read_state_unavailable_with_zero_mtime() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let params = object([
+            ("sessionKey", "s1".into()),
+            ("path", "/tmp/a.txt".into()),
+            ("mtime", pilotdeck_protocol::JsValue::Number(0.0)),
+        ]);
+        let result = r
+            .session_config_request("seed_read_state".into(), params)
+            .await;
+        let err = result.expect_err("#1455 seed_read_state zero mtime boundary");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "CAPABILITY_UNAVAILABLE",
+            "#1455 seed_read_state zero mtime passes the boundary and reaches unavailable"
+        );
+        negative_assert_eq!(
+            err.message
+                .equals_str("Seed read state is not installed on this isolated native process."),
+            true,
+            "#1455 seed_read_state terminal message matches the unavailable shape"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 G5/G6: the busy gate must fire under a reserved turn
+    // (TS probe3/probe4: SESSION_BUSY "Cannot seed file read state while a
+    // turn is active.").
+    #[tokio::test]
+    async fn seed_read_state_busy_during_active_turn() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let key: pilotdeck_protocol::JsString = "s1".into();
+        let run: pilotdeck_protocol::JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&key, &run)
+            .expect("#1455 begin turn reservation");
+        let params = object([
+            ("sessionKey", "s1".into()),
+            ("path", "/tmp/a.txt".into()),
+            (
+                "mtime",
+                pilotdeck_protocol::JsValue::Number(1_700_000_000.0),
+            ),
+        ]);
+        let result = r
+            .session_config_request("seed_read_state".into(), params)
+            .await;
+        let err = result.expect_err("#1455 seed_read_state busy during active turn");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "SESSION_BUSY",
+            "#1455 seed_read_state active turn answers SESSION_BUSY"
+        );
+        negative_assert_eq!(
+            err.message
+                .equals_str("Cannot seed file read state while a turn is active."),
+            true,
+            "#1455 seed_read_state busy message matches the TS shape"
+        );
+        r.owner.end_turn(&key, Some(&run), Some(&reservation));
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1455 G5: the params gates precede the busy gate (probe4: active turn
+    // with mtime -1 still answers INVALID_FILE_MTIME).
+    #[tokio::test]
+    async fn seed_read_state_rejects_negative_mtime_during_active_turn() {
+        let (_s, r) = std::panic::catch_unwind(setup).expect("#1310 fixture");
+        let key: pilotdeck_protocol::JsString = "s1".into();
+        let run: pilotdeck_protocol::JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&key, &run)
+            .expect("#1455 begin turn reservation");
+        let params = object([
+            ("sessionKey", "s1".into()),
+            ("path", "/tmp/a.txt".into()),
+            ("mtime", pilotdeck_protocol::JsValue::Number(-1.0)),
+        ]);
+        let result = r
+            .session_config_request("seed_read_state".into(), params)
+            .await;
+        let err = result.expect_err("#1455 seed_read_state negative mtime under turn");
+        negative_assert_eq!(
+            err.code.as_str(),
+            "INVALID_FILE_MTIME",
+            "#1455 seed_read_state mtime gate precedes the busy gate"
+        );
+        r.owner.end_turn(&key, Some(&run), Some(&reservation));
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }
@@ -606,7 +864,7 @@ mod tests {
     #[test]
     fn require_session_key_rejects_missing_key() {
         let params = pilotdeck_protocol::JsValue::Object(Default::default());
-        let err = require_session_key(&params).unwrap_err();
+        let err = require_session_key(&params).expect_err("#1310 require_session_key missing key");
         negative_assert_eq!(
             err.code.as_str(),
             "INVALID_SESSION_KEY",
@@ -617,7 +875,7 @@ mod tests {
     #[test]
     fn require_session_key_rejects_blank_key() {
         let params = object([("sessionKey", "  ".into())]);
-        let err = require_session_key(&params).unwrap_err();
+        let err = require_session_key(&params).expect_err("#1310 require_session_key blank key");
         negative_assert_eq!(
             err.code.as_str(),
             "INVALID_SESSION_KEY",
@@ -628,7 +886,8 @@ mod tests {
     #[test]
     fn require_session_key_rejects_non_string_key() {
         let params = object([("sessionKey", pilotdeck_protocol::JsValue::Number(7.0))]);
-        let err = require_session_key(&params).unwrap_err();
+        let err =
+            require_session_key(&params).expect_err("#1310 require_session_key non-string key");
         negative_assert_eq!(
             err.code.as_str(),
             "INVALID_SESSION_KEY",
@@ -648,7 +907,8 @@ mod tests {
     #[test]
     fn require_output_style_name_rejects_blank_name() {
         let params = object([("name", "  ".into())]);
-        let err = require_output_style_name(&params).unwrap_err();
+        let err = require_output_style_name(&params)
+            .expect_err("#1310 require_output_style_name blank name");
         negative_assert_eq!(
             err.code.as_str(),
             "INVALID_OUTPUT_STYLE",
