@@ -64,13 +64,16 @@ To keep the oracle deterministic the generator masks only nondeterminism:
 | `new-command` | `/new` buffered ack, `/new ` streaming ack (no session header), normal turn on the same chat |
 | `gateway-missing` | no `turn_gateway`: buffered and streaming `503 gateway_unavailable` JSON |
 | `oversized-0..2` | request body > 1,000,000 bytes closes the socket with zero bytes (three runs) |
+| `body-limit-exact` | request body of exactly 1,000,000 bytes is read and rejected as `400 invalid_json` (the cap is exclusive) |
 | `keep-alive` | `Connection: keep-alive`, `Keep-Alive: timeout=5`, two requests on one socket |
 
 The Rust replay (`channel::api_server::tests::replays_real_ts_api_server_cells`)
 skips `oversized-*` (it is a separate raw-socket test,
 `oversized_body_closes_without_response`) and otherwise compares status,
-headers, and body for every cell. `submit_inputs_match_real_ts` compares the
-exact `submitTurn` inputs recorded by the TS generator.
+headers, and body for every cell. A recorded request body of the form
+`<N bytes>` is replayed as `N` repeated `x` bytes — the oracle stores the
+request length instead of the filler. `submit_inputs_match_real_ts` compares
+the exact `submitTurn` inputs recorded by the TS generator.
 
 ## Known divergence
 
@@ -84,10 +87,11 @@ exact `submitTurn` inputs recorded by the TS generator.
 
 ## Negative controls
 
-`negative_controls.py` applies ten compile-checked product mutations (health /
-models routing, auth bypass, CORS `Vary`, SSE `[DONE]`, session header,
-visible-failure name, gateway status, active-chat guard, body limit) through
-`tests/fixtures/negative_suite.py`. Each row requires the positive control to
-pass and the named `#1333` assertion to fail. It must run after this change is
-committed (the shared guard compares against `HEAD`); see the script header for
-the exact command.
+`negative_controls.py` applies compile-checked product mutations through
+`tests/fixtures/negative_suite.py`; its `mutations` table is the register of
+what is covered (health / models routing, auth bypass, CORS `Vary`, SSE
+`[DONE]`, session header, visible-failure name, gateway status, active-chat
+guard, body limit, body-limit boundary, default port). Each row requires the
+positive control to pass and the named `#1333` assertion to fail. It must run
+after this change is committed (the shared guard compares against `HEAD`); see
+the script header for the exact command.

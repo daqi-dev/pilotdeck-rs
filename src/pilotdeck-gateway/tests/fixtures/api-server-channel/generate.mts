@@ -382,6 +382,26 @@ for (let run = 0; run < 3; run += 1) {
   });
 }
 
+// 10b. Exactly at the 1 MB cap the baseline reads the whole body and then
+// fails in JSON.parse: 400 invalid_json. The 1,000,001 cells above cannot
+// tell `>` from `>=`; this one can. The recorded request keeps a byte-count
+// placeholder instead of 1 MB of text.
+{
+  const started = await startChannel({}, undefined);
+  const result = await send(started.port, {
+    method: 'POST',
+    path: '/v1/chat/completions',
+    body: 'x'.repeat(1_000_000),
+  });
+  await started.handle.stop('surface-done');
+  cases.push({
+    id: 'body-limit-exact',
+    options: {},
+    requests: [{ method: 'POST', path: '/v1/chat/completions', body: '<1000000 bytes>' }],
+    expect: [result],
+  });
+}
+
 // 11. keep-alive response headers come from Node's server, not the handler.
 await surfaceCase('keep-alive', {}, [
   { method: 'GET', path: '/health', headers: { connection: 'keep-alive' } },
