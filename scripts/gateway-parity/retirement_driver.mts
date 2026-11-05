@@ -20,6 +20,12 @@ const save = (name: string, value: unknown) => writeFileSync(`${out}/${name}`, J
 let seq = 0, connection = 0;
 const sockets: WebSocket[] = [];
 const record = (row: object) => appendFileSync(`${out}/frames.jsonl`, JSON.stringify({ seq: ++seq, ...row }) + '\n');
+// ① (#1355 fix-r3): the official client closes a stream iterator exactly
+// when the wire carries the terminal `final:true` event frame, so `done`
+// alone cannot prove a final was seen — the wrapper records the wire
+// evidence itself (request id per method, ids that received final:true).
+const requestIds = new Map<string, string>();
+const wireFinals = new Set<string>();
 const Native = globalThis.WebSocket;
 globalThis.WebSocket = class extends Native {
   id = ++connection;
@@ -30,6 +36,9 @@ globalThis.WebSocket = class extends Native {
   }
   record(direction: string, raw: string) {
     let frame: unknown; try { frame = JSON.parse(raw); } catch { frame = raw; }
+    const wire = typeof frame === 'object' && frame !== null ? frame as Record<string, any> : null;
+    if (direction === 'send' && wire?.type === 'request') requestIds.set(String(wire.method), String(wire.id));
+    if (direction === 'receive' && wire?.type === 'event' && wire?.final === true) wireFinals.add(String(wire.id));
     record({ connection: this.id, direction, raw, frame });
   }
   send(data: any) { this.record('send', String(data)); super.send(data); }
@@ -73,21 +82,30 @@ try {
     const params = substitute(entry.params);
     const started = Date.now();
     if (entry.shape === 'stream') {
-      let events = 0, lastEventType: string | null = null, finalSeen = false, streamError: any = null;
-      try {
+      let events = 0, lastEventType: string | null = null, streamError: any = null;
+      // ② (#1355 fix-r3): the per-method timeout covers the whole stream, not
+      // each iterator step — a stream method cannot outlive its declared window.
+      const collect = async () => {
         const iterator = client.stream(entry.method, params)[Symbol.asyncIterator]();
         for (;;) {
-          const next = await withTimeout(iterator.next(), PER_METHOD_TIMEOUT_MS, entry.method);
-          if (next.done) { finalSeen = true; break; }
+          const next = await iterator.next();
+          // ① (#1355 fix-r3): done is not itself a final — the official client
+          // also ends the queue on transports it ends for its own reasons; the
+          // outcome below decides from the recorded wire evidence.
+          if (next.done) break;
           const event: any = next.value;
           events += 1; lastEventType = event?.type ?? null;
-          if (event?.final === true) { finalSeen = true; break; }
           // A1 (#1355 fix-r2): an error event is an error outcome, not an ok
           // stream that merely stopped early.
           if (event?.type === 'error') { streamError = event; break; }
         }
-        // A1: ok additionally requires a final event — a stream that ends
-        // without one (and without an error event) is recorded as an error.
+      };
+      try {
+        await withTimeout(collect(), PER_METHOD_TIMEOUT_MS, entry.method);
+        // A1/①: ok additionally requires a terminal `final:true` event frame on
+        // the wire under this request id — a stream that ended without one (and
+        // without an error event) is recorded as an error.
+        const finalSeen = wireFinals.has(requestIds.get(entry.method) ?? '');
         if (streamError) {
           outcomes.push({ method: entry.method, shape: 'stream', outcome: 'error',
             errorCode: streamError?.code ?? streamError?.error?.code ?? null,
@@ -106,7 +124,8 @@ try {
         // "timeout" must be recorded as an error, never misfiled as timeout.
         const timedOut = Boolean(error?.timedOut);
         outcomes.push({ method: entry.method, shape: 'stream', outcome: timedOut ? 'timeout' : 'error',
-          errorCode: error?.code ?? null, error: String(error?.message ?? error), events, lastEventType, finalSeen,
+          errorCode: error?.code ?? null, error: String(error?.message ?? error), events, lastEventType,
+          finalSeen: wireFinals.has(requestIds.get(entry.method) ?? ''),
           elapsedMs: Date.now() - started });
       }
     } else {

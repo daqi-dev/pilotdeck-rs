@@ -226,6 +226,14 @@ class RetirementLaunchError(EvidenceError):
         super().__init__('ROUND_LAUNCH', detail)
 
 
+# ② (#1355 fix-r3): a TimeoutExpired is a declared-budget bound, not a scored
+# FAIL — subprocess.TimeoutExpired is a SubprocessError subclass (main's except
+# tuple catches it), but it is not a TimeoutError, so the old BLOCKED
+# classification tuple let it fall through to status=FAIL.
+BLOCKED_APPARATUS_ERRORS = (ApparatusVerificationError, PermissionError, TimeoutError,
+                            KeyboardInterrupt, subprocess.TimeoutExpired)
+
+
 def require(condition, rule, detail):
     if not condition:
         raise EvidenceError(rule, detail)
@@ -1553,13 +1561,24 @@ RETIREMENT_PORT_SETS = ((28761, 28762, 28763), (28771, 28772, 28773))
 # run — every method may legitimately take its full per-method timeout — so a
 # dead gateway still reaches a per-method timeout verdict instead of only the
 # top-level round failure.  RETIREMENT_PER_METHOD_TIMEOUT_S must equal
-# PER_METHOD_TIMEOUT_MS in retirement_driver.mts; the margin covers mock +
-# gateway readiness.
+# PER_METHOD_TIMEOUT_MS in retirement_driver.mts.
+# ② (#1355 fix-r3): the budget is the sum of its legal worst-case components,
+# not a single magic number — the old 101×15+90 silently dropped the driver's
+# tail (12 HTTP probes × 10s, 5s socket close) and sat below the worst legal
+# path (1730s): a maximally slow but legal round would hit the round budget
+# before its own per-method timeouts, collapsing to a top-level failure.
 RETIREMENT_METHOD_COUNT = 101
 RETIREMENT_PER_METHOD_TIMEOUT_S = 15
-RETIREMENT_STARTUP_MARGIN_S = 90
+RETIREMENT_HTTP_PROBE_COUNT = 12
+RETIREMENT_HTTP_PROBE_TIMEOUT_S = 10
+RETIREMENT_SOCKET_CLOSE_TIMEOUT_S = 5
+RETIREMENT_READINESS_TIMEOUT_S = 45
+RETIREMENT_CONNECT_MARGIN_S = 30
 RETIREMENT_ROUND_TIMEOUT = (RETIREMENT_METHOD_COUNT * RETIREMENT_PER_METHOD_TIMEOUT_S
-                            + RETIREMENT_STARTUP_MARGIN_S)
+                            + RETIREMENT_HTTP_PROBE_COUNT * RETIREMENT_HTTP_PROBE_TIMEOUT_S
+                            + RETIREMENT_SOCKET_CLOSE_TIMEOUT_S
+                            + 2 * RETIREMENT_READINESS_TIMEOUT_S
+                            + RETIREMENT_CONNECT_MARGIN_S)
 # The audit's question is whether a TS gateway/helper runs outside the declared
 # owned set.  The census pattern is the round's own baseline path plus the TS CLI
 # entry: `ps` lines of unrelated installs (the operator's own running PilotDeck,
@@ -1783,7 +1802,7 @@ def _retirement_listener_verdict(listeners, gateway_port):
 
 def _retirement_wire_backing(frames):
     """Map methods to their request ids and the responses/events that answered."""
-    sends, responses, events = {}, {}, {}
+    sends, responses, events, final_events = {}, {}, {}, set()
     for row in frames:
         frame = row.get('frame')
         if not isinstance(frame, dict):
@@ -1798,7 +1817,9 @@ def _retirement_wire_backing(frames):
             responses[identifier] = frame
         elif kind == 'event':
             events[identifier] = events.get(identifier, 0) + 1
-    return sends, responses, events
+            if frame.get('final') is True:
+                final_events.add(identifier)
+    return sends, responses, events, final_events
 
 
 def score_retirement_round(row, expected):
@@ -1810,7 +1831,9 @@ def score_retirement_round(row, expected):
     outcome needs its wire frame; a timeout outcome is never executed and by
     definition lacks wire backing — any timeout fails the round, fail-closed;
     a stream outcome of either ok or error kind needs at least one receive
-    frame under the same id, R1 #1355 fix-r2),
+    frame under the same id, R1 #1355 fix-r2; a stream ok additionally needs a
+    `final:true` event frame under the same id, ① #1355 fix-r3 — a stream
+    that merely ended never passes as ok),
     MISSING_GROUP / MISSING_FIELD / ZERO_TESTS / UNKNOWN_SKIP (structure),
     ROUND_EXECUTION (driver exit).
     """
@@ -1868,7 +1891,7 @@ def score_retirement_round(row, expected):
                         for outcome_row in outcomes):
         problems.append({'rule': 'UNIFORM_UNAVAILABLE',
                          'detail': 'every executed method answered CAPABILITY_UNAVAILABLE'})
-    sends, responses, events = _retirement_wire_backing(row['frames'])
+    sends, responses, events, final_events = _retirement_wire_backing(row['frames'])
     violations = []
     for outcome_row in outcomes:
         method = outcome_row.get('method')
@@ -1883,14 +1906,22 @@ def score_retirement_round(row, expected):
             continue
         identifier = sends[method]
         if outcome_row.get('shape') == 'stream':
-            # R1 (#1355 fix-r2): a stream outcome of any non-timeout kind — ok
-            # or error — must be backed by at least one receive frame (event or
-            # response) under the same id.  The old branch only checked ok
-            # outcomes, so an error outcome with zero received frames still
-            # counted as executed.
-            if status in ('ok', 'error') and events.get(identifier, 0) < 1 and identifier not in responses:
-                violations.append({'method': method,
-                                   'problem': f'stream {status} without any receive frame'})
+            if status == 'ok':
+                # ① (#1355 fix-r3): a stream ok must be backed by a terminal
+                # `final:true` event frame under the same id — receive frames
+                # alone prove activity, not completion.  The pre-fix scorer
+                # passed a stream that merely ended (the arbitration's P0).
+                if identifier not in final_events:
+                    violations.append({'method': method,
+                                       'problem': 'stream ok without a final event frame'})
+            elif status == 'error':
+                # R1 (#1355 fix-r2): a stream error outcome must be backed by at
+                # least one receive frame (event or response) under the same
+                # id.  The old branch only checked ok outcomes, so an error
+                # outcome with zero received frames still counted as executed.
+                if events.get(identifier, 0) < 1 and identifier not in responses:
+                    violations.append({'method': method,
+                                       'problem': 'stream error without any receive frame'})
         elif status == 'ok':
             response = responses.get(identifier)
             if response is None or response.get('ok') is not True:
@@ -1997,6 +2028,28 @@ def _retirement_controls(round_row, expected):
     verdict = score_retirement_round(mutated, expected)
     record('STREAM_ERROR_NO_FRAME', f"stream method '{stream_row['method']}' rewritten to error with every "
                                    'receive frame stripped while keeping its send frame',
+           'EVIDENCE_BACKING', verdict, {})
+    # 6. ① (#1355 fix-r3): a stream ok outcome whose terminal event frame was
+    # downgraded to final:false (the stream merely ended) must still fail
+    # EVIDENCE_BACKING — the pre-fix scorer passed exactly this shape.
+    mutated = json.loads(json.dumps(round_row))
+    stream_ok = next((row for row in mutated['outcomes']
+                      if row.get('shape') == 'stream' and row.get('outcome') == 'ok'), None)
+    require(stream_ok is not None, 'CONTROL_SETUP', 'no ok stream outcome to mutate')
+    sends, _responses, _events, _finals = _retirement_wire_backing(mutated['frames'])
+    identifier = sends[stream_ok['method']]
+    flipped = 0
+    for frame_row in mutated['frames']:
+        frame = frame_row.get('frame')
+        if (isinstance(frame, dict) and frame.get('type') == 'event'
+                and frame.get('final') is True and frame.get('id') == identifier):
+            frame['final'] = False
+            flipped += 1
+    require(flipped == 1, 'CONTROL_SETUP',
+            f'expected exactly one terminal event frame for {stream_ok["method"]}, flipped {flipped}')
+    verdict = score_retirement_round(mutated, expected)
+    record('STREAM_OK_NON_FINAL', f"stream method '{stream_ok['method']}' keeps its ok outcome while its "
+                                  'terminal event frame is downgraded to final:false',
            'EVIDENCE_BACKING', verdict, {})
     return {'status': 'PASS' if all(row['status'] == 'PASS' for row in controls) else 'FAIL',
             'classes': controls}
@@ -2177,6 +2230,40 @@ def _retirement_entry_inventory(baseline, round_row):
             'unhit': unhit, 'gated': gated, 'entries': entries}
 
 
+def _retirement_entry_inventory_aggregate(per_round):
+    """④ (#1355 fix-r3): merge the per-round entry inventories into one face.
+
+    An entry is NO_HIT when any round failed to hit it (fail-closed — an entry
+    that answered in round 1 but 404'd in round 2 must not be hidden by round
+    1, the pre-fix face only read rounds[0]); GATED keeps its own semantics
+    (never a silent pass) but never outranks a NO_HIT.  Probes accumulate so
+    every round's live answer stays visible, and each entry carries its
+    per-round statuses.
+    """
+    status_precedence = ('NO_HIT', 'GATED', 'HIT', 'STATIC_VERIFIED')
+    merged, order = {}, []
+    for label, inventory in per_round:
+        for entry in inventory['entries']:
+            key = (entry['entry'], entry['kind'])
+            if key not in merged:
+                merged[key] = {'entry': entry['entry'], 'kind': entry['kind'],
+                               'source': entry['source'], 'probes': [], 'rounds': []}
+                order.append(key)
+            merged[key]['probes'].extend(entry.get('probes', []))
+            merged[key]['rounds'].append({'round': label, 'status': entry['status']})
+    entries = []
+    for key in order:
+        row = merged[key]
+        statuses = [round_row['status'] for round_row in row['rounds']]
+        status = next((candidate for candidate in status_precedence if candidate in statuses), statuses[-1])
+        entries.append({'entry': row['entry'], 'kind': row['kind'], 'source': row['source'],
+                        'probes': row['probes'], 'rounds': row['rounds'], 'status': status})
+    unhit = [row['entry'] for row in entries if row['status'] == 'NO_HIT']
+    gated = [row['entry'] for row in entries if row['status'] == 'GATED']
+    return {'status': 'BLOCKED' if unhit or gated else 'PASS',
+            'unhit': unhit, 'gated': gated, 'entries': entries}
+
+
 def _retirement_js_host_census():
     """Read-only census of JS host boundary call sites in the Rust tree.
 
@@ -2307,10 +2394,10 @@ webui:
         try:
             deadline = start_time + timeout
             mock = launch('mock', ['node', SCRIPT / 'mock.mjs'], mock_port)
-            ready(mock_port, mock, min(deadline, time.monotonic() + 45))
+            ready(mock_port, mock, min(deadline, time.monotonic() + RETIREMENT_READINESS_TIMEOUT_S))
             gateway = launch('gateway', ['node', '--import', SCRIPT / 'watcher.mjs',
                                          baseline / 'dist/src/cli/pilotdeck.js', 'server'], gateway_port)
-            ready(gateway_port, gateway, min(deadline, time.monotonic() + 45))
+            ready(gateway_port, gateway, min(deadline, time.monotonic() + RETIREMENT_READINESS_TIMEOUT_S))
         except (RuntimeError, TimeoutError, OSError) as error:
             # A4 (#1355 fix-r2): convert the launch failure into a retryable
             # signal so _retirement_report can move to the alternate port set.
@@ -2404,8 +2491,13 @@ def _retirement_report(output, baseline):
                                 f'round {index}: every port set was in use or failed to launch')
     verdicts = [score_retirement_round(row, expected) for row in rounds]
     coverage_status = common.aggregate_status(*(verdict['status'] for verdict in verdicts))[0]
+    # controls read rounds[0] by design (data mutation controls; the
+    # arbitration keeps this rounds[0] use exempt from ④).
     controls = _retirement_controls(rounds[0], expected)
-    inventory = _retirement_entry_inventory(baseline, rounds[0])
+    # ④ (#1355 fix-r3): the inventory face reads every round, not round 1 —
+    # an entry that answered in round 1 but 404'd in round 2 is NO_HIT.
+    inventory = _retirement_entry_inventory_aggregate(
+        [(row['label'], _retirement_entry_inventory(baseline, row)) for row in rounds])
     census_verdicts = [_retirement_census_verdict(row['census']) for row in rounds]
     # R5 (#1355 fix-r2): the network face reads as what it is — one
     # post-driver sample of the gateway pid's own established peers (provider
@@ -2468,6 +2560,43 @@ def _retirement_report(output, baseline):
     }
 
 
+def _retirement_budget_blocked(baseline, error):
+    """② (#1355 fix-r3): a round that exceeded the declared budget reports
+    BLOCKED with every scoring face present (the A8.6 consumer list:
+    methodCoverage/entryInventory/hostAudit/controls/coldRestartRollback/
+    executionStatus/expected/executed/rounds/topology/…), so a consumer never
+    KeyErrors on a budget-blocked report.  Faces carry no measurements — they
+    are BLOCKED/NOT_RUN, never an optimistic read."""
+    return {
+        'status': 'BLOCKED',
+        'reason': 'retirement TS calibration exceeded its declared round budget before a '
+                  'certifiable result; the faces below carry no measurements',
+        'failure': {'rule': 'ROUND_BUDGET', 'detail': f'{type(error).__name__}: {error}'},
+        'baseline': {'path': str(baseline), 'revision': None},
+        'expected': {'methods': [], 'count': 0, 'provenance': []},
+        'executed': {},
+        'rounds': [],
+        'methodCoverage': {'status': 'BLOCKED', 'k': RETIREMENT_ROUNDS, 'rounds': []},
+        'entryInventory': {'status': 'BLOCKED', 'unhit': [], 'gated': [], 'entries': []},
+        'hostAudit': {'status': 'BLOCKED', 'processCensus': [], 'network': [], 'listeners': [],
+                      'jsHostRequired': {'status': 'NOT_RUN',
+                                         'reason': 'round budget exceeded before the static census ran'},
+                      'nativeBinConfig': {'status': 'NOT_RUN',
+                                          'reason': 'native bin TS-upstream config audit belongs to the '
+                                                    'Rust-side retirement round'}},
+        'controls': {'status': 'NOT_RUN', 'classes': []},
+        'coldRestartRollback': {'status': 'NOT_RUN', 'rule': 'COLD_RESTART_PENDING',
+                                'reason': 'pending #1354; not reached before the budget block'},
+        'topology': {'host': 'ts-reference', 'sidecar': 'ts-mock-model',
+                     'entry': 'official GatewayWsClient driver'},
+        'portAudit': [],
+        'processAudit': [],
+        'cleanupAudit': {'status': 'NOT_RUN'},
+        'executionStatus': 'BLOCKED',
+        'acceptanceStatus': 'NOT_RUN',
+    }
+
+
 def retirement_report(output, baseline):
     """BLOCKED wrapper: a structural refusal is never a scored FAIL."""
     try:
@@ -2476,6 +2605,12 @@ def retirement_report(output, baseline):
         return {'status': 'BLOCKED', 'failure': {'rule': error.rule, 'detail': str(error)},
                 'executionStatus': 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN',
                 'reason': 'retirement TS calibration could not produce a certifiable result'}
+    except (subprocess.TimeoutExpired, TimeoutError) as error:
+        # ② (#1355 fix-r3): a TimeoutExpired from the round driver (wait_owned,
+        # census/connections probes) escaped to main and left a 9-key report
+        # whose scoring faces are all missing; it is a budget-bound signal and
+        # reports BLOCKED with the full face set instead.
+        return _retirement_budget_blocked(baseline, error)
 
 
 def main():
@@ -2620,7 +2755,7 @@ def main():
                     report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
             except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, StopIteration,
                     subprocess.SubprocessError, TimeoutError, RuntimeError, KeyboardInterrupt) as error:
-                report['status'] = 'BLOCKED' if isinstance(error, (ApparatusVerificationError, PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
+                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'
                 if args.suite == 'deadline':
                     report.pop('cells', None)  # No consumable partial score after failed final verification.
                     report['executionStatus'] = 'NOT_RUN'
