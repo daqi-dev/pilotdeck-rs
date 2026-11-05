@@ -296,11 +296,19 @@ async fn matrix_pairing_worker() {
         write(&mut client, &fence).await;
         read(&mut observer, &fence).await;
         observer.shutdown().await.expect("#132 observer shutdown");
-        tokio::time::timeout(DEADLINE, task)
-            .await
-            .expect("#132 pairing task deadline")
-            .expect("#132 pairing task join")
-            .expect("#132 pairing task result");
+        // A timed-out JoinHandle must be aborted and awaited: dropping it
+        // detaches and leaves the pairing task holding the sockets.
+        let mut task = task;
+        match tokio::time::timeout(DEADLINE, &mut task).await {
+            Ok(result) => result
+                .expect("#132 pairing task join")
+                .expect("#132 pairing task result"),
+            Err(_) => {
+                task.abort();
+                let _ = task.await; // Also handles completion racing with abort.
+                panic!("#132 pairing task deadline");
+            }
+        }
     }
     crate::test_process::receipt(&lang);
 }
