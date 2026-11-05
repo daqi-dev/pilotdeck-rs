@@ -202,6 +202,17 @@ ROW_BARE = re.compile(r'[0-9a-f]{16,64}  (\S+)')
 ROW_TABLE = re.compile(r'\| `([^`]+)` \| `[0-9a-f]{16,64}[^`]*`.*')
 _ROW_CACHE = {}
 _SOURCE_CACHE = {}
+# The delivery commit, pinned to a SHA before anything else runs.  Reading the
+# symbolic ``HEAD`` throughout would let a HEAD A -> C -> A wobble during the
+# classification window (the child apparatus has already exited) feed every
+# evidence lookup from C while the final snapshot still matches A -- a false
+# READY for a tree that fails the real gate.
+_PINNED_HEAD = {'sha': None}
+
+
+def pinned_head():
+    """The SHA pinned at start-up, or the symbolic ref before it is known."""
+    return _PINNED_HEAD['sha'] or 'HEAD'
 
 
 def manifest_rows(root, kind, commit):
@@ -314,7 +325,7 @@ def event_evidence(root, kind, mb):
                 continue
             if state:
                 continue  # historical event; append-only, not this delivery's
-        head = exists_at(root, 'HEAD', relative)
+        head = exists_at(root, pinned_head(), relative)
         if head is None:
             issues.append(f'{relative}: cannot tell whether it is committed')
             continue
@@ -367,7 +378,7 @@ def chain_backed(root, kind, edges, path, mb):
     if registration is False:
         target = '-'
     else:
-        state, actual = blob_at(root, 'HEAD', path)
+        state, actual = blob_at(root, pinned_head(), path)
         if state is not True or actual is None:
             return False
         target = actual
@@ -433,7 +444,7 @@ def head_tracked(root, path):
         relative = Path(path).relative_to(root).as_posix()
     except ValueError:
         return False
-    return exists_at(root, 'HEAD', relative) is True
+    return exists_at(root, pinned_head(), relative) is True
 
 
 def existing_file(root, kind, name):
@@ -465,12 +476,26 @@ def source_text(root, commit, path):
 
 
 def _module_tuple(tree, name):
-    """Value of a module-level ``name = (...tuple...)``, or None.
+    """Value of the one module-level ``name = (...tuple...)``, or None.
 
     Parsed with ``ast`` rather than a regex: a commented-out member
     (``# 'observer.py',``) must not count, and a ``)`` inside a comment must not
     truncate the tuple.
+
+    The binding must be unique: a later reassignment or an augmented assignment
+    means the value the interpreter sees is not the literal parsed here, so the
+    shape is "cannot tell" (None).  Returning the first literal would keep
+    reporting a member as registered after the branch removed it -- the same
+    false-READY class a comment used to cause.
     """
+    stores = [node for node in ast.walk(tree)
+              if isinstance(node, ast.Name) and node.id == name
+              and isinstance(node.ctx, ast.Store)]
+    augments = [node for node in ast.walk(tree)
+                if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
+                and node.target.id == name]
+    if len(stores) != 1 or augments:
+        return None
     for node in tree.body:
         targets, value = [], None
         if isinstance(node, ast.Assign):
@@ -487,16 +512,201 @@ def _module_tuple(tree, name):
     return None
 
 
-def _function_strings(tree, name):
-    """String constants inside ``def name(...)``, or None when it is absent."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return [child.value for child in ast.walk(node)
-                    if isinstance(child, ast.Constant) and isinstance(child.value, str)]
+def _module_path(tree, name):
+    """Value of ``name = ROOT / '<literal>'``, or None."""
+    stores = [node for node in ast.walk(tree)
+              if isinstance(node, ast.Name) and node.id == name
+              and isinstance(node.ctx, ast.Store)]
+    if len(stores) != 1:
+        return None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (isinstance(target, ast.Name) and target.id == name):
+                continue
+            value = node.value
+            if (isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div)
+                    and isinstance(value.right, ast.Constant)
+                    and isinstance(value.right.value, str)):
+                return value.right.value
+            return None
     return None
 
 
-def gateway_inventory(root, commit='HEAD'):
+def _function_node(tree, name):
+    """The single ``def name``, or None when absent or redefined.
+
+    A second definition means the interpreter runs the later body while a walk
+    that takes the first would model the wrong inventory -- so a redefinition is
+    "cannot tell", not "use the first one".
+    """
+    found = [node for node in ast.walk(tree)
+             if isinstance(node, ast.FunctionDef) and node.name == name]
+    return found[0] if len(found) == 1 else None
+
+
+def _parse(source):
+    """``ast.parse`` that treats every unparsable shape as "cannot tell"."""
+    try:
+        return ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+
+
+def _parents(tree):
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    return parents
+
+
+def _tuple_value(tree, function, name, external=()):
+    """Tuple bound to ``name`` inside ``function`` (local assignment first), else None."""
+    found = None
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (isinstance(target, ast.Name) and target.id == name):
+                continue
+            if found is not None:
+                return None
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, SyntaxError):
+                return None
+            if not isinstance(value, tuple) or not all(isinstance(item, str) for item in value):
+                return None
+            found = value
+    if found is not None:
+        return found
+    if name in external:
+        return external[name]
+    return _module_tuple(tree, name)
+
+
+def _template(node):
+    """``(prefix, suffix, name)`` for a one-placeholder f-string, else None."""
+    parts = node.values
+    if not parts:
+        return None
+    prefix = suffix = ''
+    names = []
+    for index, part in enumerate(parts):
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            if index == 0:
+                prefix = part.value
+            elif index == len(parts) - 1:
+                suffix = part.value
+            else:
+                return None
+        elif (isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name)
+                and part.format_spec is None and part.conversion in (-1, None)):
+            names.append(part.value.id)
+        else:
+            return None
+    return (prefix, suffix, names[0]) if len(names) == 1 else None
+
+
+def _template_members(tree, function, parents, node, name, external=()):
+    """Values ``name`` takes at ``node``: a comprehension's tuple, or a plain tuple."""
+    cursor = parents.get(id(node))
+    while cursor is not None:
+        if isinstance(cursor, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            for generator in cursor.generators:
+                if not (isinstance(generator.target, ast.Name) and generator.target.id == name):
+                    continue
+                source = generator.iter
+                if isinstance(source, ast.Name):
+                    return _tuple_value(tree, function, source.id, external)
+                if isinstance(source, (ast.Tuple, ast.List, ast.Set)):
+                    try:
+                        value = ast.literal_eval(source)
+                    except (ValueError, SyntaxError):
+                        return None
+                    if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
+                        return value
+                return None
+            return None
+        cursor = parents.get(id(cursor))
+    return _tuple_value(tree, function, name, external)
+
+
+def _gateway_manifest(tree, external=()):
+    """Paths ``gateway-parity``'s ``manifest_inventory`` would give a FROZEN row.
+
+    Modelled from the function's own expressions rather than from a regex over
+    its bytes: members come from ``f'scripts/.../{name}'`` templates expanded
+    over the tuple that actually feeds them, full path literals are taken
+    verbatim, and the bare tuple used as manifest keys becomes the
+    ``specs/gateway-parity/`` names.  Anything else -- a template whose tuple
+    cannot be resolved, no template at all, no spec name -- is "cannot tell"
+    (None) instead of a guessed inventory: a wrong True hides a dropped member
+    (false READY) and a wrong False demands chains ``--write`` never needs.
+    """
+    function = _function_node(tree, 'manifest_inventory')
+    if function is None:
+        return None
+    parents = _parents(function)
+    inventory, consumed, specs = set(), set(), set()
+    template_parts, templates = set(), 0
+    for node in ast.walk(function):
+        if not isinstance(node, ast.JoinedStr):
+            continue
+        template = _template(node)
+        if template is None:
+            return None
+        prefix, suffix, name = template
+        members = _template_members(tree, function, parents, node, name, external)
+        if members is None:
+            return None
+        for member in members:
+            inventory.add(prefix + member + suffix)
+            consumed.add(member)
+        template_parts.update(id(part) for part in node.values)
+        templates += 1
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Constant) or id(node) in template_parts:
+            continue
+        if isinstance(parents.get(id(node)), ast.Expr):
+            continue  # docstring / bare string statement: prose, not a member
+        value = node.value
+        if not isinstance(value, str) or value in consumed:
+            continue
+        if '/' in value:
+            if value.startswith('scripts/') or value.startswith('specs/'):
+                inventory.add(value)
+            continue
+        if '.' in value:
+            specs.add(f'specs/gateway-parity/{value}')
+    if not inventory:
+        return None
+    return inventory | specs
+
+
+def _ui_scan_dirs(tree):
+    """The ``scan(root / '<dir>')`` directories in ``apparatus_files``, or None."""
+    function = _function_node(tree, 'apparatus_files')
+    if function is None:
+        return None
+    found = set()
+    for node in ast.walk(function):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == 'scan' and len(node.args) == 1):
+            continue
+        argument = node.args[0]
+        if (isinstance(argument, ast.BinOp) and isinstance(argument.op, ast.Div)
+                and isinstance(argument.right, ast.Constant)
+                and isinstance(argument.right.value, str)):
+            found.add(argument.right.value)
+        else:
+            return None
+    return found or None
+
+
+def gateway_inventory(root, commit=None):
     """Paths gateway-parity's ``--write`` would give a FROZEN row.
 
     Its inventory is a literal in the apparatus source (``manifest_inventory``
@@ -509,6 +719,7 @@ def gateway_inventory(root, commit='HEAD'):
     "registrable" now also decides *drops*, so guessing True there would hide a
     removed member (false READY) instead of erring towards blocking.
     """
+    commit = commit or pinned_head()
     key = ('gateway-inventory', str(root), commit)
     if key in _SOURCE_CACHE:
         return _SOURCE_CACHE[key]
@@ -516,52 +727,52 @@ def gateway_inventory(root, commit='HEAD'):
     common = source_text(root, commit, 'scripts/gateway-parity/common.py')
     frozen = source_text(root, commit, 'scripts/gateway-parity/check_frozen.py')
     if common is not None and frozen is not None:
-        try:
-            scripts = _module_tuple(ast.parse(common), 'A2_SCRIPTS')
-            literals = _function_strings(ast.parse(frozen), 'manifest_inventory')
-        except SyntaxError:
-            scripts, literals = None, None
-        if scripts is not None and literals is not None:
-            # ``f'scripts/a5-19/{name}'`` is the template form: the directory is
-            # the prefix even though the literal does not end in '/'.
-            prefixes = {item for item in literals if item.endswith('/')}
-            prefixes |= {item.split('{name}')[0] for item in literals if '{name}' in item}
-            full = {item for item in literals
-                    if '/' in item and not item.endswith('/') and '{name}' not in item}
-            bare = {item for item in literals if '/' not in item and '.' in item}
-            inventory = set(full)
-            inventory.update(f'specs/gateway-parity/{name}' for name in bare)
-            inventory.update(f'scripts/gateway-parity/{name}' for name in scripts)
-            inventory.update(prefix + name for prefix in prefixes for name in bare)
+        common_tree, frozen_tree = _parse(common), _parse(frozen)
+        if common_tree is not None and frozen_tree is not None:
+            scripts = _module_tuple(common_tree, 'A2_SCRIPTS')
+            manifest = _gateway_manifest(frozen_tree,
+                                         {'A2_SCRIPTS': scripts} if scripts else {})
+            if scripts is not None and manifest is not None:
+                inventory = set(manifest) | {f'scripts/gateway-parity/{name}' for name in scripts}
     _SOURCE_CACHE[key] = inventory
     return inventory
 
 
-def ui_inventory(root, commit='HEAD'):
+def ui_inventory(root, commit=None):
     """ui-server-parity's registrable model, or ``None`` when source is unreadable.
 
-    ``APPARATUS_PATHS`` (two scanned directories + the spec directory),
-    ``SPEC_FILES`` and ``TOOLCHAIN_FILES`` are literals in ``apparatus.py``;
-    copying them here would silently drift when the apparatus changes them.  The
-    toolchain entries count only when the file exists -- ``toolchain_files()``
-    is presence-based, so a deleted one loses its row.
+    The scanned directories and the spec directory are read from *both* sides
+    and must agree: ``apparatus.py:APPARATUS_PATHS`` (used by the git-status
+    gate) and ``check_frozen.py``'s ``SPEC`` / ``apparatus_files`` (what
+    ``required_files`` actually registers).  Reading only one of them, or
+    trusting positions in the tuple, would drift silently the day either side
+    changes -- and a wrong model either hides a drop (false READY) or demands
+    chains ``--write`` never writes.  ``SPEC_FILES`` and ``TOOLCHAIN_FILES``
+    are literals in ``apparatus.py``; a toolchain entry counts only when the
+    file exists, because ``toolchain_files()`` is presence-based.
     """
+    commit = commit or pinned_head()
     key = ('ui-inventory', str(root), commit)
     if key in _SOURCE_CACHE:
         return _SOURCE_CACHE[key]
     inventory = None
     source = source_text(root, commit, 'scripts/ui-server-parity/apparatus.py')
-    if source is not None:
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            tree = None
-        if tree is not None:
+    frozen = source_text(root, commit, 'scripts/ui-server-parity/check_frozen.py')
+    if source is not None and frozen is not None:
+        tree, frozen_tree = _parse(source), _parse(frozen)
+        if tree is not None and frozen_tree is not None:
             paths = _module_tuple(tree, 'APPARATUS_PATHS')
             specs = _module_tuple(tree, 'SPEC_FILES')
             toolchain = _module_tuple(tree, 'TOOLCHAIN_FILES')
+            scan_dirs = _ui_scan_dirs(frozen_tree)
+            spec_dir = _module_path(frozen_tree, 'SPEC')
             if (paths is not None and specs is not None and toolchain is not None
-                    and len(paths) >= 3):
+                    and scan_dirs is not None and spec_dir is not None
+                    and len(paths) == 3 and all(isinstance(item, str) for item in paths)
+                    and all(item.startswith('scripts/') for item in paths[:2])
+                    and paths[2].startswith('specs/')
+                    and set(paths[:2]) == scan_dirs
+                    and paths[2].rstrip('/') == spec_dir.rstrip('/')):
                 known, present = True, set()
                 for name in toolchain:
                     state = exists_at(root, commit, name)
@@ -572,8 +783,8 @@ def ui_inventory(root, commit='HEAD'):
                         present.add(name)
                 if known:
                     inventory = {
-                        'dirs': tuple(item.rstrip('/') + '/' for item in paths[:2]),
-                        'spec': paths[2].rstrip('/') + '/',
+                        'dirs': tuple(item.rstrip('/') + '/' for item in sorted(scan_dirs)),
+                        'spec': spec_dir.rstrip('/') + '/',
                         'specs': set(specs),
                         'toolchain': present,
                     }
@@ -606,12 +817,12 @@ def registrable(root, kind, path):
             return True
         if not path.startswith(GATEWAY_DIRS):
             return False
-        inventory = gateway_inventory(root, 'HEAD')
+        inventory = gateway_inventory(root)
         if inventory is None:
             return None  # shape not recognised: never guess in either direction
         return path in inventory
     if kind == 'ui-server-parity':
-        inventory = ui_inventory(root, 'HEAD')
+        inventory = ui_inventory(root)
         if inventory is None:
             return None
         if path in inventory['toolchain']:
@@ -629,7 +840,7 @@ def tracked_at_head(root, path):
     prefix = path.split('/', 1)[0] + '/' if '/' in path else path
     key = (str(root), prefix)
     if key not in _SOURCE_CACHE:
-        code, out, _ = git(root, 'ls-tree', '-r', '--name-only', 'HEAD', '--', prefix)
+        code, out, _ = git(root, 'ls-tree', '-r', '--name-only', pinned_head(), '--', prefix)
         _SOURCE_CACHE[key] = set(out.splitlines()) if code == 0 else None
     listing = _SOURCE_CACHE[key]
     return None if listing is None else path in listing
@@ -654,14 +865,14 @@ def unregistered_added(root, kind, mb):
         return [], []
     added, issues = [], []
     if kind == 'ui-server-parity':
-        inventory = ui_inventory(root, 'HEAD')
+        inventory = ui_inventory(root)
         prefixes = () if inventory is None else inventory['dirs']
     else:
         prefixes = {'parity': ('scripts/parity/',),
                     'gateway-parity': GATEWAY_DIRS}.get(kind, ())
     for prefix in prefixes:
         code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
-                             'HEAD', '--', prefix)
+                             pinned_head(), '--', prefix)
         if code:
             issues.append(f'cannot list files under {prefix}: {err.strip()}')
             continue
@@ -852,7 +1063,7 @@ def run_apparatus(root, kind, entry, base, mb):
                                                    'would register it (inventory unreadable)', None))
             continue
         reported.add(name)
-        if exists_at(root, 'HEAD', name) is not True:
+        if exists_at(root, pinned_head(), name) is not True:
             result['blocking'].append(('blocking', f'{name}: unregistered file is not '
                                                    'committed (git add/commit required)', None))
         elif not chain_backed(root, kind, edges, name, mb):
@@ -884,7 +1095,7 @@ def event_chain_issues(root, base, kinds, mb=None):
         mb, error = merge_base(root, base)
         if error:
             return [('event-chain', error)], added, None
-    code, out, err = git(root, 'diff', '--name-status', '--no-renames', mb, 'HEAD', '--', 'specs')
+    code, out, err = git(root, 'diff', '--name-status', '--no-renames', mb, pinned_head(), '--', 'specs')
     if code:
         return [('event-chain', f'cannot diff specs/: {err.strip()}')], added, mb
     for line in out.splitlines():
@@ -952,12 +1163,12 @@ def main(argv=None):
 
     print(f'check-frozen-delivery: root={root}')
 
-    # Pin the SHA the run was started on and compare it at the end: evidence and
-    # target bytes are read from HEAD, and the child apparatus reads HEAD as
-    # well, so a commit landing mid-run (``--amend`` in the audited worker tree)
-    # would let event rows from one commit back bytes from another -- a false
-    # READY that is not fixed by pinning only this process's reads.  The
-    # merge-base is computed from this pinned SHA for the same reason.
+    # Pin the SHA the run was started on and compare it at the end: every
+    # evidence read (event rows, target bytes, inventory sources, ls-tree) uses
+    # this SHA via ``pinned_head()``, not the symbolic ``HEAD``.  Pinning only
+    # the merge-base would leave a HEAD A -> C -> A wobble inside the
+    # classification window able to feed all lookups from C while the closing
+    # snapshot still matches A -- a false READY for a tree the real gate fails.
     code, head_before, head_err = git(root, 'rev-parse', '--verify', 'HEAD')
     head_before = head_before.strip()
     if code or not head_before:
@@ -966,6 +1177,7 @@ def main(argv=None):
               f'{head_err.strip() or "<empty>"}')
         print('BLOCKED 1 / READY 0')
         return 1
+    _PINNED_HEAD['sha'] = head_before
 
     mb, mb_error = merge_base(root, args.base, head_before)
     print(f'  base={args.base} merge-base={mb or "<unresolved>"}')
