@@ -22,6 +22,7 @@
 **护栏**：破坏性命令先核授权、范围与可恢复性，不靠加前缀或改写命令绕过；未知改动与未跟踪文件先保留。
 **并行**：写入任务用 worktree 隔离并明确持有人，可复用归属清楚的树；开新树先核数量与磁盘，不套树；每树独立 `CARGO_TARGET_DIR`，共享产物不代表当前 HEAD。
 **自检**：用互相对抗的视角审，不是再读一遍；`.claude/workflows/` 是编排参考，按当前运行器执行。
+**满载推进、大方冗余（2026-11-05 人令）**：三台远端（cb8 / mbp2 / macmini-01）按分池上限吃满，不排队省资源；只依赖模型调用的工作（评审、任务书组装、分诊、分析）默认并行起、可按需冗余多跑一两家异谱系。通道余量 zai 24 / deepseek 16 / minimax 16（anthropic 仍 2）。物理与逻辑约束不变：同文件与注册点串行、合并队列、全量对拍每主机各 1、冻结装置、红线清单。
 
 ## 三、三层验证
 
@@ -94,6 +95,7 @@
 
 ### 技能停点覆盖表（2026-10-17 登记）
 `.claude/skills/*` 是厂商缓存的 symlink，不在里面写项目模版；冲突以本表与本文件为准，表外停点按决策分级。
+- **开工优先用技能流水线（2026-11-05 人令）**：单条 issue 开工先按 `.claude/skills/dev-launch/SKILL.md` 走（状态校验 → 调研 → 确定性分流 → 实现 → 三层验证 → 双谱系评审 → 交付）；相关 `dev-req` / `pr-ready` / `dev-docs` 同办。批量与无人值守调度不在技能范围，仍按本表与 board READY 执行。派子代理时在任务书里点名要求它先读对应技能。
 - **dev-launch**：§2.5 产物写 `_tmp/<YYYYMMDD>-issue-<N>/triage.md`（`check-naming.py`） · §3/§4「停等拍板 / 值不值得」→ 写卡，暂不执行则 READY 条目改 `human` 取下一条（`next-task.sh` 跳过） · §3 >3 天 → 拆小 PR，READY 列 `<码>-pr1`… · §6.6「无 P2 才收敛」→ 按问题分级 · §8 人工合并 → 第 14 条入队 · §8 关单 → PR 写 `Closes #N` 或 `Refs #N`，关前先回复 · §7.0 只剩一家 → READY 改 `blocked` 写缺哪家，不降单评审。
 - **dev-req** Phase0 复述确认 → 写进 triage，按决策分级自决；深度思考 MCP 不可用则跳过。
 - **pr-ready**：Step0 项目模板不建，invariant 以 MEMORY.md 为触发表 · Step3/Step4 → `python3 scripts/run-review-roles.py`（默认四角色并行（10-22 实测：两闸门 8 路、三闸门 12 路 GLM 并发均正常出块）；`--serial` 只在排查时用；不要分次单角色跑再拼块；每角色超时不传 `--timeout` 时按通道默认（zai 600 s、anthropic 1200 s），显式值优先，默认 `--runner zai` 即 GLM（`glm-5.3-mb`），`--runner anthropic` 跑 Claude（`.env.local` 的 `ANTHROPIC_API_KEY`，经 llm-center，10-25 起可用；GLM 作者线的非作者正式块用它；模型通道与已知坑见 memory「model-runners」），任务书 `.claude/workflows/review-*.md`）· Step6 → P0/P1 先修再重跑相关角色，P2 三分，开 PR 贴 `summary.md`。
