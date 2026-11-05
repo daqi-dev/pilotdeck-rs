@@ -957,6 +957,37 @@ class ReceiptTests(unittest.TestCase):
         self.run.paths[self.key].unlink()
         self.assertFalse(self.judge(targets=targets, any_cell=True)[0])
 
+    def test_exact_requires_every_declared_target_to_run(self):
+        # #1579 P1: a row whose second declared cell never reached libtest must
+        # not inherit the first cell's kill. This is the judge half of the
+        # control; the runner half is
+        # MatrixRunnerTests.test_exact_multi_target_runs_each_cell.
+        second = ('sibling', 'sibling assertion')
+        targets = self.targets + [second]
+        self.receipt()
+        self.assertFalse(
+            self.judge(targets=targets, any_cell=True, require_all_ran=True)[0],
+            'a declared cell without a named result was never run')
+        ran = subprocess.CompletedProcess([], 101, self.result.stdout +
+            f'test {self.PREFIX}sibling ... ok\n', '')
+        killed, _reason, hits = self.judge(
+            ran, targets=targets, any_cell=True, require_all_ran=True)
+        self.assertTrue(killed)
+        self.assertEqual(hits, [self.CELL])
+        cells = suite.cell_states(ran, self.PREFIX, targets, self.run)
+        self.assertEqual({cell['test']: cell['status'] for cell in cells},
+                         {self.CELL: 'KILLED', 'sibling': 'OK'})
+
+    def test_judge_keeps_its_three_value_contract(self):
+        # Sixteen fixtures unpack `killed, reason, hits = judge(...)`; per-cell
+        # evidence travels through cell_states() so that never breaks (#1579).
+        self.receipt()
+        judged = self.judge()
+        self.assertEqual(len(judged), 3, judged)
+        self.assertEqual(suite.cell_states(self.result, self.PREFIX,
+                                           self.targets, self.run),
+                         [{'test': self.CELL, 'status': 'KILLED'}])
+
     def test_empty_and_duplicate_receipt_targets_are_refused(self):
         for index, targets in enumerate(([], [self.key, self.key],
                                          [self.key, (self.key[0], 'other assertion')])):
@@ -1079,6 +1110,60 @@ class MatrixRunnerTests(unittest.TestCase):
                 self.assertEqual(report['controls'][0]['status'], 'SURVIVED' if fault == 'survive' else 'INVALID')
                 if fault == 'compile':
                     self.assertNotIn(('first', False), phases, 'uncompiled mutant must not execute')
+
+    def test_exact_multi_target_runs_each_cell(self):
+        # #1579 P1 negative control: if the runner reverts to a single filter
+        # built from targets[0], the second declared cell never executes; the
+        # filter assertion below goes red before the verdict is even reached.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source.rs'
+            source.write_text('original')
+            targets = [('cell_one', 'assertion one'), ('cell_two', 'assertion two')]
+            rows = [('multi', source, 'original', 'mutated', targets)]
+            commands = []
+            @contextlib.contextmanager
+            def guard(*args, **kwargs):
+                yield {source: b'original'}
+            def run(command, **kwargs):
+                commands.append(list(command))
+                if '--no-run' in command:
+                    return subprocess.CompletedProcess([], 0, '', '')
+                filters = [arg for arg in command if arg.startswith('prefix::')]
+                env = kwargs['env']
+                if suite.ReceiptRun.ENV in env:
+                    config = json.loads(env[suite.ReceiptRun.ENV])
+                    for test in filters:
+                        entry = next(target for target in config['targets']
+                                     if target['test'] == test)
+                        Path(entry['path']).write_text(config['nonce'])
+                    return subprocess.CompletedProcess(
+                        [], 101, ''.join(f'test {test} ... FAILED\n' for test in filters)
+                        + f'test result: FAILED. 0 passed; {len(filters)} failed;\n', '')
+                return subprocess.CompletedProcess(
+                    [], 0, ''.join(f'test {test} ... ok\n' for test in filters)
+                    + f'test result: ok. {len(filters)} passed; 0 failed;\n', '')
+            with patch.object(suite, 'mutating_sources', side_effect=guard), \
+                    patch.object(suite, 'run_owned', side_effect=run), \
+                    patch.object(suite, 'wait_for_slot', return_value=output('pass')), \
+                    patch.dict('os.environ', {'CARGO_TARGET_DIR': str(root / 'target')}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = suite.matrix_main(root, root / 'runner.py', 'prefix::', rows,
+                    passed_count=1, child_count=0, paths=[source], exact=True,
+                    args=[str(root / 'out')])
+            filters = [[arg for arg in command if arg.startswith('prefix::')]
+                       for command in commands if '--no-run' not in command]
+            for command_filters in filters:
+                self.assertEqual(command_filters,
+                                 ['prefix::cell_one', 'prefix::cell_two'],
+                                 'every declared target must reach libtest')
+            self.assertEqual(len(filters), 3, 'positive, negative and restored')
+            report = json.loads((root / 'out/summary.json').read_text())
+            self.assertEqual(code, 0)
+            self.assertEqual(report['controls'][0]['status'], 'KILLED')
+            self.assertEqual({cell['test']: cell['status']
+                              for cell in report['controls'][0]['cells']},
+                             {'cell_one': 'KILLED', 'cell_two': 'KILLED'})
 
 
 if __name__ == '__main__':
