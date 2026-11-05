@@ -33,6 +33,7 @@ RENDER = ROOT / "src/pilotdeck-gateway/src/channel/api_server/render.rs"
 REPLAY = "channel::api_server::tests::replays_real_ts_api_server_cells"
 DUPLICATE = "channel::api_server::tests::duplicate_chat_is_busy_then_free"
 OVERSIZED = "channel::api_server::tests::oversized_body_closes_without_response"
+EXACT_LIMIT = "channel::api_server::tests::body_at_the_exact_limit_is_read_then_rejected_as_json"
 RENDER_VISIBLE = "channel::api_server::tests::render_visible_failure_status_names_match_ts"
 DEFAULT_PORT_TEST = "channel::api_server::tests::unconfigured_port_falls_back_to_the_ts_default"
 
@@ -124,6 +125,14 @@ mutations = [
         "10_000_000",
         OVERSIZED,
         "#1333 oversized body closes with zero bytes",
+    ),
+    (
+        "body-limit-exact",
+        SERVER,
+        "if out.len() + data.len() > MAX_REQUEST_BYTES {",
+        "if out.len() + data.len() >= MAX_REQUEST_BYTES {",
+        EXACT_LIMIT,
+        "#1333 a body of exactly MAX_REQUEST_BYTES is read",
     ),
     (
         "default-port",

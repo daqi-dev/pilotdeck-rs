@@ -1095,6 +1095,42 @@ async fn oversized_body_closes_without_response() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn body_at_the_exact_limit_is_read_then_rejected_as_json() {
+    // The cap is exclusive (`> MAX_REQUEST_BYTES`, mirroring TS
+    // `ApiServerChannel.ts:409` `if (size > max)`), so a body of exactly
+    // 1,000,000 bytes is read in full and then fails JSON parsing: 400
+    // invalid_json, *not* the zero-byte close. The oracle cannot see this
+    // cell (every oversized cell sits at 1,000,001), so without this test a
+    // `>` -> `>=` off-by-one would pass replay, the oversized test and the
+    // `body-limit` negative control alike.
+    let started = start(options(&json!({"options":{}}), None), None).await;
+    let body = "x".repeat(1_000_000);
+    let response = exchange(
+        started.addr,
+        &ReqSpec {
+            method: "POST".to_owned(),
+            path: "/v1/chat/completions".to_owned(),
+            headers: Vec::new(),
+            body: body.into_bytes(),
+            keep_alive: false,
+        },
+    )
+    .await;
+    assert_eq!(
+        response.status,
+        Some(400),
+        "#1333 a body of exactly MAX_REQUEST_BYTES is read, got error {:?}",
+        response.error
+    );
+    assert!(
+        String::from_utf8_lossy(&response.body).contains("\"code\":\"invalid_json\""),
+        "#1333 a body of exactly MAX_REQUEST_BYTES fails as invalid_json, got {:?}",
+        String::from_utf8_lossy(&response.body)
+    );
+    started.handle.stop("done").await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_close_request_uses_hyper_close_header() {
     // Registered divergence A8.3-API-SERVER-002: Node keeps the handler's
     // `Connection: keep-alive` even when the request says `close`; hyper
