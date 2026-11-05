@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import tomllib
 import types
@@ -792,7 +793,7 @@ class EnvironmentControls(unittest.TestCase):
         # 两条断言照绿，而空输出会重新变成「在跑 0 → 放行」的假 PASS——正是脚本
         # 自己注释禁掉的那一格。所以把每条「先报诊断、再退出」的守卫逐条钉死：
         # 增删任意一条守卫，或把某条守卫的码改掉，都必须红。
-        guards = re.findall(r'echo "(cargo-slots: [^"\n]*)"[^\n]*?\bexit (\d)', script)
+        guards = re.findall(r'echo "(cargo-slots: [^"\n]*)"[^\n]*?\bexit (\d+)', script)
         self.assertEqual(guards,
                          [('cargo-slots: 上限必须是正整数（参数或 PDRS_CARGO_SLOTS），实际「${CAP}」', '2'),
                           ('cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）', '3'),
@@ -849,8 +850,9 @@ class EnvironmentControls(unittest.TestCase):
         # 契约核的双向性（r8 评审 P1）：删掉「ps 输出为空」那一整行守卫后，脚本仍会发
         # `exit 3`（取样失败那条），documented 与 exit 集合双双自洽 —— 只有逐条守卫的
         # 钉死能杀它。
-        empty_guard = next(line for line in script.splitlines(keepends=True)
-                           if 'ps 输出为空' in line)
+        empty_guard = next((line for line in script.splitlines(keepends=True)
+                            if 'ps 输出为空' in line and re.search(r'\bexit \d', line)), None)
+        self.assertIsNotNone(empty_guard, '#1632 the empty-sample guard line exists')
         self.assertEqual(script.count(empty_guard), 1,
                          '#1632 unique anchor: the empty-sample guard line')
         with self.assertRaises(AssertionError,
@@ -872,6 +874,50 @@ class EnvironmentControls(unittest.TestCase):
         with self.assertRaises(AssertionError, msg='#1632 dropping a case must be caught'):
             self.slot_guard_cases(mutant, script)
         print('#1632 slot-guard mutant case-removed: KILLED', flush=True)
+
+    def run_cargo_slots(self, script, tmp, ps_body):
+        """把假 `ps` 前置进 PATH，真跑一遍 `cargo-slots.sh`。"""
+        fake = Path(tmp)/'ps'
+        fake.write_text(ps_body)
+        fake.chmod(0o755)
+        return subprocess.run(['bash', str(script), '4'], capture_output=True, text=True,
+                              timeout=120,
+                              env={**os.environ,
+                                   'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}'})
+
+    def assert_cargo_slots_fails_closed(self, script, tmp, label):
+        """取样不可用时必须 rc=3，且绝不打印「在跑 N」——打印了就是把空样本读成 0 放行。"""
+        for case, body in (('ps exits non-zero', '#!/bin/sh\nexit 1\n'),
+                           ('ps prints nothing', '#!/bin/sh\nexit 0\n')):
+            done = self.run_cargo_slots(script, tmp, body)
+            self.assertEqual(done.returncode, 3, f'#1632 {label} / {case}: {done.stderr}')
+            self.assertIn('不按 0 放行', done.stderr, f'#1632 {label} / {case} explains itself')
+            self.assertNotIn('在跑', done.stdout, f'#1632 {label} / {case} reports no slot count')
+
+    def test_cargo_slots_script_fails_closed_when_ps_is_unusable(self):
+        # #1632 r9 评审（MiniMax sibling / boundary P1）：上面那条只钉脚本文本，而文本钉不住
+        # 语义——`||` 翻成 `&&`、把 `exit 3` 包进子 shell、或把整行挪到判定之后，被钉的字符串
+        # 一字不变，闸门却回到「空样本 → 在跑 0 → 放行」。所以换一个载体：假 `ps` 前置进
+        # PATH，真跑一遍脚本，两条取样失败路径都必须 rc=3 且不打印槽位数。
+        script = Path(__file__).resolve().parents[3]/'scripts/cargo-slots.sh'
+        text = script.read_text()
+        guard = next(line for line in text.splitlines(keepends=True) if 'ps 输出为空' in line)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assert_cargo_slots_fails_closed(script, tmp, 'real script')
+            for label, mutant in (
+                    ('guard-condition-flipped',
+                     text.replace('] || { echo "cargo-slots: ps 输出为空',
+                                  '] && { echo "cargo-slots: ps 输出为空', 1)),
+                    ('guard-exit-in-subshell',
+                     text.replace(guard, f'( {guard.rstrip(chr(10))} )\n', 1)),
+                    ('guard-moved-after-decision', text.replace(guard, '', 1) + guard)):
+                self.assertNotEqual(mutant, text, f'#1632 the mutant really changed: {label}')
+                path = Path(tmp)/f'{label}.sh'
+                path.write_text(mutant)
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1632 the behaviour check must catch {label}'):
+                    self.assert_cargo_slots_fails_closed(path, tmp, label)
+                print(f'#1632 slot-guard behaviour mutant {label}: KILLED', flush=True)
 
     def test_nextest_keeps_workspace_doctests_and_failure_semantics(self):
         jobs = self.ci_jobs(issue='#922')
