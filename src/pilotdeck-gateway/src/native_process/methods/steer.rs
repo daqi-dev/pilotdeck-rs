@@ -38,9 +38,11 @@ fn attachments_empty(value: &JsValue) -> bool {
 /// `prepareAttachmentTurn` and never reads `uploadedAttachments` (only
 /// `submitTurn` consumes uploads; InProcessGateway.ts:1864-1870). This native
 /// slice cannot steer with attachments yet: a non-empty `attachments` payload
-/// is rejected explicitly after the state gates instead of being silently
-/// dropped (ledger A7.2-STEER-ATTACH-001); `uploadedAttachments` is accepted
-/// and ignored, matching the TS baseline.
+/// is rejected explicitly — at the TS attachment-preparation position, right
+/// after the admission branches and before the resource gates — instead of
+/// being silently dropped (ledger A7.2-STEER-ATTACH-001, corrected by
+/// A7.2-STEER-ATTACH-001-R1); `uploadedAttachments` is accepted and ignored,
+/// matching the TS baseline.
 fn attachments_unsupported(field: &str) -> RequestError {
     RequestError {
         code: "STEER_ATTACHMENTS_UNSUPPORTED".into(),
@@ -71,14 +73,16 @@ impl Requests {
     }
 
     /// `InProcessGateway.steerTurn`:
-    /// check active run → build canonical message → enqueue via mailbox.
+    /// check active run → prepare attachments → build canonical message →
+    /// enqueue via the admission-locked mailbox path.
     async fn handle_steer_turn(&self, params: JsValue) -> Result<JsValue, RequestError> {
         let session_key = string(&params, "sessionKey")?;
         let run_id = string(&params, "runId")?;
         let item_id = string(&params, "itemId")?;
         let message_text = string(&params, "message")?;
 
-        // TS: no active run → no_active_turn; wrong run → turn_mismatch.
+        // TS: no active run → no_active_turn; wrong run → turn_mismatch
+        // (InProcessGateway.ts:1860-1862).
         let active_run = self.owner.active_turn_run_id(&session_key);
         let Some(active_run) = active_run else {
             return Ok(object([
@@ -93,24 +97,13 @@ impl Requests {
             ]));
         }
 
-        let steer_info = self.current_steer_info(&session_key);
-        let Some(steer_info) = steer_info else {
-            return Ok(object([
-                ("accepted", JsValue::Bool(false)),
-                ("reason", "no_active_turn".into()),
-            ]));
-        };
-        if steer_info.run_id != run_id {
-            return Ok(object([
-                ("accepted", JsValue::Bool(false)),
-                ("reason", "turn_mismatch".into()),
-            ]));
-        }
-
-        // Attachments are rejected after the state gates, mirroring the TS
-        // order (steerTurn checks activeTurnRunId first, then prepares
-        // attachments): the caller still learns no_active_turn /
-        // turn_mismatch before the slice's explicit attachments error.
+        // Attachments are rejected immediately after the admission branches,
+        // mirroring the TS order: steerTurn prepares attachments right after
+        // the activeTurnRunId gates (InProcessGateway.ts:1864-1870), while the
+        // session/run resource gates run later, inside router.steer
+        // (SessionRouter.ts:307-314, AgentSession.ts:290-297). The caller
+        // still learns no_active_turn / turn_mismatch before the slice's
+        // explicit attachments error.
         if params
             .get("attachments")
             .is_some_and(|value| !attachments_empty(value))
@@ -120,6 +113,27 @@ impl Requests {
         // `uploadedAttachments` is never read by TS `steerTurn` (only
         // `submitTurn` consumes uploads): a non-empty payload is accepted
         // and ignored here, matching the baseline.
+
+        // Same shared lookup as the async-hook registry's turn resolution:
+        // fetch the steer slot and guard it against the admission run ID
+        // already checked above (`active_turn_for` performs the guard).
+        let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
+            &self.project,
+            &session_key,
+            Some(&active_run),
+        );
+        let Some(steer_info) = steer_info else {
+            return Ok(object([
+                ("accepted", JsValue::Bool(false)),
+                ("reason", "no_active_turn".into()),
+            ]));
+        };
+
+        // Regression-test interleave point for the admission-vs-enqueue race:
+        // by the time this handler resumes, the steer target may have closed
+        // and restarted under the same textual turn ID. Inert unless armed.
+        #[cfg(test)]
+        race_hook::pause(&session_key).await;
 
         // Canonical TS steer message format (InProcessGateway.ts:1871-1883).
         let message = crate::metadata::object([
@@ -141,15 +155,11 @@ impl Requests {
         ]);
 
         let result = steer_info
-            .mailbox
-            .enqueue(
-                steer_info.turn_id,
-                SteerMessage {
-                    item_id,
-                    message,
-                    allowed_read_files: Some(Vec::new()),
-                },
-            )
+            .enqueue(SteerMessage {
+                item_id,
+                message,
+                allowed_read_files: Some(Vec::new()),
+            })
             .await
             .map_err(|e| RequestError::new(e.message.clone()))?;
 
@@ -189,23 +199,20 @@ impl Requests {
             ]));
         }
 
-        let steer_info = self.current_steer_info(&session_key);
+        let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
+            &self.project,
+            &session_key,
+            Some(&active_run),
+        );
         let Some(steer_info) = steer_info else {
             return Ok(object([
                 ("cancelled", JsValue::Bool(false)),
                 ("reason", "no_active_turn".into()),
             ]));
         };
-        if steer_info.run_id != run_id {
-            return Ok(object([
-                ("cancelled", JsValue::Bool(false)),
-                ("reason", "turn_mismatch".into()),
-            ]));
-        }
 
         let result = steer_info
-            .mailbox
-            .cancel(steer_info.turn_id, item_id)
+            .cancel(item_id)
             .await
             .map_err(|e| RequestError::new(e.message.clone()))?;
 
@@ -278,23 +285,67 @@ impl Requests {
             ("status", result.status.as_str().into()),
         ]))
     }
+}
 
-    /// Retrieve `ActiveSteerInfo` for the session's current live turn.
-    ///
-    /// Returns `None` if no steer resource is staged, no active turn, or
-    /// the stored run ID no longer matches the admission slot. The
-    /// resource fetch, active-turn lookup, and run-ID guard live in the
-    /// shared `interaction_steer::active_turn_for`.
-    fn current_steer_info(
-        &self,
-        session_key: &pilotdeck_protocol::JsString,
-    ) -> Option<crate::runtime::project::interaction_steer::ActiveSteerInfo> {
-        // Guard: the steer slot's run must still match the admission slot.
-        let active_run = self.owner.active_turn_run_id(session_key);
-        crate::runtime::project::interaction_steer::active_turn_for(
-            &self.project,
-            session_key,
-            active_run.as_ref(),
-        )
+/// Test-only interleave for the admission-vs-enqueue race (#1307 fix-r4).
+/// `arm` stages a one-shot pause for one session key; the steer handler
+/// suspends between its admission/steer-info gates and the locked enqueue,
+/// so a test can close and restart the turn under the same textual turn ID
+/// while the request is in flight. Inert for every other session and absent
+/// from non-test builds.
+#[cfg(test)]
+pub(super) mod race_hook {
+    use pilotdeck_protocol::JsString;
+    use std::sync::Mutex;
+    use tokio::sync::{oneshot, watch};
+
+    struct Hook {
+        session: JsString,
+        reached: oneshot::Sender<()>,
+        resume: watch::Sender<bool>,
+    }
+    static ARMED: Mutex<Option<Hook>> = Mutex::new(None);
+
+    /// Arm the one-shot pause for `session`; the returned receiver fires when
+    /// the handler has reached the pause, and the sender resumes it.
+    pub(in crate::native_process::methods) fn arm(
+        session: JsString,
+    ) -> (oneshot::Receiver<()>, watch::Sender<bool>) {
+        let (reached, reached_rx) = oneshot::channel();
+        let (resume, _resume_rx) = watch::channel(false);
+        *ARMED.lock().unwrap() = Some(Hook {
+            session,
+            reached,
+            resume: resume.clone(),
+        });
+        (reached_rx, resume)
+    }
+
+    pub(in crate::native_process::methods) async fn pause(session: &JsString) {
+        let hook = {
+            let mut armed = ARMED.lock().unwrap();
+            match armed.as_ref() {
+                Some(hook) if hook.session == *session => armed.take(),
+                _ => None,
+            }
+        };
+        let Some(hook) = hook else {
+            return;
+        };
+        // Subscribe before announcing `reached`: the test must never be able
+        // to send the resume signal ahead of the subscription (a `watch`
+        // sender with zero receivers drops the value).
+        let mut resume = hook.resume.subscribe();
+        let _ = hook.reached.send(());
+        loop {
+            if *resume.borrow() {
+                return;
+            }
+            if resume.changed().await.is_err() {
+                // The test dropped the release handle without resuming:
+                // fail open rather than hanging the handler.
+                return;
+            }
+        }
     }
 }
