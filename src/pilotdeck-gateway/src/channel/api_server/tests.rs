@@ -38,6 +38,18 @@ struct RawResponse {
     error: Option<String>,
 }
 
+/// `<N bytes>` stands for `N` repeated `x` bytes: the oracle records the
+/// request *length*, not a megabyte of filler, so a replay that sends the
+/// placeholder literally would exercise a 15-byte body instead of the cap.
+/// Any other string is the request body itself.
+fn recorded_body(text: &str) -> Vec<u8> {
+    let filler = text
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix(" bytes>"))
+        .and_then(|count| count.parse::<usize>().ok());
+    filler.map_or_else(|| text.as_bytes().to_vec(), |count| vec![b'x'; count])
+}
+
 struct ReqSpec {
     method: String,
     path: String,
@@ -57,7 +69,7 @@ impl ReqSpec {
                     .collect()
             })
             .unwrap_or_default();
-        let body = value["body"].as_str().unwrap_or("").as_bytes().to_vec();
+        let body = recorded_body(value["body"].as_str().unwrap_or(""));
         let keep_alive = value["headers"]["connection"]
             .as_str()
             .map(|value| value.eq_ignore_ascii_case("keep-alive"))
@@ -587,7 +599,7 @@ async fn replays_real_ts_api_server_cells() {
     assert_eq!(oracle["node"], "v22.22.0", "#1333 Node baseline");
     let cases = oracle["cases"].as_array().expect("#1333 oracle cases");
     // Exact ids, not a count: a regenerated oracle that renames or swaps one
-    // cell would keep `len == 13` while silently dropping a surface.
+    // cell would keep `len == 14` while silently dropping a surface.
     let ids: Vec<&str> = cases
         .iter()
         .map(|case| case["id"].as_str().expect("#1333 case id"))
@@ -607,6 +619,7 @@ async fn replays_real_ts_api_server_cells() {
             "oversized-0",
             "oversized-1",
             "oversized-2",
+            "body-limit-exact",
             "keep-alive",
         ],
         "#1333 oracle must keep every TS surface cell, in order"

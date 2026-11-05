@@ -1562,6 +1562,29 @@
       ]
     },
     {
+      "id": "body-limit-exact",
+      "options": {},
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/chat/completions",
+          "body": "<1000000 bytes>"
+        }
+      ],
+      "expect": [
+        {
+          "status": 400,
+          "headers": {
+            "connection": "close",
+            "content-length": "464",
+            "content-type": "application/json",
+            "date": "Thu, 01 Jan 1970 00:00:00 GMT"
+          },
+          "body": "{\"error\":{\"message\":\"Invalid JSON\",\"type\":\"invalid_request_error\",\"code\":\"invalid_json\",\"userHint\":\"Send a valid JSON request body.\",\"status\":400,\"scope\":\"http\",\"source\":\"api_server\",\"event\":\"api_invalid_json\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"api_invalid_json\",\"detail\":{\"message\":\"Invalid JSON\",\"code\":\"invalid_json\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Send a valid JSON request body.\",\"scope\":\"http\",\"source\":\"api_server\",\"status\":400}}}"
+        }
+      ]
+    },
+    {
       "id": "keep-alive",
       "options": {},
       "requests": [
