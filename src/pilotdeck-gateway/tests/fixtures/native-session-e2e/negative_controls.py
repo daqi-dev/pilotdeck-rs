@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_process import target_environment
 
 session = root / 'scripts/gateway-parity/session_domain.py'
@@ -70,6 +70,7 @@ cases = [
     ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    path.write_text(changed)", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    path.write_text(changed)", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
+    ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
 ]
 messages = {
     'decoder-frame-for-send-rows': '#1140 e2e real capture scores 72/72 per-case PASS',
@@ -97,6 +98,7 @@ messages = {
     'lease-enter-without-release': '#1402 a cancelled case must release the parity lease and stay loud',
     'lease-bound-erased': '#1402 the per-case lease bound is composed and below the stale-lease age',
     'lease-cancel-swallowed': '#1402 a cancelled case must release the parity lease and stay loud',
+    'memory-rehearsal-without-lock': '#1398 e2e memory rehearsal holds the source tree lock',
 }
 
 
@@ -272,8 +274,13 @@ def main():
         results.append({'name': name, 'status': status, 'compiled': compiled, 'reason': reason,
                         'test': bound(test), 'marker': messages[name]})
     try:
-        for row in selected:
-            one(row)
+        if memory:
+            with tree_lock(root, timeout=900):
+                for row in selected:
+                    one(row)
+        else:
+            for row in selected:
+                one(row)
     except BaseException as error:
         # A guard failure or a cancellation voids every row; a swallowed
         # Ctrl-C would keep a stale green summary. The per-case with above

@@ -13,7 +13,7 @@ import re
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 
 root = Path(__file__).resolve().parents[5]
 gateway_doc = root / 'scripts/gateway-parity/README.md'
@@ -23,7 +23,7 @@ session = root / 'scripts/gateway-parity/session_domain.py'
 common = root / 'scripts/gateway-parity/common.py'
 test_file = Path(__file__).with_name('test_boundary.py')
 guarded_sources = [common, gateway_doc, witness_doc, controls_doc, session, test_file, Path(__file__).resolve()]
-EXPECTED_CASES = 8
+EXPECTED_CASES = 9
 # Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('omit-common-guard', Path(__file__).resolve(), 'guarded_' + 'sources = [common,', 'guarded_' + 'sources = [', 'test_guarded_sources_include_common'),
@@ -34,12 +34,14 @@ cases = [
     ('controls-independent-claim', controls_doc, '不防共同重钉', '独立锚', 'test_documented_boundary'),
     ('drop-consistency-check', session, "isinstance(driver, dict) and driver.get('binding') == contract['binding']", 'True', 'test_binding_writer_boundary'),
     ('omit-boundary-case', Path(__file__).resolve(), "    ('om" + "it-common-guard', Path(__file__).resolve(), 'guarded_' + 'sources = [common,', 'guarded_' + 'sources = [', 'test_guarded_sources_include_common'),\n", '', 'test_expected_case_count'),
+    ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
 ]
 messages = {
     'test_expected_case_count': '#a5b boundary negative case inventory is complete',
     'test_guarded_sources_include_common': '#a5b parity mutation guards include common.py',
     'test_documented_boundary': '#1206 document the cooperative-writer boundary',
     'test_binding_writer_boundary': '#1206 observer-only edit rejected, joint rewrite is a known boundary',
+    'test_memory_rehearsal_holds_tree_lock': '#1398 boundary memory rehearsal holds the source tree lock',
 }
 
 
@@ -180,8 +182,9 @@ def main():
         results.append({'name': name, 'status': status, 'reason': reason})
     try:
         if memory:
-            for row in selected:
-                one(row)
+            with tree_lock(root, timeout=900):
+                for row in selected:
+                    one(row)
         else:
             with mutating_sources(root, guarded_sources) as originals:
                 for row in selected:
