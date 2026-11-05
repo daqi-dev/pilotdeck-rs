@@ -2296,7 +2296,7 @@ fn runtime_task_list(runtime: &CronRuntime) -> Result<Vec<JsValue>, CronError> {
 fn require_project_key(project_key: &JsValue) -> Result<String, CronError> {
     match project_key {
         JsValue::Undefined | JsValue::Null => Err(CronError::error(JsString::from(
-            "Cron task creation needs a projectKey.",
+            "Cron task creation requires a projectKey.",
         ))),
         JsValue::String(text) if metadata::js_trim(&js_lossy(text)).is_empty() => Err(
             CronError::error(JsString::from("Cron task creation requires a projectKey.")),
