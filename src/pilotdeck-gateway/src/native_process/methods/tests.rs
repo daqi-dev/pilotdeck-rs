@@ -1052,6 +1052,33 @@ async fn noncanonical_input_forms_match_ts_probes() {
     )
     .await;
 
+    // release — same guard order as claim/respond (TS probe frames
+    // `[release sessionKey:5]` and `[release requestId:5]`).
+    expect_failure(
+        &requests,
+        "user_dialog_release",
+        crate::metadata::object([
+            ("sessionKey", JsValue::Number(5.0)),
+            ("requestId", JsValue::from("r")),
+            ("leaseId", JsValue::from("l")),
+        ]),
+        "gateway_request_failed",
+        "input.sessionKey?.trim is not a function",
+    )
+    .await;
+    expect_failure(
+        &requests,
+        "user_dialog_release",
+        crate::metadata::object([
+            ("sessionKey", JsValue::from("s")),
+            ("requestId", JsValue::Number(5.0)),
+            ("leaseId", JsValue::from("l")),
+        ]),
+        "gateway_request_failed",
+        "input.requestId?.trim is not a function",
+    )
+    .await;
+
     // permission_list — same guard as list.
     expect_failure(
         &requests,
