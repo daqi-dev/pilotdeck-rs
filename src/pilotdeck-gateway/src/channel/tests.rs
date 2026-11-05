@@ -268,6 +268,7 @@ async fn replay_with_claim_race(case: &Value, claim_race: bool) -> Value {
                     .logs
                     .push(json!([level, message]))
             })),
+            turn_gateway: None,
         },
         Arc::new(move || {
             host.lock().expect("#1327 record mutex").host_closes += 1;

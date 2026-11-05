@@ -75,12 +75,44 @@ pub struct ChannelStatus {
 pub type StatusReporter = Arc<dyn Fn(ChannelStatus) + Send + Sync>;
 pub type ChannelLog = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
-/// Config is shared with each adapter. This component does not define an A7 port.
+/// One inbound message handed to the shared A7 acceptor. The adapter supplies
+/// only the TS `submitTurn` inputs; session ownership, admission, projection and
+/// durable acceptance stay in the runtime that owns the `TurnSubmitter`.
+#[derive(Clone, Debug)]
+pub struct TurnRequest {
+    pub session_key: JsString,
+    pub channel_key: ChannelKey,
+    pub message: JsString,
+}
+
+/// The event stream of one accepted turn. Dropping it is the TS consumer
+/// cleanup: the underlying submission drains its own writer; it never creates
+/// a second session owner.
+pub trait TurnEventStream: Send {
+    fn next(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, ChannelError>> + Send + '_>>;
+}
+
+/// A7 inbound port. The production implementation wraps the same
+/// `runtime::turn::submit::TurnSubmitter` the WS host uses; tests replace this
+/// port with a loopback mock and never touch an account, model or user home.
+pub trait TurnGateway: Send + Sync {
+    fn submit(
+        &self,
+        request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>>;
+}
+
+/// Config is shared with each adapter. The A7 port is optional, like TS's
+/// `deps.gateway`: a channel that needs it and does not get one answers the
+/// same "Gateway not ready" failure instead of fabricating a session owner.
 #[derive(Clone, Default)]
 pub struct ChannelStartDeps {
     pub config: Option<Arc<JsValue>>,
     pub report_status: Option<StatusReporter>,
     pub log: Option<ChannelLog>,
+    pub turn_gateway: Option<Arc<dyn TurnGateway>>,
 }
 
 pub trait ChannelHandle: Send + Sync {
