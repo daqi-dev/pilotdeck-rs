@@ -265,6 +265,32 @@ def check_catalog():
             f" close-order IDs; registered IDs without a mutation: {missing};"
             f" mutations without a registered ID: {extra}"
         )
+    # #1382: matching names alone is not enough. A row copied from another ID
+    # and renamed still satisfies the set comparison above while mutating that
+    # other ID's anchor, so the registered ID would have no independent
+    # control and the copy would run twice. For every per-ID row whose name
+    # resolves to a registered ID, pin the anchor, the mutant value and the
+    # bound assertion to that same ID. Boundary rows and renamed rows resolve
+    # to an unregistered ID and are skipped here; they are governed by the set
+    # comparison above.
+    wrong_binding = []
+    for name, _path, old, new, _test, assertion in mutations:
+        if not name.startswith(UNORDERED_CLOSE_PREFIX):
+            continue
+        close_id = name[len(UNORDERED_CLOSE_PREFIX):]
+        if close_id not in registered:
+            continue
+        if (
+            old != f'\n    "{close_id}",\n'
+            or new != f'\n    "{close_id}-unregistered",\n'
+            or assertion != f'#1252 unordered close swap must pass: {close_id}'
+        ):
+            wrong_binding.append(close_id)
+    if wrong_binding:
+        raise RuntimeError(
+            "#1382 unordered-close rows must bind their own ID;"
+            " wrong content: " + ", ".join(sorted(wrong_binding))
+        )
     if len(mutations) != EXPECTED_TOTAL:
         raise RuntimeError("#1145 fixed product mutation denominator")
     if len(set(names)) != EXPECTED_TOTAL:
