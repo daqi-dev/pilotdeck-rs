@@ -207,8 +207,12 @@ def main():
                 if not row['compiled']:
                     raise RuntimeError('mutant did not compile')
                 row['status'], row['reason'] = classify(run(case.mutation + '-negative', args), case)
-            if not passed(run(case.mutation + '-restored', args), case.test):
-                raise RuntimeError('restored positive control failed')
+                # Restore and re-run inside the source guard: the restored control
+                # compiles the tree, so it must never race another runner that
+                # takes the same .negative-source.lock (#1440 review P2).
+                case.path.write_bytes(originals[case.path])
+                if not passed(run(case.mutation + '-restored', args), case.test):
+                    raise RuntimeError('restored positive control failed')
         except Exception as error:
             row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         results.append(row)
