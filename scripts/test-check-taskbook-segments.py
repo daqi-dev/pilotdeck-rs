@@ -128,6 +128,27 @@ case("单 - 分隔行合法（正控）", 0,
                                      "| - | - | - | - | - |"))
 case("缺列（没有依赖列）", 1, BIG_SCOPE + SEGMENTS_OK.replace("| 段间依赖 |", "| 备注 |"),
      must=["缺列"])
+# GFM 允许每一行省略行首竖线；丢掉这些行 = 该行的估时 / 占位符 / 列数不再校验 → 假 PASS（DS gate16 P1#2）
+_NO_PIPE_S2 = "S2 HTTP 同域 | `src/native_http.rs` | `S2-RESULT.md` + `final.patch` S2 | 120 min | S1"
+case("省略行首竖线的数据行仍校验估时（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(TABLE.splitlines()[2], _NO_PIPE_S2), must=["120 min > 90 min"])
+case("省略行首竖线的数据行仍查占位符", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(TABLE.splitlines()[2], _NO_PIPE_S2.replace("`src/native_http.rs`", "<待填>")),
+     must=["占位符"])
+case("整张表都省行首竖线（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace(TABLE, "\n".join(
+         ln.strip().strip("|").strip() for ln in TABLE.splitlines())))
+case("表头也省行首竖线时仍校验估时（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 120 min |").replace(TABLE, "\n".join(
+         ln.strip().strip("|").strip() for ln in TABLE.splitlines())), must=["120 min > 90 min"])
+case("省略行首竖线但列数不符 → 报读不出，不静默丢", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(TABLE.splitlines()[2],
+                                     "S2 HTTP 同域 | `src/native_http.rs` | 120 min | S1"),
+     must=["读不出 5 列"])
+case("表后空行之后的正文不算表行（正控）", 0,
+     BIG_SCOPE + "## 分段交付\n\n" + TABLE + "\n每段收工即可交付，段间不共写同一文件。\n" + RESUME)
+case("表后正文含竖线也不当表行（正控）", 0,
+     BIG_SCOPE + "## 分段交付\n\n" + TABLE + "\n口径：估时按 min | 小时换算，超 90 min 再切。\n" + RESUME)
 case("换列表头：预估在第 2 列，120 min 仍要抓到", 1,
      BIG_SCOPE + """## 分段交付
 
@@ -505,6 +526,9 @@ case("表达式上下文里的命名参数 format!(\"{idx}\") 仍放行（别矫
 case("Cargo.lock 两段共写也要报（P2 假 PASS）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`Cargo.lock`")
      .replace("`src/native_http.rs`", "`Cargo.lock`"), must=["共写同一文件"])
+case(".jsonl fixture 两段共写也要报（gate16 sibling P2）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`src/fixtures/events.jsonl`")
+     .replace("`src/native_http.rs`", "`src/fixtures/events.jsonl`"), must=["共写同一文件"])
 
 # ---- fix-r13：gate14（DeepSeek boundary P0×1 + GLM boundary P1×1）---------------------------------
 # 区间两侧各自连写时，`max(所有 token)` 只取到 60：105 min 的段被当成 60 → rc 0 假 PASS
@@ -517,6 +541,8 @@ case("段落懒续行里的缩进 scope 不许静默忽略（P1 假 PASS）", 2,
      must=["缩进在正文下面"])
 case("列表项下贴的缩进示例仍静默忽略（正控）", 0,
      "# t\n\n- scope 写法示例：\n    <!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n正文\n")
+case("文档第一行就是列表项 + 缩进示例（正控，gate16 GLM P2）", 0,
+     "- scope 写法示例：\n    <!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n\n## 要做\n1. 改 src/a.rs\n")
 case("大写 PROGRESS.md 也算进度文件（P3 假 FAIL）", 0,
      BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
                                      "_tmp/20261105-issue-100/PROGRESS.md"))
@@ -539,6 +565,16 @@ case("全角花括号占位符（P2 假 PASS，两家同报）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "｛请填写本段涉及的文件｝"),
      must=["占位符"])
 
+# ---- fix-r15：gate16 GLM boundary P1（围栏前导空白不限缩进，两头都错）------------------------------
+case("缩进代码块里的孤 ``` 不是围栏开栏（P1 假 ERROR）", 1,
+     "# t\n\n写法示例（上一单）：\n\n    ```\n\n正文结束。\n\n" + TEN_RS + "\n",
+     must=["分段交付"])
+case("顶格围栏里嵌 4 格缩进围栏不提前闭合外层（P1 假 PASS）", 1,
+     "# t\n\n```\n示例：\n\n    ```\n<!-- pdrs-scope: files=2 lines=80 est_min=30 -->\n"
+     "    ```\n```\n\n" + TEN_RS + "\n", must=["分段交付"])
+case("3 格缩进的围栏仍按围栏处理（正控：围栏里的 scope 不算声明）", 0,
+     "# t\n\n   ```\n<!-- pdrs-scope: files=16 est_min=180 -->\n   ```\n\n正文\n")
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -559,6 +595,9 @@ PARSE_EST = [
     ("90 min（不包括 30 min 测试）", "", 120.0),
     ("90 min（未包含 20 min）", "", 110.0),
     ("90 min（不计入 30 min 缓冲）", "", 90.0),
+    ("90 min（需要包含 30 min 联调）", "", 90.0),
+    ("90 min（不需要包含 30 min 联调）", "", 120.0),
+    ("80 min（20 min 联调不计入）", "", 80.0),
     ("1h30m–1h45m", "", 105.0),
     ("1.5h–1h45m", "", 105.0),
     ("80–120 min", "", 120.0),
@@ -875,12 +914,18 @@ def run():
         # 1.56 MB 实测 1.54 s、2.03 MB 2.6 s（O(n²)）。绝对秒数在满载机器上会飘（load 29 实测同一条 0.72–1.51 s），
         # 所以判「输入翻倍、耗时 < 3 倍」：修前是 4 倍（平方），修后 ~2 倍（线性），与机器负载无关。
         one = "<!--pdrs-scope files=2 -->" * 78000      # 2.03 MB / 7.8 万条
-        t0 = time.monotonic()
-        sc2, err2 = ctbs.parse_scopes(one)
-        d1 = time.monotonic() - t0
-        t0 = time.monotonic()
-        sc2b, err2b = ctbs.parse_scopes(one * 2)        # 4.06 MB / 15.6 万条
-        d2 = time.monotonic() - t0
+        # 每档取 3 次的最小值：满载机器上单次会被抢占（实测同一档 0.35 / 0.9 / 1.2 s 都出现过），
+        # 最小值才反映算法本身；平方实现在最小耗时上照样是 4 倍。
+        def _best(text, times=3):
+            best = float("inf")
+            res = None
+            for _ in range(times):
+                t0 = time.monotonic()
+                res = ctbs.parse_scopes(text)
+                best = min(best, time.monotonic() - t0)
+            return res, best
+        (sc2, err2), d1 = _best(one)
+        (sc2b, err2b), d2 = _best(one * 2)              # 4.06 MB / 15.6 万条
         ratio = d2 / max(d1, 0.02)
         ok = (ratio < 3.0 and len(sc2) == 78000 and not err2 and len(sc2b) == 156000 and not err2b
               and ctbs.parse_scopes("<!-- pdrs-scope: files=2")[1])   # 未闭合注释里的 scope 仍要报错
