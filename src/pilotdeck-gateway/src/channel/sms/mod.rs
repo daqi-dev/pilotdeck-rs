@@ -601,11 +601,13 @@ async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
 
 /// What a bind to `127.0.0.1:<port>` learned about the wildcard above.
 enum V4Port {
-    /// The bind collided: something already serves IPv4 on that port — either
-    /// our own `::` listener or a third party. The probe cannot tell them
-    /// apart (`A8.3-CH-SMS-008-R4.md`).
+    /// The bind collided: something already holds `127.0.0.1:<port>` — our own
+    /// `::` listener, a third party, or a socket merely bound without ever
+    /// listening. The probe cannot tell them apart, and says nothing about
+    /// whether anyone *serves* IPv4 there (`A8.3-CH-SMS-008-R4.md`).
     Shared,
-    /// The bind succeeded: nothing serves IPv4 on that port.
+    /// The bind succeeded: the address is free for IPv4 at the moment of the
+    /// probe.
     Unshared,
     /// The probe itself could not run; the host's posture is unknown.
     Unknown,
