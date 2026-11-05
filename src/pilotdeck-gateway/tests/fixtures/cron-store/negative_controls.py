@@ -14,7 +14,9 @@ blocked stores on read errors, ENOENT-tolerant lock removal, explicit-
 projectKey run routing, the lone-surrogate projectKey fold); four more pin
 fix-r2: the raw-bytes home key, the cwd-independent absolute home, the
 panic-releasing lock guard, and the finished-tail registry removal. fix-r3
-adds four cwd-independence rows plus one contended-tail row: the cwd rows bind
+adds four cwd-independence rows plus two contended-tail rows (the second, from
+#1574, reaches the same release anchor through the real `mutate_task_file`
+entry point): the cwd rows bind
 the `cron_deleted_cwd_worker` test itself (`--ignored`, with PDRS_CRON_CASE),
 because a parent test's panic payload embeds the worker's libtest output,
 which the shared verdict truncates at the worker's own FAILED line — the
@@ -341,6 +343,20 @@ mutations = [
      '        if Arc::strong_count(current) == 2 {',
      'runtime::cron::tests::store_tail_entry_removed_after_contended_mutation_pair',
      '#1216 tail contended: a finished release must not remove the tail entry while the sibling mutation\'s clone is still alive'),
+    # #1574: the same release anchor through the real `mutate_task_file` entry
+    # point. The `== 2` shape above only fires there on one of the two
+    # interleavings: the sibling takes its own mutation clone *after* the
+    # barrier, so whether the count has dropped to two by the time the holder
+    # releases depends on which thread gets there first — a control that can
+    # survive. `> 0` models the same defect (the release removes the entry
+    # without consulting the live holders at all) and is deterministic on both
+    # interleavings of `store_tail_entry_removed_after_contended_mutate_task_file_pair`.
+    ('tail-release-removes-with-live-waiter', source,
+     '        if Arc::strong_count(current) == 1 {',
+     '        if Arc::strong_count(current) > 0 {',
+     'runtime::cron::tests::store_tail_entry_removed_after_contended_mutate_task_file_pair',
+     ['#1258 tail contended mutate: a finishing sibling must not remove the tail entry while a waiter still holds a clone',
+      '#1258 tail contended mutate: the registry must still map the file to the tail the waiter cloned']),
     # #1258: the Drop guard is swapped back for the pre-fix explicit release
     # call, so a panicking mutation unwinds past it and the registry entry is
     # stranded (CronTaskStore.ts:168-172's finally deletes on a throw too).
