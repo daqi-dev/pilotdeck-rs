@@ -44,7 +44,9 @@ ledger spec is frozen read-only, so no control mutates it even transiently.
 Mutants are never cumulative, every selected control runs (no abort on the
 first failure), a stale anchor is INVALID (never SURVIVED), a mutant that
 does not parse as Python is INVALID, and any non-KILLED control exits
-nonzero. Because mutating_sources proves the tree equals HEAD, this must run
+nonzero. The table itself is registered by EXPECTED_TOTAL (#1506): an empty,
+short, or duplicated table is refused before any control runs. Because
+mutating_sources proves the tree equals HEAD, this must run
 after the #1382 patch is committed; a pre-commit working tree is refused on
 purpose.
 
@@ -79,6 +81,12 @@ ledger = root / ledger_relative
 d1_ledger_relative = "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
 d1_ledger = root / d1_ledger_relative
 
+# #1506: this table is the only register of these controls — anchor_selfcheck
+# pins the script's presence and anchor counts, not its rows — so deleting a
+# row used to shrink coverage with every remaining check green. Raising this
+# number is the deliberate friction: adding or removing a row must re-register
+# the total in the same edit.
+EXPECTED_TOTAL = 8
 # (name, path, before, after, expected fragment of the dedicated failure)
 mutations = [
     (
@@ -142,6 +150,31 @@ mutations = [
         "boundary name list and expected-content table disagree",
     ),
 ]
+
+
+def check_mutation_table(rows):
+    """#1506: refuse an empty, short, or duplicated control table.
+
+    Runs on the whole table before any command-line selection, so `[name ...]`
+    can only narrow a complete registry.
+    """
+    if not rows:
+        raise RuntimeError("#1506 the product mutation table must not be empty")
+    names = [row[0] for row in rows]
+    if len(rows) != EXPECTED_TOTAL:
+        raise RuntimeError(
+            f"#1506 fixed product mutation denominator: expected {EXPECTED_TOTAL},"
+            f" found {len(rows)}"
+        )
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise RuntimeError(
+            "#1506 unique product mutation identities: duplicates "
+            + ", ".join(duplicates)
+        )
+
+
+check_mutation_table(mutations)
 
 if len(sys.argv) < 2:
     sys.exit(
