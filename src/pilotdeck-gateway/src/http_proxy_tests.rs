@@ -852,3 +852,64 @@ async fn production_ws_get_without_token_and_post_upgrade_route_explicitly() {
     .await
     .expect("explicit /ws method and token routing");
 }
+
+#[tokio::test(start_paused = true)]
+async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
+    use std::task::Wake;
+    struct Counter(AtomicUsize);
+    impl Wake for Counter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let counter = Arc::new(Counter(AtomicUsize::new(0)));
+    let waker = Waker::from(counter.clone());
+    let mut cx = Context::from_waker(&waker);
+    let state = Arc::new(Mutex::new(ReadState {
+        paused: false,
+        waker: None,
+    }));
+    let (io, mut client) = tokio::io::duplex(128 * 1024);
+    let now = tokio::time::Instant::now();
+    let in_flight = Arc::new(AtomicUsize::new(1));
+    let mut gated = UpgradeReadGate::new(
+        io,
+        state,
+        tokio::sync::watch::channel(None).0,
+        Arc::new(AtomicUsize::new(1)),
+        Some(NODE_HEADERS_TIMEOUT),
+        Some(now + NODE_HEADERS_TIMEOUT),
+        Some(now),
+        None,
+        tokio::sync::watch::channel(0usize).1,
+        in_flight,
+        // The request's own body is fully read: every byte from here on is
+        // the *next* head's, which the gate withholds while the response
+        // streams.
+        Arc::new(std::sync::atomic::AtomicI64::new(0)),
+    );
+    // Far more next-head bytes than Node's 16 KB TrackHeader budget: TS
+    // answers 431 + destroy instead of buffering them.
+    let flood = vec![b'X'; 40_000];
+    client
+        .write_all(&flood)
+        .await
+        .expect("duplex write must accept the flood without a reader");
+    let mut bytes = [0; 1];
+    assert!(
+        Pin::new(&mut gated)
+            .poll_read(&mut cx, &mut ReadBuf::new(&mut bytes))
+            .is_pending(),
+        "the gate withholds a next head instead of handing it to hyper"
+    );
+    assert!(
+        gated.withheld_head.len() <= WITHHELD_HEAD_CAP + 4096,
+        "#1292 fix-r3: withheld head bytes must stay bounded (got {}), not grow with the client's upload rate",
+        gated.withheld_head.len()
+    );
+    assert!(
+        gated.withheld_head.len() < flood.len(),
+        "#1292 fix-r3: the gate read the whole 40 KB flood ({} bytes) — Node rejects a head past the 16 KB budget instead of buffering it",
+        gated.withheld_head.len()
+    );
+}
