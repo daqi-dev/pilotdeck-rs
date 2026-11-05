@@ -431,6 +431,199 @@ async fn upgrade_head_respects_span_budget() {
     }
     finish(stop, task).await;
 }
+/// #1351: the boundary golden of the 16 KiB span budget, cell-replayed
+/// against the native listener from the committed `native-ws-upgrade-budget`
+/// fixture (recorded on the TS baseline with Node v22.22.0): upgrade-lane
+/// and non-upgrade-lane heads at tracked 16383 (still served) and 16384
+/// (Node's canned 431 + close), plus `b4-U1.out`'s far-over shape. The
+/// replay writes the recorded request bytes and captures with the same
+/// 250 ms quiet window the TS recorder used, so the whole head — status
+/// line, every header, and the close decision — is pinned, not just the
+/// 431's first line.
+const BUDGET_ORACLE: &str =
+    include_str!("../../tests/fixtures/native-ws-upgrade-budget/oracle.json");
+/// The quiet window the TS recorder used: a response is complete after a
+/// quarter second of silence while the connection stays open.
+const QUIET: Duration = Duration::from_millis(250);
+
+fn budget_oracle() -> Value {
+    crate::test_baseline::oracle(BUDGET_ORACLE);
+    let mut observed = serde_json::from_str::<Value>(BUDGET_ORACLE).expect("#1351 oracle JSON");
+    // Mutate the parsed real fixture, before the named test inspects it —
+    // the corruption style of `native-ws-large-oracle-content`: a recorded
+    // 431 cell is replaced in memory, so the replay must fail on its own
+    // byte comparison.
+    if crate::mutants::on("native-ws-upgrade-oracle-431") {
+        for cell in observed["cells"]
+            .as_array_mut()
+            .expect("#1351 oracle cells")
+            .iter_mut()
+        {
+            if cell["id"].as_str() == Some("upgrade-16384") {
+                cell["response"] = json!("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+            }
+        }
+    }
+    observed
+}
+
+/// The same quiet-window capture the TS recorder used, bounded by the test
+/// deadline: 250 ms of silence with the connection open ends the capture;
+/// EOF or a reset is a close.
+async fn budget_capture(socket: &mut TcpStream) -> (String, bool) {
+    let mut out = Vec::new();
+    let mut buffer = vec![0u8; 8192];
+    let start = std::time::Instant::now();
+    let mut closed = false;
+    while start.elapsed() < DEADLINE {
+        let wait = if out.is_empty() {
+            DEADLINE - start.elapsed()
+        } else {
+            QUIET
+        };
+        match timeout(wait, socket.read(&mut buffer)).await {
+            Err(_elapsed) if !out.is_empty() => break,
+            Err(_elapsed) => continue,
+            Ok(Ok(0)) => {
+                closed = true;
+                break;
+            }
+            Ok(Ok(read)) => out.extend_from_slice(&buffer[..read]),
+            // The TS recorder ignored socket errors and kept the bytes that
+            // had arrived, so a reset while the response drains is a close.
+            Ok(Err(_reset)) => {
+                closed = true;
+                break;
+            }
+        }
+    }
+    negative_assert!(
+        !out.is_empty() || closed,
+        "#1351 every boundary cell produced bytes or closed"
+    );
+    (out.iter().map(|byte| *byte as char).collect(), closed)
+}
+
+/// The bytes both sides are compared in, applying the registered transport
+/// diffs the same way `native_http::tests::normalize` does for its golden:
+/// the Date value is masked (the recording is masked already, Rust renders
+/// the live clock), header names are case-folded (hyper renders Title-Case,
+/// TS writes lowercase and literal-cased names), hyper's implicit
+/// `content-length: 0` line is dropped, and the chunk-size line is
+/// case-folded (hyper writes `B`, Node writes `b`). The cells this fixture
+/// records are one response each, with either an empty body (101, 431) or
+/// one small chunk plus terminator (200), so the folding only walks that
+/// shape.
+fn budget_normalize(raw: &str) -> String {
+    let Some((head, body)) = raw.split_once("\r\n\r\n") else {
+        return raw.to_owned();
+    };
+    let mut out = String::with_capacity(raw.len());
+    let mut chunked = false;
+    for (index, line) in head.split("\r\n").enumerate() {
+        if index == 0 {
+            out.push_str(line);
+            out.push_str("\r\n");
+            continue;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            out.push_str(line);
+            out.push_str("\r\n");
+            continue;
+        };
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            && value.to_ascii_lowercase().contains("chunked")
+        {
+            chunked = true;
+        }
+        if name.eq_ignore_ascii_case("date") {
+            out.push_str("date: <masked>\r\n");
+        } else if name.eq_ignore_ascii_case("content-length") && value.trim() == "0" {
+            // hyper's implicit empty-body length on the bare 400/431.
+        } else {
+            out.push_str(&name.to_ascii_lowercase());
+            out.push(':');
+            out.push_str(value);
+            out.push_str("\r\n");
+        }
+    }
+    out.push_str("\r\n");
+    let mut rest = body;
+    while chunked && !rest.is_empty() {
+        let Some(line_end) = rest.find("\r\n") else {
+            out.push_str(rest);
+            break;
+        };
+        let size_text = rest[..line_end].split(';').next().unwrap_or("");
+        let size = usize::from_str_radix(size_text.trim(), 16)
+            .unwrap_or_else(|_| panic!("#1351 chunk size {size_text:?} is not hex"));
+        out.push_str(&size_text.to_ascii_lowercase());
+        out.push_str("\r\n");
+        rest = &rest[line_end + 2..];
+        if rest.len() < size + 2 {
+            out.push_str(rest);
+            break;
+        }
+        out.push_str(&rest[..size]);
+        out.push_str("\r\n");
+        rest = &rest[size + 2..];
+        if size == 0 {
+            break;
+        }
+    }
+    if !chunked {
+        out.push_str(body);
+    }
+    out
+}
+
+#[tokio::test]
+async fn upgrade_budget_boundary_matches_ts() {
+    let expected = budget_oracle();
+    negative_assert_eq!(
+        expected["cells"]
+            .as_array()
+            .expect("#1351 oracle cells")
+            .len(),
+        5,
+        "#1351 the fixture records all five boundary cells"
+    );
+    let (address, stop, task) = start(Arc::default(), DEADLINE).await;
+    for cell in expected["cells"].as_array().expect("#1351 oracle cells") {
+        let id = cell["id"].as_str().expect("#1351 oracle cell id");
+        let request = cell["request"].as_str().expect("#1351 oracle cell request");
+        let recorded = cell["response"]
+            .as_str()
+            .expect("#1351 oracle cell response");
+        let closed = cell["closed"]
+            .as_bool()
+            .expect("#1351 oracle cell closed flag");
+        eprintln!(
+            "#1351 replaying boundary cell {id} (tracked {})",
+            cell["tracked"]
+        );
+        let mut socket = TcpStream::connect(address)
+            .await
+            .expect("#1351 boundary cell connect");
+        socket
+            .write_all(request.as_bytes())
+            .await
+            .expect("#1351 boundary cell send");
+        let (raw, observed) = budget_capture(&mut socket).await;
+        let _ = socket.shutdown().await;
+        negative_assert_eq!(
+            budget_normalize(&raw),
+            budget_normalize(recorded),
+            "#1351 every boundary cell's response matches the recorded TS bytes"
+        );
+        negative_assert_eq!(
+            observed,
+            closed,
+            "#1351 every boundary cell closes exactly when the TS recorder saw a close"
+        );
+    }
+    finish(stop, task).await;
+}
 #[tokio::test]
 async fn concurrent_connections() {
     let requests = Arc::new(Requests::default());
@@ -1053,6 +1246,13 @@ async fn close_tail_resumes_on_next_data() {
 #[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0"]
 fn regenerates_identically() {
     crate::test_baseline::regenerates_identically("native-ws-entry");
+}
+/// #1351: the boundary golden regenerates byte-identically from the TS
+/// baseline (Node v22.22.0 first on PATH, `PDRS_BASELINE` set).
+#[test]
+#[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0"]
+fn regenerates_budget_fixture_identically() {
+    crate::test_baseline::regenerates_identically("native-ws-upgrade-budget");
 }
 
 async fn closed_batch(wire: Vec<u8>) -> usize {

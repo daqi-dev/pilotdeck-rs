@@ -320,7 +320,9 @@ fn tracked_header_bytes<B>(request: &hyper::Request<B>) -> usize {
 /// (#1292 probe `b4-U1.out`: an over-budget `/ws` upgrade head is the same
 /// 431 + close as the non-upgrade `b4-U2.out`), so the upgrade diversion
 /// checks this before it diverts, instead of leaving upgrade heads outside
-/// the budget.
+/// the budget. The boundary itself is cell-recorded on both lanes by the
+/// `native-ws-upgrade-budget` fixture (#1351: tracked 16383 stays served,
+/// 16384 is the 431, upgrade and non-upgrade alike).
 pub(crate) fn over_header_budget<B>(request: &hyper::Request<B>) -> bool {
     let tracked = tracked_header_bytes(request);
     let over_budget = if crate::mutants::on("native-http-header-budget-boundary") {

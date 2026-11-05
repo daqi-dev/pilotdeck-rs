@@ -604,7 +604,10 @@ async fn serve_socket(
         move |mut request, lease| async move {
             // Node applies its TrackHeader span budget to upgrade requests
             // too (`b4-U1.out`: the over-budget `/ws` upgrade head gets the
-            // same 431 + close as `b4-U2.out`'s non-upgrade head). The check
+            // same 431 + close as `b4-U2.out`'s non-upgrade head; the
+            // boundary cells of the `native-ws-upgrade-budget` fixture
+            // pin both lanes at tracked 16383 served / 16384 the 431,
+            // replayed by `upgrade_budget_boundary_matches_ts`). The check
             // is gated on the diversion, not the whole closure, so the
             // non-upgrade lane keeps its own llhttp ordering — method and
             // target-grammar 400s before the budget, inside `route`.
