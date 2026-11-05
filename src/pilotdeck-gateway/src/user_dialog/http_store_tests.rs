@@ -931,6 +931,35 @@ async fn cr_in_value_is_rejected_like_node() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// The CR family outside the guard's raw bound: a registered residual, not an
+/// agreement. Node's llhttp stops at the CR itself, so **every** length of
+/// `X: \r<SP…>\n` is its 47-byte 400. The guard only closes the after-colon
+/// window at the CR and keeps forwarding the bytes behind it, so once they
+/// pass `4 × max + 2 × 8 KiB` the guard owns the answer and writes its own
+/// 67-byte 431. Inside the bound (the test above) hyper rejects the shape and
+/// both sides are 400; outside it they differ by design of the guard's bound.
+/// This pins the residual so the difference is measured instead of assumed
+/// away (see `A7.4-HTTPSTORE-431-408-SHAPE-001-R7.md` §范围 4, CR 族).
+#[tokio::test]
+async fn cr_in_value_past_the_raw_bound_keeps_the_registered_431() {
+    let (store, directory) = file_store("cr-in-value-raw-cap");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\nX: \r{}  \nConnection: close\r\n\r\n",
+        " ".repeat(90_000)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
+    assert_eq!(
+        response, NODE_431,
+        "#1555 past the raw bound the CR-in-value shape is the guard's 431 \
+         (Node answers its 400 for every length; registered in R7)"
+    );
+    assert!(closed, "#1555 the guard 431 must end the connection");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// Node's `maxHeaderSize` counts the request target plus field name and value
 /// bytes, not the raw `name: value\r\n` line. 2,000 fields of `aaaaa: x`
 /// (20,000 raw bytes but only 12,000 counted bytes) are inside the 16 KiB
@@ -4667,8 +4696,15 @@ async fn early_close_response_survives_shutdown_with_unread_body() {
 /// the loopback server and the client all count, so only the *difference*
 /// between modes is attributable to the head being parsed. `fields-max` is the
 /// densest Node-legal field count (16,329 `a:` fields = 16,383 counted bytes)
-/// and `fields-max-16x` runs sixteen of them at once to lift hyper's
-/// per-parse `max_headers` slot vectors above process noise.
+/// and `fields-max-16x` runs sixteen of them **one after another in a
+/// current-thread runtime** to lift hyper's per-parse `max_headers` slot
+/// vectors above process noise. `#[tokio::test]` without a flavour is a
+/// single-worker runtime, so the sixteen connection tasks never parse in
+/// parallel: the cell measures sixteen serial parses, not sixteen concurrent
+/// ones (measured 211.2 ms against 14.1 ms for one, #1576 R7 §范围 2). The
+/// receipt line below says so, so a summary can never be read as a
+/// multi-worker measurement. The multi-worker stacking bound is still
+/// unmeasured and stays listed as such.
 #[tokio::test]
 #[ignore = "manual peak-RSS probe; drive through tests/fixtures/user-dialog-http-store-1555/rss_probe_1555.py"]
 async fn header_budget_peak_rss() {
@@ -4718,9 +4754,23 @@ async fn header_budget_peak_rss() {
         codes.push(code);
         response_bytes += len;
     }
+    // #1555 fix-r3: read the flavor from the running runtime instead of writing
+    // it into the format string. `#[tokio::test]` with no flavor is
+    // current-thread today, so a hardcoded `flavor=current_thread` would keep
+    // claiming a serial measurement even if the attribute were changed to
+    // `flavor = "multi_thread"` -- the same "evidence that cannot fail" shape
+    // as the R6 "16 路并发" label. The assertion makes the receipt falsifiable.
+    let flavor = tokio::runtime::Handle::current().runtime_flavor();
     println!(
-        "mode={mode} width={width} statuses={codes:?} response_bytes={response_bytes} elapsed_ms={:.1}",
+        "mode={mode} width={width} flavor={flavor:?} \
+         statuses={codes:?} response_bytes={response_bytes} elapsed_ms={:.1}",
         started.elapsed().as_secs_f64() * 1000.0
+    );
+    assert_eq!(
+        flavor,
+        tokio::runtime::RuntimeFlavor::CurrentThread,
+        "#1555 the 16-request cell is a serial measurement; a multi-thread \
+         runtime would silently change what it measures"
     );
     assert!(
         codes.iter().all(|code| *code == 405),

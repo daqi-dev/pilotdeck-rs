@@ -1,0 +1,32 @@
+{"node":"v22.22.0","baseline":"plain http.createServer defaults"}
+
+=== obs-fold-short ===
+{"bytes":47,"why":"EOF","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
+HTTP/1.1 400 Bad Request\r\n
+Connection: close\r\n
+\r\n
+
+=== obs-fold-90000-spaces ===
+{"bytes":47,"why":"error:ECONNRESET","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
+HTTP/1.1 400 Bad Request\r\n
+Connection: close\r\n
+\r\n
+
+=== obs-fold-16400-bytes ===
+{"bytes":47,"why":"EOF","hex":"485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a"}
+HTTP/1.1 400 Bad Request\r\n
+Connection: close\r\n
+\r\n
+
+=== leading-ows-90000 ===
+{"bytes":141,"why":"EOF","hex":"485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a20746578742f706c61696e0d0a446174653a205468752c203035204e6f7620323032362031383a30383a343920474d540d0a436f6e6e656374696f6e3a20636c6f73650d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a0d0a320d0a6f6b0d0a300d0a0d0a"}
+HTTP/1.1 200 OK\r\n
+Content-Type: text/plain\r\n
+Date: Thu, 05 Nov 2026 18:08:49 GMT\r\n
+Connection: close\r\n
+Transfer-Encoding: chunked\r\n
+\r\n
+2\r\n
+ok\r\n
+0\r\n
+\r\n

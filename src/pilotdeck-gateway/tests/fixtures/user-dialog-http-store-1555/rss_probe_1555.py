@@ -14,7 +14,7 @@ sample, the same rule `html_budget_probe.rs` uses).
 Writes `<mode>-r<n>.log` per sample plus `summary.json`. The tree must be
 committed and clean: the driver holds the shared tree lock (the same `flock`
 the negative controls hold while they mutate sources in place) for the whole
-build and measurement window, and a dirty `src/` is refused with
+build and measurement window, and a dirty product input is refused with
 `status=INVALID` and exit code 2 instead of being recorded as `src_dirty=false`.
 """
 # anchor-selfcheck: unsupported peak-RSS measurement driver: builds the lib test
@@ -29,7 +29,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, tree_lock, wait_for_slot
+from negative_process import (SourceBaselineError, _assert_workspace_sources,
+                              _git, run_owned, tree_lock, wait_for_slot)
 
 root = Path(__file__).resolve().parents[5]
 TEST = 'user_dialog::http_store::http_store_tests::header_budget_peak_rss'
@@ -66,8 +67,15 @@ def build(env, out):
 
 
 def peak_rss(stderr):
+    """Return the peak RSS in bytes from the timing tool's report.
+
+    The two tools spell the line differently: BSD `/usr/bin/time -l` prints
+    lowercase `maximum resident set size` in bytes, GNU `time -v` prints
+    `Maximum resident set size (kbytes):` in kilobytes. Match case-insensitively
+    or every Linux sample is dropped as "no maximum resident set size line".
+    """
     for line in stderr.splitlines():
-        if 'maximum resident set size' in line:
+        if 'maximum resident set size' in line.lower():
             fields = line.replace(':', ' ').split()
             value = next(field for field in fields if field.isdigit())
             return int(value) * (1 if DARWIN else 1024)
@@ -75,13 +83,38 @@ def peak_rss(stderr):
 
 
 def workspace_dirty(root):
-    """True when any `src/` byte differs from HEAD (tracked or untracked)."""
-    clean = subprocess.run(['git', 'status', '--porcelain', '--', 'src'],
-                           cwd=root, capture_output=True, text=True, check=True)
-    return bool(clean.stdout.strip())
+    """Return the shared guard's complaint, or None when inputs match HEAD.
+
+    This delegates to `negative_process._assert_workspace_sources`, the same
+    rule the mutating controls already run under this lock. A private
+    `git status -- src` here saw neither `.cargo/`, nor the rust-toolchain pin,
+    nor the index's assume-unchanged / skip-worktree bits, nor an ignored
+    untracked build input -- exactly the "source changed, summary still says
+    `src_dirty=false`" cases fix-r2 exists to stop. One definition, one place.
+    """
+    try:
+        _assert_workspace_sources(root, 'HEAD')
+    except SourceBaselineError as error:
+        return str(error)
+    return None
+
+
+def summary_for(provenance, status, **over):
+    """Build the summary from one skeleton so both exits share a shape."""
+    summary = dict(provenance=provenance, status=status, executable=None,
+                   test=TEST, samples={}, minima={}, delta_from_baseline={},
+                   failures=[])
+    summary.update(over)
+    return summary
 
 
 def write_summary(out, summary):
+    """Persist one summary to `OUT_DIR/summary.json`.
+
+    Every exit path goes through here, including the two refusals, so a reader
+    can tell "measured nothing" from "crashed before writing": the file exists
+    in the first case. A missing file is never a passing record.
+    """
     (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
 
 
@@ -97,6 +130,13 @@ def main():
     unknown = set(args.modes) - set(MODES)
     if unknown:
         parser.error(f'unknown modes: {sorted(unknown)}')
+    # Zero rounds measures nothing, yet the old shape still wrote
+    # `status=OK` with an empty `minima` -- a reader takes that for a passing
+    # acceptance item. Refuse the invocation instead of writing it.
+    if args.rounds < 1:
+        parser.error('--rounds must be at least 1')
+    if not args.modes:
+        parser.error('--modes must name at least one mode')
     args.out.mkdir(parents=True, exist_ok=False)
     out = args.out
     # #1555 fix-r2: the negative controls mutate product sources in place under
@@ -106,26 +146,37 @@ def main():
     # measures a *lower* peak — a false PASS for the acceptance item. Hold the
     # kernel `flock` for the whole build+measurement window and refuse a tree
     # that is already dirty instead of recording the bit and continuing.
-    with tree_lock(root, timeout=1800):
+    #
+    # `starting` is printed before the lock is requested and `provenance` only
+    # after it is held, so a control that holds the lock can tell a blocked
+    # driver from a slow interpreter instead of guessing from a quiet window.
+    print(f'starting {json.dumps({"pid": os.getpid()})}', flush=True)
+    with tree_lock(root, timeout=3600):
         dirty = workspace_dirty(root)
         provenance = dict(
-            head=subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root,
-                                capture_output=True, text=True,
-                                check=True).stdout.strip(),
-            src_dirty=dirty, host=platform.node(),
+            head=_git(root, 'rev-parse', 'HEAD').decode().strip(),
+            src_dirty=dirty is not None, host=platform.node(),
             time_tool='time -l' if DARWIN else 'time -v', rounds=args.rounds)
         print(f'provenance {json.dumps(provenance)}', flush=True)
-        if dirty:
-            summary = dict(
-                provenance=provenance, status='INVALID', executable=None,
-                test=TEST, samples={}, minima={}, delta_from_baseline={},
-                failures=['src/ is dirty: the peak-RSS probe only measures a '
-                          'committed tree, and it must hold the shared tree '
-                          'lock against the negative controls'])
+        if dirty is not None:
+            summary = summary_for(provenance, 'INVALID', failures=[
+                'src/ is dirty: the peak-RSS probe only measures a committed '
+                'tree, and it must hold the shared tree lock against the '
+                f'negative controls ({dirty})'])
             write_summary(out, summary)
             print(summary['failures'][0], file=sys.stderr)
             return 2
-        executable = build(env, out)
+        try:
+            executable = build(env, out)
+        except (subprocess.SubprocessError, OSError, RuntimeError,
+                SystemExit) as error:
+            summary = summary_for(
+                provenance, 'INVALID',
+                build_log=str(out / 'build.log'),
+                failures=[f'build failed: {type(error).__name__}: {error}'])
+            write_summary(out, summary)
+            print(summary['failures'][0], file=sys.stderr)
+            return 2
         print(f'binary {executable}', flush=True)
         command = ['/usr/bin/time', '-l' if DARWIN else '-v', executable,
                    '--ignored', '--exact', TEST, '--nocapture', '--test-threads=2']
@@ -134,7 +185,11 @@ def main():
             samples[mode] = []
             for round_index in range(args.rounds):
                 run_env = dict(env, PDRS_PROBE=mode)
-                result = run_owned(command, cwd=root, env=run_env, timeout=600)
+                try:
+                    result = run_owned(command, cwd=root, env=run_env, timeout=600)
+                except subprocess.TimeoutExpired:
+                    failures.append(f'{mode} r{round_index + 1}: timed out after 600s')
+                    continue
                 log = out / f'{mode}-r{round_index + 1}.log'
                 log.write_text(result.stdout + '\n--- stderr ---\n' + result.stderr)
                 receipt = [line for line in result.stdout.splitlines()
@@ -153,14 +208,20 @@ def main():
                 print(f'{receipt[0]} rss={samples[mode][-1] if samples[mode] else "?"}',
                       flush=True)
         minima = {mode: min(values) for mode, values in samples.items() if values}
+        # `status` follows the minima, not only the failure list: a mode with
+        # no usable sample is a missing acceptance measurement even when every
+        # round merely "continued".
+        missing = [mode for mode in args.modes if mode not in minima]
+        if missing and not failures:
+            failures.append(f'no usable sample for: {sorted(missing)}')
         baseline = minima.get('baseline')
-        summary = dict(provenance=provenance,
-                       status='OK' if not failures else 'FAILED',
-                       executable=executable, test=TEST,
-                       samples=samples, minima=minima, failures=failures,
-                       delta_from_baseline={mode: value - baseline
-                                            for mode, value in minima.items()}
-                       if baseline is not None else {})
+        summary = summary_for(
+            provenance, 'OK' if not failures else 'FAILED',
+            executable=executable, samples=samples, minima=minima,
+            failures=failures,
+            delta_from_baseline={mode: value - baseline
+                                 for mode, value in minima.items()}
+            if baseline is not None else {})
         write_summary(out, summary)
         for mode in minima:
             delta = summary['delta_from_baseline'].get(mode)
@@ -168,7 +229,7 @@ def main():
                   + (f'  delta={delta:+} B' if delta is not None else ''), flush=True)
         if failures:
             print('\n'.join(failures), file=sys.stderr)
-        return 1 if failures or len(minima) != len(args.modes) else 0
+        return 0 if summary['status'] == 'OK' else 1
 
 
 if __name__ == '__main__':
