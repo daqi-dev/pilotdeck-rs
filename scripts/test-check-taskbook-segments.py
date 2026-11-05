@@ -639,6 +639,62 @@ case("顶格围栏里嵌 4 格缩进围栏不提前闭合外层（P1 假 PASS）
 case("3 格缩进的围栏仍按围栏处理（正控：围栏里的 scope 不算声明）", 0,
      "# t\n\n   ```\n<!-- pdrs-scope: files=16 est_min=180 -->\n   ```\n\n正文\n")
 
+# ---- fix-r18：gate19（MiniMax boundary P0×1 P2×5 P3×1 + GLM boundary P1×1）------------------------
+# 行中的 scope 注释（正文后面贴一条示例）修前按「顶格声明」收下，`if scopes:` 短路掉人日 / `.rs`
+# 两路回退 → 9 个 `.rs` 的包 rc 0 小包（实测）。声明必须独占行首。
+case("行中贴的示例 scope 不许短路回退（9 个 .rs 仍判大包，P0 假 PASS）", 2,
+     "# t\n\n写法参考 <!-- pdrs-scope: files=2 lines=80 est_min=30 --> 这样写\n\n" + TEN_RS + "\n",
+     must=["同一行"])
+case("行中 scope 后面紧跟第二条（同一行多个）也报（P0 同类）", 2,
+     "<!-- pdrs-scope: files=2 est_min=30 --> <!-- pdrs-scope: files=3 est_min=40 -->\n\n"
+     + TEN_RS + "\n", must=["同一行"])
+case("独占一行的顶格 scope 仍算声明（正控）", 1,
+     "# t\n\n<!-- pdrs-scope: files=16 est_min=180 -->\n\n正文\n", must=["分段交付"])
+# 小节标题按「整节名」认：`为什么要分段交付` 抢在真节前面会把合规任务书判成缺节（假 FAIL）；
+# `分段交付的背景` 里贴上一单的旧表会顶替本包（假 PASS）。
+case("小节标题带说明后缀仍认（正控：分段交付（大包必填））", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("## 分段交付", "## 分段交付（大包必填）"))
+case("「为什么要分段交付」不抢真节（P1 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("## 分段交付",
+                                     "## 为什么要分段交付\n\n因为 #1316 跑满 7200 s。\n\n## 分段交付"))
+case("「分段交付的背景」里的旧表不算本包（P1 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("## 分段交付", "## 分段交付的背景"))
+case("「续跑说明」不算 ## 续跑（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("## 续跑", "## 续跑说明"), must=["续跑"])
+
+# 合规路径与骨架占位并存：坏的那条修前被静默丢掉（派单里原样留着骨架也 rc 0）
+case("续跑里占位路径与实例路径并存仍要报（P2 fail-open）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace(
+         "- 进度文件：`_tmp/20261105-issue-100/progress.md`（每段一行）",
+         "- 进度文件：`_tmp/20261105-issue-100/progress.md`（实例）；骨架是 `_tmp/<日期>-issue-<N>/progress.md`"),
+     must=["占位"])
+# 表头写 `预计用时`：与 `预估时长` 同类，裸数字按 min（修前「读不出」→ 合规任务书假 FAIL）
+case("表头「预计用时」+ 裸数字按 min（P2 假 FAIL）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("| 预估时长 |", "| 预计用时 |")
+     .replace("| 80 min |", "| 80 |").replace("| 60 min |", "| 60 |"))
+# `预期 2 人日` / `预计需要 2 人日`：人日回退的关键词表漏了它们 → 大包被判小包（假 PASS）
+case("「预期 2 人日」也算人日证据（P2 假 PASS）", 1,
+     "# t\n\n预期 2 人日\n\n1. 改 `src/a.rs`\n2. 改 `src/b.rs`\n3. 改 `src/c.rs`\n",
+     must=["分段交付"])
+case("「预计需要 2 人日」也算（P2 假 PASS）", 1,
+     "# t\n\n预计需要 2 人日\n\n1. 改 `src/a.rs`\n2. 改 `src/b.rs`\n3. 改 `src/c.rs`\n",
+     must=["分段交付"])
+case("「预期 0.1 人日」不达阈值（正控：小包）", 0,
+     "# t\n\n预期 0.1 人日\n\n1. 改 `src/a.rs`\n2. 改 `src/b.rs`\n3. 改 `src/c.rs`\n")
+# 共写检测的扩展名白名单补齐（`.xml` 修前整类不可见 → 两段共写不报，假 PASS）
+case("两段共写 a.xml 要报（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`config/a.xml`")
+     .replace("`src/native_http.rs`", "`config/a.xml`"), must=["共写"])
+case("大小写不同的 A.RS 与 a.rs 是同一文件（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`SRC/A.RS`")
+     .replace("`src/native_http.rs`", "`src/a.rs`"), must=["共写"])
+case("无扩展名的 Dockerfile 共写要报（P2 假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`deploy/Dockerfile`")
+     .replace("`src/native_http.rs`", "`deploy/Dockerfile`"), must=["共写"])
+case("两个不同的 xml 不是共写（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "`config/a.xml`")
+     .replace("`src/native_http.rs`", "`config/b.xml`"))
+
 # parse_est 数值直判：只断言 rc 抓不到「值算错但方向仍对」的回归
 PARSE_EST = [
     ("80 min（2 个文件）", "", 80.0),
@@ -995,7 +1051,9 @@ def run():
         # 下面两条都**没有换行**：整份文档是一行。修前每条 scope 都切一遍 text[行首:pos]（行首恒 0），
         # 1.56 MB 实测 1.54 s、2.03 MB 2.6 s（O(n²)）。绝对秒数在满载机器上会飘（load 29 实测同一条 0.72–1.51 s），
         # 所以判「输入翻倍、耗时 < 3 倍」：修前是 4 倍（平方），修后 ~2 倍（线性），与机器负载无关。
-        one = "<!--pdrs-scope files=2 -->" * 78000      # 2.03 MB / 7.8 万条
+        one = "<!--pdrs-scope files=2 -->" * 78000      # 2.03 MB / 7.8 万条，全挤在一行
+        # 挤在一行的第 2 条起都是「注释和正文同一行」→ rc 2（fix-r18 的 P0 规则），只算 1 条声明；
+        # 每条独占一行时 7.8 万条都是真声明。两种形态都要线性。
         # 每档取 3 次的最小值：满载机器上单次会被抢占（实测同一档 0.35 / 0.9 / 1.2 s 都出现过），
         # 最小值才反映算法本身；平方实现在最小耗时上照样是 4 倍。
         def _best(text, times=4):
@@ -1011,10 +1069,13 @@ def run():
         ratio = d2 / max(d1, 0.02)
         # 阈值 3.5：满载（四路 gate 同时在跑）实测同一条曾到 3.02 误红；平方实现是 4 倍以上，
         # 3.5 仍分得开「线性（~2 倍）」与「平方（~4 倍）」，不改变判据语义。
-        ok = (ratio < 3.5 and len(sc2) == 78000 and not err2 and len(sc2b) == 156000 and not err2b
+        (sc3, err3), _d3 = _best(one.replace(" -->", " -->\n"))            # 每条独占一行
+        ok = (ratio < 3.5 and len(sc2) == 1 and len(err2) == 77999
+              and len(sc2b) == 1 and len(err2b) == 155999
+              and len(sc3) == 78000 and not err3
               and ctbs.parse_scopes("<!-- pdrs-scope: files=2")[1])   # 未闭合注释里的 scope 仍要报错
         print(f"{'PASS' if ok else 'FAIL'}  scope 扫描线性（2.03 MB {d1:.2f}s → 4.06 MB {d2:.2f}s，"
-              f"比值 {ratio:.1f} <3；60k 条={len(sc2)}）：err1={len(err1)}")
+              f"比值 {ratio:.1f} <3.5；单行={len(sc2)} 条+{len(err2)} 报错，逐行={len(sc3)} 条）：err1={len(err1)}")
         fails += 0 if ok else 1
 
         # 7) scandir entry 的 is_dir() 抛 OSError 也要 ScanError，不许 traceback 成 rc 1（GLM P3）
