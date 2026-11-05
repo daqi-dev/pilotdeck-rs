@@ -566,7 +566,7 @@ fn error(code: &str, message: impl Into<JsString>) -> HostError {
     error.code = Some(code.into());
     error.into()
 }
-fn blank(value: &JsString) -> bool {
+pub(crate) fn blank(value: &JsString) -> bool {
     value
         .units()
         .iter()

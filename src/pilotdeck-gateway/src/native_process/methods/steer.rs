@@ -34,10 +34,13 @@ fn attachments_empty(value: &JsValue) -> bool {
         || matches!(value, JsValue::Array(items) if items.is_empty())
 }
 
-/// TS `steerTurn` merges `attachments`/`uploadedAttachments` into the content
-/// array (InProcessGateway.ts:1864-1870). This native slice does not support
-/// steering with attachments; a non-empty payload is rejected explicitly
-/// instead of being silently dropped.
+/// TS `steerTurn` merges non-empty `attachments` into the content array via
+/// `prepareAttachmentTurn` and never reads `uploadedAttachments` (only
+/// `submitTurn` consumes uploads; InProcessGateway.ts:1864-1870). This native
+/// slice cannot steer with attachments yet: a non-empty `attachments` payload
+/// is rejected explicitly after the state gates instead of being silently
+/// dropped (ledger A7.2-STEER-ATTACH-001); `uploadedAttachments` is accepted
+/// and ignored, matching the TS baseline.
 fn attachments_unsupported(field: &str) -> RequestError {
     RequestError {
         code: "STEER_ATTACHMENTS_UNSUPPORTED".into(),
@@ -75,17 +78,6 @@ impl Requests {
         let item_id = string(&params, "itemId")?;
         let message_text = string(&params, "message")?;
 
-        // Attachments are rejected before any state lookup: the caller must
-        // learn the slice cannot carry them rather than see a fake accepted.
-        for field in ["attachments", "uploadedAttachments"] {
-            if params
-                .get(field)
-                .is_some_and(|value| !attachments_empty(value))
-            {
-                return Err(attachments_unsupported(field));
-            }
-        }
-
         // TS: no active run → no_active_turn; wrong run → turn_mismatch.
         let active_run = self.owner.active_turn_run_id(&session_key);
         let Some(active_run) = active_run else {
@@ -114,6 +106,20 @@ impl Requests {
                 ("reason", "turn_mismatch".into()),
             ]));
         }
+
+        // Attachments are rejected after the state gates, mirroring the TS
+        // order (steerTurn checks activeTurnRunId first, then prepares
+        // attachments): the caller still learns no_active_turn /
+        // turn_mismatch before the slice's explicit attachments error.
+        if params
+            .get("attachments")
+            .is_some_and(|value| !attachments_empty(value))
+        {
+            return Err(attachments_unsupported("attachments"));
+        }
+        // `uploadedAttachments` is never read by TS `steerTurn` (only
+        // `submitTurn` consumes uploads): a non-empty payload is accepted
+        // and ignored here, matching the baseline.
 
         // Canonical TS steer message format (InProcessGateway.ts:1871-1883).
         let message = crate::metadata::object([
@@ -222,6 +228,22 @@ impl Requests {
     async fn handle_hook_async_result(&self, params: JsValue) -> Result<JsValue, RequestError> {
         let session_key = string(&params, "sessionKey")?;
         let invocation_id = string(&params, "invocationId")?;
+
+        // TS validates unconditionally before any lookup
+        // (InProcessGateway.ts:1896-1899): blank ids are rejected even when
+        // no async-hook registry is staged, rather than reporting unknown.
+        // Same blank semantics as `AsyncHookRegistry::submit`, the Rust side
+        // of the same TS function.
+        if crate::runtime::async_hooks::blank(&session_key)
+            || crate::runtime::async_hooks::blank(&invocation_id)
+        {
+            return Err(RequestError {
+                code: "INVALID_ASYNC_HOOK_RESULT".into(),
+                message: "sessionKey and invocationId are required.".into(),
+                details: None,
+                validation: None,
+            });
+        }
 
         let Some(registry) = &self.async_hook_registry else {
             // No InteractionSteer resource staged → no pending hooks possible.
