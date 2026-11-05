@@ -50,8 +50,11 @@ use super::{ledger::field, transcript::timestamp};
 use crate::metadata::object;
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
-    fs, io,
+    fs,
+    future::Future,
+    io,
     path::PathBuf,
+    pin::Pin,
     sync::{Arc, LazyLock, Mutex},
     thread,
     time::{Duration, Instant},
@@ -168,6 +171,14 @@ impl StorageStimulus {
         parse_config(&value)
     }
 
+    /// Whether a barrier currently holds this site, i.e. whether an entry at it
+    /// is owed a `queued` receipt. Takes only the in-memory state, so a caller
+    /// can ask on its own tick without touching the filesystem.
+    pub(crate) fn held(&self, site: Site) -> bool {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        site_state_ref(&inner, site).held.is_some()
+    }
+
     /// Entry observation (`writer.append` / `runRegistry.append` invoked):
     /// publish a `queued` receipt when a barrier is currently held at this
     /// site, so the collector can witness what FIFO-queued behind the block.
@@ -224,8 +235,18 @@ impl StorageStimulus {
             site_state(&mut inner, site).held = Some(seq);
             drop(inner);
             let receipt = object([("boundMs", JsValue::Number(bound.as_millis() as f64))]);
-            self.publish(seq, site, key, "block", Some(&receipt))?;
-            let released = self.wait_for_release(seq, bound)?;
+            let outcome = self
+                .publish(seq, site, key, "block", Some(&receipt))
+                .and_then(|()| self.wait_for_release(seq, bound));
+            let released = match outcome {
+                Ok(released) => released,
+                Err(error) => {
+                    // Fail closed without leaving the site wedged: a hold left
+                    // behind would stamp every later entry with a receipt.
+                    self.clear_hold(site);
+                    return Err(error);
+                }
+            };
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             site_state(&mut inner, site).held = None;
             let release_seq = next_sequence(&mut inner);
@@ -249,6 +270,11 @@ impl StorageStimulus {
             next_sequence(&mut inner)
         };
         let _ = self.publish(seq, site, key, "complete", None);
+    }
+
+    fn clear_hold(&self, site: Site) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        site_state(&mut inner, site).held = None;
     }
 
     fn wait_for_release(&self, block_seq: u64, bound: Duration) -> io::Result<bool> {
@@ -462,17 +488,45 @@ pub(crate) fn writer_stimulus_queued_entry(
         .map_err(super::LedgerError::Io)
 }
 
+/// A witness receipt owed by an async port: written off the executor, awaited
+/// by the operation it stamps.
+pub(crate) type PendingReceipt =
+    Pin<Box<dyn Future<Output = Result<(), super::RunRegistryError>> + Send>>;
+
 /// Entry hook for the registry site (`runRegistry.append` invoked): `queued`
 /// receipt while a barrier is held. `stimulus` is the caller's registry
 /// handle (`None` keeps the entry inert).
-pub(crate) fn registry_stimulus_queued(
+///
+/// The async port owes two things the synchronous writer site does not: the
+/// receipt has to be decided and dispatched on the caller's tick (it is only
+/// meaningful while the barrier still holds the write behind it), and the
+/// write must not run on a Tokio executor thread. So the in-memory decision
+/// happens here and the filesystem write is handed to the blocking pool;
+/// `None` means no receipt is owed, and awaiting the returned future surfaces
+/// write failures to the append exactly as the synchronous variant did.
+pub(crate) fn registry_stimulus_queued_pending(
     stimulus: Option<&Arc<StorageStimulus>>,
     event: &JsValue,
-) -> Result<(), super::RunRegistryError> {
-    let Some(stimulus) = stimulus else {
-        return Ok(());
+) -> Option<PendingReceipt> {
+    let stimulus = Arc::clone(stimulus?);
+    if !stimulus.held(Site::Registry) {
+        return None;
+    }
+    let key = registry_event_key(event);
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        // No executor to protect: the caller's own thread writes the receipt.
+        let result = stimulus.queued(Site::Registry, &key);
+        return Some(Box::pin(std::future::ready(
+            result.map_err(super::RunRegistryError::Io),
+        )));
     };
-    stimulus
-        .queued(Site::Registry, &registry_event_key(event))
-        .map_err(super::RunRegistryError::Io)
+    Some(Box::pin(async move {
+        handle
+            .spawn_blocking(move || stimulus.queued(Site::Registry, &key))
+            .await
+            .map_err(|_| {
+                super::RunRegistryError::Invalid("Storage stimulus witness task stopped.".into())
+            })?
+            .map_err(super::RunRegistryError::Io)
+    }))
 }

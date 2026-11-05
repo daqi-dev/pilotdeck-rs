@@ -98,8 +98,8 @@ with mutating_sources(repo, [source, connection]) as snapshots:
          '        self.coordinator\n            .emit(&self.publication.run.session_key, event)',
          '        let _ = event; false', 'ordered_durable_terminal_after_session_end'),
         ('file-adapter-skips-durable', source,
-         '        self.call(move |registry| registry.append(&run, &event))',
-         '        self.call(move |_registry| { let _ = (run, event); Ok(()) })',
+         '        let append = self.call(move |registry| registry.append(&run, &event));',
+         '        let append = self.call(move |_registry| { let _ = (run, event); Ok(()) });',
          'file_registry_publication_preserves_fifo_across_workers'),
     ]
     summary = []

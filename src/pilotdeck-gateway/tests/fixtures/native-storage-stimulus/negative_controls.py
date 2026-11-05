@@ -32,9 +32,8 @@ mutations = [
     # releases instantly, so the bound-expiry release receipt loses its
     # `bounded: true` marker first.
     ('writer-barrier-never-blocks', STIMULUS,
-     'let released = self.wait_for_release(seq, bound)?;',
-     '''let _ = bound;
-            let released = true;''',
+     '.and_then(|()| self.wait_for_release(seq, bound));',
+     '.and_then(|()| Ok(true));',
      'storage::stimulus_tests::writer_barrier_bound_releases_without_release_file', '#1370 bound expiry releases with bounded true'),
     # The bound is the safety release: without the deadline the barrier never
     # self-releases, so the release receipt wait fails at its observation cap.
