@@ -90,6 +90,12 @@ def main() -> int:
 
 def _run(gate, rrr, out_base: Path) -> int:
     fails: list[str] = []
+    # 通道名额钉死为 11-05 实测值（依据 _tmp/20261105-channel-ramp/RAMP.md；与 ops fleet.py 的 P4_CAP 同源）：
+    # deepseek/minimax 96 并发无 429（原 4 是自设过低值）、zai 单 key 50 RPM 封顶（原 8 超出配额）、anthropic 未压测保持 2。
+    # 改这里必须同步 ops 仓 P4_CAP，否则评审排队与 fleet 显示会各说各话。
+    want_slots = {"zai": 6, "minimax": 16, "deepseek": 16, "anthropic": 2}
+    if rrr.RUNNER_SLOTS != want_slots:
+        fails.append(f"通道名额应为实测值 {want_slots}（与 ops fleet.py P4_CAP 同源），实为 {rrr.RUNNER_SLOTS}")
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         # 通道并发闸的锁目录必须隔离：否则本测试会与真评审抢同一组 flock 槽，或被真作业卡住

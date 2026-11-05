@@ -17,10 +17,13 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
 状态：PASS（有 final 且末行 VERDICT 合规）· PARTIAL（有 final 但缺 VERDICT/覆盖行）· TIMEOUT · ERROR · TOOLS_VIOLATION。
 只有 PASS 计入闸门；exit0 或 type=result 不等于完成评审（state/memory/20261016-review-bounds.md）。
 
-通道并发闸：每个角色起进程前按 `--runner` 取全局 flock 名额（zai 8 / deepseek 4 / minimax 4 / anthropic 2，
+通道并发闸：每个角色起进程前按 `--runner` 取全局 flock 名额（zai 6 / minimax 16 / deepseek 16 / anthropic 2，
 与 ops `scripts/fleet/fleet.py` 的 P4_CAP 同源），取不到打印 `[review-slot] waiting N/M` 排队；
 不改「四角色并行」语义，只把它们排队。anthropic 只有 2 路：不加闸时完整四角色作业必然超限
-（#1402 anthropic 四角色 25 min CPU 0%，实测是流式饥饿）。
+（#1402 anthropic 四角色 25 min CPU 0%，实测是流式饥饿）。zai 卡的不是并发而是单 key 50 RPM：
+4 角色门块实测 32–43 RPM，8 角色需 64–86 RPM 已超配额，且 GLM 实现 worker 共用同一把 ZAI_API_KEY，
+因此 6 是「贴着配额但不放弃」的值（依据 `_tmp/20261105-channel-ramp/RAMP.md`，
+决策卡 `state/decisions-20261105-gate-caps.md`）。
 
 用法：
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate
@@ -112,9 +115,11 @@ def runner_env(runner: str, key: str) -> dict[str, str]:
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
 
 # —— 通道并发闸（P4 池）——
-# 上限与 ops scripts/fleet/fleet.py 的 P4_CAP 同源（依据 _tmp/20261105-fleet-pools/CAPACITY.md）；
+# 上限与 ops scripts/fleet/fleet.py 的 P4_CAP 同源；数值按 11-05 通道台阶压测（_tmp/20261105-channel-ramp/RAMP.md）：
+# deepseek/minimax 96 并发 96/96 无 429（原 4 是自设过低值）→ 16；zai 并发不是瓶颈、单 key 50 RPM 才是（429 code 102503，
+# 被拒请求仍计入配额，且与 GLM 实现 worker 共用一把 key）→ 由 8 压到 6；anthropic 未压测，保持 2。
 # 可用 PDRS_REVIEW_SLOTS_<RUNNER> 覆盖，PDRS_REVIEW_SLOT_DIR 换锁目录（测试隔离用）。
-RUNNER_SLOTS = {"zai": 8, "deepseek": 4, "minimax": 4, "anthropic": 2}
+RUNNER_SLOTS = {"zai": 6, "minimax": 16, "deepseek": 16, "anthropic": 2}
 SLOT_WAIT_TIMEOUT = 3600  # 等名额上限（s），超时该角色记 ERROR（不静默死等）
 
 
