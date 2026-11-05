@@ -70,9 +70,12 @@ P2b 跟进）：屏障自身的 30s 安全超时是失败而非静默通过—�
 `started` 握手不再赌固定睡眠——探针写好 staging 后等待 `started + ".release"`
 信号文件（50ms 轮询、60s 上限），测试钩子在 adopt 后立刻原子发布
 （staging+rename）；原先钩子要陪跑探针里固定的 8s 睡眠，10s `started` 上限在
-重载下（4 份并发 lib 副本为负载）会先耗尽。release 是**前置条件**（不发布则
-`started` 永不出现），但它在探针 boot 之前就发出，所以实际时刻由「解释器启动
-（本机实测 ~15ms）+ 用例自己的节拍睡眠」决定——节拍不是装饰，见下段。
+重载下（4 份并发 lib 副本为负载）会先耗尽。release 门控健康路径（测试自己拥有
+该文件，在探针 boot 之前就发出），但**不是硬前置**：探针那条等待另有 60s 兜底，
+超时后照样发布 `started`（三轮评审 DeepSeek concurrency P3 + MiniMax boundary P3
+指出文档与实现相反）——该兜底今天不可达，因为测试侧 14s 的 `started` 上限先失败。
+所以实际时刻由「解释器启动（本机实测 ~15ms）+ 用例自己的节拍睡眠」决定——
+节拍不是装饰，见下段。
 deadline 下界余量 `DEADLINE_FLOOR_SLACK` 随之
 100ms→5ms——健康路径本就用不到余量（expiry 在 `write_began` 之后才计算，
 写阶段只能超时不能提前），而该余量同时是 `expiry-hoisted-before-spawn` 的

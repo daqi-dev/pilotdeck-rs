@@ -513,7 +513,7 @@ regeneration!(
 // #283: not the shared macro — the committed oracle carries the non-utf8
 // scenario (a raw `bad-\xff.txt` beside `ok.txt`), which only a
 // byte-transparent filesystem can generate: the generator probes and drops
-// the scenario on macOS APFS/HFS+ (EINVAL), so regenerating there yields 27
+// the scenario on macOS APFS/HFS+ (EILSEQ, os error 92), so regenerating there yields 27
 // scenarios and the byte comparison would false-fail. The guard is
 // Linux-only and pins the ICU build up front like the #132a card above,
 // because the recorded provider-order case is ICU-sensitive too (#283

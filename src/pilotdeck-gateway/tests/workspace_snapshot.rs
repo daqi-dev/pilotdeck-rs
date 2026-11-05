@@ -339,17 +339,36 @@ fn utf16_cmp(left: &str, right: &str) -> std::cmp::Ordering {
 }
 /// Byte-exact non-UTF-8 names need a byte-transparent filesystem; generate.mts
 /// probes identically and drops the scenario where this fails (APFS/HFS+
-/// reject the bytes with EINVAL, Linux allows them). Since #283 the committed
-/// oracle is generated on Linux (cb8, ext4; the fixture README registers the
+/// reject the bytes, Linux allows them). Since #283 the committed oracle is
+/// generated on Linux (cb8, ext4; the fixture README registers the
 /// provenance) and carries the non-utf8 scenario. The replay skips it
 /// wherever this probe fails, and the dedicated Linux gate below
 /// (`non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux`) fails loudly
 /// instead of letting the coverage evaporate silently.
+///
+/// #1400 third-round review (MiniMax sibling P1 + DeepSeek sibling P2 at
+/// #1495 B10): the probe sorts by errno, exactly like its cron twin
+/// (`runtime::cron::tests::non_utf8_names_writable`). Only `EILSEQ` — what
+/// APFS returns for these bytes, measured on darwin 25.6 for `open(O_CREAT)`,
+/// `mkdir` and `create_dir_all` alike (os error 92; earlier notes in this
+/// file and in `generate.mts` said EINVAL and were wrong) — answers "this
+/// filesystem can never host the scenario, skip". Every other error
+/// (EACCES, ENOSPC, EROFS, EMFILE, …) is a real failure of the scratch this
+/// caller handed us and panics: folding it into the skip is how the
+/// 28-scenario replay silently becomes 27 and stays green, which the raw-file
+/// skip below warns about in so many words.
 fn non_utf8_names_writable(dir: &Path) -> bool {
     let probe = dir.join(OsString::from_vec(b"probe-\xff".to_vec()));
-    let writable = fs::write(&probe, b"").is_ok();
+    let outcome = fs::write(&probe, b"");
     let _ = remove_owned(dir, &probe, false);
-    writable
+    match outcome {
+        Ok(()) => true,
+        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => false,
+        Err(error) => panic!(
+            "#283 workspace-snapshot: probing {} failed for a reason other than the file name: {error}",
+            probe.display()
+        ),
+    }
 }
 
 /// Collect every temporary-artifact violation under `directory`. `staging` is
@@ -873,7 +892,8 @@ fn non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux() {
 }
 
 /// #283: the mirror of the Linux gate above. On filesystems that cannot hold
-/// non-UTF-8 names (macOS APFS/HFS+ reject the bytes with EINVAL) the
+/// non-UTF-8 names (macOS APFS/HFS+ reject the bytes with EILSEQ, os error
+/// 92) the
 /// non-utf8 scenario cannot replay, and `replay_scenario` skips it with the
 /// same probe the generator uses — that skip is the documented behaviour, not
 /// a silent gap. If the assert below ever fires the other way (the probe
@@ -2433,11 +2453,21 @@ fn replay_scenario(scenario: &JsValue) {
     );
     if !raw_files.is_empty() && !non_utf8_names_writable(&dir) {
         // generate.mts probes the same way and drops the scenario where the
-        // bytes cannot exist (macOS APFS/HFS+ EINVAL). The committed oracle
+        // bytes cannot exist (macOS APFS/HFS+ EILSEQ). The committed oracle
         // carries the scenario since #283, and the dedicated Linux gate below
         // replays it wherever the probe succeeds; this skip stays only for
         // filesystems that physically cannot hold the raw name.
-        eprintln!("scenario {name}: skipped, filesystem rejects non-UTF-8 file names");
+        //
+        // #1400 third-round review (DeepSeek sibling P2, independently
+        // flagged by MiniMax boundary P2 at #1495 B10): straight to the
+        // stderr handle. The print-family macros are captured by libtest, so
+        // this line — the only evidence that the 28-scenario replay ran as 27
+        // — never reached the log, exactly the shape `:1804` was changed for.
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(
+            format!("scenario {name}: skipped, filesystem rejects non-UTF-8 file names\n")
+                .as_bytes(),
+        );
         return;
     }
     for raw in raw_files {

@@ -1163,12 +1163,58 @@ fn migration_non_utf8_home_keeps_one_physical_key() {
 /// is the same-shape probe.
 ///
 /// Only `EILSEQ` — the errno APFS / HFS+ return for the invalid name bytes
-/// themselves (os error 92 on darwin, 84 on Linux) — answers "this
+/// themselves (os error 92 on darwin, measured there for `open(O_CREAT)`,
+/// `mkdir` and `create_dir_all` alike; 84 on Linux) — answers "this
 /// filesystem can never host the fixture, skip". Every other error
 /// (EACCES, ENOSPC, EROFS, EMFILE, …) is a real failure of the scratch the
 /// caller handed us and panics with its own `#1400` marker: folding those
 /// into the skip would silently delete a Linux-side P1 guard from the
 /// suite, which is what #1289 refused to do and #1400 must not reintroduce.
+///
+/// #1400 third-round review (MiniMax boundary P1 at #1495 B10): the triage
+/// decision is split out so both arms are executed by
+/// [`only_eilseq_makes_the_non_utf8_probe_skippable`] below. No mutant in
+/// `tests/fixtures/cron-store/negative_controls.py` can falsify it on the
+/// hosts we run: rewriting the arm to `Err(_) => false` is indistinguishable
+/// where the probe always succeeds (Linux) or where `EILSEQ` is the only
+/// reachable failure (APFS), so a regression to "any error is a skipped
+/// host" would otherwise only be caught by reading the code — while on Linux
+/// it would turn a scratch EACCES/ENOSPC into a silent skip and delete the
+/// `#1216` double-key guard from the suite (a false PASS). A
+/// filesystem-level negative control needs fault injection the mutant
+/// mechanism does not have; that is registered as a follow-up, and this unit
+/// test is the executable evidence in the meantime.
+#[cfg(unix)]
+fn probe_failure_is_a_rejected_name(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EILSEQ)
+}
+
+/// The executable half of the triage contract: `EILSEQ` skips, everything
+/// else fails closed. Runs on every host — the errors are synthetic, so this
+/// does not depend on a filesystem that can refuse a non-UTF-8 name.
+#[cfg(unix)]
+#[test]
+fn only_eilseq_makes_the_non_utf8_probe_skippable() {
+    let error = |errno: i32| std::io::Error::from_raw_os_error(errno);
+    assert!(
+        probe_failure_is_a_rejected_name(&error(libc::EILSEQ)),
+        "#1400 EILSEQ means the filesystem rejects these bytes: skip, do not fail"
+    );
+    for errno in [
+        libc::EACCES,
+        libc::ENOSPC,
+        libc::EROFS,
+        libc::EMFILE,
+        libc::EINVAL,
+        libc::ENOENT,
+    ] {
+        assert!(
+            !probe_failure_is_a_rejected_name(&error(errno)),
+            "#1400 errno {errno} is a real failure of the scratch, not a rejecting filesystem: it must fail closed, not skip"
+        );
+    }
+}
+
 #[cfg(unix)]
 fn non_utf8_names_writable(dir: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
@@ -1178,7 +1224,7 @@ fn non_utf8_names_writable(dir: &Path) -> bool {
         .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\"probe\": true}"));
     let writable = match outcome {
         Ok(()) => true,
-        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => false,
+        Err(error) if probe_failure_is_a_rejected_name(&error) => false,
         Err(error) => panic!(
             "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",
             probe_project.display()

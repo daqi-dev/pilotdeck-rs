@@ -64,7 +64,7 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway \
 | snapshot-inside | 快照根在工作区内：扫描排除该子树、相似前缀不排除 |
 | workspace-missing | scandir ENOENT 落失败 marker（Node 文案） |
 | root-equals-workspace | 快照根等于工作区根：拒绝并只留失败 marker |
-| non-utf8 | 非 UTF-8 文件名：readdir 损失解码后 lstat ENOENT（`bad-�.txt` 文案）。需字节透明文件系统，生成器先探测；APFS/HFS+ 以 EINVAL 拒绝该字节即整场景跳过。**已覆盖（#283）**：金样 2026-11-01 于 cb8（Linux ext4）生成，见下方溯源登记；Rust 侧除通用回放外另有 `#[cfg(target_os = "linux")]` 专属门（`non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux`，逐字段对金样断言，全部带 `#283` 锚点），非 Linux 平台上配对测试断言探测必须为假、金样仍含该场景名 |
+| non-utf8 | 非 UTF-8 文件名：readdir 损失解码后 lstat ENOENT（`bad-�.txt` 文案）。需字节透明文件系统，生成器先探测；APFS/HFS+ 以 EILSEQ 拒绝该字节（darwin 25.6 实测 `open(O_CREAT)`/`mkdir`/`create_dir_all` 同为 os error 92；旧记的 EINVAL 有误）即整场景跳过；其余 errno 视为真实故障硬失败。**已覆盖（#283）**：金样 2026-11-01 于 cb8（Linux ext4）生成，见下方溯源登记；Rust 侧除通用回放外另有 `#[cfg(target_os = "linux")]` 专属门（`non_utf8_capture_fails_with_lossy_lstat_enoent_on_linux`，逐字段对金样断言，全部带 `#283` 锚点），非 Linux 平台上配对测试断言探测必须为假、金样仍含该场景名 |
 | provider-quirks | 手工 manifest：数字/缺字段/非字符串 createdAt/重复键/null 条目/绝对路径/`..` 路径/目录名叫 manifest.json——list 校验跳过、get 不过校验、restore 只动作可执行条目；对象路径为目录时 restore 报 `EISDIR ... read`。`entries` 为 `5`/`{}`/`"x"`/`null` 时（非数组）按 TS `workspaceSnapshot.ts:115` 的 `Array.isArray` 分支恢复成空条目、`restored:true` 且目标树为空，get 原样返回该值。`entryType` 为 `symlink`/`file` 但缺 `linkTarget`/`objectKey` 时按 TS `workspaceSnapshot.ts:125/128` 的同条件跳过，不抛错、`restored:true`、目标树为空 |
 | provider-null | manifest 为 `null`：list/get 抛 TypeError 文案 |
 | provider-order | 目录遍历按 Node readdir（libuv 字节序）：重复 `snapshotId` 取最后一份；`createdAt` 用 ICU `localeCompare`（`Z` 排在 `a` 前），相等值稳定保持遍历序 |

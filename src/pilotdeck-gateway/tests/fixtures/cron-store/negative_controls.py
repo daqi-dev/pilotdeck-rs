@@ -237,6 +237,15 @@ mutations = [
     # forcing it to `true` still reaches the fixture's create panic, while a
     # Linux-side EACCES/ENOSPC in the probe is a hard failure rather than a
     # silent skip.
+    # #1400 third-round review (MiniMax boundary P1): this row kills "the
+    # probe lies", NOT the triage. Rewriting the guard to `Err(_) => false`
+    # (any error skips) is indistinguishable here — Linux's probe always
+    # succeeds, APFS's only reachable failure is EILSEQ — so the triage
+    # contract is carried by the unit test
+    # `runtime::cron::tests::only_eilseq_makes_the_non_utf8_probe_skippable`,
+    # which executes both arms with synthetic errnos on every host. A
+    # filesystem-level control needs fault injection the mutation mechanism
+    # does not have (registered as a follow-up).
     ('skip-probe-forced-writable', tests,
      'fn non_utf8_names_writable(dir: &Path) -> bool {\n'
      '    use std::os::unix::ffi::OsStrExt;\n'
@@ -246,7 +255,7 @@ mutations = [
      '        .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\\"probe\\": true}"));\n'
      '    let writable = match outcome {\n'
      '        Ok(()) => true,\n'
-     '        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => false,\n'
+     '        Err(error) if probe_failure_is_a_rejected_name(&error) => false,\n'
      '        Err(error) => panic!(\n'
      '            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",\n'
      '            probe_project.display()\n'
