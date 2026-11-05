@@ -65,7 +65,19 @@ P2b 跟进）：屏障自身的 30s 安全超时是失败而非静默通过—�
 `resume`（循环条件与退出之间的竞态由复查兜住），未收到即 `exit 3`；saw 写入
 仍先行执行，超时路径继续走截止复检，删复检的变异在该路径照样可杀；新增
 「屏障超时」交错用例（测试侧故意不发 `resume`，断言 helper 非零退出、退出码
-3、park 实跑 ~30s、saw 不写）。
+3、park 实跑 ~30s、saw 不写）。#1297（批次 B10）：dead-helper 用例的
+`started` 握手事件化——探针写好 staging 后等待 `started + ".release"` 信号
+文件（50ms 轮询、60s 上限），测试钩子在 adopt 后立刻原子发布
+（staging+rename）；原先钩子要陪跑探针里固定的 8s 睡眠，10s `started` 上限在
+重载下（4 份并发 lib 副本为负载）会先耗尽。事件的拥有权在测试侧：发布先于
+等待，`started` 的出现只隔着探针的解释器启动（本机实测启动 ~15ms、端到端
+~23ms，负载只会更大）。deadline 下界余量 `DEADLINE_FLOOR_SLACK` 随之
+100ms→5ms——健康路径本就用不到余量（expiry 在 `write_began` 之后才计算，
+写阶段只能超时不能提前），而该余量同时是 `expiry-hoisted-before-spawn` 的
+判杀线，事件化后其杀伤内容只剩解释器启动，5ms 保住判杀裕度 4×+。panic 用例
+与三个场景用例（迟到 started / within-cap / 屏障超时）同样先发布 release
+再等信号，场景节奏不变（within-cap 仍以 8s 延迟的 `started` 暴露硬回 5s 的
+cap）。
 
 变异体（25 个；绑定测试如无说明均在 `--test scratch_publication`）：
 
@@ -123,10 +135,12 @@ P2b 跟进）：屏障自身的 30s 安全超时是失败而非静默通过—�
   断言 `#1155 the helper must observe the stranger's started signal before it
   dies` 判杀——两个失败点收进一个锚点列表（列表即备选集）；
 - `expiry-hoisted-before-spawn`（#1155 r4 评审 P2）：expiry 移回 spawn 前
-  ——`spawned` 钩子里的 8s `started` 握手吃光写预算，dead-helper 用例的
-  `#1155 the write phase must last its full deadline` 下界断言失败（elapsed
-  ≈ 0）；若 expiry 已过导致 writer-exit 竞态先行，则以 `#1125 helper writer
-  did not exit by its deadline` 判杀（双锚点，确定性）；
+  ——`spawned` 钩子里的 release 门控 `started` 握手（#1297 起事件化，内容是
+  探针解释器启动，实测 ~23ms）落进写预算，dead-helper 用例的
+  `#1155 the write phase must last its full deadline` 下界断言失败（实测
+  elapsed ≈ 1.48s，低于 1.5s 减 5ms 余量）；若 expiry 已过导致 writer-exit
+  竞态先行，则以 `#1125 helper writer did not exit by its deadline` 判杀
+  （双锚点，确定性）；
 - `started-cap-hardcoded-short`（#1155 r4 评审 P2，fix-r1 改形状，fix-r2b
   锚点带 `+ 1` 截断补偿，fix-r3 改绑）：helper 侧 started 等待秒数退回字面量
   `5`（墙钟，`date +%s` 基准）——fix-r3 起绑定走事件屏障受控路径的新用例
