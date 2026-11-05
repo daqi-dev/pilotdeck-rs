@@ -2268,3 +2268,651 @@ async fn permission_list_projection_and_grant_succeed() {
         .await
         .expect("#1309 permission positive fixture project shutdown");
 }
+
+// #1437: method-layer positive/negative controls for the permission and
+// user_dialog family handlers (methods/permission.rs, methods/user_dialog.rs).
+// Append-only section; the #1309 tests above stay untouched.
+
+/// Wire a connected bus (on_change supplied → is_connected) like the #1309
+/// fix-r5/r6 fixtures, so the method layer runs its parameter validation
+/// instead of the capability gate.
+fn wire_user_dialog_bus_1437(requests: &mut super::super::requests::Requests) {
+    requests.user_dialog_bus = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::user_dialog::GatewayUserDialogBus::new(
+            crate::user_dialog::DialogRuntime::default(),
+            Some(Box::new(|_event| Ok(()))),
+        ),
+    ));
+}
+
+fn register_dialog_1437(
+    requests: &super::super::requests::Requests,
+    session: &JsString,
+    request_id: &str,
+    resolved: &std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>>,
+) {
+    let sink = resolved.clone();
+    requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .register(
+            session,
+            crate::user_dialog::PendingDialog {
+                request_id: request_id.into(),
+                dialog_kind: "question".into(),
+                tool_call_id: "call-1437".into(),
+                tool_name: "ask".into(),
+                event: crate::metadata::object([("requestId", JsValue::String(request_id.into()))]),
+                accepts: Box::new(|_value| true),
+                resolve: Box::new(move |answer| sink.lock().unwrap().push(answer)),
+                reject: Box::new(|_error| {}),
+                on_settled: None,
+            },
+        );
+}
+
+// #1437: both families are gateway-request methods, not verified native
+// metadata methods, so they must stay outside LOCAL_METHODS like the upload
+// family (precedent: upload_gateway_methods_stay_outside_the_default_dispatch_
+// table, upload/gateway_tests.rs:841).
+#[test]
+fn permission_user_dialog_methods_stay_outside_local_dispatch() {
+    for method in [
+        "permission_list",
+        "grant_session_permission",
+        "user_dialog_list",
+        "user_dialog_claim",
+        "user_dialog_release",
+        "user_dialog_respond",
+    ] {
+        let request = crate::metadata::object([
+            ("type", "request".into()),
+            ("id", "1".into()),
+            ("method", method.into()),
+        ]);
+        negative_assert!(
+            !crate::dispatch::is_local(&request),
+            "#1437 {method} must stay outside LOCAL_METHODS"
+        );
+    }
+}
+
+// #1437: a present-but-blank sessionKey ("  ") is not a missing key; both
+// permission methods trim before the empty check, so it keeps the domain
+// rejection instead of passing the blank key to the bus.
+#[tokio::test]
+async fn permission_blank_session_key_rejected() {
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1437 permission blank fixture setup");
+    let error = requests
+        .permission_request(
+            "permission_list".into(),
+            crate::metadata::object([("sessionKey", "  ".into())]),
+        )
+        .await
+        .expect_err("#1437 permission_list rejects a blank sessionKey");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_PERMISSION_LIST",
+        "#1437 permission_list blank sessionKey keeps the domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "sessionKey is required.",
+        "#1437 permission_list blank sessionKey message"
+    );
+    let error = requests
+        .permission_request(
+            "grant_session_permission".into(),
+            crate::metadata::object([("sessionKey", "\t".into()), ("entry", "Bash".into())]),
+        )
+        .await
+        .expect_err("#1437 grant rejects a blank sessionKey");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_PERMISSION_GRANT",
+        "#1437 grant blank sessionKey keeps the domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "sessionKey is required.",
+        "#1437 grant blank sessionKey message"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1437 permission blank fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1437 permission blank fixture project shutdown");
+}
+
+// #1437: user_dialog_list on a wired bus — the INVALID_USER_DIALOG_LIST domain
+// code for a missing/blank sessionKey, and the dialog-event projection for a
+// valid one (previously only the capability gate on an unwired bus was
+// covered; user_dialog.rs:124).
+#[tokio::test]
+async fn user_dialog_list_validates_session_key_and_projects_dialogs() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1437 user_dialog_list fixture setup");
+    wire_user_dialog_bus_1437(&mut requests);
+    let session: JsString = "1437-list-session".into();
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    register_dialog_1437(&requests, &session, "1437-dialog", &resolved);
+
+    for (label, params) in [
+        ("missing", crate::metadata::object([])),
+        (
+            "blank",
+            crate::metadata::object([("sessionKey", "  ".into())]),
+        ),
+    ] {
+        let error = requests
+            .user_dialog_request("user_dialog_list".into(), params)
+            .await
+            .expect_err("#1437 user_dialog_list rejects a {label} sessionKey");
+        negative_assert_eq!(
+            error.code,
+            "INVALID_USER_DIALOG_LIST",
+            "#1437 user_dialog_list {label} sessionKey domain code"
+        );
+        negative_assert_eq!(
+            message(&error),
+            "sessionKey is required.",
+            "#1437 user_dialog_list {label} sessionKey message"
+        );
+    }
+
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_list".into(),
+            crate::metadata::object([("sessionKey", JsValue::String(session.clone()))]),
+        )
+        .await
+        .expect("#1437 user_dialog_list succeeds on a wired bus");
+    let dialogs = result.get("dialogs").and_then(|value| match value {
+        JsValue::Array(items) => Some(items),
+        _ => None,
+    });
+    negative_assert!(
+        dialogs.is_some(),
+        "#1437 user_dialog_list projects a dialogs array"
+    );
+    let dialogs = dialogs.expect("#1437 user_dialog_list dialogs array");
+    negative_assert_eq!(
+        dialogs.len(),
+        1,
+        "#1437 user_dialog_list projects the pending dialog"
+    );
+    negative_assert_eq!(
+        dialogs[0].get("requestId"),
+        Some(&JsValue::String("1437-dialog".into())),
+        "#1437 user_dialog_list forwards the dialog event"
+    );
+    negative_assert!(
+        dialogs[0].get("lease").is_none(),
+        "#1437 an unclaimed dialog carries no lease block"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1437 user_dialog_list fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1437 user_dialog_list fixture project shutdown");
+}
+
+// #1437: ttlMs lease bounds — TS MIN_USER_DIALOG_LEASE_MS = 1_000 and
+// MAX_USER_DIALOG_LEASE_MS = 300_000 are inclusive: exactly 1000 and 300000
+// claim, one step outside (999 / 300001) and a fractional value are rejected
+// with the INVALID_USER_DIALOG_CLAIM domain code.
+#[tokio::test]
+async fn user_dialog_claim_ttlms_bounds() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1437 ttlMs bounds fixture setup");
+    wire_user_dialog_bus_1437(&mut requests);
+    let session: JsString = "1437-ttl-session".into();
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    for (label, ttl_ms) in [
+        ("below", 999.0),
+        ("above", 300_001.0),
+        ("fractional", 1_000.5),
+    ] {
+        register_dialog_1437(&requests, &session, "1437-ttl-reject", &resolved);
+        let error = requests
+            .user_dialog_request(
+                "user_dialog_claim".into(),
+                crate::metadata::object([
+                    ("sessionKey", JsValue::String(session.clone())),
+                    ("requestId", "1437-ttl-reject".into()),
+                    ("ttlMs", JsValue::Number(ttl_ms)),
+                ]),
+            )
+            .await
+            .expect_err("#1437 {label} ttlMs is rejected");
+        negative_assert_eq!(
+            error.code,
+            "INVALID_USER_DIALOG_CLAIM",
+            "#1437 {label} ttlMs keeps the domain code"
+        );
+        negative_assert_eq!(
+            message(&error),
+            "ttlMs must be a safe integer between 1000 and 300000.",
+            "#1437 {label} ttlMs message"
+        );
+    }
+    for (label, ttl_ms, request_id) in [
+        ("minimum", 1_000.0, "1437-ttl-min"),
+        ("maximum", 300_000.0, "1437-ttl-max"),
+    ] {
+        register_dialog_1437(&requests, &session, request_id, &resolved);
+        let result = requests
+            .user_dialog_request(
+                "user_dialog_claim".into(),
+                crate::metadata::object([
+                    ("sessionKey", JsValue::String(session.clone())),
+                    ("requestId", request_id.into()),
+                    ("ttlMs", JsValue::Number(ttl_ms)),
+                ]),
+            )
+            .await
+            .expect("#1437 the {label} bound ttlMs claims");
+        negative_assert_eq!(
+            result.get("claimed"),
+            Some(&JsValue::Bool(true)),
+            "#1437 the {label} bound ttlMs claim succeeds"
+        );
+        negative_assert!(
+            result
+                .get("leaseId")
+                .and_then(JsValue::as_string)
+                .is_some_and(|lease| !lease.to_utf8().unwrap_or_default().is_empty()),
+            "#1437 the {label} bound ttlMs claim returns a lease"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1437 ttlMs bounds fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1437 ttlMs bounds fixture project shutdown");
+}
+
+// #1437: the sessionKey/requestId required rejects for claim, release and
+// respond on a WIRED bus (the #1309 gate-order test only covered the
+// capability gate on an unwired one), plus the whitespace-only leaseId reject
+// on claim (the #1309 fix-r5 tri-state test covered null, not blanks).
+#[tokio::test]
+async fn user_dialog_claim_release_domain_codes() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1437 claim/release fixture setup");
+    wire_user_dialog_bus_1437(&mut requests);
+    let session: JsString = "1437-domain-session".into();
+    for (label, params) in [
+        ("missing sessionKey", crate::metadata::object([])),
+        (
+            "blank sessionKey",
+            crate::metadata::object([("requestId", "1437-r".into())]),
+        ),
+        (
+            "missing requestId",
+            crate::metadata::object([("sessionKey", JsValue::String(session.clone()))]),
+        ),
+    ] {
+        let error = requests
+            .user_dialog_request("user_dialog_claim".into(), params)
+            .await
+            .expect_err("#1437 claim rejects a {label}");
+        negative_assert_eq!(
+            error.code,
+            "INVALID_USER_DIALOG_CLAIM",
+            "#1437 claim {label} domain code"
+        );
+        negative_assert_eq!(
+            message(&error),
+            "sessionKey and requestId are required.",
+            "#1437 claim {label} message"
+        );
+    }
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    register_dialog_1437(&requests, &session, "1437-lease-blank", &resolved);
+    let error = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1437-lease-blank".into()),
+                ("leaseId", "   ".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1437 claim rejects a whitespace-only leaseId");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_CLAIM",
+        "#1437 claim blank leaseId domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "leaseId must be a non-empty string when provided.",
+        "#1437 claim blank leaseId message"
+    );
+    for (label, params) in [
+        ("missing sessionKey", crate::metadata::object([])),
+        (
+            "missing requestId",
+            crate::metadata::object([("sessionKey", JsValue::String(session.clone()))]),
+        ),
+    ] {
+        let error = requests
+            .user_dialog_request("user_dialog_release".into(), params)
+            .await
+            .expect_err("#1437 release rejects a {label}");
+        negative_assert_eq!(
+            error.code,
+            "INVALID_USER_DIALOG_RELEASE",
+            "#1437 release {label} domain code"
+        );
+        negative_assert_eq!(
+            message(&error),
+            "sessionKey, requestId, and leaseId are required.",
+            "#1437 release {label} message"
+        );
+    }
+    let error = requests
+        .user_dialog_request("user_dialog_respond".into(), crate::metadata::object([]))
+        .await
+        .expect_err("#1437 respond rejects a missing sessionKey");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_USER_DIALOG_RESPONSE",
+        "#1437 respond missing sessionKey domain code"
+    );
+    negative_assert_eq!(
+        message(&error),
+        "sessionKey and requestId are required.",
+        "#1437 respond missing sessionKey message"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1437 claim/release fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1437 claim/release fixture project shutdown");
+}
+
+// #1437: the respond behavior dispatch — a missing result, a non-string
+// behavior and an unknown behavior all share the INVALID_USER_DIALOG_RESPONSE
+// rejection; the answered/cancelled behaviors then deliver (the #1309 fix-r5
+// test covered value/reason tri-state, not the dispatch itself).
+#[tokio::test]
+async fn user_dialog_respond_behavior_branches() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1437 behavior fixture setup");
+    wire_user_dialog_bus_1437(&mut requests);
+    let session: JsString = "1437-behavior-session".into();
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    register_dialog_1437(&requests, &session, "1437-dispatch", &resolved);
+    for (label, result) in [
+        ("missing result", None),
+        (
+            "non-string behavior",
+            Some(crate::metadata::object([(
+                "behavior",
+                JsValue::Number(1.0),
+            )])),
+        ),
+        (
+            "unknown behavior",
+            Some(crate::metadata::object([("behavior", "bogus".into())])),
+        ),
+    ] {
+        let mut fields = vec![
+            ("sessionKey", JsValue::String(session.clone())),
+            ("requestId", "1437-dispatch".into()),
+        ];
+        if let Some(result) = result {
+            fields.push(("result", result));
+        }
+        let error = requests
+            .user_dialog_request(
+                "user_dialog_respond".into(),
+                crate::metadata::object(fields),
+            )
+            .await
+            .expect_err("#1437 respond rejects a {label}");
+        negative_assert_eq!(
+            error.code,
+            "INVALID_USER_DIALOG_RESPONSE",
+            "#1437 respond {label} domain code"
+        );
+        negative_assert_eq!(
+            message(&error),
+            "result.behavior must be answered or cancelled.",
+            "#1437 respond {label} message"
+        );
+    }
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1437-dispatch".into()),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", "yes".into()),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1437 an answered behavior delivers");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1437 an answered behavior reports delivered"
+    );
+    negative_assert_eq!(
+        resolved.lock().unwrap().as_slice(),
+        [crate::user_dialog::DialogAnswer::Answered("yes".into())],
+        "#1437 an answered behavior reaches the resolver with its value"
+    );
+    register_dialog_1437(&requests, &session, "1437-cancelled", &resolved);
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1437-cancelled".into()),
+                (
+                    "result",
+                    crate::metadata::object([("behavior", "cancelled".into())]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1437 a cancelled behavior delivers");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1437 a cancelled behavior reports delivered"
+    );
+    negative_assert_eq!(
+        resolved.lock().unwrap().as_slice(),
+        [
+            crate::user_dialog::DialogAnswer::Answered("yes".into()),
+            crate::user_dialog::DialogAnswer::Cancelled(None),
+        ],
+        "#1437 a cancelled behavior reaches the resolver without a reason"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1437 behavior fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1437 behavior fixture project shutdown");
+}
+
+// #1437: USER_DIALOG_LEASE_REQUIRED — a respond against a dialog claimed by
+// another renderer lease is rejected until the matching leaseId is supplied.
+// #1453 reorders the user_dialog_respond guards; this test pins the current
+// claim-vs-respond lease semantics and needs a sync after that reorder.
+#[tokio::test]
+async fn user_dialog_respond_lease_required() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1437 lease-required fixture setup");
+    wire_user_dialog_bus_1437(&mut requests);
+    let session: JsString = "1437-lease-session".into();
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    register_dialog_1437(&requests, &session, "1437-lease-dialog", &resolved);
+    let claim = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1437-lease-dialog".into()),
+            ]),
+        )
+        .await
+        .expect("#1437 the lease-required claim succeeds");
+    let lease = claim
+        .get("leaseId")
+        .and_then(JsValue::as_string)
+        .expect("#1437 the lease-required claim returns a lease");
+
+    let respond = |lease_id: Option<JsValue>| {
+        let mut fields = vec![
+            ("sessionKey", JsValue::String(session.clone())),
+            ("requestId", "1437-lease-dialog".into()),
+        ];
+        if let Some(value) = lease_id {
+            fields.push(("leaseId", value));
+        }
+        fields.push((
+            "result",
+            crate::metadata::object([("behavior", "answered".into()), ("value", "ok".into())]),
+        ));
+        crate::metadata::object(fields)
+    };
+    for (label, lease_id) in [
+        ("without a lease", None),
+        ("with a wrong lease", Some("not-the-lease".into())),
+    ] {
+        let error = requests
+            .user_dialog_request("user_dialog_respond".into(), respond(lease_id))
+            .await
+            .expect_err("#1437 respond {label} is lease-required");
+        negative_assert_eq!(
+            error.code,
+            "USER_DIALOG_LEASE_REQUIRED",
+            "#1437 respond {label} domain code"
+        );
+        negative_assert_eq!(
+            message(&error),
+            "User dialog 1437-lease-dialog is currently claimed by another renderer.",
+            "#1437 respond {label} message"
+        );
+    }
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            respond(Some(JsValue::String(lease.clone()))),
+        )
+        .await
+        .expect("#1437 respond with the matching lease delivers");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1437 respond with the matching lease reports delivered"
+    );
+    negative_assert_eq!(
+        resolved.lock().unwrap().as_slice(),
+        [crate::user_dialog::DialogAnswer::Answered("ok".into())],
+        "#1437 respond with the matching lease resolves the dialog"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1437 lease-required fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1437 lease-required fixture project shutdown");
+}
+
+// #1437: user_dialog_respond is the one family method that is NOT capability
+// gated (require_user_dialog_bus only guards list/claim/release): on the
+// default unwired native-process bus a valid respond returns
+// Ok({"delivered": false}), never Err(CAPABILITY_UNAVAILABLE). #1445 wires
+// on_change in assembly and flips this production path; this test pins the
+// current method-layer contract and needs a sync afterwards.
+#[tokio::test]
+async fn user_dialog_respond_unwired_bus_returns_delivered_false() {
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1437 unwired bus fixture setup");
+    for (label, result) in [
+        (
+            "answered",
+            crate::metadata::object([("behavior", "answered".into()), ("value", "yes".into())]),
+        ),
+        (
+            "cancelled",
+            crate::metadata::object([("behavior", "cancelled".into())]),
+        ),
+    ] {
+        let value = requests
+            .user_dialog_request(
+                "user_dialog_respond".into(),
+                crate::metadata::object([
+                    ("sessionKey", "1437-unwired-session".into()),
+                    ("requestId", "1437-unwired-dialog".into()),
+                    ("result", result),
+                ]),
+            )
+            .await
+            .expect("#1437 respond on an unwired bus stays Ok");
+        negative_assert_eq!(
+            value.get("delivered"),
+            Some(&JsValue::Bool(false)),
+            "#1437 respond {label} on an unwired bus reports delivered:false"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1437 unwired bus fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1437 unwired bus fixture project shutdown");
+}
