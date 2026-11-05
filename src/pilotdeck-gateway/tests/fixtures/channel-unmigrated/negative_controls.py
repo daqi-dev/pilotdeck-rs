@@ -64,6 +64,14 @@ MUTATIONS = [
      'js_truthy(cfg.get("enabled"))',
      'unmigrated_bundle_channels_require_strict_boolean_true',
      '#1386 bundle channel requires strict enabled === true'),
+    # M8 (#1579 P1 sibling): the loader-table `else` arm is tightened to a
+    # strict `=== true`, so `enabled: 1` stops rejecting where TS still loads
+    # the channel. The paired js-truthiness control kills.
+    ('loader-gate-strictened', source / 'loader.rs',
+     '    } else {\n        js_truthy(cfg.get("enabled"))\n    }',
+     '    } else {\n        matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))\n    }',
+     'unmigrated_loader_channels_use_js_truthiness',
+     '#1386 loader channel uses JS truthiness'),
     # M6: iterating the loader table instead of the config-key table misses
     # `qq`/`wecom` (they are outside CHANNEL_LOADER_KEYS in TS too).
     ('loader-table-iteration', source / 'loader.rs',

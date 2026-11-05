@@ -408,11 +408,20 @@ RESULT_ROW_FIELDS = ('name', 'status', 'reason', 'compiled', 'restoredPass', 'ta
 
 
 def result_row(name, *, status='INVALID', reason='not run', compiled=False,
-               restored_pass=False, targets=(), hits=()):
-    """One `controls[]` row, restricted to :data:`RESULT_ROW_FIELDS`."""
-    return {'name': name, 'status': status, 'reason': reason,
-            'compiled': compiled, 'restoredPass': restored_pass,
-            'targets': [list(target) for target in targets], 'hits': list(hits)}
+               restored_pass=False, targets=(), hits=None):
+    """One `controls[]` row, restricted to :data:`RESULT_ROW_FIELDS`.
+
+    ``hits`` stays absent until a verdict observes it: the comparator
+    normalizes a missing ``hits`` to ``null`` and treats ``null`` and ``[]`` as
+    different, so writing ``[]`` on a row that never reached ``judge`` would
+    turn an old/new comparison of the same run into a false NOT EQUIVALENT.
+    """
+    row = {'name': name, 'status': status, 'reason': reason,
+           'compiled': compiled, 'restoredPass': restored_pass,
+           'targets': [list(target) for target in targets]}
+    if hits is not None:
+        row['hits'] = list(hits)
+    return row
 
 
 def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
