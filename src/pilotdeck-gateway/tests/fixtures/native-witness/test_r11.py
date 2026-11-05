@@ -732,38 +732,40 @@ class R11Tests(unittest.TestCase):
 
     def test_terminal_durable_events_match_fixture(self):
         marker = '#1363 terminal durable labels are the frozen fixture label family'
-        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json').read_text())
+        document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json')
+                              .read_text(encoding='utf-8'))
         labels = {event for row in document['cases'] for side in ('ts', 'rust')
                   for event in row[side]['durableStatus']}
         self.assertEqual(labels, set(c.SESSION_TERMINAL_DURABLE_EVENTS), marker)
 
-    BAD_EXPECTATION_SHAPES = ('empty', 'duplicate', 'drift', 'missing-side', 'missing-frames',
-                              'missing-registry', 'bad-applicable', 'non-string-status',
-                              'bad-frame-element', 'unparsable')
+    # One mutation per structural branch of session_expectations(): the dict is
+    # the single source for both the fixture writer and the shape list, so a
+    # new branch cannot be added without a case (unknown names raise).
+    BAD_EXPECTATION_SHAPES = {
+        'empty': lambda body: body.update(cases=[]),
+        'duplicate': lambda body: body['cases'].append(body['cases'][0]),
+        'drift': lambda body: body['cases'][0]['rust'].update(durableStatus=['turn_cancelled']),
+        'bad-key': lambda body: body['cases'][0].update(case=7),
+        'missing-side': lambda body: body['cases'][0].pop('rust'),
+        'missing-frames': lambda body: body['cases'][0]['rust'].pop('frames'),
+        'missing-registry': lambda body: body['cases'][0]['ts'].pop('registry'),
+        'bad-applicable': lambda body: body['cases'][0]['rust']['registry'].update(applicable=0),
+        # Unhashable on purpose: a hashable wrong type would already be caught
+        # by the label-family comparison, hiding a missing element-type guard.
+        'unhashable-status': lambda body: body['cases'][0]['ts']['durableStatus'].append({}),
+        'bad-frame-element': lambda body: body['cases'][0]['rust']['frames'].append(1),
+        'empty-frame-element': lambda body: body['cases'][0]['rust']['frames'].append(''),
+        'unparsable': None,
+    }
 
     def bad_expectation_root(self, name):
         """Materialise a mutated copy of the frozen fixture and return its root."""
+        mutate = self.BAD_EXPECTATION_SHAPES[name]
         document = json.loads((ROOT / 'scripts/gateway-parity/fixtures/session-expectations.json')
                               .read_text(encoding='utf-8'))
         body = json.loads(json.dumps(document))
-        if name == 'empty':
-            body['cases'] = []
-        elif name == 'duplicate':
-            body['cases'] = body['cases'] + [body['cases'][0]]
-        elif name == 'missing-side':
-            del body['cases'][0]['rust']
-        elif name == 'missing-frames':
-            del body['cases'][0]['rust']['frames']
-        elif name == 'missing-registry':
-            body['cases'][0]['ts'].pop('registry')
-        elif name == 'bad-applicable':
-            body['cases'][0]['rust']['registry']['applicable'] = 0
-        elif name == 'non-string-status':
-            body['cases'][0]['ts']['durableStatus'].append(1)
-        elif name == 'bad-frame-element':
-            body['cases'][0]['rust']['frames'].append(1)
-        elif name != 'unparsable':
-            body['cases'][0]['rust']['durableStatus'] = ['turn_cancelled']
+        if mutate is not None:
+            mutate(body)
         fixture = Path(self.temp.name) / ('exp-' + name) / 'scripts/gateway-parity/fixtures'
         fixture.mkdir(parents=True, exist_ok=True)
         text = '{"cases": [' if name == 'unparsable' else json.dumps(body)
@@ -783,12 +785,27 @@ class R11Tests(unittest.TestCase):
                 caught = error
             self.assertTrue(isinstance(caught, c.w.Incomplete), marker + ': ' + name)
 
+    def test_manifest_rejects_bad_fixtures(self):
+        marker = '#1363 frozen manifest must fail closed on truncated or non-object JSON'
+        for name, text in (('unparsable', '{"cases": ['), ('non-object', '[]')):
+            root = Path(self.temp.name) / ('manifest-' + name)
+            fixture = root / 'scripts/gateway-parity/fixtures'
+            fixture.mkdir(parents=True)
+            (fixture / 'session-calibration.json').write_text(text, encoding='utf-8')
+            caught = None
+            try:
+                with patch.object(c, '__file__', str(root / 'scripts/native-witness/collect.py')):
+                    c.session_manifest()
+            except BaseException as error:
+                caught = error
+            self.assertTrue(isinstance(caught, c.w.Incomplete), marker + ': ' + name)
+
     def test_expectations_mirror_mock_gateway(self):
         marker = '#1363 collector and mock gateway read the same expectations'
         self.assertEqual(c.session_expectations(), mock_gateway.load_expectations(ROOT), marker)
         # The mock replay is driven on its own by the e2e suite, so it must not
-        # silently collapse the malformed shapes that change the mapping.
-        for name in ('empty', 'duplicate'):
+        # silently collapse the three shapes that change the mapping itself.
+        for name in ('empty', 'bad-key', 'duplicate'):
             caught = None
             try:
                 mock_gateway.load_expectations(self.bad_expectation_root(name))

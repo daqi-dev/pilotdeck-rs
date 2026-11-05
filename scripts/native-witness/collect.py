@@ -224,9 +224,17 @@ SESSION_ORDERING_VARIANTS = stimuli.ORDERS  # legacy transport timing only
 def session_manifest():
     """The frozen 72-case E1 manifest the native capture must declare in full."""
     path = Path(__file__).resolve().parents[2] / 'scripts/gateway-parity/fixtures/session-calibration.json'
-    with open(path, encoding='utf-8') as stream:
-        cases = json.load(stream)['cases']
-    w.need(bool(cases) and len(set(cases)) == len(cases), 'session manifest is empty or has duplicates')
+    # #1363: same fail-closed contract as session_expectations(); a truncated or
+    # non-object frozen input must not escape as JSONDecodeError/KeyError/TypeError.
+    try:
+        with open(path, encoding='utf-8') as stream:
+            document = json.load(stream)
+    except ValueError as error:
+        raise w.Incomplete('#1140 session manifest is not readable JSON: ' + repr(error)) from error
+    cases = document.get('cases') if isinstance(document, dict) else None
+    w.need(isinstance(cases, list) and bool(cases), 'session manifest is empty or malformed')
+    w.need(all(isinstance(case, str) for case in cases), 'session manifest case must be a string')
+    w.need(len(set(cases)) == len(cases), 'session manifest has duplicates')
     w.need([item['case'] for item in stimuli.plans()] == cases,
            '#1368 stimulus plans must cover the frozen manifest exactly in order')
     return cases
@@ -249,8 +257,8 @@ def session_expectations():
         document = json.loads(path.read_text(encoding='utf-8'))
     except ValueError as error:
         # A truncated or zero-byte fixture must fail closed like any other
-        # structural drift, not escape as JSONDecodeError (a ValueError the
-        # caller's Blocked handler does not catch).
+        # structural drift: raise the same Incomplete the w.need checks raise
+        # (and that the fixture tests assert on), not a bare JSONDecodeError.
         raise w.Incomplete('#1140 session expectations is not readable JSON: ' + repr(error)) from error
     rows = document.get('cases') if isinstance(document, dict) else None
     w.need(isinstance(rows, list) and bool(rows), 'session expectations is empty or malformed')
