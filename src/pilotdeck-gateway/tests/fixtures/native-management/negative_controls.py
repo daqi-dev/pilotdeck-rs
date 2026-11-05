@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process/management.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
+ASSEMBLY_SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/snapshot.rs'
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 REFRESH = ROOT / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 OWNER = ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
@@ -108,8 +109,8 @@ mutations.append(('empty-storage-advertised', REQUESTS, 'self.snapshot_enabled\n
 
 
 # fix-r3: provider-derived advertisement, explicit filter and production boundary.
-mutations.append(('snapshot-state-disabled', ASSEMBLY, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() && false)', HOST, '#1231 exact wired capability set'))
-mutations.append(('snapshot-state-enabled', ASSEMBLY, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() || true)', PRODUCTION, '#1231 production entry exact 10 capabilities'))
+mutations.append(('snapshot-state-disabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() && false)', HOST, '#1231 exact wired capability set'))
+mutations.append(('snapshot-state-enabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() || true)', PRODUCTION, '#1231 production entry exact 10 capabilities'))
 mutations.append(('production-storage-authority-accepted', ENTRY, '        "PILOTDECK_STORAGE_ROOT",', '        "UNWIRED_PILOTDECK_STORAGE_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
 mutations.append(('production-snapshot-authority-accepted', ENTRY, '        "PILOTDECK_SNAPSHOT_ROOT",', '        "UNWIRED_PILOTDECK_SNAPSHOT_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
 mutations.append(('production-blank-authority-accepted', ENTRY, 'env.get(key).is_some_and(|v| !v.is_empty())', 'env.get(key).is_some_and(|v| !v.trim().is_empty())', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
