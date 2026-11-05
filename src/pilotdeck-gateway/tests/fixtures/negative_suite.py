@@ -1,6 +1,7 @@
 # anchor-selfcheck: unsupported shared mutation suite runner, no mutation definitions
 """Run every selected control without treating harness failures as kills."""
 from dataclasses import dataclass
+import itertools
 import json
 import os
 from pathlib import Path
@@ -324,6 +325,9 @@ def _write_new(path, text):
         stream.write(text)
 
 
+_PUBLISH_SERIAL = itertools.count()
+
+
 def _publish_json(path, payload, *, overwrite=False):
     """Publish one JSON evidence file atomically; refuse by default.
 
@@ -338,8 +342,13 @@ def _publish_json(path, payload, *, overwrite=False):
     * `publish_summary` (the `run_cases` path) re-publishes into an existing
       output directory, so it opts into `overwrite=True` and gets the same
       temp-file write with a `replace` (#166 r8).
+
+    The temp name carries the pid and a per-process serial, so two runs that
+    publish into one directory can never install each other's bytes or unlink
+    each other's temp file (#1579 r5: a fixed `<name>.tmp` let the writer of
+    one run `replace()` the half-written temp of another).
     """
-    temporary = path.with_name(path.name + '.tmp')
+    temporary = path.with_name(f'.{path.name}.{os.getpid()}.{next(_PUBLISH_SERIAL)}.tmp')
     try:
         temporary.write_text(json.dumps(payload, indent=2) + '\n')
         if overwrite:
@@ -347,7 +356,12 @@ def _publish_json(path, payload, *, overwrite=False):
         else:
             os.link(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink()
+        except OSError:
+            # Never mask the publish error with a cleanup error; a leaked
+            # hidden temp is inert (nothing reads dotfiles in the evidence dir).
+            pass
 
 
 # The `controls[]` row schema published to `_negkit/compare_verdicts.py`

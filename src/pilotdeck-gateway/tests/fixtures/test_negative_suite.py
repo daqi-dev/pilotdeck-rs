@@ -1181,11 +1181,31 @@ class PublishJsonTests(unittest.TestCase):
             payload = {'controls': [], 'counts': {'KILLED': 0}}
             suite._publish_json(target, payload)
             self.assertEqual(json.loads(target.read_text()), payload)
-            self.assertFalse((out / 'summary.json.tmp').exists(), 'temp file must not linger')
+            self.assertEqual(sorted(p.name for p in out.iterdir()), ['summary.json'],
+                             'the hidden temp file must not linger')
             with self.assertRaises(FileExistsError):
                 suite._publish_json(target, {'controls': ['rewritten']})
             self.assertEqual(json.loads(target.read_text()), payload,
                              'refused publish must leave the old evidence intact')
+
+    def test_publish_never_unlinks_another_runs_temp_file(self):
+        # #1579 r5 P1: the temp name used to be the fixed `<name>.tmp`, so two
+        # runs publishing into one directory shared it — the loser installed
+        # the winner's half-written bytes via `replace()` and then unlinked the
+        # winner's temp. The per-pid/serial name must leave a foreign
+        # fixed-name temp untouched even on the refusing path.
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            target = out / 'summary.json'
+            target.write_text('{"controls": []}\n')
+            foreign = out / 'summary.json.tmp'
+            foreign.write_text('half')
+            with self.assertRaises(FileExistsError):
+                suite._publish_json(target, {'controls': ['x']})
+            self.assertEqual(foreign.read_text(), 'half',
+                             'another run\'s temp file must survive our publish')
+            self.assertEqual(sorted(p.name for p in out.iterdir()),
+                             ['summary.json', 'summary.json.tmp'])
 
 
 class ResultRowSchemaTests(unittest.TestCase):

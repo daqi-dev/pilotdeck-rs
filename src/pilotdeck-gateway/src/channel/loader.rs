@@ -69,11 +69,11 @@ pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
 /// `"1"` / `[]` / `{}` / falsy / absent: `specs/gateway-parity/diffs/
 /// A8.3-CHANNEL-QQ-001.md` records the probe for the two keys above
 /// (`createStartupAdapters`) and its sibling run for the eleven loader keys
-/// (`loadEnabledChannels`). Note the seam takes the *raw* config object; the
-/// config snapshot layer (`config/snapshot.rs`) already coerces every
-/// `enabled` to a strict bool, so whichever object the assembly unit feeds
-/// decides whether the two gates can be told apart at all — recorded in that
-/// ledger entry's caveat.
+/// (`loadEnabledChannels`). The seam sees whatever object the assembly unit
+/// feeds, and both sides coerce `enabled` to a strict bool before their
+/// gates (`config/snapshot.rs` here, `parseGatewayConfig`'s `booleanField` in
+/// TS), so on a real config file the two gates cannot be told apart — the
+/// raw-object split above is the seam contract, kept in that ledger caveat.
 pub(crate) const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];
 
 /// The TS `enabled` gate for one key: strict `=== true` for the
