@@ -310,6 +310,14 @@ fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResp
             actual.status,
             String::from_utf8_lossy(&actual.body)
         );
+        // A hung connection also ends with `error`/no status once the 10 s
+        // client timeout fires; without this the ruler would pass on a hang,
+        // which the TS generator (no timeout) can never do.
+        assert_ne!(
+            actual.error.as_deref(),
+            Some("timeout"),
+            "#1333 {case} request {index}: the connection must close, not hang"
+        );
         return;
     }
     assert_eq!(
@@ -1078,6 +1086,11 @@ async fn oversized_body_closes_without_response() {
         "#1333 oversized body closes with zero bytes, got status {:?}",
         response.status
     );
+    assert_ne!(
+        response.error.as_deref(),
+        Some("timeout"),
+        "#1333 oversized body must close promptly, not hang until the client timeout"
+    );
     started.handle.stop("done").await.unwrap();
 }
 
@@ -1399,5 +1412,32 @@ fn unconfigured_port_falls_back_to_the_ts_default() {
             .port,
         9100.0,
         "#1333 the env port wins over the default"
+    );
+}
+
+#[test]
+fn port_numbers_follow_the_es_string_numeric_literal() {
+    // TS `Number(value)` (ApiServerChannel.ts:51): a sign may only precede a
+    // decimal literal or `Infinity`, so `Number("+0x10")` is NaN and
+    // `server.listen(NaN)` fails the start. A lone surrogate cannot be spelled
+    // in UTF-8 and is NaN too, never `Number("") = 0` (which would bind an
+    // ephemeral port). #1333 boundary review.
+    let number = |text: &str| server::js_number(&JsValue::String(JsString::from(text)));
+    assert_eq!(number(" 0x10 "), 16.0, "#1333 unsigned hex still parses");
+    assert_eq!(number("0b101"), 5.0, "#1333 unsigned binary still parses");
+    assert_eq!(number(""), 0.0, "#1333 the empty string is zero");
+    assert!(
+        number("+0x10").is_nan(),
+        "#1333 a signed hex literal is NaN"
+    );
+    assert!(
+        number("-0xFF").is_nan(),
+        "#1333 a negative hex literal is NaN"
+    );
+    assert_eq!(number("-Infinity"), f64::NEG_INFINITY);
+    let lone = JsString::from_utf16(vec![0xd800]);
+    assert!(
+        server::js_number(&JsValue::String(lone)).is_nan(),
+        "#1333 a lone-surrogate port string is NaN, not the empty string"
     );
 }

@@ -78,12 +78,20 @@ mutations = [
         "#1333 stream request 0: body differs",
     ),
     (
-        "buffered-session-header",
+        "stream-session-header",
         SERVER,
         "        headers.insert(SESSION_HEADER, header_value(chat_id));\n",
         "        let _ = chat_id; // mutant: drop X-Hermes-Session-Id\n",
         REPLAY,
         "#1333 stream request 0: headers differ",
+    ),
+    (
+        "buffered-session-header",
+        SERVER,
+        '        .insert(SESSION_HEADER, header_value(chat_id));',
+        '        .insert(SESSION_HEADER, header_value("mutant"));',
+        REPLAY,
+        "#1333 buffered request 0: headers differ",
     ),
     (
         "visible-failure-name",

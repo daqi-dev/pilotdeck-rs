@@ -159,7 +159,13 @@ pub(crate) fn js_number(value: &JsValue) -> f64 {
             }
         }
         JsValue::Number(number) => *number,
-        JsValue::String(text) => parse_number(&text.to_utf8().unwrap_or_default()),
+        // `to_utf8` fails on a lone surrogate; JS `Number()` of such a string
+        // is NaN, while `unwrap_or_default()` would become `Number("") = 0` and
+        // bind an ephemeral port the TS adapter never reaches.
+        JsValue::String(text) => match text.to_utf8() {
+            Ok(text) => parse_number(&text),
+            Err(_) => f64::NAN,
+        },
         JsValue::Array(items) => {
             if items.is_empty() {
                 0.0
@@ -176,9 +182,13 @@ fn parse_number(text: &str) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
-    let (sign, rest) = match text.strip_prefix('-') {
-        Some(rest) => (-1.0, rest),
-        None => (1.0, text.strip_prefix('+').unwrap_or(text)),
+    let (sign, rest, signed) = match text.strip_prefix('-') {
+        Some(rest) => (-1.0, rest, true),
+        None => (
+            1.0,
+            text.strip_prefix('+').unwrap_or(text),
+            text.starts_with('+'),
+        ),
     };
     if rest == "Infinity" {
         return f64::INFINITY * sign;
@@ -194,6 +204,12 @@ fn parse_number(text: &str) -> f64 {
             (10, rest)
         };
     if radix != 10 {
+        if signed {
+            // ES `StringNumericLiteral`: a sign may only precede a decimal
+            // literal or `Infinity`, so `Number("+0x10")`/`Number("-0xFF")` are
+            // NaN and TS `server.listen(NaN)` fails the start.
+            return f64::NAN;
+        }
         return match i128::from_str_radix(digits, radix) {
             Ok(value) => value as f64 * sign,
             Err(_) => f64::NAN,
