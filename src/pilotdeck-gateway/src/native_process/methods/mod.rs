@@ -14,6 +14,7 @@ mod metadata;
 mod permission;
 mod runs;
 mod session_dir;
+mod settings;
 mod sop;
 mod steer;
 mod tools;
@@ -67,6 +68,7 @@ register_families! {
     interaction: interaction::METHODS,
     always_on: always_on::METHODS,
     weixin_login: weixin_login::METHODS,
+    settings: settings::METHODS,
 }
 
 /// Methods wired to `Requests::request`, independent of runtime capabilities.

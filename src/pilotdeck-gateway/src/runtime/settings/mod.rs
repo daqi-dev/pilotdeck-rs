@@ -1,8 +1,9 @@
 //! U7 global settings write & reload gateway adapter (#1318). Mirrors the TS
-//! gateway layers the five A8.1 methods cross: the
+//! gateway layers the six A8.1 methods cross: the
 //! `GatewayWsConnection.ts` dispatch (`apply_flag_settings` /
-//! `update_settings` / `reload_output_styles` / `reload_config` /
-//! `reload_extensions`), then the `InProcessGateway.ts` wrapper validation
+//! `update_settings` / `resolve_settings` / `reload_output_styles` /
+//! `reload_config` / `reload_extensions`), then the `InProcessGateway.ts`
+//! wrapper validation
 //! (field checks, the per-key `hasActiveTurn` SESSION_BUSY gate, the
 //! capability seam, and `router.close(sessionKey)` after a mutating
 //! `apply_flag_settings`), then the delegated bodies:

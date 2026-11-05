@@ -528,6 +528,18 @@ pub(super) async fn start_observed_with_upload_cleanup(
             );
             let async_hook_registry =
                 steer::build_async_hook_registry(&build_project, &owner, &coordinator);
+            // U7 global settings (#1320): `createPilotConfigStoreSync` +
+            // `runtimeRefresh` + the settings gateway
+            // (createLocalGateway.ts:795-835, 1383-1410), composed in
+            // `services::native_settings_for_process`; a store load failure
+            // fails assembly, like the TS boot.
+            let settings = super::services::native_settings_for_process(
+                owner.clone(),
+                build_project.clone(),
+                &options.home,
+                &options.project,
+                &env,
+            )?;
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
                 snapshot_enabled,
@@ -548,6 +560,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 // hot-start the weixin channel on request, after the same
                 // durable-state restore as a config-enabled start.
                 prepare_weixin_login: Some(build_channels.prepare_login_callback()),
+                settings: settings.gateway,
             });
             let submitter = Arc::new(TurnSubmitter {
                 owner,

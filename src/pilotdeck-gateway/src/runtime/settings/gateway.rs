@@ -1,4 +1,4 @@
-//! The five U7 gateway methods. See the [module](super) docs for the layer
+//! The six U7 gateway methods. See the [module](super) docs for the layer
 //! map; every comment below cites the TS line it mirrors.
 use crate::config::{
     Error as ConfigError,
@@ -117,6 +117,14 @@ pub struct UpdateSettings {
     pub store: ConfigStore,
 }
 
+/// `options.resolveSettings` (createLocalGateway binds
+/// `toGatewayResolvedSettings(configStore.getSnapshot())`,
+/// createLocalGateway.ts:1402): the current snapshot projected into the
+/// redacted wire response.
+pub trait ResolveSettings: Send + Sync {
+    fn resolve(&self) -> Result<JsValue, SettingsError>;
+}
+
 /// `options.reloadOutputStyles` (createLocalGateway binds
 /// `registry.reloadOutputStylesForSdk`): resolve, the style-only plugin
 /// reload, and the per-session `closeSession("sdk_output_styles_reloaded")`.
@@ -164,12 +172,13 @@ pub struct SettingsGatewayOptions {
     pub owner: SessionOwner,
     pub apply_flag_settings: Option<Arc<dyn ApplyFlagSettings>>,
     pub update_settings: Option<UpdateSettings>,
+    pub resolve_settings: Option<Arc<dyn ResolveSettings>>,
     pub reload_output_styles: Option<Arc<dyn ReloadOutputStyles>>,
     pub reload_config: Option<Arc<dyn ReloadConfigSource>>,
     pub reload_extensions: Option<Arc<dyn ReloadExtensionsSource>>,
 }
 
-/// The five U7 methods with `InProcessGateway`'s method-level contract.
+/// The six U7 methods with `InProcessGateway`'s method-level contract.
 ///
 /// Not part of the default routing: callers assemble this component when
 /// they want the methods; nothing in `dispatch.rs` references it yet (#1320).
@@ -294,6 +303,20 @@ impl SettingsGateway {
         ))
     }
 
+    /// `InProcessGateway.resolveSettings`
+    /// (client/InProcessGateway.ts:2360-2362): the capability check is the
+    /// whole wrapper; the delegate owns the projection. `frame.params` is
+    /// never read — the WS dispatch calls `resolveSettings()` with no
+    /// arguments (GatewayWsConnection.ts:414).
+    pub async fn resolve_settings(&self) -> Result<JsValue, SettingsError> {
+        let port = self
+            .options
+            .resolve_settings
+            .as_ref()
+            .ok_or_else(|| unavailable("resolve_settings"))?;
+        port.resolve()
+    }
+
     /// `InProcessGateway.reloadOutputStyles`
     /// (client/InProcessGateway.ts:2387): the capability check is the whole
     /// wrapper; the registry method owns the rest.
@@ -333,9 +356,9 @@ impl SettingsGateway {
         Ok(reload_outcome(&port.reload_extensions(input)))
     }
 
-    /// The `GatewayWsConnection` dispatch entry for the five methods
+    /// The `GatewayWsConnection` dispatch entry for the six methods
     /// (server/GatewayWsConnection.ts:405-425, 523-543): `None` means the
-    /// method is not one of the five and belongs to the caller's wider
+    /// method is not one of the six and belongs to the caller's wider
     /// dispatch.
     pub async fn dispatch(
         &self,
@@ -345,6 +368,7 @@ impl SettingsGateway {
         Some(match method {
             "apply_flag_settings" => self.apply_flag_settings(params).await,
             "update_settings" => self.update_settings(params).await,
+            "resolve_settings" => self.resolve_settings().await,
             "reload_output_styles" => self.reload_output_styles(params).await,
             "reload_config" => self.reload_config().await,
             "reload_extensions" => self.reload_extensions(params).await,

@@ -214,6 +214,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             )),
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
+            settings: requests::Requests::stub_settings(&owner),
         }
     })
 }

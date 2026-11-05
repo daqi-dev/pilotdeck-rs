@@ -136,6 +136,13 @@ fn registry_matches_current_methods() {
         // family (not an advertised capability — TS keeps it out of
         // describeServer's capabilities list too).
         "prepare_weixin_login",
+        // #1320 U7 global settings methods
+        "apply_flag_settings",
+        "update_settings",
+        "resolve_settings",
+        "reload_output_styles",
+        "reload_config",
+        "reload_extensions",
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();
