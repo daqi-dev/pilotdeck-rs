@@ -1440,6 +1440,7 @@ class EnvironmentControls(unittest.TestCase):
             'python3 -I scripts/test-review-deepseek.py',
             'python3 -I scripts/test-review-minimax.py',
             'python3 -I scripts/test-review-roles.py',
+            'python3 -I scripts/test-check-taskbook-segments.py',
             'bash scripts/test-pdrs-loop.sh',
             'bash scripts/test-worktree-count.sh',
             'bash scripts/test-disk-budget.sh',
