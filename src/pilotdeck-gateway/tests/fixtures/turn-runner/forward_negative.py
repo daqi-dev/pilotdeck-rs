@@ -129,6 +129,14 @@ cases = [
     ('status-worker-lease', base / 'runner.rs',
      'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);', 'drop(lease);\n            let result = write(&recorder, &session, &turn);\n            drop(owner);',
      None, test_prefix + 'forward_status_drop', '#741h status dropped worker holds lease'),
+    # #1219 / A7.2-LIVE-DROP-COMPLETION-001-R2: the boundary says a failed
+    # status write with no consumer leaves no durable turn_result. Persist a
+    # fallback error result inside the same blocking worker and that boundary
+    # must die on its own assertion.
+    ('status-fail-completes', base / 'runner.rs',
+     'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);\n            result',
+     'let result = write(&recorder, &session, &turn);\n            if result.is_err() {\n                let _ = recorder.complete_turn(&session, &turn, crate::metadata::object([("type", JsValue::String("error".into()))]));\n            }\n            drop(owner);\n            drop(lease);\n            result',
+     None, test_prefix + 'forward_status_fail_drop', '#1219 [status-fail-drop]: no durable turn_result without a consumer'),
 ]
 
 def audit():

@@ -672,6 +672,17 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
                 0,
                 "#855 [cancel]: the pump must never start, not even before the abort terminal"
             );
+            // #1219 / A7.2-TURN-ABORT-001's completeTurn dimension. No runner
+            // exists on this pre-execute path, but the aborted terminal is
+            // still recorded exactly once through `RecordingAction::Complete`.
+            // Node v22.22.0, real TS `pump-order-cases/generate.mts` cancel
+            // cell: one durable turn_result with result.type=aborted,
+            // stopReason=aborted_streaming (ts-pump-order/cancel-raw.json).
+            assert_eq!(
+                store.completes.load(Ordering::SeqCst),
+                1,
+                "#1219 [cancel]: pre-cancel must append exactly one durable turn_result"
+            );
         } else {
             // Node v22.22.0, real TS gates/pump probe: model_request_started
             // survives between durable admission and the authoritative final.
