@@ -739,6 +739,62 @@ fn global_list_caps_the_merged_run_page_at_the_nullish_default() {
     );
 }
 
+/// A panicking body must not leave the session's admission fence behind: the
+/// `TurnFence` drops on unwind, so the same session is admittable again (the
+/// #1258 tail guard is the same shape one layer down in the store).
+struct PanickingBody;
+impl CronGatewayBody for PanickingBody {
+    fn run_turn(&self, _input: &CronTurnSubmit) -> Result<(), CronError> {
+        panic!("#1325 admission fence probe: the cron body panics mid-turn");
+    }
+    fn abort_turn(
+        &self,
+        _session_key: &JsString,
+        _run_id: Option<&JsString>,
+        _reason: Option<&JsString>,
+    ) -> Result<(), CronError> {
+        Ok(())
+    }
+    fn close_session(
+        &self,
+        _session_key: &JsString,
+        _reason: Option<&JsString>,
+    ) -> Result<(), CronError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn submit_turn_releases_the_admission_fence_when_the_body_panics() {
+    let admission = Arc::new(SessionAdmission::default());
+    let gateway = SessionAdmissionCronGateway::new(admission.clone(), Arc::new(PanickingBody));
+    let input = CronTurnSubmit {
+        session_key: JsString::from("cron:panic"),
+        channel_key: JsString::from("cron"),
+        project_key: None,
+        message: JsString::from("m"),
+        mode: JsString::from("default"),
+        run_id: JsString::from("run-panic"),
+        timeout_ms: 0.0,
+    };
+    let caught =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| gateway.submit_turn(&input)));
+    assert!(
+        caught.is_err(),
+        "#1325 admission fence: the body's panic must propagate out of submitTurn"
+    );
+    assert!(
+        !admission.has_active_turn(&input.session_key),
+        "#1325 admission fence: an unwinding turn must still release the session's admission"
+    );
+    assert!(
+        admission
+            .begin_turn(&input.session_key, &input.run_id)
+            .is_some(),
+        "#1325 admission fence: the session must be admittable again after the panic"
+    );
+}
+
 // S2: the six `methods.rs` adapters are the wire call surface
 // (InProcessGateway.ts:2603-2625): everything the S5 gold replay asserts
 // must be reachable through them unchanged — same results, same errors.
@@ -816,7 +872,7 @@ fn method_adapters_mirror_the_manager_surface() {
 // S2: an absent `frame.params` crosses the WS layer as `undefined`
 // (GatewayWsConnection.ts:464-470), and each adapter's first property read
 // is V8's `Cannot read properties of undefined (reading '<field>')` —
-// except `cron_list`, whose `input = {}` default (CronManager.ts:132)
+// except `cron_list`, whose `input = {}` default (CronManager.ts:121)
 // swallows it before the first read. The field names pin the TS read order
 // at the CronManager call sites: create reads `projectKey`
 // (CronManager.ts:115), update/delete/runTaskNow read `taskId` first
