@@ -103,7 +103,10 @@ pub(crate) fn unmeasured_errnos(method: &str) -> Vec<i32> {
 }
 
 /// The OS errno behind an fs error, looking through a [`Stage`] wrapper (the
-/// outer error of a staged failure is a custom error with no raw errno).
+/// outer error of a staged failure is a custom error with no raw errno) and a
+/// [`mkdir::MkdirError`] wrapper (same reason; it is only consulted at the
+/// outermost layer). Returns the **positive** errno; Node's `errno` field is
+/// this number negated (`EEXIST` is `-17`).
 pub(crate) fn os_errno(error: &io::Error) -> Option<i32> {
     if let Some(mkdir) = error
         .get_ref()
