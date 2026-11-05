@@ -2551,7 +2551,7 @@ async fn user_dialog_claim_ttlms_bounds() {
                 ]),
             )
             .await
-            .expect(&format!("#1437 the {label} bound ttlMs claims"));
+            .unwrap_or_else(|error| panic!("#1437 the {label} bound ttlMs claims: {error:?}"));
         negative_assert_eq!(
             result.get("claimed"),
             Some(&JsValue::Bool(true)),

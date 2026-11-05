@@ -7,6 +7,12 @@ committed, the shared source guard refuses to run (the whole src tree must
 equal HEAD), so the coordinator runs this after the commit lands.
 
 Usage: negative_controls.py --check | OUT_DIR [mutation ...]
+
+Scope note: the two capability-advertisement rows this issue added
+(`capability-user_dialog_list`, `capability-permission_list`) live in
+`../native-management/negative_controls.py` with the rest of the
+capability-name rows, bound to `production_host_management_and_restart`;
+running this fixture alone does not cover them (#1616 r3).
 """
 import os
 import sys
@@ -44,9 +50,11 @@ mutations = [
      'const MAX_LEASE_MS: f64 = 300_000.0;',
      'const MAX_LEASE_MS: f64 = 400_000.0;',
      TEST + 'user_dialog_claim_ttlms_bounds',
-     # A lowered minimum admits the `below` case, so the run dies on its
-     # `expect_err` before any message assertion (#1616 r1/r2).
-     ['#1437 below ttlMs is rejected', '#1437 below ttlMs message']),
+     # A raised maximum does not admit `below` (the minimum still rejects it),
+     # so the `below` case survives its `expect_err` and dies on its message
+     # assertion, which interpolates the mutated constant; `above` is the
+     # second proof point if the loop order ever changes (#1616 r3).
+     ['#1437 below ttlMs message', '#1437 above ttlMs is rejected']),
     ('ttl-fraction-allowed', USER_DIALOG,
      '|| ttl_ms.fract() != 0.0',
      '|| false',
@@ -269,6 +277,12 @@ def main():
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+    # `run_cases` installs the receipt protocol per case (negative_suite.py:410);
+    # anything inherited from a caller shell is stale and would turn a real
+    # KILLED into INVALID (same pop list as the sibling fixtures, #1616 r3).
+    for key in ('PDRS_MUTANT', 'PDRS_NEGATIVE_RECEIPTS',
+                'PDRS_NEGATIVE_PARENT_TEST', 'CARGO_TERM_QUIET'):
+        env.pop(key, None)
     selected_names = sys.argv[2:]
     if set(selected_names) - {row[0] for row in mutations}:
         raise SystemExit('unknown mutation name')
