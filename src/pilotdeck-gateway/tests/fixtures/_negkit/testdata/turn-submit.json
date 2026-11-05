@@ -431,8 +431,8 @@
   {
     "name": "timeout-error-skipped",
     "case": "timeout-active",
-    "before": "publisher.gateway_event(event);\n                    publisher.close_live();",
-    "after": "let _ = event;\n                    publisher.close_live();",
+    "before": "                        publisher.gateway_event(event);",
+    "after": "                        let _ = event;",
     "exit": 101,
     "marker": "#813 timeout-active: step 2 \"timeout\": submit scenario must match",
     "test": "runtime::turn::submit::tests::real_ts_submit_scenarios",

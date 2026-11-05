@@ -1176,26 +1176,21 @@ async fn replay_case(case: &Value) {
                     "{name}: only the takeover may reach the gated durable write (durable {durable:?}, wire {wire:?})"
                 );
             }
-            // Exactly one terminal *kind* on every surface. The takeover owns
+            // Exactly one terminal row on the durable surface: the takeover owns
             // `turn_timeout`; a losing pump writer would add
-            // `gateway_submit_failed`, which is the defect this cell pins.
-            // Rows may repeat within a kind (status + error frame both carry
-            // the same code), so uniqueness is over the set of codes.
-            let mut kinds = durable.clone();
-            kinds.sort();
-            kinds.dedup();
+            // `gateway_submit_failed`, which is the defect this cell pins. Two
+            // rows of the same code are the same defect (two writers).
             crate::negative_assert_eq!(
-                kinds,
+                durable,
                 vec![code.to_string()],
-                "{name}: exactly one durable terminal kind (durable {durable:?}, wire {wire:?})"
+                "{name}: exactly one durable terminal row (durable {durable:?}, wire {wire:?})"
             );
+            // The visible frame is dropped by `close_live` before the spawned
+            // durable write finishes, so an empty wire is legitimate; only a
+            // foreign or repeated code is a failure here.
             crate::negative_assert!(
-                wire.iter().all(|seen| seen.as_str() == code),
-                "{name}: no foreign terminal error on the wire (wire {wire:?})"
-            );
-            crate::negative_assert!(
-                wire.len() <= 1,
-                "{name}: at most one terminal error frame on the wire (wire {wire:?})"
+                wire.iter().all(|seen| seen.as_str() == code) && wire.len() <= 1,
+                "{name}: at most one terminal frame, never a foreign one (wire {wire:?})"
             );
         }
     } else {
