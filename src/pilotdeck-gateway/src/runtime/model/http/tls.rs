@@ -134,7 +134,8 @@ fn open_ca_file(path: &Path) -> std::io::Result<std::fs::File> {
     #[cfg(unix)]
     let file = {
         use std::os::unix::fs::OpenOptionsExt;
-        // A FIFO with no writer fails with ENXIO instead of waiting forever.
+        // `O_NONBLOCK` keeps `open` from waiting for a writer; the handle is
+        // judged by `fstat` below, so a FIFO is skipped before any read.
         std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NONBLOCK)
@@ -185,8 +186,17 @@ fn read_ca_file(path: &Path) -> Option<Vec<u8>> {
         return None;
     }
     let mut bytes = Vec::new();
+    // The size was just bounded, so the reservation is bounded too; without it
+    // `read_to_end` doubles the buffer and peaks at 2-3x the limit.
+    bytes.reserve(metadata.len() as usize);
     // Bound the read too: the file may have grown since `metadata()`.
-    match (&file).take(MAX_CA_FILE_BYTES + 1).read_to_end(&mut bytes) {
+    // `saturating_add` because the size-limit negative control rewrites the
+    // constant to `u64::MAX`: a plain `+ 1` would overflow (debug panic /
+    // release wrap to zero) before the assertion could fail.
+    match (&file)
+        .take(MAX_CA_FILE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+    {
         Ok(_) if bytes.len() as u64 <= MAX_CA_FILE_BYTES => Some(bytes),
         Ok(_) => {
             eprintln!(
@@ -478,8 +488,12 @@ jenPvKuS2DWn64nN+FQXsa0/wFoUqRVU0Mb2oFPws0U/XhR5wq9qRQYM/0h8
         let bundle = scratch.path().join("bundle.pem");
         let mut bytes = TEST_CA_PEM.as_bytes().to_vec();
         // A valid certificate followed by filler: without the size limit the
-        // loader would trust it, so the control below is killable.
-        bytes.resize((MAX_CA_FILE_BYTES + 1) as usize, b'#');
+        // loader would trust it, so the control below is killable. The size is
+        // deliberately not derived from `MAX_CA_FILE_BYTES` — the size-limit
+        // negative control rewrites that constant, and a derived size would
+        // overflow instead of failing the assertion.
+        const TEST_OVERSIZED_BYTES: u64 = (8 << 20) + 1;
+        bytes.resize(TEST_OVERSIZED_BYTES as usize, b'#');
         fs::write(&bundle, &bytes).expect("#1552 write an oversized CA bundle");
         let roots = roots_from(CaMode::Default, Some(bundle.as_os_str()), None, None);
         crate::negative_assert_eq!(
