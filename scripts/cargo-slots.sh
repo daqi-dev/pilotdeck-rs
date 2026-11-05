@@ -33,7 +33,9 @@
 #   · 本机没有缓存（首次）→ 给足冷启动预算（默认 120 s）问一次闸。
 # 缓存键含闸路径 / 主机名 / 名额相关环境变量，负控用桩闸时不会互相污染。
 set -uo pipefail
-GATE=${PDRS_CARGO_SLOT_BIN:-$HOME/ws/pdrs-ops/bin/cargo-slot}
+# HOME 未设（env -u HOME / 极简 CI 容器）时不能让 set -u 把脚本打成 1——那和「已满」同码，
+# 调用方会空等到 deadline。这里退化成 /ws/... 找不到闸 → 69（本机没有统一闸），语义正确。
+GATE=${PDRS_CARGO_SLOT_BIN:-${HOME:-}/ws/pdrs-ops/bin/cargo-slot}
 CAP_TTL=${PDRS_CARGO_SLOTS_CAP_TTL:-300}
 REFRESH_TIMEOUT=${PDRS_CARGO_SLOTS_REFRESH_TIMEOUT:-5}
 BOOTSTRAP_TIMEOUT=${PDRS_CARGO_SLOTS_BOOTSTRAP_TIMEOUT:-120}
