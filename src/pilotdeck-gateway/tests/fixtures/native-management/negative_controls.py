@@ -113,8 +113,8 @@ mutations.append(('capability-duplicate-run_get', REQUESTS, '                   
 # #1437: describe_server advertises the two #1309 family capabilities
 # (requests.rs user_dialog_list / permission_list); an unwired duplicate
 # breaks the exact wired capability set the HOST test pins.
-mutations.append(('capability-user_dialog_list', REQUESTS, '"commands_list",', '"commands_list", "unwired_user_dialog_list",', HOST, '#1231 exact wired capability set'))
-mutations.append(('capability-permission_list', REQUESTS, '"commands_list",', '"commands_list", "unwired_permission_list",', HOST, '#1231 exact wired capability set'))
+mutations.append(('capability-user_dialog_list', REQUESTS, '"user_dialog_list",', '"unwired_user_dialog_list",', HOST, '#1231 exact wired capability set'))
+mutations.append(('capability-permission_list', REQUESTS, '"permission_list",', '"unwired_permission_list",', HOST, '#1231 exact wired capability set'))
 mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('missing-storage-advertised', REQUESTS, 'self.snapshot_enabled\n                                || !matches!(', 'self.snapshot_enabled || true\n                                || !matches!(', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))

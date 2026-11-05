@@ -118,6 +118,20 @@ mutations = [
      '                        }',
      TEST + 'user_dialog_claim_release_domain_codes',
      '#1437 release missing leaseId message'),
+    # the shared nonempty_string trim guard: "   " must not pass as a key.
+    ('user-dialog-blank-trim', USER_DIALOG,
+     '            let text = String::from_utf16_lossy(s.units());\n'
+     '            !crate::metadata::js_trim(&text).is_empty()\n'
+     '        })\n'
+     '        .cloned()\n'
+     '        .ok_or_else(|| request_error(format!("{key} must be a non-empty string.")))',
+     '            let text = String::from_utf16_lossy(s.units());\n'
+     '            true\n'
+     '        })\n'
+     '        .cloned()\n'
+     '        .ok_or_else(|| request_error(format!("{key} must be a non-empty string.")))',
+     TEST + 'user_dialog_claim_release_domain_codes',
+     '#1437 claim blank sessionKey domain code'),
     # claim leaseId: a whitespace-only string must stay rejected.
     ('claim-blank-lease-allowed', USER_DIALOG,
      'if crate::metadata::js_trim(&text).is_empty() {\n'
