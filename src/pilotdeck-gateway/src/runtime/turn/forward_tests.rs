@@ -755,6 +755,94 @@ async fn forward_status_cancel() {
 async fn forward_status_drop() {
     status_pending(true).await;
 }
+// #1219: the same-tick combination registered in
+// specs/gateway-parity/diffs/A7.2-LIVE-DROP-COMPLETION-001-R2.md. TS keeps one
+// error turn_result there; Rust drops the awaiting transition, so the blocking
+// writer's error is discarded and no durable turn_result is appended. The
+// fixture gate holds the real production append open, so the Drop happens while
+// that write is in flight rather than after it resolved.
+#[tokio::test]
+async fn forward_status_fail_drop() {
+    let mut row = rows()
+        .into_iter()
+        .find(|r| r.get("name") == Some(&"status_explicit".into()))
+        .expect("#1219 forward fixture invariant")
+        .as_object()
+        .expect("#1219 forward fixture invariant")
+        .clone();
+    // No `noFail`: the first status append returns the I/O error.
+    row.insert("fault".into(), "agent_status_message".into());
+    let mut f = Fixture::new(&JsValue::Object(row));
+    let (entered, mut entry) = oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    *f.store
+        .gate
+        .lock()
+        .expect("#1219 forward fixture invariant") = Some((entered, wait));
+    for expected in ["turn_started", "input_accepted", "user_prompt_submitted"] {
+        assert_eq!(
+            next(&mut f.turn)
+                .await
+                .expect("#1219 forward fixture invariant")
+                .expect("#1219 forward fixture invariant")
+                .get("type"),
+            Some(&expected.into()),
+            "#1219 forward assertion"
+        );
+    }
+    let mut pending = f.turn.next();
+    timeout(Duration::from_secs(5), async {
+        tokio::select! {result=&mut pending=>panic!("#1219 status escaped gate: {result:?}"), entered=&mut entry=>entered.expect("#1219 forward fixture invariant")}
+    })
+    .await
+    .expect("#1219 status writer must enter gate");
+    drop(pending);
+    let runtime = f
+        .registry
+        .resolve(None)
+        .expect("#1219 forward fixture invariant");
+    let turn = std::mem::replace(
+        &mut f.turn,
+        stream(
+            Box::pin(std::future::pending()),
+            mpsc::channel(1).1,
+            Arc::new(StreamIntegrity::new()),
+        ),
+    );
+    drop(turn);
+    assert!(
+        f.session
+            .lock()
+            .expect("#1219 forward fixture invariant")
+            .active
+            .is_some(),
+        "#1219 dropped owner leaves the failing worker its slot"
+    );
+    assert_eq!(
+        runtime.lease_count(),
+        1,
+        "#1219 dropped owner leaves the failing worker its lease"
+    );
+    release
+        .send(())
+        .expect("#1219 status writer gate still open");
+    wait_for_cleanup(&f.session, &runtime).await;
+    assert_eq!(
+        runtime.lease_count(),
+        0,
+        "#1219 failed status worker releases its lease"
+    );
+    assert_eq!(
+        f.store.attempts.load(Ordering::SeqCst),
+        1,
+        "#1219 failed status write is attempted once"
+    );
+    assert_eq!(
+        f.store.completes.load(Ordering::SeqCst),
+        0,
+        "#1219 [status-fail-drop]: no durable turn_result without a consumer"
+    );
+}
 
 case!(forward_malformed_null_first,);
 case!(forward_malformed_null_visible,);
