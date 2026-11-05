@@ -73,8 +73,9 @@ impl FileRegistry {
     ) -> RegistryFuture<T> {
         Self::dispatch(self.jobs.clone(), operation)
     }
-    /// Same worker handoff without borrowing the adapter, so a port that owes a
-    /// receipt can queue its job only after that receipt settled.
+    /// Same worker handoff without borrowing the adapter. A job that owes a
+    /// receipt is still queued on the caller's entry tick so it keeps its FIFO
+    /// slot; only the job's execution waits for that receipt.
     fn dispatch<T: Send + 'static>(
         jobs: mpsc::Sender<RegistryJob>,
         operation: impl FnOnce(&FileRunRegistry) -> RegistryResult<T> + Send + 'static,
@@ -88,29 +89,41 @@ impl FileRegistry {
                 .map_err(|_| RunRegistryError::Invalid("Run registry worker stopped.".into()))?
         })
     }
-    /// Queue a job behind the caller's slot that only runs once the receipt it
-    /// is stamped with settled; an unwritten or abandoned receipt keeps the
-    /// durable write from happening at all.
+    /// Queue a job on the caller's tick that only runs once the receipt it is
+    /// stamped with settled; an unwritten or abandoned receipt keeps the
+    /// durable write from happening at all. The wait bound is a parameter so a
+    /// test can exercise the timeout branch without blocking a worker for the
+    /// production bound.
     fn witnessed(
         jobs: mpsc::Sender<RegistryJob>,
         gate: mpsc::Receiver<bool>,
         run: RunRef,
         event: JsValue,
     ) -> RegistryFuture<()> {
-        Self::dispatch(jobs, move |registry| {
-            match gate.recv_timeout(WITNESS_SETTLE) {
-                Ok(true) => registry.append(&run, &event),
-                _ => Err(RunRegistryError::Invalid(
-                    "Storage stimulus queued witness failed.".into(),
-                )),
-            }
+        Self::witnessed_within(jobs, gate, run, event, WITNESS_SETTLE)
+    }
+    fn witnessed_within(
+        jobs: mpsc::Sender<RegistryJob>,
+        gate: mpsc::Receiver<bool>,
+        run: RunRef,
+        event: JsValue,
+        settle: Duration,
+    ) -> RegistryFuture<()> {
+        Self::dispatch(jobs, move |registry| match gate.recv_timeout(settle) {
+            Ok(true) => registry.append(&run, &event),
+            _ => Err(RunRegistryError::Invalid(
+                "Storage stimulus queued witness failed.".into(),
+            )),
         })
     }
 }
 
 /// Bound on how long a witnessed job waits for its own receipt. The receipt is
-/// dispatched on the entry tick, so this only trips when a caller holds the
-/// append future without ever polling it.
+/// dispatched on the entry tick by the blocking pool, so under normal load the
+/// gate settles in milliseconds and this only trips if that pool is starved or
+/// the runtime is shutting down. The `registry` worker is never held for a
+/// caller that invokes `append` and withholds the returned future: the settle
+/// signal comes from the receipt write, not from the caller's first poll.
 const WITNESS_SETTLE: Duration = Duration::from_secs(60);
 impl TurnRunRegistry for FileRegistry {
     fn accept(&self, input: &RunAcceptInput) -> RegistryFuture<bool> {
@@ -134,12 +147,17 @@ impl TurnRunRegistry for FileRegistry {
         // here, on the caller's tick: publication only first polls an append
         // after its predecessor settles, and by then the barrier that owes this
         // receipt is released. Nothing below waits for that first poll.
-        let witness = crate::storage::stimulus::registry_stimulus_queued_pending(
-            self.stimulus.as_ref(),
-            event,
-        );
         let run = run.clone();
         let event = event.clone();
+        // The receipt write settles this gate itself (`registry_stimulus_queued_pending`),
+        // so a caller that invokes `append` but withholds the returned future
+        // cannot park the single registry worker on an unpolled future.
+        let (settled, gate) = mpsc::channel::<bool>();
+        let witness = crate::storage::stimulus::registry_stimulus_queued_pending(
+            self.stimulus.as_ref(),
+            &event,
+            settled,
+        );
         let Some(witness) = witness else {
             return self.call(move |registry| registry.append(&run, &event));
         };
@@ -148,12 +166,9 @@ impl TurnRunRegistry for FileRegistry {
         // plain append overtake it, and the worker order would stop matching the
         // host's call order. The job itself waits for the receipt it owes, so a
         // witness failure still fails the append before anything is written.
-        let (settled, gate) = mpsc::channel::<bool>();
         let append = Self::witnessed(self.jobs.clone(), gate, run, event);
         Box::pin(async move {
-            let outcome = witness.await;
-            let _ = settled.send(outcome.is_ok());
-            outcome?;
+            witness.await?;
             append.await
         })
     }
