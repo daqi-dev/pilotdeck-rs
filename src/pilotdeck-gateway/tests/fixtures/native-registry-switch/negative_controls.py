@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+RUNS_METHODS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/runs.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_registry_switch.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
@@ -77,11 +78,11 @@ mutations = [
      'native_process::tests::requests_registry_switch_gates_run_reads', '#1369 describe_server gates run capabilities'),
     # TS InProcessGateway.ts:2525-2544: a configured registry still serves
     # run reads; the reader must not be forced to None.
-    ('registry-reader-always-none', REQUESTS,
+    ('registry-reader-always-none', RUNS_METHODS,
      '''let registry: Option<&dyn read::TurnRunReader> = self
-                    .runs
-                    .as_deref()
-                    .map(|runs| runs as &dyn read::TurnRunReader);''',
+                .runs
+                .as_deref()
+                .map(|runs| runs as &dyn read::TurnRunReader);''',
      'let registry: Option<&dyn read::TurnRunReader> = None;',
      'native_process::tests::requests_registry_switch_gates_run_reads', '#1369 run_get with a registry resolves'),
     # The construction receipt is the #1368 registry boundary witness: the
@@ -142,7 +143,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [ASSEMBLY, REQUESTS, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
+    guarded = [ASSEMBLY, REQUESTS, RUNS_METHODS, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
                FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
