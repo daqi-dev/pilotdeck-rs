@@ -6,16 +6,19 @@ Usage: negative_controls.py --check
 Commit the tests and this script first. CARGO_TARGET_DIR is caller-owned.
 Every selected row is reported, including anchor/build/source-guard failures.
 
-Rows bind one mutation to the single gold replay
-`runtime::cron::manager_tests::six_methods_replay_the_ts_gold` (a lib test,
-run with `--exact`); the kill evidence is that test's own panic payload
-carrying its `#1325` message. The replay needs no Node: it reads the committed
-oracle bytes, so every row runs on both platforms. Six rows pin the gold-caught
-parity behaviors: the unconfigured gate's error code, requireProjectKey's
-missing-key message, updateTask's revision increment, the unknown-unit delay
-fold (NaN * → RangeError, not the "positive finite" error), the running-task
-update reason, and the global list merge's `slice(0, limit)` — including the
-limit-0 empty page that the store's own `slice(-0)` quirk would fill again.
+Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
+is that test's own panic payload carrying its `#1325` message. Six rows bind
+`runtime::cron::manager_tests::six_methods_replay_the_ts_gold`, the seventh
+binds `...::global_list_caps_the_merged_run_page_at_the_nullish_default`. The
+replay needs no Node: it reads the committed oracle bytes, so every row runs on
+both platforms. The gold rows pin: the unconfigured gate's error code,
+requireProjectKey's missing-key message, updateTask's revision increment, the
+unknown-unit delay fold (NaN * → RangeError, not the "positive finite" error),
+the running-task update reason, and the global list merge's
+`slice(0, input.limit ?? 50)` — including the limit-0 empty page that the
+store's own `slice(-0)` quirk would fill again. The seventh row pins the
+nullish default itself: the oracle's `list-global-merge` only uses the explicit
+limits 2 and 0, so no gold cell can tell 50 apart from "every run".
 """
 from pathlib import Path
 import json
@@ -33,6 +36,10 @@ projection = root / 'src/pilotdeck-gateway/src/runtime/cron/projection.rs'
 tests = root / 'src/pilotdeck-gateway/src/runtime/cron/manager_tests.rs'
 oracle = root / 'src/pilotdeck-gateway/tests/fixtures/native-cron/oracle.json'
 REPLAY = 'runtime::cron::manager_tests::six_methods_replay_the_ts_gold'
+NULLISH_REPLAY = (
+    'runtime::cron::manager_tests::'
+    'global_list_caps_the_merged_run_page_at_the_nullish_default'
+)
 mutations = [
     # The unconfigured gate reports the wrong DialogGatewayError code, so the
     # createTask unconfigured cell's recorded `code` no longer matches.
@@ -87,14 +94,23 @@ mutations = [
      '                reason.set(Some("stopped"));',
      REPLAY,
      '#1325 gold update-cases step 5 (updateTask) differs from the TS gold'),
-    # The global list merge drops its `slice(0, limit)`, so the limit-2 page
-    # keeps the per-project pools' four runs (and limit 0 would refill from
-    # the store's `slice(-0)` quirk).
+    # The global list merge drops its `slice(0, input.limit ?? 50)`, so the
+    # limit-2 page keeps the per-project pools' four runs (and limit 0 would
+    # refill from the store's `slice(-0)` quirk).
     ('list-global-limit-ignored', manager,
      '            runs.truncate(end);',
      '            let _ = end;',
      REPLAY,
      '#1325 gold list-global-merge step 3 (listTasks) differs from the TS gold'),
+    # The nullish arm falls back to the whole merged page, so
+    # `{includeHistory: true}` with no limit returns 60 runs instead of 50. No
+    # gold cell can see this (the oracle's list-global-merge only uses the
+    # explicit limits 2 and 0), so this row binds the nullish-default test.
+    ('list-global-nullish-default-ignored', manager,
+     '                JsValue::Undefined | JsValue::Null => js_slice_end(runs.len(), 50.0),',
+     '                JsValue::Undefined | JsValue::Null => runs.len(),',
+     NULLISH_REPLAY,
+     '#1325 global list nullish limit default is not capped at 50'),
 ]
 
 

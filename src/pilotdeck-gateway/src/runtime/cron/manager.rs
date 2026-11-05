@@ -2071,12 +2071,12 @@ impl CronManager {
                 let right = run_started_at(right);
                 node_compare_utf16(&collator, right, left)
             });
-            // `slice(0, limit ?? 50)` — `??` only falls through on nullish, so
-            // both `undefined` and an explicit `null` take the same default the
-            // per-runtime `history_limit` and the store use. A bare
-            // `slice(0, limit)` would instead keep everything for `undefined`
-            // and nothing for `null`; if the baseline turns out to be that
-            // form, the nullish arm below has to go back to `runs.len()`.
+            // `slice(0, input.limit ?? 50)` (CronManager.ts:139, baseline
+            // cc7c4e65 checked byte for byte): `??` only falls through on
+            // nullish, so `undefined` and an explicit `null` take the same
+            // default `history_limit` and the store use. A bare
+            // `slice(0, limit)` would keep everything for `undefined` and
+            // nothing for `null` instead.
             let end = match property(&effective, "limit")? {
                 JsValue::Undefined | JsValue::Null => js_slice_end(runs.len(), 50.0),
                 other => js_slice_end(runs.len(), js_value::to_number(other).unwrap_or(f64::NAN)),

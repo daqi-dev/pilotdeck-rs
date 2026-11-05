@@ -43,12 +43,21 @@ pinned 时钟 `Date.UTC(2026, 0, 1)`（#1216 金样同款）、计数 taskId `ta
 
 - **`unconfigured` 半边是人工转写**：`generate.mts` 直接
   `new DialogGatewayError('CAPABILITY_UNAVAILABLE', ...)`，不走真实的
-  `requireCron`。负控 `gate-code-swapped` 因此只证明「Rust == 手抄值」，
-  不证明「手抄值 == TS」。错误码有独立旁证：
-  `specs/gateway-coverage/ledger.json` 记录六方法 unconfigured 分支同为
-  `CAPABILITY_UNAVAILABLE`（锚 `InProcessGateway.ts:3017-3022`）；文案字面量
-  目前仍是单源。真断言（在 `generate.mts` 里对基线源码断言该分支的
-  code/message 字面量）前置于下次有基线的金样重生成，登记在 #1645。
+  `requireCron`，所以负控 `gate-code-swapped` 证明的是「Rust == 手抄值」。
+  手抄值本身已对基线源码核过：`InProcessGateway.ts:3016-3020`（基线
+  cc7c4e65，按 `oracle.json` 的 `sourceSha256` 逐字节选出的副本）为
+  `throw new DialogGatewayError("CAPABILITY_UNAVAILABLE", "Cron runtime is not
+  configured on this gateway.")`，code 与 message 都与夹具一致；
+  `specs/gateway-coverage/ledger.json` 记的也是同一个 code。残留缺口只是
+  「没有真去执行 requireCron」，改进办法（在 `generate.mts` 里加载该模块取
+  真实错误对象）登记在 #1645。
+- **全局 list 的 nullish `limit` 无金样格**：`oracle.json` 的
+  `list-global-merge` 只跑显式 `limit: 2` 与 `limit: 0`，合并后只有 4 条
+  run，`50` 与「全量」在两种输入下同值，金样分辨不出。该分支现有两条独立
+  证据：单测 `global_list_caps_the_merged_run_page_at_the_nullish_default`
+  与负控 `list-global-nullish-default-ignored`（绑该单测）。语义本身对基线
+  `CronManager.ts:139` 的 `.slice(0, input.limit ?? 50)` 核过（同一份
+  sha256 选出的基线副本）；补金样格前置于下次有基线的金样重生成（#1645）。
 - **`recoverInterruptedRuns` 无 TS 金样**：`oracle.json` 十格无一格触发恢复；
   `tests/cron_manager_native.rs` 的重启格只断言 Rust 对已提交夹具的行为，
   属自证。恢复只在 `start()` 路径上跑，而金样重放不 start manager。
