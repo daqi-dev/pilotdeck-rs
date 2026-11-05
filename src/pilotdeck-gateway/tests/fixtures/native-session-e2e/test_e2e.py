@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import stat
 import subprocess
 import tempfile
 import time
@@ -53,7 +54,9 @@ def _port_lease_dir():
     directory = Path('/tmp') / f'pdrs-e2e-port-leases-{owner}'
     directory.mkdir(mode=0o700, exist_ok=True)
     info = os.lstat(directory)
-    if not os.path.isdir(directory) or info.st_uid != owner:
+    # lstat + S_ISDIR, not os.path.isdir: the latter follows a symlink, so a
+    # link owned by this uid would pass while the leases landed elsewhere.
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner:
         raise RuntimeError(f'#1510 the port-lease directory {directory} is not a directory '
                            f'owned by uid {owner}')
     return directory
@@ -913,6 +916,14 @@ class LifecycleTests(unittest.TestCase):
     def test_port_reservation_is_exclusive_across_processes(self):
         marker = '#1510 the closed-guard handoff window stays exclusive via the port lease'
         port, gateway_guard, provider_guard, port_leases = _reserve_port_pair()
+        # #1510 r3: the lease location is part of the contract, not an
+        # implementation detail.  Deriving it from $TMPDIR (or from
+        # tempfile.gettempdir()) makes two copies with different TMPDIR values
+        # lease different files for the same port and reopens the handoff
+        # window this issue is about -- pin it so that change cannot pass.
+        self.assertEqual(str(_port_lease_dir()),
+                         '/tmp/pdrs-e2e-port-leases-' + str(os.getuid()),
+                         '#1510 the port-lease directory must not follow $TMPDIR')
         # Replicate the handoff window: both guards are released for the real
         # servers' binds, so only the port leases still defend the pair.  A
         # sibling process reserving now must not pick this pair.  The child is
@@ -944,7 +955,12 @@ class LifecycleTests(unittest.TestCase):
                  str(Path(__file__).resolve()), str(port)],
                 capture_output=True, text=True, timeout=120)
         except subprocess.TimeoutExpired:
-            self.fail(marker + ': the sibling reservation did not finish in time')
+            # No marker here on purpose: the negative controls classify a run as
+            # KILLED when the assertion line carries this marker, so an
+            # infrastructure hang must NOT reuse it (#1510 r3).  classify() then
+            # reports INVALID instead of a false "the mutant was caught".
+            self.fail('#1510 the sibling reservation did not finish in time '
+                      '(infrastructure, not a mutant verdict)')
         finally:
             for lease in port_leases:
                 os.close(lease)
