@@ -6,10 +6,12 @@
 //! fix-r3 hardening (lease-root containment, stat/open identity, channelKey
 //! registration gate, pdf routing, audio-form selection, lone-surrogate
 //! diagnostics, stat-authoritative oversize gate and the EISDIR turn
-//! failure).
+//! failure) plus the attach-followups-a follow-ups (#1458 pdf_size_estimate
+//! info, #1469 attachment_unsupported diagnostics, #1462 the Node EISDIR
+//! message, #1459/#1464 the lease-root/lease-path softening).
 
 use super::services::{attachment_identity_matches, compose_attachment_turn, swap_test_hook};
-use crate::{metadata::object, negative_assert};
+use crate::{metadata::object, negative_assert, negative_assert_eq};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::path::{Path, PathBuf};
@@ -186,9 +188,13 @@ fn normal_lease_image_is_inlined_and_registered() {
 
 #[cfg(unix)]
 #[test]
-fn lease_symlink_escape_is_rejected() {
+fn lease_symlink_escape_softens_to_not_found() {
     use std::os::unix::fs::symlink;
     let scratch = Scratch::new();
+    // #1464: a channelKey path whose leaf symlinks outside the lease root
+    // no longer rejects the whole turn — the TS composer fails no turn over
+    // a path — but takes the Unresolved not-found branch instead, and the
+    // outside bytes are still never read, inlined or registered (P1-1).
     // Sibling of the scratch root: a path the lease symlink escapes to.
     let outside = scratch.0.with_file_name(format!(
         "{}-outside-secret.png",
@@ -198,31 +204,55 @@ fn lease_symlink_escape_is_rejected() {
             .and_then(|n| n.to_str())
             .unwrap_or("pdrs-1321")
     ));
-    std::fs::write(&outside, b"secret").expect("#1321 outside fixture");
+    std::fs::write(&outside, "outside-secret-1464").expect("#1464 outside fixture");
     let link = scratch.lease("evil.png");
-    symlink(&outside, Path::new(&link)).expect("#1321 lease symlink");
-    let result = compose_attachment_turn(
-        &scratch.0,
-        &message("hello"),
-        &[attachment(&link, "image/png")],
+    symlink(&outside, Path::new(&link)).expect("#1464 lease symlink");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&link, "image/png")],
+        ),
+        "#1464 a lease symlink escape must not fail the turn",
     );
-    let Err(error) = result else {
-        std::fs::remove_file(outside).ok();
-        panic!("#1321 P1-1: lease symlink escape must be rejected, attachment was accepted");
-    };
     std::fs::remove_file(outside).ok();
+    let blocks = content_blocks(&result);
     negative_assert!(
-        error
-            .message
-            .contains("outside the permitted lease directory"),
-        "#1321 P1-1: lease symlink escape must be rejected, got: {}",
-        error.message
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {link} (attachment resolved outside the permitted \
+             lease directory)."
+        )),
+        "#1464 a lease symlink escape must soften to a not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| !block_text(block).contains("outside-secret-1464")),
+        "#1464 the outside bytes must never appear in any block"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1464 a lease symlink escape must never inline outside bytes"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1464 a lease symlink escape must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1464 a lease symlink escape must never produce a note line"
     );
 }
 
 #[test]
-fn lease_parent_dotdot_is_rejected() {
+fn lease_parent_dotdot_softens_to_not_found() {
     let scratch = Scratch::new();
+    // #1464: a `..` lease path is lexically outside the root — the
+    // per-attachment not-found diagnostic, never a whole-turn rejection,
+    // with the same no-read/no-registration boundary.
     let path = format!(
         "{}/../escape.png",
         scratch
@@ -230,22 +260,38 @@ fn lease_parent_dotdot_is_rejected() {
             .join(".tmp")
             .join("chat-upload-leases")
             .to_str()
-            .expect("#1321 lease root UTF-8")
+            .expect("#1464 lease root UTF-8")
     );
-    let result = compose_attachment_turn(
-        &scratch.0,
-        &message("hello"),
-        &[attachment(&path, "image/png")],
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&path, "image/png")],
+        ),
+        "#1464 a '..' lease path must not fail the turn",
     );
-    let Err(error) = result else {
-        panic!("#1321 P1-1: '..' lease path must be rejected, attachment was accepted");
-    };
+    let blocks = content_blocks(&result);
     negative_assert!(
-        error
-            .message
-            .contains("outside the permitted lease directory"),
-        "#1321 P1-1: '..' lease path must be rejected, got: {}",
-        error.message
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (attachment path is outside the permitted \
+             lease directory)."
+        )),
+        "#1464 a '..' lease path must soften to a not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1464 a '..' lease path must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1464 a '..' lease path must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1464 a '..' lease path must never produce a note line"
     );
 }
 
@@ -364,28 +410,30 @@ fn read_failure_fails_the_turn() {
     let scratch = Scratch::new();
     // P1-e (codex, ts-probe/probe.out "P1-e composer dir-*"): the resolver's
     // try/catch wraps only the stat — a directory path stats fine but the
-    // read throws EISDIR uncaught, so the whole TS turn rejects. The Rust
-    // composition fails the same way instead of converting the read error
-    // into a diagnostic.
-    let dir = scratch.lease("actually-a-dir.png");
-    std::fs::create_dir_all(&dir).expect("#1321 directory fixture");
-    let result = compose_attachment_turn(
-        &scratch.0,
-        &message("hello"),
-        &[attachment(&dir, "image/png")],
+    // read throws EISDIR uncaught, so the whole TS turn rejects. #1462: the
+    // rejection message is Node's own descriptor-read spelling, without a
+    // path — `fs.readFile(dir, {encoding:"utf8"})` on node v22.22.0 throws
+    // exactly `EISDIR: illegal operation on a directory, read`
+    // (`_tmp/20261106-issue-1458/node-probe/eisdir-probe.out`).
+    let dir = scratch.lease("actually-a-dir.txt");
+    std::fs::create_dir_all(&dir).expect("#1462 directory fixture");
+    let error = crate::test_negative_receipt::expect_err(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&dir, "text/plain")],
+        ),
+        "#1462 a directory read must reject the whole turn",
     );
-    let Err(error) = result else {
-        panic!("#1321 P1-e: a directory read failure must fail the turn");
-    };
-    negative_assert!(
-        error.message.contains("could not be read"),
-        "#1321 P1-e: the read failure must reject the turn, got: {}",
-        error.message
+    negative_assert_eq!(
+        error.message.as_str(),
+        "EISDIR: illegal operation on a directory, read",
+        "#1462 a directory read failure must carry the Node EISDIR message"
     );
-    negative_assert!(
-        error.message.contains(dir.as_str()),
-        "#1321 P1-e: the rejection must name the unreadable attachment, got: {}",
-        error.message
+    negative_assert_eq!(
+        error.code.as_str(),
+        "gateway_submit_failed",
+        "#1462 the read failure keeps the gateway submit error code"
     );
 }
 
@@ -582,6 +630,137 @@ fn binary_extension_attachment_stays_path_reference() {
              them before inspection."
         ),
         "#1321 the no-inspectable guidance form must be selected, got: {note}"
+    );
+}
+
+#[test]
+fn unsupported_extension_warning_diagnosed() {
+    let scratch = Scratch::new();
+    // #1469 (resolver :149-163, :323-329): a file attachment outside the
+    // text whitelist produces the `attachment_unsupported` warning —
+    // warnings enter the diagnostics block regardless of registration
+    // (composer :259-263) — and the guidance takes the diagnostics form.
+    // All three are registered here so the warning-only filter cannot hide
+    // behind the info gate.
+    let bin_path = scratch.lease("data.bin");
+    std::fs::write(&bin_path, b"\0binary").expect("#1469 bin fixture");
+    let noext_path = scratch.lease("data");
+    std::fs::write(&noext_path, b"no extension").expect("#1469 noext fixture");
+    let ipynb_path = scratch.lease("notebook.ipynb");
+    std::fs::write(&ipynb_path, b"{}").expect("#1469 ipynb fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[
+                attachment(&bin_path, ""),
+                attachment(&noext_path, ""),
+                attachment(&ipynb_path, ""),
+            ],
+        ),
+        "#1469 unsupported extensions must compose the turn",
+    );
+    let blocks = content_blocks(&result);
+    let diagnostics = diagnostics_block(&blocks);
+    negative_assert!(
+        diagnostics.contains(
+            "File extension .bin is not in the inline text whitelist; skipped. If this is \
+             plain text, use read_file with the exact path; otherwise convert it before \
+             inspection."
+        ) && diagnostics.contains(
+            "File extension (none) is not in the inline text whitelist; skipped. If this is \
+             plain text, use read_file with the exact path; otherwise convert it before \
+             inspection."
+        ) && diagnostics.contains(
+            "File extension .ipynb is not in the inline text whitelist; skipped. If this is \
+             plain text, use read_file with the exact path; otherwise convert it before \
+             inspection."
+        ),
+        "#1469 non-whitelisted extensions must carry the attachment_unsupported warning, \
+         got: {diagnostics}"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| !block_text(block).starts_with("<attachment path=")),
+        "#1469 unsupported extensions must not be inlined"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#1469 the diagnostics guidance form must be selected, got: {note}"
+    );
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed.contains(&JsValue::from(bin_path.as_str()))
+            && allowed.contains(&JsValue::from(noext_path.as_str()))
+            && allowed.contains(&JsValue::from(ipynb_path.as_str())),
+        "#1469 the registered unsupported attachments must register allowedReadFiles"
+    );
+}
+
+#[test]
+fn binary_container_info_diagnostic_gating() {
+    let scratch = Scratch::new();
+    // #1469: a binary-container extension is info (resolver :158) — kept
+    // for an unregistered upload, dropped for a registered attachment by
+    // the composer filter (:259-263). Both spellings of the message use
+    // the same `unsupportedFileMessage` form (resolver :326).
+    let upload_path = scratch.lease("upload.zip");
+    std::fs::write(&upload_path, b"PK\x03\x04zip").expect("#1469 upload zip fixture");
+    let registered_path = scratch.lease("chan.zip");
+    std::fs::write(&registered_path, b"PK\x03\x04zip").expect("#1469 registered zip fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[
+                upload_attachment(&upload_path, "application/zip"),
+                attachment(&registered_path, "application/zip"),
+            ],
+        ),
+        "#1469 binary-container attachments must compose the turn",
+    );
+    let blocks = content_blocks(&result);
+    let diagnostics = diagnostics_block(&blocks);
+    negative_assert!(
+        diagnostics.contains(&format!(
+            "Attachment {upload_path} has Office/archive/binary extension .zip; it was \
+             registered as a file path but not shown inline, and read_file cannot inspect \
+             this format directly."
+        )),
+        "#1469 an unregistered binary-container attachment must keep its info diagnostic, \
+         got: {diagnostics}"
+    );
+    negative_assert!(
+        diagnostics
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count()
+            == 1,
+        "#1469 a registered binary-container attachment must drop its info diagnostic"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into()))
+            && blocks
+                .iter()
+                .all(|block| !block_text(block).starts_with("<attachment path=")),
+        "#1469 binary-container attachments must not be inlined"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- chan.zip: {registered_path}"))
+            && !note.contains(upload_path.as_str()),
+        "#1469 only the registered binary container keeps a note line, got: {note}"
     );
 }
 
@@ -1356,9 +1535,12 @@ fn pdf_attachment_routes_by_suffix_and_mime() {
         compose_attachment_turn(&scratch.0, &message("hello"), &[suffix_entry, mime_entry])
             .expect("#1321 pdf attachments compose the turn");
     let blocks = content_blocks(&result);
+    // #1458: the suffix entry has no channelKey, so its `pdf_size_estimate`
+    // info diagnostic enters the block; the registered mime entry keeps the
+    // composer's info drop. Message, two pdf blocks, diagnostics, note.
     negative_assert!(
-        blocks.len() == 4,
-        "#1321 P1-g: message, two pdf blocks and the note are expected, got {}",
+        blocks.len() == 5,
+        "#1458 message, two pdf blocks, the info diagnostic and the note are expected, got {}",
         blocks.len()
     );
     negative_assert!(
@@ -1380,8 +1562,12 @@ fn pdf_attachment_routes_by_suffix_and_mime() {
         block_text(&blocks[2])
     );
     negative_assert!(
-        diagnostics_block(&blocks).is_empty(),
-        "#1321 P1-g: a stat-only pdf must not diagnose"
+        diagnostics_block(&blocks).contains(
+            "Estimated 2 pages from 250000 bytes (PilotDeck does not invoke pdfinfo, \
+             intentional_difference §4.5)."
+        ),
+        "#1458 the unregistered suffix-routed pdf must carry the pdf_size_estimate info, got: {}",
+        diagnostics_block(&blocks)
     );
 }
 
@@ -1434,6 +1620,139 @@ fn oversize_pdf_still_estimates_pages() {
     negative_assert!(
         diagnostics_block(&blocks).is_empty(),
         "#1321 P1-g: an oversize pdf must not diagnose a byte limit"
+    );
+}
+
+#[test]
+fn unregistered_pdf_reports_size_estimate_diagnostic() {
+    let scratch = Scratch::new();
+    // #1458 (resolver :287-320): `resolvePdf` also produces the
+    // `pdf_size_estimate` info diagnostic, and the composer filter
+    // (GatewayAttachmentTurnComposer.ts:259-263) keeps info only for an
+    // unregistered attachment — an uploaded (channelKey-less) pdf carries
+    // it, and any diagnostic switches the path-note guidance to its
+    // diagnostics form (composer :114-122). 204800 bytes / 102400 = 2 pages.
+    let pdf_path = scratch.lease("upload.pdf");
+    std::fs::write(&pdf_path, vec![7u8; 204_800]).expect("#1458 pdf fixture");
+    let text_path = scratch.lease("note.txt");
+    std::fs::write(&text_path, b"body").expect("#1458 note fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[
+                upload_attachment(&pdf_path, "application/pdf"),
+                attachment(&text_path, "text/plain"),
+            ],
+        ),
+        "#1458 an unregistered pdf must compose the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(
+            "Estimated 2 pages from 204800 bytes (PilotDeck does not invoke pdfinfo, \
+             intentional_difference §4.5)."
+        ),
+        "#1458 an unregistered pdf must carry the pdf_size_estimate diagnostic"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| block_text(block).starts_with("[PDF attachment: ")),
+        "#1458 the unregistered pdf must keep its estimate block"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#1458 the diagnostics guidance form must be selected, got: {note}"
+    );
+    negative_assert!(
+        note.contains(&format!("- note.txt: {text_path}")),
+        "#1458 the registered companion keeps its note line, got: {note}"
+    );
+}
+
+#[test]
+fn registered_pdf_has_no_size_estimate_diagnostic() {
+    let scratch = Scratch::new();
+    // #1458 pair: the composer filter drops the info diagnostic of a
+    // registered (channelKey) pdf — the pre-#1458 "registered info is
+    // dropped" outcome survives for exactly the registered half.
+    let pdf_path = scratch.lease("doc.pdf");
+    std::fs::write(&pdf_path, vec![7u8; 204_800]).expect("#1458 registered pdf fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&pdf_path, "application/pdf")],
+        ),
+        "#1458 a registered pdf must compose the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1458 a registered pdf must not carry the pdf_size_estimate diagnostic"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.ends_with(
+            "These are path references for reuse. If an image/PDF is already visible in this \
+             turn, do not call read_file just to view it."
+        ),
+        "#1458 a registered pdf keeps the plain guidance form, got: {note}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unresolvable_lease_root_softens_to_not_found() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1459: a lease root whose canonicalize fails with a non-NotFound
+    // errno is no valid root either — the TS composer has no lease-root
+    // concept and no stat failure of its own ever rejects a turn, so the
+    // ELOOP root (a self-referential symlink; an EACCES root via chmod 000
+    // would not trigger under a root uid) softens to the same per-attachment
+    // not-found diagnostics as a missing root. P0-a holds: zero reads, zero
+    // registrations.
+    let lease_root = scratch.0.join(".tmp").join("chat-upload-leases");
+    std::fs::remove_dir_all(&lease_root).expect("#1459 remove the lease root");
+    symlink(&lease_root, &lease_root).expect("#1459 lease root symlink loop");
+    let path = scratch.lease("looped.png");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&path, "image/png")],
+        ),
+        "#1459 an ELOOP lease root must not fail the turn",
+    );
+    std::fs::remove_file(&lease_root).expect("#1459 remove the lease root loop");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (attachment lease root is unavailable)."
+        )),
+        "#1459 an ELOOP lease root must soften every lease path to not-found, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1459 an ELOOP lease root must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1459 an ELOOP lease root must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1459 an ELOOP lease root must never produce a note line"
     );
 }
 

@@ -140,16 +140,19 @@ enum LeaseGuard {
     Unresolved(std::io::Error),
 }
 
-/// `Err` rejects the turn: the path is not lexically inside the lease root
-/// (the canonical `<project>/.tmp/chat-upload-leases/`, computed once per
-/// prepare) or contains `..`, or it canonicalizes outside that root — a
-/// symlink escape — or its canonicalization fails with a non-`NotFound` error
-/// (P2: ELOOP/ENOTDIR/EACCES are hard failures; only the missing-file
-/// `NotFound` softens into the TS-shaped not-found diagnostic). Guards P1-1:
-/// only hard-linked lease files may be inlined or added to allowedReadFiles;
-/// arbitrary client-supplied paths are rejected before they reach
-/// allowedReadFiles or any read (same shape as `read_at`'s
-/// PROJECT_PATH_FORBIDDEN symlink check in upload/mod.rs).
+/// The per-attachment lease guard. Guards P1-1: only files inside the lease
+/// root (the canonical `<project>/.tmp/chat-upload-leases/`, computed once
+/// per prepare) may be inlined or added to allowedReadFiles; arbitrary
+/// client-supplied paths never reach allowedReadFiles or any read (same
+/// shape as `read_at`'s PROJECT_PATH_FORBIDDEN symlink check in
+/// upload/mod.rs). A path outside the root — lexically (`..` or a foreign
+/// prefix, #1464) or through a symlink escape (#1464) — and an unavailable
+/// root (missing, swapped outside the project, or its own canonicalize
+/// failing, P0-a/#1459) all soften into the TS-shaped not-found branch the
+/// same way a missing lease file (the TTL cleanup race, the TS stat ENOENT)
+/// does: the TS composer never rejects a whole turn over a path. Only a
+/// canonicalization failure of the path itself with a non-`NotFound` errno
+/// under a valid root (P2) still rejects the turn.
 fn lease_guard(
     path: &str,
     lexical_root: &Path,
@@ -157,35 +160,41 @@ fn lease_guard(
 ) -> Result<LeaseGuard, SubmitError> {
     let p = Path::new(path);
     if p.components().any(|c| c == Component::ParentDir) || !p.starts_with(lexical_root) {
-        return Err(failure(
-            "Attachment path is outside the permitted lease directory.",
-        ));
+        // #1464: not lexically inside the lease root — a per-attachment
+        // not-found diagnostic, not a whole-turn rejection. No read, no
+        // registration.
+        return Ok(LeaseGuard::Unresolved(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "attachment path is outside the permitted lease directory",
+        )));
     }
-    match fs::canonicalize(p) {
-        Ok(resolved) => match canonical_root {
-            Some(root) if resolved.starts_with(root) => Ok(LeaseGuard::Resolved(resolved)),
-            // The root is valid but the path resolved outside it — a
-            // symlink escape: reject the turn (P1-1).
-            Some(_) => Err(failure(
-                "Attachment path is outside the permitted lease directory.",
-            )),
-            // P0-a (codex): there is no valid canonical root (the lease root
-            // was swapped outside the project) — the resolved spelling must
-            // never pass by prefix. The attachment takes the not-found
-            // branch: no read, no registration.
-            None => Ok(LeaseGuard::Unresolved(std::io::Error::new(
+    match canonical_root {
+        // P0-a (codex) / #1459: there is no valid canonical root — the
+        // lease root is missing, was swapped outside the project, or its
+        // own canonicalize failed (EACCES/ELOOP/…). Every lease path takes
+        // the not-found branch: no read, no registration.
+        None => Ok(LeaseGuard::Unresolved(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "attachment lease root is unavailable",
+        ))),
+        Some(root) => match fs::canonicalize(p) {
+            Ok(resolved) if resolved.starts_with(root) => Ok(LeaseGuard::Resolved(resolved)),
+            // #1464: the root is valid but the path resolved outside it —
+            // a symlink escape. A per-attachment not-found diagnostic, not
+            // a whole-turn rejection. No read, no registration.
+            Ok(_) => Ok(LeaseGuard::Unresolved(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "attachment lease root is unavailable",
+                "attachment resolved outside the permitted lease directory",
+            ))),
+            // P2: a missing file (lease TTL cleanup race) is the TS stat
+            // ENOENT — a not-found diagnostic, never a whole-turn failure.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(LeaseGuard::Unresolved(error))
+            }
+            Err(error) => Err(failure(format!(
+                "Attachment lease path cannot be resolved: {error}."
             ))),
         },
-        // P2: a missing file (lease TTL cleanup race) is the TS stat ENOENT
-        // — a not-found diagnostic, never a whole-turn failure.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(LeaseGuard::Unresolved(error))
-        }
-        Err(error) => Err(failure(format!(
-            "Attachment lease path cannot be resolved: {error}."
-        ))),
     }
 }
 
@@ -219,6 +228,61 @@ fn image_mime_for_ext(ext: &str) -> Option<&'static str> {
         ".gif" => Some("image/gif"),
         ".webp" => Some("image/webp"),
         _ => None,
+    }
+}
+
+/// The resolver diagnostic severities the composer filters on
+/// (AttachmentResolver.ts:12-22): every pre-existing diagnostic in this
+/// file is TS `warning` severity there; only the two info diagnostics
+/// (#1458 `pdf_size_estimate`, #1469 binary-container
+/// `attachment_unsupported`) carry `Info`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiagnosticSeverity {
+    Warning,
+    Info,
+}
+
+/// TS GatewayAttachmentTurnComposer.ts:259-263 — the one composer filter
+/// both info diagnostics are held to: `severity === "error" ||
+/// severity === "warning" || !item.registered`. Warnings (and errors) always
+/// enter the `[Attachment diagnostics]` block; info only when the attachment
+/// is not registered (`registered = Boolean(metadata?.channelKey)`,
+/// composer :238/:244/:250 — `entry.channel_key` here). #1458 and #1469 must
+/// share this single criterion, not grow one each.
+fn diagnostic_enters(severity: DiagnosticSeverity, registered: bool) -> bool {
+    match severity {
+        DiagnosticSeverity::Warning => true,
+        DiagnosticSeverity::Info => !registered,
+    }
+}
+
+/// TS AttachmentResolver.ts:312-318 — the `pdf_size_estimate` info
+/// diagnostic; the `[PDF attachment: …]` block above carries the same
+/// estimate (`{pages}` from `BYTES_PER_PDF_PAGE`, resolver :304).
+fn pdf_size_estimate(size: u64, pages: u64) -> String {
+    format!(
+        "Estimated {pages} pages from {size} bytes (PilotDeck does not invoke pdfinfo, \
+         intentional_difference §4.5)."
+    )
+}
+
+/// TS AttachmentResolver.ts:323-329 — `unsupportedFileMessage`: the
+/// non-whitelisted-extension diagnostic of `resolveFile`
+/// (severity per :158 — binary container info, otherwise warning).
+fn unsupported_file_message(absolute: &str, ext: &str) -> String {
+    let display_ext = if ext.is_empty() { "(none)" } else { ext };
+    if BINARY_CONTAINER_EXTENSIONS.contains(&ext) {
+        format!(
+            "Attachment {absolute} has Office/archive/binary extension {display_ext}; it was \
+             registered as a file path but not shown inline, and read_file cannot inspect this \
+             format directly."
+        )
+    } else {
+        format!(
+            "File extension {display_ext} is not in the inline text whitelist; skipped. If \
+             this is plain text, use read_file with the exact path; otherwise convert it \
+             before inspection."
+        )
     }
 }
 
@@ -539,18 +603,16 @@ pub(super) fn compose_attachment_turn(
     let lease_lexical = project_canon.join(".tmp").join("chat-upload-leases");
     // P0-a (codex): a lease root that resolved outside the canonical project
     // (a symlink swap) is no valid root at all — nothing under it may
-    // resolve, be read, or be registered. P2: only a missing root (no uploads
-    // yet) softens to `None`; any other root canonicalize failure is a hard
-    // turn failure.
+    // resolve, be read, or be registered. #1459: a root that fails to
+    // canonicalize (EACCES/ELOOP/ENOTDIR …) is equally no valid root: the TS
+    // composer has no lease-root concept and no stat/canonicalize failure of
+    // its own ever rejects the turn (each attachment failure becomes a
+    // not-found diagnostic), so the root failure softens to `None` exactly
+    // like a missing root — every lease path then takes the not-found branch
+    // (zero reads, zero registrations).
     let lease_canon = match fs::canonicalize(&lease_lexical) {
         Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
-        Ok(_) => None,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(failure(format!(
-                "Attachment lease root cannot be resolved: {error}."
-            )));
-        }
+        _ => None,
     };
 
     let mut direct_blocks: Vec<JsValue> = Vec::new();
@@ -623,6 +685,9 @@ pub(super) fn compose_attachment_turn(
                 continue;
             }
             Err(rejected) => {
+                // #1464: the only remaining rejection is the P2 internal
+                // error (a non-NotFound canonicalize failure of the path
+                // itself under a valid root) — audio stays silent.
                 if audio {
                     continue;
                 }
@@ -770,6 +835,13 @@ pub(super) fn compose_attachment_turn(
                         ),
                     ),
                 ]));
+                // #1458 — resolver :312-318: `resolvePdf` also produces the
+                // `pdf_size_estimate` info diagnostic; the composer filter
+                // (:259-263) keeps it only for an unregistered (uploaded,
+                // channelKey-less) pdf — a registered pdf's info is dropped.
+                if diagnostic_enters(DiagnosticSeverity::Info, entry.channel_key) {
+                    diagnostics.push(pdf_size_estimate(metadata.len(), estimated_pages));
+                }
             }
             routed => {
                 // P2a-1: the image routing half of composer :234 (image byte
@@ -777,10 +849,21 @@ pub(super) fn compose_attachment_turn(
                 let image = matches!(routed, AttachmentRoute::Image);
                 // TS AttachmentResolver.ts:149-163 — only whitelisted text
                 // extensions are read; every other non-image stays a
-                // registered path reference.
-                let text_inline =
-                    !image && TEXT_EXTENSIONS.contains(&resolver_extension(entry).as_str());
+                // registered path reference carrying the
+                // `attachment_unsupported` diagnostic (#1469): info for a
+                // binary-container extension, warning otherwise, through the
+                // one composer filter.
+                let ext = resolver_extension(entry);
+                let text_inline = !image && TEXT_EXTENSIONS.contains(&ext.as_str());
                 if !image && !text_inline {
+                    let severity = if BINARY_CONTAINER_EXTENSIONS.contains(&ext.as_str()) {
+                        DiagnosticSeverity::Info
+                    } else {
+                        DiagnosticSeverity::Warning
+                    };
+                    if diagnostic_enters(severity, entry.channel_key) {
+                        diagnostics.push(unsupported_file_message(&entry.path, &ext));
+                    }
                     continue;
                 }
                 let limit = if image {
@@ -805,12 +888,20 @@ pub(super) fn compose_attachment_turn(
                     // P1-e (codex, ts-probe/probe.out "P1-e composer dir-*"):
                     // the read is outside the resolver's stat try/catch —
                     // EISDIR (a directory path) rejects the whole turn
-                    // instead of becoming a diagnostic.
+                    // instead of becoming a diagnostic. #1462: the message is
+                    // Node's own — `readText` is `fs.readFile` and a
+                    // descriptor read failure carries no path there
+                    // (`EISDIR: illegal operation on a directory, read`,
+                    // node v22.22.0 probe
+                    // `_tmp/20261106-issue-1458/node-probe/eisdir-probe.out`);
+                    // an errno outside the libuv table falls back to the
+                    // previous wording.
                     Err(error) => {
-                        return Err(failure(format!(
-                            "Attachment {} could not be read: {error}",
-                            entry.path
-                        )));
+                        let rejection = crate::node_fs_message(&error, "read", None)
+                            .unwrap_or_else(|| {
+                                format!("Attachment {} could not be read: {error}", entry.path)
+                            });
+                        return Err(failure(rejection));
                     }
                 };
                 // 读满即超限 (TS stat caps, AttachmentResolver.ts:164-175 and
