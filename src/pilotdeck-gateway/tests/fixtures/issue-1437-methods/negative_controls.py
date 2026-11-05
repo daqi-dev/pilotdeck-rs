@@ -50,6 +50,30 @@ mutations = [
      '|| false',
      TEST + 'user_dialog_claim_ttlms_bounds',
      '#1437 fractional ttlMs is rejected'),
+    # the non-number ttlMs arm is a separate guard from the range check.
+    ('ttl-non-number-message', USER_DIALOG,
+     '                        Some(JsValue::Number(n)) => *n,\n'
+     '                        _ => {\n'
+     '                            return Err(domain_error(\n'
+     '                                "INVALID_USER_DIALOG_CLAIM",\n'
+     '                                format!(\n'
+     '                                    "ttlMs must be a safe integer between {MIN_LEASE_MS} and {MAX_LEASE_MS}."\n'
+     '                                ),\n'
+     '                            ));\n'
+     '                        }\n'
+     '                    };',
+     '                        Some(JsValue::Number(n)) => *n,\n'
+     '                        _ => {\n'
+     '                            return Err(domain_error(\n'
+     '                                "INVALID_USER_DIALOG_CLAIM",\n'
+     '                                format!(\n'
+     '                                    "unwired ttlMs must be a safe integer between {MIN_LEASE_MS} and {MAX_LEASE_MS}."\n'
+     '                                ),\n'
+     '                            ));\n'
+     '                        }\n'
+     '                    };',
+     TEST + 'user_dialog_claim_ttlms_bounds',
+     '#1437 non-number ttlMs message'),
     # claim/release/respond sessionKey-required domain codes (wired bus).
     ('claim-domain-code', USER_DIALOG,
      'let session_key = nonempty_string(&params, "sessionKey").map_err(|_| {\n'
@@ -78,6 +102,22 @@ mutations = [
      '                            "UNWIRED_USER_DIALOG_RESPONSE",',
      TEST + 'user_dialog_claim_release_domain_codes',
      '#1437 respond missing sessionKey domain code'),
+    # release requires leaseId too: missing/null/blank is a domain reject.
+    ('release-lease-message', USER_DIALOG,
+     '                        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {\n'
+     '                            return Err(domain_error(\n'
+     '                                "INVALID_USER_DIALOG_RELEASE",\n'
+     '                                "sessionKey, requestId, and leaseId are required.",\n'
+     '                            ));\n'
+     '                        }',
+     '                        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {\n'
+     '                            return Err(domain_error(\n'
+     '                                "INVALID_USER_DIALOG_RELEASE",\n'
+     '                                "sessionKey and requestId are required.",\n'
+     '                            ));\n'
+     '                        }',
+     TEST + 'user_dialog_claim_release_domain_codes',
+     '#1437 release missing leaseId message'),
     # claim leaseId: a whitespace-only string must stay rejected.
     ('claim-blank-lease-allowed', USER_DIALOG,
      'if crate::metadata::js_trim(&text).is_empty() {\n'
@@ -109,6 +149,25 @@ mutations = [
      'if behavior.equals_str("answeredx") {',
      TEST + 'user_dialog_respond_behavior_branches',
      '#1437 an answered behavior delivers'),
+    # the unknown-behavior arm must stay a reject, not a silent cancel.
+    ('behavior-unknown-cancels', USER_DIALOG,
+     '                    } else {\n'
+     '                        return Err(domain_error(\n'
+     '                            "INVALID_USER_DIALOG_RESPONSE",\n'
+     '                            "result.behavior must be answered or cancelled.",\n'
+     '                        ));\n'
+     '                    };',
+     '                    } else {\n'
+     '                        DialogAnswer::Cancelled(None)\n'
+     '                    };',
+     TEST + 'user_dialog_respond_behavior_branches',
+     '#1437 respond unknown behavior message'),
+    # the cancelled arm must still produce a Cancelled answer.
+    ('behavior-cancelled-skipped', USER_DIALOG,
+     '} else if behavior.equals_str("cancelled") {',
+     '} else if behavior.equals_str("cancelledx") {',
+     TEST + 'user_dialog_respond_behavior_branches',
+     '#1437 a cancelled behavior reports delivered'),
     # USER_DIALOG_LEASE_REQUIRED on a foreign lease.
     ('lease-required-code', USER_DIALOG,
      'code: "USER_DIALOG_LEASE_REQUIRED".into(),',
@@ -149,6 +208,22 @@ mutations = [
      '                        // TS: DialogGatewayError("INVALID_PERMISSION_LIST",',
      TEST + 'permission_blank_session_key_rejected',
      '#1437 permission_list rejects a blank sessionKey'),
+    # the grant arm's blank-sessionKey trim guard (same source, other branch).
+    ('grant-blank-trim', PERMISSION,
+     'let text = String::from_utf16_lossy(s.units());\n'
+     '                        !crate::metadata::js_trim(&text).is_empty()\n'
+     '                    })\n'
+     '                    .cloned()\n'
+     '                    .ok_or_else(|| {\n'
+     '                        // TS grantSessionPermission performs no input validation',
+     'let text = String::from_utf16_lossy(s.units());\n'
+     '                        true\n'
+     '                    })\n'
+     '                    .cloned()\n'
+     '                    .ok_or_else(|| {\n'
+     '                        // TS grantSessionPermission performs no input validation',
+     TEST + 'permission_blank_session_key_rejected',
+     '#1437 grant blank sessionKey keeps the domain code'),
 ]
 
 
