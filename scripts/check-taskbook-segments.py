@@ -213,7 +213,10 @@ RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
 # 代码围栏（CommonMark）：闭合行须同字符、长度 **≥** 开栏、独占一行（只许前后空白）。
 # 逐行扫（FENCE_OPEN + _fence_spans），正则写不干净：修前要求闭合串与开栏串**完全相等**，
 # ```` ``` ```` 开、```` ```` ```` 收的标准写法被判「围栏没有闭合」→ 整份任务书 rc 2（假 ERROR）。
-FENCE_OPEN = re.compile(r"[ \t]*(?P<f>`{3,}|~{3,})(?P<info>.*)$")
+# 前导空白最多 3 格（CommonMark）：4 格及以上的 ``` 是**缩进代码块里的字面内容**，不是围栏。
+# 不限缩进时两头都错：缩进块里引一行孤 ``` 会被当开栏、永不闭合 → 假 ERROR（rc 2）；
+# 顶格围栏里嵌 4 格缩进围栏时，内层提前闭合外层，夹在中间的示例 scope 泄漏成真声明 → 假 PASS。
+FENCE_OPEN = re.compile(r" {0,3}(?P<f>`{3,}|~{3,})(?P<info>.*)$")
 # 引用块与缩进代码块是 Markdown 的另两种「贴示例」形态：里面出现的 scope 同样是示例，不是本包声明。
 # 只抹成空格（行数、偏移不变），人日 / `.rs` 回退仍看原文（宁可判大）。
 QUOTED = re.compile(r"(?m)^[ \t]*>.*$")
@@ -280,7 +283,7 @@ def _fence_spans(text):
             i += 1
             continue
         ch, n = m.group("f")[0], len(m.group("f"))
-        close = re.compile(r"[ \t]*" + re.escape(ch) + "{" + str(n) + r",}[ \t]*")
+        close = re.compile(r" {0,3}" + re.escape(ch) + "{" + str(n) + r",}[ \t]*")
         j = i + 1
         while j < len(lines) and not close.fullmatch(lines[j]):
             j += 1
@@ -402,11 +405,17 @@ def _indent_kind(text, pos):
         lo = max(0, j - budget)
         nl_at = text.rfind("\n", lo, j)
         if nl_at < 0:
-            # 回看窗口里连一个换行都没有：上一行本身比窗口还长，看不到行首就判不出
-            # 「列表项 / 正文」。**必须按判不准处理**——取 `a = nl_at + 1 = 0` 会把文档开头
-            # 整段当「上一个非空行」，文档以 `- ` 开头时返回 example，长正文后面的缩进 scope
-            # 被静默丢掉（gate15 DeepSeek P0 实测：4503 字符正文 → scopes=[] rc 0 假 PASS）。
-            return "prose"
+            # 回看窗口里连一个换行都没有。两种情形要分开（gate16 GLM P2 实测）：
+            #   ① 窗口已经缩到文档开头（lo == 0）：上一行就是**第一行**，它的行首看得见，
+            #      `- scope 写法示例：` 开头 + 下一行 4 格示例 scope 应当判 example；
+            #   ② 窗口还没到开头（lo > 0）：上一行本身比窗口还长，看不到行首就判不出
+            #      「列表项 / 正文」，必须按判不准处理——取 `a = nl_at + 1 = 0` 会把文档开头
+            #      整段当「上一个非空行」，文档以 `- ` 开头时长正文后面的缩进 scope 被静默丢掉
+            #      （gate15 DeepSeek P0 实测：4503 字符正文 → scopes=[] rc 0 假 PASS）。
+            if lo > 0:
+                return "prose"
+            first = text[0:j]
+            return "example" if first.strip() and LIST_ITEM.match(first) else "prose"
         a = nl_at + 1
         if text[a:j].strip():
             return "example" if LIST_ITEM.match(text[a:j]) else "prose"
@@ -544,11 +553,24 @@ def section_text(text, keyword):
     return "\n".join(out) if grab else None
 
 
-def cells(row):
+def _split_row(row):
+    return [c.strip() for c in row.strip().strip("|").split("|")]
+
+
+def cells(row, width=None):
+    """一行表格 → 格子列表；读不出返回 None。
+
+    GFM 允许**每一行都省略行首竖线**（`S2 | a.rs | S2.md | 120 min | S1`），表头与数据行可以混着写。
+    只认行首竖线会把这类行静默丢掉：该行的估时 / 占位符 / 字段数都不再校验 → 假 PASS（DS gate16 P1#2）。
+    省略行首竖线的行按「列数等于表头」认；列数不符的由调用方报错，不许悄悄丢。
+    """
     row = row.strip()
-    if not row.startswith("|"):
+    if row.startswith("|"):
+        return _split_row(row)
+    if width is None or "|" not in row:
         return None
-    return [c.strip() for c in row.strip("|").split("|")]
+    parts = _split_row(row)
+    return parts if len(parts) == width else None
 
 
 def _col_hit(alt, header_cell):
@@ -578,11 +600,14 @@ RANGE_MARK = re.compile(r"[–—~～/]|至|到|上限|不超过|最多|≤|(?<=
 # 裸「加」是「增加 / 加班」的子串（`60–80 min（增加 20 min 联调）`），不当加法。
 ADD_MARK = re.compile(r"\+|＋|另加|再加|再补")
 BREAK_CHARS = "（(，,；;"     # 回看窗口的边界：括注开头 / 句读
-# 括注里「包含」类说明词：它们后面的数字不计入主估时。**否定式不算包含**——否定词在词前 3 字符内
+# 括注里「包含」类说明词：它们后面的数字不计入主估时。**否定式不算包含**——否定词在词前 4 字符内
 # （`不含` / `不包含` / `未包含` / `不需要包括` / `除…含`）时那段时间必须计入。
+# 窗口取 4 而不是 3：`不需要包含` 里 `不` 与 `含` 隔着 `需要包` 三字；窗口 3 只能看到 `需`，于是
+# 只能把 `需` 也当否定词，反过来把**肯定的** `需要包含 30 min` 判成否定式（120 min，假 FAIL）。
 INCLUDE_WORDS = re.compile(r"含|各|其中|包括|内含|外加")
-INCLUDE_NEG = re.compile(r"[不未无除需没]")
+INCLUDE_NEG = re.compile(r"[不未无除没]")
 EXCLUDE_WORDS = re.compile(r"不计入|不算")
+INCLUDE_LOOKBACK = 4
 
 
 def _skips_number(text, lo, hi):
@@ -593,9 +618,21 @@ def _skips_number(text, lo, hi):
     if EXCLUDE_WORDS.search(text, lo, hi):     # `（不计入 30 min 缓冲）` 是明确的排除说明
         return True
     for m in INCLUDE_WORDS.finditer(text, lo, hi):
-        if not INCLUDE_NEG.search(text[max(lo, m.start() - 3):m.start()]):
+        if not INCLUDE_NEG.search(text[max(lo, m.start() - INCLUDE_LOOKBACK):m.start()]):
             return True
     return False
+
+
+def _excludes_after(text, end):
+    """数字**后面**的「不计入 / 不算」同样生效：`80 min（20 min 联调不计入）` 是中文自然语序。
+
+    只看同一括注 / 同一句读之内（`）` `)` `，` `,` `；` `;` 为止），最多 40 字符，保持线性。
+    """
+    hi, limit = end, min(len(text), end + 40)
+    while hi < limit and text[hi] not in "）)，,；;":
+        hi += 1
+    return bool(EXCLUDE_WORDS.search(text, end, hi))
+
 
 MAX_EST_CELL = 65536        # 单个估时格子 64 KiB 上限：正常格子 < 100 字符
 UNIT_MIN = ("", "min", "mins", "minute", "minutes", "m", "分", "分钟")
@@ -615,7 +652,8 @@ def _header_unit(header_cell):
     """表头里的单位提示：`预估时长(h)` / `（hrs）` / `（h)` / `/h`。
 
     与单元格同一张单位表（此前只硬编码 `(h|hr|小时)`，`(hrs)` 的裸数字被当 min 放行）。
-    认不出的写法按 min —— 只有括号/斜杠里的独立词才算，`预估时长` 里的「时」不算。
+    认不出的返回 None（裸数字随后报「读不出」，不当 min 放行）—— 只有括号/斜杠里的独立词才算，
+    `预估时长` 里的「时」不算，`(人日)` / `人天` / `工作日` 也返回 None。
     """
     low = header_cell.lower()
     # 连续中文会被 findall 并成一个 token（`预估工时` != `工时`），所以中文单位按子串判。
@@ -709,7 +747,10 @@ def parse_est(cell, default_unit=""):
         # （`90 min（不含 30 min 测试）` 真值 120）；写成裸 `[含各]` 会把否定句也跳过 → 边界上的段假 PASS。
         # 否定判定要覆盖 2–3 字的写法：只写 `(?<![不未无除])含` 时 `不包含` 的 `含` 前一字符是 `包`，
         # 仍被当成包含（gate15 DeepSeek P1 实测：`不包含` / `不包括` / `未包含` 三种都读成 90，真值 120）。
-        if _skips_number(cell, lo, m.start()):
+        # 后置的「不计入」只对**括注里**的数字生效：`80 min（20 min 联调不计入）` 里 20 不算、80 还要算，
+        # 对 80 也做前瞻会把整格判成没有估时（实测 None）。
+        in_paren = k > 0 and cell[breaks[k - 1]] in "（("
+        if _skips_number(cell, lo, m.start()) or (in_paren and _excludes_after(cell, m.end())):
             continue
         toks.append((float(m.group(1)), m.group(2).lower(), m.start()))
     if not toks:
@@ -816,16 +857,34 @@ def check_segments(text):
     if body is None:
         problems.append("缺 `## 分段交付` 一节（大包必须按文件切段，模板见 ~/ws/pdrs-ops/templates/taskbook-segments.md）")
     else:
-        rows = [cells(line) for line in body.splitlines()]
-        rows = [r for r in rows if r is not None]
-        header = rows[0] if rows else None
-        data = []
+        raw = body.splitlines()
+        hidx = next((i for i, line in enumerate(raw) if cells(line) is not None), None)
+        if hidx is None:
+            # 整张表都省了行首竖线：表头 = 紧跟分隔行（也带竖线）的那一行。`---` 单独一行是 setext
+            # 标题 / 分隔线，不带竖线，不会误认。
+            for i in range(len(raw) - 1):
+                if "|" not in raw[i] or "|" not in raw[i + 1]:
+                    continue
+                if is_separator(_split_row(raw[i + 1])):
+                    hidx = i
+                    break
+        header = _split_row(raw[hidx]) if hidx is not None else None
+        data, table_lines = [], []
         if header is None:
             problems.append("`## 分段交付` 里没有表格（需 markdown 表：段名 / 涉及文件 / 交付物 / 预估时长 / 段间依赖）")
         else:
-            for j, r in enumerate(rows[1:]):
+            width = len(header)
+            for line in raw[hidx + 1:]:
+                if not line.strip():
+                    break           # 空行结束表格（GFM 同）：表后正文不参与解析
+                r = cells(line, width)
+                if r is None:
+                    if "|" in line:
+                        problems.append(f"分段表有一行读不出 {width} 列（行首竖线可省，但列数须与表头一致）：{_clip(line.strip())!r}")
+                    continue
+                table_lines.append(line)
                 # GFM 分隔行只能紧贴表头（第 2 行）；后面的全 `-` 行是没填的段行，不许整行跳过。
-                if j == 0 and is_separator(r):
+                if not data and is_separator(r):
                     continue
                 if not any(r):
                     problems.append(f"分段表第 {len(data) + 1} 行整行为空（不许用空行占位）")
@@ -851,7 +910,7 @@ def check_segments(text):
                     for tok_ in FILE_TOKEN.findall(r[col["files"]] if col["files"] < len(r) else ""):
                         key = tok_[2:] if tok_.startswith("./") else tok_
                         if key in owner and owner[key] != i:
-                            problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {key}"
+                            problems.append(f"第 {i} 段与第 {owner[key]} 段共写同一文件 {_clip(key)}"
                                             "（段间不共写同一文件，否则不能独立收货）")
                         else:
                             owner.setdefault(key, i)
@@ -864,7 +923,7 @@ def check_segments(text):
                         continue
                     hit = placeholder_in(cell)
                     if hit:
-                        problems.append(f"第 {i} 段「{COL_NAMES[key]}」还是占位符：{hit!r}")
+                        problems.append(f"第 {i} 段「{COL_NAMES[key]}」还是占位符：{_clip(hit)!r}")
                 if "est" in col:
                     est_cell = r[col["est"]] if col["est"] < len(r) else ""
                     est = parse_est(est_cell, default_unit)
@@ -873,7 +932,7 @@ def check_segments(text):
                                         "只认 min / 分钟 / h / 小时）")
                     elif est > SEGMENT_MAX_MIN:
                         problems.append(f"第 {i} 段预估 {est:g} min > {SEGMENT_MAX_MIN} min（切成更小的段）")
-            table_text = "\n".join(x for x in body.splitlines() if x.lstrip().startswith("|"))
+            table_text = "\n".join([raw[hidx]] + table_lines)
             if placeholder_in(table_text) and not any("占位符" in p for p in problems):
                 problems.append("分段表里还有占位符（<…> / {…} / … / TBD / TODO），须填实现值")
     resume = section_text(text, "续跑")
@@ -904,9 +963,10 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 
 # 分段表「涉及文件」列里的文件路径（按扩展名认，避免把 `S1` 这类段名当文件）
 # 只认代码扩展名时 `Cargo.lock` / `events.proto` / `001.sql` / `a.html` 不算文件 → 两段共写照样放行（假 PASS）。
+# `jsonl` 单列：`src/` 下有 50+ 个 `.jsonl` fixture，两段各追加同一份也照样放行（gate16 sibling P2）。
 FILE_TOKEN = re.compile(
     r"[A-Za-z0-9_./-]*[A-Za-z0-9_-]\."
-    r"(?:rs|py|ts|tsx|js|mjs|md|json|toml|ya?ml|sh|txt|lock|proto|sql|html|css)")
+    r"(?:rs|py|ts|tsx|js|mjs|md|json|jsonl|toml|ya?ml|sh|txt|lock|proto|sql|html|css)")
 
 
 def _clip(text, n=80):
