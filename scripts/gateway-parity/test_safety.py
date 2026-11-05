@@ -2859,20 +2859,90 @@ class RetirementScoring(unittest.TestCase):
         # P1 (#1355 fix-r4d, same family as minimax boundary #3): class 4 used
         # to rebuild the observation from `rows` only, dropping the round's
         # commandStatus — a failed lsof then scored a fabricated sample side.
-        # The whole observation is kept, and an unobservable one leaves the
-        # class unestablished instead of PASS.
+        # P1 (#1355 fix-r4e, anthropic sibling #1 = minimax boundary #1): it
+        # then judged observability on the *mutated* verdict, and because
+        # `undeclared` is checked before `unparsed or not rows`, an empty or
+        # unparsed sample flipped BLOCKED -> FAIL and the class recorded PASS.
+        # Observability is now a property of the round's own sample: failed
+        # lsof, zero parsed rows, an unparsed line, and a missing observation
+        # all leave the class unestablished.  A round that already reports
+        # undeclared peers stays establishable — the injected peer has its own
+        # address, so attribution is the exact set delta (the real r2 round
+        # reports provider egress, registered as #1478).
         expected = ['submit_turn', 'run_get']
+        samples = (
+            ('failed lsof', {'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'},
+             'unobservable'),
+            ('empty sample', {'rows': [], 'commandStatus': 'ok'}, 'unobservable'),
+            ('unparsed line', {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}],
+                               'unparsed': [{'peer': None, 'raw': 'junk'}],
+                               'commandStatus': 'ok'}, 'unobservable'),
+        )
+        for tag, observation, reason in samples:
+            row = self._stream_ok_round_row()
+            row['connections'] = observation
+            # The round's own network face must be non-PASS for these shapes —
+            # that is exactly why the control cannot be credited to a PASS.
+            self.assertNotEqual(
+                self.session._retirement_network_verdict(observation)['status'], 'PASS', tag)
+            controls = self.session._retirement_controls(row, expected)
+            class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+            self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 {tag}: {class4}')
+            self.assertIn(reason, class4['reason'], f'#41 {tag}: {class4}')
+            self._assert_full_faces(self._report_for(row, expected), f'#41 {tag}')
+        # A round with no network observation at all is the same family.
         row = self._stream_ok_round_row()
-        row['connections'] = {'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'}
+        del row['connections']
         controls = self.session._retirement_controls(row, expected)
         class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
-        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 failed lsof: {class4}')
-        self.assertIn('unobservable', class4['reason'])
-        self._assert_full_faces(self._report_for(row, expected), '#41 failed lsof')
-        # Positive side: the same round with a usable sample still passes.
-        controls = self.session._retirement_controls(self._stream_ok_round_row(), expected)
-        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
-        self.assertEqual(class4['status'], 'PASS', f'#41 usable sample: {class4}')
+        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 no observation: {class4}')
+        self.assertIn('recorded no network observation', class4['reason'])
+        # Positive side: the same round with a usable sample still passes, and
+        # so does a round that already reports an undeclared peer of its own
+        # (the r2 shape): the injected peer must be the exact set delta.
+        for tag, observation in (
+                ('usable sample', {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}],
+                                   'commandStatus': 'ok'}),
+                ('pre-existing peer', {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'},
+                                                {'peer': '180.101.242.203:443', 'raw': 'y'}],
+                                       'commandStatus': 'ok'})):
+            row = self._stream_ok_round_row()
+            row['connections'] = observation
+            controls = self.session._retirement_controls(row, expected)
+            class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+            self.assertEqual(class4['status'], 'PASS', f'#41 {tag}: {class4}')
+
+    def test_report_keeps_full_faces_when_a_round_omits_an_observation(self):
+        # P1 (#1355 fix-r4e, minimax boundary #2; anthropic sibling #2 graded
+        # it P2 — the higher grade wins): the controls path learned to tolerate
+        # a missing/null observation, but the report path still hard indexed
+        # `row['census']` / `row['connections']` / `row['listeners']`, so the
+        # same round raised KeyError out of retirement_report and main's
+        # fallback dropped all 16 scoring faces.  The registered criterion
+        # (diffs/A8.6-RETIREMENT-001.md) promises the full report for these
+        # shapes, and the missing observation must read as unobserved
+        # (BLOCKED), never as a clean empty sample (PASS).
+        expected = ['submit_turn', 'run_get']
+        faces = {
+            'census': ('processCensus', 'BLOCKED'),
+            'connections': ('network', 'BLOCKED'),
+            'listeners': ('listeners', 'FAIL'),
+        }
+        for key, (face, status) in faces.items():
+            for tag, value in (('missing', KeyError), ('null', None)):
+                row = self._stream_ok_round_row()
+                if value is KeyError:
+                    del row[key]
+                else:
+                    row[key] = value
+                report = self._report_for(row, expected)
+                for name in self.REPORT_FACES:
+                    self.assertIn(name, report, f'#43 {tag} {key} lacks face {name}')
+                self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#43 {tag} {key}')
+                self.assertEqual(report['hostAudit'][face][0]['status'], status,
+                                 f'#43 {tag} {key}: {report["hostAudit"][face]}')
+                self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag} {key}')
+
 
     def test_control_attribution_requires_the_injected_object(self):
         # P1 (#1355 fix-r4d): a control PASS must be attributed to the object
@@ -2927,6 +2997,25 @@ class RetirementScoring(unittest.TestCase):
             controls = self.session._retirement_controls(self._stream_ok_round_row(), expected)
         class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
         self.assertEqual(class2['status'], 'FAIL', f'#42c: {class2}')
+
+        #  - the network verdict stops naming the injected peer (it reports
+        #    some other undeclared address): a FAIL is not attribution to the
+        #    object the injection added, so the class is FAIL, never PASS.
+        real_network = self.session._retirement_network_verdict
+        injected = '203.0.113.7:443'
+
+        def drifted_network(observation):
+            verdict = real_network(observation)
+            if verdict.get('status') == 'FAIL':
+                verdict['undeclared'] = [peer for peer in verdict['undeclared']
+                                         if peer != injected] or ['198.51.100.9:443']
+            return verdict
+
+        with patch.object(self.session, '_retirement_network_verdict',
+                          side_effect=drifted_network):
+            controls = self.session._retirement_controls(self._stream_ok_round_row(), expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'FAIL', f'#42d: {class4}')
 
     def test_timeout_outcome_is_never_executed_and_fails_closed(self):
         # fix-r1 rule kept intact by the R1 edit: a timeout is missing for

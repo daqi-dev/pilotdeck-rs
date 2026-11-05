@@ -1734,6 +1734,25 @@ def _retirement_census_verdict(census):
             'undeclared': undeclared, 'problems': problems}
 
 
+def _retirement_report_census(round_row):
+    """The round's census verdict for the report face.
+
+    P1 (#1355 fix-r4e, minimax boundary #2; graded P2 by anthropic sibling #2,
+    higher wins): the report path indexed ``row['census']`` /
+    ``row['connections']`` / ``row['listeners']`` directly, so a round that
+    recorded no observation raised KeyError inside ``retirement_report`` and
+    main's fallback dropped all 16 scoring faces — the collapse this PR exists
+    to remove.  A missing census is an *unobserved* host set, never an empty
+    one, so it blocks instead of passing.
+    """
+    census = round_row.get('census')
+    if not isinstance(census, dict) or not isinstance(census.get('rows'), list):
+        return {'status': 'BLOCKED', 'rule': 'HOST_CENSUS', 'undeclared': [],
+                'problems': ['the round recorded no process census; an unobserved census is '
+                             'not an empty host set']}
+    return _retirement_census_verdict(census)
+
+
 def _retirement_connections(pid):
     """Established TCP peers of the gateway while it is still running."""
     result = subprocess.run(['lsof', '-nP', '-a', '-p', str(pid), '-iTCP'],
@@ -2006,8 +2025,9 @@ def _retirement_controls(round_row, expected):
     16-face report into a 5-key stub.
     P1 (#1355 fix-r4c): an injection that changes nothing on this round proves
     nothing either — the round's own pre-existing violation would be credited
-    to the control as a PASS.  Every round-mutating class therefore requires
-    its mutation to land (``mutated != round_row``); otherwise the class is
+    to the control as a PASS.  Every mutating class therefore requires its
+    mutation to land on the dimension it injects (wire frame count, outcome
+    rows, declared pids, network sample); otherwise the class is
     NOT_APPLICABLE.  The census class needs its gateway pid in the census.
     P1 (#1355 fix-r4d): landing is judged on the *injected dimension*, and
     attribution on the *injected object*, not on a rule name or a whole-round
@@ -2170,27 +2190,46 @@ def _retirement_controls(round_row, expected):
         record('UNIFORM_UNAVAILABLE', 'every outcome rewritten to error CAPABILITY_UNAVAILABLE with matching wire',
                'UNIFORM_UNAVAILABLE', verdict, {})
     # 4. 假 local 实透传: an undeclared non-loopback established peer appears.
-    connections = round_row.get('connections') or {}
-    mutated_connections = json.loads(json.dumps(connections))
-    mutated_connections['rows'] = (mutated_connections.get('rows') or []) + [
-        {'peer': '203.0.113.7:443', 'raw': 'controlled mutation'}]
-    network_verdict = _retirement_network_verdict(mutated_connections)
-    if network_verdict.get('status') == 'BLOCKED':
-        # P1 (#1355 fix-r4d, same family as minimax boundary #3): dropping the
-        # round's commandStatus/unparsed fields made the mutation score a
-        # fabricated sample.  With the whole observation kept, an unobservable
-        # sample cannot establish the class.
-        unavailable('FORWARDING_MISLABELED',
-                    'undeclared non-loopback established peer added to the gateway connections',
-                    'NETWORK_FALLBACK',
+    injected_peer = '203.0.113.7:443'
+    injection = 'undeclared non-loopback established peer added to the gateway connections'
+    connections = round_row.get('connections')
+    # P1 (#1355 fix-r4e, anthropic sibling #1 = minimax boundary #1):
+    # observability is a property of the round's *own* sample, not of the
+    # mutated one.  Judging the mutated verdict let an empty or unparsed
+    # sample count as landing — `_retirement_network_verdict` checks
+    # `undeclared` before `unparsed or not rows`, so the injected row turned
+    # the round's BLOCKED network face into FAIL and the class recorded PASS,
+    # while the registered criterion (diffs/A8.6-RETIREMENT-001.md) requires
+    # NOT_APPLICABLE there.  A non-dict observation is no observation at all.
+    # A round that already reports undeclared peers (the real r2 round does:
+    # provider egress, registered as #1478) stays establishable — the injected
+    # peer has its own address, so attribution is the exact set delta, not
+    # "some undeclared peer is present".
+    original_network = (_retirement_network_verdict(connections)
+                        if isinstance(connections, dict) else None)
+    if original_network is None:
+        unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
+                    'the control round recorded no network observation, so adding a non-loopback '
+                    'peer cannot be established')
+    elif original_network.get('status') == 'BLOCKED':
+        unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
                     f"the control round's network observation is unobservable "
-                    f"({network_verdict.get('reason')}), so adding a non-loopback peer cannot be "
+                    f"({original_network.get('reason')}), so adding a non-loopback peer cannot be "
                     'established')
     else:
-        record('FORWARDING_MISLABELED',
-               'undeclared non-loopback established peer added to the gateway connections',
-               'NETWORK_FALLBACK', network_verdict, {},
-               caused=lambda verdict: '203.0.113.7:443' in (verdict.get('undeclared') or []))
+        undeclared_before = set(original_network.get('undeclared') or [])
+        mutated_connections = json.loads(json.dumps(connections))
+        mutated_connections['rows'] = (mutated_connections.get('rows') or []) + [
+            {'peer': injected_peer, 'raw': 'controlled mutation'}]
+        network_verdict = _retirement_network_verdict(mutated_connections)
+        if network_verdict.get('status') == 'BLOCKED':
+            unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
+                        f"the mutated sample is unobservable ({network_verdict.get('reason')}), "
+                        'so adding a non-loopback peer cannot be established')
+        else:
+            record('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK', network_verdict, {},
+                   caused=lambda verdict: (set(verdict.get('undeclared') or [])
+                                           == undeclared_before | {injected_peer}))
     # 5. R1 (#1355 fix-r2): a stream method recorded as an error outcome with
     # every receive frame stripped (send kept) must still fail EVIDENCE_BACKING
     # — the pre-fix scorer passed exactly this shape.
@@ -2738,7 +2777,7 @@ def _retirement_report(output, baseline):
     # an entry that answered in round 1 but 404'd in round 2 is NO_HIT.
     inventory = _retirement_entry_inventory_aggregate(
         [(row['label'], _retirement_entry_inventory(baseline, row)) for row in rounds])
-    census_verdicts = [_retirement_census_verdict(row['census']) for row in rounds]
+    census_verdicts = [_retirement_report_census(row) for row in rounds]
     # R5 (#1355 fix-r2): the network face reads as what it is — one
     # post-driver sample of the gateway pid's own established peers (provider
     # egress included); it does not cover other TS hosts.  The rule itself is
@@ -2746,14 +2785,15 @@ def _retirement_report(output, baseline):
     # structural provider-egress FAIL is registered as a known boundary (#1478).
     network_verdicts = []
     for row in rounds:
-        verdict = _retirement_network_verdict(row['connections'])
+        connections = row.get('connections')
+        verdict = _retirement_network_verdict(connections if isinstance(connections, dict) else {})
         verdict.update({'samplingScope': 'gateway-pid-only',
                         'gatewayPid': _retirement_gateway_pid(row),
                         'peerOwnership': "every sampled peer belongs to this round's own gateway pid "
                                          '(provider egress included); other TS hosts are not covered '
                                          'by this sample'})
         network_verdicts.append(verdict)
-    listener_verdicts = [_retirement_listener_verdict(row['listeners'], row['ports']['gateway'])
+    listener_verdicts = [_retirement_listener_verdict(row.get('listeners'), row['ports']['gateway'])
                          for row in rounds]
     host_status = common.aggregate_status(*(verdict['status'] for verdict in
                                             census_verdicts + network_verdicts + listener_verdicts))[0]
@@ -2772,7 +2812,7 @@ def _retirement_report(output, baseline):
                      for verdict in verdicts},
         'rounds': [{'round': verdict['round'], 'status': verdict['status'], 'rules': verdict['rules'],
                     'driverExitCode': verdict['driverExitCode'], 'executedCount': len(verdict['executed']),
-                    'audit': row['audit'], 'listeners': row['listeners'],
+                    'audit': row.get('audit'), 'listeners': row.get('listeners'),
                     'folder': (output / row['label']).as_posix()} for verdict, row in zip(verdicts, rounds)],
         'methodCoverage': {'status': coverage_status, 'k': RETIREMENT_ROUNDS, 'rounds': verdicts},
         'entryInventory': inventory,
