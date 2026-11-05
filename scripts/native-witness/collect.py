@@ -236,11 +236,12 @@ def session_expectations():
     """The registered per-case rust expectations, validated before use.
 
     #1363 (#7, #10): the fixture is read as UTF-8, must be a non-empty table of
-    unique string case keys with a ts/rust durableStatus list, and its durable
-    label family must equal SESSION_TERMINAL_DURABLE_EVENTS. A fixture that
-    drifts fails closed here instead of silently collapsing duplicate keys,
-    crashing on an unknown manifest case, or stranding inapplicable-registry
-    cases at NOT_RUN.
+    unique string case keys, and every ts/rust side must carry the three fields
+    the consumer dereferences (``frames`` list, ``registry.applicable`` boolean,
+    ``durableStatus`` list of strings). Its durable label family must equal
+    SESSION_TERMINAL_DURABLE_EVENTS. A fixture that drifts fails closed here
+    instead of silently collapsing duplicate keys, crashing on an unknown
+    manifest case, or stranding inapplicable-registry cases at NOT_RUN.
     """
     path = Path(__file__).resolve().parents[1] / 'gateway-parity/fixtures/session-expectations.json'
     document = json.loads(path.read_text(encoding='utf-8'))
@@ -249,11 +250,19 @@ def session_expectations():
     keys = [row.get('case') if isinstance(row, dict) else None for row in rows]
     w.need(all(isinstance(key, str) for key in keys), 'session expectations case key must be a string')
     w.need(len(set(keys)) == len(keys), 'session expectations has duplicate cases')
-    w.need(all(isinstance(row.get(side), dict) and isinstance(row[side].get('durableStatus'), list)
-               for row in rows for side in ('ts', 'rust')),
-           'session expectations row is missing ts/rust durableStatus')
-    labels = {event for row in rows for side in ('ts', 'rust')
-              for event in row[side]['durableStatus']}
+    sides = [row[side] for row in rows for side in ('ts', 'rust')]
+    w.need(all(isinstance(side, dict) and isinstance(side.get('frames'), list) for side in sides),
+           'session expectations row is missing ts/rust frames list')
+    w.need(all(isinstance(side.get('registry'), dict)
+               and isinstance(side['registry'].get('applicable'), bool) for side in sides),
+           'session expectations row is missing ts/rust registry.applicable boolean')
+    w.need(all(isinstance(side.get('durableStatus'), list) for side in sides),
+           'session expectations row is missing ts/rust durableStatus list')
+    # Elements are hashed into the label set below: a non-string element would
+    # raise an uncaught TypeError instead of the structured Incomplete.
+    w.need(all(isinstance(event, str) for side in sides for event in side['durableStatus']),
+           'session expectation durableStatus entry must be a string')
+    labels = {event for side in sides for event in side['durableStatus']}
     w.need(labels == SESSION_TERMINAL_DURABLE_EVENTS,
            'session expectation durable label family drifted: ' + repr(sorted(labels)))
     return {row['case']: row['rust'] for row in rows}
@@ -345,6 +354,7 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
             after = file_signatures(paths)
             observation, identity, source = result
             last = result
+            last_error = None
             record = observation['registry']['record']
             terminal = record.get('state') in SESSION_TERMINAL_STATES
             # A failed registry is still appendable during a turn. After this
@@ -367,6 +377,11 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
                 # an honest FAIL degrading to NOT_RUN. The request's final frame
                 # is still required: without it the turn is not delimited and
                 # the case must not settle (test_settle_inapplicable_transcript_pending).
+                # Known boundary: a terminal registry can now satisfy this
+                # branch before the transcript's durable entries land; the
+                # three-sample window (>=0.15 s of unchanged bytes) is what
+                # keeps that narrow, and a late entry shows as an ordered
+                # product difference rather than NOT_RUN.
                 terminal = (terminal or not expectation['durableStatus'] or any(
                     entry.get('event') in SESSION_TERMINAL_DURABLE_EVENTS
                     for entry in observation['durableStatus']['entries']) or any(
