@@ -15,7 +15,7 @@ pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Reques
 
 fn upload_error(e: crate::upload::UploadError) -> RequestError {
     RequestError {
-        code: e.code.into(),
+        code: e.code,
         message: e.message,
         details: e.details,
         validation: None,
