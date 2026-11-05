@@ -170,6 +170,14 @@ printf '%s\n' '#!/usr/bin/env bash' 'echo "garbage"' 'exit 0' > "$T/bin/du"; chm
 run_loop
 check "⑬e du 输出非数字：exit 1、runner 0 次、消息含 fail-closed" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && grep -q "fail-closed" "$T/out.log"'
 
+# ⑬f 主仓根解析失败必须 fail-closed：绝不能回落到 worktree 根把磁盘闸悄悄关掉（两家评审 r5 的 P1）
+setup progress; mkdir "$T/root/.git"
+set +e
+bash "$T/root/scripts/pdrs-loop.sh" --dry-run > "$T/out.log" 2>&1
+rc=$?
+set -e
+check "⑬f 主仓根解析失败：exit 1、消息含无法确定主仓根" '[ "$rc" = 1 ] && grep -q "无法确定主仓根" "$T/out.log"'
+
 check "锁已释放" '[ ! -e "$T/lock" ]'
 echo "test-pdrs-loop: $([ "$fails" = 0 ] && echo OK || echo "$fails FAIL")"
 [ "$fails" = 0 ]
