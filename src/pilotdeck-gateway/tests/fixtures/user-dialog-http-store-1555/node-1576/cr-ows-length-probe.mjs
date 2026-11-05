@@ -17,8 +17,11 @@ const cases = {
   // inside the value, before the overflow accounting; a whitespace-only value
   // is not counted at all (the ows row below is 200 at 90,000 bytes).
   // The two long-value-1635x rows bracket the threshold from both sides on this
-  // exact request shape (value 16,357 -> 200, 16,358 -> 431): the limit is a
-  // property of the whole header block, not of the value's length alone.
+  // exact request shape (value 16,357 -> 200, 16,358 -> 431). What is counted
+  // is the url plus every field name plus every value -- 5 + (4+1) + (1+N) +
+  // (10+5) = 26 + N, so 16,357 counts 16,383 (passes) and 16,358 counts 16,384
+  // (rejects, `>=`). The raw head is 20 B larger; the request line and the
+  // separators are not counted.
   'long-value-16357':    'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + 'a'.repeat(16357) + '\r\nConnection: close\r\n\r\n',
   'long-value-16358':    'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + 'a'.repeat(16358) + '\r\nConnection: close\r\n\r\n',
   'long-value-16380':    'GET /list HTTP/1.1\r\nHost: h\r\nX: ' + 'a'.repeat(16380) + '\r\nConnection: close\r\n\r\n',
