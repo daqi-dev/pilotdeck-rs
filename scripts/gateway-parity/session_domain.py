@@ -2083,7 +2083,7 @@ def _retirement_report(output, baseline):
     inventory = _retirement_entry_inventory(baseline, rounds[0])
     census_verdicts = [_retirement_census_verdict(row['census']) for row in rounds]
     network_verdicts = [_retirement_network_verdict(row['connections']['rows']) for row in rounds]
-    host_status = common.aggregate_status(*(item['status'] for verdict in census_verdicts + network_verdicts))[0]
+    host_status = common.aggregate_status(*(verdict['status'] for verdict in census_verdicts + network_verdicts))[0]
     cold_restart = {'status': 'BLOCKED', 'rule': 'COLD_RESTART_PENDING',
                     'reason': 'pending #1354; explicit placeholder, never a silent skip'}
     overall = common.aggregate_status(coverage_status, inventory['status'], host_status,
