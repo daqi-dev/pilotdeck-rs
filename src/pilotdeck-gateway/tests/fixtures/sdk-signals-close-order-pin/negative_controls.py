@@ -44,8 +44,10 @@ ledger spec is frozen read-only, so no control mutates it even transiently.
 Mutants are never cumulative, every selected control runs (no abort on the
 first failure), a stale anchor is INVALID (never SURVIVED), a mutant that
 does not parse as Python is INVALID, and any non-KILLED control exits
-nonzero. The table itself is registered by EXPECTED_TOTAL (#1506): an empty,
-short, or duplicated table is refused before any control runs. Because
+nonzero. The table itself is registered by EXPECTED_TOTAL (#1506): a
+zero or negative denominator, and an empty, short, or duplicated table, are
+refused before any control runs, and a run that produced no result row exits
+nonzero instead of printing `0/0 killed`. Because
 mutating_sources proves the tree equals HEAD, this must run
 after the #1382 patch is committed; a pre-commit working tree is refused on
 purpose.
@@ -160,6 +162,15 @@ def check_mutation_table(rows):
     can only narrow a complete registry. An empty table is just the extreme of
     "row count differs", so it reports the same denominator message.
     """
+    # #1506 fix-r2: the denominator is only a guard if it is positive. With
+    # `EXPECTED_TOTAL = 0` an emptied table satisfies the count check below,
+    # the loop runs no control, and the run ends green with `0/0` — the exact
+    # shape this guard exists to refuse.
+    if EXPECTED_TOTAL < 1:
+        raise RuntimeError(
+            "#1506 registered denominator must be positive:"
+            f" EXPECTED_TOTAL={EXPECTED_TOTAL}"
+        )
     if len(rows) != EXPECTED_TOTAL:
         raise RuntimeError(
             f"#1506 fixed product mutation denominator: expected {EXPECTED_TOTAL},"
@@ -305,10 +316,15 @@ counts = {
 }
 # #1506: the guard verified the whole registry, but `results` only holds the
 # rows the command line selected. Record both, so a later reader can tell
-# "8 registered, 3 selected" from "the table shrank to 3".
+# "8 registered, 3 selected" from "the table shrank to 3". `registered` is the
+# name list itself, not just its length: a table swapped for eight different
+# names keeps the count and the uniqueness check green, and only the names
+# show it.
 summary = {
     "registeredTotal": EXPECTED_TOTAL,
+    "registered": [row[0] for row in mutations],
     "selected": [row["mutation"] for row in results],
+    "counts": counts,
     "results": results,
 }
 exclusive_write(out / "summary.json", json.dumps(summary, indent=2) + "\n")
@@ -317,11 +333,19 @@ print(
         {
             "total": len(results),
             "registeredTotal": EXPECTED_TOTAL,
+            "selectedTotal": len(results),
             "counts": counts,
         }
     ),
     flush=True,
 )
+# #1506 fix-r2: an empty run is a zero denominator, never a pass. The guard
+# above already refuses an empty table, so this only fires if the selection
+# narrowed to nothing — which the argv check also refuses. Kept as the last
+# line of defence, because "no result rows" silently exiting green is the
+# exact failure this fixture was opened for.
+if not results:
+    sys.exit("#1506 no control ran: an empty run is not a pass")
 not_killed = [row["mutation"] for row in results if row["status"] != "KILLED"]
 if not_killed:
     sys.exit(f"#1382 non-KILLED controls: {not_killed}")
