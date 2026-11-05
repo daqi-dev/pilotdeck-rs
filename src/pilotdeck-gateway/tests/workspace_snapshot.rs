@@ -2466,17 +2466,14 @@ fn replay_scenario(scenario: &JsValue) {
         // carries the scenario since #283, and the dedicated Linux gate below
         // replays it wherever the probe succeeds; this skip stays only for
         // filesystems that physically cannot hold the raw name.
-        //
-        // #1400 third-round review (DeepSeek sibling P2, independently
-        // flagged by MiniMax boundary P2 at #1495 B10): straight to the
-        // stderr handle. The print-family macros are captured by libtest, so
-        // this line — the only evidence that the 28-scenario replay ran as 27
-        // — never reached the log, exactly the shape `:1804` was changed for.
-        use std::io::Write as _;
-        let _ = std::io::stderr().write_all(
-            format!("scenario {name}: skipped, filesystem rejects non-UTF-8 file names\n")
-                .as_bytes(),
-        );
+        // #1400 third-round review (DeepSeek sibling P2, independently flagged
+        // by MiniMax boundary P2 at #1495 B10) + #1525/#1263: straight to the
+        // stderr handle via the shared writer. The print-family macros are
+        // captured by libtest, so this line — the only evidence that the
+        // 28-scenario replay ran as 27 — would otherwise never reach the log.
+        skip_line::stderr_skip_line(&format!(
+            "#1263 skip: scenario {name}: skipped, filesystem rejects non-UTF-8 file names\n"
+        ));
         return;
     }
     for raw in raw_files {

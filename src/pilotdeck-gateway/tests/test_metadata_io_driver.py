@@ -31,8 +31,10 @@ class EnvironmentControls(unittest.TestCase):
         'test(=clear_failing_inside_delete_entries_rearms_indexed_rows) | '
         'test(=dump_request_write_failure_semantics) | '
         'test(=committed_marker_with_unreadable_manifest_republishes) | '
-        'test(=unreadable_scan_child_matches_real_ts_before_denial_and_after_restore) | '
-        'test(=files_sort_keeps_submillisecond_mtime_precision)')
+        'test(=scenarios_match_ts_outcomes_and_trees) | '
+        'test(=real_ts_tool_budget_and_apply_tool_results_replay) | '
+        'test(=skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore) | '
+        'test(=runtime::tools::builtin::grep::tests::files_sort_keeps_submillisecond_mtime_precision)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -640,22 +642,51 @@ class EnvironmentControls(unittest.TestCase):
         self.assert_success_output_filter_names_real_tests(self.nextest_success_output_filter)
 
     def assert_success_output_filter_names_real_tests(self, filter_text):
-        names = re.findall(r'test\(=([A-Za-z0-9_]+)\)', filter_text)
+        # fix-r3: `test(=name)` is an exact match on the name nextest reports.
+        # Integration tests (`tests/*.rs`) report their bare fn name, unit tests
+        # (`src/**`) report their module path — a bare leaf never selects them
+        # (measured on nextest 0.9.150: `test(=bar)` misses `foo::tests::bar`,
+        # `test(=foo::tests::bar)` hits). Derive the expected name from the file
+        # that declares the fn instead of only grepping the leaf.
+        names = re.findall(r'test\(=([A-Za-z0-9_:]+)\)', filter_text)
         self.assertTrue(names, '#922 the success-output filter names its tests')
-        sources = '\n'.join(source.read_text(errors='replace')
-                            for source in (Path(__file__).resolve().parents[1]).rglob('*.rs')
-                            if 'target' not in source.parts)
+        crate = Path(__file__).resolve().parents[1]
+        sources = {source: source.read_text(errors='replace')
+                   for source in crate.rglob('*.rs') if 'target' not in source.parts}
         for name in names:
-            self.assertIn(f'fn {name}(', sources,
-                          f'#922 the success-output filter names the real test {name}')
+            leaf = name.rsplit('::', 1)[-1]
+            defining = [source for source, text in sources.items() if f'fn {leaf}(' in text]
+            self.assertTrue(defining, f'#922 the success-output filter names the real test {name}')
+            expected = set()
+            for source in defining:
+                expected |= self.nextest_visible_names(crate, source, leaf)
+            self.assertIn(name, expected,
+                          f'#922 the success-output filter must use the nextest-visible name '
+                          f'for {leaf}: {sorted(expected)}, not {name}')
+
+    @staticmethod
+    def nextest_visible_names(crate, source, leaf):
+        relative = source.relative_to(crate)
+        if relative.parts[0] != 'src':
+            return {leaf}
+        parts = list(relative.relative_to('src').with_suffix('').parts)
+        if parts[-1] == 'mod':
+            parts.pop()
+        return {'::'.join([*parts, 'tests', leaf]), '::'.join([*parts, leaf])}
 
     def test_success_output_filter_rejects_a_renamed_test(self):
-        # The filter is a list of plain test names: a rename would silently drop
-        # the success-output replay. This is the negative control for that check.
+        # The filter is a list of nextest-visible test names: a rename would
+        # silently drop the success-output replay. These are the negative
+        # controls for that check.
         self.assert_success_output_filter_names_real_tests(self.nextest_success_output_filter)
         with self.assertRaisesRegex(AssertionError, 'names the real test no_such_test'):
             self.assert_success_output_filter_names_real_tests(
                 self.nextest_success_output_filter + ' | test(=no_such_test)')
+        # fix-r3: a unit test addressed by its bare leaf name never matches.
+        with self.assertRaisesRegex(AssertionError, 'must use the nextest-visible name'):
+            self.assert_success_output_filter_names_real_tests(
+                self.nextest_success_output_filter
+                + ' | test(=files_sort_keeps_submillisecond_mtime_precision)')
 
     def test_ci_rejects_nextest_execution_drift(self):
         workflow = self.ci_workflow_fixture()

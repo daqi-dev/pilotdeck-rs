@@ -64,21 +64,21 @@ impl Drop for RestoreReadPermission {
 }
 
 fn permission_not_run(reason: &str) {
-    use std::io::Write as _;
     assert!(
         !reason.trim().is_empty(),
         "permission skip must explain why"
     );
     // #1525 / #1263: a privileged host cannot exercise the denial, so the
-    // comparison never ran. With the switch on, that is a failure, not a skip.
+    // comparison never ran. Print the reason first (the shared handle writer
+    // stays visible under libtest's default output capture), then turn the
+    // skip into a failure when the switch is on.
+    crate::test_skip_line::stderr_skip_line(&format!("NOT_RUN: {reason}\n"));
     assert!(
         !crate::test_permission_faults::require_permission_faults(),
         "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the permission probe still \
-         succeeded (root or CAP_DAC_OVERRIDE); the permission-denied contract needs an \
-         unprivileged host (需要非特权宿主)"
+         succeeded (root or CAP_DAC_OVERRIDE); the permission-denied contract \
+         ({reason}) needs an unprivileged host (需要非特权宿主)"
     );
-    // Direct stderr also stays visible under libtest's default output capture.
-    writeln!(io::stderr(), "NOT_RUN: {reason}").expect("print permission skip reason");
 }
 
 struct Scratch(PathBuf);

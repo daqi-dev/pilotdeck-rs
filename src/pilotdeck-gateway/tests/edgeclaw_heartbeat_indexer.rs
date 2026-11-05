@@ -3051,7 +3051,12 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     // reported as broken when it was never exercised — so probe natively
     // first and skip with a recognizable line when the mode does not bite.
     if fs::OpenOptions::new().write(true).open(&manifest).is_ok() {
-        let _ = fs::set_permissions(&manifest, original_permissions);
+        // Restore the writability the next step needs: the original mode came
+        // from `fs::write`, which drops the owner write bit under a 0200/0222
+        // umask, and the re-arm below must be able to rewrite the manifest.
+        let mut restore = original_permissions.clone();
+        restore.set_mode(restore.mode() | 0o200);
+        let _ = fs::set_permissions(&manifest, restore);
         if permission_faults::require_permission_faults() {
             panic!(
                 "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \

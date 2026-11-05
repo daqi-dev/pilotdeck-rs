@@ -1292,9 +1292,13 @@ async fn describe_and_call_spawn_no_children() {
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn process_audit_is_linux_only() {
-    use std::io::Write as _;
-    let _ = std::io::stderr()
-        .write_all(b"SKIP: #1349 the module-host process audit reads Linux /proc\n");
+    // #1525 / #1263: the macro's output is captured for a passing test; the
+    // shared writer goes straight to the stderr handle so the note stays
+    // visible (#1495 B10). No nextest success-output entry: the test does not
+    // exist in the Linux CI job at all.
+    crate::test_skip_line::stderr_skip_line(
+        "SKIP: #1349 the module-host process audit reads Linux /proc\n",
+    );
 }
 
 /// #996-style regeneration guard for the fixture; see the fixture README for
