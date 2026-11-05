@@ -94,10 +94,9 @@ fn visible_status_message(detail: Option<&JsValue>, fallback: &str) -> JsString 
     if let Some(message) = detail
         .and_then(|detail| detail.get("message"))
         .and_then(JsValue::as_string)
+        && !js_trim_units(message.units()).is_empty()
     {
-        if !js_trim_units(message.units()).is_empty() {
-            return message.clone();
-        }
+        return message.clone();
     }
     JsString::from(fallback)
 }
