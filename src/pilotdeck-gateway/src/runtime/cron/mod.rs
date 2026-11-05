@@ -5,13 +5,23 @@
 //! Neither is wired into the gateway process yet: storage is #1216
 //! A8.3-pr1a, schedule computation is #1324 (dispatch splits to #1305,
 //! wiring to #1325).
+mod manager;
+mod methods;
 mod migration;
 mod paths;
+mod projection;
 mod schedule;
 mod store;
 
+pub use manager::{
+    CronActiveRun, CronAgentGateway, CronError, CronGatewayBody, CronLogger, CronManager,
+    CronManagerConfig, CronManagerOptions, CronRuntime, CronTurnSubmit, NoopCronLogger,
+    SessionAdmissionCronGateway,
+};
+pub use methods::{cron_create, cron_delete, cron_list, cron_run_now, cron_stop, cron_update};
 pub use migration::{MigrationInput, migrate_cron_stores};
 pub use paths::{CronPaths, resolve_cron_paths};
+pub use projection::{CRON_METHODS, dispatch, require_cron, response, wire_error_code};
 pub use schedule::{
     CRON_SCHEDULE_COMPUTATION_VERSION, ComputedRunAt, CronCreateSchedule, DelayUnit,
     InvalidTimeValue, compute_next_cron_run_at, compute_next_run_at, cron_day_fields_use_or,
@@ -19,6 +29,8 @@ pub use schedule::{
 };
 pub use store::CronTaskStore;
 
+#[cfg(test)]
+mod manager_tests;
 #[cfg(test)]
 mod schedule_tests;
 #[cfg(test)]

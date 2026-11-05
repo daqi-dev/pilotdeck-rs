@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "tasks": [
+    {
+      "schemaVersion": 1,
+      "taskId": "task-repeat",
+      "message": "repeat me",
+      "schedule": {"type": "cron", "expression": "*/5 * * * *", "timezone": "UTC"},
+      "status": "running",
+      "sessionKey": "cron:task-repeat",
+      "channelKey": "cron",
+      "originSessionKey": "origin-session",
+      "originChannelKey": "origin-channel",
+      "projectKey": "/repeat",
+      "timezone": "UTC",
+      "createdAt": "2025-12-31T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "nextRunAt": "2026-01-01T00:05:00.000Z",
+      "lastRunId": "run-repeat",
+      "revision": 1,
+      "scheduleComputationVersion": 3
+    }
+  ]
+}
