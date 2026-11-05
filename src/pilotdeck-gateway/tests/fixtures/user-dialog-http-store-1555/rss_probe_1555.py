@@ -15,6 +15,9 @@ Writes `<mode>-r<n>.log` per sample plus `summary.json`; exits non-zero when a
 sample fails or a receipt is missing. The tree must be committed: `HEAD` and
 the `src/` cleanliness are recorded in the summary.
 """
+# anchor-selfcheck: unsupported peak-RSS measurement driver: builds the lib test
+# binary once, then times one already-written test process per head shape; it
+# never rewrites product source, so there is no source replacement table.
 import argparse
 import json
 import os
