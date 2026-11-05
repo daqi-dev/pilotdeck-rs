@@ -53,6 +53,7 @@ purpose.
 Usage:
   CARGO_TARGET_DIR=<dir> python3 -I negative_controls.py <new-output-dir> [name ...]
 """
+from collections import Counter
 import difflib
 import json
 import os
@@ -153,20 +154,19 @@ mutations = [
 
 
 def check_mutation_table(rows):
-    """#1506: refuse an empty, short, or duplicated control table.
+    """#1506: refuse a control table whose row count or names do not match.
 
     Runs on the whole table before any command-line selection, so `[name ...]`
-    can only narrow a complete registry.
+    can only narrow a complete registry. An empty table is just the extreme of
+    "row count differs", so it reports the same denominator message.
     """
-    if not rows:
-        raise RuntimeError("#1506 the product mutation table must not be empty")
-    names = [row[0] for row in rows]
     if len(rows) != EXPECTED_TOTAL:
         raise RuntimeError(
             f"#1506 fixed product mutation denominator: expected {EXPECTED_TOTAL},"
             f" found {len(rows)}"
         )
-    duplicates = sorted({name for name in names if names.count(name) > 1})
+    names = [row[0] for row in rows]
+    duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
     if duplicates:
         raise RuntimeError(
             "#1506 unique product mutation identities: duplicates "
@@ -303,8 +303,25 @@ counts = {
     state: sum(row["status"] == state for row in results)
     for state in ("KILLED", "SURVIVED", "INVALID")
 }
-exclusive_write(out / "summary.json", json.dumps(results, indent=2) + "\n")
-print(json.dumps({"total": len(results), "counts": counts}), flush=True)
+# #1506: the guard verified the whole registry, but `results` only holds the
+# rows the command line selected. Record both, so a later reader can tell
+# "8 registered, 3 selected" from "the table shrank to 3".
+summary = {
+    "registeredTotal": EXPECTED_TOTAL,
+    "selected": [row["mutation"] for row in results],
+    "results": results,
+}
+exclusive_write(out / "summary.json", json.dumps(summary, indent=2) + "\n")
+print(
+    json.dumps(
+        {
+            "total": len(results),
+            "registeredTotal": EXPECTED_TOTAL,
+            "counts": counts,
+        }
+    ),
+    flush=True,
+)
 not_killed = [row["mutation"] for row in results if row["status"] != "KILLED"]
 if not_killed:
     sys.exit(f"#1382 non-KILLED controls: {not_killed}")
