@@ -57,6 +57,38 @@ UNORDERED_CLOSE_BOUNDARY = (
     "unordered-close-unregistered-id",
     "unordered-close-non-array",
 )
+_UNORDERED_CLOSE_ID_TEST = (
+    "signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics"
+)
+# #1382: the three whole-scope boundary rows are not one-per-ID, but their
+# content is just as load-bearing. Swapping one boundary row's anchor, mutant
+# value, target test or assertion for another's keeps every name check green
+# while deleting the control, so pin the whole row. Keys must stay equal to
+# UNORDERED_CLOSE_BOUNDARY (checked in check_catalog).
+UNORDERED_CLOSE_BOUNDARY_EXPECTED = {
+    "unordered-close-overbroad": (
+        replay,
+        "    if !UNORDERED_CLOSE_CASES.contains(&id) {",
+        "    if false && !UNORDERED_CLOSE_CASES.contains(&id) {",
+        _UNORDERED_CLOSE_ID_TEST,
+        "#1252 stable close swap must fail:",
+    ),
+    "unordered-close-unregistered-id": (
+        replay,
+        'const UNORDERED_CLOSE_CASES: &[&str] = &[\n',
+        'const UNORDERED_CLOSE_CASES: &[&str] = &[\n'
+        '    "not-a-registered-signal-cell",\n',
+        "signal_replay::comparison_tests::unordered_close_scope_equals_registration",
+        "#1252 unordered close scope equals measured registration",
+    ),
+    "unordered-close-non-array": (
+        replay,
+        "    let Some(actual) = actual.as_array() else {\n        return false;\n    };",
+        "    let Some(actual) = actual.as_array() else {\n        return true;\n    };",
+        _UNORDERED_CLOSE_ID_TEST,
+        "#1252 non-array closes must fail:",
+    ),
+}
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
@@ -274,15 +306,17 @@ def check_catalog():
     # to an unregistered ID and are skipped here; they are governed by the set
     # comparison above.
     wrong_binding = []
-    for name, _path, old, new, _test, assertion in mutations:
+    for name, path, old, new, test, assertion in mutations:
         if not name.startswith(UNORDERED_CLOSE_PREFIX):
             continue
         close_id = name[len(UNORDERED_CLOSE_PREFIX):]
         if close_id not in registered:
             continue
         if (
-            old != f'\n    "{close_id}",\n'
+            path != replay
+            or old != f'\n    "{close_id}",\n'
             or new != f'\n    "{close_id}-unregistered",\n'
+            or test != _UNORDERED_CLOSE_ID_TEST
             or assertion != f'#1252 unordered close swap must pass: {close_id}'
         ):
             wrong_binding.append(close_id)
@@ -290,6 +324,25 @@ def check_catalog():
         raise RuntimeError(
             "#1382 unordered-close rows must bind their own ID;"
             " wrong content: " + ", ".join(sorted(wrong_binding))
+        )
+    # #1382: the whole-scope boundary rows get the same treatment — their names
+    # are checked above, but a row whose content was swapped for a sibling's
+    # would otherwise keep every name check green while the control is gone.
+    if set(UNORDERED_CLOSE_BOUNDARY) != set(UNORDERED_CLOSE_BOUNDARY_EXPECTED):
+        raise RuntimeError(
+            "#1382 boundary name list and expected-content table disagree"
+        )
+    wrong_boundary = []
+    for name, path, old, new, test, assertion in mutations:
+        expected = UNORDERED_CLOSE_BOUNDARY_EXPECTED.get(name)
+        if expected is None:
+            continue
+        if (path, old, new, test, assertion) != expected:
+            wrong_boundary.append(name)
+    if wrong_boundary:
+        raise RuntimeError(
+            "#1382 whole-scope boundary rows must keep their own content;"
+            " wrong content: " + ", ".join(sorted(wrong_boundary))
         )
     if len(mutations) != EXPECTED_TOTAL:
         raise RuntimeError("#1145 fixed product mutation denominator")
