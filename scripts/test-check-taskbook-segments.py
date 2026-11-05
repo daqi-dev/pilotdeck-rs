@@ -141,6 +141,28 @@ case("整张表都省行首竖线（正控）", 0,
 case("表头也省行首竖线时仍校验估时（假 PASS）", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 120 min |").replace(TABLE, "\n".join(
          ln.strip().strip("|").strip() for ln in TABLE.splitlines())), must=["120 min > 90 min"])
+# 表头省行首竖线、数据行保留竖线的混写（gate17 GLM boundary P1）：主扫按「第一条带首竖线的行」
+# 会把数据行当表头 → 合规表缺全部列 + 只有 1 段 → 假 FAIL（拒派合规任务书）
+_MIXED = TABLE.splitlines()
+_MIXED[0] = _MIXED[0].strip().strip("|").strip()          # 只有表头省行首竖线
+MIXED_HEADER_TABLE = "\n".join(_MIXED) + "\n"
+case("表头省行首竖线、数据行保留（正控）", 0,
+     BIG_SCOPE + "## 分段交付\n\n" + MIXED_HEADER_TABLE + RESUME)
+case("表头省行首竖线、数据行保留时仍校验估时", 1,
+     BIG_SCOPE + "## 分段交付\n\n" + MIXED_HEADER_TABLE.replace("| 80 min |", "| 120 min |") + RESUME,
+     must=["120 min > 90 min"])
+case("锚到的表头绑不出五列时退回带首竖线的真表头（正控）", 0,
+     BIG_SCOPE + """## 分段交付
+
+段 | 涉及文件
+---|---
+| 段 | 涉及文件 | 交付物 | 预估时长 | 段间依赖 |
+|---|---|---|---|---|
+| S1 | `src/a.rs` | `S1-RESULT.md` | 60 min | — |
+| S2 | `src/b.rs` | `S2-RESULT.md` | 60 min | S1 |
+""" + RESUME)
+case("表头省行首竖线、分隔行保留竖线（正控）", 0,
+     BIG_SCOPE + "## 分段交付\n\n" + "\n".join([_MIXED[0], "|" + _MIXED[1]] + _MIXED[2:]) + "\n" + RESUME)
 case("省略行首竖线但列数不符 → 报读不出，不静默丢", 1,
      BIG_SCOPE + SEGMENTS_OK.replace(TABLE.splitlines()[2],
                                      "S2 HTTP 同域 | `src/native_http.rs` | 120 min | S1"),
@@ -318,6 +340,20 @@ case("占位符 裸 待填", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("`src/interaction.rs`", "待填"), must=["占位符"])
 case("【重要】这类正文不算占位符（正控）", 0,
      BIG_SCOPE + SEGMENTS_OK.replace("`S1-RESULT.md` + `final.patch` S1", "`S1-RESULT.md`（【重要】先跑 fmt）"))
+# 骨架 `_tmp/<日期>-issue-<N>/progress.md` 去掉尖括号后既无 `{}<>…` 也有 `/` → 旧规则判成实例路径
+# rc 0 假 PASS（gate17 GLM boundary P0）
+case("续跑 裸 N 段 _tmp/…-issue-N（假 PASS）", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md", "_tmp/20261106-issue-N/progress.md"),
+     must=["路径段 'N' 是没替换的占位"])
+case("续跑 裸 N 独占一段 _tmp/N/", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md", "_tmp/N/progress.md"),
+     must=["路径段 'N' 是没替换的占位"])
+case("续跑 N- 前缀段 N-issue/", 1,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md", "_tmp/N-issue/progress.md"),
+     must=["路径段 'N' 是没替换的占位"])
+case("续跑 目录名含 n 但不是单字母段（正控）", 0,
+     BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
+                                     "_tmp/20261105-issue-1316/native/progress.md"))
 case("续跑 全角占位 _tmp/＜日期＞-issue-＜N＞", 1,
      BIG_SCOPE + SEGMENTS_OK.replace("_tmp/20261105-issue-100/progress.md",
                                      "_tmp/＜日期＞-issue-＜N＞/progress.md"),
