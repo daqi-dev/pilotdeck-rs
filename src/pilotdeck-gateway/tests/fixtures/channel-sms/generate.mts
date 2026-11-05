@@ -978,6 +978,19 @@ for (const definition of definitions) {
     const failed = logs.filter(([level, text]) => level === 'error' && text.startsWith(LISTEN_FAILURE));
     const ready = logs.filter(([, text]) => text.startsWith(WEBHOOK_READY));
     const where = `#1339 case ${definition.name} (${outcome}, run ${index + 1})`;
+    // #1339 fix-r5 (P1): a case that never served our webhook must also prove
+    // its probe was refused. Without this, a third party that takes the port
+    // during either run answers with `refused: false`, both runs agree, and the
+    // contamination is recorded — the log checks above cannot see it.
+    // `start-port-busy` is the one exception: its blocker owns the port by
+    // design, so it answers the probe and the case records `refused: false`.
+    const responses = record.responses as { refused?: boolean }[];
+    if (outcome !== 'ok' && !definition.blockPort) {
+      assert.ok(
+        responses.length > 0 && responses.every((response) => response?.refused === true),
+        `${where} must record only refused probes, got ${JSON.stringify(responses)}; a foreign listener answered the webhook`,
+      );
+    }
     if (outcome === 'listen-failure') {
       assert.equal(failed.length, 1, `${where} must record exactly one listen failure: ${failed.map(textOf).join('; ') || 'none'}`);
       assert.equal(ready.length, 0, `${where} must not log a live webhook: ${ready.map(textOf).join('; ')}`);

@@ -788,6 +788,55 @@ fn every_oracle_case_has_a_replay_cell() {
     assert_eq!(exempt, WITHOUT_CELL.len(), "#1339 replay-cell exemptions");
 }
 
+/// #1339 fix-r5 (P1): `bind_dual_stack` must probe the port the kernel picked,
+/// not the configured `0`. Probing `127.0.0.1:0` always succeeds, so every
+/// `webhookPort: 0` start would be demoted to the IPv4-only fallback and no
+/// other test in the crate would notice (`empty-webhook-host` uses a fixed
+/// port, where both spellings behave alike).
+#[tokio::test]
+async fn dual_stack_probe_uses_the_assigned_port() {
+    let listener = match bind_dual_stack(0).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            // Refusing is only right on a host that keeps `IPV6_V6ONLY` set;
+            // prove the host really is IPv6-only before accepting that.
+            let control = TcpListener::bind(("::", 0))
+                .await
+                .expect("#1339 control `::` bind");
+            let control_port = control.local_addr().expect("#1339 control address").port();
+            // #1339 fix-r5: decide the host type by *connecting*, not by
+            // binding. A bind-based control would share the very option that
+            // can be wrong (`SO_REUSEADDR` makes the v4 bind succeed on a
+            // dual-stack macOS host) and would make this assertion vacuous.
+            let host_is_dual_stack = TcpStream::connect(("127.0.0.1", control_port))
+                .await
+                .is_ok();
+            assert!(
+                !host_is_dual_stack,
+                "#1339 this host is dual-stack, yet bind_dual_stack(0) refused: {error}"
+            );
+            assert!(
+                error.to_string().contains("IPv6-only"),
+                "#1339 unexpected bind error: {error}"
+            );
+            return;
+        }
+    };
+    let address = listener.local_addr().expect("#1339 bound address");
+    let port = address.port();
+    assert_ne!(port, 0, "#1339 the wildcard must own a real port");
+    assert!(
+        address.is_ipv6(),
+        "#1339 `::` should bind the v6 wildcard, got {address}"
+    );
+    TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1339 the v4 side of a dual-stack listener must answer");
+    TcpStream::connect(("::1", port))
+        .await
+        .expect("#1339 the v6 side of a dual-stack listener must answer");
+}
+
 #[test]
 fn loader_mount_builds_sms_channel() {
     let mut mounts = ChannelLoaderMounts::default();
