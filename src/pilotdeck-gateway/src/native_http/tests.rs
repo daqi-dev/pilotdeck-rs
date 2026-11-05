@@ -89,8 +89,11 @@ struct Fixture {
 /// #1383: the first static root's fixture files, relative to the root. One
 /// shared table: `roots()` writes from it and the case-variant completeness
 /// guard (`only_the_registered_cell_has_a_case_variant_fixture_hit`) reads
-/// it, so a file added here without a registered expectation fails that
-/// guard instead of silently shifting the replay's premise.
+/// it, so a file added here that case-collides with a routed path fails that
+/// guard instead of silently shifting the replay's premise. The recorder's
+/// copy of this list (`tests/fixtures/native-http-basic/generate.mts`) is the
+/// frozen original; it is not machine-compared with this one, so both sides
+/// must be edited together.
 const ROOT_FILES: &[(&str, &str)] = &[
     ("index.html", "<!doctype html><html>index</html>\n"),
     ("app.js", "console.log(1)\n"),
@@ -320,6 +323,15 @@ fn static_upper_borrow_premise_holds() {
         golden.ends_with("\r\n\r\n6\r\nupper\n\r\n0\r\n\r\n"),
         "#1383 the borrowed static-upper golden is the upper\\n bytes in one size-6 chunk"
     );
+    let upper_fixture = ROOT_FILES
+        .iter()
+        .find(|(file, _)| *file == "upper.TXT")
+        .expect("#1383 the first root carries the upper.TXT fixture")
+        .1;
+    assert_eq!(
+        upper_fixture, "upper\n",
+        "#1383 borrow premise: the upper.TXT the host resolves serves the golden's chunk payload"
+    );
     assert_eq!(
         content_type_for(std::path::Path::new("upper.txt")),
         "application/octet-stream",
@@ -332,12 +344,13 @@ fn static_upper_borrow_premise_holds() {
     );
 }
 
-/// #1383: every routed cell as `(id, server, WHATWG-path)`, the path taken
-/// from the raw request line's second token through the production
-/// `whatwg_path()` — the exact path the static fallback would look up, never
-/// an independent normalization. Cells whose request line has no target
-/// (`empty-request`, `garbage`) are skipped; a parse failure maps to `/`
-/// like the router's own fallback.
+/// #1383: every routed request as `(id, server, WHATWG-path)`, one entry per
+/// request in the cell — a pipelined cell (`pipeline`,
+/// `unread-body-pipeline`) contributes both of its requests, not only the
+/// first. The target goes through the production `whatwg_path()`, the path
+/// the static fallback would look up, never an independent normalization.
+/// Cells without a parseable target (`empty-request`, `garbage`) contribute
+/// none; a parse failure maps to `/` like the router's own fallback.
 fn routed_cells() -> Vec<(String, String, String)> {
     let recorded = oracle();
     let mut cells = Vec::new();
@@ -348,24 +361,17 @@ fn routed_cells() -> Vec<(String, String, String)> {
         let request = entry["request"]
             .as_str()
             .expect("#1209 oracle cell request");
-        let request_line = request.split("\r\n").next().unwrap_or("");
-        let Some(target) = request_line.split(' ').nth(1) else {
-            continue;
-        };
-        if target.is_empty() {
-            continue;
+        let id = entry["id"]
+            .as_str()
+            .expect("#1209 oracle cell id")
+            .to_owned();
+        let server = entry["server"]
+            .as_str()
+            .expect("#1209 oracle cell server")
+            .to_owned();
+        for target in request_targets(request) {
+            cells.push((id.clone(), server.clone(), whatwg_path(target)));
         }
-        cells.push((
-            entry["id"]
-                .as_str()
-                .expect("#1209 oracle cell id")
-                .to_owned(),
-            entry["server"]
-                .as_str()
-                .expect("#1209 oracle cell server")
-                .to_owned(),
-            whatwg_path(target),
-        ));
     }
     if crate::mutants::on("native-http-case-variant-extra-cell") {
         cells.push(("static-appjs-upper".into(), "a".into(), "/APP.JS".into()));
@@ -373,42 +379,92 @@ fn routed_cells() -> Vec<(String, String, String)> {
     cells
 }
 
-/// #1383: a routed path hits a fixture file as a case variant when it equals
-/// the file name ignoring ASCII case but not byte for byte — the only shape
-/// whose served bytes depend on the host filesystem's case sensitivity.
-fn case_variant_hit(path: &str, files: &[(&str, &str)]) -> bool {
-    let name = path.strip_prefix('/').unwrap_or(path);
+/// #1383: every request target in one recorded cell blob, pipelined requests
+/// included. Each request line ends with its ` HTTP/1.x` version token, so
+/// the target is the last whitespace-delimited token before it — which holds
+/// both for a standalone request line and for a request pipelined straight
+/// onto an unread body (`unread-body-pipeline` glues `GET /app.js` to the
+/// body bytes). A body that happened to carry the same token shape would
+/// only add a path to the check: the guard errs towards failing loudly,
+/// never towards passing silently.
+fn request_targets(request: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut rest = request;
+    while let Some(at) = rest.find(" HTTP/1.") {
+        if let Some(target) = rest[..at].split_whitespace().last() {
+            targets.push(target);
+        }
+        rest = &rest[at + " HTTP/1.".len()..];
+    }
+    targets
+}
+
+/// #1383: the file key `serve_static` would look up for one already
+/// normalized path — the production `node_join` fold (empty segments and `.`
+/// dropped, `..` pops) behind the same `/` → `/index.html` mapping, so the
+/// guard compares what the filesystem is asked for, not the request string.
+/// The probe root is named after the fixture root it stands in for, so a `..`
+/// that leaves the root and re-enters it by name folds identically. `None`
+/// when `contained` rejects the candidate: `serve_static` then stats nothing
+/// from the root, so no fixture file can be reached.
+fn lookup_key(path: &str, root_name: &str) -> Option<String> {
+    let probe_root = std::path::Path::new("/pdrs-1383-fixture").join(root_name);
+    let pathname = if path == "/" { "/index.html" } else { path };
+    let candidate = node_join(&probe_root, pathname);
+    if !contained(&probe_root, &candidate) {
+        return None;
+    }
+    let relative = candidate.strip_prefix(&probe_root).ok()?;
+    Some(relative.to_string_lossy().into_owned())
+}
+
+/// #1383: a routed path hits a fixture file as a case variant when the key
+/// the static root would stat equals the file name ignoring ASCII case but
+/// not byte for byte — the only shape whose served bytes depend on the host
+/// filesystem's case sensitivity.
+fn case_variant_hit(path: &str, root_name: &str, files: &[(&str, &str)]) -> bool {
+    let Some(key) = lookup_key(path, root_name) else {
+        return false;
+    };
     files
         .iter()
-        .any(|(file, _)| name.eq_ignore_ascii_case(file) && name.as_bytes() != file.as_bytes())
+        .any(|(file, _)| key.eq_ignore_ascii_case(file) && key.as_bytes() != file.as_bytes())
+}
+
+/// #1383: the fixture root name and file table of one recorded server,
+/// mirroring [`config_for`] — `a`/`c` serve the first root, `b` the
+/// index-less one, `d` has no static root. An unregistered server panics
+/// instead of silently defaulting to the first root.
+fn files_for(server: &str) -> Option<(&'static str, &'static [(&'static str, &'static str)])> {
+    match server {
+        "a" | "c" => Some(("root", ROOT_FILES)),
+        "b" => Some(("root2", ROOT2_FILES)),
+        "d" => None,
+        other => panic!("#1383 unregistered fixture server {other:?}"),
+    }
 }
 
 /// #1383: the routed cells whose path case-collides with that server's
-/// fixture table — `a`/`c` share the first root, `b` serves the index-less
-/// root, `d` has no static root and is skipped.
+/// fixture table (the mapping lives in [`files_for`]).
 fn case_variant_ids(cells: &[(String, String, String)]) -> Vec<String> {
     cells
         .iter()
-        .filter(|(_, server, _)| server != "d")
         .filter(|(_, server, path)| {
-            let files = if server == "b" {
-                ROOT2_FILES
-            } else {
-                ROOT_FILES
-            };
-            case_variant_hit(path, files)
+            files_for(server)
+                .is_some_and(|(root_name, files)| case_variant_hit(path, root_name, files))
         })
         .map(|(id, _, _)| id.clone())
         .collect()
 }
 
 /// #1383: `static-upper-lower` is the only cell whose result depends on the
-/// host filesystem — every other routed path either matches a fixture file
-/// byte-for-byte or has no case-variant file to collide with. The fixture
-/// tables are the same constants `roots()` writes from, so a file added
-/// there without a registered expectation fails here. Binds the negative
-/// control `native-http-case-variant-extra-cell`, which routes one more
-/// case-variant cell (`/APP.JS` against `app.js`).
+/// host filesystem — every other routed request, folded through the
+/// production `node_join` the way `serve_static` folds it, either matches a
+/// fixture file byte-for-byte or has no case-variant file to collide with.
+/// The fixture tables are the same constants `roots()` writes from, so a
+/// file added there that case-collides with a routed path fails here. Binds
+/// the negative control `native-http-case-variant-extra-cell`, which routes
+/// one more case-variant cell (`/APP.JS` against `app.js`).
 #[test]
 fn only_the_registered_cell_has_a_case_variant_fixture_hit() {
     assert_eq!(

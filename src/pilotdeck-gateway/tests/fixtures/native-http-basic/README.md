@@ -2,7 +2,7 @@
 
 `generate.mts` 用固定 Node v22.22.0 加载真实 `GatewayServer.ts`（PilotDeck@cc7c4e6，
 stub 依赖同 native-ws-entry 模式），起四个服务器：`a`（127.0.0.1，静态根含
-index.html 等 11 个固定文件）、`b`（127.0.0.1，静态根仅 only.txt，无 index）、
+index.html 等 10 个固定文件：9 个在根下 + sub/page.html）、`b`（127.0.0.1，静态根仅 only.txt，无 index）、
 `c`（127.0.0.2，allowRemoteHost，静态根同 a）、`d`（localhost，无静态根）。
 88 个 cell 逐个发送原始请求字节，记录响应原始字节（`date:` 值掩码为
 `date: <masked>`，全行、跨管线化多响应）与 closed 标志，覆盖：
