@@ -1919,8 +1919,13 @@ def _retirement_ports_available(ports):
         return False
 
 
-def _retirement_round(index, output, baseline, ports, timeout):
-    """One real TS-side gateway round: mock model + baseline CLI + driver."""
+def _retirement_round(index, output, baseline, ports, timeout, methods_fixture=RETIREMENT_METHODS_FIXTURE):
+    """One real TS-side gateway round: mock model + baseline CLI + driver.
+
+    ``methods_fixture`` is a smoke seam (like run_fixture's ``command``):
+    production always drives the frozen 101-entry fixture; coverage scoring
+    enforces the full expected set regardless of what the driver ran.
+    """
     run_round_module = _load('run_round', common.SCRIPT / 'run_round.py')
     mock_port, gateway_port, webui_port = ports
     folder = output / f'round-{index:02d}'
@@ -2022,7 +2027,7 @@ webui:
                             'loopbackOnly': addresses == [f'127.0.0.1:{gateway_port}']}
         driver = launch('driver-retirement', ['node', '--import', baseline / 'node_modules/tsx/dist/loader.mts',
                                               RETIREMENT_DRIVER, '--url', f'ws://127.0.0.1:{gateway_port}/ws',
-                                              '--token', run_round_module.TOKEN, '--methods', RETIREMENT_METHODS_FIXTURE,
+                                              '--token', run_round_module.TOKEN, '--methods', methods_fixture,
                                               '--out', folder / 'driver'], None)
         row['driverExitCode'] = run_round_module.wait_owned(
             driver, max(.1, deadline - time.monotonic()))
