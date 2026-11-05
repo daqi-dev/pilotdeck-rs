@@ -174,14 +174,16 @@ def run():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_repo(root)
-        row(root, "fake", "scripts/fake/x.py", sha("A\n"), "A\n")
+        row(root, "fake", "scripts/ui-server-parity/x.py", sha("A\n"), "A\n")
+        write(root, "scripts/ui-server-parity/apparatus.py",
+              "SPEC_FILES = ('acceptance.md',)\n")
         write(root, "specs/ui-server-parity/FROZEN.md",
-              f"# fake FROZEN\n\n{sha('A\n')}  ../../scripts/fake/x.py\n")
+              f"# fake FROZEN\n\n{sha('A\n')}  ../../scripts/ui-server-parity/x.py\n")
         commit(root, "base")
         base = git(root, "rev-parse", "HEAD")
-        write(root, "scripts/fake/x.py", "B\n")
+        write(root, "scripts/ui-server-parity/x.py", "B\n")
         write(root, "specs/fake/frozen/20260101-e1.md",
-              f"Change: {sha('A\n')} {sha('B\n')} scripts/fake/x.py\n")
+              f"Change: {sha('A\n')} {sha('B\n')} scripts/ui-server-parity/x.py\n")
         commit(root, "delivery")
         edges, _, _ = cfd.event_evidence(root, "fake", base)
 
@@ -189,16 +191,16 @@ def run():
         ctx = {"root": root, "kind": "ui-server-parity", "mb": base,
                "edges": edges, "pending": set()}
         case("ui-server ../../ 旧 pin 路径可解析",
-             cfd.existing_file(root, "ui-server-parity", "../../scripts/fake/x.py") is True)
+             cfd.existing_file(root, "ui-server-parity", "../../scripts/ui-server-parity/x.py") is True)
         case("invalid path/hash ../../ 判 ok",
-             cfd.classify(ctx, "invalid path/hash: ../../scripts/fake/x.py")[0] == "ok")
+             cfd.classify(ctx, "invalid path/hash: ../../scripts/ui-server-parity/x.py")[0] == "ok")
         case("unregistered/missing 有链背书判 ok",
-             cfd.classify(ctx, "unregistered/missing file: scripts/fake/x.py")[0] == "ok")
+             cfd.classify(ctx, "unregistered/missing file: scripts/ui-server-parity/x.py")[0] == "ok")
         case("unregistered/missing 无此文件判 block",
              cfd.classify(ctx, "unregistered/missing file: scripts/fake/absent.py")[0] == "block")
         case("重复边下 unregistered/missing 判 block",
              cfd.classify(dict(ctx, edges=dup),
-                          "unregistered/missing file: scripts/fake/x.py")[0] == "block")
+                          "unregistered/missing file: scripts/ui-server-parity/x.py")[0] == "block")
         case("未提交文件不算 existing_file",
              cfd.existing_file(root, "parity", "../../scripts/fake/nope.py") is False)
         case("认不出的失败消息 fail-closed",
@@ -254,7 +256,9 @@ def run():
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
                         files=[("scripts/gateway-parity/fixtures/new.json", "{}\n")],
-                        source="# inventory names fixtures/new.json\n")
+                        source="# inventory names fixtures/new.json\n",
+                        base_files=[("scripts/gateway-parity/common.py",
+                                     "# inventory names fixtures/new.json\n")])
         case("gateway 清单成员无事件链 → BLOCKED",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
              f"rc={proc.returncode}")
@@ -263,6 +267,8 @@ def run():
         # 装置源码没提到的文件不在清单里：--write 不登记，不能误拦。
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
+                        base_files=[("scripts/gateway-parity/common.py",
+                                     "A2_SCRIPTS = ('check_frozen.py',)\n")],
                         files=[("scripts/a5-19/extra.mjs", "x\n")])
         case("gateway 清单外的 a5-19 新文件不误拦",
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
@@ -273,7 +279,9 @@ def run():
         # 但 --write 会登记改名目的地 → 旧实现假 READY（第四轮 P0）。
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
-                        base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n")],
+                        base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n"),
+                                    ("scripts/gateway-parity/common.py",
+                                     "# inventory names fixtures/new.json\n")],
                         moves=[("scripts/gateway-parity/fixtures/old.json",
                                 "scripts/gateway-parity/fixtures/new.json")],
                         source="# inventory names fixtures/new.json\n")
@@ -284,7 +292,9 @@ def run():
     with tempfile.TemporaryDirectory() as td:
         proc = delivery(Path(td), "gateway-parity",
                         {"status": "FAIL", "failures": [HASH_LIST]},
-                        base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n")],
+                        base_files=[("scripts/gateway-parity/fixtures/old.json", "{}\n"),
+                                    ("scripts/gateway-parity/common.py",
+                                     "# inventory names fixtures/new.json\n")],
                         moves=[("scripts/gateway-parity/fixtures/old.json",
                                 "scripts/gateway-parity/fixtures/new.json")],
                         events=[("specs/gateway-parity/frozen/20260101-r.md",
@@ -432,10 +442,10 @@ def run():
     with tempfile.TemporaryDirectory() as td:
         # 成员被移出清单、文件仍跟踪：--write 会删行、新目标取 '-'（与新清单的
         # new_hashes.get(name, '-') 一致），不是拿 HEAD 字节当目标。
-        payload = {"status": "FAIL", "failures": [
-            HASH_LIST, "scripts/gateway-parity/fixtures/x.json: hash change lacks "
-                       "exact new event chain"]}
-        common_src = "A2_SCRIPTS = (\n    'check_frozen.py',\n)\n"
+        # 真实 pre-write 形态：清单行还在，装置只报 hash list differs；掉行要
+        # 靠 dropped_rows 自己枚举（第七轮两家 P0/P1：手写 LACKS_CHAIN 报文是伪造对）。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        common_src = "A2_SCRIPTS = (\n    'check_frozen.py', 'common.py',\n)\n"
         base_inventory = ("\ndef manifest_inventory(root):\n"
                           "    paths = ['scripts/gateway-parity/fixtures/x.json']\n"
                           "    return paths\n")
@@ -463,10 +473,10 @@ def run():
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
-        payload = {"status": "FAIL", "failures": [
-            HASH_LIST, "scripts/gateway-parity/fixtures/x.json: hash change lacks "
-                       "exact new event chain"]}
-        common_src = "A2_SCRIPTS = (\n    'check_frozen.py',\n)\n"
+        # 真实 pre-write 形态：清单行还在，装置只报 hash list differs；掉行要
+        # 靠 dropped_rows 自己枚举（第七轮两家 P0/P1：手写 LACKS_CHAIN 报文是伪造对）。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        common_src = "A2_SCRIPTS = (\n    'check_frozen.py', 'common.py',\n)\n"
         base_inventory = ("\ndef manifest_inventory(root):\n"
                           "    paths = ['scripts/gateway-parity/fixtures/x.json']\n"
                           "    return paths\n")
@@ -491,6 +501,63 @@ def run():
                                  + EVENT_FIELDS)])
         case("成员移出清单、Change: <old> - 链 → READY",
              proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # ui-server：SPEC_FILES 是从 apparatus.py 解析的字面量，成员被移出清单时
+    # 终点同样取 '-'（第七轮两家 P1）。
+    def ui_delivery(td, *, events):
+        payload = {"verdict": "FAIL", "errors": [HASH_LIST]}
+        base_apparatus = "SPEC_FILES = ('acceptance.md', 'multimodal.md')\n"
+        head_apparatus = "SPEC_FILES = ('acceptance.md',)\n"
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha('OLD\\n')}  ../../specs/ui-server-parity/multimodal.md\n"
+                  f"{sha(base_apparatus)}  ../../scripts/ui-server-parity/apparatus.py\n"
+                  f"{sha(body)}  ../../scripts/ui-server-parity/check_frozen.py\n")
+        return delivery(Path(td), "ui-server-parity", payload,
+                        base_files=[("specs/ui-server-parity/multimodal.md", "OLD\n"),
+                                    ("scripts/ui-server-parity/apparatus.py", base_apparatus),
+                                    ("specs/ui-server-parity/FROZEN.md", frozen)],
+                        files=[("specs/ui-server-parity/multimodal.md", "NEW\n"),
+                               ("scripts/ui-server-parity/apparatus.py", head_apparatus)],
+                        events=events)
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = ui_delivery(td, events=[("specs/ui-server-parity/frozen/20260101-u.md",
+                                        f"Change: {sha('OLD\n')} - "
+                                        "specs/ui-server-parity/multimodal.md\n"
+                                        + EVENT_FIELDS)])
+        case("ui-server 成员移出 SPEC_FILES、Change: <old> - 链 → READY",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = ui_delivery(td, events=[("specs/ui-server-parity/frozen/20260101-u.md",
+                                        f"Change: {sha('OLD\n')} {sha('NEW\n')} "
+                                        "specs/ui-server-parity/multimodal.md\n"
+                                        + EVENT_FIELDS)])
+        case("ui-server 成员移出 SPEC_FILES、旧→新链 → BLOCKED",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 清单来源不可读 → 无法判定是否可登记：必须阻塞，不能折算成 '-'。
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
+        frozen = ("# fake FROZEN\n\n"
+                  f"{sha(body)}  ../../scripts/gateway-parity/check_frozen.py\n"
+                  f"{sha('GONE\\n')}  ../../scripts/gateway-parity/common.py\n")
+        proc = delivery(Path(td), "gateway-parity", payload,
+                        base_files=[("scripts/gateway-parity/common.py", "GONE\n"),
+                                    ("specs/gateway-parity/FROZEN.md", frozen)],
+                        removes=["scripts/gateway-parity/common.py"],
+                        events=[("specs/gateway-parity/frozen/20260101-n.md",
+                                 f"Change: {sha('GONE\n')} - "
+                                 "scripts/gateway-parity/common.py\n"
+                                 + EVENT_FIELDS)])
+        case("清单来源不可读 → BLOCKED（不可判定不折算成 '-'）",
+             proc.returncode == 1 and "cannot tell whether --write still registers it"
+             in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     # ------------------------------------------------------- fail-closed
