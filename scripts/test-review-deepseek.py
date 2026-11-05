@@ -271,37 +271,11 @@ def main() -> int:
     except rd.Fail:
         print("PASS 引号不配对报错")
 
-    # 官方通道：只认 DS_ORI_PARA_API_KEY（不回退到 DEEPSEEK_API_KEY），默认模型 deepseek-flash
-    for label, env_extra, want_code, want_model in [
-        ("official 读 DS_ORI_PARA_API_KEY", {"DS_ORI_PARA_API_KEY": FAKE_KEY}, 0, "deepseek-flash"),
-        ("official 不回退 DEEPSEEK_API_KEY", {"DEEPSEEK_API_KEY": FAKE_KEY}, 2, None),
-    ]:
-        with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d)
-            (tmp / "task.md").write_text("审一下", encoding="utf-8")
-            (tmp / "scripts").mkdir()
-            iso = tmp / "scripts" / SCRIPT.name  # 非 git 目录：读不到真实 .env.local
-            iso.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
-            Fake.reply, Fake.during, Fake.last_body = (200, ok_body("OK")), None, b""
-            env = {k: v for k, v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "DS_ORI_PARA_API_KEY", "PDRS_DEEPSEEK_CHANNEL")}
-            env.update(env_extra)
-            r = subprocess.run([sys.executable, "-I", str(iso), "--channel", "official", "--prompt", str(tmp / "task.md"),
-                                "--out", str(tmp / "out.md"), "--api", api, "--timeout", "5"],
-                               capture_output=True, text=True, env=env, cwd=tmp)
-            sent = json.loads(Fake.last_body or b"{}").get("model")
-            ok = r.returncode == want_code and (want_model is None or sent == want_model) and FAKE_KEY not in r.stderr + r.stdout
-            if want_code == 0:
-                ok = ok and Fake.last_key == FAKE_KEY  # 发出去的是 DS_ORI_PARA_API_KEY 的值
-            if want_code == 2:
-                ok = ok and "DS_ORI_PARA_API_KEY" in r.stderr
-            print(f"{'PASS' if ok else 'FAIL'} {label} exit={r.returncode} model={sent}")
-            fails += not ok
-
-    # 端点常量与 --api 限本机
-    ok = rd.CHANNELS["official"][0] == "https://api.deepseek.com/anthropic/v1/messages" and rd.CHANNELS["llm-center"][0] == rd.API
+    # 端点常量与 --api 限本机（官方通道已删，只剩 llm-center）
+    ok = list(rd.CHANNELS) == ["llm-center"] and rd.CHANNELS["llm-center"][0] == rd.API
     print(f"{'PASS' if ok else 'FAIL'} 通道端点常量")
     fails += not ok
-    r = run(Path(tempfile.mkdtemp()), "https://evil.example/", "--channel", "official")
+    r = run(Path(tempfile.mkdtemp()), "https://evil.example/")
     ok = r.returncode == 2 and "本机测试地址" in r.stderr
     print(f"{'PASS' if ok else 'FAIL'} --api 非本机拒绝 exit={r.returncode}")
     fails += not ok
