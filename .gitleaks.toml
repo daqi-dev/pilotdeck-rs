@@ -1,89 +1,94 @@
-# gitleaks 配置：继承默认规则，只按精确值放行已知非密钥。
+# gitleaks 配置：继承默认规则，按值放行已知非密钥。
+# 8 条值级条目（7 条哈希 + 1 条 RFC 6455 nonce）用 regexTarget="secret" + ^…$ 精确放行；
+# 5 条 PEM 片段条目是唯一例外，只用 match 子串语义——判据是「解码后真是私钥 DER 的开头」
+# （SEQUENCE + INTEGER 版本号 0/1 + AlgorithmIdentifier/私钥 OCTET STRING），不是按值的形状或前缀分桶，
+# 所以大写 hex / 128-hex / 带前缀的 sha256:… / 普通长 base64 都进不了这个桶。
+# 口径由 scripts/check-gitleaks-allowlist.py 机检（CI 静态 + 变异负控；行为负控需本机 gitleaks）。
 # 注意：全局 allowlist 的 paths 会整文件跳过扫描（8.30 实测），因此这里只用值，不用路径。
 [extend]
 useDefault = true
 
 [[allowlists]]
-description = "A6.8 upload 夹具的 idempotencyKeyHash = sha256(\"once\")（generate.mts 固定幂等键生成），不是凭据"
-regexTarget = "match"
-regexes = ['''200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e''']
+description = "A6.8 upload 夹具的 idempotencyKeyHash = sha256(\"once\")（generate.mts 固定幂等键生成），不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
+regexes = ['''^200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e$''']
 
 [[allowlists]]
-description = "A8.2-pr1 upload-gateway 夹具的 idempotencyKeyHash = sha256(\"key\")（generate.mts:207 固定幂等键 'key'），可用 printf key | shasum -a 256 复算，不是凭据"
-regexTarget = "match"
-regexes = ['''2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683''']
+description = "A8.2-pr1 upload-gateway 夹具的 idempotencyKeyHash = sha256(\"key\")（generate.mts:220 固定幂等键 'key'），可用 printf key | shasum -a 256 复算，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
+regexes = ['''^2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683$''']
 
 [[allowlists]]
-description = "A6.4-pr2a model-cost 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件的 SHA-256（键名含 Token 触发 generic-api-key），可用 shasum -a 256 resources/PilotDeck/<path> 复算，不是凭据"
-regexTarget = "match"
+description = "A6.4-pr2a model-cost 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件的 SHA-256（键名含 Token 触发 generic-api-key），可用 shasum -a 256 resources/PilotDeck/<path> 复算，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
 regexes = [
-  '''886914cd342433be20c2ba58f832a3f59c91b88a69767fb459484d7b20475ad1''',
-  '''ed0bf548742f52f8f309b405301b50b8b6ed735bd19ff87a29111d1cc8878a02''',
-  '''539e7a0473b88138321f27979ecc21a6410dc4b7f0ff382f06e81ee4a2d0777d''',
-  '''2497f0dd388c88452c98091e6a9f29260fb620d66b599c9207d2d163be5d74fa''',
+  '''^886914cd342433be20c2ba58f832a3f59c91b88a69767fb459484d7b20475ad1$''',
+  '''^ed0bf548742f52f8f309b405301b50b8b6ed735bd19ff87a29111d1cc8878a02$''',
+  '''^539e7a0473b88138321f27979ecc21a6410dc4b7f0ff382f06e81ee4a2d0777d$''',
+  '''^2497f0dd388c88452c98091e6a9f29260fb620d66b599c9207d2d163be5d74fa$''',
 ]
 
 [[allowlists]]
-description = "A6.3-pr2 config-snapshot 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件 resolveCredentials.ts / providerCredentialScope.ts 的 SHA-256（文件名含 Credential 触发 generic-api-key），可用 git show cc7c4e6:<path> | shasum -a 256 复算，不是凭据"
-regexTarget = "match"
+description = "A6.3-pr2 config-snapshot 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件 resolveCredentials.ts / providerCredentialScope.ts 的 SHA-256（文件名含 Credential 触发 generic-api-key），可用 git show cc7c4e6:<path> | shasum -a 256 复算，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
 regexes = [
-  '''bc02317428c4ab6959a8addfbc62ae966d42db83ab1c6a3736c620a637d4359b''',
-  '''cf9b1f894a7fc3b1e52cb4dde6514555bde96cfa9b4d64f68ae85940f76e17ae''',
+  '''^bc02317428c4ab6959a8addfbc62ae966d42db83ab1c6a3736c620a637d4359b$''',
+  '''^cf9b1f894a7fc3b1e52cb4dde6514555bde96cfa9b4d64f68ae85940f76e17ae$''',
 ]
 
 [[allowlists]]
-description = "A6.6-pr2 compaction / A6.7-pr5 async-hooks 夹具 sourceSha256（import 传递闭包）：固定基线 cc7c4e6 公开源文件 outputTokenRetry.ts / authToken.ts / tokenLimitParsing.ts / RouterTokenMeter.ts / countTokens.ts 的 SHA-256（文件名含 Token 触发 generic-api-key），已用 git show cc7c4e6:<path> | shasum -a 256 复算一致，不是凭据"
-regexTarget = "match"
+description = "A6.6-pr2 compaction / A6.7-pr5 async-hooks 夹具 sourceSha256（import 传递闭包）：固定基线 cc7c4e6 公开源文件 outputTokenRetry.ts / authToken.ts / tokenLimitParsing.ts / RouterTokenMeter.ts / countTokens.ts 的 SHA-256（文件名含 Token 触发 generic-api-key），已用 git show cc7c4e6:<path> | shasum -a 256 复算一致，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
 regexes = [
-  '''e8547f19c9a0ea8694a5e3d69fea2c5fc1ac8edf2c7985dfb159b0e35c933c73''',
-  '''655d743fa4230b0cf5fe7bfa0c8aacaa21489463e0b9b8e700c6bfad0b374741''',
-  '''78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959''',
-  '''5b2dfda51cbcd6cd2a161c46cec1664c3106caeaae964a5eb70036862257aced''',
-  '''491823e98e155481cac880726797f6830a612d3396f4b4101726dd13c16c9a74''',
+  '''^e8547f19c9a0ea8694a5e3d69fea2c5fc1ac8edf2c7985dfb159b0e35c933c73$''',
+  '''^655d743fa4230b0cf5fe7bfa0c8aacaa21489463e0b9b8e700c6bfad0b374741$''',
+  '''^78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959$''',
+  '''^5b2dfda51cbcd6cd2a161c46cec1664c3106caeaae964a5eb70036862257aced$''',
+  '''^491823e98e155481cac880726797f6830a612d3396f4b4101726dd13c16c9a74$''',
 ]
 
 [[allowlists]]
-description = "A6.4-pr5 model-stream 夹具 tls.json：generate.mts 用 openssl 一次性生成、仅给 127.0.0.1 本地 TLS 冒烟的测试 CA/叶子私钥（P-256，自签 CA 不受任何系统信任），不是凭据"
+description = "A6.4-pr5 model-stream 夹具 src/pilotdeck-gateway/tests/fixtures/model-stream/tls.json：generate.mts 用 openssl 一次性生成、仅给 127.0.0.1 本地 TLS 冒烟的测试 CA/叶子私钥（P-256，自签 CA 不受任何系统信任），不是凭据；本条按 match 子串语义放行（放行的是这把私钥 DER 的 base64 前缀，锚定整把私钥不现实），有意为之"
 regexTarget = "match"
 regexes = ['''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFPHGUNt2ECuu2dlb''']
 
 [[allowlists]]
-description = "A6.5-MCP-HTTPS-001 夹具 untrusted-tls.json：openssl 一次性生成、仅给 127.0.0.1 本地 TLS 冒烟的自签叶子私钥（P-256，无 CA 签、不受任何信任库信任），不是凭据"
+description = "A6.5-MCP-HTTPS-001 夹具 src/pilotdeck-gateway/tests/fixtures/mcp-https/untrusted-tls.json：openssl 一次性生成、仅给 127.0.0.1 本地 TLS 冒烟的自签叶子私钥（P-256，无 CA 签、不受任何信任库信任），不是凭据；本条按 match 子串语义放行（放行的是这把私钥 DER 的 base64 前缀，锚定整把私钥不现实），有意为之"
 regexTarget = "match"
 regexes = ['''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgX2FIVINH3Qi2aPeD''']
 
 [[allowlists]]
-description = "A6.5-pr9b html-markdown 夹具：domino 2.2.0 lib/DOMTokenList.js 的 SHA-256，已用本地安装源码逐字节复算；文件名含 Token 触发 generic-api-key，不是凭据"
-regexTarget = "match"
-regexes = ['''d0454d191c3bd2e23fda13b0bde13cbbeb47e2fc26fa10e6b7403684b4adc59a''']
+description = "A6.5-pr9b html-markdown 夹具：domino 2.2.0 lib/DOMTokenList.js 的 SHA-256，已用本地安装源码逐字节复算；文件名含 Token 触发 generic-api-key，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
+regexes = ['''^d0454d191c3bd2e23fda13b0bde13cbbeb47e2fc26fa10e6b7403684b4adc59a$''']
 
 [[allowlists]]
-description = "A6.5-MCP-HTTP-LIFETIME-001（#551）夹具 proxy-tls.json：openssl 一次性生成、仅给 0.0.0.0 本地 TLS 冒烟的测试 CA/叶子 EC 私钥（P-256，自签 CA 不受任何系统信任），不是凭据；例外是这把私钥的完整 PEM 正文（含夹具 JSON 里的转义换行），另一把 P-256 私钥仍会命中"
+description = "A6.5-MCP-HTTP-LIFETIME-001（#551）夹具 src/pilotdeck-gateway/tests/fixtures/mcp-proxy/proxy-tls.json：openssl 一次性生成、仅给 0.0.0.0 本地 TLS 冒烟的测试 CA/叶子 EC 私钥（P-256，自签 CA 不受任何系统信任），不是凭据；例外是这把私钥的完整 PEM 正文（含夹具 JSON 里的转义换行），另一把 P-256 私钥仍会命中。本条按 match 子串语义放行（放行的是整段 PEM 正文的转义形态，含 \n 转义，无法写成值级精确字面量），有意为之"
 regexTarget = "match"
 regexes = ['''MHcCAQEEIB47aFBupvRa9/Vwmz8s\+a1D\+c51rKAXY03D6qsjlxOloAoGCCqGSM49\\nAwEHoUQDQgAEYILd5e5OgILFrySL6YdrBg8VY9xEIqgZawws/p/RmedCq/7j1Cf4\\nfPaV1tKEU/LjST4ze6R\+jek/OeyXzJJvQQ==''']
 
 [[allowlists]]
-description = "A6.5-MCP-PROXY-HTTPS-001（#676）夹具 mcp-proxy-schemes/tls.json：一次性生成、只给 127.0.0.1 / mcp.test 本地代理 TLS 对拍的测试 CA（CN=pdrs-676-test-CA，自签、不受任何系统信任）叶子 RSA 私钥，不是凭据；例外只限这把私钥的完整 PEM 正文（夹具 JSON 转义换行），其他私钥仍会命中"
+description = "A6.5-MCP-PROXY-HTTPS-001（#676）夹具 src/pilotdeck-gateway/tests/fixtures/mcp-proxy-schemes/tls.json：一次性生成、只给 127.0.0.1 / mcp.test 本地代理 TLS 对拍的测试 CA（CN=pdrs-676-test-CA，自签、不受任何系统信任）叶子 RSA 私钥，不是凭据；例外只限这把私钥的完整 PEM 正文（夹具 JSON 转义换行），其他私钥仍会命中。本条按 match 子串语义放行（同上：放行的是整段 PEM 正文的转义形态），有意为之"
 regexTarget = "match"
 regexes = ['''MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDE9f7T40zuxF4f\\n0a/rkyeFb/D4e9sIOSVxvA8rOs3jY9zJUfSxe/2apH487iHKx5yYcychqN9xpZ77\\nh1XJetOb0hZRKR/7HcMPuUYqkwOsBU07rSVJVn6O46nVXH2q/AEbwhzJTiQFw4Gc\\nzo8xR/z9HI1f31rHT2V/pcyywQIMFnA7oN3GPpPZoiQEo8jzBKkyaNjDSAmj4JIS\\nSaXiH7uqzoeyX4h8NVqqM7GFFRJ5vPCDpg3XCNwcAcxFMByfyZL6E/4aNeFCzsB6\\nscic8zYm5hbf8Z2lY1KbZFwP79YHV2EgFQ8ptpY3I\+R69PuibZ1Ns3B41EFoejHr\\nTav2ux4pAgMBAAECggEAF6Ggsx1B3yFwHh73XZtEqgPH7JZWra5GlfZvdvs5lfNm\\nu4Bh7JQQ9deP3mFfbFAmE5v4WVdkxMLPeAQROMjr//V1UERQBh34aAftmWDVd1OV\\nBEiWUU3nhh8eYr8zxDqzathPwh7mH0tpXw4g\+9OUcO12sGaw4no\+FjJHRLi31Ul7\\nGQ8ErBViTfdtBYkqLx2JgJKZs9gDkbDz\+Zc4pvQkiXK0du9a7r8awg48ItLDFb4a\\nNBas\+LQx\+sFvzZBqFiA9geD/pCASk8Gm02vfaMeBvKFfc8eld8MPdpfa/R58tu3z\\nBZQvkcwIsDe\+IzUqg8Z8m6ctLgBB5U2rW762u5YxQQKBgQD\+8i4EqXRi2PnZsE3I\\nWuUmreEZMuEl5kNxM8Ao1LnbB\+knWpZ0/BU9xNyTp3Wrr5w3Qk/1jnnFz4nH535i\\nan3smChhlDfB8J2lU\+9mPlk\+63hYXeamJPD9hGgcQCPs3Ym5HUvCD8fzjr7f79Yd\\ngiCU6/A7otwSyhMnLp3GZYN36QKBgQDFxnKTeDuHuBFr5JYEwJ3onwEBkjnoIh3a\\nfeStSLDkrKvoaymqPHmMAPP1Pq68G/MjLnLzXRW0VxwLrM4I7gWHq1DgFmFVU5er\\nlITVIuHiOngAQpPtGUOqsH5bUKl/1fvnt0eiR3jWHTctl2Fwh2adOViOFMDwtJzH\\nurYCkuzMQQKBgEuumwiZQUqivLDpzH1gtkvgLEVtvDai/3xYb3/vfmjOFWGwW5/I\\nwYl/qjdO6/iWfhpNXi04KWAWdwFX8EXI9S7KEJq/BDpXcoUEwLmqYpXyEtywq2rA\\n5qVrq/hO9hs3vM2uK7IlOydLRdB2gyppWcC7taoOc6RERqFIDmA5/GgZAoGAVQQ1\\nhIcOsAzEEGk2w9w5BSI0wIQnOE5SHvY3MvYodGR1kXdfdbqBVVmjhSzo2Bv7rIfv\\nCgZdqiQ3/hzOhLAs2GEgZvO364H/lNZHM4fHKgSQSSxVgnp1yA4OgxptgnJt0vHK\\nbUvj\+cadTY/hZwoNZlCcbJcnSVGag5ETZI/cEwECgYEA9ZKniYUiw7H64RT5zy7P\\nLYfAhHO7zMLF3MLMI3nD4jI74lzv\+bSAm\+DbFpMMwBCA\+jsTOLCwy35XsmwNrM/u\\nGGOT6U60jOeMpZeqWiIVr2WbIWVeKL/j8q3l4M4fXerHq1QQMR6KoaL/xCS/F9bD\\nic0z\+bxe6TEZyXNy2XYXCm8=''']
 
 [[allowlists]]
-description = "#411 provider-http-boundaries 夹具 tls.json：一次性生成、仅给 127.0.0.1 本地 TLS 对拍的测试叶子私钥（CA 私钥已丢弃，证书不受任何系统信任），不是凭据；例外只限这把私钥的正文前缀，其他私钥仍会命中"
+description = "#411 provider-http-boundaries 夹具 src/pilotdeck-gateway/tests/fixtures/provider-http-boundaries/tls.json：一次性生成、仅给 127.0.0.1 本地 TLS 对拍的测试叶子私钥（CA 私钥已丢弃，证书不受任何系统信任），不是凭据；例外只限这把私钥的正文前缀，其他私钥仍会命中。本条按 match 子串语义放行（放行的是这把私钥 DER 的 base64 前缀，锚定整把私钥不现实），有意为之"
 regexTarget = "match"
 regexes = ['''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg75Tbl\+vlDCYAgiJM''']
 
 [[allowlists]]
-description = "#280 metadata-from-env 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件 ApiServerChannel.ts / api-server-render.ts / DiscordChannel.ts / DiscordSessionMapper.ts / discord-render.ts 的 SHA-256（路径含 Api / Discord 触发 generic-api-key、discord-api-token），可用 git show cc7c4e6:<path> | shasum -a 256 复算，不是凭据"
-regexTarget = "match"
+description = "#280 metadata-from-env 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件 ApiServerChannel.ts / api-server-render.ts / DiscordChannel.ts / DiscordSessionMapper.ts / discord-render.ts 的 SHA-256（路径含 Api / Discord 触发 generic-api-key、discord-api-token），可用 git show cc7c4e6:<path> | shasum -a 256 复算，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
 regexes = [
-  '''b24f2fcdab8c34c5d3382f72df3842f4eb4b55f26600c73c691e39d2bb0231a0''',
-  '''77fcaf9ce303019a61779a90657bc7a41cd084af1f057b85fdbfc03a6617bb7e''',
-  '''b556f9ea35db4489c087bed79844bcd01798a21d665ee02fe86eccc87fda25b1''',
-  '''3b260a848c48c218442735d0cf05ee5acc1570a1d0d75f468b7edd98e64a28a5''',
-  '''2b1a02ef3c67a4b45df532c169e2812d1dd9214fcfd95c5b32eaed5a282114de''',
+  '''^b24f2fcdab8c34c5d3382f72df3842f4eb4b55f26600c73c691e39d2bb0231a0$''',
+  '''^77fcaf9ce303019a61779a90657bc7a41cd084af1f057b85fdbfc03a6617bb7e$''',
+  '''^b556f9ea35db4489c087bed79844bcd01798a21d665ee02fe86eccc87fda25b1$''',
+  '''^3b260a848c48c218442735d0cf05ee5acc1570a1d0d75f468b7edd98e64a28a5$''',
+  '''^2b1a02ef3c67a4b45df532c169e2812d1dd9214fcfd95c5b32eaed5a282114de$''',
 ]
 
 [[allowlists]]
-description = "#1351 native-ws-upgrade-budget 金样 oracle.json：RFC 6455 §1.3 公开示例 nonce（the sample nonce 的 base64），非密钥；与 scripts/gateway-parity/driver.mts:92、src/pilotdeck-gateway/tests/common/native_ws_sample.rs:2、src/pilotdeck-gateway/tests/fixtures/native-ws-entry/sample.mts:2 的 gitleaks:allow 同值先例一致，JSON 不能写行内注释故改值级放行。按 Secret 值两端锚定（regexTarget=secret），只放行 gitleaks 抽出的 Secret 恰为该固定 base64 值的命中（按值匹配、不限出现位置），不依赖头名或 JSON 转义等语法形态；Secret 不等于该值的命中（更长值、同头不同值）仍会命中"
+description = "#1351 native-ws-upgrade-budget 金样 oracle.json：RFC 6455 §1.3 公开示例 nonce（the sample nonce 的 base64），非密钥；与 scripts/gateway-parity/driver.mts:92、src/pilotdeck-gateway/tests/common/native_ws_sample.rs:2、src/pilotdeck-gateway/tests/fixtures/native-ws-entry/sample.mts:2 的 gitleaks:allow 同值先例一致，JSON 不能写行内注释故改值级放行。按 Secret 值两端锚定（regexTarget=secret），只放行 gitleaks 抽出的 Secret 恰为该固定 base64 值的命中（按值匹配、不限出现位置），不依赖头名或 JSON 转义等语法形态；Secret 不等于该值的命中（更长值、同头不同值）仍会命中。该保证由仓内机检负控守着：scripts/check-gitleaks-allowlist.py（静态口径 + 行为负控；去掉 ^…$ 或改回 match 即判红）"
 regexTarget = "secret"
 regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
