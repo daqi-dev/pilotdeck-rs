@@ -918,6 +918,23 @@ async function run(definition: Definition) {
 
 const out = resolve(process.argv[2]!);
 await mkdir(out, { recursive: true });
+// #1339 fix-r2 (P1): the replay suite binds these same fixed ports, and this
+// generator writes the committed oracle. A listener left on one of them would
+// be recorded as the expectation (a refused probe becomes `{"refused":false}`,
+// a taken port becomes an EADDRINUSE start error), and both determinism runs
+// would hit it, so the two-run check cannot catch it. Refuse to record while
+// any case port is taken instead of publishing a corrupted oracle.
+const portIsFree = (port: number) => new Promise<boolean>((done) => {
+  const probe = net.createServer();
+  probe.once('error', () => done(false));
+  probe.listen(port, '127.0.0.1', () => probe.close(() => done(true)));
+});
+for (const definition of definitions) {
+  assert.ok(
+    await portIsFree(definition.port),
+    `#1339 port ${definition.port} for ${definition.name} is already in use; refusing to record an oracle from a taken port`,
+  );
+}
 const cases: any[] = [];
 for (const definition of definitions) {
   const first = await run(definition);

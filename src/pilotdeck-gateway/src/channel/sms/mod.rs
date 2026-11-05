@@ -541,8 +541,19 @@ impl ChannelAdapter for SmsChannel {
 /// platform accepts IPv4 on it, else `0.0.0.0` (probed on the pinned Node
 /// v22.22.0: `address()` is `::` and both 127.0.0.1 and ::1 connect).
 async fn bind_listener(host: &str, port: u16) -> std::io::Result<TcpListener> {
-    if host.is_empty() && !crate::mutants::on("sms-empty-host-bind-all") {
-        if let Ok(listener) = TcpListener::bind(("[::]", port)).await {
+    if host.is_empty() {
+        // #1339 fix-r2 (P2): `"[::]"` is not a host Rust resolves (the
+        // bracket form only parses as a socket-address string, not through
+        // `ToSocketAddrs`), so the dual-stack bind has to spell `"::"`.
+        // The switch pins loopback instead: the pre-fix shape bound the empty
+        // host, whose lookup fails on macOS but resolves to 127.0.0.1 on
+        // Linux — a platform-dependent kill.
+        let all: &str = if crate::mutants::on("sms-empty-host-bind-all") {
+            "::1"
+        } else {
+            "::"
+        };
+        if let Ok(listener) = TcpListener::bind((all, port)).await {
             return Ok(listener);
         }
         return TcpListener::bind(("0.0.0.0", port)).await;
