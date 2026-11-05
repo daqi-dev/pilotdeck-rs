@@ -1372,7 +1372,9 @@ def _exit_code_shaped(node):
     if isinstance(node, ast.Constant):
         return isinstance(node.value, int) and not isinstance(node.value, bool)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        return node.func.id == 'int'
+        # ``return bool(x)`` leaves the process with 0 when x is falsy, the same
+        # inline computation as ``int(...)`` (MiniMax sibling r6 P2-2).
+        return node.func.id in ('int', 'bool')
     if isinstance(node, ast.IfExp):
         return _exit_code_shaped(node.body) and _exit_code_shaped(node.orelse)
     return False
@@ -1461,6 +1463,20 @@ def _name_assigns_clean(name, bindings, seen=None):
 
 
 _SENTINEL_POINTS = frozenset({('scripts/gateway-parity/_guard.py', '_failure')})
+
+
+def _bare_verdict_values(node):
+    """Values written to a bare ``verdict`` name inside a registered point.
+
+    ``verdict = 'PASS'`` (a plain local name, not a dict key) claims the batch
+    verdict exactly like ``status = 'PASS'``; the write family accepted only the
+    ``status`` spelling, so the other one walked through (MiniMax sibling r6
+    P2-3).  Enumeration keeps its own narrower rule on purpose: a per-case
+    helper's ``verdict`` local must not turn into an aggregation point.
+    """
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    return [node.value for target in targets for name in _target_names(target)
+            if name == 'verdict']
 
 
 def _summary_slot_violations(summary, bindings, lineno):
@@ -1917,14 +1933,23 @@ def unshared_status_slots(function, point=None, module=None):
                 if node.value is None:
                     continue
                 _status_write_values(node.target, node.value, written)
-                if not any(_name_feeds_shared(name, function)
-                           for name in _target_names(node.target)):
+                if any(_name_feeds_shared(name, function)
+                       for name in _target_names(node.target)):
+                    # Same split as the Assign branch: a fresh leaf verdict stays
+                    # legal, a summary rebuilt from an existing one is judged --
+                    # ``report: dict = {**report, 'status': 'PASS'}`` was exempt
+                    # only because it was annotated (MiniMax sibling r6 P2-1).
+                    for summary in _returned_summary_dicts(node.value):
+                        if any(key is None for key, _item in _dict_pairs(summary)):
+                            written.extend(_status_slot_values(summary))
+                else:
                     for summary in _returned_summary_dicts(node.value):
                         written.extend(_status_slot_values(summary))
             elif isinstance(node.op, ast.BitOr):
                 for summary in _returned_summary_dicts(node.value):
                     written.extend(_status_slot_values(summary))
                 _status_write_values(node.target, node.value, written)
+            written.extend(_bare_verdict_values(node))
             if any(_assigns_clean_status(item, bindings) for item in written):
                 violations.append(
                     f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
@@ -2421,6 +2446,17 @@ def aggregation_audit():
         "    if report.get('special'):\n"
         "        sys.exit(0 if report.get('cells') else 1)\n"
         "    return common.aggregate_status(report['status'])[1]\n"
+        "def _ann_rebuilt_summary(report):\n"
+        "    report: dict = {**report, 'status': 'PASS'}\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _bare_verdict(report):\n"
+        "    verdict = 'PASS'\n"
+        "    print(report)\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
+        "def _bool_exit(report):\n"
+        "    if report.get('special'):\n"
+        "        return bool(report.get('cells'))\n"
+        "    return common.aggregate_status(report['status'])[1]\n"
         "def _return_exit_call(report):\n"
         "    if report.get('special'):\n"
         "        return sys.exit(0)\n"
@@ -2603,7 +2639,16 @@ def aggregation_audit():
             ('_exit_conditional', 'inline exit code 0 if',
              'a zero arm inside an exit call argument'),
             ('_return_exit_call', 'inline optimistic exit (sys.exit(0))',
-             'an exit call in return position')):
+             'an exit call in return position'),
+            # #892 r8: three more false-pass shapes from the r6 reviews -- an
+            # annotated rebuild of the summary, a bare ``verdict`` write and a
+            # ``bool(...)`` exit code (MiniMax sibling r6 P2-1/P2-2/P2-3).
+            ('_ann_rebuilt_summary', "inline status/exit assignment {**report",
+             'an annotated summary rebuilt from the existing one'),
+            ('_bare_verdict', "inline status/exit assignment 'PASS'",
+             'a clean status written to a bare ``verdict`` name'),
+            ('_bool_exit', 'inline exit code bool(',
+             'an exit code computed with bool()')):
         probe = next((node for node in probe892.body
                       if getattr(node, 'name', None) == probe_name), None)
         found_slots = unshared_status_slots(probe, None, probe_modules) if probe else []

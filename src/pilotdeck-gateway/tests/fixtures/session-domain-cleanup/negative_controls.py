@@ -631,6 +631,30 @@ def calibrate_return_exit_call(rows):
         'aggregation-audit: exit call in return position flagged, passed=False')
 
 
+def calibrate_ann_rebuilt(rows):
+    """#892 r8: an annotated ``report: dict = {**report, ...}`` rebuild is the
+    same write (MiniMax sibling r6 P2-1)."""
+    return _controls_main_needle(
+        rows, "status slot 'PASS'",
+        'aggregation-audit: annotated rebuild flagged, passed=False')
+
+
+def calibrate_bare_verdict(rows):
+    """#892 r8: ``verdict = 'PASS'`` claims the batch verdict without a dict
+    key (MiniMax sibling r6 P2-3)."""
+    return _controls_main_needle(
+        rows, "inline status/exit assignment 'PASS'",
+        'aggregation-audit: bare verdict write flagged, passed=False')
+
+
+def calibrate_bool_exit(rows):
+    """#892 r8: ``return bool(x)`` exits 0 on a falsy value
+    (MiniMax sibling r6 P2-2)."""
+    return _controls_main_needle(
+        rows, 'inline exit code bool(',
+        'aggregation-audit: bool exit code flagged, passed=False')
+
+
 def calibrate_early_return_branch(rows):
     """#892 r5: a zero branch that returns before the shared rebind is inline
     even though a later sibling overwrites the name (MiniMax boundary P0-1)."""
@@ -1168,6 +1192,20 @@ MUTATIONS = [
      CT_EXIT,
      "        if report.get('special'):\n"
      "            return sys.exit(0)\n" + CT_EXIT),
+    # #892 fix-r8: three more write/exit spellings from the r6 reviews.
+    ('calibrate-ann-rebuilt', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            report: dict = {**report, 'status': 'PASS'}\n" + CT_EXIT),
+    ('calibrate-bare-verdict', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            verdict = 'PASS'\n"
+     "            print(verdict)\n" + CT_EXIT),
+    ('calibrate-bool-exit', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            return bool(report.get('cells'))\n" + CT_EXIT),
     ('calibrate-status-update-kwarg', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update(status='PASS')\n"),
@@ -1384,6 +1422,12 @@ JUDGES = {
         'aggregation-audit', calibrate_exit_conditional, False, ()),
     'calibrate-return-exit-call': (
         'aggregation-audit', calibrate_return_exit_call, False, ()),
+    'calibrate-ann-rebuilt': (
+        'aggregation-audit', calibrate_ann_rebuilt, False, ()),
+    'calibrate-bare-verdict': (
+        'aggregation-audit', calibrate_bare_verdict, False, ()),
+    'calibrate-bool-exit': (
+        'aggregation-audit', calibrate_bool_exit, False, ()),
     'calibrate-status-update-kwarg': (
         'aggregation-audit', calibrate_status_update_kwarg, False, ()),
     'calibrate-clean-argument': (
