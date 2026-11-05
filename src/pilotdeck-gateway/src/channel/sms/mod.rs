@@ -181,13 +181,31 @@ struct SmsShared {
 
 impl SmsShared {
     fn log(&self, level: &str, message: String) {
-        if let Some(logger) = self
+        if crate::mutants::on("sms-log-under-lock") {
+            // The pre-fix shape kept for the negative control: the callback
+            // runs while the guard is alive, so a panicking logger poisons the
+            // mutex for every later call.
+            if let Some(logger) = self
+                .boundaries
+                .lock()
+                .expect("#1339 boundaries mutex")
+                .logger
+                .clone()
+            {
+                logger(level, &message);
+            }
+            return;
+        }
+        // #1339 fix-r1: the injected callback runs after the guard is
+        // released (`channel/server.rs` runs its callbacks outside both
+        // locks); the `let` binding ends the guard before the call.
+        let logger = self
             .boundaries
             .lock()
             .expect("#1339 boundaries mutex")
             .logger
-            .clone()
-        {
+            .clone();
+        if let Some(logger) = logger {
             logger(level, &message);
         }
     }
@@ -440,7 +458,7 @@ impl ChannelAdapter for SmsChannel {
             let listener = if bad_port {
                 None
             } else {
-                match TcpListener::bind((host_text.as_str(), port as u16)).await {
+                match bind_listener(&host_text, port as u16).await {
                     Ok(listener) => Some(listener),
                     Err(error) => {
                         shared.log(
@@ -498,7 +516,14 @@ impl ChannelAdapter for SmsChannel {
                                         .await;
                                 });
                             }
-                            Err(_) => continue,
+                            // #1339 fix-r1: a persistent accept error (fd
+                            // exhaustion) must not spin the worker hot — the
+                            // TS process would crash on the server 'error'
+                            // event; the port backs off one tick instead.
+                            Err(_) => {
+                                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                                continue;
+                            }
                         }
                     }
                 }
@@ -511,12 +536,37 @@ impl ChannelAdapter for SmsChannel {
     }
 }
 
-/// Node's `Error: listen EADDRINUSE: ...` line for the bind failure.
+/// Node `listen(port, host)` with the empty host: `""` is falsy for Node's
+/// host check, so it binds every address — the dual-stack `::` when the
+/// platform accepts IPv4 on it, else `0.0.0.0` (probed on the pinned Node
+/// v22.22.0: `address()` is `::` and both 127.0.0.1 and ::1 connect).
+async fn bind_listener(host: &str, port: u16) -> std::io::Result<TcpListener> {
+    if host.is_empty() && !crate::mutants::on("sms-empty-host-bind-all") {
+        if let Ok(listener) = TcpListener::bind(("[::]", port)).await {
+            return Ok(listener);
+        }
+        return TcpListener::bind(("0.0.0.0", port)).await;
+    }
+    TcpListener::bind((host, port)).await
+}
+
+/// Node's `Error: listen <CODE>: <message> <host>:<port>` line for the bind
+/// failure (probed on the pinned Node v22.22.0 for EADDRINUSE,
+/// EADDRNOTAVAIL and EACCES).
 fn listen_error(error: &std::io::Error, host: &str, port: f64) -> String {
     let port_text = crate::js_value::number_string(port);
+    if crate::mutants::on("sms-listen-error-node-text") {
+        return format!("Error: listen {error}: {host}:{port_text}");
+    }
     match error.kind() {
         std::io::ErrorKind::AddrInUse => {
             format!("Error: listen EADDRINUSE: address already in use {host}:{port_text}")
+        }
+        std::io::ErrorKind::AddrNotAvailable => {
+            format!("Error: listen EADDRNOTAVAIL: address not available {host}:{port_text}")
+        }
+        std::io::ErrorKind::PermissionDenied => {
+            format!("Error: listen EACCES: permission denied {host}:{port_text}")
         }
         _ => format!("Error: listen {error}: {host}:{port_text}"),
     }
@@ -610,13 +660,39 @@ async fn handle_request(
         }
     }
     if let Some(error) = read_error {
-        return Ok(plain_response(400, &format!("Bad Request: Error: {error}")));
+        // #1339 fix-r1: probed on the pinned Node v22.22.0
+        // (probes/truncated-body.txt, 3/3 deterministic) — the handler's
+        // `Bad Request: <e>` body never reaches the wire because the
+        // truncated request kills the socket first; the observable bytes
+        // are the bare 400 with an empty body.
+        let body = if crate::mutants::on("sms-body-error-text") {
+            format!("Bad Request: Error: {error}")
+        } else {
+            String::new()
+        };
+        return Ok(plain_response(400, &body));
     }
 
     let params = if content_type.contains("application/json") {
         match pilotdeck_protocol::parse_json(&String::from_utf8_lossy(&body)) {
             Ok(value) => match &value {
                 JsValue::Object(object) => object.clone(),
+                JsValue::Null if !crate::mutants::on("sms-json-null-body") => {
+                    // #1339 fix-r1: literal JSON `null` — on TS the socket
+                    // hangs (probes/null-body.txt: no response byte, the
+                    // TypeError never reaches the wire), so the oracle
+                    // cannot pin it. Rust reports the exact TypeError and
+                    // destroys the connection; the hang-vs-destroy deviation
+                    // is ledgered in A8.3-CH-SMS-007. Inside the signature
+                    // gate `Object.keys(params)` throws first.
+                    let message = if !auth_token.is_empty() && !signature.is_empty() {
+                        "TypeError: Cannot convert undefined or null to object"
+                    } else {
+                        "TypeError: Cannot read properties of null (reading 'Body')"
+                    };
+                    report_unhandled(&shared, message);
+                    return Err(DestroyConnection);
+                }
                 _ => JsObject::new(),
             },
             Err(_) => return Ok(plain_response(400, "Bad Request")),
@@ -627,7 +703,10 @@ async fn handle_request(
 
     let host_text = String::from_utf16_lossy(host.units());
     let public_text = String::from_utf16_lossy(public_url.units());
-    let full_url = if !public_text.is_empty() {
+    // #1339 fix-r1: the recorded `X-Twilio-Signature` values were computed
+    // by the TS-side generator over this exact URL, so the branch choice is
+    // part of the pinned bytes (mutant: ignore `publicUrl`).
+    let full_url = if !public_text.is_empty() && !crate::mutants::on("sms-signature-public-url") {
         format!(
             "{}{}",
             public_text.strip_suffix('/').unwrap_or(&public_text),
@@ -673,15 +752,7 @@ async fn handle_request(
         // `body.trim()` on a non-string is the TS unhandled rejection; the
         // 200 was already written. The Rust port contains it in the
         // connection task and reports it through the recorder.
-        if let Some(recorder) = shared
-            .boundaries
-            .lock()
-            .expect("#1339 boundaries mutex")
-            .record_unhandled
-            .clone()
-        {
-            recorder("TypeError: body.trim is not a function");
-        }
+        report_unhandled(&shared, "TypeError: body.trim is not a function");
         return Ok(response);
     };
 
@@ -767,6 +838,11 @@ fn validate_twilio_signature(
     let mut entries: Vec<(&JsString, &JsValue)> = params.own_entries();
     // `Object.keys(params).sort()` — UTF-16 code unit order.
     entries.sort_by_key(|(a, _)| *a);
+    // #1339 fix-r1 mutant: reversed key order — the recorded oracle
+    // signatures only replay while the port keeps the sort.
+    if crate::mutants::on("sms-signature-key-order") {
+        entries.reverse();
+    }
     let mut data = full_url.to_owned();
     for (key, value) in entries {
         data.push_str(&String::from_utf16_lossy(key.units()));
@@ -813,6 +889,20 @@ fn boundaries(shared: &SmsShared) -> Boundaries {
         .clone()
 }
 
+/// Report through the unhandled recorder with the callback outside the
+/// boundaries lock, like `SmsShared::log`.
+fn report_unhandled(shared: &SmsShared, message: &str) {
+    let recorder = shared
+        .boundaries
+        .lock()
+        .expect("#1339 boundaries mutex")
+        .record_unhandled
+        .clone();
+    if let Some(recorder) = recorder {
+        recorder(message);
+    }
+}
+
 async fn send_reply(shared: &SmsShared, chat_id: &JsString, text: JsString) -> bool {
     let sender = {
         let runtime = shared.runtime.lock().await;
@@ -846,60 +936,62 @@ async fn handle_incoming(
     chat_id: JsString,
     text: JsString,
 ) -> Result<(), ChannelError> {
-    let has_elicitation = {
-        let runtime = shared.runtime.lock().await;
-        runtime.elicitation.has_pending(&chat_id) && boundaries(shared).gateway.is_some()
-    };
-    if has_elicitation {
-        let entry = {
-            let mut runtime = shared.runtime.lock().await;
+    // #1339 fix-r1: `hasPending` + `take` in one lock section — TS runs the
+    // same stretch synchronously, and two sections would let another
+    // webhook turn slip a `clear` between the check and the take.
+    let pending_elicitation = {
+        let mut runtime = shared.runtime.lock().await;
+        if runtime.elicitation.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
             runtime.elicitation.take(&chat_id)
-        };
-        if let Some(entry) = entry {
-            let trimmed = trim_units(text.units());
-            let (response, confirmation) = if trimmed == utf16("0") {
-                let text = if crate::mutants::on("sms-elicit-cancel-text") {
-                    "已取消"
-                } else {
-                    "已取消。"
-                };
-                (
-                    elicitation::cancelled_response(&entry),
-                    Some(JsString::from(text)),
-                )
+        } else {
+            None
+        }
+    };
+    if let Some(entry) = pending_elicitation {
+        let trimmed = trim_units(text.units());
+        let (response, confirmation) = if trimmed == utf16("0") {
+            let text = if crate::mutants::on("sms-elicit-cancel-text") {
+                "已取消"
             } else {
-                (
-                    elicitation::answered_response(&entry, &JsString::from_utf16(trimmed.to_vec())),
-                    None,
-                )
+                "已取消。"
             };
-            let gateway = boundaries(shared)
-                .gateway
-                .expect("#1339 checked before take");
-            match gateway.respond_elicitation(response).await {
-                Err(error) => shared.log(
-                    "error",
-                    format!("sms: elicitation answer error: {}", error.to_js_string()),
-                ),
-                Ok(()) => {
-                    if let Some(confirmation) = confirmation {
-                        send_reply(shared, &chat_id, confirmation).await;
-                    }
+            (
+                elicitation::cancelled_response(&entry),
+                Some(JsString::from(text)),
+            )
+        } else {
+            (
+                elicitation::answered_response(&entry, &JsString::from_utf16(trimmed.to_vec())),
+                None,
+            )
+        };
+        let gateway = boundaries(shared)
+            .gateway
+            .expect("#1339 checked before take");
+        match gateway.respond_elicitation(response).await {
+            Err(error) => shared.log(
+                "error",
+                format!("sms: elicitation answer error: {}", error.to_js_string()),
+            ),
+            Ok(()) => {
+                if let Some(confirmation) = confirmation {
+                    send_reply(shared, &chat_id, confirmation).await;
                 }
             }
         }
         return Ok(());
     }
 
-    let has_permission = {
-        let runtime = shared.runtime.lock().await;
-        runtime.permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some()
+    // #1339 fix-r1: same fusion for `hasPending` + `beginAnswer`.
+    let began = {
+        let mut runtime = shared.runtime.lock().await;
+        if runtime.permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
+            Some(runtime.permissions.begin_answer(&chat_id, &text))
+        } else {
+            None
+        }
     };
-    if has_permission {
-        let begin = {
-            let mut runtime = shared.runtime.lock().await;
-            runtime.permissions.begin_answer(&chat_id, &text)
-        };
+    if let Some(begin) = began {
         match begin {
             BeginAnswer::None => (),
             BeginAnswer::Status(answer) => {
@@ -916,12 +1008,20 @@ async fn handle_incoming(
                 let gateway = boundaries(shared)
                     .gateway
                     .expect("#1339 checked before begin");
+                // #1339 fix-r1: a missing event `requestId` stays real
+                // `undefined` (the JSON record then omits the key), not the
+                // string "undefined".
+                let request_id = entry.request_id.clone();
+                let request_id = if crate::mutants::on("sms-permission-request-id-undefined")
+                    && request_id.is_none()
+                {
+                    Some(JsString::from("undefined"))
+                } else {
+                    request_id
+                };
                 let decision = PermissionDecision {
                     session_key: entry.session_key.clone(),
-                    request_id: entry
-                        .request_id
-                        .clone()
-                        .unwrap_or_else(|| JsString::from("undefined")),
+                    request_id,
                     deny,
                     remember,
                 };
@@ -970,9 +1070,35 @@ async fn handle_incoming(
         return Ok(());
     }
 
-    let already_active = {
-        let runtime = shared.runtime.lock().await;
-        runtime.active_chats.contains(&chat_id)
+    // #1339 fix-r1: `activeChats.has` → `sessionMapper.resolve` → `add` in
+    // one lock section — TS runs the same stretch synchronously; separate
+    // sections could let a parallel webhook for the same chat resolve twice
+    // and double-dispatch. The "already active" log and the `/new` reply
+    // stay outside the lock.
+    enum ActiveOutcome {
+        Skip,
+        NewChat,
+        EmptyMessage,
+        Dispatch(MappedSession),
+    }
+    let (already_active, outcome) = {
+        let mut runtime = shared.runtime.lock().await;
+        let already_active = runtime.active_chats.contains(&chat_id);
+        if already_active && !crate::mutants::on("sms-active-dedupe-off") {
+            (already_active, ActiveOutcome::Skip)
+        } else {
+            let mapped = runtime.mapper.resolve(&chat_id, &text);
+            let outcome = if mapped.command_new && mapped.message.is_empty() {
+                ActiveOutcome::NewChat
+            } else if mapped.message.is_empty() {
+                // TS: `if (!mapped.message) return;`
+                ActiveOutcome::EmptyMessage
+            } else {
+                runtime.active_chats.insert(chat_id.clone());
+                ActiveOutcome::Dispatch(mapped)
+            };
+            (already_active, outcome)
+        }
     };
     if already_active {
         shared.log(
@@ -982,32 +1108,24 @@ async fn handle_incoming(
                 String::from_utf16_lossy(chat_id.units())
             ),
         );
-        if !crate::mutants::on("sms-active-dedupe-off") {
-            return Ok(());
+    }
+    match outcome {
+        ActiveOutcome::Skip => Ok(()),
+        ActiveOutcome::NewChat => {
+            send_reply(shared, &chat_id, JsString::from("已创建新会话。")).await;
+            Ok(())
+        }
+        ActiveOutcome::EmptyMessage => Ok(()),
+        ActiveOutcome::Dispatch(mapped) => {
+            let result =
+                process_message(shared, &chat_id, &mapped.session_key, &mapped.message).await;
+            {
+                let mut runtime = shared.runtime.lock().await;
+                runtime.active_chats.remove(&chat_id);
+            }
+            result
         }
     }
-
-    let mapped = {
-        let mut runtime = shared.runtime.lock().await;
-        runtime.mapper.resolve(&chat_id, &text)
-    };
-    if mapped.command_new && mapped.message.is_empty() {
-        send_reply(shared, &chat_id, JsString::from("已创建新会话。")).await;
-        return Ok(());
-    }
-    if mapped.message.is_empty() {
-        return Ok(()); // TS: `if (!mapped.message) return;`
-    }
-    {
-        let mut runtime = shared.runtime.lock().await;
-        runtime.active_chats.insert(chat_id.clone());
-    }
-    let result = process_message(shared, &chat_id, &mapped.session_key, &mapped.message).await;
-    {
-        let mut runtime = shared.runtime.lock().await;
-        runtime.active_chats.remove(&chat_id);
-    }
-    result
 }
 
 /// The post-answer part of the TS permission branch: confirmation send,
@@ -1215,9 +1333,15 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
 }
 
 /// Raw-socket HTTP probe client used by the replay tests (`Connection: close`,
-/// full response bytes, minimal status/content-type/body parse).
+/// full response bytes, minimal status/content-type/body parse). `half_close`
+/// mirrors the generator's `socket.end()`: the write side finishes after the
+/// (possibly truncated) request so the response can still be read.
 #[cfg(test)]
-pub(crate) async fn raw_request(port: u16, raw: &[u8]) -> Result<serde_json::Value, String> {
+pub(crate) async fn raw_request(
+    port: u16,
+    raw: &[u8],
+    half_close: bool,
+) -> Result<serde_json::Value, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -1225,6 +1349,9 @@ pub(crate) async fn raw_request(port: u16, raw: &[u8]) -> Result<serde_json::Val
     // A destroyed connection (oversized payload) surfaces as a write or read
     // error with zero response bytes, same as the probe client's `closed`.
     let _ = stream.write_all(raw).await;
+    if half_close {
+        let _ = stream.shutdown().await;
+    }
     let mut bytes = Vec::new();
     let _ = stream.read_to_end(&mut bytes).await;
     let text = String::from_utf8_lossy(&bytes).into_owned();

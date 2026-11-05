@@ -28,7 +28,12 @@ records; the run is not deterministic otherwise. Cases cover the 23-cell
 state×event×timing matrix from `plan.md` (start failure modes, webhook
 request validation, turn fragment rendering, dedupe/`/new` session
 switching, elicitation and permission answering, stop while a turn is
-held). `expected` records, per case:
+held). The fix-r1 round added the signature-query, JSON-number-body,
+missing-requestId (permission and elicitation), empty-host, bind-error
+and truncated-body cells. The `port-busy-preflight` case has no replay
+cell of its own: the Rust harness holds its port busy in
+`port_busy_preflight_fails_fast`, and a second cell would race that hold
+in the parallel test suite. `expected` records, per case:
 
 - `logs` — `[level, text]` pairs through the injected logger
 - `responses` — one entry per HTTP probe: `{status, contentType, body}`,
@@ -46,6 +51,14 @@ held). `expected` records, per case:
 Megabyte request bodies appear as a `{repeat, count}` spec in `steps`;
 the bytes only exist while the request is on the wire.
 
+Steps carry the *effective* request headers: for a `sign: true` case the
+generator computed the `X-Twilio-Signature` itself (over its own signing
+URL — `publicUrl` branch or `http://127.0.0.1:{port}{path}`, without any
+query string — with `Object.keys(params).sort()` concatenation) and
+recorded it, so the Rust replay reuses the TS-computed signature bytes
+instead of re-signing. `truncate` keeps the full Content-Length while the
+wire stops short; `halfClose` finishes the request's write side.
+
 ## Regenerate
 
 ```
@@ -60,8 +73,9 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the 11 `#996` compile-time switches the
-channel carries (`crate::mutants::on("sms-…")`) through the shared
+`negative_controls.py` runs the 22 `#996` compile-time switches the
+channel carries (`crate::mutants::on("sms-…")`, the fix-r1 round added
+the last 11) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
 a restored re-run. `mutating_sources` cannot run pre-commit (new files

@@ -3,9 +3,9 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell that pins that behavior's TS bytes (11 switches). Run one sample in the
-authoring session; the coordinator runs the complete list after the patch is
-committed.
+cell or dedicated test that pins that behavior's TS bytes (22 switches; the
+fix-r1 round added the last 11). Run one sample in the authoring session; the
+coordinator runs the complete list after the patch is committed.
 
 `mutating_sources` cannot be used for a pre-commit change (it requires
 src/ == HEAD), so the controls are the #996 compile-time switches the
@@ -66,6 +66,50 @@ switches = [
     # body loses the "⚠️ ... failed" fragment.
     ('sms-render-failure-fragment', SMS / 'render.rs', 'turn_reply_fragments',
      '#1339 sms oracle: turn-reply-fragments'),
+    # fix-r1 P1: signature key order reversed — the recorded TS signatures
+    # only replay while the port keeps `Object.keys(params).sort()`.
+    ('sms-signature-key-order', SMS / 'mod.rs', 'valid_signature',
+     '#1339 sms oracle: valid-signature'),
+    # fix-r1 P1: signature URL ignores publicUrl — the public-url cell's
+    # recorded signature no longer validates.
+    ('sms-signature-public-url', SMS / 'mod.rs', 'start_ok_public_url',
+     '#1339 sms oracle: start-ok-public-url'),
+    # fix-r1 P2 #6: JSON null falls through to empty params — the dedicated
+    # destroy-connection test instead sees a 200 TWIML.
+    ('sms-json-null-body', SMS / 'mod.rs', 'json_null_body_is_unhandled_destroy',
+     '#1339 json null without signature must destroy the connection'),
+    # fix-r1 P2 #8: truncated-body 400 carries the old io::Error text — the
+    # body-truncated cell's empty-body 400 no longer matches.
+    ('sms-body-error-text', SMS / 'mod.rs', 'body_truncated',
+     '#1339 sms oracle: body-truncated'),
+    # fix-r1 P2 #9: missing permission requestId becomes the string
+    # "undefined" — the recorded decision then carries the key.
+    ('sms-permission-request-id-undefined', SMS / 'mod.rs', 'permission_missing_request_id',
+     '#1339 sms oracle: permission-missing-request-id'),
+    # fix-r1 P2 #9: missing elicitation requestId becomes the string
+    # "undefined" — the recorded response then carries the key.
+    ('sms-elicit-request-id-empty', SMS / 'elicitation.rs', 'elicitation_missing_request_id',
+     '#1339 sms oracle: elicitation-missing-request-id'),
+    # fix-r1 P2 #10: the declared-count expectation drifts +1 — the count
+    # guard fails on the generator's own declaration.
+    ('sms-oracle-declaration-count', SMS / 'tests.rs', 'oracle_case_count_is_recorded',
+     '#1339 oracle declared case count'),
+    # fix-r1 P2 #11: the logger runs under the boundaries lock — a panicking
+    # logger poisons it for the second stop.
+    ('sms-log-under-lock', SMS / 'mod.rs', 'logger_panic_does_not_poison_boundaries',
+     '#1339 stop after a logger panic must not see a poisoned boundaries mutex'),
+    # fix-r1 P2 #13: the replay port preflight is off — the busy-port replay
+    # proceeds and its connect probe no longer matches the oracle.
+    ('sms-port-preflight', SMS / 'tests.rs', 'port_busy_preflight_fails_fast',
+     '#1339 port-busy preflight marker'),
+    # fix-r1 P2 #14: empty webhookHost binds the literal "" (loopback ::1 on
+    # macOS) — the 127.0.0.1 probe is refused instead of dispatching.
+    ('sms-empty-host-bind-all', SMS / 'mod.rs', 'empty_webhook_host',
+     '#1339 sms oracle: empty-webhook-host'),
+    # fix-r1 P2 #15: listen errors keep the io::Error text — the
+    # host-unavailable cell's Node EADDRNOTAVAIL line no longer matches.
+    ('sms-listen-error-node-text', SMS / 'mod.rs', 'start_host_unavailable',
+     '#1339 sms oracle: start-host-unavailable'),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',

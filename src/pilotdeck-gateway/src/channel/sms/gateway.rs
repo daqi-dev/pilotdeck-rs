@@ -43,7 +43,10 @@ impl SubmitTurnRequest {
 #[derive(Clone, Debug)]
 pub struct ElicitationResponse {
     pub session_key: JsString,
-    pub request_id: JsString,
+    /// #1339 fix-r1: a missing event `requestId` is real `undefined` on the
+    /// TS side, so `to_js` records `undefined` — the JSON record then omits
+    /// the key exactly like TS `JSON.stringify`.
+    pub request_id: Option<JsString>,
     pub answer: JsValue,
 }
 impl ElicitationResponse {
@@ -53,7 +56,13 @@ impl ElicitationResponse {
             "sessionKey".into(),
             JsValue::String(self.session_key.clone()),
         );
-        object.insert("requestId".into(), JsValue::String(self.request_id.clone()));
+        object.insert(
+            "requestId".into(),
+            self.request_id
+                .clone()
+                .map(JsValue::String)
+                .unwrap_or(JsValue::Undefined),
+        );
         object.insert("answer".into(), self.answer.clone());
         object
     }
@@ -64,7 +73,9 @@ impl ElicitationResponse {
 #[derive(Clone, Debug)]
 pub struct PermissionDecision {
     pub session_key: JsString,
-    pub request_id: JsString,
+    /// #1339 fix-r1: same as `ElicitationResponse::request_id` — a missing
+    /// event `requestId` stays `undefined`, not the string "undefined".
+    pub request_id: Option<JsString>,
     pub deny: bool,
     /// `remember: trimmed === "2"` on the allow branch.
     pub remember: bool,
@@ -76,7 +87,13 @@ impl PermissionDecision {
             "sessionKey".into(),
             JsValue::String(self.session_key.clone()),
         );
-        object.insert("requestId".into(), JsValue::String(self.request_id.clone()));
+        object.insert(
+            "requestId".into(),
+            self.request_id
+                .clone()
+                .map(JsValue::String)
+                .unwrap_or(JsValue::Undefined),
+        );
         object.insert(
             "decision".into(),
             JsValue::String(if self.deny { "deny" } else { "allow" }.into()),
