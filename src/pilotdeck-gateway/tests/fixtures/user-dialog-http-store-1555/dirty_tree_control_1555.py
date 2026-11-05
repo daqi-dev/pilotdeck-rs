@@ -140,7 +140,7 @@ def launch(out, env, name, log):
         stderr=subprocess.STDOUT, text=True, start_new_session=True)
 
 
-def requested_clock(text):
+def requested_clock(text, not_before=None):
     """Return the driver's own monotonic timestamp from its `lock-requested` line.
 
     Stamping the request with the control's read time biases the measured wait
@@ -161,7 +161,12 @@ def requested_clock(text):
     stamp and blow the measured wait up to the whole monotonic epoch -- the
     direction that lets a slow no-lock mutant pass. A non-finite value (nan
     compares False against every threshold) or one from the future is treated
-    the same as no value at all: fall back to the read time.
+    the same as no value at all: fall back to the read time. `not_before` is
+    the control's own `time.monotonic()` when it started the hold: a stamp
+    from before that (or `0.0`, which `float('1e-400')` yields) would make the
+    measured wait look longer than the whole epoch, and `MIN_BLOCK_SECONDS` is
+    the only proof of a wait -- so anything earlier than one second before the
+    hold began is rejected too (fix-r7 review, boundary P2).
     """
     lines = text.split('\n')
     if lines and lines[-1] != '':
@@ -176,12 +181,14 @@ def requested_clock(text):
                     return None
                 if not math.isfinite(value) or value > time.monotonic():
                     return None
+                if not_before is not None and value < not_before - 1.0:
+                    return None
                 return value
             return None
     return None
 
 
-def watch(process, path):
+def watch(process, path, not_before=None):
     """Return what the driver printed while the caller still holds the lock.
 
     `lock-requested` is printed immediately before the driver's blocking
@@ -202,7 +209,7 @@ def watch(process, path):
     while True:
         text = read_log(path)
         if requested_at is None and 'lock-requested' in text:
-            stamp = requested_clock(text)
+            stamp = requested_clock(text, not_before)
             requested_at = stamp if stamp is not None else time.monotonic()
         if 'lock-acquired' in text or process.poll() is not None:
             return text, requested_at
@@ -260,8 +267,13 @@ def restore(path, original, marked=None):
         # `os.replace` swaps in the temp file's inode, so without this the
         # tracked source comes back with the umask's mode instead of its own
         # (fix-r6 review, sibling P2 -- the driver's `negctl_restore` path got
-        # the same fix; both write the same tracked file).
-        os.chmod(temp, stat.S_IMODE(path.stat().st_mode))
+        # the same fix; both write the same tracked file). Best effort on
+        # purpose: a failed chmod must not abort the restore and leave the
+        # source marked (fix-r7 review, concurrency P2).
+        try:
+            os.chmod(temp, stat.S_IMODE(path.stat().st_mode))
+        except OSError:
+            pass
         os.replace(temp, path)
     except OSError as error:
         try:
@@ -334,7 +346,7 @@ def lock_check(out, env):
         with tree_lock(root, timeout=LOCK_TIMEOUT):
             started = time.monotonic()
             process = launch(out, env, 'probe-lock', log)
-            early, requested_at = watch(process, path)
+            early, requested_at = watch(process, path, not_before=started)
             released = time.monotonic()
             held = released - started
             # A lower bound on the true wait: the driver stamps the request
@@ -414,12 +426,23 @@ def lock_check(out, env):
                   'lock-acquired, and went on to print provenance -- it ran '
                   f'without the lock (rc={returncode} '
                   f'status={summary.get("status")!r})')
+    elif not acquired and returncode == 0:
+        # No `lock-acquired`, no `provenance`, and the driver still exited
+        # cleanly: it ran to the end without ever touching the lock. That is
+        # the mutant that deletes the whole `with tree_lock(...)` block,
+        # provenance print included -- it builds nothing and writes no
+        # summary, so it has to be caught here rather than blamed on the
+        # infrastructure (fix-r7 review, concurrency P2 / boundary P3).
+        status = 'SURVIVED'
+        reason = ('the driver exited cleanly without ever printing '
+                  'lock-acquired or provenance -- it ran without the lock')
     elif not acquired:
-        # No `lock-acquired` *and* no `provenance`: the driver never got past
-        # the lock call at all, which is what a crash or an external kill
-        # looks like (`os.open` failing in `tree_lock.__enter__`, EMFILE, a
-        # stray signal). Blaming the mutant for that would be a false FAIL
-        # with the wrong attribution (fix-r6 review, concurrency P2).
+        # No `lock-acquired` *and* no `provenance` *and* a non-zero exit: the
+        # driver never got past the lock call at all, which is what a crash or
+        # an external kill looks like (`os.open` failing in
+        # `tree_lock.__enter__`, EMFILE, a stray signal). Blaming the mutant
+        # for that would be a false FAIL with the wrong attribution (fix-r6
+        # review, concurrency P2).
         status = 'INVALID'
         reason = ('the driver never reached the lock: no lock-acquired and no '
                   f'provenance in its output (rc={returncode} '
@@ -461,8 +484,12 @@ def dirty_check(out, env, original):
             temp = scratch('marker')
             temp.write_bytes(marked)
             # Same inode swap as the two restore paths: keep the source's own
-            # mode instead of the umask's (fix-r6 review, sibling P2).
-            os.chmod(temp, stat.S_IMODE(source.stat().st_mode))
+            # mode instead of the umask's (fix-r6 review, sibling P2). Best
+            # effort -- the marker must land even if the mode cannot be read.
+            try:
+                os.chmod(temp, stat.S_IMODE(source.stat().st_mode))
+            except OSError:
+                pass
             os.replace(temp, source)
             # The driver undoes the marker itself, under the lock, before it
             # returns (`negctl_restore` in rss_probe_1555.py): a restore issued
@@ -503,6 +530,16 @@ def dirty_check(out, env, original):
         reason = complaint
     elif reason:
         status = 'INVALID'
+    elif not provenance:
+        # Same rule as `lock_check`'s "never reached the lock" branch (fix-r7
+        # review, sibling P1): a driver that died before it could check the
+        # tree leaves no summary, so `refused` is False -- but that is an
+        # infrastructure failure, not evidence that the mutant survived.
+        status = 'INVALID'
+        reason = ('the driver never reached the dirty check (no provenance in '
+                  f'its summary: rc={returncode} '
+                  f'status={summary.get("status")!r}); a crash before the '
+                  'lock says nothing about the gate')
     elif refused:
         status = 'KILLED'
     else:

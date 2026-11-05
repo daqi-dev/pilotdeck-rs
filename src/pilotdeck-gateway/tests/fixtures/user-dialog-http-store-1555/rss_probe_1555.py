@@ -141,8 +141,13 @@ def negctl_restore():
         temp.write_bytes(Path(original_path).read_bytes())
         # `os.replace` swaps in the temp file's inode, so without this the
         # tracked source would come back with the umask's mode instead of its
-        # own. This path runs on every control, not only on failures.
-        os.chmod(temp, stat.S_IMODE(target.stat().st_mode))
+        # own. This path runs on every control, not only on failures. Best
+        # effort: a failed chmod must not abort the restore (fix-r7 review,
+        # concurrency P2).
+        try:
+            os.chmod(temp, stat.S_IMODE(target.stat().st_mode))
+        except OSError:
+            pass
         os.replace(temp, target)
     except (OSError, ValueError) as error:
         try:
