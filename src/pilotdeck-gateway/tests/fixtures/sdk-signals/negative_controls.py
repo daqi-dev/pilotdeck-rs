@@ -41,11 +41,22 @@ signals = root / "src/pilotdeck-cli/src/sdk/signals.rs"
 output = root / "src/pilotdeck-cli/src/sdk/output.rs"
 replay = root / "src/pilotdeck-cli/tests/common/signal_replay.rs"
 d1_ledger = root / "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
+close_order_ledger = root / "specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md"
 skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
 EXPECTED_TOTAL = 75
+# #1382: per-ID unordered-close controls are pinned to the registered
+# close-order ledger IDs. These three whole-scope boundary controls are not
+# one-per-ID rows, so they are excluded from that pin; a future boundary
+# control must be added here or the pin below fails with an unregistered ID.
+UNORDERED_CLOSE_PREFIX = "unordered-close-"
+UNORDERED_CLOSE_BOUNDARY = (
+    "unordered-close-overbroad",
+    "unordered-close-unregistered-id",
+    "unordered-close-non-array",
+)
 BUILD_TIMEOUT = 900
 TEST_TIMEOUT = 90
 
@@ -199,10 +210,63 @@ mutations = [
 ]
 
 
+def registered_unordered_close_ids():
+    """#1382: read the same close-order ledger block the Rust pin reads.
+
+    No second hardcoded ID list lives here: the IDs come from the frozen
+    D1-SDK-WS-CLOSE-ORDER-001 registration (read-only) exactly like
+    ``unordered_close_scope_equals_registration`` in signal_replay.rs.
+    """
+    text = close_order_ledger.read_text(encoding="utf-8")
+    _, _, after_start = text.partition("<!-- close-order-ids:start -->")
+    block, _, _ = after_start.partition("<!-- close-order-ids:end -->")
+    fenced = block.strip()
+    if not fenced.startswith("```json") or not fenced.endswith("```"):
+        raise RuntimeError("#1382 close-order ledger block is not fenced JSON")
+    ids = json.loads(fenced[len("```json"):-3])
+    if (
+        not isinstance(ids, list)
+        or not ids
+        or any(not isinstance(item, str) or not item for item in ids)
+    ):
+        raise RuntimeError("#1382 close-order ledger block is not a non-empty ID list")
+    if len(ids) != len(set(ids)):
+        raise RuntimeError("#1382 close-order ledger block has duplicate IDs")
+    return ids
+
+
 def check_catalog():
+    names = [row[0] for row in mutations]
+    # #1382: pin the per-ID unordered-close controls to the registered ledger
+    # IDs in both directions. EXPECTED_TOTAL only pins the row count, so
+    # raising it together with the ledger and UNORDERED_CLOSE_CASES while
+    # skipping the per-ID mutation used to leave no failing check; this pin
+    # must therefore stay a set comparison and never degenerate into count
+    # arithmetic. It runs before the denominator check so a removed row is
+    # reported as a missing ID, not as a stale total.
+    stale_boundary = sorted(set(UNORDERED_CLOSE_BOUNDARY) - set(names))
+    if stale_boundary:
+        raise RuntimeError(
+            "#1382 stale unordered-close boundary controls: "
+            + ", ".join(stale_boundary)
+        )
+    registered = set(registered_unordered_close_ids())
+    per_id = {
+        name[len(UNORDERED_CLOSE_PREFIX):]
+        for name in names
+        if name.startswith(UNORDERED_CLOSE_PREFIX)
+        and name not in UNORDERED_CLOSE_BOUNDARY
+    }
+    missing = sorted(registered - per_id)
+    extra = sorted(per_id - registered)
+    if missing or extra:
+        raise RuntimeError(
+            "#1382 unordered-close controls must equal the registered"
+            f" close-order IDs; registered IDs without a mutation: {missing};"
+            f" mutations without a registered ID: {extra}"
+        )
     if len(mutations) != EXPECTED_TOTAL:
         raise RuntimeError("#1145 fixed product mutation denominator")
-    names = [row[0] for row in mutations]
     if len(set(names)) != EXPECTED_TOTAL:
         raise RuntimeError("#1145 unique product mutation identities")
     stale = []
@@ -227,6 +291,10 @@ def raw_text(value):
 def main():
     check_catalog()
     args = sys.argv[1:]
+    # #1382: --check is deliberately a compatibility alias for --check-anchors.
+    # Both spellings are handled by this one branch, so their behavior cannot
+    # drift apart; any new flag must either join this same branch or carry its
+    # own documented semantics.
     if args in (["--check"], ["--check-anchors"]):
         print(f"#1145 {EXPECTED_TOTAL} product anchors: PASS")
         return 0
