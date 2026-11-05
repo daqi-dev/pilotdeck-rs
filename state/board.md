@@ -3010,3 +3010,19 @@ updated: 2026-11-02 12:22 · by Claude Code 子代理（READY 重写）
 - 13:1x #1369 cb8 GLM 7200 s 时限（8 文件 + native-registry-switch fixture + TS 探针半成品）→ 本机 dispatch-resume GLM。
 - 13:1x **人令暂停 loop、收尾交接** → 删 15 min cron、停两路守望，不派新单；在途进程照跑 → `_tmp/20261102-handoff-1310.md`。
 - 13:1x **两小时交接（人令暂停 loop）** → `_tmp/20261102-handoff-1310.md`。下一步：接手者重挂 watch-deliveries / watch-queue，按交接在途表收口（a5b / #1220 / #1327 / #1305 优先）。
+
+## 2026-11-05
+
+- 开工前修复干扰：.claude/notes/pr-ready/ 旧残留清理（PR #112/#118/#137/debt-upgrade/d6 评审证据）；dev-launch.review.md 对齐 real.md 2026-11-01 段（GLM/DeepSeek/MiniMax/Codex 四谱系）；新写 scripts/review-minimax.py 并冒烟通过（exit=0，MiniMax-M3.1-Flash，原件 _tmp/20261105-minimax-smoke/）；.claude/skills 分析报告 _tmp/20261105-skill-composition/analysis.md。
+- 核验：磁盘 195.9 GiB / worktree 25 棵（回收 wt-1265/wt-1308/wt-1319）/ cargo 0/4 / main 对齐 origin/main（c44f8cb31）。worktree 上限以本机 CLAUDE.md 为准（16），但当前 wt-status 脚本报上限 40（CLAUDE.md 已有两个版本在流通，board 分支的旧版与 origin/main 的新版），不新建树直到确认口径。
+- **#1396** entries/snapshots-locale-pin Linux INVALID → SKIPPED：改 negative_controls.py，新建 BASELINE_MACOS_ONLY，cargo check 通过，PR #1430（wt-1396），GLM r1 评审进行中（_tmp/20261105-issue-1396-review/）。
+
+### 08:0x–08:4x（pilotdeck-rs-3a 接手协调）
+
+- 接手：前任 07:46 退出（handoff-4）；用户 07:53 又起一个大总管会话，拍板只留本会话（已叫停退出）。本机 3 台远端（cb8/macmini/mbp2）ssh 全部超时不可达，全部工作转本机；load 0.86、cargo 0/4、磁盘 192 GiB（>190 预警，暂不加新写入）。
+- **#1430（#1396）合入** 0727f8171+c516100b3（邮箱 noreply、issue 自动关），wt-1396 回收（证据 _tmp/20261105-archive-wt-1396/）。
+- **#1319 仲裁两条 P1 开跟进**：#1432（mcp_server_status 无条件空列表，未接共享 config）、#1433（会话 MCP server 配置未进 turn 工具组合），均前置于 A7/A8 相应验收节点；原件 _tmp/20261105-cleanup-wt-1319/ARBITRATION_1319.md。
+- **#1323（PR #1426）**：CI 挂因=期望能力清单 13 项 vs main 接线后实际 23 项；wt-1323 agent 重推 10789cab0（rebase+扩清单），gate-r8 四角色 PASS 0/0/2/0，DS 增量复核 0/0/1/0（P2 为 Windows-only 场景，仲裁降级并入跟进）；P2×4 开 #1434（全链路用例/负控配对/cfg(unix) 核对/oracle 子集契约）；DS 评论已贴、正文块已新；等 rust CI 绿即入队。
+- **#1312（PR #1415）**：faf940 线推 fix-r2 e7d50ceff（守卫序对齐 TS+删不可达守卫）；gate-r2 boundary 新 P1：sop_resume 缺 4 个 schema 必填字段的返回码与「解析先于 capability gate」次序矛盾，需 TS 实测定向后派 fix-r3。
+- **收口批次 1 派发**（tmux aiw:closeout-batch1，pilotdeck-rs-f5）：wt-1307（#1425）/wt-1309（#1419）rebase 真合并 Requests 结构体字段、wt-1321（#1418）clippy 五处；cargo 串行（cargo-slots 排队）。#1399 CI 链接器 Bus error 已重跑（进行中）。撞单协调：b4f6b0 会话原被派 1417/1418/1419/1423/1425 rebase，已叫停重叠三项。
+- 人定方向重申：交接链推进直到 A7/A8 完成，仅核心 Agent 功能（always-on 暂缓），dev-launch 为入口、dev-docs 辅助、可开 loop；P2a 小补丁负控合并跑一次（新 memory p2a-negctl-batch-once）。
