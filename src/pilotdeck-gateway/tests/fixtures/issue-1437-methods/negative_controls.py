@@ -44,10 +44,9 @@ mutations = [
      'const MAX_LEASE_MS: f64 = 300_000.0;',
      'const MAX_LEASE_MS: f64 = 400_000.0;',
      TEST + 'user_dialog_claim_ttlms_bounds',
-     # The mutated constant is interpolated into the rejection message, so the
-     # `below` case fails on its message assertion before the `above` case is
-     # reached; either assertion is proof the mutation was caught (#1616 r1).
-     ['#1437 below ttlMs message', '#1437 above ttlMs is rejected']),
+     # A lowered minimum admits the `below` case, so the run dies on its
+     # `expect_err` before any message assertion (#1616 r1/r2).
+     ['#1437 below ttlMs is rejected', '#1437 below ttlMs message']),
     ('ttl-fraction-allowed', USER_DIALOG,
      '|| ttl_ms.fract() != 0.0',
      '|| false',

@@ -2415,7 +2415,9 @@ async fn user_dialog_list_validates_session_key_and_projects_dialogs() {
         let error = requests
             .user_dialog_request("user_dialog_list".into(), params)
             .await
-            .expect_err("#1437 user_dialog_list rejects a {label} sessionKey");
+            .expect_err(&format!(
+                "#1437 user_dialog_list rejects a {label} sessionKey"
+            ));
         negative_assert_eq!(
             error.code,
             "INVALID_USER_DIALOG_LIST",
@@ -2498,7 +2500,7 @@ async fn user_dialog_claim_ttlms_bounds() {
                 ]),
             )
             .await
-            .expect_err("#1437 {label} ttlMs is rejected");
+            .expect_err(&format!("#1437 {label} ttlMs is rejected"));
         negative_assert_eq!(
             error.code,
             "INVALID_USER_DIALOG_CLAIM",
@@ -2549,7 +2551,7 @@ async fn user_dialog_claim_ttlms_bounds() {
                 ]),
             )
             .await
-            .expect("#1437 the {label} bound ttlMs claims");
+            .expect(&format!("#1437 the {label} bound ttlMs claims"));
         negative_assert_eq!(
             result.get("claimed"),
             Some(&JsValue::Bool(true)),
@@ -2599,7 +2601,7 @@ async fn user_dialog_claim_release_domain_codes() {
         let error = requests
             .user_dialog_request("user_dialog_claim".into(), params)
             .await
-            .expect_err("#1437 claim rejects a {label}");
+            .expect_err(&format!("#1437 claim rejects a {label}"));
         negative_assert_eq!(
             error.code,
             "INVALID_USER_DIALOG_CLAIM",
@@ -2679,7 +2681,7 @@ async fn user_dialog_claim_release_domain_codes() {
         let error = requests
             .user_dialog_request("user_dialog_release".into(), params)
             .await
-            .expect_err("#1437 release rejects a {label}");
+            .expect_err(&format!("#1437 release rejects a {label}"));
         negative_assert_eq!(
             error.code,
             "INVALID_USER_DIALOG_RELEASE",
@@ -2757,7 +2759,7 @@ async fn user_dialog_respond_behavior_branches() {
                 crate::metadata::object(fields),
             )
             .await
-            .expect_err("#1437 respond rejects a {label}");
+            .expect_err(&format!("#1437 respond rejects a {label}"));
         negative_assert_eq!(
             error.code,
             "INVALID_USER_DIALOG_RESPONSE",
@@ -2885,7 +2887,7 @@ async fn user_dialog_respond_lease_required() {
         let error = requests
             .user_dialog_request("user_dialog_respond".into(), respond(lease_id))
             .await
-            .expect_err("#1437 respond {label} is lease-required");
+            .expect_err(&format!("#1437 respond {label} is lease-required"));
         negative_assert_eq!(
             error.code,
             "USER_DIALOG_LEASE_REQUIRED",
