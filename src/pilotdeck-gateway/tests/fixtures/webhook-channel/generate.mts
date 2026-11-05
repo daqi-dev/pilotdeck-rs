@@ -352,6 +352,10 @@ scenario(
     post('empty-object', 'd1', '{}'),
     post('short-json', 'd2', '"ab"'),
     post('not-json', 'd3', 'not json at all'),
+    // #1681: `extractText` returns the empty string for a string `text` field,
+    // and the call site's `if (!text)` treats it as no text. The cell pins the
+    // ignored reply, no deliveryInfo and no gateway call.
+    post('empty-text', 'd5', json({ text: '' })),
     post('null-body', 'd4', 'null', { mode: 'none' }),
   ],
   [[]],
