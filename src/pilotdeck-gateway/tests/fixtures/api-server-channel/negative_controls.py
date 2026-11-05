@@ -11,8 +11,9 @@ Run after the #1333 commit exists (new files are compared against HEAD):
         src/pilotdeck-gateway/tests/fixtures/api-server-channel/negative_controls.py \
         _tmp/<date>-issue-1333/negatives
 
-The coordinator runs this on the host after commit; this worktree cannot run
-`mutating_sources` because the new sources are not in HEAD yet.
+Run it only after the #1333 sources are committed: `mutating_sources` compares
+the working tree against HEAD. Markers are declared as a literal `mutations`
+tuple table so `anchor_selfcheck.py` can verify every anchor statically.
 """
 from pathlib import Path
 import os
@@ -33,8 +34,8 @@ REPLAY = "channel::api_server::tests::replays_real_ts_api_server_cells"
 DUPLICATE = "channel::api_server::tests::duplicate_chat_is_busy_then_free"
 OVERSIZED = "channel::api_server::tests::oversized_body_closes_without_response"
 
-CASES = [
-    Case(
+mutations = [
+    (
         "health-path",
         SERVER,
         '} else if path == "/health" {',
@@ -42,7 +43,7 @@ CASES = [
         REPLAY,
         "#1333 method-dispatch request 0: status differs",
     ),
-    Case(
+    (
         "models-path",
         SERVER,
         '} else if path == "/v1/models" {',
@@ -50,15 +51,15 @@ CASES = [
         REPLAY,
         "#1333 method-dispatch request 2: status differs",
     ),
-    Case(
+    (
         "auth-bypass",
         SERVER,
-        "    if !shared.api_key.is_empty()\n        && !bearer_matches(&authorization, &shared.api_key)\n    {",
-        "    if false\n        && !shared.api_key.is_empty()\n        && !bearer_matches(&authorization, &shared.api_key)\n    {",
+        "    if !shared.api_key.is_empty() && !bearer_matches(&authorization, &shared.api_key) {",
+        "    if false && !shared.api_key.is_empty() && !bearer_matches(&authorization, &shared.api_key) {",
         REPLAY,
         "#1333 auth request 0: status differs",
     ),
-    Case(
+    (
         "cors-exact-vary",
         SERVER,
         'values.push(("vary", HeaderValue::from_static("Origin")));',
@@ -66,7 +67,7 @@ CASES = [
         REPLAY,
         "#1333 cors-exact request 0: headers differ",
     ),
-    Case(
+    (
         "sse-done",
         SERVER,
         'format!("data: {}\\n\\ndata: [DONE]\\n\\n", json_text(&body))',
@@ -74,7 +75,7 @@ CASES = [
         REPLAY,
         "#1333 stream request 0: body differs",
     ),
-    Case(
+    (
         "buffered-session-header",
         SERVER,
         "        headers.insert(SESSION_HEADER, header_value(chat_id));\n",
@@ -82,7 +83,7 @@ CASES = [
         REPLAY,
         "#1333 buffered request 0: headers differ",
     ),
-    Case(
+    (
         "visible-failure-name",
         RENDER,
         '    "turn_failed",',
@@ -90,7 +91,7 @@ CASES = [
         REPLAY,
         "#1333 stream request 0: body differs",
     ),
-    Case(
+    (
         "gateway-503",
         SERVER,
         "        StatusCode::SERVICE_UNAVAILABLE,",
@@ -98,7 +99,7 @@ CASES = [
         REPLAY,
         "#1333 gateway-missing request 0: status differs",
     ),
-    Case(
+    (
         "active-chat-guard",
         SERVER,
         "        .contains(&chat_id)\n    {",
@@ -106,7 +107,7 @@ CASES = [
         DUPLICATE,
         "#1333 duplicate chat is rejected",
     ),
-    Case(
+    (
         "body-limit",
         MOD,
         "1_000_000",
@@ -115,7 +116,6 @@ CASES = [
         "#1333 oversized body closes with zero bytes",
     ),
 ]
-
 
 def mutate(text, scope, replacements):
     del scope
@@ -138,7 +138,8 @@ def main():
     environment.setdefault("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
     environment.setdefault("CARGO_PROFILE_TEST_DEBUG", "line-tables-only")
 
-    for case in CASES:
+    selected = [Case(*row) for row in mutations]
+    for case in selected:
         path = ROOT / case.path
         occurrences = path.read_text().count(case.old)
         if occurrences != 1:
@@ -147,7 +148,7 @@ def main():
                 f"expected 1 occurrence, found {occurrences}"
             )
     target.mkdir(parents=True, exist_ok=False)
-    return run_cases(ROOT, CASES, target, environment, mutate)
+    return run_cases(ROOT, selected, target, environment, mutate)
 
 
 if __name__ == "__main__":
