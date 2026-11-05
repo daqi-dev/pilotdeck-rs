@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 STIMULUS = ROOT / 'src/pilotdeck-gateway/src/storage/stimulus.rs'
 RUN_REGISTRY = ROOT / 'src/pilotdeck-gateway/src/storage/run_registry.rs'
+TRANSCRIPT_ADAPTER = ROOT / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/storage/stimulus_tests.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_storage_stimulus.rs'
@@ -64,7 +65,7 @@ mutations = [
         if changed {
             let mut blocked = None;
             if let Some(key) = stimulus_key
-                && let Some(stimulus) = super::stimulus::StorageStimulus::global()
+                && let Some(stimulus) = self.stimulus.as_ref()
                 && stimulus.before_write(super::stimulus::Site::Registry, key)?
                     == super::stimulus::Applied::Blocked
             {
@@ -72,7 +73,7 @@ mutations = [
             }''',
      '''let mut pre_blocked = None;
         if let Some(key) = stimulus_key
-            && let Some(stimulus) = super::stimulus::StorageStimulus::global()
+            && let Some(stimulus) = self.stimulus.as_ref()
             && stimulus.before_write(super::stimulus::Site::Registry, key)?
                 == super::stimulus::Applied::Blocked
         {
@@ -85,6 +86,23 @@ mutations = [
         if changed {
             let blocked = pre_blocked;''',
      'storage::stimulus_tests::registry_barrier_holds_chain_lock', "#1370 get() is held behind the barrier's chain lock"),
+    # fix-r1 isolation: the registry site must read its instance handle, not the
+    # process-wide entry — degraded back to the global, an armed stimulus can
+    # never reach the test's registry (env unset in the test process), so no
+    # block receipt ever appears.
+    ('registry-handle-degraded-to-global', RUN_REGISTRY,
+     '''&& let Some(stimulus) = self.stimulus.as_ref()
+                && stimulus.before_write(super::stimulus::Site::Registry, key)?''',
+     '''&& let Some(stimulus) = super::stimulus::StorageStimulus::global()
+                && stimulus.before_write(super::stimulus::Site::Registry, key)?''',
+     'storage::stimulus_tests::registry_barrier_holds_chain_lock', '#1370 registry barrier blocks the in-lock persist'),
+    # fix-r1 isolation, writer twin: the store's underlying append must read
+    # its instance handle. Degraded to the global, the writer barrier never
+    # blocks and the block receipt wait fails at its observation cap.
+    ('writer-store-handle-degraded-to-global', TRANSCRIPT_ADAPTER,
+     '''let stimulus = self.stimulus.clone();''',
+     '''let stimulus = super::stimulus::StorageStimulus::global();''',
+     'storage::stimulus_tests::writer_barrier_blocks_underlying_append', '#1370 writer barrier blocks the underlying append'),
     # The FIFO witness: the queued receipt is published while the barrier is
     # held, before the caller queues on the chain lock.
     ('registry-queued-after-release', STIMULUS,
@@ -175,7 +193,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [STIMULUS, RUN_REGISTRY, ASSEMBLY, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
+    guarded = [STIMULUS, RUN_REGISTRY, TRANSCRIPT_ADAPTER, ASSEMBLY, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
                FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',

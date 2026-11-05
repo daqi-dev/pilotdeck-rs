@@ -49,9 +49,13 @@ type RegistryJob = Box<dyn FnOnce(&FileRunRegistry) + Send>;
 /// Tokio executor thread. Dropping the adapter drains already accepted jobs.
 pub struct FileRegistry {
     jobs: mpsc::Sender<RegistryJob>,
+    /// #1370 controlled stimulus captured from the wrapped registry once at
+    /// construction, so the entry witness below never re-resolves mid-flight.
+    stimulus: Option<Arc<crate::storage::stimulus::StorageStimulus>>,
 }
 impl FileRegistry {
     pub fn new(registry: FileRunRegistry) -> std::io::Result<Self> {
+        let stimulus = registry.stimulus().cloned();
         let (jobs, receiver) = mpsc::channel::<RegistryJob>();
         std::thread::Builder::new()
             .name("turn-run-registry".into())
@@ -60,7 +64,7 @@ impl FileRegistry {
                     job(&registry);
                 }
             })?;
-        Ok(Self { jobs })
+        Ok(Self { jobs, stimulus })
     }
     pub(crate) fn call<T: Send + 'static>(
         &self,
@@ -96,7 +100,9 @@ impl TurnRunRegistry for FileRegistry {
         // #1370 FIFO witness at the `runRegistry.append` port: publish a
         // queued receipt before the job enters the single worker, so the
         // collector sees what queued behind a held registry barrier.
-        if let Err(error) = crate::storage::stimulus::registry_stimulus_queued(event) {
+        if let Err(error) =
+            crate::storage::stimulus::registry_stimulus_queued(self.stimulus.as_ref(), event)
+        {
             return Box::pin(std::future::ready(Err(error)));
         }
         let run = run.clone();

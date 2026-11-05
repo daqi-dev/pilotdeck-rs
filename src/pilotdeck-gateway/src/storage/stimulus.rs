@@ -16,6 +16,11 @@
 //! startup and publishes a `native storage stimulus on` receipt, #1369
 //! pattern). Unset keeps the production default — no file reads, no receipts.
 //!
+//! The entry is captured per store instance at construction and never
+//! re-resolved or swapped at write time: only writes through a store wired to
+//! an armed stimulus can ever observe it, so a stimulus armed for one
+//! component cannot fail another's writes in the same process.
+//!
 //! Control protocol (collector writes atomically via tmp + rename; the product
 //! only reads control files and only writes receipts):
 //!
@@ -47,7 +52,7 @@ use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
     fs, io,
     path::PathBuf,
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, LazyLock, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -138,16 +143,17 @@ impl StorageStimulus {
     }
 
     /// The process-wide controlled entry. Unset (or not unicode) keeps the
-    /// production default; a set value stays armed and every operation
-    /// re-checks the directory, failing closed when it disappears.
+    /// production default. The entry resolves once and is immutable for the
+    /// process lifetime, so a set value stays armed for every store that
+    /// captured it, failing closed when the directory disappears.
     pub fn global() -> Option<Arc<Self>> {
-        let lock = GLOBAL.read().unwrap_or_else(|e| e.into_inner());
-        lock.clone()
+        GLOBAL.clone()
     }
-    #[cfg(test)]
-    pub(crate) fn override_global(stimulus: Option<Arc<Self>>) -> Option<Arc<Self>> {
-        let mut lock = GLOBAL.write().unwrap_or_else(|e| e.into_inner());
-        std::mem::replace(&mut *lock, stimulus)
+    /// Same entry as a shared reference, for store implementations that do
+    /// not capture a handle of their own (the writer-site entry witness).
+    pub(crate) fn global_ref() -> Option<&'static Arc<Self>> {
+        let resolved: &'static Option<Arc<Self>> = &GLOBAL;
+        resolved.as_ref()
     }
 
     fn read_config(&self) -> io::Result<Config> {
@@ -165,7 +171,7 @@ impl StorageStimulus {
     /// Entry observation (`writer.append` / `runRegistry.append` invoked):
     /// publish a `queued` receipt when a barrier is currently held at this
     /// site, so the collector can witness what FIFO-queued behind the block.
-    pub fn queued(&self, site: Site, key: &str) -> io::Result<()> {
+    pub(crate) fn queued(&self, site: Site, key: &str) -> io::Result<()> {
         let seq = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if site_state_ref(&inner, site).held.is_none() {
@@ -179,7 +185,7 @@ impl StorageStimulus {
     /// The underlying durable write: single EIO first, then the bounded
     /// barrier. `Err` fails the storage operation; `Ok(Applied::Blocked)`
     /// means the caller owes a `completed` receipt after the real write.
-    pub fn before_write(&self, site: Site, key: &str) -> io::Result<Applied> {
+    pub(crate) fn before_write(&self, site: Site, key: &str) -> io::Result<Applied> {
         if !self.dir.is_dir() {
             return Err(invalid(format!(
                 "control directory is missing: {}",
@@ -234,7 +240,7 @@ impl StorageStimulus {
     /// Post-commit receipt for the write that was held at the barrier.
     /// Evidence only: the durable write already succeeded, so a receipt
     /// failure must not turn a successful append into a reported failure.
-    pub fn completed(&self, site: Site, key: &str) {
+    pub(crate) fn completed(&self, site: Site, key: &str) {
         let seq = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if site_state_ref(&inner, site).barrier_consumed.is_none() {
@@ -380,12 +386,11 @@ fn parse_config(value: &JsValue) -> Result<Config, io::Error> {
     })
 }
 
-static GLOBAL: LazyLock<RwLock<Option<Arc<StorageStimulus>>>> = LazyLock::new(|| {
-    RwLock::new(match std::env::var(STIMULUS_ENV) {
+static GLOBAL: LazyLock<Option<Arc<StorageStimulus>>> =
+    LazyLock::new(|| match std::env::var(STIMULUS_ENV) {
         Ok(dir) => Some(Arc::new(StorageStimulus::control(dir))),
         Err(_) => None,
-    })
-});
+    });
 
 fn object_field<'a>(draft: &'a JsObject, key: &str) -> &'a JsValue {
     static UNDEFINED: JsValue = JsValue::Undefined;
@@ -432,8 +437,12 @@ pub(crate) fn registry_event_key(event: &JsValue) -> String {
 
 /// Entry hook for the writer site (`writer.append` invoked): `queued` receipt
 /// while a barrier is held, before the caller queues on the commit lock.
-pub(crate) fn writer_stimulus_queued_draft(draft: &JsObject) -> Result<(), super::LedgerError> {
-    let Some(stimulus) = StorageStimulus::global() else {
+/// `stimulus` is the caller's store handle (`None` keeps the entry inert).
+pub(crate) fn writer_stimulus_queued_draft(
+    stimulus: Option<&Arc<StorageStimulus>>,
+    draft: &JsObject,
+) -> Result<(), super::LedgerError> {
+    let Some(stimulus) = stimulus else {
         return Ok(());
     };
     stimulus
@@ -441,8 +450,11 @@ pub(crate) fn writer_stimulus_queued_draft(draft: &JsObject) -> Result<(), super
         .map_err(super::LedgerError::Io)
 }
 /// Same witness for the `recordEntry` path, which arrives as a full entry.
-pub(crate) fn writer_stimulus_queued_entry(entry: &JsValue) -> Result<(), super::LedgerError> {
-    let Some(stimulus) = StorageStimulus::global() else {
+pub(crate) fn writer_stimulus_queued_entry(
+    stimulus: Option<&Arc<StorageStimulus>>,
+    entry: &JsValue,
+) -> Result<(), super::LedgerError> {
+    let Some(stimulus) = stimulus else {
         return Ok(());
     };
     stimulus
@@ -451,9 +463,13 @@ pub(crate) fn writer_stimulus_queued_entry(entry: &JsValue) -> Result<(), super:
 }
 
 /// Entry hook for the registry site (`runRegistry.append` invoked): `queued`
-/// receipt while a barrier is held.
-pub(crate) fn registry_stimulus_queued(event: &JsValue) -> Result<(), super::RunRegistryError> {
-    let Some(stimulus) = StorageStimulus::global() else {
+/// receipt while a barrier is held. `stimulus` is the caller's registry
+/// handle (`None` keeps the entry inert).
+pub(crate) fn registry_stimulus_queued(
+    stimulus: Option<&Arc<StorageStimulus>>,
+    event: &JsValue,
+) -> Result<(), super::RunRegistryError> {
+    let Some(stimulus) = stimulus else {
         return Ok(());
     };
     stimulus
