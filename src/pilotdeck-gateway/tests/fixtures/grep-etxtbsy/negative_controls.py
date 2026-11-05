@@ -36,7 +36,7 @@ the group reaping (`stranger-reap-removed`), and the pid-mode guard's
 kill (`stranger-pid-kill-removed`, #1155 fix-r2b review boundary P3 —
 the pid-mode test itself is Linux-only, and bound by its module-qualified
 `pid_mode::…` name since fix-r3 review P1-2: `--exact` matches nothing
-without the prefix). The other fourteen must kill on
+without the prefix). The other sixteen must kill on
 every unix host — `stranger-retention-reverted` included: bash (the macOS `/bin/sh`)
 keeps the pipe behind an explicit `<&0`, so `started` still appears, but
 the reverted helper writes no `saw` marker and the #1155 r4 saw assertion
@@ -92,7 +92,15 @@ late-started test waits for the helper's `paused` receipt, the 2-second
 delayed `started`, and proof the 1-second cap's deadline has been
 crossed before it publishes `resume`, so the saw write runs with the
 file provably present and the deadline provably gone — no scheduling
-stall can skip the poll round and dodge the kill); the
+stall can skip the poll round and dodge the kill); and #1392 closes the
+barrier's own timeout: a park that runs out of its 30-second safety
+without a `resume` must fail the helper — the forced re-check after the
+loop exits 3 (`barrier-timeout-exit-removed`, so a test thread and a
+stranger both starved past the park cannot let the helper slip out with
+`exit 0` and a skipped saw write), and the same dropped re-check bound
+to that timeout test (`saw-write-skips-the-cap-barrier-timeout`) keeps
+the deadline re-check exercised — and killable — on the timeout path
+too; the
 return-boundary scan flags write ends only
 (`boundary-write-end-filter-removed`, r3 review P2-1 — without the
 access-mode filter the stranger's read end fails the healthy path; bound
@@ -126,6 +134,7 @@ dead_stranger = 'a_dead_helper_with_a_stranger_reader_still_closes_the_write_end
 panic_stranger = 'a_panic_while_the_stranger_runs_still_ends_it'
 late_started = 'a_started_past_the_helper_cap_is_not_seen_after_a_paused_poll'
 within_cap = 'a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll'
+barrier_timeout = 'a_barrier_timeout_without_a_resume_fails_the_helper'
 # #1155 fix-r3 review P1-2: the test lives inside the `pid_mode` module, and
 # the executor below always passes `--exact`, so the binding needs the
 # module-qualified name — the bare name matched zero tests and the mutant
@@ -461,6 +470,7 @@ cases = [
                pause_end=$(( $(date +%s) + 30 ))
                while [ ! -e \\"$6\\" ] && [ \\"$(date +%s)\\" -lt \\"$pause_end\\" ]; do /bin/sleep 0.05; done
                if [ -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; then printf saw >\\"$4.staging\\"; mv \\"$4.staging\\" \\"$4\\"; fi
+               if [ ! -e \\"$6\\" ]; then exit 3; fi
                exit 0"''',
      '''            "python3 -c '{STRANGER_PROBE}' \\"$1\\" \\"$2\\" \\"$3\\" 0 <&0 &
                exit 0"''',
@@ -521,6 +531,33 @@ cases = [
      '''               if [ -e \\"$3\\" ]; then printf saw''',
      publication_target, late_started,
      "#1155 a started past the helper's cap must not be recorded as seen after a paused poll"),
+    # #1392 (#1155 r4 review P1, P2b follow-up): the barrier's own safety
+    # timeout must fail the helper, never let it slip out with `exit 0`.
+    # The mutant deletes the forced resume re-check after the park loop, so
+    # the helper exits cleanly on a timed-out barrier and the new test's
+    # `exited.success()` refusal is the assertion that kills — the r4
+    # review's starved interleaving (test thread and stranger both parked
+    # past the helper's 30 s) can no longer pass vacuously.
+    ('barrier-timeout-exit-removed', publication,
+     '''               if [ ! -e \\"$6\\" ]; then exit 3; fi
+               exit 0"''',
+     '''               exit 0"''',
+     publication_target, barrier_timeout,
+     '#1392 a barrier timed out without a resume must fail the helper, not exit cleanly'),
+    # #1392: the same dropped deadline re-check as `saw-write-skips-the-cap`
+    # above, bound to the barrier-timeout test the fix added — the same
+    # one-mutation-two-bindings shape as the two guard-kill rows. That test
+    # parks the helper out with no `resume` while the stranger's `started`
+    # provably exists (2-second delay, ~28 s before the timeout) and the
+    # 1-second scenario cap's `end` provably does not, so the mutant's saw
+    # write is the only difference on the timeout path and the saw refusal
+    # kills there too — the r4 review's leak closed from the exit-code side
+    # above and from the saw side here.
+    ('saw-write-skips-the-cap-barrier-timeout', publication,
+     '''               if [ -e \\"$3\\" ] && [ \\"$(date +%s)\\" -lt \\"$end\\" ]; then printf saw''',
+     '''               if [ -e \\"$3\\" ]; then printf saw''',
+     publication_target, barrier_timeout,
+     "#1392 a started past the helper's cap must not be recorded as seen across a timed-out barrier"),
     # #1155 r3 review P2-1: the scan must only flag write ends. The mutant
     # drops the access-mode filter, so the stranger's read end — a
     # `pipe:[inode]` fd like any other — fails the scan on the healthy path.

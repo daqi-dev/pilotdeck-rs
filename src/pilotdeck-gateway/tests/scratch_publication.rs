@@ -616,6 +616,93 @@ fn a_started_within_the_helper_cap_is_still_seen_after_a_paused_poll() {
         .expect("#1155 the within-cap stranger must be killed and reaped by the test's guard");
 }
 
+/// #1392 (#1155 r4 review P1, P2b follow-up): the barrier's own safety
+/// timeout is a failure, never a silent pass. The r4 review's leak: with
+/// the test thread and the stranger both starved past the helper's
+/// 30-second park, the helper ran on alone, skipped its saw write, and
+/// still exited 0 — so a starved run of the `saw-write-skips-the-cap`
+/// shape passed both the `exited.success()` and the `!saw.exists()`
+/// assertions without any scheduling luck at all. This test reproduces
+/// that interleaving by construction: it waits for the `paused` receipt
+/// and the stranger's `started`, then deliberately never publishes
+/// `resume`, so the helper's park runs out on its own. The `started` file
+/// provably exists by then (published seconds into the park) and the
+/// scenario cap's `end` provably does not (1 s from the spawn, far under
+/// the 30 s park) — exactly the state the starved scenario left the saw
+/// write in: file present, deadline gone. The helper must report the
+/// timed-out barrier by exiting non-zero — never the `exit 0` that made
+/// the leak invisible — and must still refuse the saw write on the far
+/// side of its own deadline. A helper that somehow exits early (the test
+/// thread itself starved past the whole park) fails the elapsed floor
+/// below instead of passing vacuously.
+#[test]
+fn a_barrier_timeout_without_a_resume_fails_the_helper() {
+    let signals = Scratch::new("helper-barrier-timeout-signals");
+    let marker = signals.path().join(STRANGER_EOF);
+    let go = signals.path().join(STRANGER_GO);
+    let started = signals.path().join(STRANGER_STARTED);
+    let saw = signals.path().join(STRANGER_SAW);
+    let paused = signals.path().join(STRANGER_PAUSED);
+    let resume = signals.path().join(STRANGER_RESUME);
+    let mut stranger = StrangerGuard::new();
+    // The scenario's local parameters, like the late-started test's: a
+    // 2-second `started` delay keeps the signal well inside the park (it
+    // has provably existed for ~28 s by the timeout), while the 1-second
+    // cap keeps `end` long gone by then — a pairing that leaves a mutant
+    // dropping the deadline re-check as the only shape that could write
+    // the saw marker on this path.
+    const SCENARIO_CAP: Duration = Duration::from_secs(1);
+    let mut helper = started_wait_helper(
+        &marker,
+        &go,
+        &started,
+        &saw,
+        &paused,
+        &resume,
+        Duration::from_secs(2),
+        SCENARIO_CAP.as_secs(),
+    )
+    .spawn()
+    .expect("#1392 the barrier-timeout helper must spawn");
+    stranger.adopt(helper_group(helper.id()));
+    wait_for_signal(&paused, STRANGER_STARTED_TIMEOUT)
+        .expect("#1392 the barrier-timeout helper must reach its paused poll");
+    let started_pid = wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
+        .expect("#1392 the barrier-timeout stranger must publish its started signal");
+    stranger.watch(stranger_pid(&started_pid));
+    // No resume, deliberately: the park must run out on its own.
+    let parked_at = Instant::now();
+    let exited = helper
+        .wait()
+        .expect("#1392 the barrier-timeout helper must exit on its own");
+    assert!(
+        !exited.success(),
+        "#1392 a barrier timed out without a resume must fail the helper, not exit cleanly: {exited}"
+    );
+    assert_eq!(
+        exited.code(),
+        Some(3),
+        "#1392 the timed-out barrier must be the helper's exit reason: {exited}"
+    );
+    // The timeout path really ran — the helper parked out the safety span,
+    // it did not exit on an instantly received signal. `date +%s`
+    // truncation can shave up to a second off the nominal 30 s, and the
+    // 2-second `started` delay lands inside the measured span, so the
+    // floor sits well below both while still annulling an instant exit.
+    assert!(
+        parked_at.elapsed() >= Duration::from_secs(25),
+        "#1392 the helper must actually park out its timed-out barrier: {:?} elapsed",
+        parked_at.elapsed()
+    );
+    assert!(
+        !saw.exists(),
+        "#1392 a started past the helper's cap must not be recorded as seen across a timed-out barrier"
+    );
+    stranger
+        .end()
+        .expect("#1392 the barrier-timeout stranger must be killed and reaped by the test's guard");
+}
+
 /// #1141 fix-r2 review P1-1 (Codex): the stranger must be owned from the
 /// moment the helper is spawned — not from a group id the helper child
 /// publishes later, which left a window where a panic could not find the
@@ -797,6 +884,17 @@ fn dead_helper_with_a_stranger_reader(
 /// before its start, and the saw write re-validates that same deadline: a
 /// `started` that appeared after it is not recorded as seen just because
 /// the file already exists when the paused poll resumes.
+/// #1392 (#1155 r4 review P1, P2b follow-up): the park's own 30-second
+/// safety timeout is a failure, never a silent pass. The forced re-check
+/// after the loop — not the loop's own condition, which a `resume` landing
+/// between its last time check and the exit could otherwise miss — exits 3
+/// when no `resume` arrived, so a test thread and a stranger both starved
+/// past the park cannot let the helper slip out with `exit 0` and a
+/// skipped saw write while the test's `exited.success()` assertion passes
+/// anyway. The saw write runs first, unchanged: the timeout path still
+/// exercises the deadline re-check — a `started` that exists at the
+/// timeout is past `end` and must not be recorded — which keeps a mutant
+/// dropping that re-check killable on this path too.
 #[allow(clippy::too_many_arguments)]
 fn started_wait_helper(
     marker: &Path,
@@ -820,6 +918,7 @@ fn started_wait_helper(
                pause_end=$(( $(date +%s) + 30 ))
                while [ ! -e \"$6\" ] && [ \"$(date +%s)\" -lt \"$pause_end\" ]; do /bin/sleep 0.05; done
                if [ -e \"$3\" ] && [ \"$(date +%s)\" -lt \"$end\" ]; then printf saw >\"$4.staging\"; mv \"$4.staging\" \"$4\"; fi
+               if [ ! -e \"$6\" ]; then exit 3; fi
                exit 0"
         ))
         .arg("dead-helper")
