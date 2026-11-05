@@ -226,6 +226,96 @@ def bare_exit_zero(rows):
     return True, 'aggregation-audit: bare optimistic exit code flagged, passed=False'
 
 
+def _main_failure(row, needle, point='controls-main'):
+    """The #892 main failure whose text contains *needle*, if any."""
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: '
+            'scripts/gateway-parity/controls/session_domain.py:main ')
+            and needle in failure for failure in failures):
+        return False, f'failures={failures!r}, want the #892 main failure with {needle!r}'
+    slots = (row.get('points', {}).get(point, {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, f'points.{point}.unsharedSlots is empty, want it flagged'
+    return True, None
+
+
+def status_slot_relayed(rows):
+    """#892 r1: a status slot filled from a locally computed variable must be
+    flagged — the shared call elsewhere in the function cannot excuse it."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _main_failure(row, "status slot 'status'", 'controls-run-all')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: locally computed status slot flagged, passed=False'
+
+
+def system_exit_zero_bypass(rows):
+    """#892 r1: ``raise SystemExit(0)`` never returns through the shared map."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _main_failure(row, 'inline optimistic exit (SystemExit)')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: optimistic raise SystemExit flagged, passed=False'
+
+
+def bare_return_exit(rows):
+    """#892 r1: a bare ``return`` hands back None, which exits 0."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _main_failure(row, 'inline optimistic exit (bare return)')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: bare return exit flagged, passed=False'
+
+
+def conditional_arm_exit(rows):
+    """#892 r1: each arm of a conditional exit is judged on its own."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _main_failure(row, 'inline exit code int(')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: optimistic conditional arm flagged, passed=False'
+
+
+def calibrate_bare_zero(rows):
+    """#892 r1: the same optimistic exit on the calibrate entry point."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(failure.startswith(
+            '#892 aggregation-audit: scripts/gateway-parity/session_domain.py:main ')
+            and 'inline exit code 0' in failure for failure in failures):
+        return False, f'failures={failures!r}, want the #892 calibrate-main bare exit failure'
+    slots = (row.get('points', {}).get('calibrate-main', {}) or {}).get('unsharedSlots')
+    if not slots:
+        return False, 'points.calibrate-main.unsharedSlots is empty, want the bare exit code'
+    return True, 'aggregation-audit: calibrate bare optimistic exit flagged, passed=False'
+
+
 # (name, source, old, new).  Every old block must occur once.  Per-mutant
 # judge metadata (mode, judge, uses_launcher, allowed_probe_errors) lives in
 # JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
@@ -367,6 +457,30 @@ MUTATIONS = [
      "        return common.aggregate_status(report['status'])[1]\n",
      "        print(json.dumps(report, ensure_ascii=False))\n"
      "        return 0\n"),
+    ('status-slot-relayed', CONTROLS_SOURCE,
+     "    report = {'status': status,\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n",
+     "    status = 'PASS' if all(r['passed'] for r in results) else 'FAIL'\n"
+     "    report = {'status': status,\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n"),
+    ('system-exit-zero-bypass', CONTROLS_SOURCE,
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return common.aggregate_status(report['status'])[1]\n",
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        raise SystemExit(0)\n"),
+    ('bare-return-exit', CONTROLS_SOURCE,
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return common.aggregate_status(report['status'])[1]\n",
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return\n"),
+    ('conditional-arm-exit', CONTROLS_SOURCE,
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return common.aggregate_status(report['status'])[1]\n",
+     "        print(json.dumps(report, ensure_ascii=False))\n"
+     "        return int(report.get('special')) if report.get('special') else common.aggregate_status(report['status'])[1]\n"),
+    ('calibrate-bare-zero', SOURCE,
+     "            return code\n",
+     "            return 0\n"),
     ('restored-skip-accepted', NEGATIVE,
      "            top_status, exit_code = common.aggregate_status(\n"
      "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
@@ -520,6 +634,11 @@ JUDGES = {
     'aggregation-branch-exit-inline': ('aggregation-audit', branch_exit_inline, False, ()),
     'summary-name-bypass': ('aggregation-audit', summary_name_bypass, False, ()),
     'bare-exit-zero': ('aggregation-audit', bare_exit_zero, False, ()),
+    'status-slot-relayed': ('aggregation-audit', status_slot_relayed, False, ()),
+    'system-exit-zero-bypass': ('aggregation-audit', system_exit_zero_bypass, False, ()),
+    'bare-return-exit': ('aggregation-audit', bare_return_exit, False, ()),
+    'conditional-arm-exit': ('aggregation-audit', conditional_arm_exit, False, ()),
+    'calibrate-bare-zero': ('aggregation-audit', calibrate_bare_zero, False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
