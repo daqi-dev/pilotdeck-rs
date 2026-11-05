@@ -17,6 +17,11 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
 状态：PASS（有 final 且末行 VERDICT 合规）· PARTIAL（有 final 但缺 VERDICT/覆盖行）· TIMEOUT · ERROR · TOOLS_VIOLATION。
 只有 PASS 计入闸门；exit0 或 type=result 不等于完成评审（state/memory/20261016-review-bounds.md）。
 
+通道并发闸：每个角色起进程前按 `--runner` 取全局 flock 名额（zai 8 / deepseek 4 / minimax 4 / anthropic 2，
+与 ops `scripts/fleet/fleet.py` 的 P4_CAP 同源），取不到打印 `[review-slot] waiting N/M` 排队；
+不改「四角色并行」语义，只把它们排队。anthropic 只有 2 路：不加闸时完整四角色作业必然超限
+（#1402 anthropic 四角色 25 min CPU 0%，实测是流式饥饿）。
+
 用法：
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate --serial
@@ -27,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import importlib.util
 import json
 import os
@@ -104,6 +110,64 @@ def runner_env(runner: str, key: str) -> dict[str, str]:
     """子进程的全部模型相关环境（白名单之外的父环境一概不带；minimax 直连官方接口，不经 llm-center）。"""
     return {"ANTHROPIC_API_KEY": key, "ANTHROPIC_BASE_URL": RUNNER_BASE_URL[runner]}
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
+
+# —— 通道并发闸（P4 池）——
+# 上限与 ops scripts/fleet/fleet.py 的 P4_CAP 同源（依据 _tmp/20261105-fleet-pools/CAPACITY.md）；
+# 可用 PDRS_REVIEW_SLOTS_<RUNNER> 覆盖，PDRS_REVIEW_SLOT_DIR 换锁目录（测试隔离用）。
+RUNNER_SLOTS = {"zai": 8, "deepseek": 4, "minimax": 4, "anthropic": 2}
+SLOT_WAIT_TIMEOUT = 3600  # 等名额上限（s），超时该角色记 ERROR（不静默死等）
+
+
+class SlotTimeout(RuntimeError):
+    pass
+
+
+def slot_dir() -> Path:
+    d = os.environ.get("PDRS_REVIEW_SLOT_DIR")
+    if d:
+        return Path(d)
+    return Path("/private/tmp" if sys.platform == "darwin" else "/tmp") / "pdrs-review-gate"
+
+
+def acquire_slot(runner: str) -> int | None:
+    """跨进程取 runner 通道的全局名额（flock 槽位，memory「lock-use-flock」）；返回 fd，close 即释放。
+    拿不到就排队并打印 `[review-slot] waiting N/M`；锁目录不可用时 fail-open（返回 None 并告警），
+    不让一个临时目录问题把评审全堵死。"""
+    n = int(os.environ.get(f"PDRS_REVIEW_SLOTS_{runner.upper()}", RUNNER_SLOTS.get(runner, 1)))
+    if n <= 0:
+        return None
+    d = slot_dir() / runner
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"[review-slot] 名额目录不可用（{e}），跳过并发闸", file=sys.stderr)
+        return None
+    started, last, said = time.time(), 0.0, False
+    while True:
+        for i in range(n):
+            try:
+                fd = os.open(d / f"slot{i}", os.O_RDWR | os.O_CREAT, 0o644)
+            except OSError as e:
+                print(f"[review-slot] 名额文件不可用（{e}），跳过并发闸", file=sys.stderr)
+                return None
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(fd)
+                continue
+            os.set_inheritable(fd, False)  # 锁 fd 不给子 claude 继承；主进程退出即释放
+            print(f"[review-slot] take {i + 1}/{n}（{runner}）", file=sys.stderr, flush=True)
+            return fd
+        now = time.time()
+        if not said:
+            print(f"[review-slot] waiting {n}/{n}（{runner} 通道已满）", file=sys.stderr, flush=True)
+            said = True
+        elif now - last >= 300:
+            print(f"[review-slot] waiting {n}/{n}（{runner}，已等 {int(now - started)} s）", file=sys.stderr, flush=True)
+            last = now
+        if now - started >= float(os.environ.get("PDRS_REVIEW_SLOT_TIMEOUT", SLOT_WAIT_TIMEOUT)):
+            raise SlotTimeout(f"等 {runner} 名额超时 {int(now - started)} s（通道上限 {n}）")
+        time.sleep(2)
 
 
 def render(text: str, values: dict[str, str]) -> str:
@@ -340,15 +404,24 @@ def main() -> int:
 
     (out / "command.txt").write_text(" ".join(cmd) + f"\n# cwd={wt} timeout={a.timeout}s\n", encoding="utf-8")
     if a.dry_run:
-        print(f"run-review-roles: dry-run，任务书在 {out}/*.prompt.md，命令见 command.txt")
+        print(f"run-review-roles: dry-run，任务书在 {out}/*.prompt.md，命令见 command.txt"
+              f"（并发闸：{a.runner} 上限 {RUNNER_SLOTS.get(a.runner, 1)}/通道，实跑取不到名额会排队）")
         return 0
 
     results: dict[str, dict] = {}
     def guarded(r: str, p: Path) -> None:
         try:
+            fd = acquire_slot(a.runner)
+        except SlotTimeout as e:
+            results[r] = {"role": r, "status": "ERROR", "detail": str(e), "counts": None}
+            return
+        try:
             results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model)
         except Exception as e:  # noqa: BLE001 —— 线程异常不得让 results 缺键、summary 丢失
             results[r] = {"role": r, "status": "ERROR", "detail": f"运行器异常 {type(e).__name__}", "counts": None}
+        finally:
+            if fd is not None:
+                os.close(fd)
 
     if a.serial:
         for r, p in jobs:

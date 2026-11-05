@@ -92,6 +92,8 @@ def _run(gate, rrr, out_base: Path) -> int:
     fails: list[str] = []
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
+        # 通道并发闸的锁目录必须隔离：否则本测试会与真评审抢同一组 flock 槽，或被真作业卡住
+        os.environ["PDRS_REVIEW_SLOT_DIR"] = str(tmp / "review-slots")
         wt = tmp / "repo"
         wt.mkdir()
         g = ["git", "-C", str(wt), "-c", "user.email=t@t", "-c", "user.name=t"]
@@ -290,6 +292,22 @@ def _run(gate, rrr, out_base: Path) -> int:
                     fails.append(f"serial：应逐个跑四角色（峰值并发 {peak}，事件 {len(ev)}）且单块过闸（rc={cp.returncode}）：{gate_errs(s)}")
             elif peak < 2:
                 fails.append(f"parallel：对照组应观察到并发（峰值 {peak}），否则 serial 断言无判别力")
+        # 通道并发闸（11-05 缺口 2）：anthropic 只有 2 路，四角色必须排队——峰值并发 = 2 且打出过 waiting
+        trace.write_text("")
+        (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {},
+                                                   "trace": str(trace)}))
+        out = out_base / "anthropic-slots"
+        cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", "anthropic", "--claude-bin", str(fake),
+                             "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1",
+                             "--out", str(out), "--roles", ROLES], capture_output=True, text=True)
+        ev = [(float(x.split()[1]), x.split()[0]) for x in trace.read_text().splitlines()]
+        depth = peak = 0
+        for _, kind in sorted(ev):
+            depth += 1 if kind == "start" else -1
+            peak = max(peak, depth)
+        if cp.returncode != 0 or peak != 2 or len(ev) != 8 or "[review-slot] waiting 2/2" not in cp.stderr:
+            fails.append(f"anthropic 并发闸：四角色应排队在 2 路上（峰值 {peak}、事件 {len(ev)}、rc={cp.returncode}；"
+                         f"stderr 应含 [review-slot] waiting 2/2）")
         # --serial 首角色超时：后续三个角色仍须照跑，块含四角色、首角色 TIMEOUT，返回非 0 且闸门拒收
         trace.write_text("")
         marker = tmp / "hang-first.flag"
