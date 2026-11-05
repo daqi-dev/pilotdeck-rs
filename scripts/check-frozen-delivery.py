@@ -36,7 +36,9 @@ scans the files added on the branch that the apparatus would actually register
 (both apparatuses: every tracked file under ``scripts/<kind>/`` and
 ``specs/<kind>/`` that the apparatus's own source says it would register --
 parity's ``manifest_inventory.names``, gateway's ``manifest_inventory``
-literals).  Each one needs the same exact ``Change: - <sha256> <path>`` chain,
+literals).  A manifest name that points outside those directories is scanned
+too, because ``--write`` registers it exactly as written.  Each one needs the
+same exact ``Change: - <sha256> <path>`` chain,
 otherwise it is a blocker: after ``--write`` the registration check would reject
 it.  A new file the apparatus would *not* register is ignored -- the real gate
 ignores it too, and a chain for it would itself be an unused event row.
@@ -108,10 +110,16 @@ BYTECODE = re.compile(r'(?:^|/)__pycache__(?:/|$)|\.py[co]$')
 # there must be named by that source to be registrable.  Either way the list
 # itself lives in the apparatus -- this tool keeps no second copy.
 GATEWAY_DIRS = ('scripts/gateway-parity/', 'scripts/a5-19/')
-# Directories either apparatus may register a file in.  One table: the
-# "is this registrable" question and the "what is newly registered" scan must
-# agree, or a spec document added under specs/<kind>/ reads as READY.
-REGISTRABLE_DIRS = {'parity': ('scripts/parity/', 'specs/parity/'),
+# parity's auto-registered directory: every tracked file under it gets a row
+# even when ``manifest_inventory`` never names it.
+PARITY_AUTO_DIR = 'scripts/parity/'
+# Directories either apparatus scans for files that may be newly registered.
+# One table: the "is this registrable" question and the "what is newly
+# registered" scan must agree, or a spec document added under specs/<kind>/
+# reads as READY.  A manifest name *outside* these directories is still
+# registrable (``--write`` registers it as written); ``unregistered_added``
+# adds exactly those paths to its scan for that reason.
+REGISTRABLE_DIRS = {'parity': (PARITY_AUTO_DIR, 'specs/parity/'),
                     'gateway-parity': GATEWAY_DIRS + ('specs/gateway-parity/',)}
 CHECK_TIMEOUT = 300
 GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
@@ -604,6 +612,13 @@ def _tuple_value(tree, function, name, external=()):
                         isinstance(item, str) for item in parsed):
                     return None
                 found = parsed
+    if stores and found is None:
+        # The name is stored somewhere this parser does not model -- a walrus
+        # (``names := (...)``), a ``for``/``with ... as`` target, a comprehension
+        # target.  The interpreter then uses a value we never saw, so falling
+        # back to a module-level copy would answer with the wrong tuple: "cannot
+        # tell", never a guess.
+        return None
     if found is not None:
         return found
     if name in external:
@@ -976,11 +991,11 @@ def registrable(root, kind, path):
             return None  # a name --write would reject: cannot model the target
         if path in manifest:
             return True
-        if not path.startswith('scripts/parity/'):
+        if not path.startswith(PARITY_AUTO_DIR):
             return False
         return tracked_at_head(root, path)
     if kind == 'gateway-parity':
-        if not path.startswith(GATEWAY_DIRS + ('specs/gateway-parity/',)):
+        if not path.startswith(REGISTRABLE_DIRS['gateway-parity']):
             return False
         inventory = gateway_inventory(root)
         if inventory is None:
@@ -1032,15 +1047,49 @@ def unregistered_added(root, kind, mb):
     if not mb:
         return [], []
     added, issues = [], []
+
+    def consider(name):
+        if BYTECODE.search(name):
+            return
+        state = registered_at(root, kind, name, mb)
+        if state is None:
+            issues.append(f'{name}: cannot tell whether it had a hash row at the base')
+            return
+        if state:
+            return
+        registration = registrable(root, kind, name)
+        if registration is None:
+            issues.append(f'{name}: cannot tell whether --write would register it')
+            return
+        if registration:
+            added.append(name)
+
+    extra = ()
     if kind == 'ui-server-parity':
         inventory = ui_inventory(root)
         prefixes = () if inventory is None else inventory['dirs']
+        if inventory is None:
+            issues.append('cannot tell ui-server-parity\'s inventory: '
+                          'cannot tell which files --write registers')
     else:
         # ``specs/<kind>/`` belongs to the inventory too: neither apparatus
         # reports a *new* spec document that has no hash row (parity only skips
         # them, gateway only says "hash list differs"), so an unscanned spec
         # directory is a false READY that ``--write`` turns into a missing chain.
         prefixes = REGISTRABLE_DIRS.get(kind, ())
+        if kind == 'parity':
+            # ``registrable`` says True for every name in ``manifest_inventory``,
+            # including one that already carries a ``scripts/``/``specs/`` prefix
+            # and therefore lives outside the two scanned directories.  Scanning
+            # only the prefixes would leave such a first registration unseen --
+            # the two questions must agree (see REGISTRABLE_DIRS).
+            specs = parity_spec_names(root)
+            manifest = None if specs is None else _parity_manifest_paths(specs)
+            if manifest is None:
+                issues.append('cannot tell parity\'s manifest_inventory names: cannot tell '
+                              'which files outside the scanned directories --write registers')
+            else:
+                extra = sorted(p for p in manifest if not p.startswith(prefixes))
     for prefix in prefixes:
         code, out, err = git(root, 'ls-tree', '-r', '--name-only', '-z',
                              pinned_head(), '--', prefix)
@@ -1048,21 +1097,9 @@ def unregistered_added(root, kind, mb):
             issues.append(f'cannot list files under {prefix}: {err.strip()}')
             continue
         for name in filter(None, out.split('\0')):
-            if BYTECODE.search(name):
-                continue
-            state = registered_at(root, kind, name, mb)
-            if state is None:
-                issues.append(f'{name}: cannot tell whether it had a hash row at the base')
-                continue
-            if state:
-                continue
-            registration = registrable(root, kind, name)
-            if registration is None:
-                issues.append(f'{name}: cannot tell whether --write would register it')
-                continue
-            if not registration:
-                continue
-            added.append(name)
+            consider(name)
+    for name in extra:
+        consider(name)
     return sorted(set(added)), issues
 
 
