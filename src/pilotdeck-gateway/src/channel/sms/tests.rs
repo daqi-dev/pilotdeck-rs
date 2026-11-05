@@ -390,12 +390,16 @@ fn build_raw(step: &Value) -> Vec<u8> {
         raw.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
     raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+    let head_len = raw.len();
     raw.extend_from_slice(&body);
     // The generator's `truncate`: Content-Length keeps declaring the full
     // body while the wire stops short; the `halfClose` step flag then
-    // finishes the request.
+    // finishes the request. #1339 fix-r2 (P2): the cut applies to the body
+    // only — the generator slices the body bytes and clamps at zero
+    // (`Math.max(0, bytes.length - truncate)`), so a cut longer than the body
+    // leaves the headers intact instead of eating them.
     let truncate = step["truncate"].as_u64().unwrap_or_default() as usize;
-    raw.truncate(raw.len().saturating_sub(truncate));
+    raw.truncate(head_len + body.len().saturating_sub(truncate));
     raw
 }
 
@@ -428,6 +432,21 @@ async fn ensure_replay_port_free(port: u16) {
             "#1339 port {port} already in use; a concurrent channel-sms replay would corrupt the oracle"
         );
     }
+}
+
+/// #1339 fix-r2 (P1): compare the responses recorded so far against the
+/// oracle's prefix after every `request` / `connect` step. A mutant that
+/// rejects a request (a broken signature order or signing URL) never reaches
+/// the final snapshot — the following `wait-sends` step times out first and
+/// panics without the case's bound assertion, which the negative-control
+/// suite judges INVALID instead of KILLED. Asserting as the responses land
+/// keeps every divergence at the case's own anchor.
+fn assert_responses_so_far(record: &Record, case: &Value, name: &str) {
+    let expected = case["expected"]["responses"]
+        .as_array()
+        .map(|values| values[..values.len().min(record.responses.len())].to_vec())
+        .unwrap_or_default();
+    crate::negative_assert_eq!(record.responses, expected, "#1339 sms oracle: {name}");
 }
 
 async fn replay_named(name: &str) {
@@ -537,16 +556,15 @@ async fn replay_named(name: &str) {
                     // reports ECONNREFUSED the same way for raw requests.
                     Err(_) => json!({"refused": true}),
                 });
+                assert_responses_so_far(&record, &case, name);
             }
             "connect" => {
                 let refused = bounded("connect probe", TcpStream::connect(("127.0.0.1", port)))
                     .await
                     .is_err();
-                record
-                    .lock()
-                    .expect("#1339 record mutex")
-                    .responses
-                    .push(json!({"refused": refused}));
+                let mut record = record.lock().expect("#1339 record mutex");
+                record.responses.push(json!({"refused": refused}));
+                assert_responses_so_far(&record, &case, name);
             }
             "wait-log" => {
                 let level = step["level"].as_str().unwrap_or_default().to_owned();
