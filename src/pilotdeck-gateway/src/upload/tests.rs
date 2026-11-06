@@ -1461,6 +1461,60 @@ fn upload_cleanup_reclaims_expired_orphan_directories() {
     assert!(log.contains("reclaimed orphan"), "{log}");
 }
 
+// #1646 review r5: the orphan branch deletes too, so its failure path needs
+// the same teeth as the record branch's `record-rm`. Without an injection
+// point nothing exercises the "unremovable orphan" arm at all, and a
+// regression that swallows the error (or ends the round on it) stays green.
+#[test]
+fn upload_cleanup_orphan_removal_failure_does_not_stop_the_sweep() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    // The one-shot fault lands on the first entry `names()` yields, which is
+    // byte-sorted: `upload-a-orphan` before `upload-b-orphan`.
+    let unremovable = uploads.join("upload-a-orphan");
+    fs::create_dir_all(unremovable.join("files")).unwrap();
+    fs::write(unremovable.join("files/x"), "debris").unwrap();
+    set_mtime(&unremovable, (EPOCH - DAY - 1) as u64);
+    let next = uploads.join("upload-b-orphan");
+    fs::create_dir_all(next.join("files")).unwrap();
+    set_mtime(&next, (EPOCH - DAY - 1) as u64);
+    seed_cleanup_record(
+        &uploads,
+        &project,
+        "upload-expired",
+        "1970-01-01T00:00:00.000Z",
+    );
+    let lease = project.join(".tmp/chat-upload-leases/upload-expired/l1");
+    fs::create_dir_all(&lease).unwrap();
+    fs::write(
+        lease.join("lease.json"),
+        "{\"expiresAt\":\"1970-01-01T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+    inject(&h, "orphan-rm", libc::EACCES);
+    let cleaned = h.store.cleanup_expired().unwrap();
+    assert_eq!(
+        cleaned, 1,
+        "the record half still runs after a failed orphan"
+    );
+    assert!(
+        unremovable.exists(),
+        "an unremovable orphan stays for the next sweep"
+    );
+    assert!(
+        !next.exists(),
+        "the sweep continues past an unremovable orphan"
+    );
+    assert!(!lease.exists(), "the lease half still runs");
+    let log = h.store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("upload-a-orphan"),
+        "a failed orphan removal is logged with its path: {log}"
+    );
+}
+
 // #1646 pairing case: a fresh orphan — a create whose metadata write has not
 // happened yet — must survive the sweep.
 #[test]
@@ -1527,6 +1581,48 @@ fn upload_cleanup_never_deletes_through_a_symlinked_root() {
         log.contains("uploads root is not a plain directory"),
         "the skip is logged: {log}"
     );
+}
+
+// #1646 review r4: the gate is an equality test on the resolved path, not a
+// "is it inside the project" test. A `.tmp` linked to another directory the
+// *project itself* owns would pass a prefix check and hand that directory's
+// children to the sweep, so the criterion is pinned here directly.
+#[test]
+fn plain_root_rejects_a_root_that_resolves_elsewhere() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p-plain-root");
+    fs::create_dir_all(project.join(".tmp")).unwrap();
+    let root = project.join(".tmp/chat-uploads");
+
+    // Inside the project but not the uploads root.
+    let sibling = project.join("important");
+    fs::create_dir_all(sibling.join("victim")).unwrap();
+    std::os::unix::fs::symlink(&sibling, &root).unwrap();
+    assert!(
+        matches!(plain_root(&project, "chat-uploads"), PlainRoot::Blocked),
+        "a root linked to another directory inside the project must be blocked"
+    );
+
+    // Outside the project.
+    let outside = scratch.dir("outside-plain");
+    fs::remove_file(&root).unwrap();
+    std::os::unix::fs::symlink(&outside, &root).unwrap();
+    assert!(
+        matches!(plain_root(&project, "chat-uploads"), PlainRoot::Blocked),
+        "a root linked outside the project must be blocked"
+    );
+
+    // A real directory is accepted, and the resolved path is what the round
+    // snapshots.
+    fs::remove_file(&root).unwrap();
+    fs::create_dir(&root).unwrap();
+    match plain_root(&project, "chat-uploads") {
+        PlainRoot::Plain(resolved) => {
+            assert_eq!(resolved, fs::canonicalize(&root).unwrap());
+            assert_eq!(resolved, root);
+        }
+        _ => panic!("a plain uploads root is accepted"),
+    }
 }
 
 // #1646 review r2: the plain-root gate only covers the moment the round
@@ -1921,13 +2017,13 @@ async fn cleanup_failure_keeps_the_schedule_alive() {
     .await
     .expect("the cleanup schedule runs its first tick");
     assert!(
-        !handle.is_finished(),
-        "a failed sweep does not end the schedule"
-    );
-    assert!(
         lease.exists(),
         "the failed round leaves the lease sweep's work undone"
     );
+    // The second tick must run. Probing "the next tick happened" *before*
+    // "the task is still alive" keeps the `cleanup-schedule-stop-on-failure`
+    // mutation deterministic: a loop that returns after the failure leaves the
+    // lease in place, so this times out instead of racing `is_finished`.
     tokio::time::timeout(Duration::from_secs(10), async {
         while lease.exists() {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1935,6 +2031,10 @@ async fn cleanup_failure_keeps_the_schedule_alive() {
     })
     .await
     .expect("the next tick sweeps again after the failed one");
+    assert!(
+        !handle.is_finished(),
+        "a failed sweep does not end the schedule"
+    );
     handle.abort();
 }
 

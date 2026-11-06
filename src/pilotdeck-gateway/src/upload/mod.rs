@@ -537,7 +537,7 @@ impl UploadStore {
         if !inside_root(root_real, dir) {
             return;
         }
-        match remove_tree(dir) {
+        match self.fault("orphan-rm", dir).and_then(|()| remove_tree(dir)) {
             Ok(()) => self.log_cleanup(format!(
                 "[uploads] cleanup reclaimed orphan: {}",
                 dir.display()
@@ -1215,13 +1215,23 @@ impl UploadArtifactLease {
                 let Some(root) = self.dir.parent().and_then(Path::parent) else {
                     return Ok(());
                 };
-                let Ok(root_real) = fs::canonicalize(root) else {
-                    return Ok(());
+                // "Gone" stays a quiet no-op (the lease is already clean, and
+                // `release` is idempotent); any other failure keeps the
+                // original `remove_tree` behaviour of surfacing the error
+                // instead of caching a success that never happened.
+                let root_real = match fs::canonicalize(root) {
+                    Ok(real) => real,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+                    Err(e) => return Err(UploadError::io(e, "realpath", Some(root))),
                 };
-                if root_real != root || !inside_root(&root_real, &self.dir) {
+                if root_real != root {
                     return Ok(());
                 }
-                remove_tree(&self.dir)
+                match resolved_inside(&root_real, &self.dir) {
+                    Ok(Some(_)) => remove_tree(&self.dir),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(UploadError::io(e, "realpath", Some(&self.dir))),
+                }
             })
             .clone()
     }
@@ -1415,13 +1425,23 @@ fn open_new(path: &Path) -> Result<File> {
 /// The entry is resolved freshly, the root is not: re-resolving the root
 /// would follow a `.tmp` swapped for a symlink mid-round and make both sides
 /// of the comparison agree again, which is exactly the case this guard exists
-/// to catch. A missing or unresolvable entry counts as "not inside", so every
-/// caller treats it as "do not delete".
+/// to catch. A missing entry counts as "not inside", so every caller treats it
+/// as "do not delete"; a resolution failure that is *not* "missing" is
+/// reported so `release` can keep propagating it instead of caching a fake
+/// success.
 fn inside_root(root_real: &Path, dir: &Path) -> bool {
-    let Ok(dir_real) = fs::canonicalize(dir) else {
-        return false;
-    };
-    dir_real != root_real && dir_real.starts_with(root_real)
+    resolved_inside(root_real, dir).ok().flatten().is_some()
+}
+
+/// [`inside_root`], but telling "gone / outside" (`Ok(None)`) apart from a real
+/// I/O failure.
+fn resolved_inside(root_real: &Path, dir: &Path) -> io::Result<Option<PathBuf>> {
+    match fs::canonicalize(dir) {
+        Ok(real) if real != root_real && real.starts_with(root_real) => Ok(Some(real)),
+        Ok(_) => Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 fn remove_tree(path: &Path) -> Result<()> {
     let result = match fs::symlink_metadata(path) {
@@ -1469,11 +1489,14 @@ fn plain_root(project: &Path, leaf: &str) -> PlainRoot {
     // project" — is the point: a `.tmp` symlinked to another directory
     // *within* the project would still be inside, and the sweep would then
     // treat that directory's children as uploads (or leases) to delete.
+    // Both stats already said "a directory is here", so anything other than a
+    // clean resolve is a race, not the ordinary empty state: report it as
+    // `Blocked` (logged) rather than `Missing` (silent), or a root that
+    // vanished exactly here would be indistinguishable from one that never
+    // existed.
     match fs::canonicalize(&root) {
         Ok(real) if real == root => PlainRoot::Plain(real),
-        Ok(_) => PlainRoot::Blocked,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => PlainRoot::Missing,
-        Err(_) => PlainRoot::Blocked,
+        _ => PlainRoot::Blocked,
     }
 }
 

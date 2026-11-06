@@ -79,6 +79,9 @@ SWAP_RECORD = 'upload::tests::upload_cleanup_record_removal_does_not_follow_a_ro
 RECORD_RM = 'upload::tests::upload_cleanup_record_removal_failure_does_not_stop_the_sweep'
 LEASE_SWAP = 'upload::tests::upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round'
 LEASE_RELEASE = 'upload::tests::upload_lease_release_does_not_follow_a_swapped_leases_root'
+PLAIN_ROOT = 'upload::tests::plain_root_rejects_a_root_that_resolves_elsewhere'
+ORPHAN_RM = 'upload::tests::upload_cleanup_orphan_removal_failure_does_not_stop_the_sweep'
+SCHEDULE = 'upload::tests::cleanup_failure_keeps_the_schedule_alive'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -467,11 +470,59 @@ mutations = [
      'a lease delete must not follow a root swapped mid-round'),
     # #1646 review r3: `release` is the third delete point on the leases tree and
     # fires long after acquire; it must not follow a swapped root either.
-    ('lease-release-symlink-root-swept', STORE, '''                if root_real != root || !inside_root(&root_real, &self.dir) {
+    ('lease-release-symlink-root-swept', STORE, '''                if root_real != root {
                     return Ok(());
                 }
-''', '', LEASE_RELEASE,
+                match resolved_inside(&root_real, &self.dir) {
+                    Ok(Some(_)) => remove_tree(&self.dir),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(UploadError::io(e, "realpath", Some(&self.dir))),
+                }
+''', '''                remove_tree(&self.dir)
+''', LEASE_RELEASE,
      'a lease release must not follow a swapped leases root'),
+    # #1646 review r4: the gate is an equality test, not a prefix test — a root
+    # linked to another directory inside the project must be refused too.
+    ('plain-root-accepts-inside-project-link', STORE, '''    match fs::canonicalize(&root) {
+        Ok(real) if real == root => PlainRoot::Plain(real),
+        _ => PlainRoot::Blocked,
+    }''', '''    match fs::canonicalize(&root) {
+        Ok(real) if real.starts_with(project) => PlainRoot::Plain(real),
+        _ => PlainRoot::Blocked,
+    }''', PLAIN_ROOT,
+     'a root linked to another directory inside the project must be blocked'),
+    # #1646 review r5: the orphan branch's failure arm had no injection point
+    # and no teeth; swallowing its error kept every test green.
+    ('cleanup-orphan-rm-silent', STORE, '''        match self.fault("orphan-rm", dir).and_then(|()| remove_tree(dir)) {
+            Ok(()) => self.log_cleanup(format!(
+                "[uploads] cleanup reclaimed orphan: {}",
+                dir.display()
+            )),
+            Err(e) => self.skip_record(dir, &e),
+        }''', '''        match self.fault("orphan-rm", dir).and_then(|()| remove_tree(dir)) {
+            Ok(()) => self.log_cleanup(format!(
+                "[uploads] cleanup reclaimed orphan: {}",
+                dir.display()
+            )),
+            Err(_) => {}
+        }''', ORPHAN_RM,
+     'a failed orphan removal is logged with its path'),
+    # #1646 review r5: the rewritten schedule test had no mutation; a loop that
+    # ends the schedule after one failed sweep is the exact regression it is
+    # supposed to catch.
+    ('cleanup-schedule-stop-on-failure', STORE, '''            if let Some(error) = failure {
+                // Same reason as `log_cleanup`: `eprintln!` panics when
+                // stderr is unwritable, and that panic would end this
+                // detached loop — the one failure the schedule must survive.
+                let _ = writeln!(io::stderr(), "[uploads] cleanup failed: {error}");
+            }''', '''            if let Some(error) = failure {
+                // Same reason as `log_cleanup`: `eprintln!` panics when
+                // stderr is unwritable, and that panic would end this
+                // detached loop — the one failure the schedule must survive.
+                let _ = writeln!(io::stderr(), "[uploads] cleanup failed: {error}");
+                return;
+            }''', SCHEDULE,
+     'the next tick sweeps again after the failed one'),
 ]
 
 if '--check' in sys.argv[1:]:
