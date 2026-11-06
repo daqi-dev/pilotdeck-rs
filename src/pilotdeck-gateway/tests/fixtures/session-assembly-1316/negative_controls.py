@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """#1316 A7.8-pr1 session-domain assembly: product mutations for the wire-up.
 
-Every mutant removes one piece of the assembly (a registry entry, a describe
-capability, an always-on method message, the always-on family registration,
-the explicit HTTP same-domain entry) and must be killed by the named oracle
-test in the same process, with the marker of the mutant inside that test's own
-panic payload. Original source bytes and hashes are verified after every
-mutation; the summary is emitted only after all mutants have run.
+Every mutant breaks one piece of the assembly (removes a registry entry or a
+describe capability, alters an always-on method message or its wire code,
+registers the always-on family, or advertises a deferred capability) and must
+be killed by the named oracle test in the same process, with the marker of the
+mutant inside that test's own panic payload. Original source bytes and hashes
+are verified after every mutation; the summary is emitted only after all
+mutants have run.
 
 Modes: `--self-check` proves the slot guard still exits bounded under
 `python3 -O` (#1632); `--slot-guard-probe BUSY_SCRIPT TIMEOUT` is the child
@@ -77,12 +78,13 @@ mutations = [
      '',
      'native_http::tests::user_dialog_store_entry_is_explicitly_not_yet_open',
      '#1316 user-dialog store entry is a 503'),
-    # #1632 P2-1: the wire-up has ten mutation points - three interaction
+    # #1632 P2-1 / #1476: the wire-up mutation points are the three interaction
     # registry entries, three always-on per-method messages, two describe
-    # capabilities and the always-on family registration - plus the explicit
-    # HTTP store entry. Four were covered above, so the seven below cover the
-    # rest. Each row names the assertion message the product test already
-    # prints, so the kill is attributable to that one assertion.
+    # capabilities, the always-on family registration, the explicit HTTP store
+    # entry, the always-on wire code and one advertised always-on capability.
+    # Four were covered above, so the nine below cover the rest. Each row names
+    # the assertion message the product test already prints, so the kill is
+    # attributable to that one assertion.
     ('registry-drops-elicitation-respond',
      'native_process/methods/interaction.rs',
      '    "elicitation_respond",\n',
