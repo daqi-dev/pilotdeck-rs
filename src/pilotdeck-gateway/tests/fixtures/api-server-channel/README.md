@@ -65,12 +65,16 @@ To keep the oracle deterministic the generator masks only nondeterminism:
 | `gateway-missing` | no `turn_gateway`: buffered and streaming `503 gateway_unavailable` JSON |
 | `oversized-0..2` | request body > 1,000,000 bytes closes the socket with zero bytes (three runs) |
 | `body-limit-exact` | request body of exactly 1,000,000 bytes is read and rejected as `400 invalid_json` (the cap is exclusive) |
+| `body-read-timeout` | `Content-Length: 64` declared but only 8 bytes sent, connection held open: Node's `requestTimeout` answers with the 408 and closes (the generator waits out the full 300 s) |
 | `keep-alive` | `Connection: keep-alive` request answered with `Connection: keep-alive` / `Keep-Alive: timeout=5` on one recorded request (socket reuse is *not* covered; see Known gaps) |
 
 The Rust replay (`channel::api_server::tests::replays_real_ts_api_server_cells`)
 skips `oversized-*` (it is a separate raw-socket test,
-`oversized_body_closes_without_response`) and otherwise compares status,
-headers, and body for every cell. A recorded request body of the form
+`oversized_body_closes_without_response`) and `body-read-timeout` (it takes
+Node's full 300 s and the Rust 408 carries hyper's chunked framing; the
+separate `partial_body_is_answered_at_the_body_read_deadline` pins the Rust side
+with an injected short deadline, and the replay still checks the TS-side 408
+shape) and otherwise compares status, headers, and body for every cell. A recorded request body of the form
 `<N bytes>` is replayed as `N` repeated `x` bytes — the oracle stores the
 request length instead of the filler. `submit_inputs_match_real_ts` compares
 the exact `submitTurn` inputs recorded by the TS generator.
@@ -113,6 +117,12 @@ silently degrade a cell into "some short body":
 - `body-limit-exact` must expand to exactly `MAX_REQUEST_BYTES` and
   `oversized-*` to exactly `MAX_REQUEST_BYTES + 1`, asserted on every replay:
   the cap and the fixture must not drift apart.
+- `body-read-timeout` records the declared `content-length` and a
+  `stalledAfter` count that must be smaller — a cell that actually completed
+  its body would exercise nothing. The replay also pins the TS answer itself
+  (status `408`, empty body, no connection error), so a baseline that reset the
+  connection instead of writing `requestTimeoutResponse` fails loudly rather
+  than silently making the Rust deadline test look equivalent.
 - Every cell must record exactly as many `expect` responses as `requests`; a
   surplus response would never be compared. A cell must also record at least
   one request — `0 == 0` would otherwise count as a covered cell that replays
@@ -156,7 +166,7 @@ excluded.
 `tests/fixtures/negative_suite.py`; its `mutations` table is the register of
 what is covered (health / models routing, auth bypass, CORS `Vary`, SSE
 `[DONE]`, session header, visible-failure name, gateway status, active-chat
-guard, body limit, body-limit boundary, default port). Each row requires the
+guard, body limit, body-limit boundary, body-read timeout, default port). Each row requires the
 positive control to pass and the named `#1333` assertion to fail. It must run
 after this change is committed (the shared guard compares against `HEAD`); see
 the script header for the exact command.

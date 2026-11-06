@@ -1585,6 +1585,31 @@
       ]
     },
     {
+      "id": "body-read-timeout",
+      "options": {},
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/chat/completions",
+          "headers": {
+            "content-length": "64",
+            "connection": "keep-alive"
+          },
+          "body": "<64 bytes>",
+          "stalledAfter": 8
+        }
+      ],
+      "expect": [
+        {
+          "status": 408,
+          "headers": {
+            "connection": "close"
+          },
+          "body": ""
+        }
+      ]
+    },
+    {
       "id": "keep-alive",
       "options": {},
       "requests": [

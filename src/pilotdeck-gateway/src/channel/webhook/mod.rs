@@ -632,7 +632,7 @@ async fn read_request_body(body: Incoming, max: f64) -> io::Result<String> {
 /// hyper's public API frames an unknown-length HTTP/1.1 body as chunked, so
 /// the wire is Node's 51 bytes plus the chunked framing — a presentation
 /// residual of the A8.4-NATIVE-HTTP-001 class, pending registration.
-fn node_request_timeout_response() -> hyper::Response<Body> {
+pub(crate) fn node_request_timeout_response() -> hyper::Response<Body> {
     let mut response = hyper::Response::new(native_http::streamed(None));
     *response.status_mut() = hyper::StatusCode::REQUEST_TIMEOUT;
     response.headers_mut().insert(
