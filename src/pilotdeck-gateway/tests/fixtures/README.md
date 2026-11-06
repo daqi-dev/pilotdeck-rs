@@ -63,10 +63,10 @@ dot / 根 / `src` 内走 `negative_selection.refuse_unusable_target()`，后者�
   `PYTHONOPTIMIZE=1` 会整条剥离 `assert`，靠 `assert` 的负控在优化解释器下静默放行。
 
 `test_negative_optimize_guards.py` 对已迁移的十五个入口逐一复算三条拒跑矩阵：未知变异名
-（加不加 `-O` 各一遍）、`CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白三档）、输出目录已存在
+（加不加 `-O` 各一遍）、`CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白 / `.` 四档）、输出目录已存在
 ——都要求 rc=2 且 stderr 点名、且不留下证据目录；它同时自证本解释器确实剥离 `assert`，否则结论
 无意义。（三个入口按模式在 `TARGET_OPTIONAL` 显式登记：两个只豁免「未设置」，`cli-parity-mock-gateway`
-不编译 Cargo 三档全豁免；豁免理由与所依赖的源码事实都有断言，不静默漏测。）
+不编译 Cargo 四档全豁免；豁免理由与所依赖的源码事实都有断言，不静默漏测。）
 同一文件里的 `PENDING_BARE_ASSERTS` 是**只减不增**的存量登记：仍带裸 `assert` 的
 `*/negative_controls.py` 必须逐条列出并写理由，新脚本带裸 `assert` 直接让 CI 红。因此
 「已迁移清单」不会被误读成全集——这个**表**只覆盖 `negative_controls.py` 命名的入口；

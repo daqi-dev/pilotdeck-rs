@@ -203,8 +203,10 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
     (#1666 fix-r7); ``'.'`` is presence-valid but rejected by the same rule, and
     was refused by two entries only (#1666 fix-r9).
 
-    ``baseline`` overrides ``PDRS_BASELINE`` so the same three absent/empty/
-    blank modes can be exercised for that variable (#1666 fix-r9).
+    ``baseline`` overrides ``PDRS_BASELINE`` so the same empty/blank modes can
+    be exercised for that variable; passing ``None`` leaves the ``setdefault``
+    value in place, so the *absent* mode is not expressible here (#1666
+    fix-r9; the guards under test only fire on empty/blank).
     """
     directory = Path(tempfile.mkdtemp(prefix='negctl-1666-', dir=base))
     _CLEANUP.append(directory)
@@ -317,7 +319,8 @@ class UnknownControlIsRefused(unittest.TestCase):
 
         `specs/negative-controls/README.md` promises this for every migrated
         entry, but the rest of this file always supplies the variable, so the
-        promise had no denominator. All three unusable modes are tested: three
+        promise had no denominator. All four unusable modes (absent / empty /
+        blank / ``.``) are tested: three
         entries used to check presence only, and a host that exports
         ``CARGO_TARGET_DIR=`` (or only spaces) would have run them after
         claiming the evidence directory and then failed inside the shared

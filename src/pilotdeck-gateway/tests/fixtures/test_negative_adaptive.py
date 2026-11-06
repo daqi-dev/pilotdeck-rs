@@ -373,6 +373,33 @@ class SuiteTests(unittest.TestCase):
         self.assertIsNone(summary, '#1666 a run that never started publishes no summary')
         self.assertEqual(observations, [], '#1666 no mutation may run after a startup refusal')
 
+    def test_shared_executor_refuses_an_unusable_caller_target(self):
+        """The value half of the target rule lives in the executor itself.
+
+        Callers such as `background-output/negative.py` have no startup guard
+        of their own, so removing the line inside `mutation_suite` would
+        silently re-open `CARGO_TARGET_DIR=.` for the whole family: the run
+        would claim its evidence directory and then compile inside the repo's
+        own `src` (#1666 fix-r10).
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs1666-shared-target-') as name:
+            root = Path(name)
+            errors = io.StringIO()
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': '.'}), \
+                 redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as refusal:
+                    control.mutation_suite(
+                        'probe', [], root / 'out',
+                        lambda _test: (('--lib',), ['cell']),
+                        lambda result, _test: result.returncode == 0,
+                        lambda _name, result, _test: ('KILLED', 'bound result'))
+            self.assertEqual(refusal.exception.code, 2,
+                             '#1666 an unusable target never started')
+            self.assertIn('target', errors.getvalue(),
+                          '#1666 the refusal names the target rule')
+            self.assertFalse((root / 'out').exists(),
+                             '#1666 a refused run leaves no evidence directory')
+
     def test_source_guard_refusal_never_launches(self):
         code, summary, observations = self.exercise('guard')
         self.assertEqual(code, 1, '#994 guard refusal is nonzero')

@@ -282,8 +282,9 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
     # #1666/#1734: the caller target is a startup guard, so it is checked
     # before the evidence directory is claimed and before the source guard can
     # wait for a cargo slot: a missing target is "never started" (2), not a
-    # run that failed. `environment()` below keeps the same refusal as a
-    # backstop for callers that reach it directly.
+    # run that failed. `environment()` below backstops only the presence half
+    # for callers that reach it directly; the value half (dot / root / `src`)
+    # is enforced here, before any directory exists (#1666 fix-r10).
     if missing_target():
         # absent, empty or all-space: all three are "never started" (#1666
         # fix-r8). Callers such as `background-output/negative.py` have no

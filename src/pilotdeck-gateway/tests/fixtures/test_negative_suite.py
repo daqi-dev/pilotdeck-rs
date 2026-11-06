@@ -1392,8 +1392,13 @@ class MatrixMainStartupTests(unittest.TestCase):
                                      '#1734 a refused run leaves no evidence directory')
 
     def test_unusable_target_is_never_started(self):
-        for mode, value in (('missing', None), ('empty', ''),
-                            ('blank', '   ')):
+        # `dot` joined the matrix in #1666 fix-r10: `matrix_main` used to pass
+        # it straight through to `run_owned`, which compiled inside the repo's
+        # own `src` after the evidence directory had already been claimed.
+        for mode, value, needle in (('missing', None, 'CARGO_TARGET_DIR'),
+                                    ('empty', '', 'CARGO_TARGET_DIR'),
+                                    ('blank', '   ', 'CARGO_TARGET_DIR'),
+                                    ('dot', '.', 'target')):
             with tempfile.TemporaryDirectory() as name:
                 root = Path(name)
                 env = {} if value is None else {'CARGO_TARGET_DIR': value}
@@ -1402,7 +1407,7 @@ class MatrixMainStartupTests(unittest.TestCase):
                     refusal, stderr = self.call(root, args=[str(out)], env=env)
                     self.assertEqual(refusal.code, 2,
                                      f'#1734 a {mode} target never started')
-                    self.assertIn('CARGO_TARGET_DIR', stderr)
+                    self.assertIn(needle, stderr)
                     self.assertFalse(out.exists(),
                                      '#1734 a refused run leaves no evidence directory')
 

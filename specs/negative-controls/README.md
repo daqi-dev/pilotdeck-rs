@@ -152,8 +152,10 @@
 `TARGET_OPTIONAL` 登记的三个入口按模式各自豁免：`interaction-values` 与
 `turn-submit-admission` 只在**变量未设置**这一档豁免（按 #1166 用共享默认 target），
 空串与纯空白由各自的 `blank_target()` 前置守卫以 2 拒跑，dot / 文件系统或仓库根 /
-`src` 这类目标同样在领取证据目录之前由 `refuse_unusable_target()` 以 2 拒跑；
-`cli-parity-mock-gateway` 不编译 Cargo，**三档全豁免**，由登记表守卫断言它没有任何
+`src` 这类目标同样在领取证据目录之前以 2 拒跑——这两个入口是直接 `try:
+target_environment(...) except RuntimeError: refuse(...)`，效果等价于
+`refuse_unusable_target()`（同一份取值规则，只是没有包成谓词）；
+`cli-parity-mock-gateway` 不编译 Cargo，**四档全豁免**，由登记表守卫断言它没有任何
 target 读取；
 **树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
@@ -171,6 +173,6 @@ target 读取；
 （未设置 / 空串 / 纯空白 / `.` 四档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
 （`interaction-values` / `turn-submit-admission` 只豁免「未设置」，由
 `negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 不编译 Cargo，
-三档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
+四档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
 AST 判；豁免多档的入口不得出现任何 target 读取形态），加个名字不能静默缩小矩阵。
 共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。
