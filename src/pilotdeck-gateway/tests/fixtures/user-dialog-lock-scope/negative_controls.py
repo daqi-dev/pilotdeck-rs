@@ -93,6 +93,10 @@ SETTLE_EVENTS_ASSERTION = ('#1599 a failing settle hook still delivers the lease
 REPLACED_POLL_TEST = ('user_dialog::channel_tests::'
                      'a_replaced_dialog_keeps_its_own_cross_gateway_poll')
 REPLACED_POLL_ASSERTION = '#1599 a replaced dialog keeps its own cross-gateway poll'
+REENTRANT_INSTALL_TEST = ('user_dialog::channel_tests::a_poll_entry_installed_after_a_'
+                          'reentrant_replacement_follows_the_replacement')
+REENTRANT_INSTALL_ASSERTION = ('#1599 a poll entry re-installed by a superseded '
+                               'registration follows the replacement')
 # Statically declared denominator: a literal tuple, deliberately not derived
 # from `mutations`, so a runtime table that lost rows cannot shrink it.
 DECLARED = (
@@ -112,6 +116,7 @@ DECLARED = (
     'restore-drops-the-replaced-waiter',
     'settle-failure-drops-pre-consume-events',
     'replaced-dialog-loses-its-poll',
+    'superseded-install-keeps-the-old-generation',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -285,6 +290,13 @@ mutations = [
      '.is_some_and(|entry| entry.generation == generation)',
      '.is_some_and(|entry| entry.generation >= generation)',
      REPLACED_POLL_TEST, REPLACED_POLL_ASSERTION),
+    # channel.poll: an entry installed by a superseded registration keeps its
+    # old generation, so the current owner can never clear it (TS keeps one
+    # timer per request; the entry follows the request id).
+    ('superseded-install-keeps-the-old-generation', 'user_dialog/channel.rs',
+     'entry.generation != generation',
+     'entry.generation == generation',
+     REENTRANT_INSTALL_TEST, REENTRANT_INSTALL_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]

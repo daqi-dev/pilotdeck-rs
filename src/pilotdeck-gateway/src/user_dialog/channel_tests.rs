@@ -1763,3 +1763,108 @@ fn a_replaced_dialog_keeps_its_own_cross_gateway_poll() {
         other => panic!("#1599 a replaced dialog keeps its own cross-gateway poll, got {other:?}"),
     }
 }
+
+#[test]
+fn a_poll_entry_installed_after_a_reentrant_replacement_follows_the_replacement() {
+    use crate::negative_assert;
+
+    // #1599: the change observer (`emit`) is host code, so it can register a
+    // same-id replacement while the original request is still being set up. The
+    // original then installs its own poll entry on top of the replacement's,
+    // bound to a generation the replacement will never clear. TS keeps one
+    // timer per request (`GatewayUserDialogChannel.ts:130-133`), so the entry
+    // must follow whichever registration owns the id, and the replacement must
+    // still receive its answer on the next tick.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-reentrant-install",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let replacement: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let takes = Arc::new(AtomicI64::new(0));
+    let emits = Arc::new(AtomicI64::new(0));
+    let mut options = ChannelOptions::new(
+        "session",
+        bus,
+        Arc::new({
+            let holder = holder.clone();
+            let replacement = replacement.clone();
+            let emits = emits.clone();
+            move |_event: JsValue| {
+                // First emit belongs to the original request: register the
+                // replacement before the original installs its poll.
+                if emits.fetch_add(1, Ordering::SeqCst) == 0 {
+                    let channel = holder
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .expect("channel is installed before the first emit");
+                    let next = channel.request_confirm(&ConfirmRequest {
+                        tool_call_id: "call-replacement".into(),
+                        tool_name: "request_user_confirm".into(),
+                        prompt: "Replacement dialog".into(),
+                        confirm_label: None,
+                        cancel_label: None,
+                        default_value: None,
+                        abort: None,
+                    });
+                    replacement.lock().unwrap().replace(next);
+                }
+                Ok(())
+            }
+        }),
+    );
+    // Both requests get the same id, which is what makes the replacement
+    // supersede the original registration.
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.take_stored_answer = Some(Arc::new({
+        let takes = takes.clone();
+        move |id: &JsString| {
+            let call = takes.fetch_add(1, Ordering::SeqCst) + 1;
+            if call <= 2 {
+                // The replacement's own first poll and the original's late poll
+                // both find nothing; the answer lands on the next tick.
+                return Ok(None);
+            }
+            Ok(Some(StoredAnswer {
+                request_id: id.clone(),
+                result: DialogAnswer::Answered(JsValue::Bool(false)),
+                submitted_at: "2026-01-01T00:00:01.000Z".into(),
+            }))
+        }
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+
+    let _original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded from the change observer".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+
+    clock.fetch_add(1_000, Ordering::SeqCst);
+    channel.tick();
+    let mut next = replacement
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the replacement request was registered from emit");
+    match next.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(false),
+            "#1599 a poll entry re-installed by a superseded registration follows the replacement"
+        ),
+        other => panic!(
+            "#1599 a poll entry re-installed by a superseded registration follows the replacement, \
+             got {other:?}"
+        ),
+    }
+}
