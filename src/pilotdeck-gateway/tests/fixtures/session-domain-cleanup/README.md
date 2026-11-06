@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 256 mutants:
+`JUDGES`, keyed by the same names. The current table has 260 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -438,7 +438,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-getattribute-attr-spelling`,
 `calibrate-getattribute-name-spelling`, `calibrate-for-wrapped-container`,
 `calibrate-for-target-after-loop`, `calibrate-for-slice`,
-`calibrate-for-copy`, `calibrate-comp-result-receiver`.
+`calibrate-for-copy`, `calibrate-comp-result-receiver`,
+`calibrate-for-target-rebind-if`, `calibrate-for-target-after-match`,
+`calibrate-comp-dict-result`, `calibrate-comp-name-iter`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1166,3 +1168,22 @@ false PASS and one false FAIL of the constant folding.
 | **Comprehension result container**: `_g = [h for h in (md,)]; _g[0].common = <stub>` -- the comprehension target is local, the list it builds is not; a relay comprehension's result carries the element roots. | `calibrate-comp-result-receiver` |
 | **Negative constant subscript (false FAIL)**: `keys = ('__doc__',); getattr(md, keys[-1])` -- a negative index is a position from the end, not an unknown name. The literal arrives as `UnaryOp(USub, Constant)`, so the fold decodes it before indexing. | self-test `negative_subscript_probe` |
 | Loop target read after the loop (false FAIL guard): `for h in hs: pass` then `print(h)` reads without writing. | self-test `iterated_after_read_probe` |
+
+### Closed by `fix-r1` round 6 (codex r3)
+
+The round-5 use-point scan walked the parent chain through
+`body`/`orelse`/`finalbody`, so a use placed in a `match` case, an `except`
+handler or a `finally` after the loop was never reached; it also stopped at
+any rebinding, so `if cond: h = None` ended the scan while the handle was
+still live. The comprehension relay branch knew neither a `DictComp` nor a
+name-bound literal iterable.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **Conditional rebinding of the loop target**: `if False: h = None` then `h('common', <stub>)` -- only a *sibling* rebinding to a provably fresh value ends the scan. | `calibrate-for-target-rebind-if` |
+| **Use in a `match` case after the loop**: the scan now walks the whole scope in source order instead of the parent chain. | `calibrate-for-target-after-match` |
+| **Dict-comprehension result container**: `_g = {0: h for h in (md,)}; _g[0].common = <stub>`. | `calibrate-comp-dict-result` |
+| **Name-bound literal iterable**: `items = (md,); _g = [h for h in items]`. | `calibrate-comp-name-iter` |
+| Fresh rebinding after the loop (false FAIL guard): `h = object(); h()` builds a new object, so the old handle is gone and `object()`/`list()`/`dict()`/... count as fresh; `getattr(md, name)` does not. | self-test `loop_rebind_fresh_probe` |
+| Conditional rebinding keeps the handle (self-test of the fix above). | self-test `loop_rebind_if_probe` |
+| Comprehension result only read (false FAIL guard): `_g = [h for h in (md,)]; print(len(_g))`. | self-test `comp_result_pure_probe` |
