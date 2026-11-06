@@ -100,3 +100,14 @@ regexes = [
   '''^0123456789abcdefghijklmnopqrstuv$''',
   '''^MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY$''',
 ]
+
+[[allowlists]]
+description = "A8.3-ch-weixin 入站媒体（#1823）夹具 weixin-channel：generate.mts 的测试 AES key 是顺序字节表（16 字节 0x00..0x0f、24 字节 0x00..0x17、32 字节 0x00..0x1f，另一把 16 字节 0x10..0x1f）以及 32 字符 hex 文本 '000102…0f'，只用于本地金样/AES-ECB 解密对拍，不连任何真实服务、不是凭据。按 Secret 值两端锚定（regexTarget=secret），只放行 gitleaks 抽出的 Secret 恰为这五个固定 base64 值的命中（按值匹配、不限出现位置）；Secret 不等于它们的命中（更长值、同头不同值）仍会命中"
+regexTarget = "secret"
+regexes = [
+  '''^AAECAwQFBgcICQoLDA0ODw==$''',
+  '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYX$''',
+  '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=$''',
+  '''^EBESExQVFhcYGRobHB0eHw==$''',
+  '''^MDAwMTAyMDMwNDA1MDYwNzA4MDkwYTBiMGMwZDBlMGY=$''',
+]
