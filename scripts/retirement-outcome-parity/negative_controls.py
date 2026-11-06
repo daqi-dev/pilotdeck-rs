@@ -20,16 +20,22 @@ import sys
 
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
-# 同族装置口径：不落 .pyc（本脚本用 spec_from_file_location 再加载 checker，
-# 陈旧字节码会让「跑的是当前源码」不成立）。
-sys.dont_write_bytecode = True
 
 import argparse
 import importlib.util
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
+
+# 同族装置口径（scripts/gateway-parity/*、scripts/parity/* 均成对设置）：不写也
+# **不读**缓存字节码。只有 dont_write_bytecode 挡不住读取已有的
+# __pycache__/check_outcome_parity.*.pyc（PEP 552 unchecked-hash 可直接执行），
+# 而本脚本正是用 spec_from_file_location 再加载 checker——陈旧字节码会让负控的
+# KILLED/INVALID 归因跑的不是当前源码。
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
 CHECKER = HERE / 'check_outcome_parity.py'
@@ -461,19 +467,27 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
 
 
 def preflight_base_rounds(data_root, oracle, names):
-    """变异前先确认参考轮本身 PASS（否则负控的归因无意义）。"""
-    for name in names:
+    """变异前先确认参考轮本身 PASS（否则负控的归因无意义）。
+
+    逐轮之外再跑一次**跨轮合并**：单轮的 P7 是空判（`p7Evaluated: false`），
+    N11 注入的「轮间漂移」只有在未注入时这对轮次本来不漂移的前提下才能归因给
+    注入；否则参考数据自带的漂移会送出一个假 KILLED。
+    """
+    invocations = [(name, [str(Path(data_root) / name)]) for name in names]
+    invocations.append(('+'.join(names), [str(Path(data_root) / name) for name in names]))
+    for label, paths in invocations:
+        command = [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(oracle)]
+        for path in paths:
+            command += ['--round', path]
         try:
             result = subprocess.run(
-                [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(oracle),
-                 '--round', str(Path(data_root) / name)],
-                capture_output=True, text=True, timeout=CHECK_TIMEOUT_SECONDS,
-                start_new_session=True)
+                command, capture_output=True, text=True,
+                timeout=CHECK_TIMEOUT_SECONDS, start_new_session=True)
         except subprocess.TimeoutExpired:
-            print(f'preflight {name}: TIMEOUT after {CHECK_TIMEOUT_SECONDS}s',
+            print(f'preflight {label}: TIMEOUT after {CHECK_TIMEOUT_SECONDS}s',
                   file=sys.stderr)
             return 2
-        print(f'preflight {name}: rc={result.returncode}', file=sys.stderr)
+        print(f'preflight {label}: rc={result.returncode}', file=sys.stderr)
         if result.returncode != 0:
             print(result.stdout[:2000], result.stderr[:2000], file=sys.stderr)
             return result.returncode or 1
@@ -564,21 +578,63 @@ def run_control(control, out_root, oracle):
     return record
 
 
+def tmp_owner_pid(name):
+    """``summary.json.<pid>.tmp`` 里的 pid；不是这个形状返回 None。"""
+    prefix, suffix = 'summary.json.', '.tmp'
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        return None
+    middle = name[len(prefix):-len(suffix)]
+    return int(middle) if middle.isdigit() else None
+
+
+def pid_alive(pid):
+    """该 pid 是否仍是活进程（判断 tmp 是不是**另一个仍在跑**的执行器的）。"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def is_own_summary_artifact(name):
+    """只认本执行器自己的产物名：精确 ``summary.json``（含旧版 ``summary.json.tmp``）
+    与 ``summary.json.<pid>.tmp``。
+
+    早先的 ``glob('summary.json*')`` 会把 ``summary.json.backup`` /
+    ``summary.json.notes`` 这类既有文件一起 ``unlink``——失效旧结果不得顺手删掉
+    别人的证据（评审 P0）。
+    """
+    return name in ('summary.json', 'summary.json.tmp') or tmp_owner_pid(name) is not None
+
+
 def invalidate_stale_summary(out_root):
     """**启动第一件事**：删掉上一轮的 summary.json 与残留 tmp。
 
-    下游以「summary.json 存在」为「负控已跑完」的证据；早退路径（读数据失败、
-    preflight 非 0、控件构造断言失败）若走不到这里，旧 PASS 会冒充本轮结果
-    （两家评审 P0，实测 `rc: 2` 且 `unlink: []`）。
+    下游以「summary.json 存在」为「负控已跑完」的证据；早退路径（参数错误、
+    读数据失败、preflight 非 0、控件构造断言失败）若走不到这里，旧 PASS 会冒充
+    本轮结果（两家评审 P0，实测 `rc: 2` 且 `unlink: []`）。
+
+    另一个**仍在跑**的执行器的 ``summary.json.<pid>.tmp`` 不删：删掉它会让对方
+    的原子发布 ``replace`` 抛 ``FileNotFoundError``（并发互斥的残余登记在跟进单）。
     """
     out_root = Path(out_root)
     try:
         out_root.mkdir(parents=True, exist_ok=True)
+        candidates = sorted(out_root.iterdir())
     except OSError as error:
-        print(f'negative_controls: cannot create {out_root}: {error}', file=sys.stderr)
+        print(f'negative_controls: cannot use {out_root}: {error}', file=sys.stderr)
         return False
     removed = []
-    for path in sorted(out_root.glob('summary.json*')):
+    for path in candidates:
+        if not (path.is_file() and is_own_summary_artifact(path.name)):
+            continue
+        owner = tmp_owner_pid(path.name)
+        if owner is not None and owner != os.getpid() and pid_alive(owner):
+            print(f'negative_controls: keeping live {path.name} (pid {owner} runs)',
+                  file=sys.stderr)
+            continue
         try:
             path.unlink()
         except OSError as error:
@@ -590,6 +646,28 @@ def invalidate_stale_summary(out_root):
     return True
 
 
+def peek_output_dir(argv):
+    """argparse **之前**从原始 argv 里认位置参数 ``output``（认得就认）。
+
+    参数拼错 / 缺值时 argparse 自己以 rc=2 退出，走不到解析后的失效步骤，旧
+    summary.json 会冒充本轮（评审 P0，复现：``out --bad`` 时旧 summary 仍在）。
+    所以失效必须在解析前做；这里只做保守的形态判断，认不出就放弃（那种情况下
+    也不知道该删哪个目录）。``--data`` / ``--oracle`` 的值不是位置参数。
+    """
+    skip_value = False
+    for token in argv:
+        if skip_value:
+            skip_value = False
+            continue
+        if token in ('--data', '--oracle'):
+            skip_value = True
+            continue
+        if token.startswith('-'):
+            continue
+        return token
+    return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Negative controls N1-N17 for the retirement outcome-parity '
@@ -599,10 +677,15 @@ def main(argv=None):
                         help='TS reference data root (default: %(default)s)')
     parser.add_argument('--oracle', default=str(DEFAULT_ORACLE),
                         help='ts-oracle.json (default: %(default)s)')
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    # 第一件事（解析前）：旧 summary 失效。argparse 的错误退出也是早退路径。
+    early_output = peek_output_dir(raw_argv)
+    if early_output is not None and not invalidate_stale_summary(early_output):
+        return 2
+    args = parser.parse_args(raw_argv)
 
     out_root = Path(args.output)
-    # 第一件事：旧 summary 失效。任何早退路径都不得把上一轮的 PASS 留在盘上。
+    # 解析成功后再按解析结果失效一次（peek 认错时兜底；本身幂等）。
     if not invalidate_stale_summary(out_root):
         return 2
     data = Path(args.data)
@@ -610,7 +693,9 @@ def main(argv=None):
         base_rows, base_frames = read_round(data, 'round-01')
         round2_rows, round2_frames = read_round(data, 'round-02')
         # 前置：未变异的参考轮必须本来 PASS。否则「期望规则 fire」可能是既有违规，
-        # 归因就不成立（例如 --data 指向的轮本就有 P4）。
+        # 归因就不成立（例如 --data 指向的轮本就有 P4）。逐轮之外还要跑一次
+        # 跨轮合并：单轮 P7 是空判，N11 的「跨轮漂移」归因必须先排除参考轮对
+        # 本身已漂移。
         preflight = preflight_base_rounds(data, Path(args.oracle),
                                           ('round-01', 'round-02'))
         if preflight != 0:
@@ -618,7 +703,7 @@ def main(argv=None):
                   '先修数据或金样', file=sys.stderr)
             return 2
         controls = build_controls(base_rows, base_frames, round2_rows, round2_frames)
-    except InputError as error:
+    except CHECK.InputError as error:
         print(f'negative_controls: 输入不可用：{error}', file=sys.stderr)
         return 2
     except Exception as error:  # noqa: BLE001 - 控件构造失败同样按输入不可用收口

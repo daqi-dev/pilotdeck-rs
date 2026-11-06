@@ -66,7 +66,9 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
 - 不比较（理由在条目「范围」）：`elapsedMs`（纯计时，95/101 跨轮变动）、
   `error.message` 文本（含轮次绝对路径与 provider 措辞，只要求非空）、
   `events` 计数 / `lastEventType`（只要求 stream ok 有 `final: true` 帧且 `events >= 1`）。
-- 成功 response 的 `"error": null` 等同「无 error」（不判 FAIL）。
+- 成功 response 的 `"error": null`（或字段缺省）等同「无 error」（不判 FAIL）；**除 null /
+  缺省之外的任何值都算携带 error**——`error: String` 的 `"boom"`、`error: Vec` 的 `[]`、`0`、
+  `true` 一律判 P6 FAIL（「不是 dict 就当没有」会放成假 PASS）。
 - 残余：① 文案与帧数不比较；② 只覆盖单轮内方法级行为，hostAudit / entryInventory /
   网络面归 #1478；③ 未接进冻结装置，Rust 轮必须显式跑本装置，否则不得宣称覆盖；
   ④ P6 要求 error 行带同 id `response` 帧，比冻结装置 `EVIDENCE_BACKING` 对 stream
@@ -97,8 +99,17 @@ N16（同 id 两条 response）与 N17（一个方法两条 send）给重复响�
 
 执行器**第一件事**是删同输出目录的旧 `summary.json`（含残留 `*.tmp`）——下游以「文件存在」
 为跑完证据，所以必须在读数据 / preflight / 控件构造**之前**失效，任何早退路径都不得留下上一轮
-的 PASS。checker 子进程带 600 s 超时（`TimeoutExpired` 收口为 rc2）；注入用常量取自判据实现
-（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。
+的 PASS。**argparse 的错误退出（拼错参数 / 缺值，rc=2）也是早退路径**：解析前先从原始 argv
+认出输出目录并失效一次，解析后再按解析结果失效一次。失效只碰本执行器自己的产物名
+（`summary.json`、`summary.json.tmp`、`summary.json.<pid>.tmp`）：`summary.json.backup`
+之类的既有文件不动，**存活 pid** 的 tmp 也不动（否则会把另一个仍在跑的执行器的原子发布打掉；
+并发互斥残余见跟进单）。前置自检除逐轮外还跑一次**跨轮合并**（`check --round round-01
+--round round-02`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除「参考轮对本身已漂移」，
+N11 的跨轮归因就不成立。checker 子进程带 600 s 超时（`TimeoutExpired` 收口为 rc2）；注入用
+常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。两个入口成对设
+`sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
+`scripts/parity/*` 口径）：只挡写不挡读时，`spec_from_file_location` 仍可执行陈旧 `.pyc`
+（PEP 552 unchecked-hash），负控的 KILLED 归因就不再是「跑当前源码」。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
