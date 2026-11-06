@@ -70,4 +70,4 @@ if compile_only:
   args=['--compile-only',str(out)]))
 raise SystemExit(run_cases(root,
  [Case(n,p,old,new,full_test(test),anchor) for n,p,old,new,test,anchor in controls],
- out,env,mutate,baseline=env.get('PDRS_NEGATIVE_BASELINE','HEAD')))
+ out,env,mutate,baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))

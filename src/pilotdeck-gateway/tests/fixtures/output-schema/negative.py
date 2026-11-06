@@ -227,7 +227,7 @@ selected = sys.argv[2:] or [name for name, _old, _new, _oracle in MUTANTS]
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
 test = 'runtime::mcp::output_schema::tests::formats_follow_ajv_formats'
 replay = 'runtime::mcp::output_schema::tests::replays_the_ajv_oracle'
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
 failures = []
 with mutating_sources(repo, [source], baseline=baseline) as snapshots:
     original = snapshots[source]

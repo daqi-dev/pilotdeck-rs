@@ -48,4 +48,4 @@ cases = [Case(n, source, o, v, test,
               ['#741k pre-cancel factory must return aborted', '#741k factory call must be lazy'])
          for n, o, v in mutations if not names or n in names]
 raise SystemExit(run_cases(root, cases, out, env, mutate,
-                           baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')))
+                           baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))

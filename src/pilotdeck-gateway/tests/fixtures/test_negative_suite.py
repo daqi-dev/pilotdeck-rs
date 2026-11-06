@@ -1492,5 +1492,43 @@ class ResultRowSchemaTests(unittest.TestCase):
         self.assertNotEqual(self.load(comparator, row), self.load(comparator, with_hits))
 
 
+class AuditBindingTests(unittest.TestCase):
+    """#1890: the shared `--audit` binding helpers must never match loosely."""
+
+    MODULES = (('runtime::a::tests::', 'a.rs'), ('runtime::b::tests::', 'b.rs'))
+
+    def test_binds_to_the_declaring_module_file(self):
+        self.assertEqual(suite.bind_module_file('runtime::a::tests::case_a', self.MODULES),
+                         ('a.rs', 'case_a'))
+        self.assertEqual(suite.bind_module_file('runtime::b::tests::case_b', self.MODULES),
+                         ('b.rs', 'case_b'))
+
+    def test_empty_short_name_is_refused(self):
+        # #1890-5: a row whose test id equals the prefix leaves `short == ''`,
+        # and the old matcher then hit the bare `=>` text spread over the file.
+        with self.assertRaises(ValueError, msg='#1890 an empty short name must be refused'):
+            suite.bind_module_file('runtime::a::tests::', self.MODULES)
+
+    def test_extra_module_level_is_refused(self):
+        with self.assertRaises(ValueError, msg='#1890 an extra module level must be refused'):
+            suite.bind_module_file('runtime::a::tests::nested::case_a', self.MODULES)
+
+    def test_unaudited_module_is_refused(self):
+        with self.assertRaises(ValueError, msg='#1890 an unaudited module must be refused'):
+            suite.bind_module_file('runtime::c::tests::case_c', self.MODULES)
+
+    def test_declares_test_accepts_every_existing_form(self):
+        self.assertTrue(suite.declares_test('fn case_a() {', 'case_a'))
+        self.assertTrue(suite.declares_test('matrix_tests! { case_a=>"row" }', 'case_a'))
+        self.assertTrue(suite.declares_test('case!(case_a,);', 'case_a', 'case!'))
+
+    def test_declares_test_needs_the_exact_name(self):
+        # A declaration that merely starts with the short name must not count.
+        self.assertFalse(suite.declares_test('fn case_ab() {', 'case_a'))
+        # The macro form is only accepted when the caller names the macro.
+        self.assertFalse(suite.declares_test('case!(case_a,);', 'case_a'))
+        self.assertFalse(suite.declares_test('case_other!(case_a,);', 'case_a', 'case!'))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

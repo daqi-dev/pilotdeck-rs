@@ -19,7 +19,7 @@ def baseline():
     # needs the same escape hatch as the session-factory and projection-cache
     # runners: an uncommitted sandbox candidate can be the guarded baseline,
     # while a committed host keeps HEAD.
-    return os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+    return os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
 
 mutations = [
     ('completion-index-skipped', 'src/pilotdeck-gateway/src/runtime/session/factory.rs',

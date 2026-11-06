@@ -51,7 +51,7 @@ refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 # the same pre-commit escape hatch used by the other fixtures' controls
 # (live-recording, turn-runner, network-timing, ...). The host runs the
 # default HEAD, i.e. the committed tree.
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
 
 # Each mutation names the test whose timing assertion it must turn red.
 LIB_DEEP_FRAME = 'runtime::tools::builtin::web::html_compat::tests::deep_frame_stack_select_end_tags_stay_within_linear_budget'

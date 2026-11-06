@@ -8,7 +8,7 @@ import sys
 root = Path(__file__).resolve().parents[6]
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, run_cases, publish_summary
+from negative_suite import Case, bind_module_file, declares_test, run_cases, publish_summary
 
 mutations = [
     ('cache-oracle-regeneration',
@@ -23,6 +23,14 @@ mutations = [
      'void work; // #1011 retain generated work directory',
      'runtime::session::factory::projection_cache_tests::generator_cleans_owned_work',
      '#1011 generator left files behind in OUT'),
+    # #1890: the hard-deadline exit skips the lexical finally, so its own
+    # cleanup is the only thing that removes the work root on that path.
+    ('generator-deadline-cleanup-skipped',
+     'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/generate.mts',
+     'fs.rmSync(ownedWork, {recursive: true, force: true, maxRetries: 2, retryDelay: 10});',
+     'void ownedWork; // #1890 deadline expiry keeps its work root',
+     'runtime::session::factory::projection_cache_tests::generator_deadline_cleans_owned_work',
+     '#1011 deadline exit leaves no work-* behind'),
     ('stale-suffix-skipped',
      'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
      'if sequence(entry) > watermark {',
@@ -129,7 +137,7 @@ def run(out, env):
     # #1281: PDRS_NEGATIVE_BASELINE lets an uncommitted sandbox candidate run
     # its controls against the exact working tree, mirroring the
     # turn-runner/spill-isolation runners; committed hosts keep HEAD.
-    baseline = env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+    baseline = env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
     compiled = []
     for name, filename, old, new, _, _ in mutations:
         target = root / filename
@@ -149,7 +157,7 @@ def run(out, env):
     selected = [Case(name, root / filename, old, new, test, assertion)
                 for name, filename, old, new, test, assertion in mutations]
     result = run_cases(root, selected, out, env, mutate, timeout=900, script=__file__,
-                       baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD'))
+                       baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD')
     return result or int(any(not r['compiled'] for r in compiled))
 
 
@@ -183,27 +191,18 @@ def main():
         # #1281 review: the full module path picks the one file that declares
         # that module (factory.rs pins the #[path] names); a concatenation of
         # both files would accept a test that lives in the other module.
-        modules = {'runtime::session::factory::tests::': 'factory_tests.rs',
-                   'runtime::session::factory::projection_cache_tests::': 'projection_cache_tests.rs'}
-        compacts = {file: ''.join(
-            (root / 'src/pilotdeck-gateway/src/runtime/session' / file).read_text().split())
-            for file in modules.values()}
+        # #1890: the rule lives in negative_suite.bind_module_file so the six
+        # audit copies cannot drift (this one used to require `=>"`).
+        modules = (('runtime::session::factory::tests::', 'factory_tests.rs'),
+                   ('runtime::session::factory::projection_cache_tests::', 'projection_cache_tests.rs'))
+        sources = {name: (root / 'src/pilotdeck-gateway/src/runtime/session' / name).read_text()
+                   for _, name in modules}
         for _name, _filename, _old, _new, test, _assertion in mutations:
-            file = None
-            matched = None
-            for module, name in modules.items():
-                if test.startswith(module):
-                    file, matched = name, module
-                    break
-            if file is None:
-                raise SystemExit(f'#1210 bound test module not audited: {test}')
-            short = test[len(matched):]
-            if '::' in short:
-                # #1281 review: an extra module level under a known prefix would
-                # still find its short name in the same file; only a direct
-                # child of the module is an exact binding.
-                raise SystemExit(f'#1210 bound test has an extra module level: {test}')
-            if 'fn' + short + '(' not in compacts[file] and short + '=>"' not in compacts[file]:
+            try:
+                file, short = bind_module_file(test, modules)
+            except ValueError as error:
+                raise SystemExit(f'#1210 {error}')
+            if not declares_test(sources[file], short):
                 raise SystemExit(f'#1210 bound test not found for {short}: {test}')
         print('PASS: #1011 projection cache mutation anchors (static only)')
         return 0
@@ -218,7 +217,7 @@ def main():
     run_out.mkdir()
     try:
         with mutating_sources(root, input_paths(),
-                              baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')):
+                              baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'):
             result = run(run_out, env)
         # Only the top-level receipt is final; publish it after all inputs have
         # been restored and verified. A killed process leaves no final receipt.

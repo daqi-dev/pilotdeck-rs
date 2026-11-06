@@ -21,7 +21,7 @@ sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 # pristine guard: the session-switch-pristine-removed reverse negative in
 # negative-restore/test_restore.py reverts to it and must execute, not crash.
 from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
-from negative_suite import classify, invalidate_completed, passed
+from negative_suite import bind_module_file, classify, declares_test, invalidate_completed, passed
 from _negative_common import mutate
 
 factory = root / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
@@ -408,23 +408,13 @@ def audit():
             # #[path] declarations). Searching one concatenation of all three
             # files let a row pass on a test that only exists in an unrelated
             # module, so the audit could stay CHECKED on a wrong binding.
-            module = None
-            matched_prefix = None
-            for module_prefix, file in audited_modules:
-                if test.startswith(module_prefix):
-                    module, matched_prefix = file, module_prefix
-                    break
-            if module is None:
-                raise ValueError('bound test module not audited: ' + test)
-            if '::' in test[len(matched_prefix):]:
-                # #1281 review: a known prefix followed by an extra module level
-                # would still find its short name in the same file; the binding
-                # is only exact when the test name sits directly under it.
-                raise ValueError('bound test has an extra module level: ' + test)
-            source = factory.with_name(module).read_text()
-            test_name = test[len(matched_prefix):]
-            compact = ''.join(source.split())
-            if 'fn' + test_name + '(' not in compact and test_name + '=>' not in compact:
+            # #1890: the rule itself now lives in negative_suite.bind_module_file
+            # so the six audit copies cannot drift apart again.
+            source_file, test_name = bind_module_file(
+                test, ((module_prefix, factory.with_name(file))
+                       for module_prefix, file in audited_modules))
+            source = source_file.read_text()
+            if not declares_test(source, test_name):
                 raise ValueError('bound full test not found: ' + test)
             # Static audit checks a literal/formatted failure marker, not semantic
             # inequality. A compiled runtime kill proves the latter. The marker
@@ -539,7 +529,7 @@ if source_cases:
         # turn-runner/spill-isolation runners; committed hosts keep HEAD.
         with mutating_sources(root, list(dict.fromkeys(
                 path for case in source_cases for path, _old, _new in row_parts(case)[1])),
-                baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
+                baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as originals:
             for case in source_cases:
                 name,changes,scope,test,assertion = row_parts(case)
                 row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
@@ -581,7 +571,7 @@ elif switch_cases:
         # HEAD too. The official guard with an empty mutation set performs the
         # same pristine check and holds the same tree lock without owning any
         # source bytes (option_env! switches never write product sources).
-        with mutating_sources(root, [], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')):
+        with mutating_sources(root, [], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'):
             for case in switch_cases:
                 name,changes,scope,test,assertion = row_parts(case)
                 row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)

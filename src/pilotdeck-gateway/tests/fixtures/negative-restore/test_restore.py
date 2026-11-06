@@ -542,7 +542,11 @@ class SessionRunnerTests(unittest.TestCase):
 
 
 class SessionFactoryTests(unittest.TestCase):
-    def test_guard_exit_revokes_compiled(self):
+    def run_guard(self, negative_baseline=None):
+        """Run the session entry once and report the baseline its guard saw.
+
+        ``negative_baseline=None`` leaves ``PDRS_NEGATIVE_BASELINE`` unset.
+        """
         with tempfile.TemporaryDirectory(prefix='pdrs-1037-session-') as directory:
             root = Path(directory).resolve()
             source = root / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
@@ -550,19 +554,21 @@ class SessionFactoryTests(unittest.TestCase):
             source.write_text('dirty: false,')
             output = root / 'evidence'
             calls = []
+            baselines = []
+            environ = {key: value for key, value in os.environ.items()
+                       if key != 'PDRS_NEGATIVE_BASELINE'}
+            environ.update({'CARGO_TARGET_DIR': str(root / 'unused'),
+                            'PDRS_BASELINE': str(root / 'unused-ts')})
+            if negative_baseline is not None:
+                environ['PDRS_NEGATIVE_BASELINE'] = negative_baseline
 
             @contextlib.contextmanager
             def guard(actual_root, paths, **kwargs):
                 self.assertEqual(actual_root, root, '#1037 session guard must own temporary root')
                 self.assertEqual(paths, [source], '#1037 session guard must own only temporary source')
-                # #1281: the session runner now names its baseline explicitly so
-                # an uncommitted candidate can be guarded. Pin a sentinel value
-                # instead of the default: the assertion stays deterministic when
-                # the ambient environment sets PDRS_NEGATIVE_BASELINE (as this
-                # very meta suite does), and it proves the override reaches the
-                # guard unchanged.
-                self.assertEqual(kwargs.get('baseline'), 'sentinel-1281',
-                                 '#1037 session guard must pass through PDRS_NEGATIVE_BASELINE')
+                # The script funnels guard exceptions into an INVALID row, so
+                # the observed value is recorded here and asserted by the caller.
+                baselines.append(kwargs.get('baseline'))
                 yield {source: b'dirty: false,'}
                 self.assertEqual(source.read_text(), 'dirty: false,', '#1037 session restores before guard exit')
                 raise RuntimeError('#1037 session guard exit failure')
@@ -575,20 +581,43 @@ class SessionFactoryTests(unittest.TestCase):
             with patch.object(negative_process, 'mutating_sources', guard), \
                     patch.object(negative_process, 'run_owned', run), \
                     patch.object(negative_process, 'wait_for_slot', return_value=subprocess.CompletedProcess([], 0, '', '')), \
-                    patch.dict(os.environ, {'CARGO_TARGET_DIR': str(root / 'unused'), 'PDRS_BASELINE': str(root / 'unused-ts'),
-                                            'PDRS_NEGATIVE_BASELINE': 'sentinel-1281'}), \
+                    patch.dict(os.environ, environ, clear=True), \
                     patch.object(sys, 'argv', ['negative_controls.py', '--compile', str(output), 'same-key-concurrent']), \
                     patch.object(sys, 'path', [str(FIXTURES / 'turn-runner'), *sys.path]), \
                     contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit, msg='#1037 session entry must return a status') as caught:
                     exec(compile(SESSION_SOURCE, str(script), 'exec'), {'__file__': str(script), '__name__': '__main__'})
             rows = json.loads((output / 'summary.json').read_text())['controls']
-            self.assertEqual(calls, ['dirty: true,'], f'#1037 session compile must observe its mutation: {rows}')
-            self.assertEqual(caught.exception.code, 1, '#1037 session guard failure must exit nonzero')
-            self.assertEqual(len(rows), 1, '#1037 session must report the selected row')
-            self.assertEqual(rows[0]['status'], 'INVALID', '#1037 session guard must invalidate completed row')
-            self.assertFalse(rows[0]['compiled'], '#1037 session guard must revoke compiled flag')
-            self.assertIn('#1037 session guard exit failure', rows[0]['reason'], '#1037 session must preserve guard reason')
+            return caught, rows, calls, baselines
+
+    def test_guard_exit_revokes_compiled(self):
+        # #1281: the session runner now names its baseline explicitly so
+        # an uncommitted candidate can be guarded. Pin a sentinel value
+        # instead of the default: the assertion stays deterministic when
+        # the ambient environment sets PDRS_NEGATIVE_BASELINE (as this
+        # very meta suite does), and it proves the override reaches the
+        # guard unchanged.
+        caught, rows, calls, baselines = self.run_guard('sentinel-1281')
+        self.assertEqual(baselines, ['sentinel-1281'],
+                         '#1037 session guard must pass through PDRS_NEGATIVE_BASELINE')
+        self.assertEqual(calls, ['dirty: true,'], f'#1037 session compile must observe its mutation: {rows}')
+        self.assertEqual(caught.exception.code, 1, '#1037 session guard failure must exit nonzero')
+        self.assertEqual(len(rows), 1, '#1037 session must report the selected row')
+        self.assertEqual(rows[0]['status'], 'INVALID', '#1037 session guard must invalidate completed row')
+        self.assertFalse(rows[0]['compiled'], '#1037 session guard must revoke compiled flag')
+        self.assertIn('#1037 session guard exit failure', rows[0]['reason'], '#1037 session must preserve guard reason')
+
+    def test_guard_defaults_to_head(self):
+        # #1890-6: pinning a sentinel above left the default branch uncovered.
+        # An unset variable and an empty one both have to reach the guard as
+        # 'HEAD' — `get(key, 'HEAD')` passes '' straight through, which would
+        # hand `mutating_sources` an unusable revision. Only the baseline is
+        # asserted here; the row verdicts belong to the sibling test so this
+        # walk-through stays independent of the guard-failure mutants.
+        for value in (None, ''):
+            _caught, _rows, _calls, baselines = self.run_guard(value)
+            self.assertEqual(baselines, ['HEAD'],
+                             f'#1037 an unset or empty baseline ({value!r}) must fall back to HEAD')
 
 
 TEST_CLASSES = (McpRestoreTests, MasksRestoreTests, NodeRestoreTests, RealGuardTests,
@@ -667,6 +696,15 @@ def negative_controls():
              "    invalidate_completed([row for row in results if row['mutation'] in scope],\n"
              "                          f'source guard: {error}')",
              '    pass')})),
+        # #1890-6: `get(key, 'HEAD')` hands an empty PDRS_NEGATIVE_BASELINE to
+        # the guard; the default walk-through must catch that.
+        ('session-baseline-empty-string', (SessionFactoryTests,),
+         {(SessionFactoryTests, 'test_guard_defaults_to_head'):
+          '#1037 an unset or empty baseline'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             "                baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as originals:",
+             "                baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:")})),
         # #1210/#1055: reverse negatives for the session runner behavior the
         # new SessionRunnerTests pin (accumulation, dict switch rows, switch
         # pristine check, scoped guard failure, classifier change list).
@@ -696,7 +734,7 @@ def negative_controls():
              # has to follow PDRS_NEGATIVE_BASELINE for uncommitted candidates),
              # so the anchor is the whole current line, not the old two-argument
              # form; an expired anchor here makes this reverse control INVALID.
-             "        with mutating_sources(root, [], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')):",
+             "        with mutating_sources(root, [], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'):",
              '        for _bypassed_pristine_1218 in [0]:')})),
         ('session-guard-scope-reverted', (SessionRunnerTests,),
          {(SessionRunnerTests, 'test_switch_guard_failure_keeps_source_verdicts'): '#1210 switch guard failure must not revoke source verdicts'},

@@ -32,6 +32,45 @@ def short_test(test):
     return test.rsplit('::', 1)[-1]
 
 
+def bind_module_file(test, modules):
+    """Bind a full test identity to the one file that declares its module.
+
+    ``modules`` is an ordered iterable of ``(prefix, path)`` pairs; the longest
+    /most specific prefix has to come first (``forwarding::`` sits inside
+    ``stream_tests::``). #1890: six audit implementations had drifted copies of
+    this rule, two of them scanned a concatenation of several files, so a
+    same-named short test in a sibling module could satisfy the binding. This
+    returns ``(path, short)`` and rejects the two shapes that cannot be exact:
+    a prefix that is not listed at all, and a further ``::`` level or an empty
+    short name under a listed prefix (an empty short name matches ``fn(`` and
+    ``=>`` in any compacted source, so it silently audits nothing).
+    """
+    for prefix, path in modules:
+        if not test.startswith(prefix):
+            continue
+        short = test[len(prefix):]
+        if not short:
+            raise ValueError('bound test has an empty short name: ' + test)
+        if '::' in short:
+            raise ValueError('bound test has an extra module level: ' + test)
+        return path, short
+    raise ValueError('bound test module not audited: ' + test)
+
+
+def declares_test(source, short, macro=None):
+    """True when ``source`` declares ``short`` as a function or a table row.
+
+    Whitespace is stripped before matching so the three drifted spellings
+    (``'fn ' + name``, ``'fn' + name``, ``name + ' =>'``) collapse into one
+    rule. ``macro`` accepts the table form ``macro!(short, ...)`` used by the
+    live-stream cases.
+    """
+    compact = ''.join(source.split())
+    if 'fn' + short + '(' in compact or short + '=>' in compact:
+        return True
+    return bool(macro) and macro + '(' + short + ',' in compact
+
+
 def case_labels(cases):
     """One unique evidence stem per Case, computed across the whole run.
 

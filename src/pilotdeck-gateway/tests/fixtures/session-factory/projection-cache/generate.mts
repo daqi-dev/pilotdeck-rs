@@ -8,20 +8,15 @@ import {assertBaseline, baselineSourceHashes} from '../../_shared/baseline.mts';
 
 const base = path.resolve(process.env.PDRS_BASELINE!);
 const output = path.resolve(process.argv[2]);
+// #1890: the hard-deadline budget is injectable so the expiry path has a test
+// (`generator_deadline_cleans_owned_work`). Lower bound keeps a stray value from
+// firing before the matrix can start; the default is unchanged at 120 s.
+const deadlineMs = Math.min(Math.max(Number(process.env.PDRS_1011_DEADLINE_MS) || 120_000, 1_000), 120_000);
 // #1281 review: a hard deadline exit skips the lexical finally, so the owned
 // work root has to be removed here as well (a killed process is the only exit
 // this cannot cover, and that one is owned by the caller's process group).
 let ownedWork: string | undefined;
-const deadline = setTimeout(() => {
-  // #1281 review: a failing cleanup must not swallow the deadline report; the
-  // stderr line and the explicit nonzero exit belong to every expiry.
-  try {
-    if (ownedWork) fs.rmSync(ownedWork, {recursive: true, force: true, maxRetries: 2, retryDelay: 10});
-  } finally {
-    process.stderr.write('#1011 generator exceeded 120 seconds\n'); process.exit(1);
-  }
-}, 120000);
-deadline.unref();
+let deadline: ReturnType<typeof setTimeout> | undefined;
 assert.equal(process.version, 'v22.22.0', '#1011 Node version');
 const sourceCommit = assertBaseline(base);
 const sourceSha256 = await baselineSourceHashes(base, [
@@ -34,7 +29,34 @@ const sourceSha256 = await baselineSourceHashes(base, [
 fs.mkdirSync(output, {recursive: true});
 fs.writeFileSync(path.join(output, '.generation-owner'), 'session-factory/projection-cache\n', {flag: 'wx'});
 const work = ownedWork = fs.mkdtempSync(path.join(output, 'work-'));
+// #1890: arm the deadline only once the owned root exists. The only thing this
+// expiry can clean is that root, so arming it earlier bought no protection and
+// made the expiry path untestable (the watchdog that covers the earlier phase
+// is the caller's process-group deadline). A forced 1 s expiry is then
+// deterministically inside the matrix.
+deadline = setTimeout(() => {
+  // #1890: a failing cleanup must be reported, not swallowed by the exit that
+  // follows, and stderr is written synchronously because `process.exit` drops
+  // queued pipe writes.
+  const report = [`#1011 generator exceeded ${deadlineMs} ms`];
+  if (ownedWork) {
+    try {
+      fs.rmSync(ownedWork, {recursive: true, force: true, maxRetries: 2, retryDelay: 10});
+      report.push(`#1011 generator deadline removed ${ownedWork}`);
+    } catch (error) {
+      report.push(`#1011 generator deadline cleanup failed for ${ownedWork}: ${(error as Error).message}`);
+    }
+  }
+  fs.writeSync(2, `${report.join('\n')}\n`);
+  process.exit(1);
+}, deadlineMs);
+deadline.unref();
 try {
+  // #1890: `generator_deadline_cleans_owned_work` needs the expiry branch to be
+  // reached deterministically, so a test-only hold keeps the matrix running
+  // past the injected deadline. Unset (the normal path) awaits nothing.
+  const holdMs = Math.min(Math.max(Number(process.env.PDRS_1011_DEADLINE_HOLD_MS) || 0, 0), 120_000);
+  if (holdMs) await new Promise(resolve => setTimeout(resolve, holdMs));
   // Delay the OS write only after native JsonlSessionPersistence has registered
   // its writeTail. Delaying the provider call itself would invent a restore race
   // in which load cannot see a write that the real provider already owns.

@@ -242,6 +242,37 @@ MUTANT_ROWS = [
         'test_negative_suite.SqliteHeaderExecutorTests.test_row_restore_failure_returns_two',
         '#1076 an unverified sqlite row restore must return 2',
     ),
+    # #1890: the shared `--audit` binding helper replaced six drifted copies.
+    # Each rejection branch is load-bearing, so each gets a mutant that
+    # re-opens exactly the hole it closes.
+    (
+        'audit-binding-empty-short-allowed',
+        SUITE,
+        "        if not short:\n"
+        "            raise ValueError('bound test has an empty short name: ' + test)",
+        "        if False:\n"
+        "            raise ValueError('bound test has an empty short name: ' + test)",
+        'test_negative_suite.AuditBindingTests.test_empty_short_name_is_refused',
+        '#1890 an empty short name must be refused',
+    ),
+    (
+        'audit-binding-extra-level-allowed',
+        SUITE,
+        "        if '::' in short:\n"
+        "            raise ValueError('bound test has an extra module level: ' + test)",
+        "        if False:\n"
+        "            raise ValueError('bound test has an extra module level: ' + test)",
+        'test_negative_suite.AuditBindingTests.test_extra_module_level_is_refused',
+        '#1890 an extra module level must be refused',
+    ),
+    (
+        'audit-binding-unlisted-module-allowed',
+        SUITE,
+        "    raise ValueError('bound test module not audited: ' + test)",
+        "    return modules[0][1], test",
+        'test_negative_suite.AuditBindingTests.test_unaudited_module_is_refused',
+        '#1890 an unaudited module must be refused',
+    ),
 ]
 
 

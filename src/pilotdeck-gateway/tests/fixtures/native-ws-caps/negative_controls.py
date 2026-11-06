@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURE = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE.parent))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import ReceiptRun, judge, passed
+from negative_suite import ReceiptRun, bind_module_file, declares_test, judge, passed
 from _shared.mutant_switch import preflight, clean_environment, enforce_denominator
 
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
@@ -67,9 +67,14 @@ def main():
     parser.add_argument('--compile-only', action='store_true')
     args = parser.parse_args()
     preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
-    tests = TESTS.read_text() + HOST_TESTS.read_text()
+    # #1890: bind each row to the file that declares its module. The old scan
+    # concatenated both test files, so a same-named short function in the other
+    # module satisfied the binding.
+    modules = ((PREFIX, TESTS), ('runtime::turn::gateway::tests::', HOST_TESTS))
+    sources = {path: path.read_text() for _, path in modules}
     for _, _, test, assertion in switches:
-        if 'fn ' + test.split('::')[-1] + '(' not in tests or '"' + assertion + '"' not in tests:
+        file, short = bind_module_file(test, modules)
+        if not declares_test(sources[file], short) or '"' + assertion + '"' not in sources[file]:
             raise RuntimeError('#1079 stale test/assertion binding: ' + test)
     if args.check:
         print(f'#1079 {len(switches)} switch bindings valid')
