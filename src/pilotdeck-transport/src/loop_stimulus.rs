@@ -148,13 +148,23 @@ impl Plan {
                 "native loop stimulus: loop.json order is not a known completion ordering"
                     .to_string()
             })?;
-        let bound = value
-            .get("boundMs")
-            .and_then(JsValue::as_number)
-            .filter(|ms| ms.is_finite() && *ms > 0.0)
-            .map_or(DEFAULT_BOUND, |ms| {
+        let bound = match value.get("boundMs") {
+            None => DEFAULT_BOUND,
+            Some(raw) => {
+                // A present bound is a claim: half of one is not "the
+                // default" and not a zero-millisecond bound, so anything but
+                // a positive whole number of milliseconds fails closed.
+                let ms = raw
+                    .as_number()
+                    .filter(|ms| ms.is_finite() && *ms >= 1.0 && ms.fract() == 0.0)
+                    .ok_or_else(|| {
+                        "native loop stimulus: loop.json boundMs must be a positive whole \
+                         number of milliseconds"
+                            .to_string()
+                    })?;
                 Duration::from_millis(ms.min(MAX_BOUND.as_millis() as f64) as u64)
-            });
+            }
+        };
         Ok(Some(Self {
             id,
             phase,
@@ -315,10 +325,12 @@ impl LoopStimulus {
             match fs::read(self.dir.join("release.json")) {
                 Ok(bytes) => {
                     if let Ok(value) = parse_json(&String::from_utf8_lossy(&bytes)) {
+                        // A release names its plan: a file without an id
+                        // belongs to no plan and must never release one.
                         let matches_id = value
                             .get("id")
                             .and_then(JsValue::as_string)
-                            .is_none_or(|id| id.equals_str(&plan.id));
+                            .is_some_and(|id| id.equals_str(&plan.id));
                         if matches_id
                             && value
                                 .get("stage")
@@ -433,6 +445,23 @@ mod tests {
             validate_value(dir.to_str().expect("#1371 utf8 path")).is_err(),
             "#1371 startup validation rejects a malformed plan"
         );
+        // A bound that is present but not a positive whole number of
+        // milliseconds is a claim the loop cannot honour: silently using the
+        // default (or truncating 0.4 ms to zero) would record a cell under a
+        // bound nobody asked for.
+        for bound in ["0", "-5", "0.4", "\"400\""] {
+            write(
+                &dir,
+                "loop.json",
+                &format!(
+                    r#"{{"id":"p","phase":"model","order":"unknown-first","boundMs":{bound}}}"#
+                ),
+            );
+            assert!(
+                LoopStimulus::control(&dir).plan().is_err(),
+                "#1371 unsupported bound fails closed: {bound}"
+            );
+        }
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -469,6 +498,12 @@ mod tests {
         // id is on disk for the first wait, so a mutant that drops the id check
         // accepts it instead of expiring at the bound.
         write(&dir, "release.json", r#"{"id":"other","stage":"outcome"}"#);
+        assert!(
+            stimulus.await_release("outcome").is_none(),
+            "#1371 foreign releases are ignored"
+        );
+        // No id at all is not a wildcard: it belongs to no plan.
+        write(&dir, "release.json", r#"{"stage":"outcome"}"#);
         assert!(
             stimulus.await_release("outcome").is_none(),
             "#1371 foreign releases are ignored"
