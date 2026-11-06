@@ -268,7 +268,7 @@ unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于�
 
 `.github/workflows/ci.yml` 的 `retirement-outcome-parity` job 每次 PR / 合入 main / merge
 queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤——纯 Python，本机实测
-六项全跑 2.3 s、变异自检 0.6 s）：
+六项全跑 3.5 s、变异自检 0.3 s）：
 
 | 步骤 | 判据 |
 |---|---|
@@ -286,12 +286,19 @@ python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 ```
 
 `--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
-超大夹具；CI 接线用**六种**变异 workflow（删掉 retirement 行 / 整段注释掉 / 给 job 内闸门
-step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给聚合 `check` job 的
-Require step 换掉 `if:` 条件 · 加 `continue-on-error`）；输出目录锁用三种**预置敌意锁
-文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即挂起或假持锁）。
-`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即同一正向检查的重跑。
-守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例变红」的机器证据。
+超大夹具；CI 接线用**十三种**变异 workflow（删掉 retirement 行 / 整段注释掉 / 给 job 内闸门
+step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` · 在 run 块首行插 `set +e` /
+给聚合 `check` job 的 Require step 换掉 `if:` 条件 · 加 `continue-on-error` · 在条件末尾追加
+`&& false` · 把 `run: exit 1` 改成 `exit 0` / 给闸门命令加 `|| true` 或 `echo` 前缀）；输出
+目录锁用三种**预置敌意锁文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG`
+判定即挂起或假持锁）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即
+同一正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例
+变红」的机器证据。
+
+接线守卫认的是**具体写法**，不是语义等价：闸门命令必须整行出现（`echo` 前缀、`|| true`
+后缀都判红），聚合 Require 的 `if:` 归一化空白后必须逐字等于登记值（所以 `if: >-` 折叠、
+整段加引号这类等价写法也判红）。这是有意的 fail-closed：本仓只有一个写方，宁可误拒也不
+放过「文本活着但闸门失效」的形态。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
