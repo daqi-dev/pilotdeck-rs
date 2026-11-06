@@ -738,6 +738,7 @@ async fn replay_case(case: &Value) -> Value {
                     pilot_home: pilot_home.clone(),
                     config: Arc::new(config),
                     weixin,
+                    feishu: crate::channel::feishu::FeishuOptions::default(),
                     weixin_maker: None,
                     log: {
                         let logs = logs.clone();

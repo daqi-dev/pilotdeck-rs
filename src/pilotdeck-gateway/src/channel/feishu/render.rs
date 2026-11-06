@@ -22,17 +22,12 @@ const DEFAULT_ABORT_FINAL_TEXT: &str = "处理已中止，请重新发送或稍�
 const DEFAULT_LIVE_CARD_MAX_TEXT_LENGTH: usize = 4000;
 const TRUNCATION_SUFFIX: &str = "\n…（已截断）";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ActivityKind {
+    #[default]
     Thinking,
     Tool,
     Subagent,
-}
-
-impl Default for ActivityKind {
-    fn default() -> Self {
-        Self::Thinking
-    }
 }
 
 fn activity_label(kind: ActivityKind) -> &'static str {
@@ -60,12 +55,19 @@ fn truncate_units(units: &[u16], keep: usize) -> String {
     crate::metadata::js_trim_end(&String::from_utf16_lossy(head)).to_owned()
 }
 
-fn normalize_text(text: &str, fallback: Option<&str>, max_len: usize, use_fallback: bool) -> String {
+fn normalize_text(
+    text: &str,
+    fallback: Option<&str>,
+    max_len: usize,
+    use_fallback: bool,
+) -> String {
     let stripped = crate::metadata::js_trim(&strip_live_cursor(text)).to_owned();
     let visible = if !stripped.is_empty() {
         stripped
     } else if use_fallback {
-        fallback.unwrap_or(DEFAULT_LIVE_CARD_FALLBACK_TEXT).to_owned()
+        fallback
+            .unwrap_or(DEFAULT_LIVE_CARD_FALLBACK_TEXT)
+            .to_owned()
     } else {
         String::new()
     };
@@ -80,7 +82,11 @@ fn normalize_text(text: &str, fallback: Option<&str>, max_len: usize, use_fallba
 }
 
 /// `renderFeishuLivePost`: the `post` message content wrapper.
-pub fn render_live_post(text: &str, is_final: bool, activity_kind: Option<ActivityKind>) -> JsValue {
+pub fn render_live_post(
+    text: &str,
+    is_final: bool,
+    activity_kind: Option<ActivityKind>,
+) -> JsValue {
     // `stripped || (isFinal ? "处理完成，但没有可见回复。" : activityLabel(...))`
     let content = normalize_text(
         text,
@@ -132,10 +138,7 @@ pub fn live_chunks(text: &str, limit: usize) -> Vec<String> {
     if limit == 0 || units.len() <= limit {
         return vec![text.to_owned()];
     }
-    units
-        .chunks(limit)
-        .map(|chunk| String::from_utf16_lossy(chunk))
-        .collect()
+    units.chunks(limit).map(String::from_utf16_lossy).collect()
 }
 
 /// `splitForTransport`: 4000-unit chunks, preferring the last newline and
@@ -231,10 +234,7 @@ pub fn format_error(event: &JsValue) -> String {
     } else {
         String::new()
     };
-    format!(
-        "\n❌ {}{provider_lines}\n",
-        display(event.get("message"))
-    )
+    format!("\n❌ {}{provider_lines}\n", display(event.get("message")))
 }
 
 /// `defaultToolErrorFormatter` (`\n⚠️ ${toolName ?? toolCallId} 执行失败\n`).
@@ -448,8 +448,12 @@ mod tests {
     #[test]
     fn events_append_like_the_controller_default_formatters() {
         let mut buffer = LiveReplyBuffer::new();
-        buffer.handle_event(&parse_json(r#"{"type":"assistant_text_delta","text":"hi"}"#));
-        buffer.handle_event(&parse_json(r#"{"type":"assistant_thinking_delta","text":"x"}"#));
+        buffer.handle_event(&parse_json(
+            r#"{"type":"assistant_text_delta","text":"hi"}"#,
+        ));
+        buffer.handle_event(&parse_json(
+            r#"{"type":"assistant_thinking_delta","text":"x"}"#,
+        ));
         buffer.handle_event(&parse_json(r#"{"type":"tool_call_finished","ok":true}"#));
         assert_eq!(buffer.text, "hi");
 
@@ -475,10 +479,10 @@ mod tests {
     #[test]
     fn split_prefers_newline_then_space_then_hard_cut() {
         let text = format!("{}\n{}", "a".repeat(30), "b".repeat(30));
-        assert_eq!(split_for_transport(&text, 40), vec![
-            "a".repeat(30),
-            "b".repeat(30)
-        ]);
+        assert_eq!(
+            split_for_transport(&text, 40),
+            vec!["a".repeat(30), "b".repeat(30)]
+        );
         let hard = "x".repeat(90);
         assert_eq!(split_for_transport(&hard, 40).len(), 3);
         assert_eq!(split_for_transport("short", 40), vec!["short".to_owned()]);
@@ -496,7 +500,7 @@ mod tests {
                 _ => None,
             })
             .and_then(|node| node.get("text"))
-            .map(display)
+            .map(|text| display(Some(text)))
             .expect("#1329 post text")
     }
 }

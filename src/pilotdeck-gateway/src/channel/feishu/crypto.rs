@@ -98,7 +98,11 @@ mod tests {
     #[test]
     fn decrypts_aes_256_cbc_with_sha256_key() {
         let iv = [7u8; 16];
-        let encrypted = encrypt(r#"{"type":"url_verification","challenge":"c-1"}"#, "k3y", iv);
+        let encrypted = encrypt(
+            r#"{"type":"url_verification","challenge":"c-1"}"#,
+            "k3y",
+            iv,
+        );
         assert_eq!(
             decrypt_feishu_payload(&encrypted, "k3y").expect("#1329 decrypt"),
             r#"{"type":"url_verification","challenge":"c-1"}"#

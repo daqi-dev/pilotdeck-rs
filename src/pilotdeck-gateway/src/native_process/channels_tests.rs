@@ -153,6 +153,7 @@ fn harness(config: &str) -> Harness {
         pilot_home: home.path(),
         config: Arc::new(parse_json(config).expect("#1328 harness config JSON")),
         weixin: WeixinChannelOptions::default(),
+        feishu: crate::channel::feishu::FeishuOptions::default(),
         weixin_maker: Some(maker),
         log: None,
         report_status: None,
