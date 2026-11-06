@@ -1446,9 +1446,12 @@ def _contains_root(node, roots):
 # ``list([common])`` is ``[common]`` under another spelling.
 _CONTAINER_CALLS = frozenset({'list', 'tuple', 'set', 'frozenset', 'dict',
                               'sorted', 'reversed', 'iter'})
+# Methods that hand back what the container already holds, so a call on a
+# container the model tracks is one more hop to the same objects.
+_CONTAINER_METHODS = frozenset({'copy', 'get', 'pop', 'popitem', 'setdefault'})
 
 
-def _container_elements(value):
+def _container_elements(value, roots=None):
     """The elements a container expression spells out, or ``None``.
 
     ``[common]``, ``{'x': common}``, ``[common][0]``, ``[common] + [None]`` and
@@ -1457,42 +1460,65 @@ def _container_elements(value):
     must agree on what counts -- they drifted apart once, one reading a
     container to any depth and the other only its top level.
 
-    A comprehension contributes its *element* expression only: ``[common for _
-    in (0,)]`` holds ``common``, while ``[f'{n}' for n in A2_SCRIPTS]`` holds
+    A comprehension contributes its *element* expression: ``[common for _ in
+    (0,)]`` holds ``common``, while ``[f'{n}' for n in A2_SCRIPTS]`` holds
     strings over an iterable that merely names the seeded object -- following
-    the iterable would drag every derived local into the watched set.  A method
-    read off a literal container (``{'k': common}.get('k')``,
-    ``[common].pop()``) hands out what the container holds, so it carries the
-    container's elements.
+    every iterable would drag each derived local into the watched set.  The one
+    iterable worth following is a container this model already tracks, so
+    ``[e for e in x]`` over ``x = [common]`` keeps ``common`` in view while
+    ``[e['k'] for e in x]`` (a derived value) does not.  A method read off a
+    literal container (``{'k': common}.get('k')``, ``[common].pop()``) hands
+    out what the container holds, so it carries the container's elements.
+
+    ``roots`` is optional: the ``sys`` side passes its own name sets so the
+    same "already tracked container" follow applies there, and ``None`` keeps
+    the purely literal reading.
     """
     if isinstance(value, ast.Subscript):
-        return _container_elements(value.value)
+        return _container_elements(value.value, roots)
     if isinstance(value, ast.Dict):
         return ([key for key in value.keys if key is not None]
                 + [item for item in value.values if item is not None])
     if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
         return list(value.elts)
-    if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add):
-        # ``[common] + [None]``: both halves are written out, so the result is
-        # the literal the file spells.  One unknown half makes it unknown.
-        left = _container_elements(value.left)
-        right = _container_elements(value.right)
-        if left is None or right is None:
-            return None
-        return left + right
+    if isinstance(value, ast.BinOp) and isinstance(value.op, (ast.Add, ast.BitOr)):
+        # ``[common] + [None]`` / ``{'k': common} | _d``: one half is written
+        # out, so the result holds what that half holds even when the other
+        # half is an expression this model cannot read.  Dropping the known
+        # half would be the fail-open direction.
+        halves = []
+        for half in (value.left, value.right):
+            part = _container_elements(half, roots)
+            if part is None and roots is not None and _contains_root(half, roots):
+                part = [half]  # ``x + [None]`` over a container already tracked
+            if part is not None:
+                halves.extend(part)
+        return halves or None
     if isinstance(value, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        if roots is not None and isinstance(value.elt, ast.Name) and any(
+                _contains_root(generator.iter, roots)
+                for generator in value.generators):
+            return [generator.iter for generator in value.generators]
         return [value.elt]
     if isinstance(value, ast.DictComp):
         return [value.key, value.value]
     if isinstance(value, ast.Call):
         if isinstance(value.func, ast.Attribute):
-            return _container_elements(value.func.value)
+            part = _container_elements(value.func.value, roots)
+            if part is not None:
+                return part
+            if roots is not None and value.func.attr in _CONTAINER_METHODS \
+                    and _contains_root(value.func.value, roots):
+                return [value.func.value]  # x.copy() / x.pop() on a tracked container
+            return None
         if _call_name(value.func) in _CONTAINER_CALLS:
             elements = []
             for argument in _call_values(value):
-                part = _container_elements(argument)
+                part = _container_elements(argument, roots)
                 if part is not None:
                     elements.extend(part)
+                elif roots is not None and _contains_root(argument, roots):
+                    elements.append(argument)  # list(x) / sorted(x) on a tracked container
             return elements or None
     return None
 
@@ -1509,7 +1535,7 @@ def _container_value(value, roots):
     comprehension's iterable.  A dict contributes its keys and its values --
     ``*d`` hands over the keys, ``**d`` the values.
     """
-    elements = _container_elements(value)
+    elements = _container_elements(value, roots)
     return elements is not None and any(
         _contains_root(element, roots) for element in elements)
 
@@ -1879,6 +1905,18 @@ def _rebound_names(tree, span=None):
         for alias in node.names:
             if alias.name != '*' and alias.name.split('.')[0] == 'builtins':
                 builtins_names.add(alias.asname or 'builtins')
+    while True:
+        # ``_b = builtins`` is the same module under another name, at any depth.
+        aliases = set()
+        for node in ast.walk(tree):
+            if _in_block(node, span):
+                continue
+            for target, value in _bound_pairs(node):
+                if value is not None and _root_name(value) in builtins_names:
+                    aliases |= _target_names(target)
+        if aliases <= builtins_names:
+            break
+        builtins_names |= aliases
     for node in ast.walk(tree):
         if _in_block(node, span):
             continue
@@ -1897,10 +1935,24 @@ def _rebound_names(tree, span=None):
         elif isinstance(node, ast.ExceptHandler):
             if node.name:
                 names.add(node.name)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            # ``for sorted in _fns:`` binds the name whatever the iterable is --
+            # ``_bound_pairs`` only follows a literal sequence, so the loop
+            # target is collected here for any iterable, and a comprehension's
+            # target likewise.
+            names |= _target_names(node.target)
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp,
+                               ast.GeneratorExp)):
+            for generator in node.generators:
+                names |= _target_names(generator.target)
+        receiver = None
         if isinstance(node, (ast.Attribute, ast.Subscript)) \
-                and isinstance(node.ctx, ast.Store) \
-                and isinstance(node.value, ast.Name) \
-                and node.value.id in builtins_names:
+                and isinstance(node.ctx, ast.Store):
+            receiver = node.value
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr in _MUTATOR_ATTRS:
+            receiver = node.func.value  # __builtins__.update({'sorted': ...})
+        if receiver is not None and _root_name(receiver) in builtins_names:
             names |= _LAMBDA_CONSUMERS
         for target, _ in _bound_pairs(node):
             names |= _target_names(target)
@@ -2080,7 +2132,7 @@ def _container_sys_kinds(value, modules, tables):
     hand over a table is therefore recorded as a table and not as a module;
     every write that spelling can make is still reached through the table side.
     """
-    elements = _container_elements(value)
+    elements = _container_elements(value, modules | tables)
     if elements is None:
         return False, False
     is_module = is_table = False
