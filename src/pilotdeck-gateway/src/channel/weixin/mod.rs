@@ -17,6 +17,7 @@
 //! the #1327 core reports only the four lifecycle states, while this adapter
 //! also reports its own login states.
 mod client;
+mod live_reply;
 mod mapper;
 #[cfg(test)]
 mod replay_tests;
@@ -29,6 +30,7 @@ pub use client::{
     WeixinLoginCallbacks, WeixinLoginResult, default_client_factory, default_login_base_url,
     is_recoverable_poll_error, login_with_qr,
 };
+use live_reply::{LiveReplyController, LiveReplyOptions, LiveReplyTransport, SendOutcome};
 pub use mapper::{WeixinCommand, WeixinResolveResult, WeixinSessionMapper};
 pub use state::ChannelStatePersistence;
 pub(crate) use state::stringify_pretty;
@@ -68,45 +70,7 @@ const WEIXIN_CONNECTION_RECOVERED_AFTER_LOSS_TEXT: &str =
 /// `timeoutFinalText` override WeixinChannel passes to the reply controller.
 const WEIXIN_TIMEOUT_FINAL_TEXT: &str =
     "处理时间已超过上限，任务已停止。你可以调整需求后重新发送。";
-/// `DEFAULT_ABORT_FINAL_TEXT` (weixin passes no `abortFinalText` override).
-const WEIXIN_ABORT_FINAL_TEXT: &str = "处理已中止，请重新发送或稍后重试。";
 const WEIXIN_NEW_SESSION_TEXT: &str = "已创建新会话。";
-const WEIXIN_SUBMIT_FAILED_TEXT: &str = "Failed to process this message. Please retry.";
-const EMPTY_RESPONSE_EXHAUSTED_TEXT: &str = "The model returned empty content repeatedly, so this turn has stopped. Try again later or increase max output tokens.";
-const MAX_TURNS_TEXT: &str = "Reached the maximum number of turns, so this turn has stopped. Increase maxTurns or split the task into smaller steps and try again.";
-
-/// ImLiveReplyController.ts `VISIBLE_FAILURE_STATUS_EVENTS`.
-const VISIBLE_FAILURE_STATUS_EVENTS: &[&str] = &[
-    "model_empty_response_exhausted",
-    "max_turns_reached",
-    "max_output_recovery_exhausted",
-    "model_request_failed",
-    "tool_call_recovery_exhausted",
-    "tool_error_loop",
-    "lifecycle_blocked",
-    "turn_failed",
-    "turn_timeout",
-    "gateway_submit_failed",
-    "session_busy",
-    "gateway_bridge_error",
-    "gateway_stream_ended_without_completion",
-    "web_http_request_failed",
-    "project_unavailable",
-    "config_invalid",
-    "gateway_unavailable",
-    "channel_submit_failed",
-    "subagent_failed",
-    "content_filter_stop",
-    "unknown_finish_reason",
-];
-/// ImLiveReplyController.ts:110-114 — `WARNING_STATUS_EVENTS` is
-/// `new Set([...VISIBLE_FAILURE_STATUS_EVENTS, "structured_output_completed",
-/// "turn_aborted"])`: derive it from the same list instead of repeating the
-/// 21 entries, so the two can never drift.
-const WARNING_STATUS_EVENTS_EXTRA: &[&str] = &["structured_output_completed", "turn_aborted"];
-fn is_warning_status_event(name: &str) -> bool {
-    VISIBLE_FAILURE_STATUS_EVENTS.contains(&name) || WARNING_STATUS_EVENTS_EXTRA.contains(&name)
-}
 
 /// TS `CREDENTIALS_PATH = join(homedir(), ".pilotdeck", "weixin-credentials.json")`;
 /// `saveCredentials` always mkdirs `homedir()/.pilotdeck`.
@@ -161,10 +125,14 @@ pub type WeixinRuntimeStatusReporter = Arc<dyn Fn(WeixinChannelStatus) + Send + 
 pub type WeixinAbortFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 pub trait WeixinGatewayPort: Send + Sync {
     fn submit_turn(&self, input: JsValue) -> WeixinTurnStream;
+    /// `reason: Option<&str>` mirrors the TS `abortTurn` `reason` field:
+    /// `Some("system:timeout")` from the live-reply watchdog, `None` keeps the
+    /// default `aborted:{runId}` / `aborted` reason.
     fn abort_turn<'a>(
         &'a self,
         session_key: &'a JsString,
         run_id: Option<&'a JsString>,
+        reason: Option<&'a str>,
     ) -> WeixinAbortFuture<'a>;
 }
 
@@ -216,6 +184,10 @@ pub struct WeixinChannelOptions {
     pub on_state_change: Option<WeixinStateChange>,
     pub gateway: Option<Arc<dyn WeixinGatewayPort>>,
     pub runtime_status: Option<WeixinRuntimeStatusReporter>,
+    /// `WeixinChannel.ts:666-676`: the weixin overrides over the TS
+    /// `ImLiveReplyController` defaults (watchdog off, 10-minute activity
+    /// delay, no update cap, weixin timeout text and activity formatter).
+    pub live_reply: LiveReplyOptions,
 }
 impl Default for WeixinChannelOptions {
     fn default() -> Self {
@@ -238,7 +210,25 @@ impl WeixinChannelOptions {
             on_state_change: None,
             gateway: None,
             runtime_status: None,
+            live_reply: weixin_live_reply_options(),
         }
+    }
+}
+
+/// The weixin `ImLiveReplyController` option overrides
+/// (WeixinChannel.ts:666-676, constants at :34-39): the turn watchdog is off
+/// by default, activity pulses wait ten minutes, and the activity/timeout
+/// texts are the weixin ones.
+pub fn weixin_live_reply_options() -> LiveReplyOptions {
+    LiveReplyOptions {
+        turn_timeout_ms: 0,
+        activity_delay_ms: 600_000,
+        activity_update_throttle_ms: 600_000,
+        activity_max_updates: u32::MAX,
+        activity_ttl_ms: u64::MAX,
+        timeout_final_text: WEIXIN_TIMEOUT_FINAL_TEXT.into(),
+        format_activity: Arc::new(live_reply::format_weixin_activity),
+        ..LiveReplyOptions::default()
     }
 }
 
@@ -358,6 +348,7 @@ struct Shared {
     on_state_change: Option<WeixinStateChange>,
     gateway: Option<Arc<dyn WeixinGatewayPort>>,
     runtime_status: Option<WeixinRuntimeStatusReporter>,
+    live_reply: LiveReplyOptions,
     logger: Mutex<Option<ChannelLog>>,
     inner: Mutex<Inner>,
 }
@@ -379,6 +370,7 @@ impl WeixinChannel {
             on_state_change: options.on_state_change,
             gateway: options.gateway,
             runtime_status: options.runtime_status,
+            live_reply: options.live_reply,
             logger: Mutex::new(None),
             inner: Mutex::new(Inner {
                 generation: 0,
@@ -1007,7 +999,9 @@ impl WeixinChannel {
                             .map(|run| run.session_key.clone())
                             .unwrap_or(previous_session_key);
                         let run_id = active_run.as_ref().and_then(|run| run.run_id.clone());
-                        if let Err(error) = gateway.abort_turn(&session_key, run_id.as_ref()).await
+                        if let Err(error) = gateway
+                            .abort_turn(&session_key, run_id.as_ref(), None)
+                            .await
                         {
                             channel.log(
                                 "warn",
@@ -1093,12 +1087,65 @@ impl WeixinChannel {
         if let Some(project_key) = &turn.project_key {
             input.insert("projectKey".into(), JsValue::String(project_key.clone()));
         }
+        let turn_timeout_ms = self.0.live_reply.turn_timeout_ms;
+        if turn_timeout_ms > 0 {
+            input.insert("timeoutMs".into(), JsValue::Number(turn_timeout_ms as f64));
+        }
         let mut stream = gateway.submit_turn(JsValue::Object(input));
-        let mut reply = WeixinReplyBuffer::new(self, user.clone());
-        let mut timed_out = false;
+        let mut live_options = self.0.live_reply.clone();
+        let error_channel = self.clone();
+        live_options.on_transport_error = Some(Arc::new(move |error: &str, phase: &str| {
+            error_channel.log(
+                "warn",
+                format!("weixin: live reply {phase} failed: {error}"),
+            );
+        }));
+        let mut reply =
+            LiveReplyController::new(self.weixin_live_reply_transport(user), live_options);
+        let mut active_run_id: Option<JsString> = None;
         let mut failed = false;
         loop {
-            let event = match stream.next().await {
+            // The `deadline` is `Copy` and the timer future borrows nothing,
+            // so `reply` stays usable in both select arms.
+            let deadline = reply.next_deadline();
+            let timer = async {
+                match deadline {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            let next = tokio::select! {
+                biased;
+                item = stream.next() => Some(item),
+                _ = timer => None,
+            };
+            let Some(item) = next else {
+                let fired = reply.fire_due_timers().await;
+                if fired.turn_timed_out {
+                    self.log(
+                        "warn",
+                        format!(
+                            "weixin: live reply timed out for user {}",
+                            String::from_utf16_lossy(user.units())
+                        ),
+                    );
+                    if let Err(message) = gateway
+                        .abort_turn(
+                            &turn.session_key,
+                            active_run_id.as_ref(),
+                            Some("system:timeout"),
+                        )
+                        .await
+                    {
+                        self.log(
+                            "warn",
+                            format!("weixin: abortTurn after timeout failed: {message}"),
+                        );
+                    }
+                }
+                continue;
+            };
+            let event = match item {
                 Ok(Some(event)) => event,
                 Ok(None) => break,
                 Err(message) => {
@@ -1118,6 +1165,7 @@ impl WeixinChannel {
                         .and_then(JsValue::as_string)
                         .cloned()
                         .unwrap_or_else(|| JsString::from(""));
+                    active_run_id = Some(run_id.clone());
                     self.lock_inner().chat_state.set_active_run(
                         user,
                         ActiveRun {
@@ -1126,27 +1174,87 @@ impl WeixinChannel {
                             generation,
                         },
                     );
+                    reply.handle_event(&event).await;
                 }
                 // After a turn_timeout, the cached timeout notice wins over
-                // the later agent_aborted terminal text.
-                "error" if !timed_out && js_string_text(event.get("code")) == "agent_aborted" => {
+                // the later agent_aborted terminal text (WeixinChannel.ts:741-747).
+                "error"
+                    if !reply.is_timed_out()
+                        && js_string_text(event.get("code")) == "agent_aborted" =>
+                {
                     reply.mark_aborted().await;
                 }
                 "error" if js_string_text(event.get("code")) == "turn_timeout" => {
-                    timed_out = true;
                     reply.mark_timed_out().await;
                 }
-                _ => reply.handle_event(&event),
+                // Prompt delivery lands with pr2c; both paths pause the
+                // activity pulses first (WeixinChannel.ts:723-730).
+                "elicitation_request" | "permission_request" => {
+                    reply.pause_activity().await;
+                }
+                _ => reply.handle_event(&event).await,
             }
         }
         if failed {
             // The TS catch path feeds the visible `channel_submit_failed`
             // agent status into the live reply controller.
-            reply.channel_submit_failed();
+            reply.channel_submit_failed().await;
         }
         if is_current() {
             self.lock_inner().chat_state.clear_active_run(user);
             reply.flush_final().await;
+        }
+    }
+
+    /// `WeixinChannel.ts:786-800 createLiveReplyTransport`: only `send`
+    /// (fire-and-forget, queue-on-failure), `pulseActivity` (reply + typing
+    /// refresh) and `stopActivity` (no-op) — no `edit`, no `maxMessageLength`.
+    fn weixin_live_reply_transport(&self, user: &JsString) -> LiveReplyTransport<()> {
+        let send_channel = self.clone();
+        let send_user = user.clone();
+        let send: Arc<
+            dyn Fn(String) -> live_reply::TransportFuture<SendOutcome<()>> + Send + Sync,
+        > = Arc::new(move |text: String| {
+            let channel = send_channel.clone();
+            let user = send_user.clone();
+            Box::pin(async move {
+                let text = JsString::from(text);
+                channel.send_reply(&user, &text, true).await;
+                // TS `send` resolves `undefined`; a failed weixin send never
+                // enters the edit fallback.
+                Ok(SendOutcome::NoHandle)
+            })
+        });
+        let pulse_channel = self.clone();
+        let pulse_user = user.clone();
+        let pulse_activity: Option<
+            Arc<
+                dyn Fn(live_reply::LiveReplyActivity) -> live_reply::TransportFuture<bool>
+                    + Send
+                    + Sync,
+            >,
+        > = Some(Arc::new(move |activity: live_reply::LiveReplyActivity| {
+            let channel = pulse_channel.clone();
+            let user = pulse_user.clone();
+            Box::pin(async move {
+                let text = JsString::from(activity.text);
+                channel.send_reply(&user, &text, false).await;
+                channel.send_typing_if_possible(&user).await;
+                Ok(true)
+            })
+        }));
+        let stop_activity: Option<
+            Arc<dyn Fn() -> live_reply::TransportFuture<bool> + Send + Sync>,
+        > = Some(Arc::new(|| Box::pin(async { Ok(true) })));
+        LiveReplyTransport {
+            send,
+            edit: None,
+            delete: None,
+            clear: None,
+            pulse_activity,
+            stop_activity,
+            max_message_length: None,
+            format_text: None,
         }
     }
 
@@ -1419,202 +1527,6 @@ fn js_string_text(value: Option<&JsValue>) -> String {
         .unwrap_or_default()
 }
 
-/// The weixin-transport subset of `ImLiveReplyController` (no `edit`, no
-/// `maxMessageLength`): deltas only accumulate; a single `transport.send`
-/// carries the final text at `flushFinal`; tool errors and error events
-/// append; the terminal texts replace the buffer. The activity pulses and
-/// the 10-minute activity delays never fire inside the golden turn
-/// boundaries, so they are inert here and land with the full controller in
-/// pr2.
-struct WeixinReplyBuffer<'a> {
-    channel: &'a WeixinChannel,
-    user_id: JsString,
-    text: Vec<u16>,
-    closed: bool,
-    has_visible_failure_status: bool,
-}
-
-impl<'a> WeixinReplyBuffer<'a> {
-    fn new(channel: &'a WeixinChannel, user_id: JsString) -> Self {
-        Self {
-            channel,
-            user_id,
-            text: Vec::new(),
-            closed: false,
-            has_visible_failure_status: false,
-        }
-    }
-
-    fn append_str(&mut self, text: &str) {
-        if self.closed || text.is_empty() {
-            return;
-        }
-        self.text.extend(text.encode_utf16());
-    }
-
-    fn handle_event(&mut self, event: &JsValue) {
-        if self.closed {
-            return;
-        }
-        let event_type = js_string_text(event.get("type"));
-        match event_type.as_str() {
-            "turn_started" => {
-                self.has_visible_failure_status = false;
-            }
-            "assistant_text_delta" => {
-                if let Some(text) = event.get("text").and_then(JsValue::as_string) {
-                    if self.closed {
-                        return;
-                    }
-                    self.text.extend_from_slice(text.units());
-                }
-            }
-            "tool_call_finished" => {
-                if event.get("ok") == Some(&JsValue::Bool(false)) {
-                    // defaultToolErrorFormatter.
-                    let name = event
-                        .get("toolName")
-                        .or_else(|| event.get("toolCallId"))
-                        .and_then(JsValue::as_string)
-                        .map(|value| String::from_utf16_lossy(value.units()))
-                        .unwrap_or_default();
-                    self.append_str(&format!("\n⚠️ {name} 执行失败\n"));
-                }
-            }
-            "agent_status" => self.handle_agent_status(event),
-            "error" => {
-                if self.has_visible_failure_status {
-                    return;
-                }
-                self.append_str(&format_error(event));
-            }
-            _ => (),
-        }
-    }
-
-    fn handle_agent_status(&mut self, event: &JsValue) {
-        let name = js_string_text(event.get("event"));
-        let detail = event.get("detail").cloned().unwrap_or(JsValue::Undefined);
-        // `event.detail?.visible !== false` — a missing detail counts as
-        // visible; `isVisibleFailureStatusDetail` needs `severity === "error"`.
-        let visible = detail.get("visible") != Some(&JsValue::Bool(false));
-        let severity_error = visible && detail.get("severity") == Some(&JsValue::from("error"));
-        let is_visible_failure =
-            visible && (VISIBLE_FAILURE_STATUS_EVENTS.contains(&name.as_str()) || severity_error);
-        if is_visible_failure {
-            self.has_visible_failure_status = true;
-        }
-        let detail_message = || {
-            detail
-                .get("message")
-                .and_then(JsValue::as_string)
-                .map(|value| String::from_utf16_lossy(value.units()))
-                .filter(|text| !text.is_empty())
-        };
-        if name == "model_empty_response_exhausted" {
-            let text = detail_message().unwrap_or_else(|| EMPTY_RESPONSE_EXHAUSTED_TEXT.into());
-            self.append_str(&format!("\n⚠️ {text}\n"));
-            return;
-        }
-        if name == "max_turns_reached" {
-            let text = detail_message().unwrap_or_else(|| MAX_TURNS_TEXT.into());
-            self.append_str(&format!("\n⚠️ {text}\n"));
-            return;
-        }
-        if (is_warning_status_event(name.as_str()) || severity_error)
-            && let Some(message) = detail_message()
-        {
-            self.append_str(&format!("\n⚠️ {message}\n"));
-        }
-        // `subagent_*` activity pulses stay inert in this subset.
-    }
-
-    fn channel_submit_failed(&mut self) {
-        self.has_visible_failure_status = true;
-        self.append_str(&format!("\n⚠️ {WEIXIN_SUBMIT_FAILED_TEXT}\n"));
-    }
-
-    /// `finalizeWithTerminalText`: the terminal text goes through
-    /// `transport.send` (queueOnFailure) and the accumulated buffer is
-    /// discarded.
-    async fn send_terminal(&mut self, text: &str) {
-        self.closed = true;
-        self.channel
-            .send_reply(&self.user_id, &JsString::from(text), true)
-            .await;
-    }
-
-    async fn mark_aborted(&mut self) {
-        if self.closed {
-            return;
-        }
-        self.send_terminal(WEIXIN_ABORT_FINAL_TEXT).await;
-    }
-
-    async fn mark_timed_out(&mut self) {
-        if self.closed {
-            return;
-        }
-        self.send_terminal(WEIXIN_TIMEOUT_FINAL_TEXT).await;
-    }
-
-    async fn flush_final(&mut self) {
-        if self.closed {
-            return;
-        }
-        self.closed = true;
-        // sendFinalChunks: exactly one chunk (no maxMessageLength) with the
-        // full buffer, sent only when its trim is non-empty.
-        let full = String::from_utf16_lossy(&self.text);
-        let trimmed = crate::metadata::js_trim(&full);
-        if !trimmed.is_empty() {
-            self.channel
-                .send_reply(
-                    &self.user_id,
-                    &JsString::from_utf16(self.text.clone()),
-                    true,
-                )
-                .await;
-        }
-    }
-}
-
-/// ImLiveReplyController.ts `defaultErrorFormatter`.
-fn format_error(event: &JsValue) -> String {
-    let message = js_template_text(&event.get("message").cloned().unwrap_or(JsValue::Undefined));
-    let mut provider_lines = String::new();
-    if let Some(provider) = event.get("providerError") {
-        let mut lines = vec![String::new(), "Provider error:".into()];
-        let text_field = |name: &str, prefix: &str| {
-            provider
-                .get(name)
-                .and_then(JsValue::as_string)
-                .filter(|value| !value.units().is_empty())
-                .map(|value| format!("{prefix}{}", String::from_utf16_lossy(value.units())))
-        };
-        if let Some(line) = text_field("provider", "- provider: ") {
-            lines.push(line);
-        }
-        if let Some(status) = provider
-            .get("status")
-            .filter(|status| !status.is_undefined())
-        {
-            lines.push(format!("- status: {}", js_template_text(status)));
-        }
-        if let Some(line) = text_field("code", "- code: ") {
-            lines.push(line);
-        }
-        if let Some(line) = text_field("message", "- message: ") {
-            lines.push(line);
-        }
-        if let Some(line) = text_field("raw", "- raw: ") {
-            lines.push(line);
-        }
-        provider_lines = lines.join("\n");
-    }
-    format!("\n❌ {message}{provider_lines}\n")
-}
-
 impl ChannelAdapter for WeixinChannel {
     fn channel_key(&self) -> &ChannelKey {
         &self.0.key
@@ -1733,14 +1645,19 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
         &'a self,
         session_key: &'a JsString,
         run_id: Option<&'a JsString>,
+        reason: Option<&'a str>,
     ) -> WeixinAbortFuture<'a> {
         Box::pin(async move {
-            // TS default reason: `aborted:{runId}` or `aborted`.
-            let reason = run_id
-                .map(|run| {
-                    JsString::from(format!("aborted:{}", String::from_utf16_lossy(run.units())))
-                })
-                .unwrap_or_else(|| JsString::from("aborted"));
+            // TS default reason: `aborted:{runId}` or `aborted`; the watchdog
+            // overrides it with `system:timeout`.
+            let reason = match reason {
+                Some(reason) => JsString::from(reason),
+                None => run_id
+                    .map(|run| {
+                        JsString::from(format!("aborted:{}", String::from_utf16_lossy(run.units())))
+                    })
+                    .unwrap_or_else(|| JsString::from("aborted")),
+            };
             self.submitter
                 .owner
                 .start_gateway_abort(session_key, run_id, Some(&reason))
