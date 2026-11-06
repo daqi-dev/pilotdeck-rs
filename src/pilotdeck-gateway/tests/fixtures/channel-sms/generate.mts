@@ -32,7 +32,12 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const require = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
 
-const EXPECTED_CASE_COUNT = 55;
+const EXPECTED_CASE_COUNT = 56;
+// #1901: the stalled-body cell can only end at Node's default `requestTimeout`
+// (300 s), and the generator runs every case twice. The probe's own deadline
+// sits above that with a margin so a missing server answer fails the run
+// instead of being recorded as a client timeout.
+const STALLED_PROBE_DEADLINE_MS = 340_000;
 
 // ---------------------------------------------------------------------------
 // real module graph, transpiled once, with `twilio` mocked at the require seam
@@ -185,6 +190,38 @@ function rawRequest(port: number, raw: string, halfClose = false): Promise<any> 
       else fail(error);
     });
     setTimeout(() => { socket.destroy(); fail(new Error('#1339 probe client timeout')); }, 3000).unref();
+  });
+}
+// #1901: `rawRequest` gives up after 3 s, which is shorter than any Node
+// `requestTimeout` the stalled-body cell waits out. The probe keeps the same
+// recording semantics (first close wins, latin1 head/body split) but its own
+// deadline, so a cell that only the server can finish is still recorded as a
+// response instead of a client-side probe timeout.
+function stalledRequest(port: number, raw: string, deadlineMs: number): Promise<any> {
+  return new Promise((done, fail) => {
+    const socket = net.connect(port, '127.0.0.1');
+    const chunks: Buffer[] = [];
+    socket.on('connect', () => { socket.write(raw); });
+    socket.on('data', (chunk: Buffer) => chunks.push(chunk));
+    socket.on('close', () => {
+      const text = Buffer.concat(chunks).toString('latin1');
+      if (!text) {
+        done({ closed: true });
+        return;
+      }
+      const [head, ...rest] = text.split('\r\n\r\n');
+      const status = Number.parseInt(head.split('\r\n')[0].split(' ')[1], 10);
+      const contentType = /^content-type:\s*(.*)$/im.exec(head)?.[1] ?? null;
+      done({ status, contentType, body: rest.join('\r\n\r\n') });
+    });
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED') done({ refused: true });
+      else fail(error);
+    });
+    setTimeout(() => {
+      socket.destroy();
+      fail(new Error(`#1901 stalled-probe timeout after ${deadlineMs} ms`));
+    }, deadlineMs).unref();
   });
 }
 const REQUEST = (
@@ -834,6 +871,21 @@ scenario({
   turn: { events: [textDelta('never')] },
 });
 scenario({
+  // #1901: a client declares `Content-Length: 64`, sends 8 bytes and keeps the
+  // connection open. Node's default `requestTimeout` (300 s, the sms channel
+  // never overrides it) answers with the 51-byte `408 Request Timeout` +
+  // `Connection: close`; without a deadline the Rust port held the connection
+  // task and the socket open forever. `truncate` keeps the declared length on
+  // the wire and `stall` keeps the write side open, so only the server can
+  // finish the request. This cell takes ~300 s per run (two runs per
+  // generation).
+  name: 'body-read-timeout', port: port(55),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({ body: 'x'.repeat(64), headers: FORM, method: 'POST', path: '/sms/incoming', truncate: 56, stall: true }),
+    stop(),
+  ],
+});
+scenario({
   // Not replayed by its own test: this case exists so the Rust port's
   // port-busy preflight check (fix-r1 P2 #13) has an oracle port it can
   // drive while a test holds it busy. Its own replay cell would race that
@@ -882,11 +934,11 @@ async function run(definition: Definition) {
     for (const step of steps) {
       switch (step.op) {
         case 'request': {
-          record.responses.push(await rawRequest(
-            definition.port,
-            REQUEST(step.body, step.headers, step.method, step.path, step.truncate ?? 0),
-            step.halfClose === true,
-          ));
+          const raw = REQUEST(step.body, step.headers, step.method, step.path, step.truncate ?? 0);
+          record.responses.push(step.stall === true
+            // #1901: only the server's own deadline can finish this request.
+            ? await stalledRequest(definition.port, raw, STALLED_PROBE_DEADLINE_MS)
+            : await rawRequest(definition.port, raw, step.halfClose === true));
           break;
         }
         case 'connect': {

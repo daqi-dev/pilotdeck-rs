@@ -29,8 +29,12 @@ state×event×timing matrix from `plan.md` (start failure modes, webhook
 request validation, turn fragment rendering, dedupe/`/new` session
 switching, elicitation and permission answering, stop while a turn is
 held). The fix-r1 round added the signature-query, JSON-number-body,
-missing-requestId (permission and elicitation), empty-host, bind-error
-and truncated-body cells. The `port-busy-preflight` case has no replay
+missing-requestId (permission and elicitation), empty-host, bind-error,
+truncated-body and body-read-timeout cells. `body-read-timeout` (#1901)
+declares `Content-Length: 64`, sends 8 bytes and keeps the write side
+open, so only Node's default `requestTimeout` (300 s) can end it: the
+baseline answers the 51-byte `408 Request Timeout` + `Connection: close`.
+That cell costs ~300 s per run, and every case runs twice. The `port-busy-preflight` case has no replay
 cell of its own: the Rust harness holds its port busy in
 `port_busy_preflight_fails_fast`, and a second cell would race that hold
 in the parallel test suite. `expected` records, per case:
@@ -73,10 +77,10 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the 69 `#996` compile-time switches the
-channel carries (`crate::mutants::on("sms-…")`; 26 → 69, where the fix-r1
+`negative_controls.py` runs the 70 `#996` compile-time switches the
+channel carries (`crate::mutants::on("sms-…")`; 26 → 70, where the fix-r1
 round added 11, #1589 added 4, #1729 added 39, #1813 added 1, #1790 added
-3 — the `switches` table is
+3, #1901 added 1 — the `switches` table is
 the truth source) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
@@ -90,6 +94,6 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
                                                  # unless all KILLED
 ```
 
-#1729：`negative_controls.py` 现有 **69** 个开关（以 `switches` 表为准），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
+#1729：`negative_controls.py` 现有 **70** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
 
 #1813：当时 **66** 个开关（`#1790` 后为 69）。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。

@@ -3,9 +3,9 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 69: the
+cell or dedicated test that pins that behavior's TS bytes (26 → 70: the
 fix-r1 round added 11, #1589 added 4, #1729 added 39, #1813 added 1, #1790
-added 3; the switches table is the truth source). Run one sample in the
+added 3, #1901 added 1; the switches table is the truth source). Run one sample in the
 authoring session; the coordinator runs the complete list after the patch is
 committed.
 
@@ -247,6 +247,11 @@ switches = [
       '#1790 the permission captured mid-send must be re-sent after the panic',
       '#1790 answering must not survive the confirmation-send cancellation',
       '#1790 answering must not survive the confirmation-send timeout']),
+    # #1901: the sms body-read deadline is disarmed — a client that declares
+    # `Content-Length` and stops sending holds the connection task and the
+    # socket open forever instead of being answered with Node's 408.
+    ('sms-body-read-no-timeout', SMS / 'mod.rs', 'body_read_timeout',
+     '#1901 a stalled body is answered at the sms body-read deadline'),
     # #1790: the initial-prompt guard is disarmed — a panic during the first
     # prompt send leaves `initial_prompt_pending` set ("权限提示发送中").
     ('sms-permission-initial-guard-off', SMS / 'permission.rs',

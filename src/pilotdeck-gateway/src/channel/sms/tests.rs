@@ -18,7 +18,7 @@ use super::super::loader::{
 use crate::channel::protocol::{ChannelLog, ChannelStartDeps};
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-sms/oracle.json");
-const EXPECTED_CASE_COUNT: usize = 55;
+const EXPECTED_CASE_COUNT: usize = 56;
 /// The fixed mapper uuid the generator injects, so `/new` session keys match.
 const MAPPER_UUID: &str = "aaaaaaaa-1111-2222-3333-444444444444";
 
@@ -2258,6 +2258,195 @@ fn assert_responses_so_far(responses: &[Value], case: &Value, name: &str) {
     crate::negative_assert_eq!(responses, &expected[..], "#1339 sms oracle: {name}");
 }
 
+/// The wire bytes of the `body-read-timeout` answer: Node v22.22.0's raw
+/// 51-byte `408 Request Timeout` ([`crate::user_dialog::NODE_408_RESPONSE`],
+/// measured on the pinned Node in
+/// `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`) with hyper's
+/// chunked framing for an unknown-length empty body. The framing residual is
+/// the registered A8.3-CH-WEBHOOK-001 class — the sms lane returns the same
+/// shared builder (`webhook::node_request_timeout_response`), so the two
+/// cannot drift apart.
+const REQUEST_TIMEOUT_408: &[u8] =
+    b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+
+/// The comparison form of an HTTP/1.1 response's wire bytes: header names are
+/// case-folded, the `date` line is dropped and chunk sizes are case-folded —
+/// exactly the presentation dimensions registered as accepted in
+/// `specs/gateway-parity/diffs/A8.4-NATIVE-HTTP-001.md`. The sms lane serves
+/// through a bare `http1::Builder`, so unlike the webhook lane's
+/// `title_case_headers(true)` + `auto_date_header(false)` it writes lowercase
+/// header names and hyper's implicit `date`; Node's canned
+/// `requestTimeoutResponse` carries no `Date` at all. Everything else — status
+/// line, the `Connection: close` value, the chunked framing — is compared
+/// verbatim, so a missing close or a changed status still fails.
+///
+/// Panics on anything that is not a complete HTTP/1.1 head plus body: a
+/// truncated or non-response wire must not normalize into a passing string.
+fn normalize_wire(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .expect("#1901 a complete HTTP/1.1 head");
+    let mut out = String::with_capacity(text.len());
+    for (index, line) in head.split("\r\n").enumerate() {
+        if index == 0 {
+            out.push_str(line);
+            out.push_str("\r\n");
+            continue;
+        }
+        let (name, value) = line.split_once(':').expect("#1901 header line");
+        let name = name.trim().to_ascii_lowercase();
+        if name == "date" {
+            continue;
+        }
+        out.push_str(&name);
+        out.push(':');
+        out.push_str(value);
+        out.push_str("\r\n");
+    }
+    out.push_str("\r\n");
+    // Chunk framing stays verbatim: the zero-size terminator is `0` in both
+    // stacks and the 408 body is empty, so nothing here needs folding.
+    out.push_str(body);
+    out
+}
+
+/// #1901: the cell declares `Content-Length: 64`, sends 8 bytes and keeps the
+/// write side open, so only the server's `requestTimeout` can end it. The
+/// replay pins the recorded TS shape first, then drives the Rust port with a
+/// shortened injected deadline (200 ms) and compares the wire bytes (see
+/// [`normalize_wire`] for the two registered presentation dimensions).
+///
+/// Without the deadline the connection task never returns: the client read
+/// times out at `CLIENT_DEADLINE` and the assertion below is the kill point
+/// for the `sms-body-read-no-timeout` negative control.
+async fn replay_body_read_timeout(case: &Value, port: u16) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    const INJECTED_DEADLINE: Duration = Duration::from_millis(200);
+    const CLIENT_DEADLINE: Duration = Duration::from_secs(5);
+
+    // The recorded TS answer, pinned so this cell cannot go blind.
+    let expected = &case["expected"]["responses"][0];
+    crate::negative_assert_eq!(
+        expected["status"].as_u64(),
+        Some(408),
+        "#1901 body-read-timeout: the baseline answers a stalled body with 408"
+    );
+    crate::negative_assert_eq!(
+        expected["body"].as_str(),
+        Some(""),
+        "#1901 body-read-timeout: the requestTimeout body is empty"
+    );
+    crate::negative_assert!(
+        expected.get("closed").is_none() && expected.get("refused").is_none(),
+        "#1901 body-read-timeout: the baseline must deliver the 408, not reset \
+         or refuse the connection, got {expected}"
+    );
+    // Node's `requestTimeoutResponse` writes no `Content-Type`.
+    crate::negative_assert!(
+        expected.get("contentType").map_or(true, Value::is_null),
+        "#1901 body-read-timeout: the requestTimeout answer has no content-type, \
+         got {expected}"
+    );
+    // The recorded request really stalls: the generator's `REQUEST()` writes
+    // `Content-Length: <byteLength(body)>` from the whole body while
+    // `truncate` keeps the tail off the wire, so the server waits for the
+    // rest of a body it was promised.
+    let steps = recorded_steps(case).expect("#1901 steps");
+    let step = &steps[0];
+    let declared = recorded_body(step).len();
+    let sent = declared
+        - usize::try_from(recorded_truncate(step).unwrap_or_default())
+            .expect("#1901 truncate fits usize");
+    crate::negative_assert!(
+        sent < declared,
+        "#1901 body-read-timeout: the request must stall before its declared \
+         body is complete (sent {sent} of {declared})"
+    );
+
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(recorded_extra(case).unwrap_or(&Value::Null))),
+        mapper: None,
+        gateway: None,
+        env: Some(Arc::new(|_| None)),
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+        request_timeout: Some(INJECTED_DEADLINE),
+    });
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#1901 start");
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1901 connect to the sms listener");
+    stream
+        .write_all(&build_raw(step))
+        .await
+        .expect("#1901 send the stalled request");
+    let mut response = Vec::new();
+    tokio::time::timeout(CLIENT_DEADLINE, stream.read_to_end(&mut response))
+        .await
+        .expect("#1901 a stalled body is answered at the sms body-read deadline")
+        .expect("#1901 read the stalled-body response bytes");
+    handle
+        .stop("body-read-timeout")
+        .await
+        .expect("#1901 stop after the body-read deadline");
+    crate::negative_assert_eq!(
+        normalize_wire(&response),
+        normalize_wire(REQUEST_TIMEOUT_408),
+        "#1901 the sms body-read deadline answers Node's 408 in hyper's \
+         chunked framing and closes the connection (normalized only for the \
+         registered A8.4-NATIVE-HTTP-001 header case / date presentation)"
+    );
+}
+
+/// The pinned 408 bytes are Node's raw 51 bytes minus their terminating CRLF
+/// plus hyper's chunked framing: a presentation residual of the
+/// A8.3-CH-WEBHOOK-001 class, not "the Node 408" byte for byte.
+#[test]
+fn sms_408_is_node_bytes_plus_hyper_framing() {
+    let node = crate::user_dialog::NODE_408_RESPONSE;
+    let mut expected = node[..node.len() - 2].to_vec();
+    expected.extend_from_slice(b"Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+    crate::negative_assert_eq!(
+        REQUEST_TIMEOUT_408,
+        expected.as_slice(),
+        "#1901 hyper's 408 is Node's unframed 408 plus the chunked framing"
+    );
+}
+
+/// #1901: nothing else pins the 300 s constant — the replay injects 200 ms and
+/// the oracle cell's own answer is not replayed, so the default could drift to
+/// 30 s or 1 h with every other check still green.
+#[test]
+fn body_read_deadline_defaults_to_the_node_request_timeout() {
+    assert_eq!(
+        DEFAULT_REQUEST_TIMEOUT,
+        Duration::from_secs(300),
+        "#1901 the body-read deadline must stay at Node's default requestTimeout"
+    );
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: None,
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: None,
+        record_unhandled: None,
+        request_timeout: None,
+    });
+    assert_eq!(
+        channel.shared.request_timeout, DEFAULT_REQUEST_TIMEOUT,
+        "#1901 an unset option means the Node default, not a shorter deadline"
+    );
+}
+
 async fn replay_named(name: &str) {
     let case = case_by_name(name);
     validate_mock_recording(&case);
@@ -2265,6 +2454,13 @@ async fn replay_named(name: &str) {
     assert_boundary_body_len(name, &case);
     let port = case["port"].as_u64().expect("#1339 case port") as u16;
     ensure_replay_port_free(port).await;
+    if name == "body-read-timeout" {
+        // #1901: the recorded TS answer arrives only after Node's full 300 s
+        // `requestTimeout`, so the cell is replayed through a shortened
+        // injected deadline instead of being waited out.
+        replay_body_read_timeout(&case, port).await;
+        return;
+    }
     let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
     let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
 
@@ -2337,6 +2533,7 @@ async fn replay_named(name: &str) {
         env: Some(env),
         twilio_factory: Some(twilio_factory),
         record_unhandled: Some(record_unhandled),
+        request_timeout: None,
     });
     let handle = channel
         .start(ChannelStartDeps {
@@ -2526,6 +2723,9 @@ replay_cases! {
     "empty-webhook-host" => empty_webhook_host,
     "start-host-unavailable" => start_host_unavailable,
     "body-truncated" => body_truncated,
+    // #1901: replayed by `replay_body_read_timeout` (Node's 300 s deadline is
+    // shortened through the injected option instead of being waited out).
+    "body-read-timeout" => body_read_timeout,
 }
 
 #[test]
@@ -2827,6 +3027,7 @@ async fn logger_panic_does_not_poison_boundaries() {
         env: None,
         twilio_factory: Some(null_factory()),
         record_unhandled: None,
+        request_timeout: None,
     });
     let handle = channel
         .start(ChannelStartDeps {
@@ -2903,6 +3104,7 @@ async fn a_panicking_process_message_does_not_leak_the_active_chat() {
         env: None,
         twilio_factory: Some(null_factory()),
         record_unhandled: None,
+        request_timeout: None,
     });
     let handle = channel
         .start(ChannelStartDeps {
@@ -3064,6 +3266,7 @@ async fn a_panicking_permission_decide_does_not_lock_the_chat() {
         env: None,
         twilio_factory: None,
         record_unhandled: None,
+        request_timeout: None,
     });
     let shared = channel.shared.clone();
     let chat = JsString::from("+15550010");
@@ -3179,6 +3382,7 @@ fn channel_with_gateway(gateway: Arc<dyn SmsGateway>) -> Arc<SmsShared> {
         env: None,
         twilio_factory: None,
         record_unhandled: None,
+        request_timeout: None,
     })
     .shared
     .clone()
@@ -4118,6 +4322,7 @@ async fn json_null_body_is_unhandled_destroy() {
         env: None,
         twilio_factory: Some(null_factory()),
         record_unhandled: Some(record_unhandled),
+        request_timeout: None,
     });
     let handle = channel
         .start(ChannelStartDeps {
@@ -4336,6 +4541,7 @@ fn lock_split_channel(case: Value, record: Arc<SyncMutex<Record>>, gates: Gates)
         env: None,
         twilio_factory: None,
         record_unhandled: None,
+        request_timeout: None,
     })
 }
 
