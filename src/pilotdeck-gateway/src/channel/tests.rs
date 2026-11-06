@@ -33,6 +33,12 @@ fn strings(value: &Value) -> Vec<String> {
 /// of a bare index (#1808, the #1729 shape): a present-but-wrong-type
 /// container fails with a `#1327` diagnostic instead of a generic object
 /// mismatch, and an absent one cannot shrink the case to a blind compare.
+///
+/// Deliberately narrower than sms/webhook's `recorded_checked`: every case in
+/// these oracles must carry an object `expected`, so absent is an error rather
+/// than a `fail_open` switch, and the two-state `Result<&Value, _>` keeps the
+/// call sites free of an `Option` hop. Sharing one helper across all five
+/// harnesses is follow-up work, not this lane (#1813 owns the other files).
 fn recorded_expected_checked(value: &Value) -> Result<&Value, String> {
     match value.get("expected") {
         None => Err("#1327 expected must be an object, got <missing>".into()),
@@ -48,6 +54,10 @@ fn recorded_expected_rejects_wrong_type() {
     crate::negative_assert!(
         recorded_expected_checked(&json!({"expected": []})).is_err(),
         "#1327 #1808 rejects expected type drift"
+    );
+    crate::negative_assert!(
+        recorded_expected_checked(&json!({})).is_err(),
+        "#1327 #1808 rejects absent expected"
     );
 }
 #[test]
