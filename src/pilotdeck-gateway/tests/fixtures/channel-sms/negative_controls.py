@@ -3,9 +3,10 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (22 switches; the
-fix-r1 round added the last 11). Run one sample in the authoring session; the
-coordinator runs the complete list after the patch is committed.
+cell or dedicated test that pins that behavior's TS bytes (26 switches; the
+fix-r1 round added 11, #1589 added the last 4). Run one sample in the
+authoring session; the coordinator runs the complete list after the patch is
+committed.
 
 `mutating_sources` cannot be used for a pre-commit change (it requires
 src/ == HEAD), so the controls are the #996 compile-time switches the
@@ -113,6 +114,27 @@ switches = [
     # host-unavailable cell's Node EADDRNOTAVAIL line no longer matches.
     ('sms-listen-error-node-text', SMS / 'mod.rs', 'start_host_unavailable',
      '#1339 sms oracle: start-host-unavailable'),
+    # #1589 issue #1: the elicitation check and take fall back into two lock
+    # sections — a concurrent event-stream clear lands between them, the take
+    # finds nothing, and the answer becomes a turn.
+    ('sms-elicit-lock-split', SMS / 'mod.rs', 'sms_elicit_lock_split',
+     '#1589 elicit lock split must answer the pending elicitation exactly once'),
+    # #1589 issue #1: same split for the permission check + beginAnswer — the
+    # cleared state reads as "no permission pending" and the answer becomes
+    # a turn.
+    ('sms-permission-lock-split', SMS / 'mod.rs', 'sms_permission_lock_split',
+     '#1589 permission lock split must decide the pending permission exactly once'),
+    # #1589 issue #1: the active-chat contains check and the resolve+insert
+    # fall back into two lock sections — two concurrent webhooks for one chat
+    # both dispatch instead of one.
+    ('sms-active-insert-split', SMS / 'mod.rs', 'sms_active_insert_split',
+     '#1589 active insert split must dispatch exactly one turn for one chat'),
+    # #1589 issue #6: the v4 probe classifies any non-EADDRINUSE failure as a
+    # free port (the fix-r5 shape) instead of Unknown — the pure classifier
+    # test pins the arm a healthy host never reaches.
+    ('sms-v4-probe-unknown-as-unshared', SMS / 'mod.rs',
+     'classify_v4_probe_other_errors_stay_unknown',
+     '#1589 v4 probe must keep unattributable errors Unknown'),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',

@@ -1410,3 +1410,243 @@ fn listen_error_matches_node_text() {
         "#1339 EACCES Node text"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #1589 dedicated tests (lock-fusion negative controls and the v4 probe)
+// ---------------------------------------------------------------------------
+
+/// #1589 (issue #1): a channel the test drives through `handle_incoming`
+/// directly — no HTTP listener, only the boundary mocks that path touches.
+fn lock_split_channel(case: Value, record: Arc<SyncMutex<Record>>, gates: Gates) -> SmsChannel {
+    let gateway: GatewayRef = Arc::new(MockGateway {
+        case,
+        record,
+        gates,
+    });
+    SmsChannel::new(SmsChannelOptions {
+        extra: None,
+        mapper: None,
+        gateway: Some(gateway),
+        env: None,
+        twilio_factory: None,
+        record_unhandled: None,
+    })
+}
+
+/// The recorded RPC names, in order.
+fn recorded_rpcs(record: &Arc<SyncMutex<Record>>) -> Vec<String> {
+    record
+        .lock()
+        .expect("#1589 record mutex")
+        .rpcs
+        .iter()
+        .map(|rpc| {
+            rpc["rpc"]
+                .as_str()
+                .expect("#1589 recorded rpc carries a name")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// #1589 (issue #1): the elicitation `hasPending` + `take` fusion. Fused, a
+/// concurrent event-stream `clear` cannot land between the check and the
+/// take, so the pending elicitation is answered exactly once and the reply
+/// never becomes a turn. Under `sms-elicit-lock-split` the two lock sections
+/// let the clear land in between: the stale check passes, `take` finds
+/// nothing, and the message falls through to `submitTurn`.
+#[tokio::test]
+async fn sms_elicit_lock_split() {
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let channel = lock_split_channel(json!({}), record.clone(), gates);
+    let chat = JsString::from("+15550001");
+    let session = JsString::from("sms:chat=+15550001:general");
+    {
+        let mut runtime = channel.shared.runtime.lock().await;
+        let question = runtime
+            .elicitation
+            .capture(&chat, &session, &JsValue::Undefined);
+        crate::negative_assert!(
+            !question.units().is_empty(),
+            "#1589 elicit lock split preset must record a question"
+        );
+    }
+    let incoming = {
+        let shared = channel.shared.clone();
+        let incoming_chat = chat.clone();
+        tokio::spawn(
+            async move { handle_incoming(&shared, incoming_chat, JsString::from("1")).await },
+        )
+    };
+    // Exactly one yield: the spawned task runs to its first park point — the
+    // fused section (which parks inside `respondElicitation`), or the
+    // switch's injected yield between the two sections — and never further
+    // before the clear below runs.
+    tokio::task::yield_now().await;
+    {
+        let mut runtime = channel.shared.runtime.lock().await;
+        runtime.elicitation.clear(&chat);
+    }
+    bounded("elicit lock split incoming", incoming)
+        .await
+        .expect("#1589 elicit lock split join")
+        .expect("#1589 elicit lock split handleIncoming");
+    let rpcs = recorded_rpcs(&record);
+    crate::negative_assert_eq!(
+        rpcs.iter()
+            .filter(|rpc| *rpc == "respondElicitation")
+            .count(),
+        1,
+        "#1589 elicit lock split must answer the pending elicitation exactly once"
+    );
+    crate::negative_assert!(
+        !rpcs.iter().any(|rpc| rpc == "submitTurn"),
+        "#1589 elicit lock split must not turn the answer into a submitTurn"
+    );
+}
+
+/// #1589 (issue #1): the permission `hasPending` + `beginAnswer` fusion, same
+/// shape as [`sms_elicit_lock_split`]. Under `sms-permission-lock-split` the
+/// clear lands between the check and `beginAnswer`, the emptied state reads
+/// as "no permission pending", and the reply becomes a `submitTurn`.
+#[tokio::test]
+async fn sms_permission_lock_split() {
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let channel = lock_split_channel(json!({}), record.clone(), gates);
+    let chat = JsString::from("+15550002");
+    let session = JsString::from("sms:chat=+15550002:general");
+    let event = to_js(&json!({
+        "requestId": "req-1589",
+        "toolName": "Bash",
+        "payload": {"command": "ls"},
+    }));
+    {
+        let mut runtime = channel.shared.runtime.lock().await;
+        let prompt = runtime.permissions.capture(&chat, &session, &event);
+        crate::negative_assert!(
+            prompt.is_some(),
+            "#1589 permission lock split preset must deliver a prompt"
+        );
+        runtime
+            .permissions
+            .confirm_initial_prompt(&chat, true, Some(&JsString::from("req-1589")));
+    }
+    let incoming = {
+        let shared = channel.shared.clone();
+        let incoming_chat = chat.clone();
+        tokio::spawn(
+            async move { handle_incoming(&shared, incoming_chat, JsString::from("1")).await },
+        )
+    };
+    tokio::task::yield_now().await;
+    {
+        let mut runtime = channel.shared.runtime.lock().await;
+        runtime.permissions.clear(&chat);
+    }
+    bounded("permission lock split incoming", incoming)
+        .await
+        .expect("#1589 permission lock split join")
+        .expect("#1589 permission lock split handleIncoming");
+    let rpcs = recorded_rpcs(&record);
+    crate::negative_assert_eq!(
+        rpcs.iter().filter(|rpc| *rpc == "permissionDecide").count(),
+        1,
+        "#1589 permission lock split must decide the pending permission exactly once"
+    );
+    crate::negative_assert!(
+        !rpcs.iter().any(|rpc| rpc == "submitTurn"),
+        "#1589 permission lock split must not turn the answer into a submitTurn"
+    );
+}
+
+/// #1589 (issue #1): the `activeChats` `contains` → `resolve` → `insert`
+/// fusion. The turn gate holds the first message's turn in flight (the TS
+/// shape the fusion exists for), so fused the second webhook for the same
+/// chat sees the chat active and is skipped — exactly one turn. Under
+/// `sms-active-insert-split` both webhooks pass their `contains` check
+/// before either inserts, so both dispatch.
+#[tokio::test]
+async fn sms_active_insert_split() {
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let channel = lock_split_channel(
+        json!({"turn": {"gate": "active-insert-turn"}}),
+        record.clone(),
+        gates.clone(),
+    );
+    let chat = JsString::from("+15550003");
+    let first = {
+        let shared = channel.shared.clone();
+        let chat = chat.clone();
+        tokio::spawn(async move { handle_incoming(&shared, chat, JsString::from("first")).await })
+    };
+    let second = {
+        let shared = channel.shared.clone();
+        let chat = chat.clone();
+        tokio::spawn(async move { handle_incoming(&shared, chat, JsString::from("second")).await })
+    };
+    // Enough yields for both spawned tasks to reach their park point: fused,
+    // the first turn parks inside `submitTurn` (holding the chat active) and
+    // the second task skips; under the switch both park between their two
+    // lock sections, before either inserts.
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    release_if_exists(&gates, "active-insert-turn");
+    bounded("active insert split first", first)
+        .await
+        .expect("#1589 active insert split first join")
+        .expect("#1589 active insert split first handleIncoming");
+    bounded("active insert split second", second)
+        .await
+        .expect("#1589 active insert split second join")
+        .expect("#1589 active insert split second handleIncoming");
+    let rpcs = recorded_rpcs(&record);
+    crate::negative_assert_eq!(
+        rpcs.iter().filter(|rpc| *rpc == "submitTurn").count(),
+        1,
+        "#1589 active insert split must dispatch exactly one turn for one chat"
+    );
+}
+
+/// #1589 (issue #6): pin every arm of the pure probe classifier, including
+/// the one a healthy host never reaches. `sms-v4-probe-unknown-as-unshared`
+/// restores the fix-r5 misreading (any non-EADDRINUSE failure read as a free
+/// port) and is killed by the `Unknown` test below.
+#[test]
+fn classify_v4_probe_ok_is_unshared() {
+    crate::negative_assert_eq!(
+        classify_v4_probe(&Ok(())),
+        V4Port::Unshared,
+        "#1589 v4 probe must read a free port as Unshared"
+    );
+}
+
+#[test]
+fn classify_v4_probe_addr_in_use_is_shared() {
+    crate::negative_assert_eq!(
+        classify_v4_probe(&Err(std::io::Error::from(std::io::ErrorKind::AddrInUse))),
+        V4Port::Shared,
+        "#1589 v4 probe must read a collision as Shared"
+    );
+}
+
+/// A probe that could not run (permission, descriptor exhaustion, a missing
+/// address family) says nothing about the host; reading it as `Unshared`
+/// would demote a working dual-stack listener to the IPv4-only fallback.
+#[test]
+fn classify_v4_probe_other_errors_stay_unknown() {
+    for error in [
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        std::io::Error::from_raw_os_error(libc::EMFILE),
+        std::io::Error::from_raw_os_error(libc::EAFNOSUPPORT),
+    ] {
+        crate::negative_assert_eq!(
+            classify_v4_probe(&Err(error)),
+            V4Port::Unknown,
+            "#1589 v4 probe must keep unattributable errors Unknown"
+        );
+    }
+}
