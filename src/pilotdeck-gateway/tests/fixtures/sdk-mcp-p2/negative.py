@@ -282,49 +282,41 @@ MUTATIONS = [
      '#401 the DOMException text is preserved'),
     # ── #401 gate11 sibling P2: tools/list compiles every outputSchema ──
     ('output-schema-rejection-removed', 'mcp/client.rs',
-     '                if let Some(schema) = tool.get("outputSchema") {\n'
-     '                    // The SDK compiles every outputSchema while caching\n'
-     '                    // `tools/list` (`cacheToolMetadata`); a bad schema\n'
-     '                    // rejects the whole list instead of silently turning\n'
-     '                    // into a permissive validator later.\n'
-     '                    if let Err(error) = super::output_schema::check_schema(schema) {\n'
-     '                        return Err(McpClientError::client(\n'
-     '                            McpClientErrorCode::CallFailed,\n'
-     '                            format!("MCP call failed (server={server_id}): {}", error.0),\n'
-     '                            server_id,\n'
-     '                        ));\n'
-     '                    }\n'
-     '                    output.insert(name.clone(), schema.clone());\n'
-     '                }\n',
-     '                if let Some(schema) = tool.get("outputSchema") {\n'
-     '                    if let Err(error) = super::output_schema::check_schema(schema) {\n'
-     '                        let _ = error;\n'
-     '                    }\n'
-     '                    output.insert(name.clone(), schema.clone());\n'
-     '                }\n',
+     '                        return Err(McpClientError::plain("Error", error.0));',
+     '                        let _ = error;',
      '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
      '#401 a bad outputSchema type must reject the whole tools/list'),
     ('output-schema-message-text', 'mcp/client.rs',
-     'format!("MCP call failed (server={server_id}): {}", error.0)',
-     'format!("MCP call failed (server={server_id}): bad output schema")',
+     'McpClientError::plain("Error", error.0)',
+     'McpClientError::plain("Error", "bad output schema")',
      '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
      '#401 the Ajv compile text reaches the caller verbatim'),
+    # 这条同时钉住「拒绝码」和「不许跳过共享的超时分类器」：把 name 换回
+    # `McpClientError`，`call_with_reconnect` 就会原样返回、code 变成空。
     ('output-schema-wrong-code', 'mcp/client.rs',
-     '                        return Err(McpClientError::client(\n'
-     '                            McpClientErrorCode::CallFailed,\n'
-     '                            format!("MCP call failed (server={server_id}): {}", error.0),\n',
-     '                        return Err(McpClientError::client(\n'
-     '                            McpClientErrorCode::CallTimeout,\n'
-     '                            format!("MCP call failed (server={server_id}): {}", error.0),\n',
+     'McpClientError::plain("Error", error.0)',
+     'McpClientError::plain("McpClientError", error.0)',
      '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
      '#401 a schema compile failure is a call failure, not the timeout path'),
     # 同一条生产代码路径的两个不同拒绝理由（type / $ref）各有自己的回归；
     # 消息文本透传对两条测试都要能判杀，否则改弱其中一条断言不会被发现。
     ('output-schema-ref-message-text', 'mcp/client.rs',
-     'format!("MCP call failed (server={server_id}): {}", error.0)',
-     'format!("MCP call failed (server={server_id}): bad output schema")',
+     'McpClientError::plain("Error", error.0)',
+     'McpClientError::plain("Error", "bad output schema")',
      '--test=mcp_client', 'list_tools_rejects_an_unresolvable_output_schema_ref',
      '#401 the Ajv reference text reaches the caller verbatim'),
+    # 修复前的写法（自己包成 `McpClientError` + 固定 call-failure 文案）：
+    # Ajv 文本里带 "timeout" 时基线与端口的分类不同，这条用例必须转红。
+    ('output-schema-timeout-word', 'mcp/client.rs',
+     'McpClientError::plain("Error", error.0)',
+     'McpClientError::client(\n'
+     '                            McpClientErrorCode::CallFailed,\n'
+     '                            format!("MCP call failed (server={_server_id}): {}", error.0),\n'
+     '                            _server_id,\n'
+     '                        )',
+     '--test=mcp_client',
+     'list_tools_reports_a_timeout_shaped_schema_error_as_a_timeout',
+     '#401 the Ajv text runs through the shared timeout classifier'),
     ('late-handshake-dir-kept', 'mcp/client.rs',
      '                async move {\n'
      '                    if let Ok(client) = outcome {\n'

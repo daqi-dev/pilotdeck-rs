@@ -712,7 +712,14 @@ async fn close_during_handshake_then_start_keeps_one_connection() {
     client.close().await;
     client.start().await.expect("second connection");
     open_gate(&dir, "g0");
-    let first = first.await.unwrap().expect_err("first attempt is aborted");
+    // The gate is the only thing holding the first attempt; bound the join so a
+    // lost reply cannot turn the pinned 120 s handshake timeout into the test's
+    // failure budget (review r4 concurrency P2-a).
+    let first = tokio::time::timeout(Duration::from_secs(30), first)
+        .await
+        .expect("the aborted attempt settles long before the pinned handshake timeout")
+        .unwrap()
+        .expect_err("first attempt is aborted");
     assert_eq!(first.message(), ABORTED);
     assert_eq!(client.status().as_str(), "ready");
     wait_logged(&dir, 0, "exit").await;
@@ -1593,12 +1600,20 @@ async fn list_tools_error(
     (code, message, status)
 }
 
-/// #401 gate11 sibling P2: the SDK compiles every `outputSchema` while caching
-/// `tools/list`, so one bad `type` rejects the whole listing — the good tool
-/// ahead of it is not returned either. TS oracle (Node v22.22.0,
-/// `_tmp/20261106-issue-401/probe/probe-bad-output-schema.mts`):
+/// #401 gate11 sibling P2: the SDK compiles every **named** tool's
+/// `outputSchema` while caching `tools/list`, so one bad `type` rejects the
+/// whole listing — the good tool ahead of it is not returned either. TS oracle
+/// (Node v22.22.0, `_tmp/20261106-issue-401/probe/probe-bad-output-schema.mts`):
 /// `mcp_call_failed`, `MCP call failed (server=mock): type must be JSONType or
 /// JSONType[]: nope`, client status stays `ready`.
+///
+/// The nameless edge is deliberately out of scope and is *not* covered here:
+/// measured on the same Node build (`probe-schema-edge.mts`, rows 3–4), the
+/// baseline rejects a nameless/non-string-named tool at the result-shape
+/// layer (`Invalid input: expected string, received undefined`) before Ajv ever
+/// sees the schema, while the port's `let Some(name) = … else { continue }`
+/// skips it and returns the listing. Aligning that needs whole-result shape
+/// validation, so it is tracked as a follow-up instead (review r4 boundary P2a).
 #[tokio::test]
 async fn list_tools_rejects_a_bad_output_schema_type() {
     let tools = concat!(
@@ -1656,6 +1671,41 @@ async fn list_tools_rejects_an_unresolvable_output_schema_ref() {
     );
 }
 
+/// #401 gate11 boundary P1: the baseline does not wrap the Ajv failure in an
+/// `McpClientError`, so it runs through the same `is_timeout_message`
+/// classifier as any other call error — text that happens to mention
+/// "timeout" is reported as a timeout *and* recycles the transport. Oracle:
+/// `_tmp/20261106-issue-401/probe/probe-schema-edge.mts`, rows "nested Ajv
+/// message contains 'timeout'": `mcp_call_timeout`,
+/// `MCP call timed out (server=mock): type must be JSONType or JSONType[]:
+/// timeout`, client status `error`.
+#[tokio::test]
+async fn list_tools_reports_a_timeout_shaped_schema_error_as_a_timeout() {
+    let tools = concat!(
+        r#"[{"name":"good","inputSchema":{"type":"object"}},"#,
+        r#"{"name":"bad","inputSchema":{"type":"object"},"#,
+        r#""outputSchema":{"type":"object","properties":{"x":{"type":"timeout"}}}}]"#
+    );
+    let (code, message, status) = list_tools_error(
+        "mcp-client-output-schema-timeout-word",
+        tools,
+        "#401 a timeout-shaped outputSchema still rejects the whole tools/list",
+    )
+    .await;
+    assert_eq!(
+        code, "mcp_call_timeout",
+        "#401 the Ajv text runs through the shared timeout classifier"
+    );
+    assert_eq!(
+        message, "MCP call timed out (server=mock): type must be JSONType or JSONType[]: timeout",
+        "#401 the timeout path prefixes the Ajv text instead of the call-failure text"
+    );
+    assert_eq!(
+        status, "error",
+        "#401 a timeout-shaped schema error recycles the transport"
+    );
+}
+
 // ── gate11 concurrency P2(c): dispose while a handshake is in flight ──────
 
 /// #401 gate11 concurrency P2(c): `dispose()` does not fence an in-flight
@@ -1666,6 +1716,21 @@ async fn list_tools_rejects_an_unresolvable_output_schema_ref() {
 /// attempt's connection is closed and its per-session directory removed even
 /// though nobody awaits it. The gate is a file the mock waits on, so the
 /// interleaving is deterministic — no sleeps decide who goes first.
+///
+/// Three things this test pins are **not** baseline behaviour; they are the
+/// port's own answer and are enumerated here instead of being silently frozen
+/// (review r4 sibling P2, decision issue #1751):
+///
+/// 1. the late attempt fails (`entries[0].status == "error"`) while the
+///    baseline resolves `start()` with `{"ok":true}` and ends up `ready`;
+/// 2. the late connection is closed and its child exits, while the baseline's
+///    child is still alive after the handshake lands;
+/// 3. the per-session directory survives `close()` and is removed only when
+///    the late handshake settles (`dirRemovedAtClose: false` here,
+///    `true` in the baseline).
+///
+/// Registering 1–3 in the accepted-diff ledger is frozen-file work with its
+/// own approval path, so it is tracked in #1751 rather than edited here.
 #[tokio::test]
 async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
     let scratch = Scratch::new("mcp-client-dispose-inflight");
@@ -1747,8 +1812,10 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
         "#401 dispose leaves the client idle while the handshake is still running"
     );
     open_gate(&dir, "g0");
-    let entries = starting
+    // Bounded join for the same reason as the sibling test above.
+    let entries = tokio::time::timeout(Duration::from_secs(30), starting)
         .await
+        .expect("the late handshake settles long before the pinned handshake timeout")
         .expect("#401 the runtime start task must finish");
     assert_eq!(entries.len(), 1, "#401 one server entry");
     assert_eq!(
