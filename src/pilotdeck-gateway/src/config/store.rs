@@ -62,7 +62,9 @@
 //! config file, and only when it is a regular file of at most
 //! [`CONTENT_SAMPLE_LIMIT`] bytes — a rewrite meeting all of those conditions
 //! and landing in the window is *not* seen, where the pre-#1739 per-tick
-//! content comparison did see it. Larger files and the other entries of a
+//! content comparison did see it (both versions hash a failed content read as
+//! absent instead of retrying, so this cell presupposes that both reads
+//! succeed; see #1792). Larger files and the other entries of a
 //! watched directory were metadata-only before #1739 too, so this cell adds
 //! nothing for them. Measured on HFS+ (1 s ctime granularity) in
 //! `_tmp/20261106-issue-1736/r2/evidence/`; ledger:
