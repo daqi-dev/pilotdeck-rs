@@ -780,7 +780,7 @@ fn assert_oversized_cell_records_only_connection_errors(id: &str, case: &Value) 
     assert!(
         expectations
             .iter()
-            .all(|expected| expected.get("error").is_some()),
+            .all(|expected| matches!(expected.get("error"), Some(Value::String(_)))),
         "#1333 {id}: an oversized body must record a connection error, not a response, \
          got {expectations:?}"
     );
@@ -1286,8 +1286,8 @@ fn gateway_from(
                     // `"turns": [5]` used to read as a turn with no `events`
                     // and no `error` — the absent/wrong-type conflation r4/r6
                     // removed from the outer containers, still open on the
-                    // element itself. Only absent (or `null`) means "this turn
-                    // scripts nothing".
+                    // element itself. Only an absent `turns` key means "no
+                    // turn"; a `null` element is drift like any other type.
                     let turn = match turn {
                         Value::Object(_) => turn,
                         other => {
