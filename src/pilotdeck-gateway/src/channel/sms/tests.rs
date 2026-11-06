@@ -389,7 +389,8 @@ fn recorded_checked<'a, T>(
 /// #1879: the same helper now carries the `?? {}` / `?? []` / `?? 0` /
 /// `?? "no reason"` / `=== true` / falsy fields listed below in
 /// `OLD_NULL_REJECTING_FIELDS`, so every recorded read that has a TS default
-/// spells absence the same way (16 read sites at the time of writing).
+/// spells absence the same way — one `recorded_present` call site per name in
+/// `OLD_NULL_REJECTING_FIELDS`.
 fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     let present = value.get(field);
     // #1813 negative control: the switch restores the old reads, in which
@@ -2003,6 +2004,14 @@ fn absent_recording_fields_keep_defaults() {
         replay_stop_reason(&json!({"reason": null})),
         "no reason",
         "#1339 #1879 null stop.reason replays as the default reason"
+    );
+    // The replay builds the channel options with
+    // `extra: Some(to_js_object(recorded_extra(&case).unwrap_or(&Value::Null)))`,
+    // so assert the same expression for a null `extra` and an absent one.
+    assert_eq!(
+        to_js_object(recorded_extra(&json!({"extra": null})).unwrap_or(&Value::Null)),
+        to_js_object(recorded_extra(&empty).unwrap_or(&Value::Null)),
+        "#1339 #1879 null extra replays as an empty extra, same as an absent key"
     );
     // #1729 fix-r6: `expected` is no longer an optional recording field, so the
     // old `assert_responses_so_far(&[], &empty, …)` probe (absent `expected`
