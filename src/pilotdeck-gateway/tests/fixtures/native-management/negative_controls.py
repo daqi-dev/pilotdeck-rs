@@ -139,6 +139,14 @@ mutations.append(('environment-snapshot-root-dropped', ENTRY, 'inherited.insert(
 # production step the WIRING test calls; without this row it could return
 # `None` with every assertion still green.
 mutations.append(('submit-recorder-unwired', ASSEMBLY_SNAPSHOT, 'Ok(recorder) => Some(recorder),', 'Ok(_) => None,', WIRING, '#1431 staged snapshot recorder'))
+# #1761 item 4: pair for the settings capability guard's "real delegate but
+# never advertised" half. `production_host_management_and_restart` also fails
+# on this advertisement (exact wired set), but the settings guard owns the
+# assertion that names the rule — TS publishes neither reload in any config
+# state, so advertising one breaks the TS-subset contract — so the mutant is
+# bound to that test and marker.
+SETTINGS_CAPABILITIES = 'native_process::management_tests::settings_capabilities_match_served_delegates'
+mutations.append(('capability-add-reload_config', REQUESTS, '"resolve_settings",', '"resolve_settings", "reload_config",', SETTINGS_CAPABILITIES, '#1320 settings method reload_config must stay unadvertised'))
 mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('missing-storage-advertised', REQUESTS, 'self.snapshot_enabled\n                                || !matches!(', 'self.snapshot_enabled || true\n                                || !matches!(', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
