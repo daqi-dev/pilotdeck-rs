@@ -1513,12 +1513,39 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
     ))
     .expect("#1431 --storage-root parses");
     let env = options.environment(crate::config::Env::new());
-    // Same composition the project staging does for `PersistenceResources`:
-    // resolve the immutable environment to one recorder and provider.
-    let config = crate::storage::resolve_workspace_snapshot_config(|key| env.get(key).cloned())
-        .expect("#1431 storage environment resolves")
-        .expect("#1431 storage environment enables snapshots");
-    let recorder = Arc::new(crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(config));
+    // setup() staged the project from `PILOTDECK_STORAGE_ROOT=<home>/storage`;
+    // `--storage-root` must resolve to that same root, or this test would
+    // capture into a tree the management gateway never reads.
+    negative_assert_eq!(
+        env.get("PILOTDECK_STORAGE_ROOT"),
+        Some(&storage.to_string_lossy().into_owned()),
+        "#1431 --storage-root selects the staged root"
+    );
+    // Take the recorder the project staging built, exactly as
+    // `assembly::snapshot::snapshot_recorder` does for production `Services`,
+    // instead of rebuilding the composition here: a change to staging must not
+    // leave this test green.
+    let recorder = {
+        let lease = requests.project.acquire(None).expect("#1431 project lease");
+        let resources = lease
+            .runtime()
+            .resources()
+            .get::<crate::runtime::project::ProjectResources>()
+            .expect("#1431 project resources");
+        let persistence = resources
+            .context()
+            .resource(crate::runtime::project::Resource::Persistence)
+            .expect("#1431 persistence resource");
+        persistence
+            .as_any()
+            .downcast_ref::<crate::runtime::project::persistence::PersistenceResources>()
+            .expect("#1431 persistence resource type")
+            .snapshots
+            .as_ref()
+            .expect("#1431 staged snapshot composition")
+            .recorder
+            .clone()
+    };
     let services = crate::native_process::services::Services {
         options: options.clone(),
         project: requests.project.clone(),
