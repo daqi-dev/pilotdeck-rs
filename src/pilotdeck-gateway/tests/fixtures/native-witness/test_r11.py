@@ -57,7 +57,27 @@ class R11Tests(unittest.TestCase):
         self.clock += duration
         self.sleeps.append(duration)
 
-    def wait(self, on_sleep=None, deadline=10, received=(), expectation=None):
+    @staticmethod
+    def envelopes(*events, final=None):
+        """A real WS capture: one ``final: false`` yield plus one ``final: true``.
+
+        ``read_observation`` projects the recorder's envelopes (#1372), so a
+        fixture must carry the terminal the gateway would have derived
+        (``lastError ?? lastCompleted ?? fallback``).  A bare
+        ``{'id': ..., 'final': True}`` frame is a shape the wire never has.
+        """
+        rows = [{'type': 'event', 'id': 'request', 'seq': index, 'final': False, 'event': event}
+                for index, event in enumerate(events)]
+        if final is None:
+            final = (next((event for event in reversed(events) if event.get('type') == 'error'), None)
+                     or next((event for event in reversed(events) if event.get('type') == 'turn_completed'), None)
+                     or n.WS_TERMINAL_FALLBACK)
+        rows.append({'type': 'event', 'id': 'request', 'seq': len(rows), 'final': True,
+                     'event': dict(final)})
+        return rows
+
+    def wait(self, on_sleep=None, deadline=10, received=None, expectation=None):
+        received = self.envelopes() if received is None else received
         with patch.object(c.time, 'monotonic', side_effect=lambda: self.clock), \
                 patch.object(c.time, 'sleep', side_effect=on_sleep or self.sleep):
             return c.wait_observation(self.home, self.project, self.session, self.run, received, 'request', deadline,
@@ -135,7 +155,7 @@ class R11Tests(unittest.TestCase):
                 self.chat.write_text(''.join(json.dumps({'type': 'agent_status_message', 'event': label}) + '\n'
                                              for label in expected['durableStatus']))
                 (self.home / 'runs.json').write_text('{"records": [], "events": {}}')
-                final = [{'id': 'request', 'final': True}]
+                final = self.envelopes()
                 observed, _, _ = self.wait(received=final, expectation=expected)
                 self.assertTrue(observed is not None and observed['registry']['applicable'] is False
                                 and self.sleeps == [0.05, 0.05], marker)
@@ -148,7 +168,7 @@ class R11Tests(unittest.TestCase):
             self.write('completed', 'turn_timeout')
             (self.home / 'runs.json').write_text('{"records": [], "events": {}}')
             expected = {'registry': {'applicable': True}, 'durableStatus': ['turn_timeout']}
-            observed, _, source = self.wait(deadline=0.11, received=[{'id': 'request', 'final': True}],
+            observed, _, source = self.wait(deadline=0.11, received=self.envelopes(),
                                              expectation=expected)
             self.assertTrue(observed is None and source['collectionError'] == '落盘未完成'
                             and self.clock == 0.11, marker)
@@ -159,10 +179,17 @@ class R11Tests(unittest.TestCase):
         marker = '#1140 r12 inapplicable registry still waits for transcript finality'
         expected = {'registry': {'applicable': False}, 'durableStatus': ['turn_timeout']}
         try:
-            for frames in ([], [{'id': 'request', 'final': False}]):
+            for frames in ([], self.envelopes({'type': 'assistant_text_delta', 'text': 'pending'})[:-1]):
                 self.clock, self.sleeps = 0.0, []
                 self.write('completed', 'turn_timeout')
-                observed, _, _ = self.wait(deadline=0.11, received=frames, expectation=expected)
+                try:
+                    observed, _, _ = self.wait(deadline=0.11, received=frames, expectation=expected)
+                except c.Blocked:
+                    # #1372: without this request's terminal envelope the
+                    # recorded stream is not delimited, so collection errors
+                    # out instead of settling on a partial capture.  Either
+                    # outcome means "did not settle".
+                    observed = None
                 self.assertTrue(observed is None, marker)
             self.clock, self.sleeps = 0.0, []
             self.chat.write_text('')
@@ -173,7 +200,7 @@ class R11Tests(unittest.TestCase):
                     # A different terminal status is a product scoring difference,
                     # not an excuse to report this readable case as NOT_RUN.
                     self.chat.write_text(json.dumps({'type': 'agent_status_message', 'event': 'turn_failed'}) + '\n')
-            observed, _, _ = self.wait(tick, received=[{'id': 'request', 'final': True}], expectation=expected)
+            observed, _, _ = self.wait(tick, received=self.envelopes(), expectation=expected)
             self.assertTrue(observed is not None and len(self.sleeps) == 5
                             and observed['durableStatus']['entries'][0]['event'] == 'turn_failed', marker)
         except Exception as error:
@@ -187,7 +214,7 @@ class R11Tests(unittest.TestCase):
                 self.write('completed', 'turn_timeout')
                 (self.home / 'runs.json').unlink()
                 expected = {'registry': {'applicable': applicable}, 'durableStatus': ['turn_timeout']}
-                observed, _, source = self.wait(deadline=0.11, received=[{'id': 'request', 'final': True}],
+                observed, _, source = self.wait(deadline=0.11, received=self.envelopes(),
                                                  expectation=expected)
                 self.assertTrue((observed is None) == applicable and source['registryText'] is None
                                 and self.clock == (0.11 if applicable else 0.1), marker)
@@ -204,7 +231,7 @@ class R11Tests(unittest.TestCase):
             self.chat.write_text(json.dumps({'type': 'turn_result', 'text': 'complete\u2028result'}, ensure_ascii=False) + '\n')
             (self.home / 'runs.json').unlink()
             expected = {'registry': {'applicable': False}, 'durableStatus': ['turn_timeout']}
-            observed, _, _ = self.wait(received=[{'id': 'request', 'final': True}], expectation=expected)
+            observed, _, _ = self.wait(received=self.envelopes(), expectation=expected)
             self.assertTrue(observed is not None and not observed['durableStatus']['entries']
                             and self.sleeps == [0.05, 0.05], marker)
         except Exception as error:
@@ -641,9 +668,17 @@ class R11Tests(unittest.TestCase):
             temporary = path.with_suffix('.partial')
             temporary.write_text(json.dumps(registry))
             temporary.replace(path)
-            frames = [{'id': 'request', 'final': final_flag, 'event': {'type': final_type, 'code': 'result_unknown'}}]
+            event = {'type': final_type, 'code': 'result_unknown'}
+            frames = self.envelopes(event) if final_flag else self.envelopes(event)[:-1]
             try:
                 result = self.wait(deadline=0.11, received=frames)
+            except c.Blocked as error:
+                # #1372: `final_flag=False` now records a stream with no
+                # terminal envelope at all, which collection reports as a
+                # structural error instead of a partial observation.  Both
+                # outcomes are "the failed attempt did not settle".
+                self.assertFalse(accepted, marker + ': ' + repr(error))
+                continue
             except Exception as error:
                 self.fail(marker + ': ' + repr(error))
             self.assertTrue((result[0] is not None) == accepted, marker)
@@ -723,7 +758,7 @@ class R11Tests(unittest.TestCase):
         marker = '#1363 inapplicable registry must not overwrite a terminal registry'
         expectation = {'registry': {'applicable': False}, 'durableStatus': ['turn_failed']}
         try:
-            observation, _, _ = self.wait(received=[{'id': 'request', 'final': True}],
+            observation, _, _ = self.wait(received=self.envelopes(),
                                           expectation=expectation)
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
@@ -742,7 +777,7 @@ class R11Tests(unittest.TestCase):
                 # round and score a state the product no longer has.
                 self.write('running')
         try:
-            result = self.wait(tick, deadline=0.2, received=[{'id': 'request', 'final': True}],
+            result = self.wait(tick, deadline=0.2, received=self.envelopes(),
                                expectation=expectation)
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
@@ -752,7 +787,7 @@ class R11Tests(unittest.TestCase):
         marker = '#1715 an early settle surfaces the missing entry, it never passes'
         expectation = {'registry': {'applicable': False}, 'durableStatus': ['turn_failed']}
         try:
-            observation, _, _ = self.wait(received=[{'id': 'request', 'final': True}],
+            observation, _, _ = self.wait(received=self.envelopes(),
                                           expectation=expectation)
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
