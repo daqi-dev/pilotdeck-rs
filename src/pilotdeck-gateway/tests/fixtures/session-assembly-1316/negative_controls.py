@@ -850,21 +850,42 @@ def restore_probe():
     return problems
 
 
+# #1938: the mark `dispatch_probe` puts on every child it starts, and the stub
+# `PATH` those children get. A child that still reaches the main path has fallen
+# through a usage guard; the mark is what stops it there, because the alternative
+# is `out.mkdir`, this checkout's tree lock and real cargo - the meta-control
+# copies keep `root` pointing at this checkout, so a fall-through is not local.
+DISPATCH_PROBE_MARKER = 'PILOTDECK_NEGCTL_DISPATCH_PROBE'
+DISPATCH_PROBE_STUB = ('#!/bin/sh\n'
+                       'echo "$0 $*" >> "{calls}"\n'
+                       'exit 1\n')
+
+
 def dispatch_probe():
-    """#1692 r15-4: every mode takes an exact argument list, end to end.
+    """#1692 r15-4 / #1938: every mode takes an exact argument list, end to end.
 
     The structural pin in `test_metadata_io_driver.py` proves the dispatcher is
     still there; this proves what it does. Before the rewrite the two flags were
     matched differently, so `--self-check extra` fell through to the main path:
     it was read as an output directory plus a mutation name, and an unknown
     `--flag` could become a directory. Every case below runs the fixture itself
-    in a throwaway cwd, so a fall-through shows up as either the wrong
-    diagnostic or a created path - never as a silent full run.
+    in a throwaway cwd, so a fall-through shows up as the wrong diagnostic, a
+    created path, a called `cargo` or a touched tree lock - never as a silent
+    full run. `-x` alone used to be exactly that (#1938): with the guard gone it
+    had no second argument to fail on, so it created a directory named `-x` and
+    walked into the mutation suite. Three things fence the children in now: the
+    marker the main path refuses, the `CARGO_TARGET_DIR` their environment no
+    longer carries, and the `cargo` / `rustc` / `git` stubs that only record a
+    call.
     """
     problems = []
     invocations = (
         ([], '(no arguments)', 'usage: negative_controls.py'),
+        # The bare flag is the shape that fell through: no mutation name either,
+        # so only the guard stood between it and `out.mkdir`. The second form is
+        # the cheap extra layer (option b): it stops at the unknown mutation name.
         (['-x'], '-x', 'unknown mode'),
+        (['-x', 'no-such-mutation'], '-x no-such-mutation', 'unknown mode'),
         (['--slot-guard-probe', 'only-one'], '--slot-guard-probe only-one',
          'takes exactly 2 arguments'),
         (['--slot-guard-probe', '/bin/true', 'not-a-timeout'],
@@ -878,11 +899,31 @@ def dispatch_probe():
     # child would simply start a full `--self-check`, i.e. spawn this probe again
     # and recurse. The static pin in `test_metadata_io_driver.py` owns that line
     # (and the manual invocation in the PR body shows the verdict).
-    with tempfile.TemporaryDirectory(prefix='negctl-1316-dispatch-') as directory:
+    with tempfile.TemporaryDirectory(prefix='negctl-1316-dispatch-') as directory, \
+            tempfile.TemporaryDirectory(prefix='negctl-1316-probe-') as scratch:
+        directory = Path(directory)
+        scratch = Path(scratch)
+        calls = scratch / 'cargo-calls.txt'
+        stub_dir = scratch / 'bin'
+        stub_dir.mkdir()
+        for stub_name in ('cargo', 'rustc', 'git'):
+            stub = stub_dir / stub_name
+            stub.write_text(DISPATCH_PROBE_STUB.format(calls=calls))
+            stub.chmod(0o755)
+        # #1938: `CARGO_TARGET_DIR` is a JOB-level variable in CI, so an inherited
+        # one turns the fixture's own early exit off. Both stubs are needed
+        # because a fall-through builds the workspace scanner before it collects.
+        child_env = {key: value for key, value in os.environ.items()
+                     if key != 'CARGO_TARGET_DIR'}
+        child_env[DISPATCH_PROBE_MARKER] = '1'
+        child_env['PATH'] = str(stub_dir) + os.pathsep + child_env.get('PATH', '')
+        lock = root / '.negative-source.lock'
+        lock_before = (lock.exists(),
+                       lock.stat().st_mtime_ns if lock.exists() else None)
         for arguments, label, needle in invocations:
             try:
                 result = run_owned([sys.executable, '-I', str(Path(__file__).resolve()),
-                                    *arguments], cwd=directory, timeout=60)
+                                    *arguments], cwd=directory, env=child_env, timeout=60)
             except subprocess.TimeoutExpired:
                 problems.append(f'dispatch {label}: fell through to the main path '
                                 'instead of refusing')
@@ -892,9 +933,41 @@ def dispatch_probe():
                 problems.append(f'dispatch {label}: exited 0')
             elif needle not in text:
                 problems.append(f'dispatch {label}: no usage diagnostic: {text[-200:]}')
-        created = sorted(entry.name for entry in Path(directory).iterdir())
+        # #1938: the marker gate on its own, driven with an argument list the main
+        # path would otherwise accept (`OUT_DIR MUTATION`). Nothing but the gate
+        # stands between this child and `out.mkdir`, so the verdict is the gate's
+        # own diagnostic - and the directory that must not exist.
+        try:
+            result = run_owned([sys.executable, '-I', str(Path(__file__).resolve()),
+                                'probe-marker-out', 'registry-drops-always-on'],
+                               cwd=directory, env=child_env, timeout=60)
+        except subprocess.TimeoutExpired:
+            problems.append('dispatch marker: a probe child ran the main path '
+                            '(no refusal within the probe timeout)')
+        else:
+            text = result.stdout + result.stderr
+            if result.returncode == 0 or 'dispatch probe: refused' not in text:
+                problems.append(f'dispatch marker: a probe child ran the main path: '
+                                f'{text[-200:]}')
+        created = sorted(entry.name for entry in directory.iterdir())
         if created:
             problems.append(f'dispatch: an argument became an output path: {created}')
+        # #1938: "the fall-through never reached this checkout" as a file the
+        # check reads, not as an inference from the timing. `cargo` / `rustc`
+        # mean real work started; `git` means `mutating_sources` got as far as
+        # the tree lock (it takes the lock and only then runs the pristine
+        # checks), so it is the one that covers a bare flock - a flock leaves no
+        # mtime trace. The mtime/existence check below still catches the case
+        # the stubs cannot: a fall-through in a tree where the lock file does
+        # not exist yet.
+        if calls.exists():
+            problems.append(f'dispatch: the probe started a stubbed cargo, rustc or '
+                            f'git: {calls.read_text().strip()[:200]}')
+        lock_after = (lock.exists(),
+                      lock.stat().st_mtime_ns if lock.exists() else None)
+        if lock_after != lock_before:
+            problems.append(f'dispatch: the probe touched the real tree lock: {lock} '
+                            f'went from {lock_before} to {lock_after}')
         if not problems:
             print('dispatch probe: extra arguments and unknown modes are usage errors',
                   flush=True)
@@ -1247,6 +1320,17 @@ self_check_controls = [
     ('bare-invocation-guard-removed',
      [('if mode is None:\n    sys.exit(USAGE)\n', 'if False:\n    pass\n')],
      True, 'dispatch (no arguments): no usage diagnostic', None),
+    # #1938: the marker gate is the LAST thing between a deleted usage guard and
+    # this checkout's tree lock plus real cargo. Drop it and a probe child holding
+    # a valid `OUT_DIR MUTATION` list creates its output directory and walks on,
+    # so the copy's dispatch probe reports it and the copy goes red. Without this
+    # case the marker could be deleted with every other control still green.
+    ('dispatch-probe-marker-removed',
+     [("if os.environ.get(DISPATCH_PROBE_MARKER):\n"
+       "    sys.exit(f'dispatch probe: refused to run the main path for {mode!r}; the '\n"
+       "             f'probe child must fail on a usage guard\\n{USAGE}')\n",
+       '')],
+     True, 'dispatch marker: a probe child ran the main path', None),
 ]
 
 if not self_check_controls:
@@ -1289,6 +1373,16 @@ def self_check_controls_run():
         stub = directory / 'cargo-slots-free.sh'
         stub.write_text(STUB_GATE_TEXT)
         stub.chmod(0o755)
+        # #1938: the copies run WITHOUT the job's `CARGO_TARGET_DIR` (CI sets it
+        # job-wide, `.github/workflows/ci.yml`). A copy whose guard is gone then
+        # dies at the fixture's own "CARGO_TARGET_DIR must be supplied by the
+        # caller" exit - the second gate - instead of taking this checkout's
+        # tree lock and running real cargo. The marker is deliberately not set
+        # for these children: they are `--self-check` runs, not dispatch-probe
+        # children, and a fall-through here must stay loud rather than be
+        # absorbed by the marker's refusal.
+        child_env = {key: value for key, value in os.environ.items()
+                     if key != 'CARGO_TARGET_DIR'}
         # Control of the control: an unmutated copy must still pass, otherwise
         # every "the copy went red" verdict below would be meaningless.
         # #1692 §9 r3 review (MiniMax boundary P1): these three exits carry the
@@ -1303,7 +1397,7 @@ def self_check_controls_run():
             return problems
         try:
             result = run_owned([sys.executable, '-I', str(control), '--self-check'],
-                               timeout=CONTROL_TIMEOUT_SECONDS)
+                               env=child_env, timeout=CONTROL_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             problems.append(f'control copy: --self-check did not finish within {CONTROL_TIMEOUT_SECONDS}s')
             return problems
@@ -1321,7 +1415,7 @@ def self_check_controls_run():
                 continue
             try:
                 result = run_owned([sys.executable, '-I', str(variant), '--self-check'],
-                                   timeout=CONTROL_TIMEOUT_SECONDS)
+                                   env=child_env, timeout=CONTROL_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 problems.append(f'{name}: INVALID (no verdict within '
                                 f'{CONTROL_TIMEOUT_SECONDS}s)')
@@ -1383,6 +1477,16 @@ if mode is None:
     sys.exit(USAGE)
 if mode.startswith('-'):
     sys.exit(f'unknown mode: {mode}\n{USAGE}')
+# #1938: `dispatch_probe` drives this very file as a child. A child that gets
+# here has fallen through a usage guard, and the next steps are `out.mkdir`, the
+# tree lock and real cargo - on THIS checkout, because the meta-control copies
+# keep `root` pointing at it. So the probe marks its children and the main path
+# refuses the mark before its first side effect. The check sits AFTER the mode
+# dispatch on purpose: a legitimate usage error still reports its own diagnostic
+# (`-x` stays `unknown mode`), and only a fall-through ever sees the mark.
+if os.environ.get(DISPATCH_PROBE_MARKER):
+    sys.exit(f'dispatch probe: refused to run the main path for {mode!r}; the '
+             f'probe child must fail on a usage guard\n{USAGE}')
 
 selected = arguments
 if selected:

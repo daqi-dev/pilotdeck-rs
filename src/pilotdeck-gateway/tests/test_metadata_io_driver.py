@@ -1079,7 +1079,11 @@ class EnvironmentControls(unittest.TestCase):
                 "f'dispatch {label}: fell through to the main path ' 'instead of refusing'",
                 "f'dispatch {label}: exited 0'",
                 "f'dispatch {label}: no usage diagnostic: {text[-200:]}'",
+                "'dispatch marker: a probe child ran the main path ' '(no refusal within the probe timeout)'",
+                "f'dispatch marker: a probe child ran the main path: ' f'{text[-200:]}'",
                 "f'dispatch: an argument became an output path: {created}'",
+                "f'dispatch: the probe started a stubbed cargo, rustc or ' f'git: {calls.read_text().strip()[:200]}'",
+                "f'dispatch: the probe touched the real tree lock: {lock} ' f'went from {lock_before} to {lock_after}'",
             ],
             'self_check_controls_run': [
                 "f'control copy: {error}'",
@@ -1113,7 +1117,7 @@ class EnvironmentControls(unittest.TestCase):
         sites = [site for function in self.PROBLEM_FUNCTIONS for site in raw[function]]
         self.assertEqual({function: len(rows) for function, rows in pinned.items()},
                          {'self_check': 14, 'slot_timeout_probe': 5, 'restore_probe': 11,
-                          'dispatch_probe': 4, 'deadline_probe': 15,
+                          'dispatch_probe': 8, 'deadline_probe': 15,
                           'self_check_controls_run': 6},
                          '#1843 C the pinned witness count per function')
         self.assertEqual(len(set(sites)), len(sites),
@@ -1146,8 +1150,8 @@ class EnvironmentControls(unittest.TestCase):
                   'negative_controls.py').read_text()
         rows = self.self_check_controls_rows(source)
         names = [ast.literal_eval(row.elts[0]) for row in rows]
-        self.assertEqual(len(rows), 15,
-                         '#1843 D fifteen meta controls cover the self-check guards')
+        self.assertEqual(len(rows), 16,
+                         '#1843 D sixteen meta controls cover the self-check guards')
         self.assertEqual(names, [
             'deadline-refusal-removed',
             'progress-flush-removed',
@@ -1164,7 +1168,8 @@ class EnvironmentControls(unittest.TestCase):
             'restore-failclosed-removed',
             'unknown-mode-guard-removed',
             'bare-invocation-guard-removed',
-        ], '#1843 D the meta controls are exactly these, not merely fifteen rows')
+            'dispatch-probe-marker-removed',
+        ], '#1843 D the meta controls are exactly these, not merely sixteen rows')
         # 只钉行数等于允许「换掉一条真负控、行数不变」：名字逐一钉死后，换名同样会红。
         dropped = ast.get_source_segment(source, rows[-1])
         mutant = source.replace(dropped + ',', '', 1)
@@ -1198,7 +1203,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = 'f55bfdb8c72d71c926622229f14d9d89d202fd0f0aab1b21226d4548d1266484'
+    SESSION_CONTROLS_SHA256 = 'e12099d65cda01ddb14b8de3860ee2254eb9269e5a1a89220b423fc899affe0c'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
@@ -1239,6 +1244,7 @@ self_check_controls_run | return | return problems
 <module> | sys.exit() | sys.exit(1 if control_problems else 0)
 <module> | sys.exit() | sys.exit(USAGE)
 <module> | sys.exit() | sys.exit(f'unknown mode: {mode}\n{USAGE}')
+<module> | sys.exit() | sys.exit(f'dispatch probe: refused to run the main path for {mode!r}; the ' f'probe child must fail on a usage guard\n{USAGE}')
 <module> | sys.exit() | sys.exit(f'unknown mutation name(s): {sorted(set(selected) - {m[0] for m in mutations})}')
 <module> | sys.exit() | sys.exit('no mutations selected: the negative control would pass without testing anything')
 <module> | sys.exit() | sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
