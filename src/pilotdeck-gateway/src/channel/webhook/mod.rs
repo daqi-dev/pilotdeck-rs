@@ -578,10 +578,11 @@ async fn route_request(
 /// hyper frames a known-length body with `content-length` on any version.
 /// With an unknown size hyper cannot chunk a 1.0 connection, so it writes the
 /// body and closes, matching Node's bytes.
-/// Sibling: the 1.0 version switch is kept in sync with `finalize` in
-/// `src/module_host.rs`, `src/module_host/approvals.rs`, `src/api_web.rs`,
-/// `src/user_dialog/http_store.rs` and the 1.0 branch in `src/native_http.rs`
-/// (the `sms` lane has none yet — #1913). The unsized wrapper is webhook-only
+/// Sibling: the 1.0 version switch is kept in sync with the `finalize` helpers
+/// in `src/module_host.rs`, `src/module_host/approvals.rs` and `src/api_web.rs`,
+/// and with the inline 1.0 branches in `src/user_dialog/http_store.rs` and
+/// `src/native_http.rs` (the `sms` lane has none yet — #1913). The unsized
+/// wrapper is webhook-only
 /// because this channel answers with `handler_response_with_length` bodies,
 /// while those paths stream an unknown-size body that a 1.0 connection already
 /// frames by closing.
