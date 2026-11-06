@@ -13,8 +13,9 @@
 //! notification server; the settings store anchors at PILOT_HOME).
 
 use super::services::{
-    NativeSettingsOptions, attachment_identity_matches, compose_attachment_turn,
-    handle_bound_to_upload_areas, native_settings, native_settings_for_process, swap_test_hook,
+    NativeSettingsOptions, attachment_identity_matches, canonical_upload_store,
+    compose_attachment_turn, handle_bound_to_upload_areas, native_settings,
+    native_settings_for_process, swap_test_hook,
 };
 use crate::config::Env;
 use crate::config::store::{ConfigStore, StoreOptions};
@@ -1697,6 +1698,121 @@ fn upload_store_root_swapped_outside_project_is_not_a_second_home() {
         "#1468 a store root outside the project must never register allowedReadFiles"
     );
     std::fs::remove_file(&store_root).ok();
+    std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// #1468 (review deepseek sibling#1 / concurrency#3, minimax boundary#2 /
+/// concurrency#2): the upload-store root is a second accepted home, so its
+/// containment guard must be exercisable on its own. In the end-to-end
+/// sequence an outside store root also trips the identity term first, so that
+/// test cannot tell whether this guard exists; `canonical_upload_store` is the
+/// whole decision, and the control below pins that it is not "always None".
+#[cfg(unix)]
+#[test]
+fn upload_store_root_outside_the_project_is_not_a_home() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let project = scratch.0.clone();
+    let store = project.join(".tmp").join("chat-uploads");
+    let outside = project.with_file_name(format!(
+        "{}-outside-store-home",
+        project
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1468")
+    ));
+    std::fs::create_dir_all(&outside).expect("#1468 outside store home fixture");
+    std::fs::create_dir_all(project.join(".tmp")).expect("#1468 scratch .tmp");
+    symlink(&outside, &store).expect("#1468 swap the store root outside the project");
+    negative_assert!(
+        canonical_upload_store(&project).is_none(),
+        "#1468 a store root outside the project must not become a home"
+    );
+    std::fs::remove_file(&store).expect("#1468 remove the swapped store link");
+    std::fs::create_dir_all(&store).expect("#1468 real in-project store root");
+    negative_assert!(
+        canonical_upload_store(&project).is_some(),
+        "#1468 an in-project store root must stay a home"
+    );
+    std::fs::remove_dir_all(&outside).ok();
+}
+
+/// #1468 (review deepseek boundary#1 / concurrency#1,#2): the identity the
+/// open is bound to must be the object the containment check validated, not
+/// whatever the path points at after that check. A leaf swapped for an
+/// outside symlink in the `[canonicalize, approved stat]` window is a swap;
+/// `symlink_metadata` does not follow it, so the turn takes the not-found
+/// branch. The `AfterOpen` rename gives the outside inode an in-root name —
+/// under the pre-fix `fs::metadata` the approved object *is* the outside
+/// inode and the rename lands it inside the lease root with every check
+/// passing, so only the no-follow sample keeps the bytes out.
+#[cfg(unix)]
+#[test]
+fn leaf_swapped_before_approved_stat_is_not_found() {
+    use std::cell::Cell;
+    use std::os::unix::fs::symlink;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1468 lease fixture");
+    let outside_root = scratch.0.with_file_name(format!(
+        "{}-outside-preapproved",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1468")
+    ));
+    std::fs::create_dir_all(&outside_root).expect("#1468 outside pre-approval dir");
+    let outside_file = outside_root.join("outside.png");
+    std::fs::write(&outside_file, b"outside-bytes").expect("#1468 outside pre-approval fixture");
+    let fired = Rc::new(Cell::new(0));
+    let _swap = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeApprovedStat, {
+        let fired = Rc::clone(&fired);
+        let leaf = PathBuf::from(&path);
+        let outside_file = outside_file.clone();
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf");
+            symlink(&outside_file, &leaf).expect("#1468 swap the leaf before the approved stat");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let _rename = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, {
+        let leaf = PathBuf::from(&path);
+        let outside_file = outside_file.clone();
+        move |_| {
+            std::fs::rename(&outside_file, &leaf)
+                .expect("#1468 rename the outside file over the leaf");
+        }
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1468 a pre-approval swap must not fail the turn");
+    drop(_swap);
+    drop(_rename);
+    negative_assert!(
+        fired.get() == 1,
+        "#1468 the pre-approval swap hook must fire inside the production sequence"
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1468 a link planted before the approved stat must never inline outside bytes"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1468 a link planted before the approved stat must never register allowedReadFiles"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).contains("became a symlink after validation"),
+        "#1468 a link planted before the approved stat must be diagnosed as a swap"
+    );
     std::fs::remove_dir_all(&outside_root).ok();
 }
 

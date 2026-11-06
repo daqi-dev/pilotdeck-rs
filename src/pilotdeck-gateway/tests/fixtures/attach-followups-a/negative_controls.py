@@ -6,10 +6,13 @@ Usage: negative_controls.py --check
 Every mutation must compile, fail at its bound nonce receipt, and pass again
 after restoration. Source bytes must equal HEAD; no alternate baseline exists.
 The shared-filter row (filter-info-inverted) and the two #1458/#1469 rows
-together pin the one composer filter behind both diagnostics. The three #1468
+together pin the one composer filter behind both diagnostics. The six #1468
 rows pin the handle binding itself: the dropped containment check (the
 multi-step choreography reaches the read only through it), the fail-open
-error arm, and the (dev, inode) depth check it complements.
+error arm, the (dev, inode) depth check it complements, the pre-open identity
+itself, the no-follow sampling of that identity (a link planted before the
+approved stat must not become the approved object), and the upload-store
+root containment guard that makes the store a second legitimate home.
 """
 import argparse
 import hashlib
@@ -135,6 +138,24 @@ mutations = [
      '        if false {',
      'native_process::services_tests::leaf_swapped_after_revalidation_fails_identity',
      '#1468 the (dev, inode) depth check must stay'),
+    # The pre-open identity is only meaningful if it is sampled without
+    # following a link: restoring `fs::metadata` lets a link planted in the
+    # `[canonicalize, approved stat]` window become the approved object, and
+    # the after-open rename then lands the outside inode inside the lease
+    # root with every remaining check passing.
+    ('approved-stat-follows-link', SERVICES,
+     '        let approved_stat = match fs::symlink_metadata(&resolved) {',
+     '        let approved_stat = match fs::metadata(&resolved) {',
+     'native_process::services_tests::leaf_swapped_before_approved_stat_is_not_found',
+     '#1468 a link planted before the approved stat must never inline outside bytes'),
+    # The upload-store containment guard is a decidable function on its own;
+    # dropping the containment term makes every canonicalizable store root a
+    # home, including one that resolves outside the project.
+    ('upload-store-containment-dropped', SERVICES,
+     '        Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),',
+     '        Ok(resolved) => Some(resolved),',
+     'native_process::services_tests::upload_store_root_outside_the_project_is_not_a_home',
+     '#1468 a store root outside the project must not become a home'),
 ]
 
 

@@ -687,7 +687,29 @@ impl UploadStore {
         // *current* name, so a rename after the open could move an outside
         // record under the upload root. A rename cannot change which inode
         // the descriptor references (same residual as `services.rs` step 0).
-        let approved = match fs::metadata(&canonical_path) {
+        // #1494 r2 (deepseek concurrency#2 / boundary#1): the identity must
+        // be the object the containment check above validated.
+        // `fs::metadata` re-walks the path and follows a symlink, so a link
+        // planted between the canonicalize and this stat became the
+        // "approved" object, the open followed the same link, and a rename
+        // then gave the outside record an in-root name — every check passed
+        // and the outside record was returned. The canonical path is
+        // symlink-free by construction, so a link here appeared after the
+        // validation: `fs::symlink_metadata` does not follow it and the read
+        // is refused. (A regular record renamed over the leaf is still
+        // caught by the identity comparison below.)
+        #[cfg(test)]
+        swap_test_hook::notify(
+            swap_test_hook::SwapWindow::BetweenCanonicalizeAndApprovedStat,
+            &canonical_path,
+        );
+        let approved = match fs::symlink_metadata(&canonical_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(UploadError::dialog(
+                    "PROJECT_PATH_FORBIDDEN",
+                    "Upload metadata path became a symlink after validation.",
+                ));
+            }
             Ok(metadata) => metadata,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(UploadError::io(e, "realpath", Some(&canonical_path))),
@@ -714,7 +736,14 @@ impl UploadStore {
                 // platform's own resolved path for the descriptor must still
                 // name a location inside the canonical upload root, and a
                 // handle with no resolvable path is never read either
-                // (fail closed, like the #1468 lease binding).
+                // (fail closed, like the #1468 lease binding). The identity
+                // term below also refuses a benign concurrent store rewrite
+                // (`write` renames a fresh `metadata.json` over the old one):
+                // that mismatch is indistinguishable from a post-approval
+                // rename of an outside vnode into the root, and a retry would
+                // re-read the now-in-root replacement and hand the attacker
+                // the bytes. The availability trade-off is owned by the
+                // #1494 P2 follow-up.
                 let handle_inside = match crate::handle_path::opened_path(&file) {
                     Ok(handle) => handle.starts_with(&upload_root),
                     Err(_) => false,
@@ -1178,12 +1207,15 @@ fn future(record: &JsValue, field: &str, now: i64) -> Result<bool> {
 mod swap_test_hook {
     use std::path::Path;
 
-    /// The #1494 windows: after `read_at`'s canonicalize prefix check and
-    /// before the `File::open` that re-walks the path, and (second) right
+    /// The #1494 windows: after `read_at`'s canonicalize prefix check but
+    /// before the approved identity is sampled (r2 — the identity must not
+    /// be taken by following a link planted here), after that sample and
+    /// before the `File::open` that re-walks the path, and (third) right
     /// after the open succeeded, before the handle is validated — the window
     /// a rename uses to give an outside vnode a name inside the upload root.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum SwapWindow {
+        BetweenCanonicalizeAndApprovedStat,
         BetweenCanonicalizeAndOpen,
         AfterOpen,
     }
