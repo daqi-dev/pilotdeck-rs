@@ -389,8 +389,9 @@ fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     let present = value.get(field);
     // #1813 negative control: the switch restores the old reads, in which
     // `permissionDelivered` had no null filter and the #1879 fields (`env`,
-    // `sendFailAt`, the `turn.*` members, and the per-step `truncate` /
-    // `halfClose`) still rejected an explicit null as a type drift.
+    // `sendFailAt`, the `turn.*` members, the per-step `truncate` /
+    // `halfClose`, and the per-step `headers` / `reason`) still rejected an
+    // explicit null as a type drift.
     if crate::mutants::on("sms-oracle-null-sentinel") {
         return if field == "permissionDelivered" || OLD_NULL_REJECTING_FIELDS.contains(&field) {
             present
@@ -402,12 +403,12 @@ fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
 }
 
 /// #1879: fields whose pre-#1879 read did not filter an explicit JSON `null`.
-/// The recorder writes `?? {}` / `?? []` / `?? 0` / `=== true` / a falsy check
-/// for them, so absence spelled as `null` must not become a type error on one
-/// field only. Names match the JSON key the selected object carries at the
-/// read site — every one of them is unique in the sms fixture today, so the
-/// switch still restores exactly one behaviour per field.
-const OLD_NULL_REJECTING_FIELDS: [&str; 8] = [
+/// The recorder writes `?? {}` / `?? []` / `?? 0` / `?? "no reason"` /
+/// `=== true` / a falsy check for them, so absence spelled as `null` must not
+/// become a type error on one field only. Names match the JSON key the selected
+/// object carries at the read site — every one of them is unique in the sms
+/// fixture today, so the switch still restores exactly one behaviour per field.
+const OLD_NULL_REJECTING_FIELDS: [&str; 10] = [
     "env",
     "sendFailAt",
     "gate",
@@ -416,6 +417,8 @@ const OLD_NULL_REJECTING_FIELDS: [&str; 8] = [
     "holdAfter",
     "truncate",
     "halfClose",
+    "headers",
+    "reason",
 ];
 
 /// #1813: every sentinel-bearing field must read explicit `null` the same way.
@@ -428,8 +431,9 @@ const OLD_NULL_REJECTING_FIELDS: [&str; 8] = [
 /// (`generate.mts:1041` / `:1048`), so a hand-edited explicit `null` is
 /// absence there too (#1879: the shared `sms-oracle-null-sentinel` switch
 /// restores the old fail-closed read for both, via `OLD_NULL_REJECTING_FIELDS`).
-/// The `turn.*` members and the per-step `truncate` / `halfClose` have their
-/// own tests (`null_turn_*_is_absence`, `recorded_{truncate,half_close}_null_is_absence`),
+/// The `turn.*` members and the per-step `truncate` / `halfClose` / `headers` /
+/// `reason` have their own tests (`null_turn_*_is_absence`,
+/// `recorded_{truncate,half_close,header_map,stop_reason}_null_is_absence`),
 /// because a single aggregate would stop at its first failing assertion.
 #[test]
 fn null_sentinels_are_absence_for_every_sentinel_field() {
@@ -517,7 +521,10 @@ fn null_turn_hold_is_absence() {
 
 fn recorded_header_map_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
-        value.get("headers"),
+        // #1879: `effectiveHeaders` spreads `step.headers ?? {}` (generate.mts:335),
+        // the same `?? {}` absence signature as `env`, so a hand-edited explicit
+        // `null` reads as "no overrides" on both sides.
+        recorded_present(value, "headers"),
         "headers",
         "an object",
         |value| value.is_object().then_some(value),
@@ -535,6 +542,14 @@ fn recorded_header_map_rejects_wrong_type() {
     crate::negative_assert!(
         recorded_header_map_checked(&json!({"headers": []})).is_err(),
         "#1339 #1729 rejects headers type drift"
+    );
+}
+
+#[test]
+fn recorded_header_map_null_is_absence() {
+    crate::negative_assert!(
+        recorded_header_map_checked(&json!({"headers": null})).is_ok_and(|value| value.is_none()),
+        "#1339 #1879 null headers is absence"
     );
 }
 
@@ -1466,7 +1481,10 @@ fn recorded_rpcs_count_panics_when_absent() {
 
 fn recorded_stop_reason_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        value.get("reason"),
+        // #1879: the handler does `reason ?? "no reason"` (channel/sms/mod.rs), and
+        // the recorder's `stop(null)` writes `{reason: null}` (generate.mts:264), so
+        // an explicit `null` is absence here too.
+        recorded_present(value, "reason"),
         "stop.reason",
         "a string",
         Value::as_str,
@@ -1484,6 +1502,14 @@ fn recorded_stop_reason_rejects_wrong_type() {
     crate::negative_assert!(
         recorded_stop_reason_checked(&json!({"reason": []})).is_err(),
         "#1339 #1729 rejects stop.reason type drift"
+    );
+}
+
+#[test]
+fn recorded_stop_reason_null_is_absence() {
+    crate::negative_assert!(
+        recorded_stop_reason_checked(&json!({"reason": null})).is_ok_and(|value| value.is_none()),
+        "#1339 #1879 null stop.reason is absence"
     );
 }
 
@@ -1927,6 +1953,13 @@ fn absent_recording_fields_keep_defaults() {
         build_raw(&json!({"body": "abc"})),
         "#1339 #1879 null truncate sends the same bytes as an absent key"
     );
+    // Replay site `let half_close = recorded_half_close(step).unwrap_or(false)`
+    // (tests.rs replay arm) must derive `false` from an explicit `null`, the
+    // same as TS `step.halfClose === true` (`generate.mts:888`).
+    assert!(
+        !recorded_half_close(&null_step).unwrap_or(false),
+        "#1339 #1879 null halfClose derives false, same as an absent key"
+    );
     // #1729 fix-r6: `expected` is no longer an optional recording field, so the
     // old `assert_responses_so_far(&[], &empty, …)` probe (absent `expected`
     // silently compares nothing) is gone; absence now panics — covered by
@@ -1942,6 +1975,10 @@ fn absent_recording_fields_keep_defaults() {
     assert!(
         recorded_header_map(&empty).is_none(),
         "#1339 absent headers"
+    );
+    assert!(
+        recorded_header_map(&json!({"headers": null})).is_none(),
+        "#1339 #1879 null headers is absence"
     );
     assert!(
         recorded_header_map(&json!({"headers":{}})).is_some(),
@@ -2150,6 +2187,10 @@ fn absent_recording_fields_keep_defaults() {
     assert!(
         recorded_stop_reason(&empty).is_none(),
         "#1339 absent stop.reason"
+    );
+    assert!(
+        recorded_stop_reason(&json!({"reason": null})).is_none(),
+        "#1339 #1879 null stop.reason is absence"
     );
     assert!(
         recorded_stop_reason(&json!({"reason":"value"})).is_some(),
