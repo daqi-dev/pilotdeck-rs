@@ -94,15 +94,17 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## 负控本地运行
 
-`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 27 个
-源码变异（20 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 28 个
+源码变异（21 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
 遮蔽折叠指纹不提交、未分类模式不被 `NotFound` 定死、报变化拍不提交短路指纹、
 目录被换成文件后的类型探针、持续遮蔽仍上报可观测变更、目录消失是完整观测、
 `NotFound` stat 是完整观测；另有 #1899 的 6 行随 rebase 移植：停表证据退回
 `is_finished()`、watch 循环首拍 panic / spaw 后干净的早退 / 首拍循环内退出
-（drop 与 stop 两条路径）、以及永不停止——`#1650` 的静默死亡路径），要求各绑定
+（drop 与 stop 两条路径）、以及永不停止——`#1650` 的静默死亡路径；#1946 再加 1 行：
+claiming poll 必须让出调度、就地载入即杀），名册分母是脚本里的 `EXPECTED_NAMES`
+静态字面量（删行 / 改名 / 换序即拒绝开跑，不再用运行期表长），要求各绑定
 测试自身 panic 载荷携带其行绑定的
-`#1736` / `#1739` / `#1792` / `#1794` / `#1899` 杀点标记（绑定测试内另含 `#1793` 的
+`#1736` / `#1739` / `#1792` / `#1794` / `#1899` / `#1946` 杀点标记（绑定测试内另含 `#1793` 的
 `MAX_POLL_INTERVAL == 60 s` 字面钉），每个变异前跑正控、后跑恢复正控，源码
 逐字节恢复并复核。运行时要求：
 
