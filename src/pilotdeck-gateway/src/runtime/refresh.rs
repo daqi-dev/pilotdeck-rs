@@ -491,16 +491,6 @@ fn on_config_change(inner: &Arc<Inner>, paths: &[JsString], classes: &[ChangeCla
         joined,
     };
     executor.spawn(async move {
-        // #1745: the settlement callbacks are promise reactions — they run in
-        // a later microtask, never inside the publication (or the store's
-        // next same-tick reload) that produced them. A spawned task is
-        // runnable immediately, so on a single-threaded scheduler it would
-        // start staging inside the next reload's deferred start and settle
-        // before that change's own listener runs (`runtime-refresh`'s
-        // `concurrent-changes-failure-then-success`). One yield first keeps
-        // the store's claim-to-load microtask window intact; the store no
-        // longer compensates for it by loading some claims inline.
-        tokio::task::yield_now().await;
         let mut lost = lost;
         // The reload future is dropped only after its settlement callbacks:
         // a registry may hold its queue position until then (see

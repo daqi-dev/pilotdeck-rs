@@ -205,14 +205,14 @@ impl Clone for ReplacementCoordinator {
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup returns first error'),
     ('cleanup-skips-project-after-error', ASSEMBLY,
      '''let project = cleanup_observer(
-                "project",
-                cleanup_project.dispose().await.map_err(|e| e.to_string()),
-            )
-            .await;''',
+                    "project",
+                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
+                )
+                .await;''',
      '''let project = if sessions.is_err() { Ok(()) } else { cleanup_observer(
-                "project",
-                cleanup_project.dispose().await.map_err(|e| e.to_string()),
-            ).await };''',
+                    "project",
+                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
+                ).await };''',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup attempts both resources'),
     ('cleanup-project-diagnostic', ASSEMBLY,
      'cleanup_diagnostic(error);', 'let _ = error;',
