@@ -41,6 +41,10 @@ deadline = setTimeout(() => {
   const report = [`#1011 generator exceeded ${deadlineMs} ms`];
   if (ownedWork) {
     try {
+      // #1890: the failure branch is only reachable when the removal itself
+      // throws, so the test arms this injection instead of trying to make a
+      // recursive force remove fail on a real filesystem.
+      if (process.env.PDRS_1011_DEADLINE_CLEANUP_FAIL === '1') throw new Error('injected cleanup failure');
       fs.rmSync(ownedWork, {recursive: true, force: true, maxRetries: 2, retryDelay: 10});
       report.push(`#1011 generator deadline removed ${ownedWork}`);
     } catch (error) {

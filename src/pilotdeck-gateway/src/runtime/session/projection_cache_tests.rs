@@ -687,6 +687,53 @@ fn generator_deadline_cleans_owned_work() {
     std::fs::remove_dir_all(scratch).expect("#1011 remove deadline scratch");
 }
 
+#[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn generator_deadline_reports_cleanup_failure() {
+    // #1890: a removal that throws must be named on stderr before the deadline
+    // exit, otherwise the caller only sees "timed out" and cannot tell that an
+    // owned work root was left behind. A recursive force remove does not fail
+    // on a writable filesystem, so the generator arms an injected throw.
+    let scratch =
+        std::env::temp_dir().join(format!("pdrs-1011-deadline-fail-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&scratch).expect("#1011 deadline failure scratch");
+    let base = std::env::var("PDRS_BASELINE").expect("#1011 pinned baseline configured");
+    let mut command = std::process::Command::new("node");
+    command
+        .arg("--disable-warning=ExperimentalWarning")
+        .arg("--import")
+        .arg(format!("{base}/node_modules/tsx/dist/loader.mjs"))
+        .arg(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/session-factory/projection-cache/generate.mts"),
+        )
+        .arg(&scratch)
+        .env("PDRS_1011_DEADLINE_MS", "1000")
+        .env("PDRS_1011_DEADLINE_HOLD_MS", "60000")
+        .env("PDRS_1011_DEADLINE_CLEANUP_FAIL", "1");
+    let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+        &mut command,
+        "session-factory/projection-cache",
+        Duration::from_secs(180),
+    )
+    .expect("#1011 generator deadline failure bounded run");
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    assert!(
+        !status.success(),
+        "#1011 generator deadline failure exits non-zero: {output}"
+    );
+    assert!(
+        output.contains("#1011 generator deadline cleanup failed for")
+            && output.contains("injected cleanup failure"),
+        "#1011 generator deadline names the cleanup failure: {output}"
+    );
+    std::fs::remove_dir_all(scratch).expect("#1011 remove deadline failure scratch");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_append_keeps_both_commits() {
     let row = case("concurrent-append");
