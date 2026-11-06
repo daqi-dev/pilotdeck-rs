@@ -1555,6 +1555,103 @@ async fn pre_aborted_signal_fails_only_the_caller() {
     );
 }
 
+// ── gate11 sibling P2: tools/list compiles every outputSchema ──────────────
+
+/// Runs one `tools/list` whose result carries `tools` (raw JSON array text)
+/// against a scripted stdio server and returns the caller-visible error.
+async fn list_tools_error(
+    tag: &str,
+    tools: &str,
+    missing: &'static str,
+) -> (String, String, String) {
+    let scratch = Scratch::new(tag);
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let client = race_client(
+        &dir,
+        &[format!(
+            r#"{{"initialize":[{INIT_REPLY}],"tools/list":[{{"send":{{"jsonrpc":"2.0","id":"$id","result":{{"tools":{tools}}}}}}}]}}"#
+        )],
+        None,
+    );
+    client
+        .start()
+        .await
+        .expect("#401 the scripted server must accept the handshake");
+    let error = client.list_tools().await.expect_err(missing);
+    let code = error
+        .client_code()
+        .map(|code| code.as_str().to_owned())
+        .unwrap_or_default();
+    let message = error.message().to_owned();
+    let status = client.status().as_str().to_owned();
+    client.close().await;
+    settle(&dir, false).await;
+    (code, message, status)
+}
+
+/// #401 gate11 sibling P2: the SDK compiles every `outputSchema` while caching
+/// `tools/list`, so one bad `type` rejects the whole listing — the good tool
+/// ahead of it is not returned either. TS oracle (Node v22.22.0,
+/// `_tmp/20261106-issue-401/probe/probe-bad-output-schema.mts`):
+/// `mcp_call_failed`, `MCP call failed (server=mock): type must be JSONType or
+/// JSONType[]: nope`, client status stays `ready`.
+#[tokio::test]
+async fn list_tools_rejects_a_bad_output_schema_type() {
+    let tools = concat!(
+        r#"[{"name":"good","inputSchema":{"type":"object"}},"#,
+        r#"{"name":"bad","inputSchema":{"type":"object"},"#,
+        r#""outputSchema":{"type":"object","properties":{"x":{"type":"nope"}}}}]"#
+    );
+    let (code, message, status) = list_tools_error(
+        "mcp-client-output-schema-type",
+        tools,
+        "#401 a bad outputSchema type must reject the whole tools/list",
+    )
+    .await;
+    assert_eq!(
+        code, "mcp_call_failed",
+        "#401 a schema compile failure is a call failure, not the timeout path"
+    );
+    assert_eq!(
+        message, "MCP call failed (server=mock): type must be JSONType or JSONType[]: nope",
+        "#401 the Ajv compile text reaches the caller verbatim"
+    );
+    assert_eq!(
+        status, "ready",
+        "#401 a schema rejection leaves the shared connection usable"
+    );
+}
+
+/// #401 gate11 sibling P2: an unresolvable `$ref` in one tool's `outputSchema`
+/// rejects the whole listing with Ajv's reference text. TS oracle: same probe,
+/// `MCP call failed (server=mock): can't resolve reference #/nope from id #`.
+#[tokio::test]
+async fn list_tools_rejects_an_unresolvable_output_schema_ref() {
+    let tools = concat!(
+        r#"[{"name":"good","inputSchema":{"type":"object"}},"#,
+        r#"{"name":"bad","inputSchema":{"type":"object"},"#,
+        r##""outputSchema":{"type":"object","properties":{"x":{"$ref":"#/nope"}}}}]"##
+    );
+    let (code, message, status) = list_tools_error(
+        "mcp-client-output-schema-ref",
+        tools,
+        "#401 an unresolvable outputSchema $ref must reject the whole tools/list",
+    )
+    .await;
+    assert_eq!(
+        code, "mcp_call_failed",
+        "#401 an unresolvable $ref is a call failure, not the timeout path"
+    );
+    assert_eq!(
+        message, "MCP call failed (server=mock): can't resolve reference #/nope from id #",
+        "#401 the Ajv reference text reaches the caller verbatim"
+    );
+    assert_eq!(
+        status, "ready",
+        "#401 a $ref rejection leaves the shared connection usable"
+    );
+}
+
 /// #681（A6.5-MCP-CONNECT-HOSTNAME-001）：主机名 URL 的拒连文案显示解析出
 /// 的地址，而不是 URL 主机名。TS 金样 2026-10-25 实测（证据
 /// `_tmp/20261025-issue-681/ts-probe.out`）：legacy SSE 连
