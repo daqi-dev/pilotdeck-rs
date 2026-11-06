@@ -115,15 +115,19 @@ pub struct ScalingSamples {
 /// in the rest.
 ///
 /// What either shape catches is bounded by the band, not by "any regression".
-/// A doubling-size run of `n^e` reads `2^e`, so the 2.83x band catches an
-/// exponent of about 1.5 and above (2^1.5 = 2.83x); a mild `n^1.1` reads
-/// 2.14x and stays inside, exactly as it did under the retired 3x line
-/// (exponent 1.58). Constant-factor regressions are invisible to any ratio and
-/// are caught only where the caller also applies
-/// [`assert_within_per_sample_cap`] (the two `html_markdown` tests); the
-/// `html_compat` deep-frame unit judges the ratio only, by design (#798).
-/// Anything narrower than the median reintroduces the false red this issue
-/// exists to remove.
+/// A doubling-size run of `n^e` reads `2^e`. Without the slack the band is
+/// `2^1.5 = 2.83x`, i.e. it rejects `e > 1.5`; the 150 ms slack is converted
+/// through the fastest small run, so the boundary at a given call site is
+/// `e > log2(2^1.5 + 0.15 / small)` — 1.552 at the smallest measured small
+/// run (1.45 s), where the retired `3x + 0.15 s` line sits at 1.634, so the
+/// replacement still catches strictly milder growth. A mild `n^1.1` reads
+/// 2.14x and stays inside, as it did under the 3x line. Constant-factor
+/// regressions are invisible to any ratio; the callers that also apply
+/// [`assert_within_per_sample_cap`] catch those above the budget
+/// (`large_shallow`'s four cases, `ten_mib`, and `reparented`'s 8 MiB run —
+/// the 2 MiB probe before it judges the ratio only). The `html_compat`
+/// deep-frame unit judges the ratio only, by design (#798). Anything narrower
+/// than the median reintroduces the false red this issue exists to remove.
 #[allow(dead_code)]
 pub fn fastest_scaling_ratio<S>(
     label: &str,
@@ -179,9 +183,11 @@ where
 ///
 /// The slack costs guarantee width: a quadratic implementation at a 0.6x
 /// "half" reads 2.78x against the 2.15x band, but only while
-/// `0.15 s / small < factor^2 - factor^1.5`, i.e. `small > 0.24 s` strictly
-/// (at exactly 0.24 s the ratio equals the limit and `ratio <= limit` admits
-/// it; `scaling_band_tracks_the_measured_input_factor` asserts that floor).
+/// `0.15 s / small < factor^2 - factor^1.5`, i.e. `small > 0.23957 s` — the
+/// exact floor, which `scaling_band_tracks_the_measured_input_factor`
+/// asserts. The round 0.24 s quoted elsewhere is above that floor and is
+/// rejected by the same `ratio <= limit` comparison; it is a conservative
+/// shorthand, not the boundary.
 /// Every measured call site clears it by a wide margin: the smallest observed
 /// small sample is 1.45 s (deep-frame 4 MiB) and `large_shallow` runs 5.8 s,
 /// so the slack takes at most 0.10x of the 0.63x gap on this hardware. That is
@@ -436,7 +442,8 @@ fn scaling_band_tracks_the_measured_input_factor() {
     // The 0.15 s slack is converted through the small run, so the rejection
     // only holds while the small sample is long enough that the slack cannot
     // bridge the linear-to-quadratic gap: the floor is
-    // 0.15 / (factor^2 - factor^1.5) = 0.24 s. Every call site runs 1.4-5.8 s
+    // 0.15 / (factor^2 - factor^1.5) = 0.23957 s (0.24 s is a conservative
+    // rounding and is rejected too). The measured call sites run 1.45-5.8 s
     // (deep-frame 4 MiB measured 1.45 s, `large_shallow` 5.8 s), so the slack
     // takes at most 0.10x of that gap there.
     let floor = 0.15 / (quadratic_ratio - factor.powf(1.5));
