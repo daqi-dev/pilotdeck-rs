@@ -5311,9 +5311,13 @@ def _resolved_write_helper(node, bindings, depth=0, seen=None):
             # status ruler stopped at the four canonical names (codex sibling
             # r31 P2-11).
             return node.id
-        found = {_resolved_write_helper(value, bindings, depth + 1, seen)
-                 for _line, value in _bindings_at(
-                     bindings, node.id, getattr(node, 'lineno', None))}
+        # #892 r35: every sibling binding gets its own path guard.  Sharing
+        # one ``seen`` across them let the first path mark a node the second
+        # path also needed, so ``h = a; h = a; h(...)`` resolved to
+        # ``{'setattr', None}`` and the write vanished (codex boundary r34
+        # P0-2 / GLM concurrency r34 P0-1).
+        found = {_resolved_write_helper(value, bindings, depth + 1, set(seen))
+                 for _line, value in _bindings_at(bindings, node.id, node)}
         if len(found) == 1:
             return found.pop() or None
         return None
@@ -5337,9 +5341,14 @@ def _resolved_write_helper(node, bindings, depth=0, seen=None):
             # r31 P1-5).
             name = 'partial'
         else:
-            name = _resolved_write_helper(callee, bindings, depth + 1)
+            # #892 r35: the callee sits on the same alias path, so it shares
+            # the cycle guard; dropping it started a fresh walk per hop and a
+            # two-node alias cycle (``a = b(); b = a()``) recursed to the
+            # interpreter limit.
+            name = _resolved_write_helper(callee, bindings, depth + 1, seen)
         if name == 'partial' and node.args:
-            inner = _resolved_write_helper(node.args[0], bindings, depth + 1)
+            inner = _resolved_write_helper(node.args[0], bindings, depth + 1,
+                                           seen)
             if inner in _WRITE_HELPERS:
                 return inner
             return None
@@ -5370,9 +5379,10 @@ def _name_resolves_to_builtins(node, bindings, depth=0, seen=None):
     seen.add(id(node))
     if node.id in ('builtins', '__builtins__'):
         return True
-    return any(_name_resolves_to_builtins(value, bindings, depth + 1, seen)
-               for _line, value in _bindings_at(
-                   bindings, node.id, getattr(node, 'lineno', None)))
+    # #892 r35: per-path guard, same regression as ``_resolved_write_helper``
+    # -- one sibling's visit must not blind the next.
+    return any(_name_resolves_to_builtins(value, bindings, depth + 1, set(seen))
+               for _line, value in _bindings_at(bindings, node.id, node))
 
 
 def _partial_bound_arguments(node, bindings, depth=0, seen=None):
@@ -5389,9 +5399,11 @@ def _partial_bound_arguments(node, bindings, depth=0, seen=None):
     seen.add(id(node))
     if isinstance(node, ast.Name):
         found = None
-        for _line, value in _bindings_at(
-                bindings, node.id, getattr(node, 'lineno', None)):
-            got = _partial_bound_arguments(value, bindings, depth + 1, seen)
+        # #892 r35: per-path guard here too -- the sibling loop reused one
+        # ``seen`` and dropped the later candidate of the same binding.
+        for _line, value in _bindings_at(bindings, node.id, node):
+            got = _partial_bound_arguments(value, bindings, depth + 1,
+                                           set(seen))
             if got is None:
                 continue
             if found is not None and [ast.dump(item) for item in got] != [
