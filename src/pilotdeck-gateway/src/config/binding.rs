@@ -438,8 +438,8 @@ fn ensure_modules(m: &JsValue, key: &str) -> Result<(), Error> {
     )))
 }
 fn encode_uri_component(v: &JsValue) -> Result<String, Error> {
-    if !string_coercible(v) {
-        return Err(primitive_error());
+    if let Err(kind) = crate::js_value::string_coercible_checked(v) {
+        return Err(coercion_error(kind));
     }
     let s = if let JsValue::String(s) = v {
         s.to_utf8()
@@ -461,6 +461,37 @@ fn encode_uri_component(v: &JsValue) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `agentId` comes straight out of `project-bindings.json`; a deep array
+    /// must fail the coercion instead of recursing until the process aborts.
+    #[test]
+    fn uri_component_coercion_is_bounded_instead_of_aborting() {
+        let mut deep = JsValue::from("x");
+        for _ in 0..crate::js_value::MAX_ARRAY_DEPTH + 1 {
+            deep = JsValue::Array(vec![deep]);
+        }
+        let error = encode_uri_component(&deep).expect_err("past the shared depth bound");
+        assert_eq!(error.name, "RangeError");
+        assert_eq!(
+            error.message.to_utf8().expect("utf-8 message"),
+            crate::js_value::StackOverflow::MESSAGE
+        );
+
+        let with_to_string = object([("toString", JsValue::Null)]);
+        let error = encode_uri_component(&with_to_string).expect_err("own toString property");
+        assert_eq!(error.name, "TypeError");
+        assert_eq!(
+            error.message.to_utf8().expect("utf-8 message"),
+            crate::js_value::ToStringError::NOT_PRIMITIVE
+        );
+
+        let mut at_bound = JsValue::from("x");
+        for _ in 0..crate::js_value::MAX_ARRAY_DEPTH {
+            at_bound = JsValue::Array(vec![at_bound]);
+        }
+        assert!(encode_uri_component(&at_bound).is_ok());
+    }
+
     #[test]
     fn webui_spread_preserves_array_indices_in_both_binding_branches() {
         let fixture = parse_json(include_str!(

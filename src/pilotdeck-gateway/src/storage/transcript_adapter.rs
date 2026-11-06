@@ -1982,11 +1982,14 @@ mod coercion_depth_tests {
     #[test]
     fn deep_snapshot_block_type_is_a_range_error_not_a_stack_overflow() {
         let entry = |depth: usize| {
-            let mut deep = JsValue::from("text");
-            for _ in 0..depth {
-                deep = JsValue::Array(vec![deep]);
-            }
-            deep_entry(deep)
+            entry_with(object([
+                ("type", JsValue::from("tool_result")),
+                ("toolCallId", JsValue::from("c1")),
+                (
+                    "content",
+                    JsValue::Array(vec![object([("type", nested(depth))])]),
+                ),
+            ]))
         };
         match projection_supported(&entry(js_value::MAX_ARRAY_DEPTH + 1)) {
             Err(AdapterError::Range(message)) => {
@@ -1998,7 +2001,39 @@ mod coercion_depth_tests {
         // unknown type and the snapshot degrades like any other invalid one.
         assert!(projection_supported(&entry(js_value::MAX_ARRAY_DEPTH)).is_ok());
     }
-    fn deep_entry(deep: JsValue) -> JsValue {
+    /// `isContentBlock` also runs `String(value.mediaType)` on
+    /// `media_reference` blocks (`CompactSnapshot.ts:44-50`); pin the same two
+    /// sides of the shared bound for that call site.
+    #[test]
+    fn deep_snapshot_media_type_is_a_range_error_not_a_stack_overflow() {
+        let entry = |depth: usize| {
+            entry_with(object([
+                ("type", JsValue::from("media_reference")),
+                ("path", JsValue::from("media/p.png")),
+                ("originalBytes", JsValue::Number(1.0)),
+                ("preview", JsValue::from("preview")),
+                ("hasMore", JsValue::Bool(false)),
+                ("mimeType", JsValue::from("image/png")),
+                ("mediaType", nested(depth)),
+            ]))
+        };
+        match projection_supported(&entry(js_value::MAX_ARRAY_DEPTH + 1)) {
+            Err(AdapterError::Range(message)) => {
+                assert_eq!(message, js_value::StackOverflow::MESSAGE);
+            }
+            other => panic!("expected a RangeError, got {other:?}"),
+        }
+        assert!(projection_supported(&entry(js_value::MAX_ARRAY_DEPTH)).is_ok());
+    }
+    fn nested(depth: usize) -> JsValue {
+        let mut deep = JsValue::from("text");
+        for _ in 0..depth {
+            deep = JsValue::Array(vec![deep]);
+        }
+        deep
+    }
+    /// A compact boundary whose single snapshot message holds `block`.
+    fn entry_with(block: JsValue) -> JsValue {
         object([
             ("type", JsValue::from("control_boundary")),
             (
@@ -2018,17 +2053,7 @@ mod coercion_depth_tests {
                                 "messages",
                                 JsValue::Array(vec![object([
                                     ("role", JsValue::from("user")),
-                                    (
-                                        "content",
-                                        JsValue::Array(vec![object([
-                                            ("type", JsValue::from("tool_result")),
-                                            ("toolCallId", JsValue::from("c1")),
-                                            (
-                                                "content",
-                                                JsValue::Array(vec![object([("type", deep)])]),
-                                            ),
-                                        ])]),
-                                    ),
+                                    ("content", JsValue::Array(vec![block])),
                                 ])]),
                             ),
                         ]),
