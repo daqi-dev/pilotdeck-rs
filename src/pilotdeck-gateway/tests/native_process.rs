@@ -14,6 +14,9 @@ mod test_negative_receipt;
 #[allow(dead_code)]
 #[path = "../src/test_process.rs"]
 mod test_process;
+// Kept for the `#[path]`-included test_process.rs above, whose own tests
+// resolve `crate::test_scratch` through this crate root; this file's own
+// tests stopped using it (#1401 item 5).
 #[path = "common/scratch.rs"]
 mod test_scratch;
 // Real binaries, isolated state, Node observer and local-only provider.
@@ -148,15 +151,28 @@ async fn explicit_entry_selects_parser() {
 // nothing about the gate.
 #[tokio::test]
 async fn native_entry_process_rejects_inherited_authority() {
-    let scratch = test_scratch::Scratch::new("1261-native-entry");
-    let home = scratch.path().join("home");
-    let project = scratch.path().join("project");
+    // #1401 item 5: this test's scratch is its own (not the shared
+    // `test_scratch::Scratch`) so every failure point below carries the
+    // #1261 message; the shared helper's plain expects stay out of this
+    // test's payload.
+    let root =
+        std::env::temp_dir().join(format!("pdrs-1261-native-entry-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).expect("#1261 native entry scratch directory must be new");
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(root.clone());
+    let home = root.join("home");
+    let project = root.join("project");
     std::fs::create_dir(&home).expect("#1261 native entry home directory");
     std::fs::create_dir(&project).expect("#1261 native entry project directory");
-    let token_file = scratch.path().join("token");
+    let token_file = root.join("token");
     std::fs::write(&token_file, "1261-native-entry-token\n")
         .expect("#1261 native entry token file");
-    let sidecar = scratch.path().join("sidecar");
+    let sidecar = root.join("sidecar");
     std::fs::write(&sidecar, "#1261 never executed before the rejection\n")
         .expect("#1261 native entry sidecar file");
     // A complete valid profile (the native-management precedent): with the
@@ -187,7 +203,7 @@ async fn native_entry_process_rejects_inherited_authority() {
             .arg("--sidecar")
             .arg(&sidecar)
             .env_clear()
-            .env(key, scratch.path().join("inherited-authority"))
+            .env(key, root.join("inherited-authority"))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
@@ -214,17 +230,22 @@ async fn native_entry_process_rejects_inherited_authority() {
                     .expect("#1261 native entry child exit status");
                 let stderr = String::from_utf8_lossy(&collected);
                 // A child that exits before the entry gate (assembly, config,
-                // dyld, OOM) or between the gate and its listening
-                // advertisement leaves neither the rejection nor the
+                // dyld, OOM) leaves neither the rejection nor the
                 // advertisement on stderr, so this run cannot tell an intact
                 // gate from a displaced one. The plain panic carries no #1261
                 // kill marker: the judge records INVALID instead of a false
-                // KILLED; only the rejection itself reaches the marked
-                // assertions below.
-                if !stderr.contains(&rejection) {
+                // KILLED. A child that exits *after* its own listening
+                // advertisement has already proven the entry gate accepted the
+                // authority, so the advertisement reaches a marked assertion
+                // even on this early-exit path.
+                let advertised = stderr.contains("native listening");
+                if !stderr.contains(&rejection) && !advertised {
                     panic!(
                         "#1261 native entry child exited early; no rejection and no listening advertisement for {key}, cannot judge"
                     );
+                }
+                if advertised {
+                    negative_assert!(!advertised, "#1261 native entry rejects inherited {key}");
                 }
                 negative_assert!(
                     !status.success(),
@@ -258,6 +279,117 @@ async fn native_entry_process_rejects_inherited_authority() {
                 );
                 panic!("#1261 native entry child neither rejected nor advertised listening");
             }
+        }
+    }
+}
+
+// #1401 item 6: anchor run()'s options.environment call site. The unit
+// tests in src/native_process/tests.rs call the function directly; only
+// the real --native child exercises the call site. environment() removes
+// PILOTDECK_CONFIG_PATH, so the isolated home's config wins
+// (config global_config_path); with the call displaced
+// (`let env = inherited;`) the inherited key survives, the child loads
+// the injected invalid YAML instead, and fails fast with the
+// default-config parse error — the only observation this failure can
+// produce, because the error conversion drops the diagnostics that
+// would have carried the path (measured on cb8: the message text is the
+// whole evidence). With the call intact the child reads the valid home
+// config and stays up, advertising listening before the deadline.
+// Neither branch kills on a slow host alone: an early exit without the
+// parse error, and a deadline without the advertisement, are both
+// unjudgeable (unmarked panics, INVALID).
+#[tokio::test]
+async fn native_entry_scrubs_inherited_process_environment() {
+    let root =
+        std::env::temp_dir().join(format!("pdrs-1261-native-scrub-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).expect("#1261 native entry scrub scratch directory must be new");
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(root.clone());
+    let home = root.join("home");
+    let project = root.join("project");
+    std::fs::create_dir(&home).expect("#1261 native entry scrub home directory");
+    std::fs::create_dir(&project).expect("#1261 native entry scrub project directory");
+    let token_file = root.join("token");
+    std::fs::write(&token_file, "1261-native-scrub-token\n")
+        .expect("#1261 native entry scrub token file");
+    let sidecar = root.join("sidecar");
+    std::fs::write(
+        &sidecar,
+        "#1261 never executed before the scrub observation\n",
+    )
+    .expect("#1261 native entry scrub sidecar file");
+    std::fs::write(
+        home.join("pilotdeck.yaml"),
+        "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n",
+    )
+    .expect("#1261 native entry scrub home config file");
+    // Invalid on purpose: with the call site displaced the child must fail
+    // fast on it; with the call intact the key is removed and this file is
+    // never read.
+    let inherited_config = root.join("inherited-config.yaml");
+    std::fs::write(&inherited_config, "not: valid: yaml: {{{\n")
+        .expect("#1261 native entry scrub inherited config file");
+    use tokio::io::AsyncReadExt;
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
+        .arg("--native")
+        .arg("--home")
+        .arg(&home)
+        .arg("--project")
+        .arg(&project)
+        .arg("--listen")
+        .arg("127.0.0.1:0")
+        .arg("--token-file")
+        .arg(&token_file)
+        .arg("--sidecar")
+        .arg(&sidecar)
+        .env_clear()
+        .env("PILOTDECK_CONFIG_PATH", &inherited_config)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("#1261 native entry scrub child launch");
+    let mut stderr = child
+        .stderr
+        .take()
+        .expect("#1261 native entry scrub child stderr pipe");
+    let mut collected = Vec::new();
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stderr.read_to_end(&mut collected),
+    )
+    .await;
+    match outcome {
+        Ok(Ok(_eof)) => {
+            let stderr = String::from_utf8_lossy(&collected);
+            println!("#1261 scrub early exit: {stderr}");
+            let leaked_parse = stderr.contains("Failed to parse default config YAML.");
+            if !leaked_parse {
+                panic!(
+                    "#1261 native entry scrub child exited early; no default config parse observation, cannot judge"
+                );
+            }
+            negative_assert!(
+                !leaked_parse,
+                "#1261 native entry scrubs inherited PILOTDECK_CONFIG_PATH"
+            );
+        }
+        Ok(Err(_read)) => panic!("#1261 native entry scrub child stderr read failed"),
+        // Deadline: with the call intact the child is up and listening; a
+        // slow host is not evidence, so the deadline alone never kills.
+        Err(_deadline) => {
+            let stderr = String::from_utf8_lossy(&collected);
+            if !stderr.contains("native listening") {
+                panic!(
+                    "#1261 native entry scrub child neither advertised listening nor exited, cannot judge"
+                );
+            }
+            println!("#1261 scrub child advertised listening; inherited config was not read");
         }
     }
 }

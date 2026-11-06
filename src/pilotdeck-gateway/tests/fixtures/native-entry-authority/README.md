@@ -17,11 +17,23 @@
 会在拒绝前写入 `home`，测试断言 `home` 除自身写入的 config 外无新增条目。
 
 判杀集合（MARKERS）只含上述三个键断言消息：launch / stderr 管道 / exit-wait 等
-环境性失败一律落 INVALID。子进程早退（stderr 既无 rejection 也无 `native listening`
-广播，即先于入口门或门与广播之间退出）时，测试用**不带判杀标记**的 panic 报
-「子进程提前退出，无法判定」，同样只落 INVALID——环境性早退不得记成 KILLED。测试
-自身的失败点均带 `#1261 native entry ...` 专属消息（共享 `Scratch` 构造内部的
-expect 除外，它们不在判杀集合内，只落 INVALID）。
+环境性失败一律落 INVALID。子进程早退分两支（#1401 项 1）：stderr **既无 rejection
+也无 `native listening` 广告**（先于入口门退出，dyld/OOM/装配失败）时，测试用
+**不带判杀标记**的 panic 报「子进程提前退出，无法判定」，只落 INVALID——环境性
+早退不得记成 KILLED；stderr **已有 `native listening` 广告**再退出时，广播本身已
+证明入口门接受了继承权限，测试用带键标记的断言判杀（KILLED）。测试自身的失败点均
+带 `#1261 native entry ...` 专属消息（测试自建 scratch 目录，不再依赖共享
+`test_scratch::Scratch`，#1401 项 5）。
+
+#1401 项 6 为 `run()` 里 `options.environment(inherited)` 的调用点另绑一个测试
+`native_entry_scrubs_inherited_process_environment`：`environment()` 会移除
+`PILOTDECK_CONFIG_PATH`（`config::global_config_path` 里该键赢了 `<home>/pilotdeck.yaml`），
+测试注入指向无效 YAML 的该键——正控下键被移除、子进程读测试写好的合法 home config
+并常驻（截止期分支，广播在场即正控结束）；变异 `let env = inherited;`（跳过 scrub）下
+键保留、子进程读注入文件快速失败，stderr 必现 `Failed to parse default config YAML.`
+（实测：错误转换丢弃携带 path 的 diagnostics，消息文本是唯一可观察证据）。两分支的
+失败方向均为 INVALID（早退无该消息 / 截止期无广播都只报无标记 panic），不引入
+「慢主机 → KILLED」路径。
 
 cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_...")` 只在集成
 测试编译期可用，且 `--test native_process` 会连带重建 gateway 二进制，变异体才被编进
@@ -32,18 +44,23 @@ cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_
 
 ## 运行
 
-`python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）。实际
-负控命令为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由调用方
+`python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）：除 marker
+模板、三个键名与 scrub 标记外，还绑定测试源码里的 `leftover.is_empty()` 与
+`native listening` 两处观察（#1401 项 4——缺任一处，后移 / 删除变异的判杀就静默失效）。
+实际负控命令为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由调用方
 设置 `CARGO_TARGET_DIR`，使用共享 HEAD 守卫、进程所有权和最终汇总：每项先正控，再
 `--no-run` 确认变异体可编译，再判杀，恢复后复跑；过期锚点与无法编译都是 INVALID，
 任一非 KILLED 即非零退出。未提交源码不能运行（`mutating_sources` 拒跑），不得使用
 副本仓库绕过；由协调者在提交后的宿主树上运行。
 
 `python3 -I early_exit_invalid.py NEW_OUTPUT`（同样必须设置 `CARGO_TARGET_DIR`，
-`--check` 为静态检查）证明上一段的早退分支：它把 `CARGO_TARGET_DIR` 里已构建的
-`debug/pilotdeck-gateway` 原子换成「立即退出、无任何输出」的 stub（模拟 dyld/OOM 等
-环境性早退），跑同一个绑定测试并用共享 `negative_suite.classify` 判定，要求结果是
-INVALID、且命名测试的 panic 载荷含早退分支专属消息（防止其他无标记失败冒充）；
-随后按 SHA-256 校验恢复原二进制并复跑正控。它不变异任何源码，也不经过
-`mutating_sources`，所以未提交的树（含本 fixture 所在测试文件的改动）上也能运行。
-任一环节不符即非零退出。
+`--check` 为静态检查）证明早退分支的两半：它把 `CARGO_TARGET_DIR` 里已构建的
+`debug/pilotdeck-gateway` 原子换成 stub（临时名走 `tempfile.mkstemp`，#1401 项 2），
+跑同一个绑定测试并用共享 `negative_suite.classify` 判定——无输出 stub（立即 `exit 86`）
+必须 INVALID 且命名测试的 panic 载荷含早退分支专属消息；`native listening` stub（先向
+stderr 打印 `native listening 127.0.0.1:1` 再 `exit 86`）必须 KILLED 且载荷含绑定
+marker。两个变体的原始输出分别落 `early-exit-neg-eof.log` /
+`early-exit-neg-listening.log`，互不覆盖。随后按 SHA-256 校验恢复原二进制并复跑正控。
+证据目录走共享 `new_output_directory`（`#953` 非空拒用、`.claim` O_EXCL，#1401 项 3）。
+它不变异任何源码，也不经过 `mutating_sources`，所以未提交的树（含本 fixture 所在
+测试文件的改动）上也能运行。任一环节不符即非零退出。
