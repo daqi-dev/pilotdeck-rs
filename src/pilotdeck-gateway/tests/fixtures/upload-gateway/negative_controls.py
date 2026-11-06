@@ -74,6 +74,8 @@ LEASE_ATOMIC = 'upload::tests::upload_lease_atomic_rename_failure_keeps_valid_le
 SYMLINK_ROOT = 'upload::tests::upload_cleanup_never_deletes_through_a_symlinked_root'
 SWAP = 'upload::tests::upload_cleanup_does_not_follow_a_root_swapped_mid_round'
 LEASE_SYMLINK = 'upload::tests::upload_lease_cleanup_never_deletes_through_a_symlinked_root'
+LEASE_ENTRY = 'upload::tests::upload_lease_cleanup_never_deletes_through_an_entry_symlink'
+SWAP_RECORD = 'upload::tests::upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round'
 RECORD_RM = 'upload::tests::upload_cleanup_record_removal_failure_does_not_stop_the_sweep'
 
 # (name, source, original, mutant, named test, exclusive failure text)
@@ -407,16 +409,10 @@ mutations = [
      'a failed record removal does not stop the sweep'),
     # #1646 review r2: the plain-root gate only covers the round start; the
     # entry must be measured against the root snapshotted when the round began.
-    ('cleanup-orphan-root-recanonicalized', STORE, '''        let Ok(dir_real) = fs::canonicalize(dir) else {
+    ('cleanup-orphan-root-recanonicalized', STORE, '''        if !inside_root(root_real, dir) {
             return;
-        };
-        if dir_real == root_real || !dir_real.starts_with(root_real) {
-            return;
-        }''', '''        let Ok(dir_real) = fs::canonicalize(dir) else {
-            return;
-        };
-        let root_real = fs::canonicalize(root_real).unwrap_or_default();
-        if dir_real == root_real || !dir_real.starts_with(&root_real) {
+        }''', '''        let root_real = fs::canonicalize(root_real).unwrap_or_default();
+        if !inside_root(&root_real, dir) {
             return;
         }''', SWAP,
      'a root swapped mid-round must not be followed'),
@@ -432,6 +428,24 @@ mutations = [
             }
         };''', '''        let root = project.join(".tmp/chat-upload-leases");''', LEASE_SYMLINK,
      'a symlinked leases root must not be swept'),
+    ('cleanup-record-rm-follows-swapped-root', STORE, '''            if !inside_root(&root_real, &dir) {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: outside the uploads root",
+                    dir.display()
+                ));
+                continue;
+            }
+''', '', SWAP_RECORD,
+     'a record delete must not follow a root swapped mid-round'),
+    ('cleanup-lease-entry-symlink-swept', STORE, '''                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] lease cleanup skipped {}: outside the leases root",
+                        dir.display()
+                    ));
+                    continue;
+                }
+''', '', LEASE_ENTRY,
+     'a symlinked lease entry must not be swept'),
 ]
 
 if '--check' in sys.argv[1:]:

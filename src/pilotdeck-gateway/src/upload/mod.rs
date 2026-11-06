@@ -458,6 +458,12 @@ impl UploadStore {
         let Ok(root_real) = fs::canonicalize(&root) else {
             return;
         };
+        // Anchor the snapshot inside the project: `.tmp` or `chat-uploads`
+        // could already be a symlink that `plain_root` saw as a real directory
+        // only because it was swapped between the two stats above.
+        if !root_real.starts_with(project) {
+            return;
+        }
         for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
             let dir = root_real.join(&id);
             let record = match self.read_at(project, &id) {
@@ -481,6 +487,18 @@ impl UploadStore {
                     self.skip_record(&dir, &e);
                     continue;
                 }
+            }
+            // The record branch deletes too, so it needs the same guard as the
+            // orphan branch: compare the entry as resolved *now* with the
+            // round-start root snapshot. Without it, a root swapped for a
+            // symlink mid-round turns every remaining record into a delete
+            // outside the project.
+            if !inside_root(&root_real, &dir) {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: outside the uploads root",
+                    dir.display()
+                ));
+                continue;
             }
             match self
                 .fault("record-rm", &dir)
@@ -524,10 +542,7 @@ impl UploadStore {
         // the round started: if `.tmp` or `chat-uploads` was swapped for a
         // symlink since, `dir_real` leaves the snapshot and the delete is
         // skipped instead of following the link outside the project.
-        let Ok(dir_real) = fs::canonicalize(dir) else {
-            return;
-        };
-        if dir_real == root_real || !dir_real.starts_with(root_real) {
+        if !inside_root(root_real, dir) {
             return;
         }
         match remove_tree(dir) {
@@ -1004,11 +1019,16 @@ impl UploadStore {
                 return Ok(());
             }
         };
-        let Ok(root) = fs::canonicalize(&root) else {
+        // Snapshot once, like the record half: the entry checks below resolve
+        // against this value for the whole round.
+        let Ok(root_real) = fs::canonicalize(&root) else {
             return Ok(());
         };
-        for id in names(&root).into_iter().filter(|id| safe_id(id)) {
-            let leases = root.join(id);
+        if !root_real.starts_with(project) {
+            return Ok(());
+        }
+        for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
+            let leases = root_real.join(id);
             for lease in names(&leases).into_iter().filter(|id| safe_id(id)) {
                 let dir = leases.join(lease);
                 let metadata = fs::read(dir.join("lease.json"))
@@ -1019,10 +1039,17 @@ impl UploadStore {
                 {
                     continue;
                 }
+                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] lease cleanup skipped {}: outside the leases root",
+                        dir.display()
+                    ));
+                    continue;
+                }
                 self.fault("lease-rm", &dir)?;
                 remove_tree(&dir)?;
             }
-            if names(&leases).is_empty() {
+            if names(&leases).is_empty() && inside_root(&root_real, &leases) {
                 remove_tree(&leases)?;
             }
         }
@@ -1377,6 +1404,20 @@ fn open_new(path: &Path) -> Result<File> {
         .mode(0o600)
         .open(path)
         .map_err(|e| UploadError::io(e, "open", Some(path)))
+}
+/// Whether `dir` currently resolves to a real directory strictly inside
+/// `root_real`, the root **snapshot taken when the round started**.
+///
+/// The entry is resolved freshly, the root is not: re-resolving the root
+/// would follow a `.tmp` swapped for a symlink mid-round and make both sides
+/// of the comparison agree again, which is exactly the case this guard exists
+/// to catch. A missing or unresolvable entry counts as "not inside", so every
+/// caller treats it as "do not delete".
+fn inside_root(root_real: &Path, dir: &Path) -> bool {
+    let Ok(dir_real) = fs::canonicalize(dir) else {
+        return false;
+    };
+    dir_real != root_real && dir_real.starts_with(root_real)
 }
 fn remove_tree(path: &Path) -> Result<()> {
     let result = match fs::symlink_metadata(path) {

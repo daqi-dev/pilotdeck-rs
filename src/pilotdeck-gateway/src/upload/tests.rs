@@ -1531,9 +1531,36 @@ fn upload_cleanup_never_deletes_through_a_symlinked_root() {
 
 // #1646 review r2: the plain-root gate only covers the moment the round
 // starts. If `.tmp` is swapped for a symlink *while* the round runs, every
-// later orphan must still be measured against the root the round snapshotted —
+// later delete must still be measured against the root the round snapshotted —
 // re-resolving the root per entry would resolve through the new link and make
 // both sides of the containment check agree (codex P0 / GLM concurrency P1).
+//
+// The swap happens inside the `now` callback: after the round's plain check and
+// its root snapshot, and before the recursive delete. That is the whole-round
+// window a crafted tree gets, with no timing luck involved.
+fn store_swapping_tmp(
+    project: &Path,
+    outside: &Path,
+    clock: Arc<AtomicI64>,
+    swaps: Arc<AtomicUsize>,
+) -> Arc<UploadStore> {
+    let (resolved, listed) = (project.to_owned(), project.to_owned());
+    let (root, target) = (project.to_owned(), outside.to_owned());
+    let (tick, swap) = (clock, swaps);
+    let mut opts = UploadStoreOptions::new(
+        move |_: &JsString| Ok(resolved.clone()),
+        move || Ok(vec![listed.clone()]),
+    );
+    opts.now = Arc::new(move || {
+        if swap.fetch_add(1, Ordering::SeqCst) == 0 {
+            fs::rename(root.join(".tmp"), root.join(".tmp.real")).unwrap();
+            std::os::unix::fs::symlink(&target, root.join(".tmp")).unwrap();
+        }
+        tick.load(Ordering::SeqCst)
+    });
+    Arc::new(UploadStore::new(opts))
+}
+
 #[test]
 fn upload_cleanup_does_not_follow_a_root_swapped_mid_round() {
     let scratch = Scratch::new();
@@ -1549,26 +1576,13 @@ fn upload_cleanup_does_not_follow_a_root_swapped_mid_round() {
     fs::write(orphan.join("files/x"), "own").unwrap();
     set_mtime(&orphan, (EPOCH - 2 * DAY) as u64);
 
-    // The clock is read after the round's plain check and its root snapshot,
-    // and before the recursive delete: swapping here is the whole-round window
-    // a crafted tree gets, with no timing luck involved.
-    let clock = Arc::new(AtomicI64::new(EPOCH));
     let swaps = Arc::new(AtomicUsize::new(0));
-    let (projects, listed) = (project.clone(), project.clone());
-    let (swap_root, swap_target) = (project.clone(), outside.clone());
-    let (tick, swap) = (clock.clone(), swaps.clone());
-    let mut opts = UploadStoreOptions::new(
-        move |_: &JsString| Ok(projects.clone()),
-        move || Ok(vec![listed.clone()]),
+    let store = store_swapping_tmp(
+        &project,
+        &outside,
+        Arc::new(AtomicI64::new(EPOCH)),
+        swaps.clone(),
     );
-    opts.now = Arc::new(move || {
-        if swap.fetch_add(1, Ordering::SeqCst) == 0 {
-            fs::rename(swap_root.join(".tmp"), swap_root.join(".tmp.real")).unwrap();
-            std::os::unix::fs::symlink(&swap_target, swap_root.join(".tmp")).unwrap();
-        }
-        tick.load(Ordering::SeqCst)
-    });
-    let store = UploadStore::new(opts);
     store.cleanup_expired().unwrap();
 
     assert_eq!(
@@ -1582,6 +1596,116 @@ fn upload_cleanup_does_not_follow_a_root_swapped_mid_round() {
     );
 }
 
+// #1646 review r2: the same swap, but the delete that must be refused is the
+// expired-**record** one — it follows `read_at`, whose containment check ran
+// before the swap and does not cover the delete.
+#[test]
+fn upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round() {
+    let scratch = Scratch::new();
+    let outside = scratch.dir("outside-swap-record");
+    let victim = outside.join("chat-uploads/upload-a/files/x");
+    fs::create_dir_all(victim.parent().unwrap()).unwrap();
+    fs::write(&victim, "keep").unwrap();
+
+    let project = scratch.dir("p-swap-record");
+    let h = golden_store(&project);
+    seed_cleanup_record(
+        &project.join(".tmp/chat-uploads"),
+        &project,
+        "upload-a",
+        "1970-01-01T00:00:00.000Z",
+    );
+    drop(h);
+
+    let swaps = Arc::new(AtomicUsize::new(0));
+    let clock = Arc::new(AtomicI64::new(EPOCH));
+    let store = store_swapping_tmp(&project, &outside, clock.clone(), swaps.clone());
+    store.cleanup_expired().unwrap();
+
+    assert_eq!(
+        swaps.load(Ordering::SeqCst),
+        1,
+        "the swap happened mid-round"
+    );
+    assert!(
+        victim.exists(),
+        "a record delete must not follow a root swapped mid-round"
+    );
+}
+
+// #1646 review r2 (GLM sibling / concurrency / boundary, P0): the lease half
+// follows a symlinked **entry**, not just a symlinked root. "No lease.json or
+// unparsable means expired" makes the recursive delete the default action for
+// whatever such an entry points at.
+#[test]
+fn upload_lease_cleanup_never_deletes_through_an_entry_symlink() {
+    let scratch = Scratch::new();
+    let outside = scratch.dir("outside-entry");
+    let leaked = outside.join("lease-a");
+    fs::create_dir_all(leaked.join("files")).unwrap();
+    fs::write(leaked.join("files/x"), "keep").unwrap();
+
+    let project = scratch.dir("p-entry-link");
+    let h = golden_store(&project);
+    let root = project.join(".tmp/chat-upload-leases");
+    fs::create_dir_all(&root).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("upload-a")).unwrap();
+    h.store.cleanup_expired().unwrap();
+
+    assert!(
+        leaked.join("files/x").exists(),
+        "a symlinked lease entry must not be swept"
+    );
+    let log = h.store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("outside the leases root"),
+        "the skip is logged: {log}"
+    );
+}
+
+// #1646 review r2: the lease half must also refuse a delete after `.tmp` is
+// swapped mid-round (the clock is read right before the delete).
+#[test]
+fn upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round() {
+    let scratch = Scratch::new();
+    let outside = scratch.dir("outside-swap-lease");
+    let leaked = outside.join("chat-upload-leases/upload-a/lease-a");
+    fs::create_dir_all(&leaked).unwrap();
+    fs::write(
+        leaked.join("lease.json"),
+        "{\"expiresAt\":\"1970-01-01T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+
+    let project = scratch.dir("p-swap-lease");
+    let own = project.join(".tmp/chat-upload-leases/upload-a/lease-a");
+    fs::create_dir_all(&own).unwrap();
+    fs::write(
+        own.join("lease.json"),
+        "{\"expiresAt\":\"1970-01-01T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+
+    let swaps = Arc::new(AtomicUsize::new(0));
+    let store = store_swapping_tmp(
+        &project,
+        &outside,
+        Arc::new(AtomicI64::new(EPOCH)),
+        swaps.clone(),
+    );
+    store.cleanup_expired().unwrap();
+
+    assert_eq!(
+        swaps.load(Ordering::SeqCst),
+        1,
+        "the swap happened mid-round"
+    );
+    assert!(
+        leaked.join("lease.json").exists(),
+        "a lease delete must not follow a root swapped mid-round"
+    );
+}
+
 // #1646 review r2: the lease half needs the same gate as the record half —
 // "unreadable lease means expired" makes deletion the default, so a symlinked
 // leases root would delete lease trees outside the project.
@@ -1589,7 +1713,7 @@ fn upload_cleanup_does_not_follow_a_root_swapped_mid_round() {
 fn upload_lease_cleanup_never_deletes_through_a_symlinked_root() {
     let scratch = Scratch::new();
     let outside = scratch.dir("outside-leases");
-    let leaked = outside.join("chat-upload-leases/upload-a/lease-a");
+    let leaked = outside.join("upload-a/lease-a");
     fs::create_dir_all(&leaked).unwrap();
     fs::write(
         leaked.join("lease.json"),
