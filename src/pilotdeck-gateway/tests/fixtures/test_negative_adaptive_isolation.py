@@ -1,7 +1,9 @@
 # anchor-selfcheck: unsupported subprocess isolation and candidate-baseline regression tests
 """#994: real HEAD-guarded Python probes; no synthetic Git or Cargo workspace."""
+import contextlib
 import importlib.util
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -480,9 +482,19 @@ class CandidateBaselineTests(unittest.TestCase):
                              '#994 distinguish baseline failure and execution error')
 
     def test_missing_target_and_empty_selection_do_not_pass(self):
-        with patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(
-                SystemExit, 'CARGO_TARGET_DIR', msg='#994 candidate must require caller target'):
+        # #1666: the refusal moved from the SystemExit payload to stderr + the
+        # fixed "never started" code, so the invariant is now checked on both.
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {}, clear=True), \
+                contextlib.redirect_stderr(stderr), \
+                self.assertRaises(SystemExit) as refused:
             self.fixture.baseline_only([self.fixture.cases[0]], self.out / 'missing')
+        self.assertEqual(refused.exception.code, 2,
+                         '#994 missing caller target is "never started", not a failed run')
+        self.assertIn('CARGO_TARGET_DIR', stderr.getvalue(),
+                      '#994 candidate must require caller target')
+        self.assertFalse((self.out / 'missing').exists(),
+                         '#1666 a refusal leaves no evidence directory behind')
         with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(self.out / 'target')}):
             self.assertEqual(self.fixture.baseline_only([], self.out / 'empty'), 1,
                              '#994 empty candidate selection cannot pass')
