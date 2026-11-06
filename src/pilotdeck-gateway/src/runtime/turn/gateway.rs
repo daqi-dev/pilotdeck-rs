@@ -655,12 +655,25 @@ impl HostedConnection {
 /// It only keeps an embedding whose cleanup (or whose refused owner) never
 /// settles from turning a fast builder failure into a hung
 /// `start_with_cleanup`. The two synchronous disposals below always run.
+///
+/// #1942: the two fixture-only switches below exist so this cleanup has a
+/// standing negative control, not just the positive
+/// `a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup`:
+/// `native-ws-skip-initialization-cleanup` skips the whole teardown (the
+/// coordinator and its interactions are left live), and
+/// `native-ws-skip-initialization-embedding-cleanup` skips only the embedding
+/// cleanup poll. Each is registered in the native-ws-entry roster
+/// (`tests/fixtures/native-ws-entry/negative_controls.py`) and must be killed
+/// by that test's own marker.
 async fn dispose_initialization(
     coordinator: &TurnEventCoordinator,
     services: Option<GatewayServices>,
     cleanup: Option<Call<'static, Result<(), String>>>,
     teardown_deadline: Duration,
 ) {
+    let skip_teardown = crate::mutants::on("native-ws-skip-initialization-cleanup");
+    let skip_cleanup =
+        skip_teardown || crate::mutants::on("native-ws-skip-initialization-embedding-cleanup");
     let interactions = services
         .as_ref()
         .map(|services| services.interactions.clone());
@@ -670,9 +683,12 @@ async fn dispose_initialization(
         let _ =
             tokio::time::timeout_at(shutdown_deadline, services.submitter.owner.shutdown()).await;
     }
-    if let Some(cleanup) = cleanup {
+    if !skip_cleanup && let Some(cleanup) = cleanup {
         let cleanup_deadline = tokio::time::Instant::now() + cleanup_bound;
         let _ = tokio::time::timeout_at(cleanup_deadline, cleanup).await;
+    }
+    if skip_teardown {
+        return;
     }
     coordinator.dispose();
     if let Some(interactions) = interactions {
