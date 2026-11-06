@@ -192,14 +192,24 @@ fn recorded_body_refuses_an_unbounded_count() {
     recorded_body("<9000000 bytes>");
 }
 
-// #1606 r6: the container-level tri-state, which the 14 oracle cells cannot
-// exercise — every one of them records an `options` object, and the 11 cells
+// #1606 r6: the container-level tri-state, which the 15 oracle cells cannot
+// exercise — every one of them records an `options` object, and the 12 cells
 // without a gateway record none at all, so a regression to `unwrap_or_default`
 // would still replay green.
 #[test]
 #[should_panic(expected = "options must be an object")]
 fn options_refuses_a_non_object_container() {
     options(&json!({ "options": [] }), None);
+}
+
+// #1759: the same "the fixture cannot exercise it" argument for the key set.
+// Every recorded key is one the reader maps, so a reader that ignored an
+// unknown key would stay green on all 15 cells while the generator (which
+// spreads the recorded options into the real TS channel) kept honouring it.
+#[test]
+#[should_panic(expected = "options key \"requestTimeout\" is not read")]
+fn options_refuses_an_unknown_key() {
+    options(&json!({ "options": { "requestTimeout": 1000 } }), None);
 }
 
 #[test]
@@ -247,6 +257,19 @@ fn gateway_from_refuses_non_array_events() {
 fn gateway_from_refuses_a_non_string_error() {
     gateway_from(
         &json!({ "gateway": { "turns": [{ "events": [], "error": 7 }] } }),
+        None,
+        Arc::new(AtomicBool::new(false)),
+    );
+}
+
+// #1759: the element itself. `Value::get` on `5` answers `None` for every
+// field, so `"turns": [5]` used to become an empty turn — the outer
+// `gateway` / `turns` containers were tri-state, the elements were not.
+#[test]
+#[should_panic(expected = "gateway turn must be an object")]
+fn gateway_from_refuses_a_non_object_turn() {
+    gateway_from(
+        &json!({ "gateway": { "turns": [5] } }),
         None,
         Arc::new(AtomicBool::new(false)),
     );
@@ -585,6 +608,34 @@ fn actual_headers(response: &RawResponse) -> BTreeMap<String, String> {
     out
 }
 
+/// #1759: one rule for every recorded connection error, selected by *shape*
+/// rather than by cell id. r8 made the generator record the measured byte
+/// count and any status line it saw on the error path, but the pins that read
+/// those fields lived only in the `oversized-*` branch — a renamed or newly
+/// added error cell would leave the measurements uncompared. `bytes` is a
+/// measurement: a clean close delivered zero bytes and no status line, so any
+/// other shape is fixture (or baseline) drift and panics here.
+fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
+    if expected.get("error").is_none() {
+        return;
+    }
+    assert!(
+        expected["error"].is_string(),
+        "#1333 {case} request {index}: a recorded connection error must be a string, got {expected}"
+    );
+    assert_eq!(
+        expected["bytes"].as_u64(),
+        Some(0),
+        "#1333 {case} request {index}: a recorded connection error must be a zero-byte close \
+         (a partially delivered response is not a clean close), got {expected}"
+    );
+    assert!(
+        expected.get("status").is_none(),
+        "#1333 {case} request {index}: a recorded connection error must not carry a status \
+         line, got {expected}"
+    );
+}
+
 fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResponse) {
     if expected.get("error").is_some() {
         assert!(
@@ -842,6 +893,12 @@ fn case_option(options: &Value, key: &str, fallback: &str) -> String {
     }
 }
 
+/// #1759: every `options` key this replay maps into `ApiServerOptions`. The
+/// oracle is allowed to record only these, because `generate.mts` spreads the
+/// recorded object into the real `ApiServerChannel` — an unmapped key would be
+/// a TS-side setting the Rust comparison silently ignores.
+const REPLAY_OPTION_KEYS: [&str; 3] = ["apiKey", "modelName", "corsOrigins"];
+
 fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
     // #1606 r6 (both zai roles, independently): r5 tightened every key *inside*
     // `options` and claimed this file no longer conflates absent with
@@ -856,6 +913,21 @@ fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
         panic!("#1333 options must be an object, found {other:?}");
     }
     let options = &case["options"];
+    // #1759: the *key set* was still fail-open. `generate.mts` spreads the
+    // recorded options verbatim into the real `ApiServerChannel`
+    // (`...(options ?? {})`), so a key the generator records takes effect on
+    // the TS side; a reader that ignores it would compare a cell against a
+    // differently-configured Rust server and still stay green. The roster is
+    // closed: a new key must be mapped here before the oracle may record it.
+    if let Some(recorded) = options.as_object() {
+        for key in recorded.keys() {
+            assert!(
+                REPLAY_OPTION_KEYS.contains(&key.as_str()),
+                "#1333 options key {key:?} is not read by the replay (known keys: \
+                 {REPLAY_OPTION_KEYS:?}); the fixture and the reader have drifted apart"
+            );
+        }
+    }
     ApiServerOptions {
         port: Some(JsValue::Number(0.0)),
         api_key: Some(case_option(options, "apiKey", "")),
@@ -921,21 +993,37 @@ fn gateway_from(
             Value::Null => Vec::new(),
             Value::Array(turns) => turns
                 .iter()
-                .map(|turn| ScriptedTurn {
-                    events: match turn.get("events") {
-                        None | Some(Value::Null) => Vec::new(),
-                        Some(Value::Array(events)) => events.clone(),
-                        Some(other) => {
-                            panic!("#1333 gateway turn events must be an array, found {other:?}")
+                .map(|turn| {
+                    // #1759: `Value::get` answers `None` for a non-object, so
+                    // `"turns": [5]` used to read as a turn with no `events`
+                    // and no `error` — the absent/wrong-type conflation r4/r6
+                    // removed from the outer containers, still open on the
+                    // element itself. Only absent (or `null`) means "this turn
+                    // scripts nothing".
+                    let turn = match turn {
+                        Value::Object(_) => turn,
+                        other => {
+                            panic!("#1333 gateway turn must be an object, found {other:?}")
                         }
-                    },
-                    error: match turn.get("error") {
-                        None | Some(Value::Null) => None,
-                        Some(Value::String(text)) => Some(text.clone()),
-                        Some(other) => {
-                            panic!("#1333 gateway turn error must be a string, found {other:?}")
-                        }
-                    },
+                    };
+                    ScriptedTurn {
+                        events: match turn.get("events") {
+                            None | Some(Value::Null) => Vec::new(),
+                            Some(Value::Array(events)) => events.clone(),
+                            Some(other) => {
+                                panic!(
+                                    "#1333 gateway turn events must be an array, found {other:?}"
+                                )
+                            }
+                        },
+                        error: match turn.get("error") {
+                            None | Some(Value::Null) => None,
+                            Some(Value::String(text)) => Some(text.clone()),
+                            Some(other) => {
+                                panic!("#1333 gateway turn error must be a string, found {other:?}")
+                            }
+                        },
+                    }
                 })
                 .collect(),
             other => panic!("#1333 gateway.turns must be an array, found {other:?}"),
@@ -955,7 +1043,7 @@ async fn replays_real_ts_api_server_cells() {
     assert_eq!(oracle["node"], "v22.22.0", "#1333 Node baseline");
     let cases = oracle["cases"].as_array().expect("#1333 oracle cases");
     // Exact ids, not a count: a regenerated oracle that renames or swaps one
-    // cell would keep `len == 14` while silently dropping a surface.
+    // cell would keep the length unchanged while silently dropping a surface.
     let ids: Vec<&str> = cases
         .iter()
         .map(|case| case["id"].as_str().expect("#1333 case id"))
@@ -1003,6 +1091,18 @@ async fn replays_real_ts_api_server_cells() {
             Some(recorded_requests.len()),
             "#1333 {id}: every recorded TS response must pair with a recorded request"
         );
+        // #1759: by shape, before any branch can skip a cell — the
+        // `oversized-*` and `body-read-timeout` cells never reach
+        // `compare_response`, so an id-scoped pin would leave a future error
+        // cell's recorded `bytes` / `status` unread.
+        for (index, expected) in case["expect"]
+            .as_array()
+            .expect("#1333 expect")
+            .iter()
+            .enumerate()
+        {
+            assert_recorded_error_shape(id, index, expected);
+        }
         if id == "body-read-timeout" {
             // #1620: a client that declares `Content-Length` and then stops
             // sending is answered by Node's `requestTimeout` (300 s) with the
@@ -1072,22 +1172,11 @@ async fn replays_real_ts_api_server_cells() {
             // cells at all. If the baseline cap ever rises above the recorded
             // `OVER_CAP_BYTES`, the generator would record `400 invalid_json`
             // here while the placeholder and the Rust cap stay at 1_000_001 —
-            // the whole surface green and the two sides disagreeing. Pin the
-            // shape: a close with zero bytes and no status line.
-            let expected = &case["expect"][0];
-            assert_eq!(
-                expected["bytes"].as_u64(),
-                Some(0),
-                "#1333 {id}: an oversized body must close without delivering bytes, got {expected}"
-            );
-            assert!(
-                expected.get("status").is_none(),
-                "#1333 {id}: an oversized body must not receive a status line, got {expected}"
-            );
-            assert!(
-                expected["error"].is_string(),
-                "#1333 {id}: an oversized body must record the connection error, got {expected}"
-            );
+            // the whole surface green and the two sides disagreeing.
+            //
+            // #1759: the recorded shape is pinned for *every* error
+            // expectation by `assert_recorded_error_shape` above, not here, so
+            // this branch is back to what its name says: skip the replay.
             continue;
         }
         let dropped = Arc::new(AtomicBool::new(false));

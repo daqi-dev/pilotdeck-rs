@@ -99,13 +99,24 @@ silently degrade a cell into "some short body":
   The containers follow it too: an `options` that is present but not an object
   panics (absent every key takes its default), and so does a `gateway` that is
   present but not an object, a `gateway.turns` that is present but not an array,
-  or a turn `events` / `error` of the wrong type — only absent (or `null`) means
+  a turn that is not an object (only absent or `null` means "no turn"), or a turn
+  `events` / `error` of the wrong type — only absent (or `null`) means
   "no gateway / no turns / no events / no error".
+- The `options` **key set** is closed. Only `apiKey` / `modelName` /
+  `corsOrigins` may be recorded; any other key panics the replay
+  (`REPLAY_OPTION_KEYS` in `tests.rs`). The generator spreads the recorded
+  options verbatim into the real `ApiServerChannel` (`...(options ?? {})`), so a
+  key the fixture records takes effect on the TS side; a reader that ignored it
+  would compare a differently-configured Rust server and stay green. Adding a
+  key therefore means teaching the reader first, then recording it.
 - The `oversized-*` cells are never re-sent by the replay, so their recorded
   response used to be compared by nothing at all. Both ends now pin its shape:
   the generator refuses to record anything but a zero-byte close, and the
-  replay asserts the recorded `expect[0]` has `bytes: 0`, an `error` string and
-  no `status`. A baseline cap raised above the recorded `OVER_CAP_BYTES` would
+  replay asserts **every** `expect[i]` that carries an `error` key — not only
+  the `oversized-*` ones — has `bytes: 0`, an `error` string and no `status`
+  (`assert_recorded_error_shape`). The rule is shape-driven so a renamed or
+  newly added error cell cannot keep r8's measured fields uncompared. A
+  baseline cap raised above the recorded `OVER_CAP_BYTES` would
   therefore fail loudly instead of leaving the surface green. `bytes` is a
   **measurement**, not a constant: it is counted on the socket, so it is
   recorded even when the connection dies before the `response` callback runs
