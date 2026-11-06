@@ -16,9 +16,15 @@ from negative_contract import BoundResult
 
 # module, name, unique source span, replacement, test, assertion
 VARIANTS = (
-    ('C', 'shared-scope', 'return (isinstance(marker, str)', 'return True or (isinstance(marker, str)',
+    # #1734: the scope predicate moved to the shared `negative_scope` module,
+    # so both scope mutants now withdraw the import and substitute a copy with
+    # the old permissive rule instead of editing the removed local copy.
+    ('C', 'shared-scope', 'from negative_scope import HANG_PREFIXES, marker_is_scoped',
+     'from negative_scope import HANG_PREFIXES\nmarker_is_scoped = lambda marker: True',
      'test_scope_fallback', '#935 shared scoped check rejects generic markers'),
-    ('C', 'bare-step', "and not marker.rstrip().endswith(': step')", 'and True',
+    ('C', 'bare-step', 'from negative_scope import HANG_PREFIXES, marker_is_scoped',
+     'from negative_scope import HANG_PREFIXES\n'
+     'marker_is_scoped = lambda marker: isinstance(marker, str) and bool(marker.strip())',
      'test_bare_step_scope', '#935 bare step prefix never kills'),
     ('C', 'payload-first-line', 're.fullmatch(case.payload_pattern, payloads[0]) is not None', "re.search(case.payload_pattern, '\\n'.join(lines)) is not None",
      'test_first_line_ownership', '#1110 only one owned first-line message counts'),

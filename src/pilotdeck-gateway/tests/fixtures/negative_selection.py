@@ -6,6 +6,7 @@ is supposed to pass. The unmutated baseline therefore always runs first, and a
 failing baseline makes the whole run INVALID before any mutant verdict counts.
 """
 import re
+import sys
 
 
 def baseline_passed(raw, test_name):
@@ -46,6 +47,50 @@ def select(controls, requested, *, name=lambda row: row[0], always=('baseline',)
         raise ValueError(f'unknown controls: {", ".join(sorted(unknown))}')
     return [row for row in rows
             if name(row) in always or not requested or name(row) in requested]
+
+
+def registered(rows, expected_names, *, name=lambda row: row[0]):
+    """Require the runtime table to equal a static roster, exactly.
+
+    The denominator of a negative-control run must be a literal in the source,
+    not ``len(table)``. With a runtime denominator, deleting a row silently
+    shrinks the run: the summary says ``N/N killed`` for whatever survived, and
+    a run that lost every row prints ``0/0 killed`` and exits 0 (#1666). This
+    compares names in order and rejects duplicates, so a dropped, renamed,
+    duplicated or reordered row is a startup refusal rather than a smaller
+    green run.
+    """
+    names = [name(row) for row in rows]
+    expected = list(expected_names)
+    if not expected:
+        raise ValueError('empty expected roster')
+    if len(set(expected)) != len(expected):
+        raise ValueError(f'duplicate names in expected roster: {expected}')
+    if names != expected:
+        missing = [item for item in expected if item not in names]
+        extra = [item for item in names if item not in expected]
+        raise ValueError(
+            'control roster drifted from the static inventory'
+            f' (missing={missing or "none"} extra={extra or "none"}'
+            f' runtime={names} expected={expected})')
+    return names
+
+
+def refuse(message):
+    """Refuse to run: print the reason to stderr and exit 2.
+
+    Exit 2 means "this run never started" -- an unknown control name, a
+    control roster that no longer matches the static inventory, a locked or
+    dirty tree, or an unreadable oracle. It is deliberately distinct from 1
+    ("it ran and the result is not green"), so a reader can tell a false-green
+    guard firing from a negative control that legitimately failed (#1734).
+
+    A ``SystemExit`` carrying a *string* exits 1, so the message is written
+    first and the code is passed explicitly as an int.
+    """
+    sys.stderr.write(f'INVALID: {message}\n')
+    sys.stderr.flush()
+    raise SystemExit(2)
 
 
 def verdict_exit(rows, *, key='verdict', killed='KILLED'):

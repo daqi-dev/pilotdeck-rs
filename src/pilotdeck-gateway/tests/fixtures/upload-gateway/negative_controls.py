@@ -44,6 +44,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 GATEWAY = root / 'src/pilotdeck-gateway/src/upload/gateway.rs'
@@ -529,29 +530,57 @@ mutations = [
      'the next tick sweeps again after the failed one'),
 ]
 
+# #1666: static denominator; a deleted row must not shrink the run silently and
+# an emptied table must never print `0/0 killed` and exit 0.
+EXPECTED_NAMES = (
+    'attachment-path-leak', 'record-unknown-leak', 'optional-empties-kept',
+    'files-not-array', 'project-key-not-trimmed', 'project-key-nonstring-accepted',
+    'upload-id-not-safe', 'client-file-id-not-trimmed',
+    'base64-limit-off-by-one', 'base64-precheck-removed', 'cap-after-decode',
+    'project-error-lossy', 'part-error-lossy', 'base64-trailing-bits-rejected',
+    'surrogate-key-hash-not-lossy', 'idempotency-hash-skipped',
+    'idempotency-type-before-manifest', 'number-format-expanded',
+    'surrogate-lossy-bridge', 'null-attachment-swallowed',
+    'part-requires-provider-first', 'get-requires-provider-after-upload-id',
+)
+
 if '--check' in sys.argv[1:]:
+    # #1666: ordinary raises, so `python3 -O` cannot strip these guards.
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
     for name, source, old, _new, _test, _expected in mutations:
         original = source.read_text()
-        assert original.count(old) == 1, (name, original.count(old))
+        occurrences = original.count(old)
+        if occurrences != 1:
+            raise ValueError(f'{name}: anchor occurs {occurrences} times (expected 1)')
     print(f'PASS: {len(mutations)} mutation anchors match their sources')
     sys.exit(0)
 
+selected = sys.argv[2:]
+try:
+    registered(mutations, EXPECTED_NAMES)
+    # `mutations` stays the frozen literal so `anchor_selfcheck.py` can read it
+    # statically; the requested subset is a separate name.
+    run_rows = select(mutations, selected, always=())
+except ValueError as error:
+    refuse(str(error))
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
-selected = sys.argv[2:]
-if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
 env = os.environ.copy()
-assert env.get('CARGO_TARGET_DIR'), 'set CARGO_TARGET_DIR to the caller build directory'
+if not env.get('CARGO_TARGET_DIR'):
+    refuse('set CARGO_TARGET_DIR to the caller build directory')
 summary = []
 baseline = os.environ.get('PDRS_NEG_BASELINE', 'HEAD')
 with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
-    for name, source, old, new, test, expected in mutations:
+    for name, source, old, new, test, expected in run_rows:
         original = snapshots[source]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
-        assert content.count(old) == 1, (name, content.count(old))
+        occurrences = content.count(old)
+        if occurrences != 1:
+            raise ValueError(f'{name}: anchor occurs {occurrences} times (expected 1)')
         changed = content.replace(old, new, 1)
         (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
             content.splitlines(True), changed.splitlines(True),
@@ -578,9 +607,16 @@ with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
                                 returncode=result.returncode, failure=failure,
                                 sourceSha256=before))
             print(f'{name}: {"KILLED" if killed else "NOT KILLED"} rc={result.returncode} {failure}', flush=True)
-            assert killed, f'{name}: did not hit its named assertion ({expected!r})'
+            if not killed:
+                raise RuntimeError(
+                    f'{name}: did not hit its named assertion ({expected!r})')
         finally:
             source.write_bytes(original)
-            assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+            restored = hashlib.sha256(source.read_bytes()).hexdigest()
+            if restored != before:
+                raise RuntimeError(
+                    f'{name}: restore failed ({restored} != {before}); the tree is dirty')
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte', flush=True)
+print(f'{len(summary)}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
+# #1666: a zero-row or surviving run can never exit 0 under `-O`.
+sys.exit(verdict_exit(summary, key='killed', killed=True))

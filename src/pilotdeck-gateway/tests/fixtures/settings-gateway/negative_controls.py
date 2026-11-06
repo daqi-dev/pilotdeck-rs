@@ -210,6 +210,16 @@ duplicated_markers = sorted({marker for marker in MARKERS.values()
 if duplicated_markers:
     refuse('#1538 every mutation needs its own marker;'
            f' shared={duplicated_markers}')
+# #1734: `killed` also requires the literal `#1318` in the evidence, so a marker
+# that is itself a substring of that literal would satisfy the marker test
+# vacuously: `'#1318' in evidence` is already required next to it. Keep the two
+# checks independent by refusing any marker drawn from the criterion's own
+# fixed tokens.
+MARKER_FLOOR_TOKENS = ('#1318',)
+for name, marker in MARKERS.items():
+    if any(marker in token for token in MARKER_FLOOR_TOKENS):
+        refuse(f'#1734 marker for {name!r} is part of the kill criterion itself:'
+               f' {marker!r}')
 selected = sys.argv[2:]
 # #1538 fix-r5 (MiniMax sibling P1): the runtime selection lives in `rows`,
 # never back in `mutations`. `anchor_selfcheck.py` only accepts a mutation
@@ -254,9 +264,19 @@ if baseline_source != 'HEAD':
     print(f'NON-HEAD BASELINE: {baseline_sha} via PDRS_NEGATIVE_BASELINE; '
           'the host gate only trusts HEAD evidence', flush=True)
 # A `case <id>` marker must name a real oracle row, or the mutant can never
-# be judged KILLED (fix-r1 P1: `apply-success-closes` never existed).
-oracle = json.loads((Path(__file__).with_name('oracle.json')).read_text(encoding='utf-8'))
-case_ids = {case['id'] for case in oracle['cases']}
+# be judged KILLED (fix-r1 P1: `apply-success-closes` never existed). The
+# marker is the row-level anchor: it binds the kill to one oracle case, not to
+# one assertion inside that case, which is the strongest form an oracle replay
+# can offer (`MARKERS` values that start with `case ` are documented as such in
+# the README).
+# #1734: an unreadable oracle is "never ran" (exit 2), not a failed run. It used
+# to raise a traceback after the baseline line had been printed, which the exit
+# table had to describe as an exit-1 shape with no evidence.
+try:
+    oracle = json.loads((Path(__file__).with_name('oracle.json')).read_text(encoding='utf-8'))
+    case_ids = {case['id'] for case in oracle['cases']}
+except (OSError, ValueError, KeyError, TypeError) as error:
+    refuse(f'#1734 oracle.json is unreadable: {type(error).__name__}: {error}')
 for marker in MARKERS.values():
     if marker.startswith('case ') and marker[5:] not in case_ids:
         # #1538: explicit, so `-O` cannot strip the check.
@@ -343,9 +363,15 @@ def record_failed_run():
             pass
 
 
+# #1734: `mutating_sources.__enter__` is where a dirty tree or a lock timeout
+# surfaces. At that point nothing has run, so it is "never started" (exit 2),
+# not the exit-1 shape "ran without a green verdict". `entered` flips only after
+# `__enter__` returns; a failure after that keeps the ordinary exit-1 semantics.
+entered = False
 try:
     with mutating_sources(root, sorted({source / filename for _, filename, *_ in rows}),
                           baseline=baseline_sha) as snapshots:
+        entered = True
         def run(tests):
             # libtest takes several full-name filters after `--` (one positional
             # TESTNAME per cargo invocation); `--exact` keeps them literal.
@@ -475,8 +501,13 @@ try:
                 publish_baseline()
                 if not restored:
                     raise RuntimeError(f'#1318 restore failed: {filename}')
-except BaseException:
+except BaseException as error:
     record_failed_run()
+    if not entered:
+        # Nothing ran and nothing was mutated: refusal, not a verdict.
+        print(f'#1734 the run never started: {type(error).__name__}: {error}',
+              file=sys.stderr, flush=True)
+        sys.exit(2)
     raise
 
 # #1538 fix-r6 (GLM concurrency P1 + MiniMax concurrency P0, same finding): the

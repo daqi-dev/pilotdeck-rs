@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
@@ -110,6 +111,19 @@ mutations = [
      '''        let lower = String::from_utf16_lossy(key.units()).to_lowercase();
         NEEDLES.iter().any(|needle| lower.contains(needle))'''),
 ]
+# #1666: the denominator is this literal roster, not `len(mutations)`. With a
+# runtime denominator a deleted row shrinks the run silently and a table that
+# lost every row reports `0/0 killed` and exits 0. Renaming or dropping a
+# mutant here is a deliberate edit that must update this tuple too.
+EXPECTED_NAMES = (
+    'redaction-disabled',
+    'hint-always-included',
+    'recoverable-truthiness',
+    'source-path-always-included',
+    'top-level-key-order-swapped',
+    'version-mistranscribed',
+    'unicode-folding-regression',
+)
 tests = {
     'redaction-disabled': 'config_is_projected_through_the_shared_redaction',
     'hint-always-included': 'optional_fields_follow_truthiness',
@@ -131,23 +145,33 @@ failure_fragments = {
     'unicode-folding-regression': '(#864 fix-r1)',
 }
 selected = sys.argv[2:]
-if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
+# #1666: both guards are ordinary raises, so `python3 -O` cannot strip them.
+# They run before the environment check so a typo is refused as "never started"
+# (exit 2) instead of being mistaken for a failed control (exit 1).
+try:
+    registered(mutations, EXPECTED_NAMES)
+    # `mutations` stays the frozen literal: `anchor_selfcheck.py` reads this
+    # table statically, and rebinding it to a call would hide the roster from
+    # the static extractor. The subset is a separate name.
+    run_rows = select(mutations, selected, always=())
+except ValueError as error:
+    refuse(str(error))
 if 'CARGO_TARGET_DIR' not in os.environ:
-    sys.exit('set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 env = os.environ.copy()
 summary = []
 with mutating_sources(root, [source, shared]) as snapshots:
-    for name, path, old, new in mutations:
+    for name, path, old, new in run_rows:
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
         # A stale anchor (source drifted, or a copy-paste duplicate) must abort
         # the run; recording it as SURVIVED would hide a broken control.
-        assert content.count(old) == 1, (
-            f'{name}: anchor occurs {content.count(old)} times (expected 1); '
-            'the settings.rs anchor is stale and must be updated')
+        occurrences = content.count(old)
+        if occurrences != 1:
+            raise ValueError(
+                f'{name}: anchor occurs {occurrences} times (expected 1); '
+                'the settings.rs anchor is stale and must be updated')
         changed = content.replace(old, new, 1)
         (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
             content.splitlines(True), changed.splitlines(True),
@@ -171,11 +195,18 @@ with mutating_sources(root, [source, shared]) as snapshots:
                                 sourceSha256=before))
             print(f'{name}: {"KILLED" if killed else "NOT KILLED"} '
                   f'rc={result.returncode} {failure}', flush=True)
-            assert killed, f'{name}: compile/signal failure or surviving mutant is not evidence'
+            if not killed:
+                raise RuntimeError(
+                    f'{name}: compile/signal failure or surviving mutant is not evidence')
         finally:
             path.write_bytes(original)
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+            restored = hashlib.sha256(path.read_bytes()).hexdigest()
+            if restored != before:
+                raise RuntimeError(
+                    f'{name}: restore failed ({restored} != {before}); the tree is dirty')
             (out / 'summary.json').write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-    print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte',
+    print(f'{len(summary)}/{len(run_rows)} killed; every source restored byte-for-byte',
           flush=True)
+# #1666: a zero-row run can never exit 0, and neither can a surviving mutant.
+sys.exit(verdict_exit(summary, key='killed', killed=True))

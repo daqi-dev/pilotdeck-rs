@@ -568,11 +568,14 @@ class PanicBlockCriterion(unittest.TestCase):
             with self.subTest(log=log):
                 self.assertEqual(registered[log], own)
                 raw = (SUBMIT_RECORDED / f'{log}.log').read_text()
-                # The real host log carries the same-case prefix, so the old
-                # bare-prefix judge accepted it...
+                # The real host log carries the same-case prefix, and the old
+                # bare-prefix judge accepted it. #1734 moved the scope rule into
+                # `negative_scope` (one implementation for this helper and the
+                # M6 kit), so a `: step` marker -- which matches every step of
+                # that case -- is now refused here too.
                 self.assertIn('snapshot-success: step',
                               panic_evidence(raw, SUBMIT_REPLAY))
-                self.assertTrue(marker_kills_named_test(
+                self.assertFalse(marker_kills_named_test(
                     raw, SUBMIT_REPLAY, 'snapshot-success: step'))
                 # ...but the complete message of the other step must not.
                 self.assertTrue(named_test_failed(raw, SUBMIT_REPLAY))

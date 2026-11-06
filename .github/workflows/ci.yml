@@ -49,6 +49,16 @@ jobs:
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
       - name: 共享执行器隔离与候选正控回归（#994）
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
+      # #1666 / #1734：负控脚本的守卫不得依赖 assert —— `python3 -O` /
+      # `PYTHONOPTIMIZE=1` 会把 assert 整条剥离，靠 assert 的守卫在优化解释器下静默
+      # 放行（未知变异名 → `0/0 killed`、rc=0）。这两个自测把每个脚本的拒绝路径在
+      # 加与不加 `-O` 的解释器下各复算一遍，且第一个用例先自证本解释器确实剥离
+      # assert（否则整组结论无意义）。两者都不需要 cargo，只读源码。
+      - name: 网关负控守卫 -O 不变性自测（#1666 / #1734）
+        working-directory: src/pilotdeck-gateway/tests/fixtures
+        run: |
+          python3 -B -m unittest -v test_negative_optimize_guards
+          python3 -B -m unittest -v settings-gateway/test_negative_controls.py
       # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
       # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
       # 宿主清单、neg-for-diff 都没拦住，靠最终评审读码才发现。glob 统一覆盖今后新增的

@@ -7,9 +7,12 @@ old runners had: they only asserted the filtered list was non-empty, so a typo
 next to a valid name looked like a successful subset and, worse, dropped the
 baseline.
 """
+import io
 import unittest
+from contextlib import redirect_stderr
 
-from negative_selection import baseline_passed, select, verdict_exit
+from negative_selection import (baseline_passed, refuse, registered, select,
+                                verdict_exit)
 
 ROWS = [('baseline', 'pass'), ('mutant-a', 'kill'), ('mutant-b', 'kill')]
 
@@ -82,6 +85,62 @@ class VerdictExit(unittest.TestCase):
         self.assertEqual(verdict_exit(rows, key='status'), 0)
         self.assertEqual(verdict_exit([], key='status'), 1)
         self.assertEqual(verdict_exit([{'status': 'SKIPPED'}], key='status'), 1)
+
+
+class StaticRoster(unittest.TestCase):
+    """#1666: the denominator is a source literal, not ``len(runtime_table)``.
+
+    With a runtime denominator a deleted row turns ``3/3 killed`` into
+    ``2/2 killed`` and deleting every row prints ``0/0 killed`` and exits 0.
+    These checks are ordinary raises, so ``python3 -O`` cannot strip them.
+    """
+
+    def test_matching_roster_is_returned(self):
+        self.assertEqual(registered(ROWS, ['baseline', 'mutant-a', 'mutant-b']),
+                         ['baseline', 'mutant-a', 'mutant-b'])
+
+    def test_dropped_renamed_duplicated_or_reordered_rows_are_refused(self):
+        for runtime, expected, reason in (
+            (ROWS[:2], ['baseline', 'mutant-a', 'mutant-b'], 'dropped row'),
+            ([ROWS[0], ('mutant-x', 'kill'), ROWS[2]],
+             ['baseline', 'mutant-a', 'mutant-b'], 'renamed row'),
+            ([ROWS[0], ROWS[1], ROWS[1]],
+             ['baseline', 'mutant-a', 'mutant-b'], 'duplicated row'),
+            (list(reversed(ROWS)), ['baseline', 'mutant-a', 'mutant-b'], 'reordered'),
+            ([], ['baseline'], 'empty run'),
+        ):
+            with self.subTest(reason=reason):
+                with self.assertRaises(ValueError):
+                    registered(runtime, expected)
+
+    def test_empty_expected_roster_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'empty expected roster'):
+            registered([], [])
+
+    def test_duplicate_expectation_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'duplicate names in expected roster'):
+            registered(ROWS[:2], ['baseline', 'baseline'])
+
+    def test_dict_rows_use_the_name_key(self):
+        rows = [dict(name='baseline'), dict(name='mutant-a')]
+        self.assertEqual(registered(rows, ['baseline', 'mutant-a'],
+                                    name=lambda row: row['name']),
+                         ['baseline', 'mutant-a'])
+
+
+class Refuse(unittest.TestCase):
+    """#1734: "never started" is exit 2, distinct from a failed run's exit 1."""
+
+    def test_refuse_exits_two_with_the_reason_on_stderr(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                refuse('unknown mutation name: typo')
+        # A SystemExit carrying a string would exit 1; the code must be the
+        # explicit integer so a reader can tell a guard from a failed control.
+        self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(stderr.getvalue(),
+                         'INVALID: unknown mutation name: typo\n')
 
 
 if __name__ == '__main__':
