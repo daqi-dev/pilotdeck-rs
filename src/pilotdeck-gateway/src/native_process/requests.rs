@@ -172,16 +172,17 @@ impl GatewayRequests for Requests {
                             "snapshot_list",
                             "snapshot_get",
                             "snapshot_restore",
-                            // TS splices the six cron names right after the
-                            // snapshot triplet, gated on `options.cron`
-                            // (InProcessGateway.ts:2114-2122); the filter
-                            // below keeps the unconfigured gate.
-                            "cron_create",
-                            "cron_list",
-                            "cron_update",
-                            "cron_delete",
-                            "cron_stop",
-                            "cron_run_now",
+                        ]
+                        // TS splices the six cron names right after the
+                        // snapshot triplet, gated on `options.cron`
+                        // (InProcessGateway.ts:2114-2122); the filter below
+                        // keeps the unconfigured gate. `CRON_METHODS` is the
+                        // single name owner (#1325), so the advertisement,
+                        // the capability filter and the family registry
+                        // cannot drift apart.
+                        .into_iter()
+                        .chain(crate::runtime::cron::CRON_METHODS)
+                        .chain([
                             "manager_sessions",
                             "commands_list",
                             "usage_snapshot",
@@ -231,8 +232,7 @@ impl GatewayRequests for Requests {
                             "permission_decide",
                             "async_hook_result",
                             "delete_session",
-                        ]
-                        .into_iter()
+                        ])
                         .chain([
                             "upload_create",
                             "upload_get",
@@ -253,15 +253,7 @@ impl GatewayRequests for Requests {
                                 && (memory_enabled
                                     || !matches!(*capability, "memory_list" | "memory_wipe"))
                                 && (self.cron.is_some()
-                                    || !matches!(
-                                        *capability,
-                                        "cron_create"
-                                            | "cron_list"
-                                            | "cron_update"
-                                            | "cron_delete"
-                                            | "cron_stop"
-                                            | "cron_run_now"
-                                    ))
+                                    || !crate::runtime::cron::CRON_METHODS.contains(capability))
                         })
                         .map(JsValue::from)
                         .collect(),

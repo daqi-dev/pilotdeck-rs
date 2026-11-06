@@ -6,7 +6,7 @@ use super::super::{
     refresh::{BoxFuture, RefreshRouter},
 };
 use super::{
-    LiveSessionHandle, SessionAdmission, SessionTurns, TurnCompletionHandle, TurnReservation,
+    LiveSessionHandle, SessionTurns, TurnCompletionHandle, TurnReservation,
     handle::{aggregate, wait_result},
 };
 use pilotdeck_protocol::{JsString, JsValue};
@@ -600,13 +600,6 @@ impl SessionOwner {
         } else {
             self.0.turns.admission.begin_turn(key, run)
         }
-    }
-
-    /// The one volatile admission fence this owner admits through, shared by
-    /// reference with secondary acceptors (cron's #1326 gateway binds the
-    /// same `SessionAdmission`, never a second instance).
-    pub fn admission(&self) -> Arc<SessionAdmission> {
-        self.0.turns.admission.clone()
     }
 
     /// Consumers retain the identity returned by `begin_turn` until cleanup.
