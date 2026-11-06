@@ -16,6 +16,9 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
 执行层只读证明：解析 stream-json 的 init 事件，工具集合不是白名单子集 → 立即杀进程，记 TOOLS_VIOLATION。
 状态：PASS（有 final 且末行 VERDICT 合规）· PARTIAL（有 final 但缺 VERDICT/覆盖行）· TIMEOUT · ERROR · TOOLS_VIOLATION。
 只有 PASS 计入闸门；exit0 或 type=result 不等于完成评审（state/memory/20261016-review-bounds.md）。
+模型校验先认「API 错误响应」：响应 model 为 `<synthetic>`/空，或响应不是期望模型且正文含 `API Error:` 时，
+不判「模型不符」，转按内嵌原文分类——额度 429（找人：升级套餐 / 换 key）· ECONNRESET / Connection dropped
+（查网络 / 代理，并自动重试一次；别的错误一律不重试，免得把额度 429 重试放大）。
 
 通道并发闸：每个角色起进程前按 `--runner` 取全局 flock 名额（zai 6 / minimax 16 / deepseek 16 / anthropic 2，
 与 ops `scripts/fleet/fleet.py` 的 P4_CAP 同源），取不到打印 `[review-slot] waiting N/M` 排队；
@@ -72,6 +75,12 @@ LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走
 # （10-25 实测 claude-opus-5-5 / claude-sonnet-5-5 经 llm-center 原样回显，原件 _tmp/20261025-anth-runner/smoke-*；
 # 11-05 实测 MiniMax-M3.1-Flash 原样回显、deepseek-v4.1-flash-mb 回显 DeepSeek-V4.1-Flash，原件 _tmp/20261105-minimax-runner/）
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3", "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
+SYNTHETIC_MODEL = "<synthetic>"  # 网关错误响应（额度 / 断连）的占位 model：不是换了模型，是真没跑成
+API_ERROR_MARK = "API Error:"  # 错误原文前缀，见 _tmp/20261106-issue-1527/review-r30-minimax/
+ERR_QUOTA = "额度耗尽（429）"  # 找人：升级 Token Plan 套餐 / 换 key
+ERR_CONN = "连接断开"  # 查网络 / 代理 / 节点
+ERR_OTHER = "通道错误响应"
+RETRY_MARKS = ("ECONNRESET", "Connection dropped")  # 只重试这一类；把额度 429 也重试只会放大占用
 MINIMAX_BASE_URL = "https://api.minimaxi.com/anthropic"  # MiniMax 官方 Anthropic 兼容接口，Claude Code 自行拼 /v1/messages（与 review-minimax.py 的 API 常量一致）
 DEFAULT_MODEL = {"zai": "glm-5.3-mb", "anthropic": "claude-opus-5-5", "minimax": "MiniMax-M3.1-Flash",
                  "deepseek": "deepseek-v4.1-flash-mb"}  # 通道正本见 state/memory/20261015-model-runners.md
@@ -222,10 +231,55 @@ def validate_final(text: str) -> tuple[str, dict[str, int] | None, str]:
     return "PASS", counts, ""
 
 
+def api_error_text(result: dict) -> str:
+    """错误响应的内嵌原文：优先取带 `API Error:` 的块（断连前可能已有正常正文，别混进来），其余按序兜底。"""
+    texts = [t for t in (result.get("resp_texts") or []) if isinstance(t, str) and t.strip()]
+    res = result.get("result")
+    if isinstance(res, str) and res.strip():
+        texts.append(res)
+    out: list[str] = []
+    for t in [x for x in texts if API_ERROR_MARK in x] or texts:
+        if t not in out:
+            out.append(t)
+    return " ".join(out).strip()
+
+
+def classify_api_error(text: str) -> str:
+    low = text.lower()
+    if "429" in text or "用量上限" in text or "token plan" in low or "quota" in low:
+        return ERR_QUOTA
+    if any(m in text for m in RETRY_MARKS) or "连接" in text:
+        return ERR_CONN
+    return ERR_OTHER
+
+
+def one_line(text: str, limit: int = 300) -> str:
+    """detail 会进 summary 表格：压成一行、限长；表格竖线由写表处统一转义，完整原文仍在 *.jsonl / *.err 里。"""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
 def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int,
              extra_env: dict[str, str] | None = None, model: str = "") -> dict:
-    raw = out_dir / f"{role}.jsonl"
-    err = out_dir / f"{role}.err"
+    """跑一个角色；连接断开（ECONNRESET / Connection dropped）自动重试一次，其它错误不重试。"""
+    rec = run_role_once(role, prompt_path, out_dir, cmd, cwd, timeout, extra_env, model)
+    if not rec.pop("retry_connection", False):
+        return rec
+    first = rec.get("api_error_text") or rec["detail"]
+    rec2 = run_role_once(role, prompt_path, out_dir, cmd, cwd, timeout, extra_env, model, suffix=".retry1")
+    rec2.pop("retry_connection", None)
+    if rec2.get("api_error_kind") == ERR_CONN:
+        rec2["detail"] = f"{ERR_CONN}（重试 1 次后仍失败）：{rec2.get('api_error_text') or '（无内嵌原文）'}"
+    else:
+        rec2["detail"] = f"首次 {ERR_CONN}（{first}），已自动重试 1 次；{rec2['detail'] or 'PASS'}"
+    rec2["retried"] = 1
+    return rec2
+
+
+def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int,
+                  extra_env: dict[str, str] | None = None, model: str = "", suffix: str = "") -> dict:
+    raw = out_dir / f"{role}{suffix}.jsonl"
+    err = out_dir / f"{role}{suffix}.err"
     started = time.time()
     rec: dict = {"role": role, "status": "ERROR", "detail": "", "counts": None, "cost_usd": None,
                  "started": dt.datetime.now().isoformat(timespec="seconds")}
@@ -268,6 +322,12 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
                     if ev.get("type") == "assistant":
                         msg = ev.get("message")
                         result.setdefault("resp_models", set()).add(msg.get("model") if isinstance(msg, dict) else None)
+                        # 错误响应（额度 / 断连）没有正常评审正文，原因只在 assistant 文本块里（real shape 见
+                        # _tmp/20261106-issue-1527/review-r30-minimax/：model=<synthetic> + "API Error: ..."）
+                        if isinstance(msg, dict):
+                            for blk in msg.get("content") or []:
+                                if isinstance(blk, dict) and isinstance(blk.get("text"), str):
+                                    result.setdefault("resp_texts", []).append(blk["text"])
                     if ev.get("type") == "result":
                         result.update(ev)
                 except Exception as e:  # noqa: BLE001 —— pump 必须先杀进程再死，绝不留下未验证的进程
@@ -303,7 +363,26 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
     # 防静默换模型：init 只是本地选择值，还要核后端每条响应的 model 与 modelUsage（审的不是声明的那家，结论不计）
     resp = result.get("resp_models") or set()
     usage = set((result.get("modelUsage") or {}).keys()) if isinstance(result.get("modelUsage"), dict) else set()
-    if model and (result.get("init_model") != model or resp != {RESP_MODEL_ALIAS.get(model, model)} or not usage or usage != {model}):
+    expect = RESP_MODEL_ALIAS.get(model, model)
+    if model and result.get("init_model") != model:
+        rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
+        return rec
+    # 先认「API 错误响应」再判模型：额度 / 断连时网关回 model=<synthetic>、正文是 "API Error: ..."，
+    # 若先比 model 就把真实原因（429 / ECONNRESET）误报成「模型不符」（历史 69 条 ERROR 即此）。
+    # 只有「响应不是期望模型」时才按错误响应处理：正常评审里引用 "API Error:" 字样不得被误判成失败。
+    err_text = api_error_text(result)
+    synthetic = any(m in (None, "", SYNTHETIC_MODEL) for m in resp)
+    if model and not resp:  # 连 assistant 事件都没有：模型根本没用上，报「模型不符」同样是错怪实现方
+        rec["detail"] = f"{ERR_OTHER}：通道没有返回任何模型响应（无 assistant 事件），不是模型不符"
+        return rec
+    if model and (synthetic or (API_ERROR_MARK in err_text and resp != {expect})):
+        kind = classify_api_error(err_text)
+        rec["detail"] = f"{kind}：{one_line(err_text) or '（错误响应没有内嵌原文）'}"
+        rec["api_error_kind"] = kind
+        rec["api_error_text"] = one_line(err_text)
+        rec["retry_connection"] = kind == ERR_CONN and any(mark in err_text for mark in RETRY_MARKS)
+        return rec
+    if model and (resp != {expect} or not usage or usage != {model}):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
         return rec
     rec["cost_usd"] = result.get("total_cost_usd")
@@ -454,8 +533,9 @@ def main() -> int:
     ]
     for r in roles:
         c = results[r]["counts"] or {}
+        detail = (results[r]["detail"] or "—").replace("|", "\\|").replace("\n", " ")
         lines.append(f"| {r} | {results[r]['status']} | {c.get('P0', '-')} | {c.get('P1', '-')} | {c.get('P2', '-')} | "
-                     f"{c.get('P3', '-')} | {results[r].get('seconds')} | {results[r]['detail'] or '—'} |")
+                     f"{c.get('P3', '-')} | {results[r].get('seconds')} | {detail} |")
     lines += ["", f"原件：`{out.relative_to(ROOT)}/`（<角色>.md 为结论，.jsonl/.err 为原始流）"]
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"run-review-roles: {'全部 PASS' if ok else '有非 PASS'}；P0={tot['P0']} P1={tot['P1']} P2={tot['P2']}；见 {out}/summary.md")
