@@ -71,7 +71,7 @@ MUTATIONS = [
     ('bundle-feishu-dropped', loader,
      'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
      'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin"];',
-     FEISHU),
+     [FEISHU]),
 ]
 
 
