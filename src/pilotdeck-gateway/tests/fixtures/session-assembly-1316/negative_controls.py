@@ -26,6 +26,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -240,18 +241,58 @@ def mask_stop_signals():
     signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
 
 
+# #1843 A: the mask above makes SIGTERM/SIGINT undeliverable while the sources
+# are written back. Restoring is a handful of writes plus a `git show` hash
+# check, but "a handful" is not a bound: a hung write or a git that blocks on a
+# textconv filter would hold the masked window open with no signal left to
+# interrupt it, and the runner's only remaining move is a second, SIGKILL
+# attempt. SIGALRM is NOT in STOP_SIGNALS, so a watchdog handler still fires
+# inside the window and can interrupt the blocking call in the main thread.
+# Same class as the measured job-timeout behaviour in `DEADLINE_SECONDS`: bound
+# it here, in a way the runner cannot preempt.
+RESTORE_TIMEOUT_SECONDS = 120
+RESTORE_ALARM = signal.SIGALRM
+_armed_restore_timeout = RESTORE_TIMEOUT_SECONDS
+
+
+class RestoreStalled(BaseException):
+    """The masked restore window outlived its bound."""
+
+
+def _restore_stalled(_signum, _frame):
+    raise RestoreStalled(
+        f'the source restore did not finish within {_armed_restore_timeout}s')
+
+
+def arm_restore_watchdog(timeout=RESTORE_TIMEOUT_SECONDS):
+    """Start the restore bound; `stop_run` disarms it on every exit path."""
+    global _armed_restore_timeout
+    _armed_restore_timeout = timeout
+    signal.signal(RESTORE_ALARM, _restore_stalled)
+    signal.setitimer(signal.ITIMER_REAL, timeout)
+
+
+def disarm_restore_watchdog():
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    signal.signal(RESTORE_ALARM, signal.SIG_DFL)
+
+
 @contextlib.contextmanager
-def restore_window():
-    """Mask cancellation as soon as the body ends.
+def restore_window(timeout=RESTORE_TIMEOUT_SECONDS):
+    """Mask cancellation as soon as the body ends, and bound the restore.
 
     Enters the `with` innermost, so on the way out it runs BEFORE
     `mutating_sources.__exit__`: the sources are restored and re-verified with
-    both stop signals blocked, and `stop_run` unblocks them afterwards.
+    both stop signals blocked, and `stop_run` unblocks them afterwards. The
+    watchdog armed here is what keeps that window finite (#1843 A): a restore
+    that never returns would otherwise be unreachable by SIGTERM and end in
+    the runner's SIGKILL, leaving the tree mutated.
     """
     try:
         yield
     finally:
         mask_stop_signals()
+        arm_restore_watchdog(timeout)
 
 
 class RunStopped(BaseException):
@@ -370,6 +411,29 @@ def append_progress(**fields):
     os.fsync(progress.fileno())
 
 
+def write_source_atomic(path, data):
+    """Publish source bytes in one rename, never a truncating in-place write.
+
+    #1692 §9: `path.write_text` / `write_bytes` truncate first, so a SIGKILL in
+    the middle of the write leaves an empty or half-written source. The next
+    `mutating_sources` preflight reads that as "differs from HEAD" and refuses
+    every later run until a human repairs the tree. The temp file lives in the
+    same directory, so `os.replace` is one atomic rename and a reader only ever
+    sees the old or the new bytes (the pattern `native-config/negative_controls.py`
+    already uses). The temp name is removed on every failure path so it cannot
+    become an untracked build input.
+    """
+    temporary = path.with_name(path.name + '.negctl.tmp')
+    try:
+        with temporary.open('wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 @contextlib.contextmanager
 def stop_run():
     """Record a deadline / SIGTERM as `timed_out` instead of killing the run.
@@ -384,10 +448,21 @@ def stop_run():
     except RunStopped as error:
         timed_out = f'{type(error).__name__}: {error}'
         print(f'run stopped before finishing: {timed_out}', file=sys.stderr, flush=True)
+    except RestoreStalled as error:
+        # #1843 A: the restore ran out of its bound. Publishing a summary here
+        # would claim a verified restore while the tree may still hold a mutant
+        # (#979 P0 / #1076), so the contract is the same as any other failed
+        # restore: no summary at all, non-zero exit, loud diagnostic.
+        raise SystemExit(f'restore did not finish before the run was cut off: {error}; '
+                         'no summary published, sources may still be mutated')
     finally:
         # The restore is done and verified by now (the body masks signals while
         # it unwinds). From here on a cancellation would only truncate the
         # summary, so ignore both and drop anything that arrived while masked.
+        # The restore watchdog is disarmed FIRST: it guards the masked window
+        # only, and leaving it armed would turn a slow summary write into a
+        # `RestoreStalled` after the sources were already restored (#1843 A).
+        disarm_restore_watchdog()
         for sig in STOP_SIGNALS:
             signal.signal(sig, signal.SIG_IGN)
         signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
@@ -485,7 +560,34 @@ def deadline_probe():
                                 'the deadline raised')
             else:
                 print('deadline probe log: collected output written before raising', flush=True)
+            # #1843 B (the third fix-r1 P1 guard): `take_slot` re-routes the
+            # slot guard's own `sys.exit` into TIMEOUT only while the OVERALL
+            # budget is what ran out. Without that branch a deadline that
+            # expires while waiting for a slot leaves through `acquire_slot`'s
+            # plain SystemExit - no summary, no TIMEOUT row - which is exactly
+            # the outcome §1/§4 exist to prevent. The refusal above cannot
+            # cover it: that path raises AssertionError, not SystemExit.
+            def gate_exit(*_args, **_kwargs):
+                # Live when `bounded()` caps the wait, expired by the time the
+                # gate's own exit is handled: the only shape in which the
+                # re-route branch is what decides the outcome.
+                time.sleep(0.1)
+                raise SystemExit('cargo slots unavailable for 600s')
+
+            wait_for_slot = gate_exit
+            deadline = time.monotonic() + 0.05
+            try:
+                take_slot('probe')
+            except RunDeadlineExceeded as error:
+                print(f'deadline probe slot-guard exit: re-routed to TIMEOUT ({error})',
+                      flush=True)
+            except SystemExit as error:
+                problems.append('slot-guard exit: exited instead of reporting TIMEOUT: '
+                                f'{error}')
+            else:
+                problems.append('slot-guard exit: neither TIMEOUT nor exit')
             run_owned = refuse
+            wait_for_slot = refuse
             deadline = time.monotonic()
             append_progress(event='probe', status='OK')
             lines = (out / 'progress.jsonl').read_text().splitlines()
@@ -521,6 +623,237 @@ def deadline_probe():
             if progress is not None:
                 progress.close()
             deadline, deadline_budget, out, progress, env, run_owned, wait_for_slot = saved
+    return problems
+
+
+def slot_timeout_probe():
+    """#1692 r15-1: `acquire_slot` refuses non-finite / non-positive budgets.
+
+    `deadline_probe`'s bad-value table only covers the STRING form of the env
+    override (`deadline_seconds`). The float guard on the slot wait itself was
+    never exercised: every caller passes a positive literal, so `math.isfinite`
+    and the `<= 0` test could both be deleted and every self-check case stayed
+    green. inf / nan / -1 are exactly the values that break `wait_for_slot`'s
+    deadline arithmetic (inf: the comparison is always true; nan: never true;
+    -1: expired before the first sample), so each needs its own refusal, and a
+    finite positive budget must still reach the shared helper unchanged.
+    """
+    global wait_for_slot
+    problems = []
+    saved = wait_for_slot
+    seen = []
+    gate = Path('/nonexistent/negctl-1316-slot-guard.sh')
+
+    def recorder(script, *, timeout=SLOT_TIMEOUT_SECONDS):
+        seen.append((Path(script), timeout))
+        return subprocess.CompletedProcess([], 0, 'cargo-slots: 0 / cap 1\n', '')
+
+    try:
+        wait_for_slot = recorder
+        for bad in (float('inf'), float('-inf'), float('nan'), -1, 0):
+            try:
+                acquire_slot(script=gate, timeout=bad)
+            except SystemExit as error:
+                if 'must be finite and positive' not in str(error):
+                    problems.append(f'slot timeout {bad!r}: exited without the refusal '
+                                    f'message: {error}')
+            except BaseException as error:  # noqa: BLE001 - any other path is red
+                problems.append(f'slot timeout {bad!r}: {type(error).__name__} instead of '
+                                'the explicit sys.exit')
+            else:
+                problems.append(f'slot timeout {bad!r} was not refused')
+        if seen:
+            problems.append(f'slot timeout: a refused budget still reached the slot wait: '
+                            f'{seen!r}')
+        acquire_slot(script=gate, timeout=5)
+        if seen != [(gate, 5)]:
+            problems.append('slot timeout: a finite positive budget did not reach the '
+                            f'shared helper unchanged: {seen!r}')
+        elif not problems:
+            print('slot timeout probe: inf / -inf / nan / -1 / 0 refused, 5 s passed through',
+                  flush=True)
+    finally:
+        wait_for_slot = saved
+    return problems
+
+
+def _send_signals_after(signals):
+    """Send process-directed signals from a helper thread, main thread delivery.
+
+    `pthread_sigmask` is per thread: the helper blocks the stop signals in
+    itself so the kernel delivers them to the main thread, which is the thread
+    the fixture's handlers run on.
+    """
+    def run():
+        signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+        for sig, delay in signals:
+            time.sleep(delay)
+            os.kill(os.getpid(), sig)
+    return threading.Thread(target=run, daemon=True)
+
+
+def restore_probe():
+    """#1843 A/B: the masked restore window, the double-signal disarm, the bound.
+
+    Three invariants, each with its own meta control:
+      * a stop signal that arrives while the sources are being written back
+        must not interrupt the restore (the window masks it; `stop_run` turns
+        the pending one into an ignored signal afterwards);
+      * the FIRST stop signal disarms BOTH, so a second one cannot raise again
+        inside the restore - the mask is per thread, so this is the only
+        process-wide guarantee that a second delivery cannot land on a thread
+        where the signal is still unblocked;
+      * a restore that never returns is cut off by the SIGALRM watchdog
+        instead of waiting for the runner's second, SIGKILL attempt.
+    """
+    problems = []
+    saved_handlers = {sig: signal.getsignal(sig) for sig in STOP_SIGNALS}
+
+    @contextlib.contextmanager
+    def simulated_restore(delay, record, cap=5.0):
+        """Stand-in for `mutating_sources.__exit__`'s write-back."""
+        try:
+            yield
+        finally:
+            started = time.monotonic()
+            try:
+                time.sleep(min(delay, cap))
+            except BaseException as error:  # noqa: BLE001 - recording is the point
+                record['interrupted'] = f'{type(error).__name__}: {error}'
+                raise
+            record['elapsed'] = time.monotonic() - started
+
+    try:
+        with tempfile.TemporaryDirectory(prefix='negctl-1316-restore-'):
+            # (1) A cancellation that lands DURING the restore is masked: the
+            # restore runs to completion and the signal is dropped afterwards.
+            # Deleting `mask_stop_signals()` makes the handler raise inside the
+            # write-back, which is the "tree left mutated" failure.
+            record = {}
+            signal.signal(signal.SIGTERM, _stop_on_signal)
+            signal.signal(signal.SIGINT, _stop_on_signal)
+            sender = _send_signals_after([(signal.SIGTERM, 0.3)])
+            sender.start()
+            with stop_run(), simulated_restore(0.8, record), restore_window(timeout=10):
+                pass
+            sender.join(timeout=5)
+            if 'interrupted' in record:
+                problems.append('restore window: the stop signal interrupted the restore ('
+                                f"{record['interrupted']})")
+            elif record.get('elapsed', 0) < 0.7:
+                problems.append('restore window: the simulated restore did not run to '
+                                f"completion ({record.get('elapsed')!r}s)")
+            else:
+                print('restore probe: a stop signal during the restore did not '
+                      'interrupt it', flush=True)
+            # (2) One stop signal disarms both. Called directly, with both
+            # handlers first armed for real: probe (1) ends in `stop_run`, whose
+            # `finally` turns them into SIG_IGN, so inheriting that state would
+            # make this case pass no matter what the handler does.
+            signal.signal(signal.SIGTERM, _stop_on_signal)
+            signal.signal(signal.SIGINT, _stop_on_signal)
+            try:
+                _stop_on_signal(signal.SIGINT, None)
+            except RunTerminated:
+                pass
+            else:
+                problems.append('stop signal: the handler did not raise RunTerminated')
+            still_armed = [sig.name for sig in STOP_SIGNALS
+                           if signal.getsignal(sig) is not signal.SIG_IGN]
+            if still_armed:
+                problems.append('stop signal: a second delivery would raise again inside '
+                                f'the restore ({", ".join(still_armed)} still handled)')
+            else:
+                print('restore probe: the first stop signal disarmed both', flush=True)
+            # (3) The restore is bounded. `simulated_restore` caps its sleep at
+            # 5 s, so an unarmed watchdog shows up as a 5 s window, not a hang.
+            record = {}
+            started = time.monotonic()
+            try:
+                with simulated_restore(30, record), restore_window(timeout=0.3):
+                    pass
+            except RestoreStalled as error:
+                elapsed = time.monotonic() - started
+                if elapsed >= 3:
+                    problems.append(f'restore watchdog: fired after {elapsed:.1f}s for a '
+                                    '0.3 s bound')
+                else:
+                    print(f'restore probe: a stalled restore was cut off after '
+                          f'{elapsed:.1f}s ({error})', flush=True)
+            else:
+                problems.append('restore watchdog: a stalled restore was not cut off '
+                                f'after {time.monotonic() - started:.1f}s')
+            # (4) And the bound must leave through the fail-closed path: a
+            # non-zero exit with no summary. Swallowing `RestoreStalled` would
+            # let the run publish a summary that claims a verified restore.
+            record = {}
+            try:
+                with stop_run(), simulated_restore(30, record), restore_window(timeout=0.2):
+                    pass
+            except SystemExit as error:
+                if 'no summary published' not in str(error):
+                    problems.append('restore watchdog: exited without the fail-closed '
+                                    f'diagnostic: {error}')
+                else:
+                    print('restore probe: a stalled restore exits non-zero with no '
+                          'summary', flush=True)
+            except BaseException as error:  # noqa: BLE001 - any other path is red
+                problems.append('restore watchdog: left via '
+                                f'{type(error).__name__} instead of the fail-closed exit')
+            else:
+                problems.append('restore watchdog: a stalled restore returned normally')
+    finally:
+        disarm_restore_watchdog()
+        for sig, handler in saved_handlers.items():
+            signal.signal(sig, handler)
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
+    return problems
+
+
+def dispatch_probe():
+    """#1692 r15-4: every mode takes an exact argument list, end to end.
+
+    The structural pin in `test_metadata_io_driver.py` proves the dispatcher is
+    still there; this proves what it does. Before the rewrite the two flags were
+    matched differently, so `--self-check extra` fell through to the main path:
+    it was read as an output directory plus a mutation name, and an unknown
+    `--flag` could become a directory. Every case below runs the fixture itself
+    in a throwaway cwd, so a fall-through shows up as either the wrong
+    diagnostic or a created path - never as a silent full run.
+    """
+    problems = []
+    invocations = (
+        (['--slot-guard-probe', 'only-one'], 'takes exactly 2 arguments'),
+        (['--slot-guard-probe', '/bin/true', 'not-a-timeout'], 'not a timeout'),
+        # A name that is not a mutation either, so a fall-through fails fast
+        # instead of starting the whole mutation suite.
+        (['--made-up-mode', 'extra'], 'unknown mode'),
+    )
+    # `--self-check extra` is NOT driven here: with its arity guard removed that
+    # child would simply start a full `--self-check`, i.e. spawn this probe again
+    # and recurse. The static pin in `test_metadata_io_driver.py` owns that line
+    # (and the manual invocation in the PR body shows the verdict).
+    with tempfile.TemporaryDirectory(prefix='negctl-1316-dispatch-') as directory:
+        for arguments, needle in invocations:
+            label = ' '.join(arguments)
+            try:
+                result = run_owned([sys.executable, '-I', str(Path(__file__).resolve()),
+                                    *arguments], cwd=directory, timeout=60)
+            except subprocess.TimeoutExpired:
+                problems.append(f'dispatch {label}: fell through to the main path '
+                                'instead of refusing')
+                continue
+            text = result.stdout + result.stderr
+            if result.returncode == 0:
+                problems.append(f'dispatch {label}: exited 0')
+            elif needle not in text:
+                problems.append(f'dispatch {label}: no usage diagnostic: {text[-200:]}')
+        created = sorted(entry.name for entry in Path(directory).iterdir())
+        if created:
+            problems.append(f'dispatch: an argument became an output path: {created}')
+        if not problems:
+            print('dispatch probe: extra arguments and unknown modes are usage errors',
+                  flush=True)
     return problems
 
 
@@ -635,37 +968,56 @@ def self_check(timeout=2, wall=60):
         # its exit-code contract. rc alone is not a verdict - 1 is also what a
         # crashed or missing gate produces - so each code must carry its own
         # diagnostic (review P2).
-        started = time.monotonic()
-        try:
-            result = run_owned(
-                [sys.executable, '-I', str(Path(__file__).resolve()), '--slot-guard-probe',
-                 str(root / 'scripts/cargo-slots.sh'), str(timeout)],
-                timeout=wall)
-        except subprocess.TimeoutExpired:
-            result = None
-        elapsed = time.monotonic() - started
-        if result is None:
-            problems.append(f'real gate: never returned within {wall}s')
-        elif result.returncode == 0:
-            if 'slot free:' not in result.stdout + result.stderr:
-                problems.append('real gate: rc=0 without the guard reporting a slot')
-            elif elapsed >= timeout + 3:
-                problems.append(f'real gate: took {elapsed:.1f}s for a {timeout}s deadline')
+        #
+        # #1843 F: but the real gate's verdict is also this HOST's verdict -
+        # busy, cold-bootstrapping, or an ops install that is mid-update all
+        # change rc with nothing wrong with the guard, and under load that
+        # turned a whole `--self-check-controls` run INVALID. CI is the one
+        # environment that is fixed (a runner has no `~/ws/pdrs-ops`, so
+        # cargo-slots.sh answers rc 69 -> "slot free"), so the real-gate probe
+        # runs there and is reported as skipped everywhere else. The six stub
+        # gates keep covering 0/1/2/3/4/64 on every host.
+        if os.environ.get('CI') == 'true':
+            started = time.monotonic()
+            try:
+                result = run_owned(
+                    [sys.executable, '-I', str(Path(__file__).resolve()), '--slot-guard-probe',
+                     str(root / 'scripts/cargo-slots.sh'), str(timeout)],
+                    timeout=wall)
+            except subprocess.TimeoutExpired:
+                result = None
+            elapsed = time.monotonic() - started
+            if result is None:
+                problems.append(f'real gate: never returned within {wall}s')
+            elif result.returncode == 0:
+                if 'slot free:' not in result.stdout + result.stderr:
+                    problems.append('real gate: rc=0 without the guard reporting a slot')
+                elif elapsed >= timeout + 3:
+                    problems.append(f'real gate: rc=0 took {elapsed:.1f}s for a '
+                                    f'{timeout}s deadline')
+                else:
+                    print(f'self-check real cargo-slots.sh: exit rc=0 in {elapsed:.1f}s',
+                          flush=True)
+            elif result.returncode == 1:
+                if 'cargo slots unavailable' not in result.stdout + result.stderr:
+                    problems.append('real gate: rc=1 without the bounded-busy verdict '
+                                    '(gate broken rather than busy)')
+                elif elapsed >= timeout + 3:
+                    problems.append(f'real gate: rc=1 took {elapsed:.1f}s for a '
+                                    f'{timeout}s deadline')
+                else:
+                    print(f'self-check real cargo-slots.sh: exit rc=1 (busy) in '
+                          f'{elapsed:.1f}s', flush=True)
             else:
-                print(f'self-check real cargo-slots.sh: exit rc=0 in {elapsed:.1f}s', flush=True)
-        elif result.returncode == 1:
-            if 'cargo slots unavailable' not in result.stdout + result.stderr:
-                problems.append('real gate: rc=1 without the bounded-busy verdict '
-                                '(gate broken rather than busy)')
-            elif elapsed >= timeout + 3:
-                problems.append(f'real gate: took {elapsed:.1f}s for a {timeout}s deadline')
-            else:
-                print(f'self-check real cargo-slots.sh: exit rc=1 (busy) in '
-                      f'{elapsed:.1f}s', flush=True)
+                problems.append('real gate: expected a bounded 0/1 verdict, '
+                                f'got rc={result.returncode}')
         else:
-            problems.append('real gate: expected a bounded 0/1 verdict, '
-                            f'got rc={result.returncode}')
+            print('self-check real cargo-slots.sh: skipped outside CI '
+                  '(this host\'s slot state is not a verdict about the guard)', flush=True)
     problems.extend(deadline_probe())
+    problems.extend(slot_timeout_probe())
+    problems.extend(restore_probe())
+    problems.extend(dispatch_probe())
     for problem in problems:
         print('self-check FAILED: ' + problem, file=sys.stderr)
     if problems:
@@ -706,9 +1058,9 @@ COPY_ROOT_LINE = ('root = Path({root!r})\n'
 # `str(root / 'scripts/cargo-slots.sh')` text also appears in this very
 # definition, and a non-unique anchor is INVALID, not a kill.
 REAL_GATE_ARG = ("'--slot-guard-probe',\n"
-                 "                 str(root / 'scripts/cargo-slots.sh'), str(timeout)],")
+                 "                     str(root / 'scripts/cargo-slots.sh'), str(timeout)],")
 STUB_GATE_ARG = ("'--slot-guard-probe',\n"
-                 "                 str(Path(__file__).resolve().parent "
+                 "                     str(Path(__file__).resolve().parent "
                  "/ 'cargo-slots-free.sh'), str(timeout)],")
 STUB_GATE_TEXT = '#!/bin/sh\necho "cargo-slots: 0 / cap 1"\nexit 0\n'
 # Each meta-control copy runs a full `--self-check` (measured 12-13 s per copy,
@@ -787,6 +1139,66 @@ self_check_controls = [
      [('            if log_path is not None:\n'
        '                log_path.write_text(collected)\n', '')],
      True, 'no log was written before the deadline raised', None),
+    # #1843 B: `take_slot`'s re-route is the only thing that turns the slot
+    # guard's own `sys.exit` into a TIMEOUT row while the OVERALL budget is what
+    # ran out. Drop it and the probe sees the plain exit instead.
+    ('slot-guard-exit-not-rerouted',
+     [('        if deadline - time.monotonic() <= 0:\n'
+       '            raise RunDeadlineExceeded(\n'
+       "                f'{name}: overall deadline of {deadline_budget}s reached while '\n"
+       "                'waiting for a cargo slot')\n", '')],
+     True, 'slot-guard exit: exited instead of reporting TIMEOUT', None),
+    # #1692 r15-1: the finite-and-positive guard is the only thing standing
+    # between inf/nan/-1/0 and a wait that never expires. Without it every bad
+    # budget reaches the shared helper.
+    ('slot-timeout-guard-removed',
+     [('    if not math.isfinite(timeout) or timeout <= 0:\n'
+       '        # float(\'inf\')/nan 会让 deadline 比较永远成立（或永远不成立），必须先拒。\n'
+       "        sys.exit(f'slot timeout must be finite and positive: {timeout!r}')\n", '')],
+     True, 'was not refused', None),
+    # #1843 A: the mask is what keeps a cancellation from interrupting the
+    # write-back; without it the signal lands inside the restore.
+    ('restore-mask-removed',
+     [('        mask_stop_signals()\n'
+       '        arm_restore_watchdog(timeout)\n',
+       '        arm_restore_watchdog(timeout)\n')],
+     True, 'the stop signal interrupted the restore', None),
+    # #1843 B: disarming BOTH signals on the first delivery is the process-wide
+    # half of the fix; without it the probe sees a live handler afterwards.
+    ('stop-signal-second-armed',
+     [('    for sig in STOP_SIGNALS:\n'
+       '        signal.signal(sig, signal.SIG_IGN)\n'
+       "    raise RunTerminated(f'signal {signum} before the run finished')\n",
+       "    raise RunTerminated(f'signal {signum} before the run finished')\n")],
+     True, 'a second delivery would raise again inside the restore', None),
+    # #1843 A: the SIGALRM watchdog is the only bound on the masked window.
+    # Without it the stalled restore simply runs to the simulated cap.
+    ('restore-watchdog-removed',
+     [('        mask_stop_signals()\n'
+       '        arm_restore_watchdog(timeout)\n',
+       '        mask_stop_signals()\n')],
+     True, 'a stalled restore was not cut off', None),
+    # #1843 A: and the bound has to leave fail-closed. Without the translation
+    # the stalled restore escapes as a bare RestoreStalled instead of the
+    # "no summary published" exit.
+    ('restore-failclosed-removed',
+     [('    except RestoreStalled as error:\n'
+       '        # #1843 A: the restore ran out of its bound. Publishing a summary here\n'
+       '        # would claim a verified restore while the tree may still hold a mutant\n'
+       '        # (#979 P0 / #1076), so the contract is the same as any other failed\n'
+       '        # restore: no summary at all, non-zero exit, loud diagnostic.\n'
+       "        raise SystemExit(f'restore did not finish before the run was cut off: "
+       "{error}; '\n"
+       "                         'no summary published, sources may still be mutated')\n",
+       '')],
+     True, 'left via RestoreStalled instead of the fail-closed exit', None),
+    # #1692 r15-4: without the unknown-mode guard a `--flag` becomes a main-path
+    # argument instead of a usage error.
+    ('unknown-mode-guard-removed',
+     [("if mode is not None and mode.startswith('--'):\n"
+       "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')\n",
+       'if False:\n    pass\n')],
+     True, 'dispatch --made-up-mode extra: no usage diagnostic', None),
 ]
 
 if not self_check_controls:
@@ -813,9 +1225,11 @@ def _self_check_variant(name, replacements, directory):
                 text = text.replace(old, new, 1)
         if count != 1:
             raise ValueError(f'{name}: anchor {old!r} matches {count} times')
-    path = directory / f'{name}.py'
-    path.write_text(text)
-    return path
+    # Named `copy_path`, not `path`: the only `path.write_*` in this file must be
+    # the source writes, so the §9 structural guard can forbid them by name.
+    copy_path = directory / f'{name}.py'
+    copy_path.write_text(text)
+    return copy_path
 
 
 def self_check_controls_run():
@@ -877,25 +1291,38 @@ def self_check_controls_run():
     return problems
 
 
-if sys.argv[1:2] == ['--slot-guard-probe']:
-    # Child mode driven by `self_check`: run the real guard against a gate that
-    # is always busy. Returning here at all would mean the wait was unbounded.
-    if len(sys.argv) != 4:
-        sys.exit('usage: --slot-guard-probe BUSY_SLOT_SCRIPT TIMEOUT_SECONDS')
+# #1692 r15-4: ONE dispatch rule for every mode. The two flags used to be
+# matched differently - `--slot-guard-probe` by prefix plus an arity check,
+# `--self-check` by whole-argv equality - so `negative_controls.py --self-check
+# extra` fell through to the main path and created a DIRECTORY named
+# `--self-check`. Every mode now takes an exact argument list, extra arguments
+# are a usage error, and an unknown `--flag` can never become an output path.
+USAGE = ('usage: negative_controls.py OUT_DIR [MUTATION ...] | --self-check | '
+         '--self-check-controls | --slot-guard-probe SLOT_SCRIPT TIMEOUT_SECONDS')
+mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
+if mode == '--slot-guard-probe':
+    # Child mode driven by `self_check`: run the guard against a gate. Returning
+    # here at all would mean the wait was unbounded.
+    if len(arguments) != 2:
+        sys.exit(f'--slot-guard-probe takes exactly 2 arguments\n{USAGE}')
     try:
-        probe_timeout = float(sys.argv[3])
+        probe_timeout = float(arguments[1])
     except ValueError:
-        sys.exit(f'--slot-guard-probe: not a timeout: {sys.argv[3]!r}')
-    slots = acquire_slot(script=Path(sys.argv[2]), timeout=probe_timeout)
+        sys.exit(f'--slot-guard-probe: not a timeout: {arguments[1]!r}')
+    slots = acquire_slot(script=Path(arguments[0]), timeout=probe_timeout)
     print(f'slot free: {slots.stdout.strip()}', flush=True)
     sys.exit(0)
-if sys.argv[1:] == ['--self-check']:
-    sys.exit(self_check())
-if sys.argv[1:] == ['--self-check-controls']:
+if mode in ('--self-check', '--self-check-controls'):
+    if arguments:
+        sys.exit(f'{mode} takes no arguments: {arguments!r}\n{USAGE}')
+    if mode == '--self-check':
+        sys.exit(self_check())
     control_problems = self_check_controls_run()
     for problem in control_problems:
         print('self-check control FAILED: ' + problem, file=sys.stderr)
     sys.exit(1 if control_problems else 0)
+if mode is not None and mode.startswith('--'):
+    sys.exit(f'unknown mode: {mode}\n{USAGE}')
 
 selected = sys.argv[2:]
 if selected:
@@ -972,7 +1399,8 @@ with stop_run(), mutating_sources(
                 fromfile=filename, tofile=filename)))
             take_slot(name)
             append_progress(event='mutation-start', name=name)
-            path.write_text(changed)
+            # #1692 §9: one rename, never a truncating in-place write.
+            write_source_atomic(path, changed.encode())
             log_path = out / f'{name}.log'
             code, log = run(full, log_path=log_path)
             log_path.write_text(log)
@@ -1001,7 +1429,10 @@ with stop_run(), mutating_sources(
                             reason=f'{type(error).__name__}: {error}')
             failures.append(name)
         finally:
-            path.write_bytes(original)
+            # #1692 §9: same rule on the way back. A KILL inside a truncating
+            # `write_bytes` leaves an empty source that reads as "differs from
+            # HEAD" on the next run; the rename leaves the old bytes instead.
+            write_source_atomic(path, original)
             # A restore that does not verify must fail loudly; an assert here is
             # stripped by `python3 -O` (#1632 P2-2). `mutating_sources` re-checks
             # the whole guarded set on exit, this is the per-mutant check.
