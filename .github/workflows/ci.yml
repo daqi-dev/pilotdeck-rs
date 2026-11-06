@@ -301,6 +301,7 @@ jobs:
           python3 -I scripts/test-review-roles.py
           python3 -I scripts/test-check-taskbook-segments.py
           python3 -I scripts/test-check-frozen-delivery.py
+          python3 -I scripts/parity-attrib/test_frame_attrib.py
           bash scripts/test-pdrs-loop.sh
           bash scripts/test-worktree-count.sh
           bash scripts/test-disk-budget.sh
