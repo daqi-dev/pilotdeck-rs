@@ -60,7 +60,14 @@ merge-base starts there from ``-``.  A dirty tracked working tree is blocking:
 the apparatus hashes working-tree bytes, so HEAD could otherwise hide behind
 uncommitted changes.
 
-Read-only.  It never runs ``--write`` and never edits the tree.
+Read-only with a verifiable write scope.  It never runs ``--write`` and never
+writes into the audited worktree: every child apparatus runs in a throwaway
+checkout of the pinned commit (``git worktree add --detach``), so neither a
+moving ``HEAD`` nor a file edit in the audited tree can reach it.  The audited
+tree's ``git status`` (tracked and untracked) is compared before and after the
+run, and any difference is blocking.  The only writes outside temporary
+directories are git's own worktree bookkeeping under ``.git/worktrees``, which
+is removed again before the tool exits.
 
 Usage:
     python3 -I scripts/check-frozen-delivery.py [--root PATH] [--base REF]
@@ -85,13 +92,30 @@ import ast
 import hashlib
 import json
 import re
+import shutil
 import subprocess
+import tempfile
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
-ACCEPT_HASH_LIST = 'hash list differs from generated inventory'
+# The only hash-list message the three apparatuses emit (verbatim).  A substring
+# test accepted a composite message that merely *contained* the known phrase --
+# e.g. "hash list differs from generated inventory; permission denied" -- as
+# reducible, i.e. a false READY for a report the real gate would refuse.
+HASH_LIST_MSG = 'hash list differs from generated inventory; run check_frozen.py --write'
 BLOCK_MARKERS = ('lacks exact new event chain', 'missing', 'unregistered', 'cannot')
-LACKS_CHAIN = re.compile(r'(.+?): hash change lacks exact new event chain')
+# Full message, suffix included: the apparatus always appends the parenthetical,
+# so an unknown tail is a different failure, not this one.
+LACKS_CHAIN = re.compile(r'(.+?): hash change lacks exact new event chain '
+                         r'\(or has stale/duplicate event\)')
+# A registered file whose bytes the apparatus could not read because the branch
+# deletes it (parity/gateway ``check()``).  ``Errno 2`` is ENOENT everywhere; the
+# human-readable part after it is locale-dependent, so only the errno is matched.
+MISSING_FILE = re.compile(r'(.+?): \[Errno 2\] .+')
+# ``check_registration`` aborts this way when ``new_hashes`` cannot read a row
+# the current manifest still lists -- exactly the pre-``--write`` deletion case.
+ABORTED_REGISTRATION = re.compile(r'cannot verify registration base \S+: (.+)')
+NONREGULAR_FILE = re.compile(r'nonregular frozen file: (.+)')
 A2_MISSING = re.compile(r'A2 apparatus missing FROZEN hash: (.+)')
 UNREGISTERED = re.compile(r'unregistered/missing file: (.+)')
 UNEXPECTED_REGISTERED = re.compile(r'unexpected registered file: (.+)')
@@ -360,11 +384,70 @@ def event_evidence(root, kind, mb):
         reviews = re.findall(r'^Independent-Reviews:([^\n]*)$', text, re.M)
         if len(reviews) == 1 and reviews[0].strip().startswith(PENDING_PREFIX):
             pending.add(path.name)
+        # Validate *every* Change: row here, not only the ones that happen to
+        # parse.  A Pending: review makes the real apparatus raise on the review
+        # field before it ever reaches the row loop, so a malformed row, an
+        # equal-hash row or a duplicate would stay invisible until the reviews
+        # are backfilled -- then the gate fails on a delivery this tool called
+        # READY.  The row rules mirror the apparatus's ``read_events`` exactly.
+        changes = []
+        malformed = False
         for line in text.splitlines():
+            if not line.startswith('Change:'):
+                continue
             match = EVENT_CHANGE.fullmatch(line)
-            if match:
-                edges.append((path.name, match.group(3), match.group(1), match.group(2)))
+            if not match:
+                issues.append(f'{relative}: invalid Change row')
+                malformed = True
+                continue
+            name = match.group(3)
+            if (Path(name).is_absolute() or PurePosixPath(name).as_posix() != name
+                    or '..' in PurePosixPath(name).parts or match.group(1) == match.group(2)):
+                issues.append(f'{relative}: invalid Change path or equal hashes')
+                malformed = True
+                continue
+            changes.append((name, match.group(1), match.group(2)))
+        if not changes and not malformed:
+            issues.append(f'{relative}: event file has no Change row '
+                          '(the real gate reports missing/duplicate Change rows)')
+        if len(changes) != len(set(changes)):
+            issues.append(f'{relative}: duplicate Change row')
+        edges.extend((path.name, name, old, new) for name, old, new in changes)
+    # No event row may sit outside an exact chain: the real gate reports that as
+    # a stale/duplicate event, and before this check the same rows were invisible
+    # whenever the file (or a sibling event) was still Pending.
+    for name in sorted({name for _, name, _, _ in edges}):
+        if not chain_backed(root, kind, edges, name, mb):
+            issues.append(f'{name}: event row is not part of an exact chain from the '
+                          'merge-base row to the bytes --write will pin '
+                          '(the real gate reports a stale/duplicate event)')
     return edges, pending, issues
+
+
+def row_targets(root, kind, path, mb):
+    """(merge-base pin, target pin) for ``path``, or None when either is unknown.
+
+    The target is "what the new manifest will pin": the HEAD bytes when --write
+    would register the path, '-' when it drops or never had the row (a deleted
+    file *and* a member removed from the inventory while the file stays tracked
+    both end at '-', exactly like ``new_hashes.get(name, '-')``).
+    """
+    if not mb:
+        return None
+    registration = registrable(root, kind, path)
+    if registration is None:
+        return None  # cannot tell -> nothing is provable (fail closed)
+    if registration is False:
+        target = '-'
+    else:
+        state, actual = blob_at(root, pinned_head(), path)
+        if state is not True or actual is None:
+            return None
+        target = actual
+    base = base_digest(root, kind, mb, path)
+    if base is None:
+        return None
+    return base, target
 
 
 def chain_backed(root, kind, edges, path, mb):
@@ -379,24 +462,11 @@ def chain_backed(root, kind, edges, path, mb):
     Bytes come from HEAD, not the working tree: an uncommitted edit must not be
     able to complete a chain the branch does not contain.
     """
-    # The target is "what the new manifest will pin": the HEAD bytes when
-    # --write would register the path, '-' when it drops or never had the row
-    # (a deleted file *and* a member removed from the inventory while the file
-    # stays tracked both end at '-', exactly like ``new_hashes.get(name, '-')``).
-    if not mb:
+    targets = row_targets(root, kind, path, mb)
+    if targets is None:
         return False
-    registration = registrable(root, kind, path)
-    if registration is None:
-        return False  # cannot tell -> nothing is provable (fail closed)
-    if registration is False:
-        target = '-'
-    else:
-        state, actual = blob_at(root, pinned_head(), path)
-        if state is not True or actual is None:
-            return False
-        target = actual
-    base = base_digest(root, kind, mb, path)
-    if base is None or base == target:
+    base, target = targets
+    if base == target:
         return False
     remaining = [(old, new) for _, name, old, new in edges if name == path]
     current = base
@@ -410,6 +480,47 @@ def chain_backed(root, kind, edges, path, mb):
         remaining.remove(edge)
         current = edge[1]
     return current == target and not remaining
+
+
+def registration_ok(root, kind, edges, path, mb):
+    """True when this path needs no event chain, or its exact chain is present."""
+    targets = row_targets(root, kind, path, mb)
+    if targets is None:
+        return False
+    base, target = targets
+    return True if base == target else chain_backed(root, kind, edges, path, mb)
+
+
+def base_event_issues(root, kind, mb):
+    """Event files that changed since the merge-base (the gate's append-only half).
+
+    ``check_registration`` verifies this *after* the loop that can abort on a
+    deleted row, so the precheck has to re-prove it before it may accept that
+    abort: a rewritten historical event would otherwise ride along unseen.
+    """
+    if not mb:
+        return []
+    prefix = f'specs/{kind}/frozen/'
+    code, out, err = git(root, 'ls-tree', '-r', '-z', mb, '--', prefix)
+    if code:
+        return [f'cannot list {prefix} at the merge-base: {err.strip()}']
+    issues = []
+    for entry in filter(None, out.split('\0')):
+        meta, raw_path = entry.split('\t', 1)
+        mode, kind_name, oid = meta.split()
+        name = raw_path
+        if mode != '100644' or kind_name != 'blob':
+            issues.append(f'{name}: base event is not a regular file (append-only)')
+            continue
+        head_code, head_out, _ = git(root, 'rev-parse', '--verify', '--quiet',
+                                     f'{pinned_head()}:{name}')
+        if head_code or head_out.strip() != oid:
+            issues.append(f'{name}: base event changed/deleted/renamed (append-only)')
+            continue
+        path = root / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o111:
+            issues.append(f'{name}: base event changed/deleted/renamed (append-only)')
+    return issues
 
 
 # ------------------------------------------------------------ classification
@@ -3159,17 +3270,90 @@ def dropped_rows(root, kind, mb):
     return dropped, issues
 
 
+def dropped_path(ctx, name):
+    """Repo-relative path when ``name`` is a row --write drops *and* the exact
+    ``Change: <old> -`` chain backs the deletion; else None.
+
+    A deletion is legitimate only when the row really disappears from the
+    regenerated manifest (``dropped``) and the event chain ends at ``-``.  Both
+    halves are checked independently here, so accepting the raw missing-file
+    message cannot widen acceptance to any other failure.
+    """
+    relative = strip_reported(name)
+    if relative is None or relative not in (ctx.get('dropped') or ()):
+        return None
+    if not chain_backed(ctx['root'], ctx['kind'], ctx['edges'], relative, ctx['mb']):
+        return None
+    return relative
+
+
+def aborted_path(ctx, detail):
+    """Repo-relative path named by an aborted ``check_registration``, or None."""
+    match = NONREGULAR_FILE.fullmatch(detail)
+    if match:
+        return strip_reported(match.group(1))
+    if '[Errno 2]' in detail:
+        # "[Errno 2] <locale text>: '<absolute path>'" -- take the quoted tail.
+        tail = detail.rsplit(': ', 1)[-1].strip().strip("'\"")
+        return repo_relative(ctx['root'], tail)
+    return None
+
+
+def registration_gaps(root, kind, mb, edges, added):
+    """Registration facts an aborted ``check_registration`` never got to check.
+
+    Empty means this tool proves everything the aborted half would have decided:
+    every merge-base row still matches its pinned bytes or ends at its exact
+    chain target (the ``-`` of a dropped row included), every first registration
+    has its ``Change: -`` chain, and historical event files are append-only.
+    Only then may the raw abort message count as reducible.
+    """
+    gaps = list(base_event_issues(root, kind, mb))
+    rows = manifest_rows(root, kind, mb)
+    if rows is None:
+        gaps.append('cannot read the merge-base manifest rows')
+        return gaps
+    for name in sorted(set(rows) | set(added)):
+        if BYTECODE.search(name):
+            continue
+        if not registration_ok(root, kind, edges, name, mb):
+            gaps.append(f'{name}: registration is not provable from an exact event chain '
+                        '(the aborted check_frozen run never reported it)')
+    return gaps
+
+
 def classify(ctx, item):
     """'ok' | 'pending' | ('block', why, detail_or_None)."""
     root, kind, mb, edges = ctx['root'], ctx['kind'], ctx['mb'], ctx['edges']
     # parity: "<name>: hash mismatch"; ui-server-parity: "invalid path/hash: <name>".
+    # A deleted row also surfaces here (the row is still in the manifest before
+    # --write), so the provable-drop test is the second half of the same rule.
     for pattern in (r'(.+): hash mismatch', r'invalid path/hash: (.+)'):
         match = re.fullmatch(pattern, item)
-        if match and existing_file(root, kind, match.group(1)):
+        if match and (existing_file(root, kind, match.group(1))
+                      or dropped_path(ctx, match.group(1))):
             return 'ok', None, None
     # gateway-parity: the manifest row name itself, unprefixed.
-    if ' ' not in item and ':' not in item and bare_manifest_file(root, kind, item):
+    if ' ' not in item and ':' not in item and (bare_manifest_file(root, kind, item)
+                                                or dropped_path(ctx, item)):
         return 'ok', None, None
+    # A registered file this branch deletes: before ``--write`` the old row is
+    # still in the manifest, so the apparatus reports the missing path (or aborts
+    # the registration half).  Both forms are reducible only with the exact
+    # ``Change: <old> -`` chain; the row-dropped loop below still reports the
+    # missing chain when there is one.
+    match = ABORTED_REGISTRATION.fullmatch(item)
+    if match:
+        named = aborted_path(ctx, match.group(1))
+        if (named and dropped_path(ctx, named)
+                and not ctx.get('registration_gaps')):
+            return 'ok', None, None
+        return 'block', 'blocking', None
+    match = MISSING_FILE.fullmatch(item)
+    if match:
+        if dropped_path(ctx, match.group(1)):
+            return 'ok', None, None
+        return 'block', 'blocking', None
     # First registration: --write adds the row; the added event row must back it.
     match = A2_MISSING.fullmatch(item)
     if match:
@@ -3201,7 +3385,7 @@ def classify(ctx, item):
                 and chain_backed(root, kind, edges, relative, mb)):
             return 'ok', None, None
         return 'block', 'blocking', None
-    match = LACKS_CHAIN.match(item)
+    match = LACKS_CHAIN.fullmatch(item)
     if match:
         name = match.group(1)
         # The name must be in the *old or the new* manifest.  The apparatus also
@@ -3221,12 +3405,14 @@ def classify(ctx, item):
     match = re.fullmatch(r'frozen/([^/:]+): ' + re.escape(PENDING_FAMILY_MSG), item)
     if match and match.group(1) in ctx['pending']:
         return 'pending', None, None
-    # Recognised block markers win over a bare "hash list differs" substring so a
-    # composite message can never be silently accepted.
+    # Recognised block markers win over the reducible hash-list message so a
+    # composite message can never be silently accepted.  The hash-list message
+    # itself is matched in full: a known prefix with an unknown tail is a
+    # different failure the real gate would refuse.
     for marker in BLOCK_MARKERS:
         if marker in item:
             return 'block', 'blocking', None
-    if ACCEPT_HASH_LIST in item:
+    if item == HASH_LIST_MSG:
         return 'ok', None, None
     if 'merge-base == HEAD' in item:
         return 'block', 'blocking (branch has no commits of its own vs base)', None
@@ -3234,20 +3420,48 @@ def classify(ctx, item):
 
 
 # ------------------------------------------------------------ the two checks
-def run_apparatus(root, kind, entry, base, mb):
-    """Run one check_frozen.py --base and classify its failures."""
+def snapshot_entry(root, entry, snapshot):
+    """The apparatus path inside the pinned snapshot, or None when it is absent.
+
+    The checker itself must be committed: an uncommitted or untracked checker is
+    not what the delivery is judged on, so it cannot be run from the snapshot.
+    """
+    try:
+        relative = entry.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    candidate = snapshot / relative
+    return candidate if candidate.is_file() else None
+
+
+def run_apparatus(root, kind, entry, base, mb, snapshot=None):
+    """Run one check_frozen.py --base and classify its failures.
+
+    ``snapshot`` is a throwaway checkout of the pinned commit.  The child runs
+    there, never in the audited worktree: the audited HEAD (and its bytes) can
+    move A -> B -> A inside the run window, and a child that read B while every
+    evidence lookup here is pinned to A would yield a false READY.
+    """
     result = {'kind': kind, 'blocking': [], 'reducible': [], 'pending': [],
               'pending_events': [], 'note': None}
     if entry is None:
         result['blocking'].append(('blocking', f'specs/{kind}/FROZEN.md exists but '
                                                f'scripts/{kind}/check_frozen.py is absent', None))
         return result
+    child, cwd = entry, root
+    if snapshot is not None:
+        child = snapshot_entry(root, entry, snapshot)
+        if child is None:
+            result['blocking'].append(('blocking', f'{entry}: the apparatus is not '
+                                                   'committed at the pinned snapshot', None))
+            return result
+        cwd = snapshot
     try:
-        proc = subprocess.run([sys.executable, '-I', str(entry), '--base', base],
+        proc = subprocess.run([sys.executable, '-I', str(child), '--base', base],
                               capture_output=True, text=True, errors='replace',
-                              cwd=str(root), timeout=CHECK_TIMEOUT)
+                              cwd=str(cwd), timeout=CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
-        result['blocking'].append(('blocking', f'cannot run {entry}: {error}', None))
+        result['blocking'].append(('blocking', f'cannot run {child}: {error}', None))
         return result
     try:
         report = json.loads(proc.stdout)
@@ -3261,7 +3475,20 @@ def run_apparatus(root, kind, entry, base, mb):
     edges, pending, issues = event_evidence(root, kind, mb)
     result['pending_events'] = sorted(pending)
     result['blocking'].extend(('blocking', message, None) for message in issues)
-    ctx = {'root': root, 'kind': kind, 'mb': mb, 'edges': edges, 'pending': pending}
+    # Enumerate the rows --write will add and drop *before* classifying: a
+    # deleted row's raw missing-file message is only reducible when that row is
+    # provably dropped with an exact chain.
+    new_files, new_issues = unregistered_added(root, kind, mb)
+    dropped, drop_issues = dropped_rows(root, kind, mb)
+    ctx = {'root': root, 'kind': kind, 'mb': mb, 'edges': edges, 'pending': pending,
+           'dropped': set(dropped)}
+    # An aborted ``check_registration`` skips its own chain loop and the
+    # append-only check on historical event files.  Before the abort message may
+    # count as reducible, re-prove both halves here; any gap keeps it blocking.
+    if any(ABORTED_REGISTRATION.fullmatch(item) for item in failures):
+        gaps = registration_gaps(root, kind, mb, edges, new_files)
+        ctx['registration_gaps'] = gaps
+        result['blocking'].extend(('blocking', message, None) for message in gaps)
     if status == 'DRAFT':
         result['blocking'].append(('blocking', 'apparatus is DRAFT (no approved FROZEN.md)', None))
         return result
@@ -3284,7 +3511,6 @@ def run_apparatus(root, kind, entry, base, mb):
     # differs" (or not at all), so check every new file in its --write scope and
     # everything parity skipped for lack of a FROZEN row.  Each needs the exact
     # ``Change: - <sha256>`` chain --write will rely on.
-    new_files, new_issues = unregistered_added(root, kind, mb)
     result['blocking'].extend(('blocking', message, None) for message in new_issues)
     reported = set()
     for name in sorted(set(new_files) | set(unregistered)):
@@ -3309,7 +3535,6 @@ def run_apparatus(root, kind, entry, base, mb):
     # Dropped registrations: the apparatus cannot report these before --write
     # (its new_hashes still comes from the row that is there), so a member taken
     # out of the inventory -- or a deleted file -- would otherwise read READY.
-    dropped, drop_issues = dropped_rows(root, kind, mb)
     result['blocking'].extend(('blocking', message, None) for message in drop_issues)
     reported.update(dropped)  # a dropped row is not also a first registration
     for name in dropped:
@@ -3366,6 +3591,39 @@ def event_chain_issues(root, base, kinds, mb=None):
     for kind in sorted({kind for kind, _ in added if kind not in kinds}):
         issues.append((None, f'event file under specs/{kind}/frozen/ but no such apparatus'))
     return issues, added, mb
+
+
+# ------------------------------------------------------------ snapshot
+def create_snapshot(root, commit):
+    """Throwaway checkout of ``commit`` for the child apparatuses.
+
+    Returns ``(path, None)`` or ``(None, why)``.  The snapshot is built from the
+    pinned SHA, not the symbolic ``HEAD``: ``git worktree add --detach`` names
+    the commit explicitly, so a concurrent checkout cannot be captured.  Failure
+    is blocking (fail closed) -- running a child against the audited worktree is
+    exactly the A -> B -> A hole this closes.
+    """
+    holder = Path(tempfile.mkdtemp(prefix='cfd-snapshot-'))
+    target = holder / 'tree'
+    code, out, err = git(root, 'worktree', 'add', '--detach', '--quiet',
+                         str(target), commit)
+    if code:
+        shutil.rmtree(holder, ignore_errors=True)
+        return None, (err.strip() or out.strip() or f'git worktree add rc={code}')
+    return target, None
+
+
+def remove_snapshot(root, snapshot):
+    """Drop the snapshot (and its ``.git/worktrees`` entry); never raise."""
+    if snapshot is None:
+        return
+    holder = snapshot.parent
+    code, _, _ = git(root, 'worktree', 'remove', '--force', str(snapshot))
+    if code:
+        shutil.rmtree(holder, ignore_errors=True)
+        git(root, 'worktree', 'prune')
+        return
+    shutil.rmtree(holder, ignore_errors=True)
 
 
 # ------------------------------------------------------------ output
@@ -3427,35 +3685,70 @@ def main(argv=None):
     # Uncommitted tracked changes are blocking, not a note: the apparatus hashes
     # *working-tree* bytes, so a dirty tree can hide a HEAD side change (or the
     # reverse) and yield READY for a branch CI will reject.  Untracked files are
-    # invisible to the apparatus, so they stay a note.
-    code, dirty, dirty_err = git(root, 'status', '--porcelain', '--untracked-files=no')
+    # invisible to the apparatus, so they stay a note -- but the full status is
+    # also the before/after fingerprint that proves the run left the audited
+    # tree untouched (P1: the promise must be verifiable, not asserted).
+    code, dirty, dirty_err = git(root, 'status', '--porcelain', '--untracked-files=all')
+    status_before = dirty
     tree_block = None
     if code != 0:
         tree_block = ('cannot check working-tree cleanliness, so HEAD could be hiding '
                       'behind uncommitted bytes: '
                       + (dirty_err.strip() or f'git status rc={code}'))
-    elif dirty.strip():
-        tree_block = ('working tree has uncommitted tracked changes; the apparatus hashes '
-                      'working-tree bytes, so HEAD is not what gets judged: '
-                      + '; '.join(sorted(line.strip() for line in dirty.splitlines())[:5]))
+    else:
+        tracked = [line for line in dirty.splitlines() if not line.startswith('??')]
+        if tracked:
+            tree_block = ('working tree has uncommitted tracked changes; the apparatus hashes '
+                          'working-tree bytes, so HEAD is not what gets judged: '
+                          + '; '.join(sorted(line.strip() for line in tracked)[:5]))
 
     # Pin the resolved SHA: pass it (not the symbolic ref) to every apparatus so
     # a concurrent ``git fetch`` cannot move the base between classification and
     # the child check_frozen runs.  event_chain_issues reuses the same SHA.
-    results = [run_apparatus(root, kind, entry, mb, mb)
-               for kind, entry in apparatuses]
-    issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
+    # Children run in a throwaway checkout of that SHA, never in the audited
+    # worktree: its HEAD can move A -> B -> A while they run, so a child reading
+    # the runtime HEAD could judge B while every lookup here is pinned to A.
+    snapshot, snapshot_error = create_snapshot(root, head_before)
+    if snapshot is None:
+        results = [{'kind': 'snapshot',
+                    'blocking': [('blocking', 'cannot create the read-only snapshot the '
+                                              'apparatuses must run in: ' + snapshot_error, None)],
+                    'reducible': [], 'pending': [], 'pending_events': [], 'note': None}]
+        issues, added = [], []
+    else:
+        try:
+            results = [run_apparatus(root, kind, entry, mb, mb, snapshot)
+                       for kind, entry in apparatuses]
+            # The audited tree is out of the apparatuses' reach; this proves the
+            # snapshot itself was not rewritten underneath a sibling run.
+            write_code, written, write_err = git(snapshot, 'status', '--porcelain',
+                                                 '--untracked-files=all')
+            if write_code != 0 or written.strip():
+                results.append({'kind': 'snapshot',
+                                'blocking': [('blocking',
+                                              'the apparatus changed its pinned snapshot during '
+                                              'the run, so the reports do not describe one tree: '
+                                              + (write_err.strip() or written.strip()), None)],
+                                'reducible': [], 'pending': [], 'pending_events': [], 'note': None})
+        finally:
+            remove_snapshot(root, snapshot)
+        issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
 
     # Re-sample the working tree: the first sample is taken before the apparatus
     # runs, so a file written during the run (editor auto-save, a leftover
-    # checkout) would otherwise be hashed by the apparatus while the tree looked
-    # clean here -- the same false READY, just inside the window.
+    # checkout) would otherwise be invisible here -- the same false READY, just
+    # inside the window.  A different fingerprint is blocking even when both
+    # samples are clean (an A -> B -> A edit of a tracked file).
     code, dirty_after, dirty_err_after = git(root, 'status', '--porcelain',
-                                             '--untracked-files=no')
-    if tree_block is None and (code != 0 or dirty_after.strip()):
-        tree_block = ('working tree changed during the run: the apparatus hashed bytes '
-                      'that are not what HEAD will be judged on'
-                      + (f' ({dirty_err_after.strip()})' if code != 0 else ''))
+                                             '--untracked-files=all')
+    if tree_block is None and code != 0:
+        tree_block = ('cannot re-check the working tree after the run: '
+                      + (dirty_err_after.strip() or f'git status rc={code}'))
+    elif tree_block is None and dirty_after != status_before:
+        changed = '; '.join(sorted(line.strip() for line in
+                                   set(dirty_after.splitlines()) ^ set(status_before.splitlines()))[:5])
+        tree_block = ('the audited working tree changed during the run, so the deliverable is '
+                      'not the tree that was judged: ' + (changed or 'status text differs'))
 
     if tree_block:
         results.insert(0, {'kind': 'worktree',
