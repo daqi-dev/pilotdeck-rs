@@ -113,6 +113,8 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 
 负控（`negative_controls.py`，全部 KILLED）：
 
+`exact=True` 的判定器要求「命名测试 FAILED」**且**收到该断言的 nonce 收据，收据只由 `negative_assert*` / `test_negative_receipt::expect_err` 写出。所以每格变异的死亡路径都必须落在这些断言上：先 std `expect`/`expect_err` 再断言会让测试在收据之前 panic，判定器只能报 `NO_RECEIPT`（INVALID）。下载三格因此改为先取`Result`、再用 `outcome_summary` 断言（也避免把 50 MiB 载荷 Debug 进日志）。
+
 | 变异 | 死点 |
 |---|---|
 | `media-plaintext-passthrough-dropped`（早退加 `&& buffer.is_empty()`） | `plaintext_passthrough_wins_over_its_own_decryption`（`media-file-plaintext-wins-over-decrypt` 的诱饵被采用） |
@@ -120,10 +122,10 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 | `media-key-length-always-128`（24 字节也走 `Aes128`） | `the_key_length_selects_the_aes_variant`（`media-image-media-base64-aes192`） |
 | `media-all-miss-returns-empty`（全不中返回空 Vec 而非 `None`） | `an_all_miss_falls_back_to_the_input`（`media-image-all-miss-falls-back`） |
 | `media-pkcs7-strip-dropped` | `decryption_strips_the_pkcs7_padding`（`media-image-owner-hex-aes128`，尾部 padding 未剥） |
-| `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（index 越界 panic） |
+| `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（变异体 `chunk[1]` 越界 panic，被 `catch_unwind` 接住后由 `negative_assert_eq` 判定） |
 | `media-download-received-cap-removed`（读 body 上限改 `usize::MAX`） | `the_received_body_is_capped_at_the_limit` |
 | `media-download-body-on-fetch-deadline`（正文空闲期限改用 60 s fetch 期限） | `a_slow_body_outlives_the_fetch_deadline` |
-| `media-download-fetch-deadline-removed`（取头期限改 `Duration::MAX`） | `the_header_phase_still_aborts_at_the_fetch_deadline` |
+| `media-download-fetch-deadline-removed`（取头期限改 3600 s） | `the_header_phase_still_aborts_at_the_fetch_deadline` |
 | `media-download-content-length-non-finite-guard-dropped`（去掉 `is_finite`） | `content_length_uses_js_number_finite_semantics` 的 `"Infinity"` |
 | `media-download-terminated-mapped-to-fetch-failed`（断流映射回 `fetch failed`） | `a_terminated_body_reports_the_fetch_type_error` |
 | `replay-missing-case`（`remove(0)` 丢掉一条渠道场景） | `weixin_replays_the_ts_channel_oracle` 的 `#1328 weixin oracle case count` |
