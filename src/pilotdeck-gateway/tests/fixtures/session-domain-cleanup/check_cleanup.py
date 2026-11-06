@@ -2803,15 +2803,33 @@ def _leaf_targets(targets):
 
 
 def _walk_scoped(tree):
-    """``(scope, node)`` for every node, *scope* being the enclosing function."""
+    """``(scope, node)`` for every node, *scope* being the enclosing function.
+
+    #892 r35: a decorator, a default value and an annotation are evaluated
+    where the ``def`` sits, not inside the function they belong to.  Treating
+    the decorator expression as part of the decorated body made a nested
+    lambda there resolve its capture against the inner function's unrelated
+    local (``x = object()``) and drop the ``setattr`` written through ``x =
+    md`` (codex boundary r34 P0-3).
+    """
     stack = [(None, tree)]
     while stack:
         scope, node = stack.pop()
         yield scope, node
         inner = node if isinstance(
             node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) else scope
+        header = set()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # ``args`` carries both defaults and parameter annotations; the
+            # whole node belongs to the enclosing scope.
+            header = {id(item) for item in node.decorator_list}
+            header.add(id(node.args))
+            if node.returns is not None:
+                header.add(id(node.returns))
+        elif isinstance(node, ast.Lambda):
+            header = {id(node.args)}
         for child in ast.iter_child_nodes(node):
-            stack.append((inner, child))
+            stack.append((scope if id(child) in header else inner, child))
 
 
 def _scope_parents(tree):
@@ -3792,6 +3810,11 @@ def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
                 continue
             names, _value = _local_bound_names(node)
             written.update(names)
+        # #892 r35: ``_local_bound_names`` reads statements only, so a
+        # ``nonlocal common`` rebound through a walrus or a ``match`` capture
+        # counted as a declaration with no write and kept the enclosing relay
+        # trusted (codex boundary r34 P0-4).
+        written.update(_walrus_names(nested) | _match_capture_names(nested))
         for name in declared & written:
             trusted.discard(name)
             rebound.add(name)
