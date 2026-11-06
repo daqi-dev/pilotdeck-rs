@@ -581,6 +581,30 @@ fn budget_normalize(raw: &str) -> String {
     out
 }
 
+/// #1351 (2026-11-06 review): the TrackHeader arithmetic the TS recorder
+/// applies at record time (`generate.mts` `trackedSpan`), recomputed from the
+/// *recorded* request bytes — target length plus every header name/value
+/// length, the colon and the leading space after it not counted. The replay
+/// asserts it against the recorded `tracked`, so copying one cell's request
+/// into another cell can no longer stay green while silently losing the
+/// boundary a cell is supposed to pin.
+fn budget_tracked_span(request: &str) -> usize {
+    let head = request.split("\r\n\r\n").next().unwrap_or_default();
+    let mut lines = head.split("\r\n");
+    let target = lines
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .expect("#1351 recorded request line");
+    let mut span = target.len();
+    for line in lines {
+        let (name, value) = line
+            .split_once(':')
+            .expect("#1351 recorded request header line");
+        span += name.len() + value.trim_start_matches(' ').len();
+    }
+    span
+}
+
 #[tokio::test]
 async fn upgrade_budget_boundary_matches_ts() {
     let expected = budget_oracle();
@@ -619,10 +643,13 @@ async fn upgrade_budget_boundary_matches_ts() {
         let closed = cell["closed"]
             .as_bool()
             .expect("#1351 oracle cell closed flag");
-        eprintln!(
-            "#1351 replaying boundary cell {id} (tracked {})",
-            cell["tracked"]
+        let tracked = cell["tracked"].as_u64().expect("#1351 oracle cell tracked") as usize;
+        negative_assert_eq!(
+            budget_tracked_span(request),
+            tracked,
+            "#1351 recorded cell {id} tracked span matches its own request bytes"
         );
+        eprintln!("#1351 replaying boundary cell {id} (tracked {tracked})");
         let mut socket = TcpStream::connect(address)
             .await
             .expect("#1351 boundary cell connect");
