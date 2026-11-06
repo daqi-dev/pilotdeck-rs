@@ -93,6 +93,9 @@ NEGATIVE_PROCESS = (ROOT / 'src/pilotdeck-gateway/tests/fixtures/'
 NEGATIVE_PROCESS_REL = ('src/pilotdeck-gateway/tests/fixtures/'
                         'negative_process.py')
 GUARD_REL = 'scripts/gateway-parity/_guard.py'
+# #892 fix-r27: the controls module's ``rel``, so a judge binds the shared-name
+# withdrawal to the mutant that caused it.
+CONTROLS_REL = 'scripts/gateway-parity/controls/session_domain.py'
 
 _MISSING = object()
 
@@ -1460,6 +1463,100 @@ def calibrate_decorated_guard_load(rows):
         f'aggregation-audit: {GUARD_REL} decorated loader flagged, passed=False')
 
 
+def calibrate_direct_attribute_write(rows):
+    """#892 fix-r27: ``md.common = <stub>`` replaces the shared attribute with
+    no ``setattr`` call (DeepSeek sibling r26 P1-4)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: direct attribute write flagged, passed=False')
+
+
+def calibrate_dict_mutation_keys(rows):
+    """#892 fix-r27: a literal key dict mutated after binding is unbounded
+    (GLM boundary r26 P0-2)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: mutated key dict flagged, passed=False')
+
+
+def calibrate_sys_modules_wildcard(rows):
+    """#892 fix-r27: a non-literal ``sys.modules`` key pre-seeds the entry the
+    bootstrap trusts (GLM boundary r26 P0-3)."""
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CONTROLS_REL} wildcard pre-seed flagged, '
+        'passed=False')
+
+
+def calibrate_single_definition_dynamic(rows):
+    """#892 fix-r27: a literal ``exec`` rebinding a proven source is not the
+    single ``def`` the registry accepted (DeepSeek concurrency r26 P1-8)."""
+    return _audit_needle(
+        rows, f'{NEGATIVE_PROCESS_REL}:committed_status_contract no longer',
+        f'aggregation-audit: {NEGATIVE_PROCESS_REL} dynamic rebind flagged, '
+        'passed=False')
+
+
+def calibrate_dynamic_shared_name(rows):
+    """#892 fix-r27: a literal ``exec`` rebinding the shared name withdraws it
+    (GLM concurrency r26 P1-1)."""
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CONTROLS_REL} dynamic shared-name write flagged, '
+        'passed=False')
+
+
+def calibrate_builtin_alias_setattr(rows):
+    """#892 fix-r27: ``from builtins import setattr as _sa`` is the same
+    callable as the bare name (DeepSeek boundary r26 P1-2)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: builtin-alias setattr flagged, passed=False')
+
+
+def calibrate_vars_dict_receiver(rows):
+    """#892 fix-r27: ``vars(md)['common'] = <stub>`` writes the receiver through
+    its ``__dict__`` (GLM simplify r26 P1-2)."""
+    return _audit_needle(
+        rows, f'{CHECK_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CHECK_REL} vars() receiver write flagged, '
+        'passed=False')
+
+
+def calibrate_loop_key_rebind(rows):
+    """#892 fix-r27: the ``for`` target that spells the key is reassigned in the
+    loop body, so it no longer names the sequence's key (DeepSeek concurrency
+    r26 P1-3)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: loop key rebind flagged, passed=False')
+
+
+def calibrate_definition_header_walrus(rows):
+    """#892 fix-r27: a walrus in a definition header runs in the enclosing
+    scope (GLM concurrency r26 P1-2)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: definition-header walrus flagged, passed=False')
+
+
+def calibrate_sys_modules_chain_poison(rows):
+    """#892 fix-r27: a key pre-seeded from another pre-seeded key's read had to
+    be poisoned through a fixpoint, not one pass (GLM concurrency r26 P1-1)."""
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CONTROLS_REL} chained pre-seed flagged, '
+        'passed=False')
+
+
+def calibrate_walrus_receiver_local(rows):
+    """#892 fix-r27: a walrus inside the audited function rebinds the receiver
+    for the whole body (GLM boundary r26 P2-1)."""
+    return _not_shared(
+        rows, CHECK_REL, 'summarize_results',
+        'aggregation-audit: function-local walrus receiver flagged, passed=False')
+
+
 def calibrate_computed_status_write(rows):
     """#892 r20: ``report['status'] = 'PA' + 'SS'`` writes the clean literal
     without ever being a ``Constant`` node (GLM boundary r19 P1-2)."""
@@ -2658,6 +2755,134 @@ MUTATIONS = [
      "\n"
      "@_swap\n"
      "def load(name, path):"),
+    # #892 fix-r27 (DeepSeek sibling r26 P1-4): ``md.common = <stub>`` is the
+    # same withdrawal as ``setattr(md, 'common', ...)`` -- only the call
+    # spelling was judged.
+    ('calibrate-direct-attribute-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    md.common = SimpleNamespace(\n"
+     "        aggregate_status=lambda *a: ('PASS', 0))\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r27 (GLM boundary r26 P0-2): the literal dict a ``setattr`` key
+    # loop walks is mutated after its binding, so the key set is unbounded and
+    # cannot be read as the binding-site literal.
+    ('calibrate-dict-mutation-keys', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "_KEYS = {'common': None}\n"
+     "_KEYS['main'] = None\n"
+     "if False:\n"
+     "    for _k in _KEYS:\n"
+     "        setattr(md, _k, None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r27 (GLM boundary r26 P0-3): a key that is not a literal cannot
+    # be resolved to the one entry it pre-seeds, so the ``'*'`` sentinel must be
+    # a real verdict instead of dead data.
+    ('calibrate-sys-modules-wildcard', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "_key = '_guard'\n"
+     "sys.modules[_key] = object()\n"
+     "_guard = sys.modules.get('_guard')\n"),
+    # #892 fix-r27 (DeepSeek concurrency r26 P1-8): ``exec`` of a literal
+    # source that rebinds a proven source leaves the single-definition rule
+    # reading the ``def`` it never replaced.
+    ('calibrate-single-definition-dynamic', NEGATIVE_PROCESS,
+     "def committed_status_contract(",
+     "exec('committed_status_contract = None')\n"
+     "\n"
+     "\n"
+     "def committed_status_contract("),
+    # #892 fix-r27 (GLM concurrency r26 P1-1): a literal ``exec`` that rebinds
+    # the shared aggregator name is the same withdrawal as ``globals()[...]``.
+    ('calibrate-dynamic-shared-name', CONTROLS_SOURCE,
+     "_load = _guard.load\n",
+     "_load = _guard.load\n"
+     "exec('common = None')\n"),
+    # #892 fix-r27 (DeepSeek boundary r26 P1-2): ``from builtins import
+    # setattr as _sa`` is the same callable as the bare name.
+    ('calibrate-builtin-alias-setattr', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "from builtins import setattr as _builtin_setattr\n"
+     "if False:\n"
+     "    _builtin_setattr(md, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r27 (GLM simplify r26 P1-2): ``vars(md)['common'] = <stub>``
+    # writes the receiver through its ``__dict__``.
+    ('calibrate-vars-dict-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    vars(md)['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r27 (DeepSeek concurrency r26 P1-3): the ``for`` target that
+    # spells the ``setattr`` key is reassigned inside the loop body, so the key
+    # is no longer the sequence's spelling.
+    ('calibrate-loop-key-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    for _k in ('common',):\n"
+     "        _k = 'main'\n"
+     "        setattr(md, _k, None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r27 (GLM concurrency r26 P1-2): a walrus in a definition *header*
+    # runs in the enclosing scope even though the body does not.
+    ('calibrate-definition-header-walrus', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "def _header(_x=(md := SimpleNamespace(\n"
+     "        common=SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))))):\n"
+     "    return _x\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r27 (GLM concurrency r26 P1-1): a key pre-seeded from another
+    # pre-seeded key's *read* laundered itself through the one-pass poisoning
+    # scan.
+    ('calibrate-sys-modules-chain-poison', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "sys.modules['_stub_alias'] = object()\n"
+     "sys.modules['_guard'] = sys.modules.get('_stub_alias')\n"
+     "_guard = sys.modules.get('_guard')\n"),
+    # #892 fix-r27 (GLM boundary r26 P2-1): a walrus inside an audited function
+    # rebinds the receiver for the whole body with no ``Assign`` statement.
+    ('calibrate-walrus-receiver-local', CHECK,
+     "    executed = [row for row in results if row.get('passed') is not None]",
+     "    if (md := SimpleNamespace(\n"
+     "            common=SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0)))):\n"
+     "        pass\n"
+     "    executed = [row for row in results if row.get('passed') is not None]"),
 ]
 
 JUDGES = {
@@ -3017,6 +3242,28 @@ JUDGES = {
         'aggregation-audit', calibrate_negative_process_redefine, False, ()),
     'calibrate-decorated-guard-load': (
         'aggregation-audit', calibrate_decorated_guard_load, False, ()),
+    'calibrate-direct-attribute-write': (
+        'aggregation-audit', calibrate_direct_attribute_write, False, ()),
+    'calibrate-dict-mutation-keys': (
+        'aggregation-audit', calibrate_dict_mutation_keys, False, ()),
+    'calibrate-sys-modules-wildcard': (
+        'aggregation-audit', calibrate_sys_modules_wildcard, False, ()),
+    'calibrate-single-definition-dynamic': (
+        'aggregation-audit', calibrate_single_definition_dynamic, False, ()),
+    'calibrate-dynamic-shared-name': (
+        'aggregation-audit', calibrate_dynamic_shared_name, False, ()),
+    'calibrate-builtin-alias-setattr': (
+        'aggregation-audit', calibrate_builtin_alias_setattr, False, ()),
+    'calibrate-vars-dict-receiver': (
+        'aggregation-audit', calibrate_vars_dict_receiver, False, ()),
+    'calibrate-loop-key-rebind': (
+        'aggregation-audit', calibrate_loop_key_rebind, False, ()),
+    'calibrate-definition-header-walrus': (
+        'aggregation-audit', calibrate_definition_header_walrus, False, ()),
+    'calibrate-sys-modules-chain-poison': (
+        'aggregation-audit', calibrate_sys_modules_chain_poison, False, ()),
+    'calibrate-walrus-receiver-local': (
+        'aggregation-audit', calibrate_walrus_receiver_local, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
