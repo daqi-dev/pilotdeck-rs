@@ -56,8 +56,14 @@ LIB_BINDINGS = {
 ALL_BINDINGS = {**BINDINGS, **{name: (row[0], row[1]) for name, row in LIB_BINDINGS.items()}}
 # 纯文本绑定：没有 mutants::on 开关可挂，靠 capture.py 与 test_acceptance.py
 # 双向锚定，任一侧的那段绑定被单独删掉都响亮失败。
-CAPTURE_GUARD = '\n    if sys.exception() is not None:\n        return\n'
-TEXT_BINDINGS = {'capture-second-signal': ('capture.py', CAPTURE_GUARD, 'test_acceptance.py', "'capture-secondary-signal'")}
+CAPTURE_GUARD = '\n    if isinstance(sys.exception(), RuntimeError):\n        return\n'
+CAPTURE_FINALLY = '\n    finally:\n        if process is not None:\n            reclaim(process, output)\n'
+TEXT_BINDINGS = {
+    'capture-second-signal': ('capture.py', CAPTURE_GUARD, 'test_acceptance.py', "'capture-secondary-signal'"),
+    'capture-reclaim-in-finally': ('capture.py', CAPTURE_FINALLY, 'test_acceptance.py', 'def test_capture_second_signal_preserves_cleanup'),
+}
+# 清单自己也要有分母：整张表被删掉时循环空转、`+ 0 text bindings: OK` 会假绿。
+EXPECTED_TEXT_BINDINGS = 2
 TURN = ROOT / 'src/pilotdeck-gateway/src/runtime/turn'
 
 
@@ -84,6 +90,8 @@ def main():
     # #1194/#1398: the feature switches above cannot see a plain-Python guard,
     # so bind it by text here. Behaviour is proven by
     # test_acceptance.py::test_capture_second_signal_preserves_cleanup.
+    if len(TEXT_BINDINGS) != EXPECTED_TEXT_BINDINGS:
+        raise RuntimeError(f'#748 text binding inventory drifted: {len(TEXT_BINDINGS)} != {EXPECTED_TEXT_BINDINGS}')
     for name, (source_file, anchor, probe_file, probe) in TEXT_BINDINGS.items():
         if (FIXTURE / source_file).read_text().count(anchor) != 1:
             raise RuntimeError(f'#748 {name}: guard anchor missing or duplicated in {source_file}')
