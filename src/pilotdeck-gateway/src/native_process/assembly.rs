@@ -63,7 +63,7 @@ use std::{
 
 mod mcp;
 mod memory;
-mod snapshot;
+pub(crate) mod snapshot;
 mod steer;
 mod user_dialog;
 

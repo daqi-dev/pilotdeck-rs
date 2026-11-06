@@ -2,7 +2,7 @@
 
 `pilotdeck-gateway --native` 显式启动单 project 的 Rust 宿主；无该首参数时保留 A4 代理入口。当前生产装配支持文本主代理、原生只读工具、默认空 provider LSP、模型标题、session JSONL、run registry 与取消。配置的 MCP、plugins/skills/hooks、subagents、附件及每轮 model/SDK override 尚未装配，入口明确拒绝相应请求。它不是完整 native 格验收结论。
 
-启动参数均显式提供。home 与 project 是已存在的绝对目录，二者不得相同或互相包含；token 文件非空；sidecar 为绝对文件路径；监听仅接受 `127.0.0.1` 的高位端口或 `0`。`--sidecar-arg` 可重复，`--drain-ms` 默认 5000、范围 1..300000。`--storage-root` 可选：给出时按原样注入 `PILOTDECK_STORAGE_ROOT` 并启用 snapshot 能力，缺省或空白值保持 snapshot 关闭（生产默认关闭，见决策卡 `state/decisions-20261101-1231-u3-scope.md` 选项 B）；非 UTF-8 值按启动参数硬错误拒绝；与 home/project 不同，相对值按进程 cwd 解析，不要求绝对或已存在。配置从隔离 home/project 加载，继承的 `PILOTDECK_CONFIG_PATH`、代理 upstream、sidecar TCP 地址、`PILOTDECK_STORAGE_ROOT` 与 `PILOTDECK_SNAPSHOT_ROOT`（含空白值）被移除；继承到非空的 managed/storage/snapshot 根时拒绝启动。
+启动参数均显式提供。home 与 project 是已存在的绝对目录，二者不得相同或互相包含；token 文件非空；sidecar 为绝对文件路径；监听仅接受 `127.0.0.1` 的高位端口或 `0`。`--sidecar-arg` 可重复，`--drain-ms` 默认 5000、范围 1..300000。`--storage-root` 可选：给出时按原样注入 `PILOTDECK_STORAGE_ROOT` 并启用 snapshot 能力，缺省或空白值保持 snapshot 关闭（生产默认关闭，见决策卡 `state/decisions-20261101-1231-u3-scope.md` 选项 B）；非 UTF-8 值按启动参数硬错误拒绝；与 home/project 不同，相对值按进程 cwd 解析，不要求绝对或已存在。配置从隔离 home/project 加载，继承的 `PILOTDECK_CONFIG_PATH`、代理 upstream、sidecar TCP 地址被移除；未给 `--storage-root` 时继承的 `PILOTDECK_STORAGE_ROOT` 与 `PILOTDECK_SNAPSHOT_ROOT`（含空白值）一并移除，给出时只注入 `PILOTDECK_STORAGE_ROOT`、继承的 `PILOTDECK_SNAPSHOT_ROOT` 原样保留。继承到非空的 managed/storage/snapshot 根时拒绝启动。
 
 token 仅移除末尾 CR/LF，保留空格与 tab；全部为空白则拒绝启动，客户端须发送处理后的精确 token。环境键值以有损 UTF-8 捕获，非法字节替换为 U+FFFD，因此不保证含非 UTF-8 字节的路径仍可访问；此处说明既有行为，不改变鉴权或路径规则。
 

@@ -1521,31 +1521,22 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
         Some(&storage.to_string_lossy().into_owned()),
         "#1431 --storage-root selects the staged root"
     );
-    // Take the recorder the project staging built, exactly as
-    // `assembly::snapshot::snapshot_recorder` does for production `Services`,
-    // instead of rebuilding the composition here: a change to staging must not
-    // leave this test green.
-    let recorder = {
-        let lease = requests.project.acquire(None).expect("#1431 project lease");
-        let resources = lease
-            .runtime()
-            .resources()
-            .get::<crate::runtime::project::ProjectResources>()
-            .expect("#1431 project resources");
-        let persistence = resources
-            .context()
-            .resource(crate::runtime::project::Resource::Persistence)
-            .expect("#1431 persistence resource");
-        persistence
-            .as_any()
-            .downcast_ref::<crate::runtime::project::persistence::PersistenceResources>()
-            .expect("#1431 persistence resource type")
-            .snapshots
-            .as_ref()
-            .expect("#1431 staged snapshot composition")
-            .recorder
-            .clone()
-    };
+    // Go through the production composition itself: `Services` receives the
+    // recorder from these two calls in `assembly`, so a change to staging or to
+    // the handoff cannot leave this test green.
+    let enabled =
+        crate::native_process::assembly::snapshot::snapshot_enabled(&options, &requests.project)
+            .await
+            .expect("#1431 staged snapshot state");
+    negative_assert!(enabled, "#1431 --storage-root enables snapshots");
+    let recorder = crate::native_process::assembly::snapshot::snapshot_recorder(
+        &options,
+        &requests.project,
+        enabled,
+    )
+    .await
+    .expect("#1431 staged recorder")
+    .expect("#1431 staged snapshot recorder");
     let services = crate::native_process::services::Services {
         options: options.clone(),
         project: requests.project.clone(),

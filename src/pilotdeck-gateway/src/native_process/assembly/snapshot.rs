@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 // Validate real families before claiming readiness. Partial staging belongs
 // to this registry and must drain even when construction returns an error.
-pub(super) async fn snapshot_enabled(
+pub(crate) async fn snapshot_enabled(
     options: &Options,
     project: &Arc<ProjectRuntimeRegistry>,
 ) -> Result<bool, ProxyError> {
@@ -40,7 +40,7 @@ pub(super) async fn snapshot_enabled(
 
 // Extract the snapshot recorder once, so `Services` can hand the same
 // provider to every submit turn without re-acquiring the project lease.
-pub(super) async fn snapshot_recorder(
+pub(crate) async fn snapshot_recorder(
     options: &Options,
     project: &Arc<ProjectRuntimeRegistry>,
     snapshot_enabled: bool,
