@@ -280,6 +280,35 @@ MUTATIONS = [
      'const ABORT_MESSAGE: &str = "aborted";',
      '--test=mcp_client', 'pre_aborted_signal_fails_only_the_caller',
      '#401 the DOMException text is preserved'),
+    # ── #401 gate11 sibling P2: tools/list compiles every outputSchema ──
+    ('output-schema-rejection-removed', 'mcp/client.rs',
+     '                if let Some(schema) = tool.get("outputSchema") {\n'
+     '                    // The SDK compiles every outputSchema while caching\n'
+     '                    // `tools/list` (`cacheToolMetadata`); a bad schema\n'
+     '                    // rejects the whole list instead of silently turning\n'
+     '                    // into a permissive validator later.\n'
+     '                    if let Err(error) = super::output_schema::check_schema(schema) {\n'
+     '                        return Err(McpClientError::client(\n'
+     '                            McpClientErrorCode::CallFailed,\n'
+     '                            format!("MCP call failed (server={server_id}): {}", error.0),\n'
+     '                            server_id,\n'
+     '                        ));\n'
+     '                    }\n'
+     '                    output.insert(name.clone(), schema.clone());\n'
+     '                }\n',
+     '                if let Some(schema) = tool.get("outputSchema") {\n'
+     '                    if let Err(error) = super::output_schema::check_schema(schema) {\n'
+     '                        let _ = error;\n'
+     '                    }\n'
+     '                    output.insert(name.clone(), schema.clone());\n'
+     '                }\n',
+     '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
+     '#401 a bad outputSchema type must reject the whole tools/list'),
+    ('output-schema-message-text', 'mcp/client.rs',
+     'format!("MCP call failed (server={server_id}): {}", error.0)',
+     'format!("MCP call failed (server={server_id}): bad output schema")',
+     '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
+     '#401 the Ajv compile text reaches the caller verbatim'),
 ]
 
 # Each delayed row changes the delay parameter that the real lock probe
