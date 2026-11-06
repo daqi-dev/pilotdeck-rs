@@ -17,13 +17,17 @@ from negative_contract import BoundResult
 # module, name, unique source span, replacement, test, assertion
 VARIANTS = (
     # #1734: the scope predicate moved to the shared `negative_scope` module,
-    # so both scope mutants now withdraw the import and substitute a copy with
-    # the old permissive rule instead of editing the removed local copy.
+    # so both scope mutants rebind the imported name with the old permissive
+    # rule instead of editing the removed local copy. The replacement stays on
+    # ONE line: the anchor sits inside the `try:` block of `contract.py`, and
+    # `str.replace` keeps the anchor's own indentation, so a replacement that
+    # starts a new line would dedent and turn the mutant into a SyntaxError
+    # (INVALID) instead of a killed assertion.
     ('C', 'shared-scope', 'from negative_scope import HANG_PREFIXES, marker_is_scoped',
-     'from negative_scope import HANG_PREFIXES\nmarker_is_scoped = lambda marker: True',
+     'from negative_scope import HANG_PREFIXES, marker_is_scoped; marker_is_scoped = lambda marker: True',
      'test_scope_fallback', '#935 shared scoped check rejects generic markers'),
     ('C', 'bare-step', 'from negative_scope import HANG_PREFIXES, marker_is_scoped',
-     'from negative_scope import HANG_PREFIXES\n'
+     'from negative_scope import HANG_PREFIXES, marker_is_scoped; '
      'marker_is_scoped = lambda marker: isinstance(marker, str) and bool(marker.strip())',
      'test_bare_step_scope', '#935 bare step prefix never kills'),
     ('C', 'payload-first-line', 're.fullmatch(case.payload_pattern, payloads[0]) is not None', "re.search(case.payload_pattern, '\\n'.join(lines)) is not None",
