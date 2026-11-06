@@ -236,9 +236,10 @@ def main():
     # The sidecar sha proofs below compare a mutant build and a restored build
     # against one baseline build. Incremental compilation makes otherwise
     # identical sources produce different binaries, which would turn both
-    # comparisons into noise; a fresh codegen unit per build keeps them
-    # meaningful.
-    env['CARGO_INCREMENTAL'] = '0'
+    # comparisons into noise; only the sidecar builds below run with it off,
+    # so the far more numerous test builds keep their incremental cache.
+    sidecar_env = dict(env)
+    sidecar_env['CARGO_INCREMENTAL'] = '0'
     # The adjudicator and the shared apparatus decide KILLED/SURVIVED/INVALID
     # just as much as the product sources do: a loosened `panic_evidence` or
     # `passed` would turn a sibling panic into a recorded kill without any
@@ -250,7 +251,11 @@ def main():
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
                ROOT / 'src/pilotdeck-gateway/src/test_process.rs',
-               ROOT / 'src/pilotdeck-transport/src/lib.rs']
+               ROOT / 'src/pilotdeck-transport/src/lib.rs',
+               # The executable round runs this binary, and its startup is
+               # where the plan is frozen: an unpinned edit here would change
+               # what the whole matrix measures.
+               ROOT / 'src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs']
     results = []
     guarded_sha256 = {}
     sidecar_sha256 = None
@@ -282,7 +287,7 @@ def main():
         command = ['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
                    '-p', 'pilotdeck-transport', '--bin', 'pilotdeck-agent-loop-sidecar']
         (output / f'{label}.command.json').write_text(json.dumps(command) + '\n')
-        built = run_owned(command, cwd=ROOT, env=env, timeout=900)
+        built = run_owned(command, cwd=ROOT, env=sidecar_env, timeout=900)
         (output / f'{label}.log').write_text(built.stdout + built.stderr)
         if built.returncode:
             raise RuntimeError(f'{label}: sidecar build failed')
