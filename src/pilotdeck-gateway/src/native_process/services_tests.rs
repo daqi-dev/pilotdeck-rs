@@ -1729,6 +1729,29 @@ fn upload_store_root_outside_the_project_is_not_a_home() {
         "#1468 a store root outside the project must not become a home"
     );
     std::fs::remove_file(&store).expect("#1468 remove the swapped store link");
+    // Review boundary P2: a store root that is itself a link is refused even
+    // when it points *inside* the project — otherwise the whole project (or
+    // any subtree) becomes an accepted home while `read_at`'s lexical prefix
+    // check rejects the same layout.
+    symlink(&project, &store).expect("#1468 swap the store root for the project root");
+    negative_assert!(
+        canonical_upload_store(&project).is_none(),
+        "#1468 a store root that is a link into the project must not become a home"
+    );
+    std::fs::remove_file(&store).expect("#1468 remove the in-project store link");
+    // An ancestor (`.tmp`) that is a link points the canonical spelling
+    // elsewhere; only the containment term sees it. The leaf is a real
+    // directory, so the link check above cannot answer for it.
+    std::fs::remove_dir_all(project.join(".tmp")).expect("#1468 drop scratch .tmp");
+    let outside_tmp = outside.join("tmp");
+    std::fs::create_dir_all(outside_tmp.join("chat-uploads"))
+        .expect("#1468 outside ancestor store fixture");
+    symlink(&outside_tmp, project.join(".tmp")).expect("#1468 swap .tmp outside the project");
+    negative_assert!(
+        canonical_upload_store(&project).is_none(),
+        "#1468 a store root under an outside ancestor must not become a home"
+    );
+    std::fs::remove_file(project.join(".tmp")).expect("#1468 remove the swapped .tmp link");
     std::fs::create_dir_all(&store).expect("#1468 real in-project store root");
     negative_assert!(
         canonical_upload_store(&project).is_some(),

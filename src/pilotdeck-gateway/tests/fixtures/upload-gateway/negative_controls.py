@@ -56,6 +56,7 @@ LEASE_CHAIN = 'upload::tests::upload_read_at_forged_record_cannot_reach_the_leas
 READ_AT_RENAME = ('upload::tests::upload_read_at_record_renamed_after_open_is_rejected')
 READ_AT_PREAPPROVED = (
     'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
+LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -231,10 +232,36 @@ mutations = [
                 }
 ''', '', READ_AT_SWAP,
      '#1494 the swapped-in outside record must never be read back'),
+    # The genuine pre-fix shape is both missing guards at once: the handle
+    # binding *and* the pre-open identity. Restoring only the spelling check
+    # leaves the r2 identity term in place, which refuses the swapped record
+    # with its own message — the named test then dies on a different
+    # assertion, which is not evidence for this row (review boundary P1).
     ('read-at-check-before-open', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
                     Ok(handle) => handle.starts_with(&upload_root),
                     Err(_) => false,
-                };''',
+                };
+                if !handle_inside {
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata handle leaves the upload directory.",
+                    ));
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let opened = match file.metadata() {
+                        Ok(metadata) => metadata,
+                        Err(e) => return Err(UploadError::io(e, "stat", None)),
+                    };
+                    if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
+                        return Err(UploadError::dialog(
+                            "PROJECT_PATH_FORBIDDEN",
+                            "Upload metadata handle names a different file than the one validated.",
+                        ));
+                    }
+                }
+''',
      '                let handle_inside = canonical_path.starts_with(&upload_root);',
      LEASE_CHAIN,
      '#1494 a forged record must never reach the attachment lease'),
@@ -255,6 +282,15 @@ mutations = [
      '        let approved = match fs::metadata(&canonical_path) {',
      READ_AT_PREAPPROVED,
      '#1494 a link planted before the approved stat must be refused before the open'),
+    # #1494 (review sibling P1): the lease hard link re-walks the attachment
+    # path, so the linked inode must be compared with the identity recorded on
+    # the verified handle. Dropping that comparison pins whatever the path
+    # names at link time — the named test must go red.
+    ('lease-link-identity-dropped', STORE,
+     '                if !lease_link_matches(&destination, identities.get(index).copied().flatten()) {',
+     '                if false {',
+     LEASE_LINK,
+     '#1494 a swapped attachment must never be pinned into the lease'),
 ]
 
 if '--check' in sys.argv[1:]:

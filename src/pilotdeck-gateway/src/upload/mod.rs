@@ -441,7 +441,8 @@ impl UploadStore {
         project_key: &str,
         attachment_ids: Option<&[String]>,
     ) -> Result<UploadArtifactLease> {
-        let (record, mut attachments) = self.verified(upload_id, project_key, attachment_ids)?;
+        let (record, mut attachments, identities) =
+            self.verified(upload_id, project_key, attachment_ids)?;
         let dir = Path::new(&string(&record, "projectKey").unwrap_or_default())
             .join(".tmp/chat-upload-leases")
             .join(upload_id)
@@ -462,12 +463,29 @@ impl UploadStore {
                 .map_err(|e| UploadError::io(e, "write", None))?;
             file.sync_all()
                 .map_err(|e| UploadError::io(e, "fsync", None))?;
-            for attachment in &mut attachments {
+            for (index, attachment) in attachments.iter_mut().enumerate() {
                 let source = PathBuf::from(string(attachment, "path").unwrap_or_default());
                 let destination = dir.join(string(attachment, "attachmentId").unwrap_or_default());
                 self.fault("lease-link", &source)?;
+                #[cfg(test)]
+                swap_test_hook::notify(
+                    swap_test_hook::SwapWindow::BetweenVerifiedAndLeaseLink,
+                    &source,
+                );
                 fs::hard_link(&source, &destination)
                     .map_err(|e| UploadError::io(e, "link", Some(&source)))?;
+                // #1494 sibling P1: `hard_link` re-walks `source`, so a leaf
+                // renamed between the integrity check in `verified` and this
+                // call would be pinned as the lease artifact and later inlined
+                // by the composer (it accepts any in-root regular file). The
+                // link itself is the ground truth: compare the linked inode
+                // with the identity recorded on the verified handle.
+                if !lease_link_matches(&destination, identities.get(index).copied().flatten()) {
+                    return Err(UploadError::dialog(
+                        "ATTACHMENT_TAMPERED",
+                        "Attachment artifact changed between verification and lease acquisition.",
+                    ));
+                }
                 set(attachment, "path", path_value(&destination));
             }
             Ok(())
@@ -494,7 +512,11 @@ impl UploadStore {
         upload_id: &str,
         project_key: &str,
         attachment_ids: Option<&[String]>,
-    ) -> Result<(UploadRecord, Vec<UploadedAttachment>)> {
+    ) -> Result<(
+        UploadRecord,
+        Vec<UploadedAttachment>,
+        Vec<Option<AttachmentIdentity>>,
+    )> {
         let record = self.get(upload_id)?;
         let project = (self.options.resolve_project)(&JsString::from(project_key))?;
         let project = fs::canonicalize(&project)
@@ -530,22 +552,30 @@ impl UploadStore {
                 "Unknown attachmentId.",
             ));
         }
+        // #1494 sibling P1: one open per attachment, and the integrity check
+        // and the identity recorded for the later lease `hard_link` come from
+        // that same handle. A path-walked `metadata` followed by a separate
+        // `File::open` inside `sha256_file` left a window in which the leaf
+        // could be renamed to an outside file, so the hash covered a different
+        // inode than the one the lease later pinned.
+        let mut identities = Vec::with_capacity(attachments.len());
         for attachment in &attachments {
             let path = PathBuf::from(string(attachment, "path").unwrap_or_default());
-            let info = fs::metadata(&path).ok();
-            if info.is_none_or(|i| i.len() as f64 != number(attachment, "bytes"))
-                || sha256_file(&path)? != string(attachment, "sha256").unwrap_or_default()
+            let mut file = match File::open(&path) {
+                Ok(file) => file,
+                Err(_) => return Err(attachment_integrity_failed(attachment)),
+            };
+            let info = file
+                .metadata()
+                .map_err(|e| UploadError::io(e, "stat", None))?;
+            if info.len() as f64 != number(attachment, "bytes")
+                || hash_file(&mut file)? != string(attachment, "sha256").unwrap_or_default()
             {
-                return Err(UploadError::dialog(
-                    "ATTACHMENT_TAMPERED",
-                    format!(
-                        "Attachment integrity check failed: {}",
-                        string(attachment, "attachmentId").unwrap_or_default()
-                    ),
-                ));
+                return Err(attachment_integrity_failed(attachment));
             }
+            identities.push(attachment_identity(&info));
         }
-        Ok((record, attachments))
+        Ok((record, attachments, identities))
     }
 
     fn progress(&self, record: &UploadRecord, delta: u64) -> Result<UploadRecord> {
@@ -1081,8 +1111,52 @@ fn json_line(value: &JsValue) -> Result<String> {
             .unwrap_or_default()
     ))
 }
-fn sha256_file(path: &Path) -> Result<String> {
-    let mut file = File::open(path).map_err(|e| UploadError::io(e, "open", Some(path)))?;
+fn attachment_integrity_failed(attachment: &UploadedAttachment) -> UploadError {
+    UploadError::dialog(
+        "ATTACHMENT_TAMPERED",
+        format!(
+            "Attachment integrity check failed: {}",
+            string(attachment, "attachmentId").unwrap_or_default()
+        ),
+    )
+}
+
+/// The `(dev, inode)` pair recorded on the verified handle. Non-Unix has no
+/// cross-platform file identity, so the lease-link comparison is skipped
+/// there (`lease_link_matches` returns true); Unix is the shipped target.
+#[cfg(unix)]
+type AttachmentIdentity = (u64, u64);
+#[cfg(not(unix))]
+type AttachmentIdentity = ();
+
+#[cfg(unix)]
+fn attachment_identity(metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn attachment_identity(_metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
+    None
+}
+
+/// #1494: the lease hard link must pin the inode the integrity check
+/// approved, not whatever the source path names after that check.
+#[cfg(unix)]
+fn lease_link_matches(destination: &Path, expected: Option<AttachmentIdentity>) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::metadata(destination), expected) {
+        (Ok(linked), Some((dev, ino))) => linked.dev() == dev && linked.ino() == ino,
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn lease_link_matches(_destination: &Path, _expected: Option<AttachmentIdentity>) -> bool {
+    true
+}
+
+fn hash_file(file: &mut File) -> Result<String> {
     let mut digest = Sha256::new();
     let mut chunk = [0; 64 * 1024];
     loop {
@@ -1218,6 +1292,9 @@ mod swap_test_hook {
         BetweenCanonicalizeAndApprovedStat,
         BetweenCanonicalizeAndOpen,
         AfterOpen,
+        /// #1494 sibling P1: after `verified` hashed the attachment through a
+        /// handle but before the lease `hard_link` re-walks its path.
+        BetweenVerifiedAndLeaseLink,
     }
 
     type Hook = Box<dyn FnMut(&Path)>;
