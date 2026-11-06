@@ -46,6 +46,14 @@ half of that pin:
     or test, one field per control, so a boundary comparison that
     degenerated into "assertion only" (or into any single dropped field) is
     caught at exactly the position that stopped being checked;
+  - unordered-close-boundary-path-retargeted: one boundary row moves off the
+    shared replay harness — the fifth field of the same tuple. The per-ID
+    path control above cannot stand in for it (the per-ID binding check
+    refuses that one first), so without this row the boundary comparison
+    could drop `path` and stay green. If it ever does, this row is the only
+    one that moves: the anchor no longer resolves in the retargeted file, so
+    the #1145 stale-anchor check turns it INVALID (a nonzero exit), not
+    KILLED — loud either way;
   - unordered-close-boundary-key-renamed: the expected-content table renames
     one key, so the name tuple and the table disagree and the consistency
     check between them must fire before any per-row content comparison.
@@ -65,9 +73,13 @@ the source lock — the #1145 full runner holds it for its whole 75-case run —
 gives up after a short probe rather than the 900 s default, and an abort of
 any kind (busy lock, failed restore, Ctrl-C) still writes the summary, with
 every recorded KILLED row revoked and every unrun control marked INVALID
-(#1508). Because mutating_sources proves the tree equals HEAD, this must run
-after the #1382 patch is committed; a pre-commit working tree is refused on
-purpose.
+(#1508). An abort exits 2 and a red run exits 1, matching the sibling
+devices: 1 means the device worked and a control survived, 2 means the
+device never produced a verdict. The summary is published temp-file-then-
+rename, so an interrupt during that write leaves no summary at all rather
+than a half-written one. Because mutating_sources proves the tree equals HEAD,
+this must run after the #1382 patch is committed; a pre-commit working tree is
+refused on purpose.
 
 Usage:
   CARGO_TARGET_DIR=<dir> python3 -I negative_controls.py <new-output-dir> [name ...]
@@ -107,7 +119,7 @@ d1_ledger = root / d1_ledger_relative
 # row used to shrink coverage with every remaining check green. Raising this
 # number is the deliberate friction: adding or removing a row must re-register
 # the total in the same edit.
-EXPECTED_TOTAL = 13
+EXPECTED_TOTAL = 14
 # (name, path, before, after, expected fragment of the dedicated failure)
 mutations = [
     (
@@ -211,6 +223,19 @@ mutations = [
         r"    ('unordered-close-overbroad', replay, '    if !UNORDERED_CLOSE_CASES.contains(&id) {', '    if false && !UNORDERED_CLOSE_CASES.contains(&id) {', 'signal_replay::comparison_tests::unordered_close_scope_equals_registration',",
         "wrong content: unordered-close-overbroad",
     ),
+    # #1507 fix-r1: the boundary row's *path* position is a separate field of
+    # the same five-tuple comparison, and the per-ID `unordered-close-path-
+    # retargeted` control above cannot cover it (that one is refused by the
+    # per-ID binding check, never by the boundary comparison). Without this
+    # row, degrading `(path, old, new, test, assertion) != expected` to
+    # `expected[1:]` left every other control green.
+    (
+        "unordered-close-boundary-path-retargeted",
+        catalog_relative,
+        "    ('unordered-close-non-array', replay,",
+        "    ('unordered-close-non-array', signals,",
+        "wrong content: unordered-close-non-array",
+    ),
 ]
 
 
@@ -248,7 +273,7 @@ check_mutation_table(mutations)
 
 # #1506 fix-r3: the registered name list is frozen here, before `[name ...]`
 # narrows `mutations` below. Read after that rebinding it is just `selected`
-# again, so the "8 registered" evidence proved nothing on a subset run.
+# again, so the full-registry evidence proved nothing on a subset run.
 REGISTERED = [row[0] for row in mutations]
 
 if len(sys.argv) < 2:
@@ -292,7 +317,6 @@ def run_check(label):
 LOCK_TIMEOUT_SECONDS = 60
 
 results = []
-recorded = set()
 
 
 def record(name, status, reason, compiled):
@@ -304,7 +328,6 @@ def record(name, status, reason, compiled):
             "compiled": compiled,
         }
     )
-    recorded.add(name)
     print(f"{name}: {status}: {reason}", flush=True)
 
 
@@ -416,9 +439,8 @@ except BaseException as error:
     # already recorded (#979 P0: a green row over an unverified tree is a false
     # pass), and every control that never ran is still accounted for.
     invalidate_completed(results, f"run aborted: {aborted}")
-    for row in mutations:
-        if row[0] not in recorded:
-            record(row[0], "INVALID", f"run aborted: {aborted}", False)
+    for row in mutations[len(results):]:
+        record(row[0], "INVALID", f"run aborted: {aborted}", False)
 
 # #1506 fix-r3: an empty run is a zero denominator, never a pass, and it must
 # not publish evidence that looks like a finished run. The table guard above
@@ -432,7 +454,7 @@ counts = {
 }
 # #1506: the guard verified the whole registry, but `results` only holds the
 # rows the command line selected. Record both, so a later reader can tell
-# "13 registered, 3 selected" from "the table shrank to 3". `registered` is the
+# "14 registered, 3 selected" from "the table shrank to 3". `registered` is the
 # name list itself, not just its length: a table swapped for the same number of
 # different names keeps the count and the uniqueness check green, and only the
 # names show it.
@@ -443,7 +465,16 @@ summary = {
     "counts": counts,
     "results": results,
 }
-exclusive_write(out / "summary.json", json.dumps(summary, indent=2) + "\n")
+# #1508 fix-r1: publish atomically (sibling `cli-parity-lock-bounded` shape,
+# #166 r8). `exclusive_write` created summary.json empty and filled it in place,
+# so a second SIGINT/SIGKILL during the abort publish left an existing but
+# unparsable summary — the reader sees "device broken" instead of the INVALID
+# verdict. A temp file plus rename means an interrupt here leaves no summary at
+# all, and a missing summary is the fail-closed signal.
+summary_path = out / "summary.json"
+summary_tmp = out / "summary.json.tmp"
+summary_tmp.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+summary_tmp.replace(summary_path)
 print(
     json.dumps(
         {
@@ -456,7 +487,15 @@ print(
     flush=True,
 )
 if aborted is not None:
-    sys.exit(f"#1382 run did not complete: {aborted}")
+    # #1508 fix-r1: an aborted run is rc 2, not 1 — the sibling devices
+    # (`cli-parity-lock-bounded`, `issue-297`) reserve 1 for "a control ran and
+    # was not killed" (a red run of a working device) and 2 for "the device
+    # never produced a verdict" (busy lock, unverified restore, cancellation).
+    # The INVALID summary is already on disk, so the exit code only routes the
+    # reader; a coordinator must not read "the device never ran" as "a control
+    # survived".
+    print(f"#1382 run did not complete: {aborted}", file=sys.stderr, flush=True)
+    sys.exit(2)
 not_killed = [row["mutation"] for row in results if row["status"] != "KILLED"]
 if not_killed:
     sys.exit(f"#1382 non-KILLED controls: {not_killed}")
