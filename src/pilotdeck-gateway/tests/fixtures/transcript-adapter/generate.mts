@@ -537,9 +537,14 @@ try {
       ['snapshot-tool-result', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: [{ type: 'text', text: 'r' }] }] }]) }, true],
       ['snapshot-tool-result-object-type', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: [{ type: {}, text: 'y' }] }] }]) }, true],
       ['snapshot-valid-replacement-junk', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([user('retained')]), replacementMessages: 'junk' }, true],
+      // An invalid snapshot must fall through to replacementMessages. Pairing
+      // two of the invalid shapes with a truthy replacement makes the validator
+      // falsifiable: if it wrongly accepted the snapshot, the row would restore
+      // instead of throwing (the empty-messages row keeps the reject-without-
+      // replacement path that ends in a warning).
       ['snapshot-invalid-empty-messages', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: { version: 1, messages: [] } }, true],
-      ['snapshot-invalid-wrong-version', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: { version: 2, messages: [user('x')] } }, true],
-      ['snapshot-invalid-tool-result-content', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: 5 }] }]) }, true],
+      ['snapshot-invalid-wrong-version', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: { version: 2, messages: [user('x')] }, replacementMessages: 'junk' }, false],
+      ['snapshot-invalid-tool-result-content', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: 5 }] }]), replacementMessages: [null] }, false],
       ['replacement', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [user('pending')] }, true],
       ['replacement-empty', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [] }, true],
       ['replacement-falsy-zero', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: 0 }, true],

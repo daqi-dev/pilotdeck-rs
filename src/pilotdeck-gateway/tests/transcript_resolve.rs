@@ -41,8 +41,8 @@ impl TranscriptStore for UnusedStore {
 /// children spawned by `matrix` replay the committed oracle without
 /// `PDRS_BASELINE`, so the 30 s child bound below is spent on the matrix,
 /// not on re-running the 650-source git probe table in each of the ten
-/// children (#978 scan: all seven were killed mid-verification at load
-/// 39-45).
+/// children (#978 scan: all seven children of that run were killed
+/// mid-verification at load 39-45).
 fn verify_baseline_once() {
     static VERIFIED: OnceLock<()> = OnceLock::new();
     VERIFIED.get_or_init(|| drop(baseline::oracle_bounded(ORACLE_TEXT)));

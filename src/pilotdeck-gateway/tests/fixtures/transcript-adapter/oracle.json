@@ -19018,7 +19018,7 @@
       "name": "restore-compact-snapshot-invalid-wrong-version",
       "store": {},
       "initialFiles": {
-        "s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":2,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}}}\n"
+        "s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":2,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]},\"replacementMessages\":\"junk\"}}\n"
       },
       "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
       "steps": [
@@ -19041,65 +19041,9 @@
         {
           "op": "restore",
           "outcome": {
-            "entries": [
-              {
-                "type": "accepted_input",
-                "sessionId": "x",
-                "turnId": "turn-1",
-                "sequence": 1,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-1",
-                "parentEntryId": null,
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": [
-                      {
-                        "type": "text",
-                        "text": "old"
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "control_boundary",
-                "sessionId": "s1",
-                "turnId": "turn-1",
-                "sequence": 2,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-2",
-                "parentEntryId": "l-1",
-                "boundary": {
-                  "kind": "compact",
-                  "subtype": "compact_boundary",
-                  "compactMetadata": {
-                    "compactionId": "c1",
-                    "trigger": "auto",
-                    "preTokens": 100,
-                    "postTokens": 40
-                  },
-                  "snapshot": {
-                    "version": 2,
-                    "messages": [
-                      {
-                        "role": "user",
-                        "content": [
-                          {
-                            "type": "text",
-                            "text": "x"
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                }
-              }
-            ],
-            "diagnostics": [],
-            "state": {
-              "sequence": 2,
-              "lastEntryId": "l-2"
+            "error": {
+              "name": "TypeError",
+              "message": "messages.map is not a function"
             }
           }
         },
@@ -19185,7 +19129,8 @@
                         ]
                       }
                     ]
-                  }
+                  },
+                  "replacementMessages": "junk"
                 }
               },
               {
@@ -19223,77 +19168,9 @@
         {
           "op": "restore",
           "outcome": {
-            "entries": [
-              {
-                "type": "accepted_input",
-                "sessionId": "x",
-                "turnId": "turn-1",
-                "sequence": 1,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-1",
-                "parentEntryId": null,
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": [
-                      {
-                        "type": "text",
-                        "text": "old"
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "control_boundary",
-                "sessionId": "s1",
-                "turnId": "turn-1",
-                "sequence": 2,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-2",
-                "parentEntryId": "l-1",
-                "boundary": {
-                  "kind": "compact",
-                  "subtype": "compact_boundary",
-                  "compactMetadata": {
-                    "compactionId": "c1",
-                    "trigger": "auto",
-                    "preTokens": 100,
-                    "postTokens": 40
-                  },
-                  "snapshot": {
-                    "version": 2,
-                    "messages": [
-                      {
-                        "role": "user",
-                        "content": [
-                          {
-                            "type": "text",
-                            "text": "x"
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "type": "session_metadata",
-                "metadata": {
-                  "title": "after hydrate"
-                },
-                "sessionId": "s1",
-                "turnId": "turn-1",
-                "sequence": 3,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "<id-1>",
-                "parentEntryId": "l-2"
-              }
-            ],
-            "diagnostics": [],
-            "state": {
-              "sequence": 3,
-              "lastEntryId": "<id-1>"
+            "error": {
+              "name": "TypeError",
+              "message": "messages.map is not a function"
             }
           }
         }
@@ -19349,14 +19226,14 @@
         }
       ],
       "files": {
-        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":2,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}}}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"after hydrate\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"l-2\"}\n"
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":2,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]},\"replacementMessages\":\"junk\"}}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"after hydrate\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"l-2\"}\n"
       }
     },
     {
       "name": "restore-compact-snapshot-invalid-tool-result-content",
       "store": {},
       "initialFiles": {
-        "s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":1,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"t\",\"content\":5}]}]}}}\n"
+        "s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":1,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"t\",\"content\":5}]}]},\"replacementMessages\":[null]}}\n"
       },
       "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
       "steps": [
@@ -19379,66 +19256,9 @@
         {
           "op": "restore",
           "outcome": {
-            "entries": [
-              {
-                "type": "accepted_input",
-                "sessionId": "x",
-                "turnId": "turn-1",
-                "sequence": 1,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-1",
-                "parentEntryId": null,
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": [
-                      {
-                        "type": "text",
-                        "text": "old"
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "control_boundary",
-                "sessionId": "s1",
-                "turnId": "turn-1",
-                "sequence": 2,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-2",
-                "parentEntryId": "l-1",
-                "boundary": {
-                  "kind": "compact",
-                  "subtype": "compact_boundary",
-                  "compactMetadata": {
-                    "compactionId": "c1",
-                    "trigger": "auto",
-                    "preTokens": 100,
-                    "postTokens": 40
-                  },
-                  "snapshot": {
-                    "version": 1,
-                    "messages": [
-                      {
-                        "role": "user",
-                        "content": [
-                          {
-                            "type": "tool_result",
-                            "toolCallId": "t",
-                            "content": 5
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                }
-              }
-            ],
-            "diagnostics": [],
-            "state": {
-              "sequence": 2,
-              "lastEntryId": "l-2"
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'content')"
             }
           }
         },
@@ -19525,7 +19345,10 @@
                         ]
                       }
                     ]
-                  }
+                  },
+                  "replacementMessages": [
+                    null
+                  ]
                 }
               },
               {
@@ -19563,78 +19386,9 @@
         {
           "op": "restore",
           "outcome": {
-            "entries": [
-              {
-                "type": "accepted_input",
-                "sessionId": "x",
-                "turnId": "turn-1",
-                "sequence": 1,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-1",
-                "parentEntryId": null,
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": [
-                      {
-                        "type": "text",
-                        "text": "old"
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "control_boundary",
-                "sessionId": "s1",
-                "turnId": "turn-1",
-                "sequence": 2,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "l-2",
-                "parentEntryId": "l-1",
-                "boundary": {
-                  "kind": "compact",
-                  "subtype": "compact_boundary",
-                  "compactMetadata": {
-                    "compactionId": "c1",
-                    "trigger": "auto",
-                    "preTokens": 100,
-                    "postTokens": 40
-                  },
-                  "snapshot": {
-                    "version": 1,
-                    "messages": [
-                      {
-                        "role": "user",
-                        "content": [
-                          {
-                            "type": "tool_result",
-                            "toolCallId": "t",
-                            "content": 5
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "type": "session_metadata",
-                "metadata": {
-                  "title": "after hydrate"
-                },
-                "sessionId": "s1",
-                "turnId": "turn-1",
-                "sequence": 3,
-                "createdAt": "2026-10-18T00:00:00.000Z",
-                "entryId": "<id-1>",
-                "parentEntryId": "l-2"
-              }
-            ],
-            "diagnostics": [],
-            "state": {
-              "sequence": 3,
-              "lastEntryId": "<id-1>"
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'content')"
             }
           }
         }
@@ -19690,7 +19444,7 @@
         }
       ],
       "files": {
-        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":1,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"t\",\"content\":5}]}]}}}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"after hydrate\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"l-2\"}\n"
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"c1\",\"trigger\":\"auto\",\"preTokens\":100,\"postTokens\":40},\"snapshot\":{\"version\":1,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"t\",\"content\":5}]}]},\"replacementMessages\":[null]}}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"after hydrate\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"l-2\"}\n"
       }
     },
     {

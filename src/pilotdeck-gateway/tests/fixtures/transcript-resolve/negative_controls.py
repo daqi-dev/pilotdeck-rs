@@ -65,6 +65,18 @@ def main():
          '                output.pop();\n'
          '            },',
          'relative_sidechain_dotdot_cwd', 'transcript resolve matrix: join-relative-dotdot'),
+        # A bare file name has an empty dirname; the empty first segment must not
+        # become a root slash (the #1551 bug class).
+        ('join-bare-root-slash', adapter_source,
+         'if !joined.is_empty() {\n            joined.push(\'/\');\n        }',
+         'joined.push(\'/\');',
+         'relative_sidechain_bare_cwd', 'transcript resolve matrix: join-relative-bare'),
+        # Nested sidechain: a child writer keeps the parent's stem and appends
+        # its own `subagents/<id>.jsonl` level.
+        ('join-omits-stem', adapter_source,
+         'join_path(&[&parent, stem, "subagents", &subagent])',
+         'join_path(&[&parent, "subagents", &subagent])',
+         'relative_sidechain_nested_cwd', 'transcript resolve matrix: join-relative-nested'),
     ]
     # The same rollback must also exercise the separate projectRoot call site.
     name, source, old, new, _, _ = mutations[0]
