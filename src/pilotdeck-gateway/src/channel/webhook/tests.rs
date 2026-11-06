@@ -1944,10 +1944,11 @@ fn webhook_channel_regenerates_identically() {
 fn zero_step_cells_are_the_two_named_cells() {
     // #1813 negative control: model a recording that lost one cell's whole
     // `steps` array while the rest still parses — that is the drift this
-    // check exists to catch. The switch drops `invalid-signature`'s recorded
-    // steps at the read site, so the comparison must see a third zero-step
-    // cell and go red. (Mutating the expectation instead would only prove the
-    // assertion is not empty.)
+    // check exists to catch. The switch discards `invalid-signature`'s recorded
+    // steps at the read result, so the classification below still runs through
+    // `steps.is_empty()` only; a KILLED here proves the comparison notices a
+    // genuinely empty read. (Mutating the expectation, or adding the name to
+    // the list directly, would only prove the assertion is not empty.)
     const ZERO_STEP: &[&str] = &["invalid-port", "port-in-use"];
     const LOST_STEPS_CELL: &str = "invalid-signature";
     let lost_steps = crate::mutants::on("webhook-zero-step-whitelist");
@@ -1958,8 +1959,13 @@ fn zero_step_cells_are_the_two_named_cells() {
     let mut zero: Vec<&str> = Vec::new();
     for case in cases {
         let name = case["name"].as_str().expect("#1334 oracle case name");
-        let steps = recorded_steps(case).expect("#1334 steps validated array");
-        if steps.is_empty() || (lost_steps && name == LOST_STEPS_CELL) {
+        let steps: &[Value] = recorded_steps(case).expect("#1334 steps validated array");
+        let steps: &[Value] = if lost_steps && name == LOST_STEPS_CELL {
+            &[]
+        } else {
+            steps
+        };
+        if steps.is_empty() {
             zero.push(name);
         }
     }
