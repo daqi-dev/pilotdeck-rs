@@ -57,6 +57,24 @@ if hang_first and not os.path.exists(hang_first):
     mode = "hang"
 if mode == "hang":
     time.sleep(30)
+# API 错误响应（真形状见 _tmp/20261106-issue-1527/review-r30-minimax/：model=<synthetic> + 正文 "API Error: ..."）
+API_QUOTA = "API Error: Request rejected (429) · 已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。 (2056)"
+API_CONN = "API Error: Connection dropped (ECONNRESET)"
+api_err = {"api_error_quota": API_QUOTA}.get(mode)
+if mode == "api_error_conn_once":
+    flag = conf["conn_flag"]
+    if not os.path.exists(flag):
+        open(flag, "w").close()
+        api_err = API_CONN
+if api_err:
+    print(json.dumps({"type": "assistant", "message": {"model": "<synthetic>",
+                                                       "content": [{"type": "text", "text": api_err}]}}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": api_err,
+                      "total_cost_usd": 0, "modelUsage": {}}), flush=True)
+    if trace:
+        with open(trace, "a") as f:
+            f.write(f"end {time.time()}\n")
+    sys.exit(1)
 if mode != "no_assistant":
     resp = "wrong-model-x" if mode == "wrong_resp" else {"glm-5.3-mb": "GLM-5.3",  # 真网关回显展示名
                                                           "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}.get(model, model)
@@ -240,6 +258,55 @@ def _run(gate, rrr, out_base: Path) -> int:
         rc, s = run("timeout", "hang", timeout=2)
         if rc == 0 or "TIMEOUT" not in s or not gate_errs(s):
             fails.append(f"timeout：应判 TIMEOUT 且闸门拒收（rc={rc}）")
+
+        # —— API 错误响应不得误报「模型不符」；断连重试一次；真模型不符仍要判出（11-06）——
+        def run_one(name: str, conf: dict) -> tuple[int, dict, str, list[str]]:
+            trace_f = tmp / f"{name}.trace"
+            trace_f.write_text("")
+            (tmp / "fake.json").write_text(json.dumps({"log": str(log), "final": FINAL, "keys": {"mmx_file": mmx_secret},
+                                                       "trace": str(trace_f), **conf}))
+            out = out_base / name
+            cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", "minimax", "--claude-bin", str(fake),
+                                 "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1",
+                                 "--out", str(out), "--roles", "simplify"], capture_output=True, text=True)
+            sp = out / "status.json"
+            st = json.loads(sp.read_text(encoding="utf-8"))["simplify"] if sp.exists() else {}
+            s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
+            return cp.returncode, st, s, trace_f.read_text().split()
+
+        # ① 429 额度：判「额度耗尽」+ 原文，不判模型不符，且不得重试（重试只会放大占用）
+        rc, st, s, ev = run_one("api-quota", {"mode": "api_error_quota"})
+        detail = st.get("detail", "")
+        if rc == 0 or st.get("status") != "ERROR" or "额度耗尽" not in detail or "模型不符" in detail:
+            fails.append(f"api-quota：429 应判额度耗尽而不是模型不符（rc={rc}、{st.get('status')}、{detail}）")
+        if "API Error:" not in detail or "429" not in detail or "Token Plan" not in detail:
+            fails.append(f"api-quota：detail 应带内嵌错误原文：{detail}")
+        if ev.count("start") != 1:
+            fails.append(f"api-quota：额度 429 不得重试（起了 {ev.count('start')} 次）")
+        if "额度耗尽" not in s or "API Error:" not in s:
+            fails.append(f"api-quota：结果行（summary 表格）应写出错误分类与原文：{s}")
+        print(f"api-quota: status={st.get('status')} attempts={ev.count('start')} detail={detail}")
+
+        # ② ECONNRESET：自动重试一次后 PASS；两次的原始流分别留档
+        rc, st, s, ev = run_one("api-conn", {"mode": "api_error_conn_once", "conn_flag": str(tmp / "conn.flag")})
+        detail = st.get("detail", "")
+        if rc != 0 or st.get("status") != "PASS" or st.get("retried") != 1:
+            fails.append(f"api-conn：ECONNRESET 应重试 1 次后 PASS（rc={rc}、{st.get('status')}、retried={st.get('retried')}）")
+        if ev.count("start") != 2:
+            fails.append(f"api-conn：应恰好重试一次（起了 {ev.count('start')} 次）")
+        if "连接断开" not in detail or "ECONNRESET" not in detail:
+            fails.append(f"api-conn：detail 应说明首次断连并带原文：{detail}")
+        if "simplify:PASS" not in s or "roles=simplify:PASS" not in s:
+            fails.append(f"api-conn：重试成功应产出 PASS 结果块：{s}")
+        if not (out_base / "api-conn" / "simplify.retry1.jsonl").exists():
+            fails.append("api-conn：重试的原始事件流应单独留档（simplify.retry1.jsonl），不得覆盖首次现场")
+        print(f"api-conn: status={st.get('status')} retried={st.get('retried')} attempts={ev.count('start')} detail={detail}")
+
+        # ③ 负控：正常响应但 model 字段不同（无 API Error）仍必须判「模型不符」，防把校验改瘫
+        rc, st, s, ev = run_one("model-mismatch", {"mode": "wrong_resp"})
+        if rc == 0 or st.get("status") != "ERROR" or "模型不符" not in st.get("detail", ""):
+            fails.append(f"model-mismatch：正常响应但 model 不同仍须判模型不符（{st.get('status')}、{st.get('detail')}）")
+        print(f"model-mismatch: status={st.get('status')} detail={st.get('detail')}")
 
         # 缺钥：fixture 文件没有该键、父环境却有——必须拒绝，不回退父环境（无条件断言，开发机与 CI 一致）
         empty = tmp / "empty.env"
