@@ -1275,6 +1275,19 @@ def _sys_aliases(tree, span=None):
                             added_tables.add(target.id)
                     elif _sys_table(value, modules):
                         added_tables.add(target.id)
+                    else:
+                        # ``rows = [sys.modules]`` / ``_m = [sys.path][0]``: a
+                        # literal container, or an element of one, hands the
+                        # table on without spelling it.  The two kinds stay
+                        # apart -- ``_foreign_writes`` subtracts the module
+                        # names from the table names, so calling a table a
+                        # module would drop it from the guarded set.
+                        is_module, is_table = _container_sys_kinds(
+                            value, modules, tables)
+                        if is_module:
+                            added_modules.add(target.id)
+                        if is_table:
+                            added_tables.add(target.id)
                     continue
                 if not isinstance(target, (ast.Tuple, ast.List)):
                     continue
@@ -1363,7 +1376,12 @@ def _alias_roots(tree, seeds, span=None):
                     elif any(_root_name(item) in roots for item in values):
                         added.update(names)
                     continue
-                if isinstance(target, ast.Name) and _root_name(value) in roots:
+                if isinstance(target, ast.Name) and (
+                        _root_name(value) in roots
+                        or _container_value(value, roots)):
+                    # ``rows = [common]`` is the same object one hop away:
+                    # ``_swap(*rows)`` / ``**[...]`` hands it on without the
+                    # name, and ``_p = [common][0]`` indexes it back out.
                     added.add(target.id)
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
@@ -1409,6 +1427,25 @@ def _contains_root(node, roots):
     """
     return any(isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
                and child.id in roots for child in ast.walk(node))
+
+
+def _container_value(value, roots):
+    """True when binding ``value`` keeps one of ``roots`` one step away.
+
+    ``rows = [common]`` / ``kw = {'x': common}`` / ``_p = [common][0]``: the
+    bound name is not the object itself, so ``_root_name`` (which strips
+    attributes and subscripts but stops at any other node) answers ``None`` --
+    yet ``_swap(*rows)``, ``_swap(**kw)`` and ``_p.update(...)`` all reach the
+    object without ever spelling its name.  Only a *literal* container is read
+    this way: a comprehension (``[f'{n}' for n in A2_SCRIPTS]``) or a call
+    result may hold anything, and following those would drag every derived
+    local into the watched set.  A dict contributes its keys and its values --
+    ``*d`` hands over the keys, ``**d`` the values.
+    """
+    target = value.value if isinstance(value, ast.Subscript) else value
+    if not isinstance(target, (ast.Dict, ast.Tuple, ast.List, ast.Set)):
+        return False
+    return _contains_root(value, roots)
 
 
 def _argument_pairs(call, order, stars):
@@ -1494,9 +1531,17 @@ def _local_aliases(function, names):
                                 added[name] = local.get(name, set()) | reached
                     continue
                 root = _root_name(value)
-                if root not in local:
+                reached = set()
+                if root in local:
+                    reached = local[root]
+                elif _container_value(value, local):
+                    # ``rows = [x]`` then ``_swap2(*rows)``: the parameter is
+                    # one literal hop away, exactly as at module scope.
+                    for read in _names_read(value, local):
+                        reached |= local[read]
+                if not reached:
                     continue
-                reached = local.get(target.id, set()) | local[root]
+                reached |= local.get(target.id, set())
                 if not reached <= local.get(target.id, set()):
                     added[target.id] = reached
         if not added:
@@ -1506,15 +1551,22 @@ def _local_aliases(function, names):
 
 
 def _defaults(arguments):
-    """``{parameter name: default expression}`` for one ``ast.arguments``."""
+    """``{parameter name: [default expressions]}`` for one ``ast.arguments``.
+
+    A list, not one expression: a name defined more than once (``def _swap(x=
+    common): ...`` above, ``def _swap(x=0): ...`` below) is callable through
+    either definition, and a call written between the two runs the first one.
+    Keeping only the last default parsed let the watched value disappear; the
+    merge in ``_mutating_functions`` appends instead of replacing.
+    """
     defaults = {}
     positional = arguments.posonlyargs + arguments.args
     for arg, default in zip(positional[len(positional) - len(arguments.defaults):],
                             arguments.defaults):
-        defaults[arg.arg] = default
+        defaults.setdefault(arg.arg, []).append(default)
     for arg, default in zip(arguments.kwonlyargs, arguments.kw_defaults):
         if default is not None:
-            defaults[arg.arg] = default
+            defaults.setdefault(arg.arg, []).append(default)
     return defaults
 
 
@@ -1572,17 +1624,21 @@ def _mutating_functions(tree, span):
         local = _local_aliases(body, names)
         mutated = set()
         for child in ast.walk(body):
+            # The receiver is matched by containment, not by its bare root name:
+            # ``[x][0].update(...)`` is the same write as ``x.update(...)``, and
+            # ``_root_name`` stops at the list literal.
             if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) \
-                    and child.func.attr in _MUTATOR_ATTRS \
-                    and _root_name(child.func) in local:
-                mutated |= local[_root_name(child.func)]
+                    and child.func.attr in _MUTATOR_ATTRS:
+                for read in _names_read(child.func, local):
+                    mutated |= local[read]
             elif isinstance(child, (ast.Attribute, ast.Subscript)) \
-                    and isinstance(child.ctx, ast.Store) \
-                    and _root_name(child) in local:
+                    and isinstance(child.ctx, (ast.Store, ast.Del)):
                 # ``def _swap(x): _a, _b = x, None; _a.A2_SCRIPTS = ()``: a
                 # store through a renamed parameter edits the object the
-                # caller handed over, exactly like ``x.update(...)``.
-                mutated |= local[_root_name(child)]
+                # caller handed over, exactly like ``x.update(...)``.  ``del
+                # x['k']`` edits in place just the same.
+                for read in _names_read(child, local):
+                    mutated |= local[read]
         defaults = _defaults(arguments)
         if not owners:
             # Nobody can call this lambda by name; it only matters when the call
@@ -1636,11 +1692,19 @@ def _mutating_functions(tree, span):
         name = record['name']
         if name in found:
             previous = found[name]
-            found[name] = (None, (), record['mutated'] | previous[2],
-                           {**previous[3], **record['defaults']})
+            # Every definition's defaults stay in reach: which one a call runs
+            # depends on where the call sits, which this model does not track,
+            # so replacing the older default let ``def _swap(x=0)`` below hide
+            # the ``x=common`` above.
+            merged = {key: list(value) for key, value in previous[3].items()}
+            for key, value in record['defaults'].items():
+                merged.setdefault(key, []).extend(value)
+            found[name] = (None, (), record['mutated'] | previous[2], merged)
         else:
             found[name] = (record['order'], record['stars'],
-                           set(record['mutated']), dict(record['defaults']))
+                           set(record['mutated']),
+                           {key: list(value)
+                            for key, value in record['defaults'].items()})
     return found, unbound
 
 
@@ -1679,7 +1743,8 @@ def _watched_argument(call, entry, roots):
             # pinned at all, so any watched object the call or a default can
             # hand over fails closed.
             return _contains_root(call, roots) or any(
-                _contains_root(value, roots) for value in defaults.values())
+                _contains_root(value, roots)
+                for values in defaults.values() for value in values)
         pairs = list(_argument_pairs(call, order, stars))
         if any(_contains_root(value, roots) for _, value in pairs):
             return True
@@ -1691,7 +1756,7 @@ def _watched_argument(call, entry, roots):
         supplied = {name for name, _ in pairs if name is not None}
         for name in mutated:
             if name not in supplied and name in defaults \
-                    and _contains_root(defaults[name], roots):
+                    and any(_contains_root(value, roots) for value in defaults[name]):
                 return True
         return False
     supplied = set()
@@ -1705,7 +1770,7 @@ def _watched_argument(call, entry, roots):
             return True
     for name in mutated:
         if name not in supplied and name in defaults \
-                and _contains_root(defaults[name], roots):
+                and any(_contains_root(value, roots) for value in defaults[name]):
             return True  # def _swap(x=common): x.update(...)  ->  _swap()
     return False
 
@@ -1725,6 +1790,30 @@ _LAMBDA_CONSUMERS = frozenset({'sorted', 'min', 'max', 'map', 'filter',
                                'sort', 'reduce'})
 
 
+def _rebound_names(tree, span=None):
+    """Every name the file binds itself: assignment, ``def``, ``class``, import.
+
+    A consumer whitelist is only worth its name while the name at the call site
+    is still the builtin (or the method) it stands for.  ``sorted = _apply`` or
+    ``def sorted(f): return f(sys.modules)`` turns ``sorted(lambda ...)`` into
+    an arbitrary call this model cannot see into, so a rebound consumer name is
+    no evidence at all.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if _in_block(node, span):
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name != '*':
+                    names.add(alias.asname or alias.name.split('.')[0])
+        for target, _ in _bound_pairs(node):
+            names |= _target_names(target)
+    return names
+
+
 def _unbound_lambda_reaches(tree, unbound, roots, span):
     """True when a nameless lambda that edits a parameter may get a watched object.
 
@@ -1737,21 +1826,31 @@ def _unbound_lambda_reaches(tree, unbound, roots, span):
     another argument of that call.  ``partial(lambda ...)``, a decorator and a
     locally defined wrapper all keep the lambda for a later call this model
     cannot see, so they stay unplaced too.
+
+    Only a lambda that *is* one of the call's own arguments is paired with it.
+    ``sorted(rows, key=lambda o: _apply(lambda p: p.update(...)))`` looks like
+    a consumer call from the outside, but the inner lambda is handed to
+    ``_apply``, which may call it with anything -- descending into the argument
+    would credit the outer ``sorted`` for a lambda it never receives.
     """
     unplaced = set(unbound)
+    rebound = _rebound_names(tree, span)
     for node in ast.walk(tree):
         if _in_block(node, span) or not isinstance(node, ast.Call):
             continue
         values = _call_values(node)
         for value in values:
-            for child in ast.walk(value):
-                if isinstance(child, ast.Lambda) and id(child) in unplaced:
-                    if _call_name(node.func) not in _LAMBDA_CONSUMERS:
-                        continue  # the callee may call it later with anything
-                    unplaced.discard(id(child))
-                    if _contains_root(node.func, roots) or any(
-                            _contains_root(other, roots) for other in values):
-                        return True
+            if not (isinstance(value, ast.Lambda) and id(value) in unplaced):
+                continue
+            caller = _call_name(node.func)
+            if caller not in _LAMBDA_CONSUMERS or caller in rebound:
+                # The callee may call it later with anything -- and a
+                # consumer name the file rebound is just a name.
+                continue
+            unplaced.discard(id(value))
+            if _contains_root(node.func, roots) or any(
+                    _contains_root(other, roots) for other in values):
+                return True
     return bool(unplaced)
 
 
@@ -1764,8 +1863,12 @@ def _aliased_mutator(tree, mutating, roots, span):
     ``_g = getattr(_C(), '_swap')`` reach the same callable through a container
     or a reflection, so the whole right-hand side is searched.  ``_g =
     common.update`` then ``_g({...})`` is the same trick one level down: the
-    bound method of a watched object edits that object.  Which object owns a
-    function attribute is not modelled, so this fails closed either way.
+    bound method of a watched object edits that object, and ``_g =
+    getattr(sys.modules, 'update')`` spells the same method as a string.  Which
+    object owns a function attribute is not modelled, so this fails closed
+    either way; a ``getattr`` whose arguments this model cannot read (an
+    expansion, a variable attribute name) fails closed too, because the name it
+    binds is then a callable nothing else in the file names.
     """
     for node in ast.walk(tree):
         if _in_block(node, span):
@@ -1780,18 +1883,67 @@ def _aliased_mutator(tree, mutating, roots, span):
                     if child.attr in _MUTATOR_ATTRS \
                             and _contains_root(child.value, roots):
                         return True  # _g = common.update / REQUIRED.update
-                if isinstance(child, ast.Call) and _call_name(child.func) == 'getattr' \
-                        and len(child.args) >= 2:
-                    attr = child.args[1]
-                    if isinstance(attr, ast.Constant) and attr.value in mutating:
+                if isinstance(child, ast.Call) and _call_name(child.func) == 'getattr':
+                    if any(isinstance(arg, ast.Starred) for arg in child.args) \
+                            or any(word.arg is None for word in child.keywords):
+                        # ``getattr(*_pair)``: which argument is the object and
+                        # which the attribute is not visible, so the callable
+                        # this binds cannot be named -- nor can what it edits.
                         return True
+                    if len(child.args) < 2:
+                        continue  # getattr(x) is a TypeError, not a write
+                    attr = child.args[1]
+                    if not (isinstance(attr, ast.Constant)
+                            and isinstance(attr.value, str)):
+                        # ``_n = '_swap'; _g = getattr(_C(), _n)``: the attribute
+                        # name is a string this model cannot read, so ``_g`` may
+                        # be any method of any object.
+                        return True
+                    if attr.value in mutating:
+                        return True
+                    if attr.value in _MUTATOR_ATTRS \
+                            and _contains_root(child.args[0], roots):
+                        return True  # _g = getattr(sys.modules, 'update')
     return False
 
 
 def _sys_table(node, module_roots):
-    """True when ``node`` is ``X.modules`` / ``X.path`` for a ``sys`` alias ``X``."""
+    """True when ``node`` is ``X.modules`` / ``X.path`` for a ``sys`` alias ``X``.
+
+    The receiver is matched by containment, exactly as ``_foreign_writes``
+    matches the receiver of a mutator call: ``[_s][0].modules`` names the table
+    without spelling the module as a bare name, and ``_root_name`` stops at the
+    list literal.
+    """
     return (isinstance(node, ast.Attribute) and node.attr in _SYS_TABLES
-            and _root_name(node) in module_roots)
+            and _contains_root(node.value, module_roots))
+
+
+def _container_sys_kinds(value, modules, tables):
+    """``(module, table)``: what a literal container behind a name may hold.
+
+    ``rows = [sys.modules]`` keeps a table one hop away and ``mods = [sys]``
+    keeps the module itself; both reach the same writes as the bare names once
+    the container is unpacked or indexed.  Only a literal container, or an
+    element taken out of one, is read this way -- a comprehension or a call
+    result may hold anything and stays unmodelled.  The two kinds stay apart
+    because ``_foreign_writes`` subtracts the module names from the table names
+    when it looks for table writes.
+    """
+    target = value.value if isinstance(value, ast.Subscript) else value
+    if isinstance(target, ast.Dict):
+        elements = [key for key in target.keys if key is not None]
+        elements += [item for item in target.values if item is not None]
+    elif isinstance(target, (ast.Tuple, ast.List, ast.Set)):
+        elements = list(target.elts)
+    else:
+        return False, False
+    is_module = any(isinstance(item, ast.Name) and item.id in modules
+                    for item in elements)
+    is_table = any(_sys_table(item, modules)
+                   or (isinstance(item, ast.Name) and item.id in tables)
+                   for item in elements)
+    return is_module, is_table
 
 
 def _foreign_writes(tree, watched, span):

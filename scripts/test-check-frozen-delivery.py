@@ -1124,6 +1124,108 @@ def run():
                       "    _f = lambda name: name\n"
                       "    paths = [f'scripts/gateway-parity/{n}' for n in A2_SCRIPTS]\n"
                       "    return {name: name for name in paths}\n") is None)
+
+    # ---------------------------------------------------------------- r28 负控
+    # r27 的复审又放开 / 漏掉两条假 PASS 路径：被看护对象先在字面量容器里装一
+    # 跳（`rows = [common]`、`_p = [common][0]`）再展开或就地改，以及用
+    # `getattr(sys.modules, 'update')` 把就地改的方法名藏进字符串。另外三处是
+    # 同一族的漏口（函数体内按裸名匹配接收者、消费者白名单名字被重绑、同名多
+    # 定义的默认值被后一条覆盖），一条一个负控。
+    case("gateway 字面量容器装一跳后按位置展开 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "rows = [common]\n_swap(*rows)\n" + _gw_tail) is None)
+    case("gateway 字面量容器装一跳后按属性调用展开 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "rows = [common]\n_C()._swap(*rows)\n" + _gw_tail) is None)
+    case("gateway dict 字面量装一跳后按 ** 展开 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "kw = {'x': common}\n_swap(**kw)\n" + _gw_tail) is None)
+    case("gateway 字面量容器装 sys.modules 后展开 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'apparatus': None})\n"
+                        "rows = [sys.modules]\n_swap(*rows)\n" + _gw_tail) is None)
+    case("gateway 从字面量容器取元素后就地改属性 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_p = [common][0]\n_p.A2_SCRIPTS = ()\n" + _gw_tail) is None)
+    case("gateway 从字面量容器取元素后就地改表 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_m = [sys.modules][0]\n_m.update({'apparatus': None})\n"
+                      + _gw_tail) is None)
+    case("gateway getattr 取被看护表的方法名 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_g = getattr(sys.modules, 'update')\n"
+                        "_g({'apparatus': None})\n" + _gw_tail) is None)
+    case("gateway getattr 取被看护对象的就地改方法 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_g = getattr(common, 'update')\n_g({'A2_SCRIPTS': ()})\n"
+                      + _gw_tail) is None)
+    case("gateway getattr 的实参按 * 展开后取方法 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_pair = (_C(), '_swap')\n_g = getattr(*_pair)\n_g(common)\n"
+                      + _gw_tail) is None)
+    case("gateway getattr 的属性名藏在变量里 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_n = '_swap'\n_g = getattr(_C(), _n)\n_g(common)\n"
+                      + _gw_tail) is None)
+    case("gateway 被调函数内按字面量容器取接收者后就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    [x][0].update({'A2_SCRIPTS': ()})\n"
+                        "_swap(common)\n" + _gw_tail) is None)
+    case("gateway 被调函数内按字面量容器取接收者后写属性 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    [x][0].A2_SCRIPTS = ()\n"
+                        "_swap(common)\n" + _gw_tail) is None)
+    case("gateway 被调函数内 del 形参下标（就地改）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    del x['apparatus']\n"
+                        "_swap(sys.modules)\n" + _gw_tail) is None)
+    case("gateway 消费者名字被文件重绑后不再可信 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _apply(f):\n    return f(common)\n"
+                        "sorted = _apply\n"
+                        "sorted(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway 同名函数两条定义、默认值前一条带被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x=common):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "_swap()\n"
+                        "def _swap(x=0):\n    x.update({'A2_SCRIPTS': ()})\n"
+                      + _gw_tail) is None)
+    case("gateway 无主 lambda 嵌在另一个 lambda 里（外层是消费者）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _apply(f):\n    return f(common)\n"
+                        "sorted(rows, key=lambda o: _apply("
+                        "lambda p: p.update({'A2_SCRIPTS': ()})))\n"
+                      + _gw_tail) is None)
+    case("gateway sys 模块名装进容器后取其 modules 表 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys as _s\n"
+                        "[_s][0].modules.update({'apparatus': None})\n"
+                      + _gw_tail) is None)
+    case("gateway 从容器取出的干净元素 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_p = [{'k': 0}][0]\n_p.update({'k': 1})\n"
+                      + _gw_tail) is not None)
+    # 白名单每个成员都要有配对的负控（名单漂移即红）与正控（干净数据不误拦）。
+    for _consumer in sorted(cfd._LAMBDA_CONSUMERS):
+        case(f"gateway 无主 lambda 交给 {_consumer} 且同时喂被看护对象 → 不可判定",
+             gw_inventory(GW_BOOTSTRAP
+                          + f"{_consumer}(common, lambda o: o.setdefault('k', 1))\n"
+                          + _gw_tail) is None)
+        case(f"gateway 无主 lambda 交给 {_consumer} 只碰自己的元素 → 仍可判定",
+             gw_inventory(GW_BOOTSTRAP
+                          + f"{_consumer}([{{'k': 0}}], "
+                            "lambda o: o.setdefault('k', 1))\n"
+                          + _gw_tail) is not None)
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_repo(root)
@@ -1886,6 +1988,11 @@ def run():
     case("ui 块外 _m = _boot_sys.modules 后 update → 不可判定",
          ui_registrable(UI_APPARATUS, UI_FROZEN
                         + "\n_m = _boot_sys.modules\n_m.update({'apparatus': None})\n") is None)
+    # r28：`_sys_table` 的接收者改按包含匹配后，ui 侧的同一拼写也要拦得住。
+    case("ui 块外 sys 模块名装进容器后取其 modules 表 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\nimport sys as _s\n"
+                          "[_s][0].modules.update({'apparatus': None})\n") is None)
     case("ui 函数体内 _s = REQUIRED 后 difference_update → 不可判定",
          ui_registrable(UI_APPARATUS, UI_FROZEN
                         + "\ndef _r():\n    _s = REQUIRED\n"
