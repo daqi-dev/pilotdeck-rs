@@ -1898,8 +1898,12 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
                     hidden_source.write_text('before\n')
                     self.run_check(label=f'restored-{filename}')
                 finally:
-                    hidden_source.write_text('before\n')
-                    destination.unlink(missing_ok=True)
+                    # Nested: if restoring the shared source fails, still drop the
+                    # scratch script so later subtests start from a clean tree.
+                    try:
+                        hidden_source.write_text('before\n')
+                    finally:
+                        destination.unlink(missing_ok=True)
         other = self.fixtures / 'sample/runner.py'
         other.write_text("raise RuntimeError('must never execute')\n")
         self.assertIn('runner.py: no supported mutation anchors', self.run_check(1, label='unregistered-helper'))
@@ -2092,8 +2096,12 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
                     self.run_check(label=f'#977 marker-restored-{name}')
                     print(f'MARKER {name}: present=0 removed=1 restored=0')
                 finally:
-                    self.script.unlink(missing_ok=True)
-                    CHECK.UNSUPPORTED_SIGNALS.pop(name, None)
+                    # Nested: a failing unlink (OSError) must not skip the
+                    # registration cleanup that keeps later subtests clean.
+                    try:
+                        self.script.unlink(missing_ok=True)
+                    finally:
+                        CHECK.UNSUPPORTED_SIGNALS.pop(name, None)
 
     def test_helper_exemption_cannot_hide_mutation_signals(self):
         reason = 'helper without mutation definitions'
@@ -2294,8 +2302,12 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
                     with patch.dict(CHECK.ROW_EXCEPTIONS, {(filename, name): ''}):
                         self.assertIn('empty row exception reason', self.run_check(1))
                 finally:
-                    sibling.unlink(missing_ok=True)
-                    self.script.unlink(missing_ok=True)
+                    # Nested: a failing unlink of one scratch file must not skip
+                    # removal of the other, which would leak into later subtests.
+                    try:
+                        sibling.unlink(missing_ok=True)
+                    finally:
+                        self.script.unlink(missing_ok=True)
 
     def test_function_scoped_row_is_checked_instead_of_exempted(self):
         self.script.unlink()
