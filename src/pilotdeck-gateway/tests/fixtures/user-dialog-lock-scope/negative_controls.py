@@ -118,6 +118,16 @@ SETTLE_JOURNAL_TEST = ('user_dialog::channel_tests::'
                        'keeps_the_replacement_rows')
 SETTLE_JOURNAL_ASSERTION = ("#1599 a superseded settle must not delete the "
                             "replacement's store row")
+JOURNAL_WRITE_TEST = ('user_dialog::channel_tests::a_registration_replaced_while_'
+                      'its_journal_write_runs_keeps_the_replacement_row')
+JOURNAL_WRITE_ASSERTION = ('#1599 a registration replaced during its journal '
+                           'write must end with the replacement error')
+STORE_CLAIM_ASSERTION = ('#1599 the original must not claim the owner lease '
+                         'after the replacement published')
+STICKY_REPLACED_TEST = ('user_dialog::channel_tests::a_registration_whose_'
+                        'replacement_finished_still_sees_the_supersession')
+STICKY_REPLACED_ASSERTION = ('#1599 a registration replaced by a finished '
+                             'replacement must end with an error')
 # Statically declared denominator: a literal tuple, deliberately not derived
 # from `mutations`, so a runtime table that lost rows cannot shrink it.
 DECLARED = (
@@ -142,6 +152,9 @@ DECLARED = (
     'superseded-abort-cancels-the-replacement',
     'settle-release-deletes-the-replacement-row',
     'settle-journal-deletes-the-replacement-row',
+    'superseded-registration-overwrites-the-journal-row',
+    'superseded-registration-claims-the-replacement-lease',
+    'supersession-flag-forgets-a-finished-replacement',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -359,6 +372,32 @@ mutations = [
      '        }',
      '        journal.remove(&state.request_id)?;',
      SETTLE_JOURNAL_TEST, SETTLE_JOURNAL_ASSERTION),
+    # persist: the re-check after `journal.record` is dropped, so a superseded
+    # registration writes its own store row over the replacement's.
+    ('superseded-registration-overwrites-the-journal-row', 'user_dialog/channel.rs',
+     '            if replaced(&self.inner, state) {\n'
+     '                return Err(DialogError::Invalid(replaced_during("journal write")));\n'
+     '            }\n',
+     '',
+     JOURNAL_WRITE_TEST, JOURNAL_WRITE_ASSERTION),
+    # persist: the re-check after `store.put` is dropped, so a superseded
+    # registration runs the host claim hook and steals the replacement's lease.
+    ('superseded-registration-claims-the-replacement-lease', 'user_dialog/channel.rs',
+     '            if replaced(&self.inner, state) {\n'
+     '                return Err(DialogError::Invalid(replaced_during("store write")));\n'
+     '            }\n',
+     '',
+     STORE_WRITE_TEST, STORE_CLAIM_ASSERTION),
+    # begin: the sticky flag is never set, so a suspended original mistakes the
+    # finished replacement's empty table slot for "the id is still mine".
+    ('supersession-flag-forgets-a-finished-replacement', 'user_dialog/channel.rs',
+     '            if let Some(previous) = requests.get(&request_id)\n'
+     '                && !Arc::ptr_eq(previous, &state)\n'
+     '            {\n'
+     '                previous.replaced.store(true, Ordering::SeqCst);\n'
+     '            }\n',
+     '',
+     STICKY_REPLACED_TEST, STICKY_REPLACED_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]
