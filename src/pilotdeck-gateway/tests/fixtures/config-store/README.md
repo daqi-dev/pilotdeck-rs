@@ -54,7 +54,8 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   `undefined`、不记 `diagnostics`。
 - 时间走 Tokio 暂停时钟：`wait` 推进虚拟时间，watcher 的轮询与去抖计时确定性
   触发，不依赖真实 sleep。Rust 以轮询（默认 20 ms）代替 `fs.watch` 事件，监视
-  对象的选取（存在则监视自身、否则监视父目录、父目录也不存在则不监视）与基线一致。
+  对象的选取（存在则监视自身、否则监视父目录、父目录也不存在则不监视）与基线
+  一致，非 `NotFound` 的启动 stat 失败除外（保留该路径待首拍重探，#1792 r1）。
   本原件的 watch 场景写入间隔 30 ms，加一个轮询周期仍远小于 250 ms 去抖，结论不受
   下列差异影响。
 - 与 `fs.watch` 不全等的三处（不加 crate 时无法消除，已用单测钉住现行为）：
@@ -68,12 +69,13 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   已能看到（`restored_mtime_rewrite_between_samples_is_seen`），只剩「整个突发的 ctime
   都停在指纹记下的那个 tick 编号」这一格。每次采样先比对元数据（含每次写入与 `utimes` 都会
   刷新的 ctime、inode）：元数据未变则不读内容（#1739）。不完整采样不提交 metadata 指纹，
-  按「什么失败」分两档（#1792 r1）：条目或目录的 `NotFound` 是完整观测，缺失本身计入
+  按「什么失败」分两档（#1792 r1/r2）：条目或目录的 `NotFound` 是完整观测，缺失本身计入
   指纹；打开或读取配置文件失败把该条目内容哈希成 `None`，按指纹差至多报一次（#1792，
   `transient_read_failure_is_retried_until_the_content_is_seen`）；stat / `read_dir`
-  的其它失败算被遮蔽采样，折叠指纹照常提交但本轮不报，下一 tick 重试，读恢复后的首个
-  完整采样补报一次（identity reload，登记见 `A6.3-CONFIG-POLL-001-R1.md`），同一不可读
-  状态不会 reload 风暴。完整语义下漏检只有一格：改写后
+  的其它失败算被遮蔽采样，不提交任何指纹（含折叠指纹），只与上一遮蔽采样比较后上报可观测
+  变化，读恢复后与最后一次完整采样比较、有差才报（#1792 r2，登记见
+  `A6.3-CONFIG-POLL-001-R1.md`），同一不可读状态不会 reload 风暴、持续遮蔽也不会永久
+  静默。完整语义下漏检只有一格：改写后
   ctime 未跨 tick，且 len / is_dir / mtime / inode / dev 也都没变；精确表述见
   `src/config/store.rs` 模块文档。
   元数据变化后（或不完整采样重试时）才读被监视配置文件（含经父目录监视、后来出现的
@@ -92,10 +94,14 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## 负控本地运行
 
-`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 13 个
-源码变异，要求各绑定测试自身 panic 载荷携带其行绑定的 `#1736` / `#1739` / `#1792` /
-`#1794` 杀点标记（绑定测试内另含 `#1793` 的 `MAX_POLL_INTERVAL == 60 s` 字面钉），
-每个变异前跑正控、后跑恢复正控，源码逐字节恢复并复核。运行时要求：
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 21 个
+源码变异（17 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
+遮蔽折叠指纹不提交、未分类模式不被 `NotFound` 定死、报变化拍不提交短路指纹、
+目录被换成文件后的类型探针、持续遮蔽仍上报可观测变更、目录消失是完整观测、
+`NotFound` stat 是完整观测），要求各绑定测试自身 panic 载荷携带其行绑定的
+`#1736` / `#1739` / `#1792` / `#1794` 杀点标记（绑定测试内另含 `#1793` 的
+`MAX_POLL_INTERVAL == 60 s` 字面钉），每个变异前跑正控、后跑恢复正控，源码
+逐字节恢复并复核。运行时要求：
 
 ```sh
 CARGO_TARGET_DIR=<独立目录> LANG=en_US.UTF-8 \

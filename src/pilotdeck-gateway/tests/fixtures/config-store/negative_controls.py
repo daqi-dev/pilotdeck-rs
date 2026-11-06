@@ -18,11 +18,21 @@ three pin the metadata short-circuit (#1739: the skipped content read, the
 ctime bump that carries a same-length mtime-restored rewrite through it at
 both the watcher and the unit level); five pin the #1792 recovery contract
 (an incomplete sample must not commit the metadata fingerprint, at watch
-start and mid-run; a ``NotFound`` stat or ``read_dir`` is a complete
-observation of absence at both the entry and the directory level; a failed
-startup probe must not drop the watched path) plus the #1736 pair that must
-be restored together (debounce ceiling + unchecked deadline add — the
-double-restoration regression that kills the watcher task).
+start and mid-run; a non-``NotFound`` stat or ``read_dir`` failure is not a
+complete observation at the entry and the directory level; a failed startup
+probe must not drop the watched path); eight pin the #1792 r2 rules (the
+first complete sample after a failed startup probe must report a change
+made during the failure; an obscured sample commits nothing — not the
+metadata shortcut, not the folded fingerprint — and is compared only
+against the previous obscured sample, so a delete during a stat outage is
+seen and a persistent obstruction does not silence the directory; a
+``NotFound`` on the unclassified re-probe must not fix the mode to file;
+the per-tick type probe that keeps a directory-replaced-by-a-file watch
+alive; a reported change must not commit the metadata shortcut; a
+``NotFound`` stat or ``read_dir`` is a complete observation at the entry
+and the directory level) plus the #1736 pair that must be restored together
+(debounce ceiling + unchecked deadline add — the double-restoration
+regression that kills the watcher task).
 
 ``PDRS_NEGATIVE_BASELINE`` may name another commit object (the sandbox
 verification pass pins a ``git stash create`` commit of the reviewed tree,
@@ -143,9 +153,11 @@ mutations = [
      TESTS + 'overflowing_debounce_does_not_kill_the_watcher',
      '#1736 the watcher task must survive an unrepresentable debounce'),
     # #1739: the metadata short-circuit is removed, so every sample reads the
-    # config file's content again and the read-count assertion fails.
+    # config file's content again and the read-count assertion fails. #1792
+    # r2: the shortcut is also skipped while the mode is unclassified (D10).
     ('metadata-short-circuit-removed', source,
-     '        if metadata_status == SampleStatus::Complete\n'
+     '        if !unclassified\n'
+     '            && metadata_status == SampleStatus::Complete\n'
      '            && self.metadata_fingerprint == Some(next_metadata)\n'
      '        {\n'
      '            return false;\n'
@@ -171,11 +183,18 @@ mutations = [
     # #1792: the incomplete sample commits its metadata fingerprint anyway, so
     # identical metadata short-circuits every later sample — the read that
     # failed is never retried and the recovery assertion (no metadata change,
-    # change re-reported once reads recover) fails.
+    # change re-reported once reads recover) fails. #1792 r2: the commit
+    # condition also requires a quiet, classified tick (D10/D11).
     ('incomplete-sample-committed', source,
-     '        self.metadata_fingerprint = (metadata_status == SampleStatus::Complete\n'
-     '            && status == SampleStatus::Complete)\n'
-     '            .then_some(next_metadata);',
+     '        self.metadata_fingerprint = if changed\n'
+     '            || unclassified\n'
+     '            || metadata_status != SampleStatus::Complete\n'
+     '            || status != SampleStatus::Complete\n'
+     '        {\n'
+     '            None\n'
+     '        } else {\n'
+     '            Some(next_metadata)\n'
+     '        };',
      '        self.metadata_fingerprint = Some(next_metadata);',
      TESTS + 'transient_read_failure_is_retried_until_the_content_is_seen',
      '#1792 the read is retried after recovery with no metadata change'),
@@ -228,6 +247,100 @@ mutations = [
      '        Err(_) => None,',
      TESTS + 'startup_stat_failure_keeps_the_path_watched',
      '#1792 a stat failure at startup must not drop the path'),
+    # #1792 r2 (D8): the first complete sample after a failed startup probe
+    # only records again (`None` read as "unchanged from something"), so a
+    # change made while the probe was failing is never reported.
+    ('startup-recovery-not-reported', source,
+     '        let changed = previous != Some(next);',
+     '        let changed = previous.is_some_and(|previous| previous != next);',
+     TESTS + 'startup_stat_failure_keeps_the_path_watched',
+     '#1792 r2 the first complete sample after a failed probe reports the change made during the failure'),
+    # #1792 r2 (D9): an obscured sample commits its folded fingerprint again
+    # (the r1 rule). The folded fingerprint hashes a failed stat exactly like
+    # a missing entry, so a delete made during the outage compares equal and
+    # is never reported.
+    ('recovery-trusts-folded-fingerprint', source,
+     '            let (next, _status) = fingerprint(&self.path, directory, self.target.as_deref(), true);\n'
+     '            self.metadata_fingerprint = None;\n'
+     '            return self.observe_obscured(next);',
+     '            let (next, _status) = fingerprint(&self.path, directory, self.target.as_deref(), true);\n'
+     '            self.metadata_fingerprint = None;\n'
+     '            self.fingerprint = Some(next_metadata);\n'
+     '            return self.observe_obscured(next);',
+     TESTS + 'stat_failure_during_change_is_seen_after_recovery',
+     '#1792 r2 a delete made during a stat outage is seen after recovery'),
+    # #1792 r2 (D10): a `NotFound` on the unclassified re-probe fixes the mode
+    # to file again (the r1 bug), so the path is never re-classified when it
+    # appears as a directory.
+    ('probe-not-found-fixes-file-mode', source,
+     '                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,',
+     '                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {\n'
+     '                    self.directory = Some(false);\n'
+     '                    false\n'
+     '                }',
+     TESTS + 'probe_failure_then_directory_is_reclassified',
+     '#1792 r2 a NotFound re-probe must not fix the mode to file'),
+    # #1792 r2 (D11): the tick that reports a change also commits the metadata
+    # shortcut again, so the next tick short-circuits without re-reading the
+    # content — the two samples happen at different times.
+    ('report-commits-metadata-shortcut', source,
+     '        self.metadata_fingerprint = if changed\n'
+     '            || unclassified',
+     '        self.metadata_fingerprint = if unclassified',
+     TESTS + 'a_reported_change_does_not_commit_the_metadata_shortcut',
+     '#1792 r2 the reported tick commits no metadata shortcut'),
+    # #1792 r2 (D15): the per-tick type probe is removed, so a watched
+    # directory replaced by a plain file stays in directory mode and every
+    # tick is obscured (`read_dir` ENOTDIR) — no reload ever again.
+    ('mode-change-not-detected', source,
+     '        if let Some(directory) = self.directory\n'
+     '            && let Ok(meta) = stat_path(&self.path)\n'
+     '            && meta.is_dir() != directory\n'
+     '        {\n'
+     '            self.directory = Some(meta.is_dir());\n'
+     '            self.metadata_fingerprint = None;\n'
+     '        }\n',
+     '',
+     TESTS + 'a_directory_replaced_by_a_file_is_seen',
+     '#1792 r2 a directory replaced by a file is seen'),
+    # #1792 r2 (D16): an obscured sample never reports against the previous
+    # obscured one, so a permanently unreadable sibling entry silences every
+    # observable change in the watched directory.
+    ('obscured-change-not-reported', source,
+     '        let previous = self.obscured_fingerprint.replace(sample);\n'
+     '        previous.is_some_and(|previous| previous != sample)',
+     '        let previous = self.obscured_fingerprint.replace(sample);\n'
+     '        { let _ = previous; false }',
+     TESTS + 'a_persistent_obstruction_still_reports_observable_changes',
+     '#1792 r2 a persistent obstruction must not silence observable changes'),
+    # #1792 r2 (D17): a `read_dir` `NotFound` is counted as obscured again, so
+    # a vanished watched directory is not a complete observation and its
+    # disappearance is never reported.
+    ('read-dir-not-found-counted-obscured', source,
+     '                if error.kind() != std::io::ErrorKind::NotFound {\n'
+     '                    status = status.merge(SampleStatus::Obscured);\n'
+     '                }',
+     '                status = status.merge(SampleStatus::Obscured);',
+     TESTS + 'a_removed_directory_is_a_complete_observation',
+     '#1792 r2 a vanished directory is a complete observation and reports once'),
+    # #1792 r2 (D13, DeepSeek sibling P2): a `NotFound` stat is counted as
+    # obscured, so a dangling entry keeps the sample incomplete forever and
+    # the metadata fingerprint never commits. The pre-existing
+    # `stat-failure-counted-complete` row mutates the same branch the other
+    # way and cannot kill the bound test; this row does.
+    ('not-found-counted-obscured', source,
+     '            if error.kind() == std::io::ErrorKind::NotFound {\n'
+     '                SampleStatus::Complete\n'
+     '            } else {\n'
+     '                SampleStatus::Obscured\n'
+     '            }',
+     '            if error.kind() == std::io::ErrorKind::NotFound {\n'
+     '                SampleStatus::Obscured\n'
+     '            } else {\n'
+     '                SampleStatus::Obscured\n'
+     '            }',
+     TESTS + 'missing_entry_is_a_complete_observation',
+     '#1792 a dangling entry is a complete observation, not a permanent None'),
 ]
 
 
