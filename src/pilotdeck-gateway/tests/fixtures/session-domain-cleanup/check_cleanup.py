@@ -2107,6 +2107,23 @@ def _attrgetter_is_dynamic(call):
                 and literal.value in _MANAGED_WRITE_ATTRS)
 
 
+def _constant_int(node):
+    """The int literal *node* spells, including a negative one (#1953 r4).
+
+    ``x[-1]`` parses as ``UnaryOp(USub, Constant(1))``; ``bool`` is excluded so
+    ``x[True]`` is not folded into a claim about ``x[1]``.
+    """
+    if (isinstance(node, ast.Constant) and isinstance(node.value, int)
+            and not isinstance(node.value, bool)):
+        return node.value
+    if (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub)
+            and isinstance(node.operand, ast.Constant)
+            and isinstance(node.operand.value, int)
+            and not isinstance(node.operand.value, bool)):
+        return -node.operand.value
+    return None
+
+
 def _constant_string(node, simple):
     """The literal string *node* denotes, through one local binding (#892 r34).
 
@@ -2148,13 +2165,18 @@ def _constant_string(node, simple):
             # list literal told the gate the name was still ``__doc__`` and
             # the write handle went out trusted.  A list is mutable, so its
             # element is never a proven constant.
-            if (isinstance(sequence, ast.Tuple)
-                    and isinstance(index, ast.Constant)
-                    and isinstance(index.value, int)
-                    and not isinstance(index.value, bool)
-                    and 0 <= index.value < len(sequence.elts)):
-                node = sequence.elts[index.value]
-                continue
+            position = _constant_int(index)
+            if (isinstance(sequence, ast.Tuple) and position is not None):
+                # #1953 fix-r1 round 4 (GLM boundary r2 P2): a negative index
+                # is a position from the end, not an unknown name --
+                # ``keys = ('__doc__',); getattr(md, keys[-1])`` is the same
+                # pure read and was failing closed.  A negative literal is
+                # ``UnaryOp(USub, Constant)``, not ``Constant(-1)``.
+                if position < 0:
+                    position += len(sequence.elts)
+                if 0 <= position < len(sequence.elts):
+                    node = sequence.elts[position]
+                    continue
             return None
         break
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -2275,6 +2297,13 @@ def _container_callee(func):
     if (isinstance(func, ast.Call) and isinstance(func.func, ast.Name)
             and func.func.id in ('next', 'iter') and func.args):
         return func.args[0].id if isinstance(func.args[0], ast.Name) else None
+    # #1953 fix-r1 round 4 (GLM boundary r2 P0): ``for h in hs.copy():`` hands
+    # the same elements over; the call position already knew the wrapper on the
+    # loop side, the iteration side did not decode the method at all.
+    if (isinstance(func, ast.Call) and isinstance(func.func, ast.Attribute)
+            and func.func.attr == 'copy'
+            and isinstance(func.func.value, ast.Name)):
+        return func.func.value.id
     return None
 
 
@@ -3114,6 +3143,55 @@ def _loop_target_used_as_handle(body, name):
     return False
 
 
+def _statements_after(node, parents, scope_root):
+    """Statements that run after *node* in the same scope, nearest first.
+
+    #1953 fix-r1 round 4 (GLM boundary r2 P0): a ``for`` target survives the
+    loop, so ``for h in hs: pass`` followed by ``h('common', <stub>)`` still
+    writes the receiver the loop handed over.  The body-only scan missed it.
+    """
+    current = node
+    while True:
+        parent = parents.get(current)
+        if parent is None:
+            return
+        for field in ('body', 'orelse', 'finalbody'):
+            block = getattr(parent, field, None)
+            if not isinstance(block, list) or current not in block:
+                continue
+            index = block.index(current)
+            yield from block[index + 1:]
+            break
+        else:
+            return
+        if parent is scope_root:
+            return
+        current = parent
+
+
+def _loop_target_used_after(statements, name):
+    """True when *name* is still used as a handle after the loop.
+
+    Stops at a rebinding of the name in the same scope: the later uses are a
+    different object then.  (A rebinding inside a nested definition is not
+    distinguished; that direction is fail-closed.)
+    """
+    for statement in statements:
+        for child in ast.walk(statement):
+            if (isinstance(child, ast.Name) and child.id == name
+                    and isinstance(child.ctx, (ast.Store, ast.Del))):
+                return False
+            if (isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                    and child.func.id == name):
+                return True
+            if (isinstance(child, (ast.Subscript, ast.Attribute))
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == name
+                    and isinstance(getattr(child, 'ctx', None), ast.Store)):
+                return True
+    return False
+
+
 def _comprehension_uses_handle(node, name, kinds):
     """True when *name* is called, written through, or used as a write receiver.
 
@@ -3234,6 +3312,25 @@ def _receiver_attribute_writes(tree, receivers, shared):
             # subscript off a receiver-rooted name is still that receiver
             # (codex boundary r33 P0-3).
             return receiver_roots(node.value, scope)
+        # #1953 fix-r1 round 4 (GLM boundary r2 P1): the *result* container of a
+        # comprehension over receivers holds them, so
+        # ``_g = [h for h in (md,)]; _g[0].common = <stub>`` writes the
+        # receiver.  The target is local to the comprehension, the container is
+        # not.
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            found = set()
+            for generator in node.generators:
+                names = set(_target_names(generator.target))
+                element = node.elt
+                if not (isinstance(element, ast.Name) and element.id in names):
+                    continue
+                if isinstance(generator.iter, (ast.List, ast.Tuple, ast.Set)):
+                    elements = generator.iter.elts
+                else:
+                    elements = _iter_literal_elements(generator.iter)
+                for item in elements:
+                    found |= receiver_roots(item, scope)
+            return found
         return set()
 
     def namespace_dict_roots(node, scope):
@@ -3374,26 +3471,30 @@ def _receiver_attribute_writes(tree, receivers, shared):
         # #1953 fix-r1 round 2 (GLM concurrency r1b P1): the call position
         # already decodes ``list(hs)`` / ``iter(hs)`` wrappers, the iteration
         # position only accepted a bare name, so ``for h in list(hs):`` escaped
-        # with the same handle.
-        iter_name = node.iter.id if isinstance(node.iter, ast.Name) else None
-        if (iter_name is None and isinstance(node.iter, ast.Call)
-                and isinstance(node.iter.func, ast.Name)
-                and node.iter.func.id in ('list', 'tuple', 'sorted', 'iter',
-                                          'reversed')
-                and len(node.iter.args) == 1
-                and isinstance(node.iter.args[0], ast.Name)):
-            iter_name = node.iter.args[0].id
+        # with the same handle.  Round 4 (GLM boundary r2 P0): the two
+        # positions now share one decoder -- ``for h in hs[:]:`` /
+        # ``for h in hs.copy():`` were still unseen.
+        if isinstance(node.iter, ast.Name):
+            iter_name = node.iter.id
+        else:
+            iter_name = _container_callee(node.iter)
         if iter_name is None:
             continue
         # #1953 fix-r1 round 3 (codex r2 P1): iterating a container of dynamic
         # handles only *hands them over* to the loop target, so
         # ``for h in hs: print(h)`` is a pure read.  Judge the loop target's
         # own use points -- a call or a store -- instead of withdrawing on the
-        # iteration itself.
+        # iteration itself.  Round 4: the target outlives the loop, so the
+        # rest of the scope counts too.
         target = node.target
-        if (not isinstance(target, ast.Name)
-                or not _loop_target_used_as_handle(node.body, target.id)):
+        if not isinstance(target, ast.Name):
             continue
+        body = list(node.body) + list(node.orelse)
+        if not _loop_target_used_as_handle(body, target.id):
+            if not _loop_target_used_after(
+                    _statements_after(node, parents, scope or tree),
+                    target.id):
+                continue
         for level in _chain(scope):
             if (level, iter_name) in handle_containers:
                 # ``for h in hs: h('common', <stub>)`` takes the same handles
@@ -7618,6 +7719,29 @@ def aggregation_audit():
                             frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test withdrew '
                         'on a pure read of an iterated handle container')
+    iterated_after_read_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    print(_h)\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(iterated_after_read_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a pure read of a loop target after the loop')
+    negative_subscript_probe = ast.parse(
+        "def main():\n"
+        "    _keys = ('__doc__',)\n"
+        "    _docs = [getattr(md, _keys[-1])]\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(negative_subscript_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a negative constant subscript of a tuple')
     getattribute_name_probe = ast.parse(
         "def main():\n"
         "    _key = '__dict__'\n"
