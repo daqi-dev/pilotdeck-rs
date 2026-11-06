@@ -585,11 +585,19 @@ pub(super) async fn start_observed_with_upload_cleanup(
             // six names stay out of capabilities and every call answers the
             // `requireCron` gate. A build failure fails the whole assembly
             // through the same `project.dispose()` fallback below.
-            let cron = match cron::build(cron_section.as_ref(), &options.home) {
-                Ok(cron) => cron,
-                Err(error) => return Err(error),
-            };
-            let cron_admission = owner.admission();
+            let cron = cron::build(cron_section.as_ref(), &options.home)?;
+            // #1326: the cron port's own volatile fence. It must NOT be the
+            // owner's `SessionAdmission`: `SessionAdmissionCronGateway` holds
+            // its fence for the whole of `run_turn`, and that call ends in
+            // `TurnSubmitter::submit`, which admits the very same sessionKey
+            // through `SessionOwner::begin_turn`. Sharing one instance puts
+            // the outer fence in the inner admission's way — the submit is
+            // rejected `session_busy` and the turn never runs (review r1,
+            // both channels). A dedicated instance still rejects a second
+            // concurrent cron trigger for one sessionKey (cell 11), while the
+            // real per-session admission stays where it belongs, inside the
+            // submit path.
+            let cron_admission = Arc::new(crate::runtime::session::SessionAdmission::default());
             let cron_owner = owner.clone();
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
@@ -627,11 +635,12 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 projector,
             });
             // #1326: bind the live gateway port before `start()` — the
-            // manager's own bind gate enforces the order. The admission is
-            // the owner's one `SessionAdmission` (never a second instance), so
-            // cron turns fence against the same volatile turn budget as the
-            // WS gateway's admissions; `start()` failing here fails the
-            // assembly through the `project.dispose()` fallback below.
+            // manager's own bind gate enforces the order. `cron_admission` is
+            // the port's dedicated fence (see above, not the owner's), so a
+            // second concurrent cron trigger for one sessionKey is rejected
+            // while the turn's real admission still happens in the submit
+            // path; `start()` failing here fails the assembly through the
+            // `project.dispose()` fallback below.
             if let Some(cron) = cron.as_ref() {
                 let body = Arc::new(cron::NativeCronGatewayBody::new(
                     cron_owner.clone(),

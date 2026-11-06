@@ -50,9 +50,8 @@ pub(super) fn cron_io_error(error: CronError) -> std::io::Error {
     std::io::Error::other(String::from_utf16_lossy(error.message().units()))
 }
 
-/// The one `CronManager::new` of the native process (`grep -rn
-/// "CronManager::new" src/` finds only this construction plus the `runtime/
-/// cron` fixtures): `None` keeps the unconfigured shape — the six names
+/// The native process's one production `CronManager::new` (test fixtures
+/// construct their own): `None` keeps the unconfigured shape — the six names
 /// stay out of capabilities and every method answers the `requireCron` gate.
 pub(super) fn build(
     section: Option<&JsValue>,

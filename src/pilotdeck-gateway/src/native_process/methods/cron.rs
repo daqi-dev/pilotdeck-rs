@@ -55,13 +55,9 @@ impl Requests {
                 // six names here, so reaching this branch means the registry
                 // and the dispatch table disagree — an implementation error
                 // to report, never to silence or `unreachable!` over.
-                None => Err(RequestError {
-                    code: "gateway_request_failed".into(),
-                    message: format!("Native cron family received unregistered method {method}.")
-                        .into(),
-                    details: None,
-                    validation: None,
-                }),
+                None => Err(RequestError::new(format!(
+                    "Native cron family received unregistered method {method}."
+                ))),
             }
         })
     }

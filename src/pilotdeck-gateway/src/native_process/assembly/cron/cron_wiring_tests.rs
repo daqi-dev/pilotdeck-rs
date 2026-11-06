@@ -36,10 +36,14 @@ struct Harness {
     host: TurnGateway,
     connection: crate::runtime::turn::gateway::HostedConnection,
     text: Arc<Text>,
+    /// Holds the fixture tree alive for as long as the host runs. `boot`
+    /// creates it; `boot_with` leaves it to the caller (the `Scratch` drop
+    /// deletes the home tree, which a live host keeps writing under).
+    _scratch: Option<crate::native_process::management_tests::Scratch>,
 }
 
 async fn boot(configured: bool) -> Harness {
-    let (_scratch, requests) =
+    let (scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1326 fixture setup");
     let options = requests.options.clone();
@@ -58,7 +62,9 @@ async fn boot(configured: bool) -> Harness {
         std::fs::write(options.home.join("pilotdeck.yaml"), CRON_CONFIG)
             .expect("#1326 cron config");
     }
-    boot_with(options, env).await
+    let mut harness = boot_with(options, env).await;
+    harness._scratch = Some(scratch);
+    harness
 }
 
 /// The connection half of `boot`, over caller-supplied options — the caller
@@ -81,6 +87,7 @@ async fn boot_with(options: crate::native_process::Options, env: crate::config::
         host,
         connection,
         text,
+        _scratch: None,
     }
 }
 
@@ -438,5 +445,84 @@ async fn ts_seeded_task_survives_the_switch_without_re_execution() {
         records[0]["startedAt"],
         "2026-01-01T00:00:00.000Z",
         "#1326 the record starts at the stored task.updatedAt"
+    );
+}
+
+/// #1326 r1 P1 (both review channels): the port's fence and the submit
+/// path's admission must be **different** `SessionAdmission` instances.
+/// `SessionAdmissionCronGateway` holds its fence for the whole of
+/// `run_turn`, and `NativeCronGatewayBody::run_turn` ends in
+/// `TurnSubmitter::submit`, which admits the same `sessionKey` through
+/// `SessionOwner::begin_turn`. Binding the owner's admission here makes the
+/// inner admission answer `session_busy` for the outer fence's own key: the
+/// turn never runs and the drained stream reports success.
+#[test]
+fn a_shared_port_fence_would_lock_out_the_submit_path() {
+    use crate::runtime::cron::{
+        CronError, CronGatewayBody, CronTurnSubmit, SessionAdmissionCronGateway,
+    };
+    use crate::runtime::session::SessionAdmission;
+    use pilotdeck_protocol::JsString;
+
+    /// Stands in for `TurnSubmitter::submit`: admits the same key through the
+    /// admission the owner uses.
+    struct SubmitsThrough(Arc<SessionAdmission>);
+    impl CronGatewayBody for SubmitsThrough {
+        fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+            match self.0.begin_turn(&input.session_key, &input.run_id) {
+                Some(_) => Ok(()),
+                None => Err(CronError::gateway(
+                    "session_busy",
+                    JsString::from("Session already has an active turn."),
+                )),
+            }
+        }
+        fn abort_turn(
+            &self,
+            _: &JsString,
+            _: Option<&JsString>,
+            _: Option<&JsString>,
+        ) -> Result<(), CronError> {
+            Ok(())
+        }
+        fn close_session(&self, _: &JsString, _: Option<&JsString>) -> Result<(), CronError> {
+            Ok(())
+        }
+    }
+
+    let turn = || CronTurnSubmit {
+        session_key: JsString::from("cron:task-1"),
+        channel_key: JsString::from("cron"),
+        project_key: None,
+        message: JsString::from("m"),
+        mode: JsString::from("default"),
+        run_id: JsString::from("run-1"),
+        timeout_ms: 1000.0,
+    };
+
+    // The wiring this test guards: the port owns its fence, the body admits
+    // through another instance — the submit path is not blocked.
+    let port_fence = Arc::new(SessionAdmission::default());
+    let submit_fence = Arc::new(SessionAdmission::default());
+    let gateway =
+        SessionAdmissionCronGateway::new(port_fence, Arc::new(SubmitsThrough(submit_fence)));
+    use crate::runtime::cron::CronAgentGateway;
+    assert!(
+        gateway.submit_turn(&turn()).is_ok(),
+        "#1326 a dedicated port fence must not block the submit path's admission"
+    );
+
+    // Negative control: one shared instance reproduces the deadlock, so this
+    // assertion fails the moment someone binds the owner's admission again.
+    let shared = Arc::new(SessionAdmission::default());
+    let gateway =
+        SessionAdmissionCronGateway::new(shared.clone(), Arc::new(SubmitsThrough(shared)));
+    let error = gateway
+        .submit_turn(&turn())
+        .expect_err("#1326 the shared fence is the defect this test pins");
+    assert_eq!(
+        error.code(),
+        Some("session_busy"),
+        "#1326 the self-lock surfaces as session_busy"
     );
 }
