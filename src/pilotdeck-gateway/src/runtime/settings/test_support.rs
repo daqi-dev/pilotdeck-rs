@@ -89,8 +89,9 @@ pub(crate) fn scenario_keys(oracle: &JsValue) -> Vec<String> {
 /// #1748 item 3: reused straight from the settings gateway, which delegates to
 /// the protocol crate (`JsObject::own_entries`, the routine the JSON codec and
 /// the wire boundary share). This used to be a second implementation of
-/// ECMAScript key order, so a correction to either copy would have silently
-/// desynchronized the oracle replays' byte comparison.
+/// ECMAScript key order here, so a correction to either copy would have
+/// silently desynchronized the oracle replays' byte comparison. Copies in
+/// other modules are outside this change and stay tracked by #1748.
 pub(crate) use super::gateway::own_entries;
 
 /// JS `String(number)` for the golden's numeric tokens.
