@@ -1272,6 +1272,43 @@ def calibrate_shadowed_common_global(rows):
     return calibrate_shadowed_common(rows)
 
 
+def calibrate_shadowed_receiver_global(rows):
+    """#892 r23: the healthy relay binding ``md = load_session_domain()``
+    replaced by a stub at module scope (through ``global md`` in ``main``)
+    kept every ``md.common.aggregate_status`` in the file taken on the
+    spelling alone (GLM boundary r22 P0-1)."""
+    return _must_call_shared(
+        rows, 'summarize_results',
+        'aggregation-audit: module-scope stub receiver flagged, passed=False')
+
+
+def calibrate_shadowed_receiver_poison_fn(rows):
+    """#892 r23: an unrelated ``def _poison_md(): global md; md = <stub>``
+    rebinds the module receiver at runtime, out of the module walk's sight
+    (GLM boundary r22 P0-1)."""
+    return _must_call_shared(
+        rows, 'summarize_results',
+        'aggregation-audit: receiver poisoned through global flagged, '
+        'passed=False')
+
+
+def calibrate_shadowed_receiver_same_fn(rows):
+    """#892 r23: ``global md; md = <stub>`` inside the registered point itself
+    -- the function-scope scan skipped global-declared receivers, so the relay
+    stayed trusted (GLM boundary r22 P0-1)."""
+    return _must_call_shared(
+        rows, 'summarize_results',
+        'aggregation-audit: in-function global receiver stub flagged, '
+        'passed=False')
+
+
+def calibrate_redefined_loader(rows):
+    """#892 r23: ``def _load(name, path): return SimpleNamespace(...)`` after
+    ``_load = _guard.load`` keeps the call spelling while returning a stub;
+    the loader trust was callee-blind (GLM boundary r22 P1-2)."""
+    return calibrate_shadowed_common(rows)
+
+
 def calibrate_computed_status_write(rows):
     """#892 r20: ``report['status'] = 'PA' + 'SS'`` writes the clean literal
     without ever being a ``Constant`` node (GLM boundary r19 P1-2)."""
@@ -2265,6 +2302,49 @@ MUTATIONS = [
      "    from types import SimpleNamespace\n"
      "    common = SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))\n\n\n"
      "def _failure(error, policy, common):"),
+    # #892 fix-r23 (GLM boundary r22 P0-1): the relay receiver lost the shared
+    # call only when rebound *inside* the audited function; module and global
+    # poisoning kept the relay trusted file-wide.  Three shapes, each judged on
+    # the registered point (summarize_results) the fixture itself uses; the stub
+    # yields FAIL, not a fake PASS, for the reason given at
+    # calibrate-shadowed-receiver-local.
+    ('calibrate-shadowed-receiver-global', CHECK,
+     "    global md\n    md = load_session_domain()\n",
+     "    global md\n"
+     "    from types import SimpleNamespace\n"
+     "    md = SimpleNamespace(common=SimpleNamespace(\n"
+     "        aggregate_status=lambda *a: ('FAIL', 1)))\n"),
+    ('calibrate-shadowed-receiver-poison-fn', CHECK,
+     "def load_session_domain():",
+     "def _poison_md():\n"
+     "    global md\n"
+     "    from types import SimpleNamespace\n"
+     "    md = SimpleNamespace(common=SimpleNamespace(\n"
+     "        aggregate_status=lambda *a: ('FAIL', 1)))\n"
+     "\n"
+     "\n"
+     "def load_session_domain():"),
+    ('calibrate-shadowed-receiver-same-fn', CHECK,
+     "    executed = [row for row in results if row.get('passed') is not None]\n"
+     "    skipped = [row for row in results",
+     "    global md\n"
+     "    from types import SimpleNamespace\n"
+     "    md = SimpleNamespace(common=SimpleNamespace(\n"
+     "        aggregate_status=lambda *a: ('FAIL', 1)))\n"
+     "    executed = [row for row in results if row.get('passed') is not None]\n"
+     "    skipped = [row for row in results"),
+    # #892 fix-r23 (GLM boundary r22 P1-2): the loader alias redefined as a
+    # stub-returning def.  The mutated controls file is statically scanned,
+    # not imported by the aggregation-audit run, so the mutation cannot crash
+    # the audit it is there to calibrate.
+    ('calibrate-redefined-loader', CONTROLS_SOURCE,
+     "_load = _guard.load\n",
+     "_load = _guard.load\n"
+     "\n"
+     "\n"
+     "def _load(name, path):\n"
+     "    from types import SimpleNamespace\n"
+     "    return SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))\n"),
 ]
 
 JUDGES = {
@@ -2590,6 +2670,14 @@ JUDGES = {
         'aggregation-audit', calibrate_shadowed_receiver_local, False, ()),
     'calibrate-shadowed-common-global': (
         'aggregation-audit', calibrate_shadowed_common_global, False, ()),
+    'calibrate-shadowed-receiver-global': (
+        'aggregation-audit', calibrate_shadowed_receiver_global, False, ()),
+    'calibrate-shadowed-receiver-poison-fn': (
+        'aggregation-audit', calibrate_shadowed_receiver_poison_fn, False, ()),
+    'calibrate-shadowed-receiver-same-fn': (
+        'aggregation-audit', calibrate_shadowed_receiver_same_fn, False, ()),
+    'calibrate-redefined-loader': (
+        'aggregation-audit', calibrate_redefined_loader, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
@@ -2733,6 +2821,24 @@ def terminate_cleanly(signum, _frame):
     raise SystemExit(128 + signum)
 
 
+def _install_terminate_handlers():
+    """Install the catch-and-unwind handler for every signal we can (#892 r23).
+
+    ``_SHIELDED_SIGNALS`` defers SIGQUIT inside the restore window, but the
+    batch loop registered only SIGTERM/SIGHUP; outside the window a ``^\\``
+    still hit the default kill-with-core disposition, so the finally blocks
+    never ran and a mutant stayed in the tree -- exactly the SIGTERM hazard
+    ``terminate_cleanly`` exists for (anthropic sibling r22 P1 / GLM boundary
+    r22 P2, taken at the higher grade).  Split out of ``main`` so a test can
+    install the very handlers the harness runs with.
+    """
+    signal.signal(signal.SIGTERM, terminate_cleanly)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate_cleanly)
+    if hasattr(signal, 'SIGQUIT'):
+        signal.signal(signal.SIGQUIT, terminate_cleanly)
+
+
 def run_check(case, mode, timeout=CHECK_TIMEOUT_SECONDS):
     return run_owned([sys.executable, '-I', str(CHECK), '--output', str(case),
                       '--mode', mode], cwd=ROOT, env=dict(os.environ), timeout=timeout)
@@ -2804,9 +2910,7 @@ def main():
     # Spelled out one by one: the anchor selfcheck rejects ``getattr`` in a
     # file that takes a snapshot, because a dynamic attribute lookup could also
     # reach a mutating capability.
-    signal.signal(signal.SIGTERM, terminate_cleanly)
-    if hasattr(signal, 'SIGHUP'):
-        signal.signal(signal.SIGHUP, terminate_cleanly)
+    _install_terminate_handlers()
     known = {row[0] for row in MUTATIONS}
     if set(args.only) - known or len(args.only) != len(set(args.only)):
         common = committed_status_contract(ROOT)
