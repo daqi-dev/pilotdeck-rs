@@ -319,6 +319,22 @@ impl OrderedSet {
     }
 }
 
+/// #1780: releases a chat's `active_chats` slot when its queued-turn task
+/// ends, including on the panic path (`process_message` unwinds, the bare
+/// `tokio::spawn` task dies, and nothing else would remove the marker).
+/// The drop path only takes the same `Inner` lock every other accessor uses;
+/// `lock_inner` recovers a poisoned lock, so the guard itself cannot panic
+/// while the process unwinds (a `Drop` panic aborts the process).
+struct ActiveChatSlot {
+    channel: WeixinChannel,
+    user: JsString,
+}
+impl Drop for ActiveChatSlot {
+    fn drop(&mut self) {
+        self.channel.lock_inner().active_chats.remove(&self.user);
+    }
+}
+
 struct Inner {
     generation: u64,
     abort: Option<Cancellation>,
@@ -1055,13 +1071,31 @@ impl WeixinChannel {
 
     async fn run_queued_turns(self, user: JsString, first_turn: QueuedWeixinTurn) {
         self.lock_inner().active_chats.insert(&user);
+        // #1780: TS clears the marker in `finally`, even on a rejected turn —
+        // and on a panicking one. This task is a bare `tokio::spawn` whose
+        // JoinHandle is dropped, so a panic in `process_message` only kills
+        // the task; without the guard the chat would stay in `active_chats`
+        // and every later message of that user would queue behind a dead
+        // consumer forever. Constructed after the insert and bound for the
+        // whole body, so `Drop` runs on the normal return *and* on unwind.
+        //
+        // Same `Drop`-guard shape as `channel::ActiveChat` (#1738); that type
+        // owns a standalone `Arc<Mutex<HashSet<_>>>`, while this set lives in
+        // the channel's single `Inner` mutex and must keep JS `Set` insertion
+        // order for the notification paths, so release through `lock_inner`.
+        let _active = ActiveChatSlot {
+            channel: self.clone(),
+            user: user.clone(),
+        };
         let mut next = Some(first_turn);
         while let Some(turn) = next.take() {
             self.process_message(&user, &turn).await;
             next = self.lock_inner().chat_state.shift_turn(&user);
         }
-        // TS clears the marker in `finally`, even on a rejected turn.
-        self.lock_inner().active_chats.remove(&user);
+        // #1725#4: the `shift_turn` above and the marker release in `_active`'s
+        // drop are two separate lock sections; a message arriving in between
+        // queues with nobody left to drain it. Not changed here — this fix is
+        // panic safety only, the double-lock window stays under #1725#4.
     }
 
     async fn process_message(&self, user: &JsString, turn: &QueuedWeixinTurn) {
