@@ -494,16 +494,32 @@ def same_json(left, right):
     the audit scored a stream whose terminal is not the frame it claims to
     repeat (#1372 review P0).  Booleans therefore only match booleans; numbers
     keep comparing by value, which is what ``JSON.parse`` gives JavaScript.
+
+    The walk keeps its own stack instead of recursing: ``json.loads`` accepts
+    inputs deeper than the interpreter's recursion limit, so a recursive
+    comparison would raise ``RecursionError`` on a legal terminal instead of
+    answering (#1372 r4 review P1).
     """
-    if isinstance(left, bool) or isinstance(right, bool):
-        return type(left) is type(right) and left == right
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        return left == right
-    if isinstance(left, dict) and isinstance(right, dict):
-        return left.keys() == right.keys() and all(same_json(left[key], right[key]) for key in left)
-    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
-        return len(left) == len(right) and all(same_json(one, other) for one, other in zip(left, right))
-    return type(left) is type(right) and left == right
+    stack = [(left, right)]
+    while stack:
+        one, other = stack.pop()
+        if isinstance(one, bool) or isinstance(other, bool):
+            if type(one) is not type(other) or one != other:
+                return False
+        elif isinstance(one, (int, float)) and isinstance(other, (int, float)):
+            if one != other:
+                return False
+        elif isinstance(one, dict) and isinstance(other, dict):
+            if one.keys() != other.keys():
+                return False
+            stack.extend((one[key], other[key]) for key in one)
+        elif isinstance(one, (list, tuple)) and isinstance(other, (list, tuple)):
+            if len(one) != len(other):
+                return False
+            stack.extend(zip(one, other))
+        elif type(one) is not type(other) or one != other:
+            return False
+    return True
 
 
 def terminal_source(frames, terminal):
