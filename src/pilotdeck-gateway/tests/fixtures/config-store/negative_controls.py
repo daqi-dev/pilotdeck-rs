@@ -16,8 +16,10 @@ short-circuit (the skipped content read on unchanged metadata, and the ctime
 bump that carries a same-length mtime-restored rewrite through it); two pin
 #1899's watcher-stop evidence (the join-based check reverted to
 ``JoinHandle::is_finished()``, which is also true for a task that died by
-panic, and a panicking watcher loop that an ``is_finished()``-only check
-accepts as a clean stop — the #1650 silent-death path).
+panic; a panicking watcher loop that an ``is_finished()``-only check accepts as
+a clean stop; and a watcher that returns cleanly right after spawn, which only
+the pre-drop liveness assertion catches — all three are #1650's silent-death
+path).
 """
 from pathlib import Path
 import json
@@ -139,6 +141,17 @@ mutations = [
      'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
      ['#1899 the watcher must still be running before the store is dropped',
       '#1899 dropping the store must stop the watcher cleanly']),
+    # #1899 review P2-2: a watcher that returns cleanly right after spawn also
+    # joins with `Ok(())`, so the drop-the-store evidence only means something
+    # once the watcher is proven alive before the drop. This mutant is that
+    # counterexample — the silent-death shape #1650 is about, with a clean exit
+    # instead of a panic — and it must die at the liveness assertion.
+    ('watch-loop-clean-early-exit', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    return;\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
+     '#1899 the watcher must still be running before the store is dropped'),
 ]
 
 
