@@ -9,7 +9,7 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 |---|---|
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
-| `negative_controls.py` | N1–N13 汇总式控件执行器（见下）。 |
+| `negative_controls.py` | N1–N15 汇总式控件执行器（见下）。 |
 
 ## 金样来源
 
@@ -68,7 +68,7 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   error 的「任意 receive 帧」更严——只落 event 帧的 stream error 会判 FAIL（响亮失败，
   非假 PASS）；放宽需另立更正件。
 
-## 负控（N1–N13）
+## 负控（N1–N15）
 
 ```sh
 python3 -I scripts/retirement-outcome-parity/negative_controls.py <输出目录> \
@@ -78,11 +78,16 @@ python3 -I scripts/retirement-outcome-parity/negative_controls.py <输出目录>
 
 只做数据变异（内存改 + 写临时目录，**不改任何源码文本**）；逐条记
 `KILLED` / `SURVIVED` / `INVALID` + 原因，全部跑完再汇总，任一非 KILLED 即非零退出；
-`summary.json` 原子发布（先写 `*.tmp` 再 `rename`）。判据分两步：**注入是否落地**（重读
-落盘文件核对变异事实）+ **归因是否落到被注入对象**（期望规则 fire 且点名被注入方法）。
+`summary.json` 原子发布（先写 `*.tmp` 再 `rename`）。判据分三步：**先核各原始轮对金样
+rc=0**（原始数据本就有违规时，注入后的违规不能算作注入被杀）→ **注入是否落地**（重读
+落盘文件核对变异事实）→ **归因是否落到被注入对象**（**每条期望规则都** fire 且点名被注入
+方法；期望两条规则时任一命中不算 KILLED）。
 N10（99/101 unavailable，线缆同步）是 F5 / DS-P0-1 的闭环证据：旧 `UNIFORM_UNAVAILABLE`
 语义（全 101 才 FAIL）在该形状下一条规则都不触发。N12（`shape` request↔`stream` 互换）与
-N13（`outcome` 改成未登记值）分别给 P2 / P8 两条此前无控件的规则配了具名控件。
+N13（`outcome` 改成未登记值）分别给 P2 / P8 两条此前无控件的规则配了具名控件。N14
+（stream ok 方法加一条同 id 错误 response，事件侧 `final: true` 仍在）与 N15（两个 request
+ok 方法共用同一请求 id、只留一条 response）封住 P6 的两条假 PASS：矛盾 response 被忽略、
+一个方法的成功 response 被另一个方法借用。
 
 执行器启动时先删同输出目录的旧 `summary.json`（旧结果不得冒充本轮），checker 子进程带
 600 s 超时；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N13）。
+"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N15）。
 
 只做数据变异：从 TS 参考数据加载轮次，内存里改 methods / frames，写到输出目录下
 的临时轮次目录，再以子进程跑 ``check_outcome_parity.py check``。**不改任何源码
@@ -167,6 +167,7 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     assert len(request_ok) >= 3, f'need three request-shaped ok rows, got {request_ok}'
     stream_ok = [row['method'] for row in base_rows
                  if row['outcome'] == 'ok' and row['shape'] == 'stream']
+    assert stream_ok, 'baseline has no stream ok method; N14 needs one'
     # 保留 stream ok（它没有 response 帧可改写）与一个 request ok → 恰 99 个被改写。
     keep_ok = stream_ok[:1] + request_ok[:1] if stream_ok else request_ok[:2]
     assert len(keep_ok) == 2, f'need exactly two kept ok rows, got {keep_ok}'
@@ -211,6 +212,54 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
                 rewrite_response(frames, identifier,
                                  error_response(identifier, CAPABILITY_UNAVAILABLE, INJECTED_MESSAGE))
         return {'round-01': (rows, frames)}
+
+    def n14():
+        rows, frames = clone((base_rows, base_frames))[0]
+        identifier = send_id(frames, stream_ok[0])
+        bad = error_response(identifier, ALT_CODE, INJECTED_MESSAGE)
+        frames.append({'direction': 'receive', 'raw': json.dumps(bad, ensure_ascii=False),
+                       'frame': bad})
+        return {'round-01': (rows, frames)}
+
+    def n15():
+        rows, frames = clone((base_rows, base_frames))[0]
+        identifier, other = send_id(frames, request_ok[0]), send_id(frames, request_ok[1])
+        for frame in frames:
+            wire = frame.get('frame')
+            if (frame.get('direction') == 'send' and isinstance(wire, dict)
+                    and wire.get('method') == request_ok[1]):
+                wire['id'] = identifier
+                frame['raw'] = json.dumps(wire, ensure_ascii=False)
+        drop_response(frames, other)
+        return {'round-01': (rows, frames)}
+
+    def landed_n14():
+        def check(bundles):
+            rows, frames = bundles['round-01']
+            row = find_row(rows, stream_ok[0])
+            if row['outcome'] != 'ok':
+                return False, f'{stream_ok[0]} outcome changed to {row["outcome"]!r}'
+            frame = response_frame(frames, send_id(frames, stream_ok[0]))
+            if frame is None or (frame['frame'] or {}).get('ok') is not False:
+                return False, 'contradictory error response did not land'
+            return True, ''
+        return check
+
+    def landed_n15():
+        def check(bundles):
+            rows, frames = bundles['round-01']
+            first, second = request_ok[0], request_ok[1]
+            id1, id2 = send_id(frames, first), send_id(frames, second)
+            if id1 != id2:
+                return False, f'ids differ: {first}={id1} {second}={id2}'
+            matching = [frame for frame in frames
+                        if frame.get('direction') == 'receive'
+                        and isinstance(frame.get('frame'), dict)
+                        and frame['frame'].get('id') == id1]
+            if len(matching) != 1:
+                return False, f'{len(matching)} receive frames for the shared id, expected 1'
+            return True, ''
+        return check
 
     def n11():
         first = clone((base_rows, base_frames))[0]
@@ -341,7 +390,26 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
                 one(lambda rows, frames: find_row(rows, outcome_probe).update(
                     outcome='skipped', error='injected unknown outcome')),
                 landed_row('outcome', 'skipped', outcome_probe)),
+        Control('N14', f'stream ok 方法 {stream_ok[0]} 加一条同 id 错误 response',
+                ['P6-WIRE-CODE'], stream_ok[0], n14, landed_n14()),
+        Control('N15', f'{request_ok[0]} 与 {request_ok[1]} 共用同一请求 id（只留一条 response）',
+                ['P6-WIRE-CODE'], request_ok[0], n15, landed_n15()),
     ]
+
+
+def preflight_base_rounds(data_root, oracle, names):
+    """变异前先确认参考轮本身 PASS（否则负控的归因无意义）。"""
+    for name in names:
+        result = subprocess.run(
+            [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(oracle),
+             '--round', str(Path(data_root) / name)],
+            capture_output=True, text=True, timeout=CHECK_TIMEOUT_SECONDS,
+            start_new_session=True)
+        print(f'preflight {name}: rc={result.returncode}', file=sys.stderr)
+        if result.returncode != 0:
+            print(result.stdout[:2000], result.stderr[:2000], file=sys.stderr)
+            return result.returncode or 1
+    return 0
 
 
 def run_control(control, out_root, oracle):
@@ -403,6 +471,10 @@ def run_control(control, out_root, oracle):
     matched = [violation for violation in violations
                if violation['rule'] in control.expected_rules
                and violation.get('method') == control.probe]
+    # 期望规则必须**全部**点名被注入方法（并集非空即算 KILLED 会让回归失效的
+    # 规则被另一条规则遮住，例如 N9 的 P3）。
+    if {violation['rule'] for violation in matched} != control.expected_rules:
+        matched = []
     if control.id == 'N7' and matched:
         # N7 必须点名双方码（outcome 码与线缆码都在 detail 里）。
         probe_code = control.extra['probeCode']
@@ -426,7 +498,7 @@ def run_control(control, out_root, oracle):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='Negative controls N1-N13 for the retirement outcome-parity '
+        description='Negative controls N1-N15 for the retirement outcome-parity '
                     'checker (#1477). Data-only mutations; no source text is touched.')
     parser.add_argument('output', help='output directory for mutated rounds + summary')
     parser.add_argument('--data', default=str(DEFAULT_DATA),
@@ -438,6 +510,13 @@ def main(argv=None):
     data = Path(args.data)
     base_rows, base_frames = read_round(data, 'round-01')
     round2_rows, round2_frames = read_round(data, 'round-02')
+    # 前置：未变异的参考轮必须本来 PASS。否则「期望规则 fire」可能是既有违规，
+    # 归因就不成立（例如 --data 指向的轮本就有 P4）。
+    preflight = preflight_base_rounds(data, Path(args.oracle), ('round-01', 'round-02'))
+    if preflight != 0:
+        print('negative_controls: 未变异的参考轮已不 PASS 金样，负控无法归因；先修数据或金样',
+              file=sys.stderr)
+        return 2
     controls = build_controls(base_rows, base_frames, round2_rows, round2_frames)
 
     out_root = Path(args.output)
