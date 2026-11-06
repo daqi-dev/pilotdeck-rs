@@ -1712,7 +1712,7 @@ const REPLAY_BODY_BUDGET: usize = MAX_BODY_BYTES + 1;
 /// One recorded body as `(text, count, bytes)`. `bytes` is `text.len() * count`,
 /// validated without materializing the body, so a reader that only needs the
 /// length does not allocate a megabyte to measure it (#1984).
-fn recorded_body_spec_checked<'a>(step: &'a Value) -> Result<(&'a str, usize, usize), String> {
+fn recorded_body_spec_checked(step: &Value) -> Result<(&str, usize, usize), String> {
     let (text, count) = match step.get("body") {
         None => return Ok(("", 0, 0)),
         Some(Value::String(text)) => (text.as_str(), 1),
