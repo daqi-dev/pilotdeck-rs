@@ -10,13 +10,20 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
 | `negative_controls.py` | N1–N17 汇总式控件执行器（见下）。 |
+| `fixtures/` | 金样的**入库输入**（5 轮 `methods.json` + `frames.jsonl` 切片，1540 KiB）。来源、切片规则与新旧 sha256 对照见 `fixtures/PROVENANCE.md`。 |
+| `self_check.py` | 装置守卫闸门（体积预算 / `emit` 复现 / `check` 5 轮 / 负控全 KILLED / 输出目录锁 / CI 接线），CI 与本机共用；`--self-check-controls` 是它自己的变异负控。 |
 
 ## 金样来源
 
 - TS 基线：`cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，Node v22.22.0，#1355
   `--suite retirement` TS 参考轮 **k=5**。
-- 原始数据：`_tmp/20261106-issue-1477/r1/data/round-01..05/driver/{methods.json,frames.jsonl}`
-  （目录名与逐文件 sha256 记在 `ts-oracle.json` 的 `rounds` 里——金样来源可核，不是手搓）。
+- 原始数据（仓外，未跟踪）：`_tmp/20261106-issue-1477/r1/data/round-01..05/driver/{methods.json,frames.jsonl}`。
+- **入库夹具（判据与 CI 的实际输入）**：`fixtures/round-01..05/driver/{methods.json,frames.jsonl}`
+  ——干净检出即可跑。切片规则（`methods.json` 只留判据消费的 5 个字段、`frames.jsonl` 逐字节
+  照搬）与「原始 ↔ 切片 sha256」对照见 `fixtures/PROVENANCE.md`。逐文件 sha256 记在
+  `ts-oracle.json` 的 `rounds.files` 里——金样来源可核，不是手搓。**切片后 5 轮的
+  `methodsSha256` 相同**（去掉容差字段后内容本就一致），逐轮可区分性由 `framesSha256` 保留
+  （5 个互不相同），审计时别拿 `methodsSha256` 判「是不是同一轮」。
 - 分布（对本数据独立复算）：101 方法 / 轮 = 77 ok + 24 error（15 种错误码）；
   `submit_turn` 唯一 `stream`；6 个 `CAPABILITY_UNAVAILABLE`（`manager_browsers`、
   `memory_list`、`memory_wipe`、`snapshot_get`、`snapshot_list`、`snapshot_restore`）；
@@ -26,17 +33,17 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 ## 重生成（必须与已提交金样逐字节相同）
 
 ```sh
+F=scripts/retirement-outcome-parity/fixtures
 python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \
   --oracle /tmp/oracle.json \
-  --round _tmp/20261106-issue-1477/r1/data/round-01 \
-  --round _tmp/20261106-issue-1477/r1/data/round-02 \
-  --round _tmp/20261106-issue-1477/r1/data/round-03 \
-  --round _tmp/20261106-issue-1477/r1/data/round-04 \
-  --round _tmp/20261106-issue-1477/r1/data/round-05
+  --round $F/round-01 --round $F/round-02 --round $F/round-03 \
+  --round $F/round-04 --round $F/round-05
 cmp /tmp/oracle.json scripts/retirement-outcome-parity/ts-oracle.json   # 必须无差异
 ```
 
-不一致说明金样来源不明或含未登记变异——停下来写清楚哪一轮哪一行不同，不得继续。
+不一致说明夹具或金样有一个被改过而另一个没跟上（或有人手改金样）——停下来写清楚哪一轮
+哪一行不同，不得继续。重采全量 TS 数据后用同一命令重生成，并把新旧 sha256 对照补进
+`fixtures/PROVENANCE.md`。
 
 ## Rust retirement 轮怎么调用
 
@@ -80,16 +87,30 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
 
 ```sh
 python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输出目录> \
-  [--data _tmp/20261106-issue-1477/r1/data] \
+  [--data scripts/retirement-outcome-parity/fixtures] \
   [--oracle scripts/retirement-outcome-parity/ts-oracle.json]
 ```
+
+`--data` 默认指向**入库夹具**（相对脚本位置，不依赖 cwd，干净检出即可跑，CI 同此）；
+`--data` 仍可覆盖，用于重采后的新参考轮。`--oracle` 默认同目录金样。
+
+**输出目录互斥（#1809 条目 4）**：整轮运行（权威失效 → 控件构造 → 逐条写 `N*/driver/*`
+→ 发布 `summary.json`）都在一把 `fcntl.flock` 独占锁下，锁文件是
+`<输出目录>/.retirement-outcome-parity.lock`。第二个进程**阻塞等待**（不是失败、不是
+静默跳过），等锁期间在 stderr 打一行 `waiting for output lock …`。理由：并发跑两次是
+合法用法（CI 与本机各一次、审计者边跑边看），明确失败会被误读成数据问题；阻塞既能保证
+「一次只有一个进程在写」，又不会把合法的并发调用打红。缺 `fcntl` / `O_NOFOLLOW` 的平台
+按 rc2 拒跑（与 `require_safe_writes` 同口径），不静默退化成「没锁」。`emit` 写金样时用
+**同一把** `output_lock`（锁金样所在目录），两个入口不会在同一个目录里交错写。
 
 只做数据变异（内存改 + 写临时目录，**不改任何源码文本**）；逐条记
 `KILLED` / `SURVIVED` / `INVALID` + 原因，全部跑完再汇总，任一非 KILLED 即非零退出；
 `summary.json` 原子发布（先写 `*.tmp` 再 `rename`）。判据分三步：**先核各原始轮对金样
 rc=0**（原始数据本就有违规时，注入后的违规不能算作注入被杀）→ **注入是否落地**（重读
 落盘文件核对变异事实）→ **归因是否落到被注入对象**（**每条期望规则都** fire 且点名被注入
-方法；期望两条规则时任一命中不算 KILLED）。
+方法；期望两条规则时任一命中不算 KILLED）。前置自检覆盖 `--data` 下**全部**轮次（逐轮 +
+一次跨轮合并；#1809 条目 5——此前写死 `round-01`/`round-02`，换 `--data` 后
+`round-03..05` 的 PASS 不在自检范围）。
 N10（99/101 unavailable，线缆同步）是 F5 / DS-P0-1 的闭环证据：旧 `UNIFORM_UNAVAILABLE`
 语义（全 101 才 FAIL）在该形状下一条规则都不触发。N12（`shape` request↔`stream` 互换）与
 N13（`outcome` 改成未登记值）分别给 P2 / P8 两条此前无控件的规则配了具名控件。N14
@@ -168,8 +189,10 @@ token 的旧扫描同结论；Codex r16 用独立的 54 278 个 token 复算也�
 
 失效只碰本执行器自己的产物名（`summary.json`、`summary.json.tmp`、`summary.json.<pid>.tmp`）：
 `summary.json.backup` 之类的既有文件不动，**存活 pid** 的 tmp 也不动（否则会把另一个仍在跑的
-执行器的原子发布打掉；并发互斥残余见跟进单）。前置自检除逐轮外还跑一次**跨轮合并**
-（`check --round round-01 --round round-02`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除
+执行器的原子发布打掉）。并发互斥由 `<输出目录>/.retirement-outcome-parity.lock` 的独占
+`flock` 保证（见上节）；锁在**权威失效之前**拿到，所以后到者不会在先到者发布 `summary.json`
+的窗口里读到半成品。前置自检逐轮覆盖 `--data` 下的**全部**轮次，另跑一次**跨轮合并**
+（`check --round <全部轮次>`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除
 「参考轮对本身已漂移」，N11 的跨轮归因就不成立。checker 子进程带 600 s 超时（`TimeoutExpired`
 收口为 rc2）；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。两个入口
 成对设 `sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
@@ -196,6 +219,29 @@ unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于�
 `emit` 的 tmp 用 `tempfile.mkstemp` 取不可预测的名字（`<name>.<pid>.tmp` 在世界可写目录里可被
 预置符号链接），失败路径先删 tmp 再收口。
 `raise SystemExit('消息')` 返回的是 **1**，会被下游当成「判据 FAIL」。
+
+## CI（#1809）
+
+`.github/workflows/ci.yml` 的 `retirement-outcome-parity` job 每次 PR / 合入 main / merge
+queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤——纯 Python，4 s 级）：
+
+| 步骤 | 判据 |
+|---|---|
+| `emit` 复算 + `cmp` 金样 | 夹具能逐字节复现已提交金样 |
+| `check` 5 轮 | P1–P8 全 PASS，`p7Evaluated=true` |
+| 负控 N1–N17 | 全 KILLED（任一 SURVIVED / INVALID 即红） |
+| `self_check.py --budget --lock --wiring` | 夹具体积预算 · 输出目录互斥 · CI 接线本身还在 |
+
+`self_check.py` 是这些守卫的单一实现，本地可整跑：
+
+```sh
+python3 -I scripts/retirement-outcome-parity/self_check.py            # 六项全跑
+python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
+```
+
+`--self-check-controls` 给每个守卫造一个违反样本（超大夹具 / 抢锁的第二进程 / 删掉步骤的
+workflow），对应检查必须**变红**；守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI
+步骤 → 相应用例变红」的机器证据。
 
 ## 为什么不在 `scripts/gateway-parity/`
 

@@ -146,11 +146,62 @@ jobs:
           path: ${{ runner.temp }}/negctl-1316
           if-no-files-found: warn
 
+  # retirement outcome-parity 装置（#1809）：把「判据还能不能用」接进 CI。
+  # 纯 Python（无 Rust / Node 依赖），几秒钟跑完，因此不做 paths 过滤——多跑不可漏跑；
+  # 与其它重 job 一样只受 scope 的 docs_only 分类控制（#1199 口径）。
+  # 数据是**入库**的切片夹具 scripts/retirement-outcome-parity/fixtures（干净检出可复现），
+  # 不再依赖未跟踪的 _tmp/。
+  retirement-outcome-parity:
+    needs: [scope]
+    if: ${{ needs.scope.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # ① 金样可复现：emit 从入库夹具复算，必须与已提交 ts-oracle.json 逐字节相同。
+      #    不一致 = 夹具或金样有一个被改过而另一个没跟上（或有人手改金样）。
+      - name: emit 复算与金样逐字节比对
+        run: |
+          F=scripts/retirement-outcome-parity/fixtures
+          python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \
+            --oracle "$RUNNER_TEMP/ts-oracle.json" \
+            --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \
+            --round "$F/round-04" --round "$F/round-05"
+          cmp "$RUNNER_TEMP/ts-oracle.json" scripts/retirement-outcome-parity/ts-oracle.json
+      # ② 判据 5 轮全 PASS（含 P7 跨轮稳定性——单轮时 P7 是空判，报告会写 p7Evaluated）。
+      - name: check 5 轮
+        run: |
+          F=scripts/retirement-outcome-parity/fixtures
+          python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
+            --oracle scripts/retirement-outcome-parity/ts-oracle.json \
+            --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \
+            --round "$F/round-04" --round "$F/round-05"
+      # ③ 负控 N1–N17 全 KILLED（任一 SURVIVED / INVALID 即非零退出）。
+      #    默认 --data 指向入库夹具；输出目录在 RUNNER_TEMP，供下一步上传。
+      - name: 负控 N1–N17 全 KILLED
+        run: |
+          python3 -I scripts/retirement-outcome-parity/negative_controls.py \
+            --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"
+      # ④ 守卫自检：夹具体积预算、输出目录互斥、CI 接线。这几条都是「守卫本身还在不在」，
+      #    拆掉任一处（删体积上限 / 删 flock / 删上面的步骤）本步即红。
+      - name: 装置守卫自检（体积预算 / 输出目录锁 / CI 接线）
+        run: |
+          python3 -I scripts/retirement-outcome-parity/self_check.py \
+            --only budget --only lock --only wiring
+      # 红了才最需要逐条证据（summary.json 里每条 KILLED / SURVIVED / INVALID + 原因）。
+      - name: 上传负控证据
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: retirement-outcome-parity-negctl
+          path: ${{ runner.temp }}/retirement-outcome-parity-negctl
+          if-no-files-found: warn
+
   # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；各重 job 的结果
   # 「非 success 且不是（skipped 且 docs_only=true）」才拒绝——即分类器确定纯文档改动才
   # 接受 skipped，取消 / 其他跳过照旧拒绝（#904 的有意放宽，边界见 state/decisions-20261031-ci-docs-scope.md）。
   check:
-    needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]
+    needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, retirement-outcome-parity]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -170,6 +221,9 @@ jobs:
         run: exit 1
       - name: Require negative control success
         if: ${{ always() && needs.negative-controls.result != 'success' && !(needs.negative-controls.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
+        run: exit 1
+      - name: Require retirement outcome-parity success
+        if: ${{ always() && needs.retirement-outcome-parity.result != 'success' && !(needs.retirement-outcome-parity.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
         run: exit 1
 
   rust:
