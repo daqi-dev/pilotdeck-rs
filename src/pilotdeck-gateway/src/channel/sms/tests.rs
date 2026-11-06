@@ -1667,6 +1667,16 @@ fn recorded_extra_panics_on_wrong_type() {
 }
 
 #[test]
+#[should_panic(expected = "#1339 #1879 signed case valid-signature must record request headers")]
+fn signed_recording_rejects_null_headers() {
+    validate_mock_recording(&json!({
+        "name": "valid-signature",
+        "sign": true,
+        "steps": [{"op": "request", "headers": null}],
+    }));
+}
+
+#[test]
 fn recorded_extra_null_is_absence() {
     crate::negative_assert!(
         recorded_extra_checked(&json!({"extra": null})).is_ok_and(|value| value.is_none()),
@@ -1837,6 +1847,30 @@ fn recorded_send_fail_at(case: &Value) -> Vec<u64> {
 // Validate mock configuration before spawning channel tasks: a malformed
 // recording must fail this test, not only panic in a detached mock future.
 fn validate_mock_recording(case: &Value) {
+    // #1879: a `sign: true` recording bakes the TS-computed
+    // `X-Twilio-Signature` into each request step's headers. An explicit
+    // `headers: null` would drop it, and the signature gate skips validation
+    // when that header is absent (`channel/sms/mod.rs`), so the case would
+    // replay without exercising signing at all. Keep that shape fail-closed,
+    // even though a null `headers` is absence for an unsigned step.
+    if case.get("sign") == Some(&Value::Bool(true)) {
+        for step in case
+            .get("steps")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if step.get("op").and_then(Value::as_str) == Some("request") {
+                assert!(
+                    step.get("headers").is_some_and(Value::is_object),
+                    "#1339 #1879 signed case {} must record request headers",
+                    case.get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<unnamed>")
+                );
+            }
+        }
+    }
     let turn = recorded_turn(case).unwrap_or(&Value::Null);
     recorded_turn_gate(turn);
     recorded_turn_error(turn);
@@ -2007,11 +2041,15 @@ fn absent_recording_fields_keep_defaults() {
     );
     // The replay builds the channel options with
     // `extra: Some(to_js_object(recorded_extra(&case).unwrap_or(&Value::Null)))`,
-    // so assert the same expression for a null `extra` and an absent one.
+    // so assert that same expression yields the empty object TS `?? {}` gives.
     assert_eq!(
         to_js_object(recorded_extra(&json!({"extra": null})).unwrap_or(&Value::Null)),
-        to_js_object(recorded_extra(&empty).unwrap_or(&Value::Null)),
-        "#1339 #1879 null extra replays as an empty extra, same as an absent key"
+        to_js_object(&json!({})),
+        "#1339 #1879 null extra replays as an empty extra, same as TS ?? {{}}"
+    );
+    assert!(
+        to_js_object(recorded_extra(&json!({"extra": null})).unwrap_or(&Value::Null)).is_empty(),
+        "#1339 #1879 null extra is an empty extra"
     );
     // #1729 fix-r6: `expected` is no longer an optional recording field, so the
     // old `assert_responses_so_far(&[], &empty, …)` probe (absent `expected`
