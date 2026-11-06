@@ -371,6 +371,12 @@ def main():
     parser.add_argument('mutations', nargs='*')
     args = parser.parse_args()
     requested = args.mutations
+    # #1666/#1734: the caller target is a startup guard for both entry modes.
+    # Refusing here -- before the roster, the source guard, the lock and the
+    # evidence directory -- keeps "never started" (2) distinguishable from
+    # "ran and did not pass" (1) and leaves nothing behind.
+    if not os.environ.get('CARGO_TARGET_DIR'):
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
     try:
         registered(cases, EXPECTED_NAMES)
         selected = [row for row in cases if not requested or row[0] in requested]

@@ -1,6 +1,6 @@
 # anchor-selfcheck: unsupported synthetic adaptive build/run and scratch lifecycle regression tests
 """#994 process probes; fake Cargo is a test double, never a product baseline."""
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 import io
 import importlib.util
 import json
@@ -77,9 +77,17 @@ class AdaptiveTests(unittest.TestCase):
                 with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(target)}), self.assertRaises(
                         ValueError, msg='#994 reject product/disposable target'):
                     control.persistent_environment(directory)
-            with patch.dict(os.environ, {}, clear=True), self.assertRaises(
-                    SystemExit, msg='#994 require caller target'):
+            # #1666/#1734: a missing caller target is "never started" (2), and
+            # the reason goes to stderr -- `SystemExit('...')` would exit 1 and
+            # a bare `assertRaises(SystemExit)` cannot tell the two apart.
+            stderr = io.StringIO()
+            with patch.dict(os.environ, {}, clear=True), \
+                    redirect_stderr(stderr), \
+                    self.assertRaises(SystemExit) as refused:
                 control.persistent_environment(directory)
+            self.assertEqual(refused.exception.code, 2, '#994 require caller target')
+            self.assertIn('CARGO_TARGET_DIR', stderr.getvalue(),
+                          '#994 the refusal must name the missing variable')
 
 
 class CargoTests(unittest.TestCase):
@@ -248,6 +256,7 @@ class SuiteTests(unittest.TestCase):
                  patch.object(control, 'scratch', scratch), \
                  patch.object(control, 'source_copy', return_value=root / 'scratch/src'), \
                  patch.object(control, 'persistent_environment', return_value={'CARGO_TARGET_DIR': str(root / 'target')}), \
+                 patch.dict(os.environ, {'CARGO_TARGET_DIR': str(root / 'target')}), \
                  patch.object(control.CargoTests, 'run', run), \
                  __import__('contextlib').redirect_stdout(io.StringIO()):
                 try:
