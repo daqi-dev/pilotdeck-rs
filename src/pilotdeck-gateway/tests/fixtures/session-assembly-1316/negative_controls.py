@@ -1289,19 +1289,26 @@ def self_check_controls_run():
         stub.chmod(0o755)
         # Control of the control: an unmutated copy must still pass, otherwise
         # every "the copy went red" verdict below would be meaningless.
+        # #1692 §9 r3 review (MiniMax boundary P1): these three exits carry the
+        # whole verdict, so they must go through `problems.append` like every
+        # other witness -- a bare `return [...]` is invisible to the #1843 C
+        # witness pins, and `return []` would turn a broken baseline copy into
+        # `--self-check-controls` exit 0 (a false PASS for the CI step).
         try:
             control = _self_check_variant('control', [], directory)
         except ValueError as error:
-            return [str(error)]
+            problems.append(f'control copy: {error}')
+            return problems
         try:
             result = run_owned([sys.executable, '-I', str(control), '--self-check'],
                                timeout=CONTROL_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            return ['control copy: --self-check did not finish within '
-                    f'{CONTROL_TIMEOUT_SECONDS}s']
+            problems.append(f'control copy: --self-check did not finish within {CONTROL_TIMEOUT_SECONDS}s')
+            return problems
         if result.returncode != 0:
-            return [f'control copy: an unmutated copy failed (rc={result.returncode}): '
-                    + (result.stdout + result.stderr)[-400:]]
+            tail = (result.stdout + result.stderr)[-400:]
+            problems.append(f'control copy: an unmutated copy failed (rc={result.returncode}): {tail}')
+            return problems
         print('self-check control copy: PASS (rc=0)', flush=True)
 
         for name, replacements, expect_message, message, expect_rc in self_check_controls:

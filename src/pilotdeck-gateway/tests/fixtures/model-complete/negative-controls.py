@@ -422,10 +422,25 @@ def atomic_write(path: Path, data: bytes) -> None:
     `mkstemp` creates 0600, so the source mode is restored before the rename --
     otherwise every run would publish 0600 onto a tracked source and leave a
     mode-only `git diff` under `core.filemode=true`.
+
+    Two shapes the r2 version got wrong (#1692 §9 r3 review):
+    - this helper also CREATES the recovery sidecars (`STATE_DIR/state.json`,
+      `STATE_DIR/original.http.rs`), which never exist on a clean start, so the
+      source mode is only read from a target that already exists (0600, the
+      `mkstemp` default, otherwise) -- an unconditional `path.stat()` raised
+      `FileNotFoundError` before the first mutation;
+    - those sidecars live under the system temp dir, which is often a different
+      filesystem (tmpfs `/tmp` on Linux CI), where `os.replace` raises `EXDEV`.
+      The scratch dir therefore follows the target: the repository-root
+      `PUBLISH_DIR` for tracked sources inside the worktree (outside every
+      scanned area, so a SIGKILL residue is not an "untracked build input"), and
+      the target's own directory for anything outside it (same device, so the
+      rename stays atomic).
     """
-    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(PUBLISH_DIR), prefix=".negctl-" + path.name, suffix=".tmp")
-    mode = path.stat().st_mode & 0o7777
+    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent
+    scratch.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o7777 if path.exists() else 0o600
+    fd, tmp = tempfile.mkstemp(dir=str(scratch), prefix=".negctl-" + path.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -442,8 +457,7 @@ def atomic_write(path: Path, data: bytes) -> None:
         except OSError:
             pass
     finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+        Path(tmp).unlink(missing_ok=True)
 
 
 def load_state() -> dict | None:

@@ -4,7 +4,7 @@
 
 ## 跑法
 
-先提交（`mutating_sources` 要求被保护源码逐字节等于 `HEAD`，未提交的树会被拒）。运行期间这棵树必须独占：变异体写在源码位置，同树的并发 `cargo build` / `cargo test` 会读到变异字节，把环境竞争报成假 FAIL。写入与回滚都走「仓根 `.negctl-publish/` 临时文件 + `fsync` + 一次 `os.replace`」（#1692 §9）：临时文件不在被扫的 `src` 区内、落在 `.gitignore` 的 `.negctl-*` 命名空间，SIGKILL 残留不会被下一轮 preflight 判成 untracked build input；权限位从源文件带过去，`core.filemode` 下不留 mode-only diff。并发读者只会看到旧字节或变异字节，不会读到半截文件；但「读到变异字节」这一半仍只能靠独占树排除，不是本装置能自己保证的。再：
+先提交（`mutating_sources` 要求被保护源码逐字节等于 `HEAD`，未提交的树会被拒）。运行期间这棵树必须独占：变异体写在源码位置，同树的并发 `cargo build` / `cargo test` 会读到变异字节，把环境竞争报成假 FAIL。写入与回滚都走「仓根 `.negctl-publish/` 临时文件 + `fsync` + 一次 `os.replace`」（#1692 §9）：保护来自位置——仓根不在 `_assert_input_areas` 的扫描区（`src` / `.cargo` / `rust-toolchain*`）内，SIGKILL 残留不会被下一轮 preflight 判成 untracked build input（该扫描用 `git ls-files --others`，**故意包含**被忽略文件，所以 `.gitignore` 的 `.negctl-*` 只是让 `git status` 保持干净，不是保护本身）；权限位从源文件带过去，`core.filemode` 下不留 mode-only diff。并发读者只会看到旧字节或变异字节，不会读到半截文件；但「读到变异字节」这一半仍只能靠独占树排除，不是本装置能自己保证的。再：
 
 ```
 CARGO_TARGET_DIR=<本树独立 target> \
