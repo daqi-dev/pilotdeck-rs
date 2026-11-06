@@ -499,11 +499,41 @@ pub(super) fn attachment_identity_matches(before: &fs::Metadata, opened: &fs::Me
 
 #[cfg(not(unix))]
 pub(super) fn attachment_identity_matches(_before: &fs::Metadata, _opened: &fs::Metadata) -> bool {
-    // No stable cross-platform file identity: non-Unix leans on the
-    // post-open canonicalize containment revalidation (step 2 of the
-    // open-first sequence in compose_attachment_turn, which runs on every
-    // platform) instead of this comparison.
+    // #1468, stated honestly: without a stable cross-platform file identity
+    // this comparison says nothing, and the open-first sequence's path-based
+    // steps (post-open canonicalize containment, path stat) are all spelled
+    // against the path — two well-timed swaps (leaf to an outside symlink
+    // before the open, back to the in-root file before the revalidation,
+    // and onto the outside file again before the stat) read outside bytes
+    // through an outside handle while every path check passes. The handle
+    // binding below (`handle_bound_to_upload_areas`) is the step that does
+    // not consult the path; on a platform whose `opened_path` fails (see
+    // handle_path.rs) it fails closed, so the residual window on such a
+    // platform is the platform itself, not this comparison. Non-Unix is not
+    // a current shipping target; the residual window is accepted and
+    // documented rather than papered over.
     true
+}
+
+/// #1468: the approval object is the opened handle, not any path spelling
+/// checked around it. The handle's own resolved path (macOS F_GETPATH,
+/// Linux /proc/self/fd — see `handle_path`) must name a location inside the
+/// canonical lease root or the canonical upload-store root (a lease file is
+/// a hard link of an upload-store file, and the platform may report either
+/// name). An unavailable handle path fails closed — never approved.
+pub(super) fn handle_bound_to_upload_areas(
+    file: &File,
+    lease_root: &Path,
+    upload_store: Option<&Path>,
+) -> bool {
+    match crate::handle_path::opened_path(file) {
+        Ok(handle) => {
+            handle.starts_with(lease_root)
+                || upload_store.is_some_and(|store| handle.starts_with(store))
+        }
+        // #1468: an unavailable handle path is never approved.
+        Err(_) => false,
+    }
 }
 
 /// TS GatewayAttachmentTurnComposer.ts:125-151 — `attachmentDiagnosticsGuidance`.
@@ -642,6 +672,14 @@ pub(super) fn compose_attachment_turn(
         Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
         _ => None,
     };
+    // #1468: the second legitimate home of a lease object. Every lease file
+    // is a hard link of the upload-store file (`acquire_attachment_lease`),
+    // and the platform's handle-path lookup may answer with either name of
+    // a hard-linked vnode (macOS F_GETPATH does — probe
+    // `_tmp/20261106-issue-1468-1494/probe/`; Linux /proc always reports
+    // the spelling the open used). A missing store root (no uploads yet)
+    // simply leaves the lease spelling as the only accepted home.
+    let upload_store_canon = fs::canonicalize(project_canon.join(".tmp").join("chat-uploads")).ok();
 
     let mut direct_blocks: Vec<JsValue> = Vec::new();
     let mut inline_blocks: Vec<JsValue> = Vec::new();
@@ -730,8 +768,13 @@ pub(super) fn compose_attachment_turn(
         // outside-project symlink after `lease_guard`'s canonicalize and
         // both lookups follow the same link onto the same outside inode —
         // the (dev, inode) comparison passes and outside bytes get inlined.
-        // The approved object is now bound by revalidating the path AFTER
-        // the open, and every read comes from the handle:
+        // #1468 corrected the claim that those path-based steps bound the
+        // approved object: three well-timed swaps (leaf to an outside
+        // symlink before the open, back to an in-root file before the
+        // revalidation, onto the outside file again before the stat) open
+        // the outside file and pass every check that consults the path.
+        // The approval is now bound to the opened handle itself, and every
+        // read comes from that handle:
         //   1. open `resolved`;
         //   2. post-open `canonicalize` containment under the canonical
         //      lease root — a swap made after the open resolves outside
@@ -739,14 +782,25 @@ pub(super) fn compose_attachment_turn(
         //   3. path stat vs the handle's fstat `(dev, inode)` — a swap
         //      made after the revalidation stats a different file than
         //      the handle and is treated as not-found;
-        //   4. a swap made after all checks only moves the path, never
+        //   4. the handle's own resolved path (`handle_path`, macOS
+        //      F_GETPATH / Linux /proc/self/fd) must name a location
+        //      inside the canonical lease root or the canonical
+        //      upload-store root, and an unavailable handle path is never
+        //      approved — the step that survives a fully choreographed
+        //      multi-swap sequence, because it asks the platform which
+        //      object the descriptor references instead of consulting the
+        //      movable path;
+        //   5. a swap made after all checks only moves the path, never
         //      the opened handle, so the bytes still come from the object
         //      this sequence validated.
-        // Step 2 runs on every platform; the (dev, inode) comparison is a
-        // Unix-only strengthening (non-Unix leans on step 2). The
+        // Step 2 and the handle binding run on every platform; the
+        // (dev, inode) comparison is a Unix-only strengthening (see the
+        // honest residual note on `attachment_identity_matches`). The
         // registered allowedReadFiles spelling is the post-open canonical
         // form from step 2 (identical to the pre-open one when nothing
         // moved).
+        #[cfg(test)]
+        swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeOpen, &resolved);
         let mut file = match File::open(&resolved) {
             Ok(file) => file,
             Err(error) => {
@@ -819,6 +873,31 @@ pub(super) fn compose_attachment_turn(
             let error = std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "attachment resolved to a different file between revalidation and read",
+            );
+            diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+            continue;
+        }
+        // #1468 step 4: bind the approval to the opened handle. This is the
+        // last gate before any registration or read, and the only one that
+        // does not consult the movable path: the multi-swap sequence passes
+        // steps 2 and 3 with an outside handle, and only the handle's own
+        // resolved location exposes it. A handle whose path is unavailable
+        // fails closed (`handle_bound_to_upload_areas`).
+        let handle_bound = match lease_canon.as_deref() {
+            Some(lease_root) => {
+                handle_bound_to_upload_areas(&file, lease_root, upload_store_canon.as_deref())
+            }
+            // No valid canonical lease root is reachable here (lease_guard
+            // resolved under one); if it ever is, fail closed anyway.
+            None => false,
+        };
+        if !handle_bound {
+            if audio {
+                continue;
+            }
+            let error = std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "attachment handle resolved outside the lease root after open",
             );
             diagnostics.push(attachment_not_found(entry, &entry.path, &error));
             continue;
@@ -1625,12 +1704,16 @@ pub fn native_settings_for_process(
 pub(super) mod swap_test_hook {
     use super::*;
 
-    /// Which injection point the swap happens in: between `File::open` and
-    /// the post-open `canonicalize` containment revalidation (step 2), or
+    /// Which injection point the swap happens in: after `lease_guard`'s
+    /// canonicalization but before `File::open` (#1468 — the open itself
+    /// may then follow a swapped link), between `File::open` and the
+    /// post-open `canonicalize` containment revalidation (step 2), or
     /// between the revalidation and the `(dev, inode)` path-stat/fstat
-    /// comparison (step 3).
+    /// comparison (step 3). The #1468 multi-step sequence chains one swap
+    /// per window, so every window holds its own slot.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum SwapWindow {
+        BeforeOpen,
         AfterOpen,
         AfterRevalidate,
     }
@@ -1638,34 +1721,43 @@ pub(super) mod swap_test_hook {
     type Hook = Box<dyn FnMut(&Path)>;
 
     thread_local! {
-        static HOOK: std::cell::RefCell<Option<(SwapWindow, Hook)>> =
+        static HOOKS: std::cell::RefCell<Vec<(SwapWindow, Hook)>> =
             std::cell::RefCell::default();
     }
 
-    pub struct Guard;
+    /// Removes exactly its own window's hook on drop.
+    pub struct Guard {
+        window: SwapWindow,
+    }
 
     pub fn set(window: SwapWindow, hook: impl FnMut(&Path) + 'static) -> Guard {
-        HOOK.with(|slot| {
-            assert!(slot.borrow().is_none());
-            *slot.borrow_mut() = Some((window, Box::new(hook)));
+        HOOKS.with(|hooks| {
+            assert!(
+                hooks.borrow().iter().all(|(set, _)| *set != window),
+                "one swap hook per window"
+            );
+            hooks.borrow_mut().push((window, Box::new(hook)));
         });
-        Guard
+        Guard { window }
     }
 
     pub fn notify(window: SwapWindow, resolved: &Path) {
-        HOOK.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if let Some((hook_window, hook)) = slot.as_mut()
-                && *hook_window == window
-            {
-                hook(resolved);
+        HOOKS.with(|hooks| {
+            for (hook_window, hook) in hooks.borrow_mut().iter_mut() {
+                if *hook_window == window {
+                    hook(resolved);
+                }
             }
         });
     }
 
     impl Drop for Guard {
         fn drop(&mut self) {
-            HOOK.with(|slot| *slot.borrow_mut() = None);
+            HOOKS.with(|hooks| {
+                hooks
+                    .borrow_mut()
+                    .retain(|(window, _)| *window != self.window)
+            });
         }
     }
 }

@@ -13,8 +13,8 @@
 //! notification server; the settings store anchors at PILOT_HOME).
 
 use super::services::{
-    NativeSettingsOptions, attachment_identity_matches, compose_attachment_turn, native_settings,
-    native_settings_for_process, swap_test_hook,
+    NativeSettingsOptions, attachment_identity_matches, compose_attachment_turn,
+    handle_bound_to_upload_areas, native_settings, native_settings_for_process, swap_test_hook,
 };
 use crate::config::Env;
 use crate::config::store::{ConfigStore, StoreOptions};
@@ -1201,6 +1201,10 @@ fn open_first_sequence_without_swap_keeps_inline_control() {
 /// `File::open` and the post-open canonicalize revalidation — step 2's
 /// containment check must catch it: not-found, no read, no registration.
 /// The fired flag is asserted so an unfired hook (a silent test) fails.
+/// #1468 honesty note: this covers one swap in one window. A choreographed
+/// sequence across all three windows defeats every path-based step (see
+/// `multi_step_swap_across_all_windows_is_not_found`); the guarantee that
+/// no outside bytes are inlined now rests on the handle binding, step 4.
 #[cfg(unix)]
 #[test]
 fn leaf_swapped_between_open_and_revalidation_is_not_found() {
@@ -1271,6 +1275,8 @@ fn leaf_swapped_between_open_and_revalidation_is_not_found() {
 /// fix-r4 window 1 (ancestor): the lease `u1` directory is swapped for an
 /// outside symlink between the open and the revalidation — the canonical
 /// spelling escapes the lease root, step 2 must treat it as not-found.
+/// Same #1468 honesty note as the leaf variant above: one swap, one
+/// window; the multi-step choreography belongs to the handle-binding test.
 #[cfg(unix)]
 #[test]
 fn ancestor_swapped_between_open_and_revalidation_is_not_found() {
@@ -1336,7 +1342,11 @@ fn ancestor_swapped_between_open_and_revalidation_is_not_found() {
 
 /// fix-r4 window 2: the leaf is swapped AFTER the revalidation — the
 /// revalidated path stat and the opened handle's fstat disagree on
-/// (dev, inode), step 3 must treat it as not-found.
+/// (dev, inode), step 3 must treat it as not-found. The same #1468
+/// honesty note applies: (dev, inode) equality only holds for one swap
+/// in one window; a sequence that restores the in-root file before the
+/// stat and swaps again afterwards passes step 3 and is caught only by
+/// the step-4 handle binding (`multi_step_swap_across_all_windows_is_not_found`).
 #[cfg(unix)]
 #[test]
 fn leaf_swapped_after_revalidation_fails_identity() {
@@ -1379,6 +1389,14 @@ fn leaf_swapped_after_revalidation_fails_identity() {
         "#1321 fix-r4 window 2: the swap hook must fire inside the production sequence"
     );
     let blocks = content_blocks(&result);
+    // #1468: this assertion is the negative-control receipt for the
+    // (dev, inode) depth check — a leaf swapped after the revalidation must
+    // stay not-found because the path stat and the handle's fstat disagree.
+    negative_assert!(
+        diagnostics_block(&blocks)
+            .contains("(attachment resolved to a different file between revalidation and read)."),
+        "#1468 the (dev, inode) depth check must stay"
+    );
     negative_assert!(
         diagnostics_block(&blocks).contains(&format!(
             "Image attachment not found: {path} (attachment resolved to a different file \
@@ -1404,6 +1422,134 @@ fn leaf_swapped_after_revalidation_fails_identity() {
         "#1321 fix-r4: a leaf swapped after the revalidation must never produce a note line"
     );
     std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// #1468: the issue's three-swap sequence — the leaf is a real in-root file
+/// while `lease_guard` canonicalizes it, is swapped for an outside symlink
+/// before `File::open` (so the open itself follows onto the outside file),
+/// is swapped back to a real in-root file for the post-open revalidation,
+/// and is swapped onto the outside file again for the path-stat/fstat
+/// identity comparison. Every path-based check passes while the opened
+/// handle is the outside file: only binding the approval to the handle's
+/// own resolved path (not any spelling checked around it) rejects the
+/// read. All three windows must fire and the attachment must land in the
+/// not-found branch — zero inlined bytes, zero registration, no note line.
+#[cfg(unix)]
+#[test]
+fn multi_step_swap_across_all_windows_is_not_found() {
+    use std::cell::Cell;
+    use std::os::unix::fs::symlink;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1468 lease fixture");
+    let outside_root = scratch.0.with_file_name(format!(
+        "{}-outside-multi",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1468")
+    ));
+    std::fs::create_dir_all(&outside_root).expect("#1468 outside multi fixture dir");
+    std::fs::write(outside_root.join("outside.png"), b"outside-bytes")
+        .expect("#1468 outside multi fixture");
+    let fired = Rc::new(Cell::new(0));
+    let _before = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeOpen, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        let outside_link = outside_root.join("outside.png");
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf");
+            symlink(&outside_link, &leaf).expect("#1468 swap the leaf onto the outside file");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let _after = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the swapped link");
+            std::fs::write(&leaf, b"lease-bytes").expect("#1468 restore the in-root leaf");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let _revalidate = swap_test_hook::set(swap_test_hook::SwapWindow::AfterRevalidate, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        let outside_link = outside_root.join("outside.png");
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf again");
+            symlink(&outside_link, &leaf).expect("#1468 swap the leaf onto the outside file again");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1468 a multi-step swap must not fail the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        fired.get() == 3,
+        "#1468 all three swap hooks must fire inside the production sequence"
+    );
+    let outside_data = JsValue::from(BASE64_STANDARD.encode(b"outside-bytes").as_str());
+    let leaked = blocks.iter().find(|block| {
+        block.get("type") == Some(&"image".into()) && block.get("data") == Some(&outside_data)
+    });
+    if let Some(block) = leaked {
+        eprintln!(
+            "#1468 the outside bytes reached the inline pipeline: image block data={:?}",
+            block.get("data")
+        );
+    }
+    negative_assert!(
+        leaked.is_none(),
+        "#1468 a handle outside the lease root must never be read"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (attachment handle resolved outside the lease \
+             root after open)."
+        )),
+        "#1468 the multi-step swap must be diagnosed not-found"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1468 the multi-step swap must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1468 the multi-step swap must never produce a note line"
+    );
+    std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// #1468: the handle-binding decision must fail closed. A handle whose own
+/// path the platform cannot produce (a pipe has no filesystem path: macOS
+/// F_GETPATH answers EBADF, Linux /proc answers `pipe:[…]` and handle_path
+/// rejects it) is never approved — a swapped symlink whose trick is to make
+/// the handle unresolvable must not turn that into a pass.
+#[cfg(unix)]
+#[test]
+fn handle_path_unavailable_fails_closed() {
+    let scratch = Scratch::new();
+    let lease_root = scratch.0.join(".tmp").join("chat-upload-leases");
+    let mut child = std::process::Command::new("/bin/cat")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("#1468 spawn the pipe fixture");
+    let stdin = child.stdin.take().expect("#1468 take the pipe write end");
+    let pipe_file = std::fs::File::from(std::os::fd::OwnedFd::from(stdin));
+    negative_assert!(
+        !handle_bound_to_upload_areas(&pipe_file, &lease_root, None),
+        "#1468 an unavailable handle path must fail closed"
+    );
+    drop(pipe_file);
+    let _ = child.wait();
 }
 
 #[test]

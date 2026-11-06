@@ -7,6 +7,10 @@ pub mod config;
 mod dispatch;
 mod fetch_redirect;
 mod frame;
+// #1468/#1494: the resolved path of an already-open handle (macOS
+// F_GETPATH, Linux /proc/self/fd) shared by the attachment lease guard and
+// the upload metadata read.
+mod handle_path;
 pub mod hooks;
 pub mod host;
 pub mod http_proxy;
