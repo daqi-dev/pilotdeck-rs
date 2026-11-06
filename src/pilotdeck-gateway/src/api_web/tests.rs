@@ -399,6 +399,7 @@ fn native_config() -> native_http::Config {
         token: "fixture-token".into(),
         loopback: true,
         static_root: None,
+        webhook: None,
     }
 }
 

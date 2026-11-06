@@ -1,7 +1,10 @@
 //! Channel component: registration/config loading, lifecycle, the A7 inbound
 //! port and concrete channel adapters (A8.3 `api-server` and `webhook`).
 pub mod api_server;
+pub mod feishu;
+pub(crate) mod http_client;
 pub mod im_cron;
+pub(crate) mod im_interaction;
 pub mod loader;
 pub mod protocol;
 pub mod runtime_status;

@@ -1,17 +1,17 @@
-//! The slice of `ImElicitationHelper` / `ImPermissionHelper` that
-//! `WeComCallbackChannel.ts:216-251` drives.
+//! The slice of `ImElicitationHelper` / `ImPermissionHelper` the IM channels
+//! drive (`WeComCallbackChannel.ts:216-251`, `FeishuChannel.ts:337-429`).
 //!
-//! Those helpers live outside `adapters/channel/wecom-callback/`; this unit
-//! ports the channel-side orchestration against this narrow port. Assembly
-//! supplies a shared implementation, and the TS oracle/Rust tests supply the
-//! same scripted fake so the comparison covers the channel, not helper
-//! internals.
+//! Those helpers live outside the individual adapter directories; this unit
+//! ports the channel-side orchestration against one narrow port shared by the
+//! wecom-callback and feishu lanes. Assembly supplies a shared implementation,
+//! and the TS oracles/Rust tests supply the same scripted fake so the
+//! comparison covers each channel, not helper internals.
 
 use std::{future::Future, pin::Pin};
 
 use pilotdeck_protocol::JsValue;
 
-use super::super::protocol::ChannelError;
+use super::protocol::ChannelError;
 
 pub(crate) type InteractionFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

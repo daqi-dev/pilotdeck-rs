@@ -89,6 +89,7 @@ impl NativeWsServer {
             token: token.clone(),
             loopback: ts_loopback_literal(address.ip()),
             static_root: None,
+            webhook: None,
         };
         Ok(Self {
             // Node's checker phase anchors at the 'listening' event; this
@@ -122,6 +123,14 @@ impl NativeWsServer {
     /// later A8.4 packages opt in.
     pub fn with_static_root(mut self, root: PathBuf) -> Self {
         self.http.static_root = Some(root);
+        self
+    }
+
+    /// Mount the `ANY /feishu/webhook` entry on this listener
+    /// (`options.feishuWebhook`): the resolver is consulted per request, so a
+    /// channel start/stop/reload is visible without rebinding.
+    pub fn with_webhook(mut self, resolver: native_http::WebhookResolver) -> Self {
+        self.http.webhook = Some(resolver);
         self
     }
 
@@ -637,7 +646,7 @@ async fn serve_socket(
                     _ => Err(std::io::Error::other("invalid native WS upgrade")),
                 }
             } else {
-                native_http::serve(&request, http_config).await
+                native_http::serve_with_body(request, http_config).await
             }
         },
         stop,

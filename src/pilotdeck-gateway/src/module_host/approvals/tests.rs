@@ -758,6 +758,7 @@ async fn serve_and_capture(
         token: TOKEN.to_owned(),
         loopback: true,
         static_root: None,
+        ..Default::default()
     };
     let listener = TcpListener::bind("127.0.0.1:0")
         .await

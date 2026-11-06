@@ -1,6 +1,8 @@
-//! Minimal outbound HTTP for qyapi. Production uses the same rustls connector
-//! as the provider transports; tests point `base_url` at a loopback server so
-//! the exact production path (including JSON/errcode handling) runs offline.
+//! Minimal outbound HTTP shared by the IM channels (qyapi for the WeCom
+//! callback, the Lark Open API for feishu). Production uses the same rustls
+//! connector as the provider transports; tests point the caller's base URL at
+//! a loopback server so the exact production path (including JSON/errcode
+//! handling) runs offline.
 
 use std::time::Duration;
 
@@ -50,10 +52,40 @@ impl HttpClient {
         body: &str,
         timeout: Duration,
     ) -> Result<HttpResponse, String> {
+        self.send(method, url, content_type, None, body, timeout).await
+    }
+
+    /// The `Authorization: Bearer <token>` variant the Lark Open API needs
+    /// (the WeCom callback carries its token in the query string instead).
+    pub(crate) async fn request_bearer(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        bearer: &str,
+        body: &str,
+        timeout: Duration,
+    ) -> Result<HttpResponse, String> {
+        self.send(method, url, content_type, Some(bearer), body, timeout)
+            .await
+    }
+
+    async fn send(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        bearer: Option<&str>,
+        body: &str,
+        timeout: Duration,
+    ) -> Result<HttpResponse, String> {
         let uri: hyper::Uri = url.parse().map_err(|error| format!("TypeError: {error}"))?;
         let mut builder = Request::builder().method(method).uri(uri);
         if let Some(content_type) = content_type {
             builder = builder.header(header::CONTENT_TYPE, content_type);
+        }
+        if let Some(bearer) = bearer {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {bearer}"));
         }
         let request = builder
             .body(Full::new(Bytes::from(body.to_owned())))

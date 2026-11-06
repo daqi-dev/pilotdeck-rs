@@ -40,7 +40,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     let inherited = capture_environment(std::env::vars_os());
     validate_environment(&inherited)?;
     let env = options.environment(inherited);
-    let host = assembly::start(options.clone(), env).await?;
+    let (host, feishu_webhook) = assembly::start_with_webhook(options.clone(), env).await?;
     let server = match crate::native_ws::NativeWsServer::bind(
         options.listen,
         host.clone(),
@@ -49,7 +49,9 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     )
     .await
     {
-        Ok(server) => server,
+        // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
+        // registers it on the HTTP server, after `/auth/local-token`).
+        Ok(server) => server.with_webhook(feishu_webhook),
         Err(error) => {
             let _ = host.shutdown(options.drain_budget).await;
             return Err(error);
