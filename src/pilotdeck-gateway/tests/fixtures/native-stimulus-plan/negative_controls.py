@@ -36,7 +36,9 @@ def write_atomic(path, data):
     `path.write_text` truncates first: a SIGKILL in the middle leaves a half
     file that `mutating_sources` then reads as "differs from HEAD" and refuses
     to run over. The temp lives at the repository root, outside the scanned
-    `src` area and inside the `.gitignore`d `.negctl-*` namespace.
+    `src` area -- that location is the protection. The `.gitignore`d
+    `.negctl-*` name only keeps `git status` clean: the preflight scan uses
+    `git ls-files --others` and includes ignored files on purpose.
     """
     PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'

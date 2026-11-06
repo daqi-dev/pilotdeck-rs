@@ -840,6 +840,10 @@ class EnvironmentControls(unittest.TestCase):
              'path.write_bytes(mutated)'),
             ('truncating-restore-write', 'atomic_write(_active["path"], original)',
              '_active["path"].write_bytes(original)'),
+            # r4（MiniMax sibling P1）：`--recover` 的还原点是第三个发布点，接收者叫
+            # `mutated_file`——r3 按变量名枚举时它整个漏在覆盖类之外。
+            ('truncating-recover-write', 'atomic_write(mutated_file, original)',
+             'mutated_file.write_bytes(original)'),
         ),
         'native-stimulus-plan/negative_controls.py': (
             ('truncating-mutant-write', 'write_atomic(path, changed.encode())',
@@ -894,13 +898,30 @@ class EnvironmentControls(unittest.TestCase):
         return body
 
     def sibling_write_guards(self, source, relative):
-        """#1692 §9 r2/r3：被变异源一处原地截断写都不许有，全走原子发布。"""
-        for pattern, what in ((r'(?<![\w.])path\.write_(?:text|bytes)\(', 'the mutant source'),
-                              (r'\bcase\.path\.write_(?:text|bytes)\(', 'the case source')):
-            self.assertEqual(re.findall(pattern, source), [],
-                             f'#1692 §9 r2 {relative} {what} is never written in place')
-        self.assertNotIn('_active["path"].write_', source,
-                         f'#1692 §9 r2 {relative} the recovery restore is atomic too')
+        """#1692 §9 r2/r4：被变异源一处原地截断写都不许有，全走原子发布。
+
+        r4（MiniMax sibling P1 / DeepSeek boundary P2 同源）：r3 的版本按**接收者变量名**
+        枚举（`path` / `case.path` / `_active["path"]`），而 `model-complete` 的第三个发布点
+        `atomic_write(mutated_file, original)`（`--recover` 的还原，`mutated_file` 就是树内的
+        被变异源）不在名单里、也没有对应变异体——把它换回 `mutated_file.write_bytes(original)`
+        三条断言全绿，§9 的「一处原地截断写都不许有」对该点假 PASS。
+        改成 AST 判「谁在被写」：接收者必须是输出目录（`out` 派生的证据/日志）之外的一律判红，
+        接收者叫什么名字都不影响覆盖类。
+        """
+        offenders = []
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr not in ('write_text', 'write_bytes'):
+                continue
+            receiver = (ast.get_source_segment(source, node.func.value) or '').strip()
+            # 证据目录（`out / …`）是唯一允许的原地写目标；被变异源一律走原子发布。
+            if receiver.lstrip('( ').startswith('out'):
+                continue
+            offenders.append(f'line {node.lineno}: {receiver}.{node.func.attr}(…)')
+        self.assertEqual(offenders, [],
+                         f'#1692 §9 r2 {relative} writes an in-place truncating target that '
+                         'is not an evidence file')
         self.assertNotIn("path.name + '.negctl.tmp'", source, relative)
         self.assertNotIn('mkstemp(dir=str(path.parent)', source, relative)
 
@@ -1156,6 +1177,36 @@ class EnvironmentControls(unittest.TestCase):
                               for row in self.self_check_controls_rows(renamed)], names)
         print('#1843 D self-check control row-renamed: KILLED', flush=True)
 
+    def test_self_check_controls_exit_is_pinned(self):
+        # r4（MiniMax sibling P1）：r3 把 `self_check_controls_run()` 的三条承重出口改成
+        # 走 `problems.append`（理由：`return []` 会让 CI 步骤假 PASS），但**同一条链上
+        # 「见证 → 退出码」的那一步没人钉**：把 `sys.exit(1 if control_problems else 0)`
+        # 改成 `sys.exit(0)`、或者把上一行的调用挪走，全部 `problems.append` 见证文本不变，
+        # #1843 C 的 55 条钉子全绿——而 `.github/workflows/ci.yml` 里那一步把「非零退出」
+        # 当验收判据，于是它照绿。与 `--self-check` 的 `if problems: return 1` 同层，
+        # 后者已有计数钉 + 变异杀，这里补齐同样的两层。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+        for fragment in ('control_problems = self_check_controls_run()',
+                         'sys.exit(1 if control_problems else 0)'):
+            self.assertEqual(source.count(fragment), 1,
+                             f'#1692 r4 the controls verdict decides the exit status: {fragment}')
+        for label, old, new in (
+                ('controls-exit-always-zero', 'sys.exit(1 if control_problems else 0)',
+                 'sys.exit(0)'),
+                ('controls-result-discarded', 'control_problems = self_check_controls_run()',
+                 'self_check_controls_run()')):
+            self.assertIn(old, source, f'#1692 r4 controls exit anchor: {label}')
+            mutant = source.replace(old, new, 1)
+            self.assertNotEqual(mutant, source, f'#1692 r4 the mutant really applied: {label}')
+            with self.assertRaises(AssertionError,
+                                   msg=f'#1692 r4 controls {label} must be caught'):
+                self.assertEqual(mutant.count('control_problems = self_check_controls_run()'), 1,
+                                 '#1692 r4 the controls verdict is still collected')
+                self.assertEqual(mutant.count('sys.exit(1 if control_problems else 0)'), 1,
+                                 '#1692 r4 the controls verdict still decides the exit status')
+            print(f'#1692 r4 controls exit mutant {label}: KILLED', flush=True)
+
     def write_source_atomic_body(self, source):
         """`write_source_atomic` 的函数体源码（#1692 §9）。"""
         for node in ast.walk(ast.parse(source)):
@@ -1194,8 +1245,10 @@ class EnvironmentControls(unittest.TestCase):
         # 所以「临时文件总会被删」恰好在唯一要紧的那条路径上是假的。放在被变异源旁边
         # 就是放进 `src/`，而 `negative_process._assert_input_areas` 用
         # `git ls-files --others`（故意包含被忽略的文件）扫 `src`，下一次运行会以
-        # 「untracked build input」拒跑——正是 §9 要消灭的那种锁死。放到仓库根、
-        # 落进 `.gitignore` 的 `.negctl-*` 命名空间，两个隐患同时消失，且仍在同一个
+        # 「untracked build input」拒跑——正是 §9 要消灭的那种锁死。**保护来自位置**：
+        # 仓库根不在扫描区（`src` / `.cargo` / `rust-toolchain*`）内；`.gitignore` 的
+        # `.negctl-*` 只让 `git status` 保持干净，不是保护本身（r4 MiniMax sibling P2：
+        # 这里的旧说法与本 PR 刚改对的 `native-config/README.md` 相反）。仍在同一个
         # 文件系统上，`os.replace` 依旧是一次原子 rename。
         self.assertEqual(source.count("PUBLISH_DIR = root / '.negctl-publish'"), 1,
                          '#1692 §9 the publish scratch dir is one root-level constant')
@@ -1208,8 +1261,10 @@ class EnvironmentControls(unittest.TestCase):
             ['git', 'check-ignore', '-q', str(repo/'.negctl-publish'/'sample.tmp')],
             cwd=repo, capture_output=True)
         self.assertEqual(ignored.returncode, 0,
-                         '#1692 §9 .gitignore really covers the scratch dir '
-                         '(.negctl-*), so a SIGKILL residue is not "untracked"')
+                         '#1692 §9 .gitignore covers the scratch dir (.negctl-*), so a '
+                         'SIGKILL residue leaves `git status` clean -- the LOCKOUT is '
+                         'avoided by the location (root, outside the scanned areas), '
+                         'not by being ignored')
         # 两个调用点都必须走它：写入变异体一条、还原一条。
         self.assertEqual(source.count('write_source_atomic(path, changed.encode())'), 1,
                          '#1692 §9 the mutant is published atomically')
