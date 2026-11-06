@@ -78,7 +78,11 @@ const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// (`wecom_callback/http.rs`), and this lane follows it. hyper answers a head
 /// timeout by closing without a response: Node's 51-byte 408 and its landing
 /// on the 30 s connections-checker grid stay Rust/TS residuals, registered in
-/// `specs/gateway-parity/diffs/A8.3-CH-SMS-012.md`.
+/// `specs/gateway-parity/diffs/A8.3-CH-SMS-012.md`. Those residuals are a
+/// scope choice, not an impossibility: the in-repo native lane reproduces both
+/// by owning the read side instead of using this builder
+/// (`http_proxy::NODE_HEADERS_TIMEOUT_408`, its `grid_anchor`), and the
+/// webhook channel already serves through it.
 const DEFAULT_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const TWIML_OK: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
 
@@ -114,7 +118,15 @@ pub struct SmsChannelOptions {
     /// injected together so the head bound is testable without a second
     /// option field (adding one would touch every `SmsChannelOptions`
     /// literal). Production never sets this, so the heads still get Node's
-    /// 60 s and the bodies Node's 300 s.
+    /// 60 s and the bodies Node's 300 s. A consequence worth knowing when
+    /// reading the #1901 body-read replays: their injected value also caps the
+    /// head, so a client that wrote a *complete* head still has to get it onto
+    /// the wire inside it. Those replays send the head and the body in one
+    /// write, so the head is complete on the first poll; a future case that
+    /// deliberately delays its head needs the split (`A8.3-CH-SMS-012`).
+    /// `Some(Duration::ZERO)` is not meaningful either: hyper reports the head
+    /// timeout on the first pending poll, so such a channel serves almost
+    /// nothing.
     pub request_timeout: Option<std::time::Duration>,
 }
 
@@ -589,14 +601,16 @@ impl ChannelAdapter for SmsChannel {
                                             async move { handle_request(request, shared).await }
                                         },
                                     );
-                                    // #1955: Node's `headersTimeout`. hyper only
-                                    // arms the head deadline when a `Timer` is
-                                    // installed; without one it silently turns the
-                                    // built-in 30 s default into `None`, and a
-                                    // half-written request head then pins this
-                                    // detached connection task and its socket
-                                    // forever (unauthenticated). The sibling
-                                    // `wecom_callback` lane installs the same pair.
+                                    // #1955: Node's `headersTimeout` — see
+                                    // `DEFAULT_HEADERS_TIMEOUT` for why the
+                                    // `Timer` is required and what stays a TS
+                                    // residual. The mutation switch is what
+                                    // proves the deadline is load-bearing.
+                                    //
+                                    // #1958 (in flight) owns the fixture
+                                    // table: register `sms-header-read-no-timeout`
+                                    // in `tests/fixtures/channel-sms/negative_controls.py`
+                                    // once it lands.
                                     let mut builder =
                                         hyper::server::conn::http1::Builder::new();
                                     if !crate::mutants::on("sms-header-read-no-timeout") {
