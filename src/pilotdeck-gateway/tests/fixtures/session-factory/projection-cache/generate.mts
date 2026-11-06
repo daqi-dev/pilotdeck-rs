@@ -13,8 +13,13 @@ const output = path.resolve(process.argv[2]);
 // this cannot cover, and that one is owned by the caller's process group).
 let ownedWork: string | undefined;
 const deadline = setTimeout(() => {
-  if (ownedWork) fs.rmSync(ownedWork, {recursive: true, force: true, maxRetries: 2, retryDelay: 10});
-  process.stderr.write('#1011 generator exceeded 120 seconds\n'); process.exit(1);
+  // #1281 review: a failing cleanup must not swallow the deadline report; the
+  // stderr line and the explicit nonzero exit belong to every expiry.
+  try {
+    if (ownedWork) fs.rmSync(ownedWork, {recursive: true, force: true, maxRetries: 2, retryDelay: 10});
+  } finally {
+    process.stderr.write('#1011 generator exceeded 120 seconds\n'); process.exit(1);
+  }
 }, 120000);
 deadline.unref();
 assert.equal(process.version, 'v22.22.0', '#1011 Node version');

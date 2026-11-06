@@ -842,15 +842,15 @@ fn factory_generators_clean_only_owned_work() {
         )
         .expect("#1253 cleanup generator bounded execution");
         // #1281 review: a bare non-zero exit does not prove the cell failed at
-        // its intended point — a missing baseline, a bad flag or a crashed
-        // loader would fail too and the cleanup assertion would still pass.
-        // Pin the marker each failing variant must print: the collision cells
-        // die on the exclusive (wx) open of the foreign file, the snapshot cell
-        // on its own injected hook. Plain cells must print neither.
+        // its intended point — a missing baseline, a bad flag, a crashed loader
+        // or an earlier `wx` write (file-snapshot-test and probe both write
+        // exclusively before this point) would fail too and the cleanup
+        // assertion would still pass. Each failing cell therefore has to name
+        // the file that actually collided, not just the EEXIST code.
         let failure_marker = match variant {
             Variant::Plain => None,
             Variant::SnapshotFailure => Some("#1253 snapshot body failure after mkdtemp"),
-            Variant::Collision(_) => Some("EEXIST"),
+            Variant::Collision(path) => Some(path),
         };
         let output = format!(
             "{}{}",
@@ -868,6 +868,14 @@ fn factory_generators_clean_only_owned_work() {
                 output.contains(marker),
                 "#1253 factory generator fails at the intended point: {script} {variant:?} must report {marker:?}: {output}"
             );
+            if matches!(variant, Variant::Collision(_)) {
+                // The path alone is not enough either: only the exclusive open
+                // reports EEXIST, so both have to be present.
+                assert!(
+                    output.contains("EEXIST"),
+                    "#1253 collision fails on the exclusive open of {marker}: {script} {variant:?}: {output}"
+                );
+            }
         } else {
             assert!(
                 !output.contains("EEXIST")
