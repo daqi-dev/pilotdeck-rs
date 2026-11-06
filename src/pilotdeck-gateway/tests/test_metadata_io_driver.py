@@ -589,8 +589,9 @@ class EnvironmentControls(unittest.TestCase):
                          '#1632 cached paths are exactly the registry and git sources, never target')
         self.assertIn("key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}",
                       block, '#1632 the cache key follows the committed lockfile')
-        # 夹具最坏墙钟远超平台默认 360 min，必须有显式上界（#1632 评审 P2）。
-        self.assertIn('    timeout-minutes: 120\n', body,
+        # 夹具自己按 PDRS_NEGCTL_DEADLINE 收口，job 上界只作兜底，但必须显式
+        # 且高于夹具预算（#1632 评审 P2 / #1692 §1）。
+        self.assertIn('    timeout-minutes: 150\n', body,
                       '#1632 the job bounds its own wall clock')
         # 失败时最需要证据：夹具已经把 .log/.patch/summary.json 写好，别让 runner 丢掉。
         uploads = [step for step in steps if 'actions/upload-artifact@v4' in step]
@@ -663,7 +664,7 @@ class EnvironmentControls(unittest.TestCase):
                '          path: |\n            ~/.cargo/registry\n            ~/.cargo/git\n',
                '          path: ~/.cargo/registry\n',
                '#1632 the cache declares its paths as a block')
-        change('job-timeout-removed', '    timeout-minutes: 120\n', '',
+        change('job-timeout-removed', '    timeout-minutes: 150\n', '',
                '#1632 the job bounds its own wall clock')
         change('evidence-upload-conditional', '        if: ${{ always() }}\n',
                '        if: ${{ success() }}\n',
@@ -1429,15 +1430,39 @@ class EnvironmentControls(unittest.TestCase):
         deadlines = re.findall(r'^DEADLINE_SECONDS = (\d+)$', fixture, re.M)
         self.assertEqual(len(deadlines), 1,
                          '#1692 negative-controls fixture declares one overall deadline')
-        # 15 minutes of slack, not 10: a fixture run also pays for the cargo cold
-        # bootstrap, the checkout/toolchain steps, and up to six meta-control
-        # copies of `--self-check` (CONTROL_TIMEOUT_SECONDS = 120 each) before the
-        # upload. The margin has to cover those, or the platform kill still
-        # preempts the graceful TIMEOUT path it is there to protect.
+        # The job timeout has to cover the two self-check steps that run BEFORE
+        # the fixture AND the fixture's own deadline AND the upload. Derive the
+        # self-check worst case from the fixture instead of hardcoding a slack:
+        # a fixed 900 s silently stops being enough as soon as a meta control is
+        # added (#1692 review P2).
+        tree = ast.parse(fixture)
+        controls = next(
+            len(node.value.elts) for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.List)
+            and any(isinstance(target, ast.Name) and target.id == 'self_check_controls'
+                    for target in node.targets))
+        control_timeout = int(re.search(r'^CONTROL_TIMEOUT_SECONDS = (\d+)$',
+                                        fixture, re.M)[1])
+        walk = re.search(r'def self_check\(timeout=(\d+), wall=(\d+)\)', fixture)
+        self.assertIsNotNone(walk, '#1692 self_check keeps its bounded wall clock')
+        gates = next(
+            len(node.value.keys) for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Dict)
+            and any(isinstance(target, ast.Name) and target.id == 'gates'
+                    for target in node.targets))
+        # Every gate case runs twice (plain and -O), plus the tree-lock and the
+        # real-gate probe; each child is capped by `wall`. The meta-control
+        # step runs the control copy plus one copy per case at CONTROL_TIMEOUT.
+        self_check_worst = (2 * gates + 2) * int(walk[2])
+        controls_worst = (controls + 1) * control_timeout
+        margin = self_check_worst + controls_worst + 300  # + checkout/cache/upload
         self.assertGreaterEqual(
-            int(minutes[0]) * 60, int(deadlines[0]) + 900,
-            '#1692 the job timeout must outlive the fixture deadline by at least 15 '
-            'minutes, otherwise the platform kill preempts the graceful TIMEOUT path')
+            int(minutes[0]) * 60, int(deadlines[0]) + margin,
+            f'#1692 the job timeout must outlive the fixture deadline plus the '
+            f'{self_check_worst}s self-check worst case, the {controls_worst}s '
+            f'meta-control worst case and 300s of setup/upload')
         # The budget has to be the fixture's own default. An env override in the
         # job (or in any step of it) could raise the deadline past the job
         # timeout - or shrink it below what the mutations need - without touching
@@ -1445,9 +1470,13 @@ class EnvironmentControls(unittest.TestCase):
         env_names = re.findall(r"^DEADLINE_ENV = '([A-Za-z0-9_]+)'$", fixture, re.M)
         self.assertEqual(len(env_names), 1,
                          '#1692 negative-controls fixture declares one deadline env name')
-        # Comments in the job body name the variable on purpose (they document the
-        # default budget), so only YAML content counts here.
-        code = '\n'.join(line for line in job.splitlines()
+        # Comments name the variable on purpose (they document the default
+        # budget), so only YAML content counts here. The scan is the WHOLE
+        # workflow, not just the job body: a top-level `env:` sits before
+        # `jobs:` (which `ci_jobs()` slices away) yet applies to every job, so a
+        # job-scoped scan would leave that override path open (#1692 review P2).
+        workflow = self.ci_workflow_fixture()
+        code = '\n'.join(line for line in workflow.splitlines()
                          if not line.lstrip().startswith('#'))
         self.assertNotIn(
             env_names[0], code,
@@ -1537,20 +1566,25 @@ class EnvironmentControls(unittest.TestCase):
         profiles = ('      CARGO_PROFILE_DEV_DEBUG: line-tables-only\n'
                     '      CARGO_PROFILE_TEST_DEBUG: line-tables-only\n')
         for name, changed, message in (
-                ('missing', mutate('    timeout-minutes: 120\n', ''),
+                ('missing', mutate('    timeout-minutes: 150\n', ''),
                  '#1692 negative-controls job has one literal timeout-minutes'),
-                ('expression', mutate('    timeout-minutes: 120\n',
+                ('expression', mutate('    timeout-minutes: 150\n',
                                       '    timeout-minutes: ${{ env.NEGCTL_MINUTES }}\n'),
                  '#1692 negative-controls job has one literal timeout-minutes'),
-                ('below-deadline', mutate('    timeout-minutes: 120\n',
-                                          '    timeout-minutes: 60\n'),
-                 '#1692 the job timeout must outlive the fixture deadline by at least 15 '
-                 'minutes, otherwise the platform kill preempts the graceful TIMEOUT path'),
+                ('below-deadline', mutate('    timeout-minutes: 150\n',
+                                          '    timeout-minutes: 120\n'),
+                 '#1692 the job timeout must outlive the fixture deadline plus the'),
                 # An env override silently replaces the fixture's own budget: the
                 # literal timeout above would still read 120 while the deadline
                 # ran past it.
                 ('deadline-env-override',
                  mutate(profiles, profiles + "      PDRS_NEGCTL_DEADLINE: '9000'\n"),
+                 '#1692 negative-controls must not set PDRS_NEGCTL_DEADLINE: the fixture '
+                 'deadline is fixed by DEADLINE_SECONDS, not by the workflow'),
+                # A top-level `env:` is applied to every job but lives before
+                # `jobs:`, so a job-body-only scan would miss it entirely.
+                ('deadline-env-toplevel-override',
+                 "env:\n  PDRS_NEGCTL_DEADLINE: '9000'\n\n" + workflow,
                  '#1692 negative-controls must not set PDRS_NEGCTL_DEADLINE: the fixture '
                  'deadline is fixed by DEADLINE_SECONDS, not by the workflow')):
             with self.subTest(mutation=name):

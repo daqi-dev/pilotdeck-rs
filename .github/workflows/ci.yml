@@ -97,7 +97,7 @@ jobs:
     # 在两条变异之间硬杀进程 —— 源码停在变异态、没有 progress/summary、job 记成
     # cancelled 而不是有界红。所以这里的分钟数必须大于夹具内部预算 + 余量，
     # 由 test_metadata_io_driver 钉死。
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       # #1692 §3：负控跑的是同一批 cargo 测试；不压 debuginfo 时每次调用要额外
       # 写几百 MB 的 DWARF，直接把 90 min 的预算耗在磁盘上。
