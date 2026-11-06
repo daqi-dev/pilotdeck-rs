@@ -1826,9 +1826,9 @@ fn a_poll_entry_installed_after_a_reentrant_replacement_follows_the_replacement(
         let takes = takes.clone();
         move |id: &JsString| {
             let call = takes.fetch_add(1, Ordering::SeqCst) + 1;
-            if call <= 2 {
-                // The replacement's own first poll and the original's late poll
-                // both find nothing; the answer lands on the next tick.
+            if call == 1 {
+                // The replacement's own first poll finds nothing; the answer
+                // lands on the next tick.
                 return Ok(None);
             }
             Ok(Some(StoredAnswer {

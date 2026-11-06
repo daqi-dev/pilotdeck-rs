@@ -599,21 +599,37 @@ impl GatewayUserDialogChannel {
         {
             let due = (self.inner.options.now_ms)()
                 .saturating_add(self.inner.options.poll_interval_ms.max(1));
-            {
+            let generation = state.generation.load(Ordering::SeqCst);
+            let installed = {
                 let mut polls = self.inner.polls.lock().unwrap();
-                if !polls.entries.contains_key(&request_id) {
-                    polls.order.push(request_id.clone());
+                // #1599: a reentrant host callback (the change observer or
+                // `emit`) can register a replacement under the same id and
+                // install its poll first. TS keeps one timer per request
+                // (`GatewayUserDialogChannel.ts:130-133`), so only the newest
+                // registration may own the entry; a late install from the
+                // superseded one is ignored rather than resetting the
+                // replacement's in-flight poll.
+                let current = polls.entries.get(&request_id).map(|entry| entry.generation);
+                if current.is_none_or(|current| current < generation) {
+                    if current.is_none() {
+                        polls.order.push(request_id.clone());
+                    }
+                    polls.entries.insert(
+                        request_id.clone(),
+                        PollEntry {
+                            due_ms: due,
+                            polling: false,
+                            generation,
+                        },
+                    );
+                    true
+                } else {
+                    false
                 }
-                polls.entries.insert(
-                    request_id.clone(),
-                    PollEntry {
-                        due_ms: due,
-                        polling: false,
-                        generation: state.generation.load(Ordering::SeqCst),
-                    },
-                );
+            };
+            if installed {
+                self.poll_once(&request_id);
             }
-            self.poll_once(&request_id);
         }
 
         ChannelRequest {
@@ -809,48 +825,49 @@ impl GatewayUserDialogChannel {
     }
 
     fn poll_once(&self, request_id: &JsString) {
-        let state = self.inner.requests.lock().unwrap().get(request_id).cloned();
-        let Some(state) = state else {
+        let requests = self.inner.requests.lock().unwrap();
+        let Some(state) = requests.get(request_id).cloned() else {
             // No registration owns this id, so any poll entry left for it is an
-            // orphan. Drop only the entry observed here: a concurrent
-            // registration can install a live poll under the same id in this
-            // window (#1599).
-            let observed = self
-                .inner
-                .polls
-                .lock()
-                .unwrap()
-                .entries
-                .get(request_id)
-                .map(|entry| entry.generation);
-            if let Some(generation) = observed {
-                stop_polling(&self.inner, request_id, generation);
-            }
+            // orphan. Remove it while the registration map is still held: a
+            // registration publishes its state before it installs a poll entry,
+            // so this lock keeps a concurrent registration from landing a live
+            // entry between the check and the removal (#1599).
+            let mut polls = self.inner.polls.lock().unwrap();
+            polls.entries.remove(request_id);
+            polls.order.retain(|id| id != request_id);
             return;
         };
+        drop(requests);
         // #1599: a reentrant host callback may replace the registration while
         // this poll is in flight; every poll mutation below stays bound to the
         // registration captured here.
         let generation = state.generation.load(Ordering::SeqCst);
         {
             let mut polls = self.inner.polls.lock().unwrap();
+            let Some(entry_generation) =
+                polls.entries.get(request_id).map(|entry| entry.generation)
+            else {
+                return;
+            };
+            if entry_generation < generation {
+                // The entry is left over from a superseded registration that
+                // installed after the current waiter already gave up on its own
+                // poll. TS pairs the timer with the request
+                // (`GatewayUserDialogChannel.ts:130-133`), so an entry the
+                // current registration never installed is dropped instead of
+                // polled (#1599).
+                polls.entries.remove(request_id);
+                polls.order.retain(|id| id != request_id);
+                return;
+            }
+            if entry_generation > generation {
+                // A newer registration owns this entry; this pass is stale and
+                // must not disturb its in-flight poll.
+                return;
+            }
             let Some(entry) = polls.entries.get_mut(request_id) else {
                 return;
             };
-            if entry.generation > generation {
-                // A newer registration already owns this entry; this pass
-                // belongs to a superseded registration and must not disturb it.
-                return;
-            }
-            if entry.generation != generation {
-                // The entry was installed by a registration that has since been
-                // replaced (its install can land after the replacement already
-                // polled). TS keeps one timer per request, so the entry belongs
-                // to whichever registration owns the id now: rebind it instead
-                // of leaving it marked for a generation that never clears it.
-                entry.generation = generation;
-                entry.polling = false;
-            }
             if entry.polling {
                 return;
             }
