@@ -175,13 +175,25 @@ pub fn decrypt_weixin_file(buffer: &[u8], file: &JsValue) -> Vec<u8> {
         .unwrap_or_else(|| buffer.to_vec())
 }
 
+/// JS `typeof value === "object"` after the falsy guard: arrays pass it too
+/// (`typeof [] === "object"`), so an array owner reports the zero shape
+/// instead of `none`; `undefined`/`null`/primitives are `none`.
+fn is_object_like(value: &JsValue) -> bool {
+    matches!(value, JsValue::Object(_) | JsValue::Array(_))
+}
+
 /// `summarizeWeixinMediaKeyShape`: `keyShape=ownerAesKeyLen=…,…`.
 pub fn summarize_weixin_media_key_shape(media_owner: &JsValue) -> String {
-    let Some(owner) = media_owner.as_object() else {
+    if !is_object_like(media_owner) {
         return "keyShape=none".to_owned();
-    };
-    let media = owner.get("media").and_then(JsValue::as_object);
-    let owner_aes_key = read_string(owner.get("aeskey"));
+    }
+    // Array owners have no `aeskey`/`media` properties (JS yields undefined),
+    // which the `Option` reads below already reproduce.
+    let owner = media_owner.as_object();
+    let media = owner
+        .and_then(|owner| owner.get("media"))
+        .and_then(JsValue::as_object);
+    let owner_aes_key = read_string(owner.and_then(|owner| owner.get("aeskey")));
     let media_key = media.and_then(|media| media.get("aes_key"));
     let media_aes_key = read_string(media_key);
     let parts = [
