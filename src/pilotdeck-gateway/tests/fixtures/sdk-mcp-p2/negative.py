@@ -311,8 +311,8 @@ MUTATIONS = [
      'McpClientError::plain("Error", error.0)',
      'McpClientError::client(\n'
      '                            McpClientErrorCode::CallFailed,\n'
-     '                            format!("MCP call failed (server={_server_id}): {}", error.0),\n'
-     '                            _server_id,\n'
+     '                            format!("MCP call failed (server=mock): {}", error.0),\n'
+     '                            "mock",\n'
      '                        )',
      '--test=mcp_client',
      'list_tools_reports_a_timeout_shaped_schema_error_as_a_timeout',
@@ -337,6 +337,19 @@ MUTATIONS = [
      '--test=mcp_client',
      'dispose_during_an_in_flight_handshake_removes_the_session_directory',
      '#401 dispose returns before the in-flight handshake settles, and its cleanup still removes the per-session directory'),
+    # 同源的「迟到清理负责删 per-session 目录」有第二条实现（握手**超时**分支，
+    # 与上面的 epoch 不匹配分支各一份）；少了这条，只改超时分支不删目录不会被发现
+    # （review r6 minimax sibling P2）。
+    ('timeout-branch-late-dir-kept', 'mcp/client.rs',
+     '                        if let Some(dir) = late_dir {\n'
+     '                            dir.remove().await;\n'
+     '                        }',
+     '                        if let Some(dir) = late_dir {\n'
+     '                            let _ = dir;\n'
+     '                        }',
+     '--test=mcp_client',
+     'timed_out_handshake_keeps_its_directory_until_late_close_then_removes_it',
+     'late close must remove the old directory'),
 ]
 
 # Each delayed row changes the delay parameter that the real lock probe

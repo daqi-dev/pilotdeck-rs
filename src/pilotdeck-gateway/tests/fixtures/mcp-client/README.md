@@ -33,13 +33,13 @@ LANG=en_US.UTF-8 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs"
 请求头和原样 body 记进 `http.jsonl`；不同连接上的到达顺序不确定，两侧都按文本排序后比较。
 端口在 oracle 里写成 `<host>`，拒绝连接的端口写成 `<refused>`。
 
-## 语料：26 场景 / 115 步 + 7 组纯函数用例
+## 语料：28 场景 / 121 步 + 7 组纯函数用例
 
 | 场景 | 覆盖 |
 |---|---|
 | basic | 记忆化 start、listTools 缓存（只发一次 tools/list）、清洗/截断/重名 wireName、zod 输出键序、content 默认 `[]`、`args` 为 null/缺省、二次 close |
 | call-errors | JSON-RPC 错误、zod 失败（union / 单一开放分支 / 布尔 / 数值下限 / base64）、required task 工具、outputSchema 缺 structuredContent 与 isError 豁免 |
-| list-errors | tools 元素错、缺 tools + nextCursor 类型错、空列表 |
+| list-errors | tools 元素错、缺 tools + nextCursor 类型错、空列表、单个工具 `outputSchema` 编译失败（坏 `type`；Ajv 文案带 `timeout` 时按超时分类并回收传输） |
 | invalid-frames | 非 JSON、非 JSON-RPC、未知 id 响应、服务器 ping（延后一跳回复）、未知请求（立即 Method not found）、通知、`\r` 行尾、字符串 id、同 id 重复响应、孤立代理项透传、内容与 `_meta` 键清洗 |
 | handshake-error / -version / -schema / -crash / -timeout | 初始化 RPC 错误后重试成功、协议版本不支持、初始化结果 zod 失败、握手中崩溃、握手超时（进程不回收，同 TS） |
 | spawn-enoent | `spawn <cmd> ENOENT` |

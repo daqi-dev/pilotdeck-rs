@@ -430,7 +430,7 @@ impl SdkClient {
                         // `call_with_reconnect`: a message that happens to
                         // mention "timeout" is reported as a timeout and
                         // recycles the transport (`probe-schema-edge.out`,
-                        // first two rows). Wrapping it as `McpClientError`
+                        // rows 3–4: type value and `$ref` fragment). Wrapping it as `McpClientError`
                         // here would skip that classification.
                         return Err(McpClientError::plain("Error", error.0));
                     }
