@@ -887,6 +887,51 @@ fn checkpoint_keeps_replay_when_a_row_has_no_sequence() {
 }
 
 #[test]
+fn checkpoint_suffix_spreads_string_denials_like_js() {
+    // Codex #1985 r2 P2: the non-BMP fixture row only proves `project()`. This
+    // pins the *checkpoint suffix* branch in `projection_cache.rs`, which used
+    // to re-read the suffix with the strict `array()` helper and so rejected a
+    // string the full replay accepts.
+    // Real TS measurement for the same shape (Node v22.22.0, hydrate with a
+    // supplied summary checkpoint at watermark 1 followed by
+    // `permissionDenials: "😀"`): `{"usage":{},"permissionDenials":["😀"]}`
+    // — one code point, the surrogate pair joined.
+    let first = js(
+        r#"{"version":1,"entryId":"e1","parentEntryId":null,"sequence":1,"sessionId":"session-1253","turnId":"turn-1","createdAt":"2026-10-28T00:00:00.000Z","type":"turn_result","result":{"type":"completed","usage":{},"permissionDenials":[]}}"#,
+    );
+    let suffix = js(
+        r#"{"version":1,"entryId":"e2","parentEntryId":"e1","sequence":2,"sessionId":"session-1253","turnId":"turn-1","createdAt":"2026-10-28T00:00:00.000Z","type":"turn_result","result":{"type":"completed","usage":{},"permissionDenials":"😀"}}"#,
+    );
+    let envelope = js(
+        r#"{"format":"pilotdeck.session-projections","version":1,"sessionId":"session-1253","asOfSequence":1,"anchor":{"sequence":1,"entryId":"e1","parentEntryId":null,"turnId":"turn-1","type":"turn_result","createdAt":"2026-10-28T00:00:00.000Z"},"projections":{"agent-transcript.turn-summary":{"version":1,"asOfSequence":1,"state":{"usage":{},"permissionDenials":[]}}}}"#,
+    );
+    let store = store();
+    let cache = ProjectionCache::new(
+        Arc::new(SuppliedCheckpoint(envelope)),
+        store.inner.clone(),
+        store.key.clone(),
+        store.projection.clone(),
+    );
+    cache
+        .restore(vec![first, suffix])
+        .expect("#1985 checkpoint suffix restore");
+    assert_eq!(
+        *lock(&cache.hydrated_rows),
+        1,
+        "#1985 checkpoint summary row actually hydrated"
+    );
+    let state = store
+        .projection
+        .snapshot()
+        .expect("#1985 checkpoint suffix snapshot");
+    assert_eq!(
+        JsValue::Array(state.permission_denials),
+        js(r#"["😀"]"#),
+        "#1985 checkpoint suffix spreads string denials by code point"
+    );
+}
+
+#[test]
 fn delta_event_permutations_equal_replay() {
     // All ordered triples, including repeated results and completion before
     // messages. Every prefix is checked, not just a single final snapshot.

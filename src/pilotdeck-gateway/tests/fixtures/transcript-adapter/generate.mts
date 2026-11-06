@@ -655,10 +655,13 @@ try {
   // #1985 review (Codex r1): the ports run one projector at a time over the
   // whole log, so with two malformed records the winner is decided by
   // projector order, not record order. TS surfaces, measured through the real
-  // adapter: restore runs turnSummary → compact boundary (WebHistory token
-  // usage) → metadata; list runs the conversation finalize (which skips
-  // everything before the last compact boundary) → turnSummary → metadata →
-  // the title trims on the *merged* metadata.
+  // adapter: restore runs the conversation reduce (compact boundary clone) →
+  // turnSummary → metadata → WebHistory token usage (`compactMetadata.postTokens`);
+  // list runs the conversation finalize (which skips everything before the last
+  // compact boundary) → turnSummary → metadata → the title trims on the *merged*
+  // metadata. Registration order: BuiltinSessionProjections.ts (agent transcript
+  // cell, then fileHistory, then WebHistory) and AgentTranscriptProjections.ts:436-440
+  // (conversation, turnSummary, metadata, compactBoundary, subagentReferences).
   {
     const okUsage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 1, totalTokens: 18 };
     const result = (extra: any) => ({ type: 'completed', usage: okUsage, permissionDenials: [], ...extra });
@@ -678,6 +681,12 @@ try {
       ['metadata-merge-inherited', [meta({ title: 'ok' }), meta({ aiTitle: 7 })], true, true],
       ['metadata-merge-final-invalid', [meta({ title: 'ok', aiTitle: 7 }), meta({ title: '' })], true, false],
       ['metadata-merge-ai-title', [meta({ aiTitle: 'A' }), meta({ title: '  ' })], true, true],
+      // Order pins that the earlier rows cannot give: a null metadata value
+      // reaches `mergeMetadata` (metadata reducer) before WebHistory reads
+      // `compactMetadata.postTokens`, and a bad replacementMessages clone
+      // (conversation reducer) wins over a bad usage (turnSummary).
+      ['metadata-before-posttok', [meta(null), compact(undefined)], false, false],
+      ['boundary-before-usage', [{ type: 'turn_result', result: result({ usage: null }) }, { type: 'control_boundary', boundary: { kind: 'compact', subtype: 'compact_boundary', replacementMessages: 42, compactMetadata: { postTokens: 9 } } }], false, false],
     ];
     for (const [suffix, records, restoreOk, listOk] of ordered) {
       const lines = [line(at(1, 'accepted_input', { messages: [user('prompt')] }))];
@@ -735,7 +744,7 @@ try {
   }
 
   // Changing scenarios requires updating the exact Rust count and README too.
-  assert.equal(scenarios.length, 480, 'adapter oracle scenario count');
+  assert.equal(scenarios.length, 482, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

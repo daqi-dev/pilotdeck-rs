@@ -73,6 +73,24 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         }
         // Hydration runs every registered reducer over the whole log, reducer by'''),
           ('list-denials-not-array', '            if !matches!(denials, JsValue::Array(_)) {', '            if !js_iterable(denials) {'),
+          # #1985 r2: the restore gate must scan metadata before WebHistory's
+          # `compactMetadata.postTokens` (registration order). Swapping the two
+          # passes flips the winner for `metadata:null` + missing postTokens.
+          ('restore-metadata-before-webhistory', '''        for entry in entries {
+            metadata_reduce_supported(entry)?;
+        }
+        for entry in entries {
+            if is_str(field(entry, "type"), "control_boundary") {
+                compact_budget_supported(entry)?;
+            }
+        }''', '''        for entry in entries {
+            if is_str(field(entry, "type"), "control_boundary") {
+                compact_budget_supported(entry)?;
+            }
+        }
+        for entry in entries {
+            metadata_reduce_supported(entry)?;
+        }'''),
           ('list-title-trim-dropped', '''        Some(_) => {
             return Err(AdapterError::Type(
                 "metadata.title?.trim is not a function".into(),
@@ -95,6 +113,6 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         run('restore-loses-domain-state', True)
         restore()
         run('restored', False)
-        print('PASS: 8 / 8 adapter mutants killed', flush=True)
+        print('PASS: 9 / 9 adapter mutants killed', flush=True)
     finally:
         restore()
