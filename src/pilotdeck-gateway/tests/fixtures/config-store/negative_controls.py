@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""#1736 / #1739 / #1792 / #1794 HEAD-only controls on the shared suite
-runner (negative_suite.run_cases): each mutation must be killed by its named
-test's own panic marker, then the tree is restored and re-verified.
+"""#1736 / #1739 / #1792 / #1794 / #1899 HEAD-only controls on the shared
+suite runner (negative_suite.run_cases): each mutation must be killed by its
+named test's own panic marker, then the tree is restored and re-verified.
 
 Usage: negative_controls.py --check
        negative_controls.py NEW_OUT [mutation ...]
@@ -10,8 +10,8 @@ including anchor/build/source-guard failures.
 
 Rows bind one mutation to one named test in ``config::store::tests`` (a lib
 test, run with ``--exact``); the kill evidence is that test's own panic
-payload carrying its ``#1736`` / ``#1739`` / ``#1792`` / ``#1794`` marker.
-Four rows pin the watcher bounds (the debounce ceiling through both the
+payload carrying its ``#1736`` / ``#1739`` / ``#1792`` / ``#1794`` / ``#1899``
+marker. Four rows pin the watcher bounds (the debounce ceiling through both the
 watcher-level test and the ledger's literal two-hour pin, the poll-interval
 ceiling, and the ``checked_add`` overflow fallback in ``deadline_after``);
 three pin the metadata short-circuit (#1739: the skipped content read, the
@@ -30,8 +30,14 @@ seen and a persistent obstruction does not silence the directory; a
 the per-tick type probe that keeps a directory-replaced-by-a-file watch
 alive; a reported change must not commit the metadata shortcut; a
 ``NotFound`` stat or ``read_dir`` is a complete observation at the entry
-and the directory level) plus the #1736 pair that must be restored together
-(debounce ceiling + unchecked deadline add — the double-restoration
+and the directory level); six pin #1899's watcher-stop evidence (the
+join-based check reverted to ``JoinHandle::is_finished()``, which tokio also
+reports for a task that died by panic; a panicking watcher loop that an
+``is_finished()``-only check accepts as a clean stop; one that returns
+cleanly right after spawn; one that exits on its first in-loop tick, before
+``stop`` and before ``drop(store)``; and one that never stops at all — all of
+them are #1650's silent-death path) plus the #1736 pair that must be restored
+together (debounce ceiling + unchecked deadline add — the double-restoration
 regression that kills the watcher task).
 
 ``PDRS_NEGATIVE_BASELINE`` may name another commit object (the sandbox
@@ -55,6 +61,7 @@ from negative_suite import Case, run_cases
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/config/store.rs'
+tests = root / 'src/pilotdeck-gateway/src/config/store/tests.rs'
 TESTS = 'config::store::tests::'
 mutations = [
     # #1736: the debounce ceiling is removed, so a representable over-long
@@ -341,6 +348,98 @@ mutations = [
      '            }',
      TESTS + 'missing_entry_is_a_complete_observation',
      '#1792 a dangling entry is a complete observation, not a permanent None'),
+    # #1899: the watcher-stop evidence goes back to `JoinHandle::is_finished()`,
+    # which tokio 1.48 also reports for a task that died by panic (the harness
+    # stores `JoinError::panic` and marks the task complete), so the regression
+    # test's `expect_err` fails at its own marker: a panicked watcher is again
+    # accepted as a clean stop — #1650's silent hot-reload death.
+    ('is-finished-stop-evidence-restored', tests,
+     '    match tokio::time::timeout(STOP_TIMEOUT, task).await {\n'
+     '        Err(_) => Err(format!(\n'
+     '            "the watcher task did not stop within {STOP_TIMEOUT:?}"\n'
+     '        )),\n'
+     '        Ok(Ok(())) => Ok(()),\n'
+     '        Ok(Err(err)) if err.is_panic() => Err(format!("the watcher task panicked: {err}")),\n'
+     '        Ok(Err(err)) => Err(format!("the watcher task was cancelled: {err}")),\n'
+     '    }',
+     '    if task.is_finished() {\n'
+     '        Ok(())\n'
+     '    } else {\n'
+     '        Err("the watcher task did not stop".to_owned())\n'
+     '    }',
+     TESTS + 'panicked_watcher_task_is_not_a_clean_stop',
+     '#1899 a panicked watcher must not look like a clean stop'),
+    # #1899: the watcher loop panics on its first poll — the #1650 silent-death
+    # path. The drop test must fail instead of passing on a task that is merely
+    # "finished": the injected panic kills it at the first liveness check, and
+    # the later ones are listed because they are the same defect seen one step
+    # apart (`classify` accepts the first marker that shows up).
+    ('watch-loop-panic-injected', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    panic!("#1899 injected: simulated watch_loop failure");\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
+     ['#1899 the watcher must still be running before the handle is dropped',
+      '#1899 the watcher must still be running before the store is dropped',
+      '#1899 dropping the store must stop the watcher cleanly']),
+    # #1899 review P2-2: a watcher that returns cleanly right after spawn also
+    # joins with `Ok(())`, so the drop-the-store evidence only means something
+    # once the watcher is proven alive before the drop. This mutant is that
+    # counterexample — the silent-death shape #1650 is about, with a clean exit
+    # instead of a panic — and it must die at the liveness assertion.
+    ('watch-loop-clean-early-exit', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    return;\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
+     ['#1899 the watcher must still be running before the handle is dropped',
+      '#1899 the watcher must still be running before the store is dropped']),
+    # #1899 review P2 (boundary): a liveness check taken at spawn time proves
+    # nothing about a watcher that returns on its first in-loop tick — still
+    # #1650's silent death, one tick later. Each check advances one poll interval
+    # first, and this mutant is what that advance is there to catch.
+    ('watch-loop-exits-after-first-tick', source,
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                let mut changed = false;',
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                return;\n'
+     '                let mut changed = false;',
+     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
+     ['#1899 the watcher must still be running before the handle is dropped',
+      '#1899 the watcher must still be running before the store is dropped']),
+    # #1899 review P2 (sibling): the same mutant against `WatchHandle::stop`,
+    # which aborts and swallows the `JoinError` — `weak_count == 0` and "no
+    # reload" alone would accept a watcher that died before the stop.
+    ('watch-loop-exits-after-first-tick-before-stop', source,
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                let mut changed = false;',
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                return;\n'
+     '                let mut changed = false;',
+     TESTS + 'stop_cancels_pending_reload_and_leaves_no_task',
+     '#1899 the watcher must still be running before stop'),
+    # #1899 review P2 (concurrency): every other row dies before the join, so
+    # the timeout arm of `watcher_stop` (and with it the "90 s clears the 60 s
+    # poll ceiling" invariant) had no receipt. Removing the owner-gone return
+    # makes the watcher keep ticking after `drop(store)`: the suspended clock
+    # walks the whole 90 s at no wall-clock cost and the test fails at the
+    # clean-stop assertion instead of hanging or being called a clean stop.
+    ('watch-loop-never-stops', source,
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                let mut changed = false;',
+     '                let mut changed = false;',
+     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
+     '#1899 dropping the store must stop the watcher cleanly'),
 ]
 
 
@@ -352,7 +451,7 @@ def check_anchor(row, original):
 def mutate(content, scope, replacements):
     for old, new in replacements:
         if content.count(old) != 1 or old == new:
-            raise RuntimeError('#1736/#1739/#1792/#1794 expired or ineffective mutation anchor')
+            raise RuntimeError('#1736/#1739/#1792/#1794/#1899 expired or ineffective mutation anchor')
         content = content.replace(old, new, 1)
     return content
 
@@ -374,7 +473,7 @@ def main():
             print('\n'.join(errors))
             return 1
         distinct = len({(str(row[1]), row[2]) for row in mutations})
-        print(f'#1736/#1739/#1792/#1794 {len(mutations)} rows / {distinct} distinct anchors checked')
+        print(f'#1736/#1739/#1792/#1794/#1899 {len(mutations)} rows / {distinct} distinct anchors checked')
         return 0
     if not args:
         raise SystemExit('provide NEW_OUT and optional mutation names, or --check')
