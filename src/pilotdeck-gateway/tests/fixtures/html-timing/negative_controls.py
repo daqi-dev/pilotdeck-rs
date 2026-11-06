@@ -9,13 +9,14 @@ catch it, then the restored tree must pass the same test. Run with no other
 writers/builds in this worktree.
 
 Release mode, because the mutants must stay observable without debug-only
-checks. The red runs use the caller's default sample count (three rounds, five
-for the reparented test), exactly like the green runs and CI: a forced
-``PDRS_TIMING_SAMPLES=1`` would let the mutant fall out on the one-sample path
-and never prove that the median criterion CI judges can turn red (#978 first
-review). Every mutant here is equally slow in every round, so the median of
-the paired ratios stays high and the per-sample cap is never divided by the
-sample count; more samples only redden them further. ``CARGO_TARGET_DIR`` must
+checks. The red runs use the fixture's default sample count (three rounds, five
+for the reparented test), exactly like the green runs and CI, and an inherited
+``PDRS_TIMING_SAMPLES`` is dropped so no caller export can shrink them: a
+forced one-sample red run would never prove that the median criterion CI
+judges can turn red (#978 first review). Every mutant here is equally slow in
+every round, so the median of the paired ratios stays high and the per-sample
+cap is never divided by the sample count; more samples only redden them
+further. ``CARGO_TARGET_DIR`` must
 come from the caller; a private build directory would hide slot contention
 from cargo-slots.sh.
 
@@ -164,6 +165,11 @@ if selected:
 
 def run_timing_test(target, extra_env, timeout):
     env = os.environ.copy()
+    # Both runs must use this fixture's default sample count whatever the
+    # caller exported: an inherited ``PDRS_TIMING_SAMPLES=1`` would silently
+    # put the red run back on the one-sample path CI never takes (#978 second
+    # review). ``extra_env`` can still override it explicitly.
+    env.pop('PDRS_TIMING_SAMPLES', None)
     env.update(extra_env)
     wait_for_slot(root / 'scripts/cargo-slots.sh')
     return run_owned(['cargo', 'test', '--release', '--locked', '--offline',

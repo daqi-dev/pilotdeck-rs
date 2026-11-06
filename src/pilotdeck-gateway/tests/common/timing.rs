@@ -103,6 +103,19 @@ pub struct ScalingSamples {
 /// Like [`fastest_scaling`], but also returns the median of the per-round
 /// ratios. The median discards a minority of preempted rounds instead of
 /// letting the fastest independent runs come from different load regimes.
+///
+/// This is a different estimator, not a scaled copy of the retired
+/// "fastest half vs fastest full" line, and the difference is deliberate
+/// (#978 second review). On the CI samples `paired_median_ignores_whole_round_preemption`
+/// pins, the retired shape reddened (4.480 s full against 3x * 1.360 s +
+/// 0.15 s = 4.23 s) although two of the three paired rounds were linear
+/// (3.32x, 2.19x, 1.95x): whole-round preemption, i.e. a false red. The median
+/// drops exactly that minority. What it no longer catches is an implementation
+/// that is super-linear in a minority of rounds and linear in the rest; a
+/// deterministic regression is super-linear in every round, so its median stays
+/// outside the band, and a constant-factor regression is caught by
+/// [`assert_within_per_sample_cap`]. Anything narrower than that reintroduces
+/// the false red this issue exists to remove.
 #[allow(dead_code)]
 pub fn fastest_scaling_ratio<S>(
     label: &str,
@@ -155,6 +168,15 @@ where
 /// tolerates a minority of preempted rounds; the 150 ms slack is converted to
 /// ratio space through the fastest small run, so short inputs keep the same
 /// absolute allowance.
+///
+/// The slack costs guarantee width: a quadratic implementation at a 0.6x
+/// "half" reads 2.78x against the 2.15x band, but only while
+/// `0.15 s / small < factor^2 - factor^1.5`, i.e. `small >= 0.24 s`
+/// (`scaling_band_tracks_the_measured_input_factor` asserts that floor). Every
+/// call site clears it by a wide margin: the smallest measured small sample is
+/// 1.45 s (deep-frame 4 MiB) and `large_shallow` runs 5.8 s, so the slack takes
+/// at most 0.10x of the 0.63x gap. A caller with sub-0.24 s samples cannot
+/// claim the same guarantee from the ratio alone.
 #[allow(dead_code)]
 pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor: f64) {
     const NOISE: f64 = 0.15;
@@ -399,11 +421,23 @@ fn scaling_band_rejects_quadratic_growth_without_loosening() {
 /// first review found, closed without widening any band.
 #[test]
 fn scaling_band_tracks_the_measured_input_factor() {
-    let factor = 1.0 / 0.6;
+    let factor: f64 = 1.0 / 0.6;
     let quadratic_ratio = factor * factor;
+    // The 0.15 s slack is converted through the small run, so the rejection
+    // only holds while the small sample is long enough that the slack cannot
+    // bridge the linear-to-quadratic gap: the floor is
+    // 0.15 / (factor^2 - factor^1.5) = 0.24 s. Every call site runs 1.4-5.8 s
+    // (deep-frame 4 MiB measured 1.45 s, `large_shallow` 5.8 s), so the slack
+    // takes at most 0.10x of that gap there.
+    let floor = 0.15 / (quadratic_ratio - factor.powf(1.5));
+    assert!(
+        (floor - 0.2396).abs() < 0.001,
+        "#978 the 0.6x quadratic is rejected only for small >= {floor:.4}s"
+    );
+    let small = Duration::from_secs_f64(1.45); // deep-frame's measured 4 MiB run
     let sampled = ScalingSamples {
-        small: Duration::from_secs(1),
-        large: Duration::from_secs_f64(quadratic_ratio),
+        small,
+        large: small.mul_f64(quadratic_ratio),
         median_ratio: quadratic_ratio,
         samples: 3,
     };

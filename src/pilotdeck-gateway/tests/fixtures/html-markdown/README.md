@@ -150,9 +150,17 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 最快半幅与最快全幅落在不同负载区间（CI 实测 half 1.360/2.106/2.297 s、full
 4.518/4.605/4.480 s：最快比 3.29x 假红，成对比值 3.32/2.19/1.95、中位数 2.19x）。
 带宽取几何中点 `factor^1.5`：输入翻倍为 2^1.5 ≈ 2.83x，比旧的 3x + 150 ms 更紧。
+换估计量本身是**有意的语义变更**，不是同一条判据的系数调整：上面那组 CI 样本上旧判据红
+（4.480 s > 3 × 1.360 s + 0.15 s），而三轮配对里两轮是线性的（3.32x / 1.95x），
+说明那次红是整轮抢占造成的假红——中位数丢掉的正是这一小撮轮次。代价是「少数轮超线性、
+其余轮线性」的实现不再被抓；确定性退化每一轮都超线性，中位数仍在带外，常数因子退化
+由每样本绝对上限兜底。比这更窄的判据会把这个 issue 要消除的假红重新引回来。
 `large_shallow` 与 `ten_mib` 仍把主重复减半：半幅展开后先断言字节数在全幅的 50%–60%
 之间（实测各例均 ≥ 0.50），再由**实测字节比**推导 `factor = full/half`——0.6 时
 factor 1.667x、二次比 2.78x，硬编码 factor 2.0 的 2.83x 带会放过它，推导后的 2.15x 带不会。
+这条保证有前提：150 ms 余量按 `0.15s/small` 折算，0.6x 的二次实现只有在
+`small ≥ 0.15/(factor² − factor^1.5) = 0.24 s` 时才必被拦下；实际调用点 small 为
+1.45 s（deep-frame 4 MiB）到 5.8 s（`large_shallow`），余量最多吃掉 0.63x 差距里的 0.10x。
 #978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
 拉起本二进制里 `#[ignore]` 的 `large_shallow_cpu_worker`，用例与幅面经
 `PDRS_HTML_CPU_CASE`/`PDRS_HTML_CPU_SIZE` 选择；与 #987 给 `html_compat`
@@ -184,7 +192,8 @@ CI 慢跑机实测单样本全幅 31.5–34 秒（46033287、193e8a1e，比开�
 `PDRS_TIMING_SAMPLES` 控制（`large_shallow`/`ten_mib`/
 `html_compat` 默认 3，`reparented` 默认 5，有效 1..=9）；
 `tests/fixtures/html-timing/negative_controls.py` 的红跑与绿跑使用**同一默认采样数**
-（3，`reparented` 5），因此红跑真正走 CI 判的中位数路径，而不是退化到单样本
+（3，`reparented` 5），并且夹具会丢掉调用方继承来的 `PDRS_TIMING_SAMPLES`，因此
+红跑真正走 CI 判的中位数路径，而不是退化到单样本
 （变异体每轮都同样慢，采样更多只会更红；每样本兜底不被采样稀释）。负控逐项记
 KILLED / SURVIVED / INVALID 并在最后汇总，任一非 KILLED 即非零退出。
 输入与期望构造不计入转换计时。错误累计后统一失败，恢复旧节点上限时四例都必须报错，

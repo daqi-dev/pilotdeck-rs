@@ -964,8 +964,10 @@ fn reparented_wide_subtrees_stay_fast() {
     let expected_full = expected(output_x_count);
     let expected_small = expected(small_x_count);
     // Five rounds with the median of the paired ratios: two preempted rounds
-    // still leave a good estimate. PDRS_TIMING_SAMPLES=1 wins for the
-    // quadratic negative control, whose mutant sample costs seconds.
+    // still leave a good estimate. `PDRS_TIMING_SAMPLES` overrides this for
+    // local debugging; the negative controls drop any inherited value and run
+    // this default, so their red runs exercise the same median path as CI
+    // (#978 second review).
     let samples = timing::timing_samples_or(5);
 
     let probe = timing::fastest_scaling_ratio(
