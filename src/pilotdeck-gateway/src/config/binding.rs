@@ -441,12 +441,17 @@ fn encode_uri_component(v: &JsValue) -> Result<String, Error> {
     if let Err(kind) = crate::js_value::string_coercible_checked(v) {
         return Err(coercion_error(kind));
     }
-    let s = if let JsValue::String(s) = v {
-        s.to_utf8()
-            .map_err(|_| Error::new("gateway_request_failed", "URI malformed"))?
-    } else {
-        js_string(v)
-    };
+    // `String(array)` keeps lone surrogates and `encodeURIComponent` then
+    // throws `URIError: URI malformed`; the lossy `js_string` used to encode
+    // U+FFFD and succeed (#1550 修 r5).
+    let s = match v {
+        JsValue::String(s) => s.to_utf8().ok(),
+        JsValue::Array(_) => crate::js_value::to_string_units(v)
+            .ok()
+            .and_then(|units| String::from_utf16(&units).ok()),
+        _ => Some(js_string(v)),
+    }
+    .ok_or_else(|| Error::new("gateway_request_failed", "URI malformed"))?;
     let mut output = String::new();
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
@@ -490,6 +495,21 @@ mod tests {
             at_bound = JsValue::Array(vec![at_bound]);
         }
         assert!(encode_uri_component(&at_bound).is_ok());
+    }
+
+    /// `String(["\ud800"])` keeps the lone surrogate and TS's
+    /// `encodeURIComponent` then throws `URIError: URI malformed`. The array
+    /// branch used to go through the lossy `js_string`, which replaced it with
+    /// U+FFFD and encoded `%EF%BF%BD` (#1550 修 r5).
+    #[test]
+    fn uri_component_rejects_a_lone_surrogate_inside_an_array() {
+        let lone = pilotdeck_protocol::JsString::from_utf16(vec![0xd800]);
+        let error = encode_uri_component(&JsValue::Array(vec![JsValue::String(lone)]))
+            .expect_err("encodeURIComponent throws URIError");
+        assert_eq!(
+            error.message.to_utf8().ok().as_deref(),
+            Some("URI malformed")
+        );
     }
 
     #[test]
