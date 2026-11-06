@@ -100,7 +100,14 @@ except ValueError as error:
 # (#1666 fix-r7, found by review on both sides of the tree).
 if blank_target():
     refuse('CARGO_TARGET_DIR is set but blank; unset it to use the shared target')
-env = target_environment(root)
+# The normalisation also rejects targets it can never build in (dot, the
+# filesystem or repository root, `src`, a file). Those are caller errors too,
+# so they are the same startup refusal (2) -- before fix-r8 they surfaced as an
+# uncaught RuntimeError (1) after the claim (#1666 fix-r8).
+try:
+    env = target_environment(root)
+except RuntimeError as error:
+    refuse(str(error))
 out = claim_dir(sys.argv[1])
 paths = sorted({path for _name, path, _old, _new in run_rows}, key=str)
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','interaction_producer_','--','--nocapture']

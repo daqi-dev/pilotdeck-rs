@@ -11,7 +11,8 @@ Every script below is invoked with a mutation name that does not exist. The
 correct answer is exit code 2 ("never started") with the unknown name on
 stderr, and the same answer whether or not assertions are stripped. Two more
 matrices cover the other startup refusals the contract promises: an already
-claimed output directory, and an absent (or empty) ``CARGO_TARGET_DIR``. For
+claimed output directory, and an unusable ``CARGO_TARGET_DIR`` -- absent, empty
+or all-space. For
 all three, the evidence directory must not exist afterwards. The first test is
 the harness's own negative control: it proves this interpreter really does drop
 ``assert`` under ``-O``, so a green run here cannot be an artefact of a Python
@@ -78,20 +79,27 @@ TARGET_OPTIONAL = {
 
 # Any read of the target variable is a target guard. Matching the call shapes
 # (not one spelling) keeps the exemption honest when a guard is reintroduced
-# with double quotes, `os.getenv`, or the shared predicates.
-TARGET_READ = re.compile(r'''os\.environ\s*\[\s*['"]CARGO_TARGET_DIR['"]\s*\]
-                         | os\.environ\.get\s*\(\s*['"]CARGO_TARGET_DIR['"]
+# with double quotes, `os.getenv`, an alias (`env = os.environ.copy()` then
+# `env.get(...)`, or `from os import environ`), a subscription, or the shared
+# predicates. An alias that only matched `os.environ...` would let the fully
+# exempt entry grow a guard that none of the three modes exercises
+# (#1666 fix-r8, raised by all four review roles).
+TARGET_READ = re.compile(r'''\w+\.environ\s*\[\s*['"]CARGO_TARGET_DIR['"]\s*\]
+                         | \w+\.get\s*\(\s*['"]CARGO_TARGET_DIR['"]
+                         | \w+\s*\[\s*['"]CARGO_TARGET_DIR['"]\s*\]
                          | os\.getenv\s*\(\s*['"]CARGO_TARGET_DIR['"]
                          | (?:missing|blank)_target\s*\(
                          ''', re.X)
 
 
 def calls(source, name):
-    """True when the source *calls* ``name`` (an import or a docstring is not a call)."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return False
+    """True when the source *calls* ``name`` (an import or a docstring is not a call).
+
+    A source that does not parse is a failure, not a "no": returning False on
+    ``SyntaxError`` would let the "must really call target_environment"
+    assertion pass on a file whose syntax is broken (#1666 fix-r8).
+    """
+    tree = ast.parse(source)
     return any(isinstance(node, ast.Call) and (
         (isinstance(node.func, ast.Name) and node.func.id == name) or
         (isinstance(node.func, ast.Attribute) and node.func.attr == name))
@@ -205,6 +213,12 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
         env.pop('CARGO_TARGET_DIR', None)
     elif target in ('empty', 'blank'):
         env['CARGO_TARGET_DIR'] = '' if target == 'empty' else '   '
+    elif target == 'dot':
+        # Set, non-blank, and still unusable: the shared normalisation rejects
+        # it (``#1166 target cannot be dot``). That refusal must be the same
+        # "never started" (2) before the evidence directory is claimed
+        # (#1666 fix-r8).
+        env['CARGO_TARGET_DIR'] = '.'
     else:
         env.setdefault('CARGO_TARGET_DIR', str(out.parent / 'cargo-target'))
     env.pop('PYTHONOPTIMIZE', None)
@@ -348,6 +362,25 @@ class UnknownControlIsRefused(unittest.TestCase):
                 if needle is not None:
                     self.assertIn(needle, source,
                                   f'{script} no longer matches its exemption reason: {reason}')
+
+    def test_defaulting_entries_refuse_a_target_the_normalisation_rejects(self):
+        """A dot target is unusable too, and equally "never started" (#1666 fix-r8).
+
+        The two entries that default the target when it is absent call
+        ``target_environment`` before claiming the directory; that helper raises
+        for a dot / root / ``src`` target. Uncaught, that was rc 1 with a
+        traceback -- the "ran and failed" bucket for a run that never began.
+        """
+        for script in ('interaction-values/negative_controls.py',
+                       'turn-submit-admission/negative_controls.py'):
+            with self.subTest(script=script):
+                result, out = run(script, [], optimize=False, base=self.base,
+                                  target='dot')
+                self.assertEqual(result.returncode, 2,
+                                 f'{script} must refuse a dot target: {result.stderr[-400:]}')
+                self.assertIn('target', result.stderr.lower(), f'{script}: name the cause')
+                self.assertFalse(out.exists(),
+                                 f'{script}: a refusal must not leave an evidence directory')
 
     def test_optimize_and_plain_agree(self):
         # The point of the issue: the verdict must not depend on -O.

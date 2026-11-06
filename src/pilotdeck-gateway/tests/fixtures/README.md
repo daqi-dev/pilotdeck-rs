@@ -36,11 +36,13 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 契约范围仅上述两个共享执行器。`shared-runner-failclosed/negative_controls.py` 是手工顶层脚本，其 `main()` 对所有守卫失败一律返回 rc=2（含进入守卫前的拒跑）；本仓没有调用方解析它的退出码，且任何失败都发布全 INVALID（失败关闭），故不纳入三分契约。同一仓内自管执行脚本（`edgeclaw-*`、`anchor_selfcheck.py` 等）「锚点过期 → 2」的约定同样不在本契约范围。
 
 `_shared.negative_control.mutation_suite` 另有一条启动期规则（#1666/#1734）：它先占证据目录再取环境，
-所以缺 `CARGO_TARGET_DIR` 的拒跑放在占目录之前，并同样走 `negative_selection.refuse()`——rc=2、
+所以 `CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白，统一走 `negative_selection.missing_target()`）
+的拒跑放在占目录之前，并同样走 `negative_selection.refuse()`——rc=2、
 原因进 stderr；若启动期 `refuse()` 从更深处（如脚本自己的 oracle 读取）抛出，且**目录仍为空**，
 执行器不发布 `summary.json` 并撤掉它；目录已有文件时撤不掉，此时在 stderr 打出残留路径，按 rc=2
-（从未开跑）退出、不发布 `summary.json`（目录已被外部删掉则按「没有残留」静默）。两条子分支分别由
-`test_negative_adaptive.py` 的 refuse / refuse-residue 用例覆盖。其余失败沿用本执行器既有语义，**不套用上面的三分**：
+（从未开跑）退出、不发布 `summary.json`（目录已被外部删掉则按「没有残留」静默）。三条子分支分别由
+`test_negative_adaptive.py` 的 refuse / refuse-residue / refuse-vanished 用例覆盖。这条守卫是整族的
+兜底：`background-output/negative.py` 这类直接调用 `mutation_suite` 的入口自身没有前置守卫。其余失败沿用本执行器既有语义，**不套用上面的三分**：
 取消（`KeyboardInterrupt` / `scratch` 的 `SystemExit('<string>')`）与恢复核验失败都记 rc=1 并发布
 全 INVALID 总结（`test_negative_adaptive.py` 的 interrupt / restore 用例锁定这一行为）。
 
@@ -64,7 +66,9 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 不编译 Cargo 三档全豁免；豁免理由与所依赖的源码事实都有断言，不静默漏测。）
 同一文件里的 `PENDING_BARE_ASSERTS` 是**只减不增**的存量登记：仍带裸 `assert` 的
 `*/negative_controls.py` 必须逐条列出并写理由，新脚本带裸 `assert` 直接让 CI 红。因此
-「已迁移清单」不会被误读成全集——未迁移的都在登记表里，由 #1666 分批推进。
+「已迁移清单」不会被误读成全集——这个**表**只覆盖 `negative_controls.py` 命名的入口；
+`negative.py` / `*_negative.py` 等同样式脚本不在表内，属 #1666 batch 3，另行分批推进
+（它们当中带裸 `assert` 的不会被这张表挡下）。
 `settings-gateway/test_negative_controls.py` 用「真实源码 + 一处注入编辑」复算启动守卫，
 不需要 cargo、不需要已提交的树。
 

@@ -147,9 +147,12 @@
 实现进度按行读：**已迁移脚本**对未知 / 重复变异名、名册漂移、输出目录已存在
 （走 `claim_dir`，`FileExistsError` 不再落成 1）、`CARGO_TARGET_DIR` 不可用
 （未设置 / 空串 / 纯空白，统一走 `negative_selection.missing_target()`）都返回 2；
-`TARGET_OPTIONAL` 登记的三个入口只在**变量未设置**这一档豁免（前两个按 #1166 用共享
-默认 target，`cli-parity-mock-gateway` 不编译 Cargo），空串与纯空白它们同样以 2 拒跑
-（前两个各有 `blank_target()` 前置守卫）；
+`TARGET_OPTIONAL` 登记的三个入口按模式各自豁免：`interaction-values` 与
+`turn-submit-admission` 只在**变量未设置**这一档豁免（按 #1166 用共享默认 target），
+空串与纯空白由各自的 `blank_target()` 前置守卫以 2 拒跑，`target_environment` 对
+dot / 文件系统或仓库根 / `src` 这类目标抛的 `RuntimeError` 也折算成 2；
+`cli-parity-mock-gateway` 不编译 Cargo，**三档全豁免**，由登记表守卫断言它没有任何
+target 读取；
 **树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
