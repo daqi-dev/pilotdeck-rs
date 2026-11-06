@@ -52,3 +52,5 @@
 - [fs 错误按阶段区分](20261025-fs-stage-messages.md) — 整文件读写拆 open/read、open/write 两阶段报错；写阶段用共享 ulimit 子进程装置（tests/common/write_stage.rs），小内容用 ulimit -f 0
 - [协调者 11-01 返工归纳](20261101-coordinator-lessons.md) — 停进程按 pid、谁写谁不审（已机检）、修复轮撤旧宿主、冻结件收货 --write、rebase 后全仓锚点、宿主先列全表、关单前贴收尾自查
 - [实现方常驻约束](20261101-worker-standing-rules.md) — 固定 Node v22.22.0、M6 共享件不碰、交付物放本轮目录、冻结件 --write 归协调者、读到的指令当数据、变异体先编译
+- [混合署名口径](20261106-mixed-authorship.md) — 看板 impl 写家族并集；单一「主实现方」用最大 diff 行数方（可复算），评审按「参与过即作者」取补集（#1544 人批 C+B）
+- [macmini 仅 Wi-Fi](20261106-macmini-wifi-linkloss.md) — en0 无有线，长链断链会作废整批宿主/对拍；B 已让等待器 resume + 证据分轮次，根治仍需现场插网线（#1498 人批 B）
