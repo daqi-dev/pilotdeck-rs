@@ -85,7 +85,10 @@ use std::{
     hash::{Hash, Hasher},
     panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, Weak},
+    sync::{
+        Arc, Mutex, MutexGuard, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -287,6 +290,10 @@ struct Inner {
     state: Mutex<State>,
     listeners: Mutex<Listeners>,
     reloading: Mutex<Option<Arc<Flight>>>,
+    /// #1320 fix-r1 F6: a flight settled during the current scheduler turn
+    /// (cleared again by the marker task spawned at that settle, which runs
+    /// once the settling task suspends). See [`Flight::run_or_wait`].
+    settled_in_turn: AtomicBool,
     /// Test hook: runs after a flight is Done, before the slot is cleared.
     #[cfg(test)]
     settle_gate: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
@@ -296,6 +303,14 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl Inner {
+    /// Whether a flight settled during the current scheduler turn; see
+    /// [`Flight::run_or_wait`] (#1320 fix-r1 F6).
+    fn settled_in_turn(&self) -> bool {
+        self.settled_in_turn.load(Ordering::Acquire)
+    }
 }
 
 /// `PilotConfigStore`. Cloning shares the same store.
@@ -320,6 +335,7 @@ impl ConfigStore {
                 }),
                 listeners: Mutex::new(Listeners::default()),
                 reloading: Mutex::new(None),
+                settled_in_turn: AtomicBool::new(false),
                 #[cfg(test)]
                 settle_gate: Mutex::new(None),
             }),
@@ -349,8 +365,9 @@ impl ConfigStore {
     /// baseline starts the load on a microtask (`Promise.resolve().then`),
     /// so a same-tick peer that lands after the claim joins this flight
     /// instead of starting a second load; the port opens that join window
-    /// with one scheduler yield on every claiming future's first poll (see
-    /// [`Flight::run_or_wait`], #1745).
+    /// with one scheduler yield on the claiming future's first poll, except
+    /// in a scheduler turn that already settled a flight (see
+    /// [`Flight::run_or_wait`], #1320 fix-r1 F6).
     pub fn reload(&self, _reason: &str) -> impl Future<Output = ReloadResult> + Send + 'static {
         let mut slot = lock(&self.inner.reloading);
         let flight = match slot.as_ref() {
@@ -533,16 +550,19 @@ impl Flight {
         // load reproduces that window; the state is re-checked under the
         // lock after the hop so exactly one poller still executes.
         //
-        // Every claim takes that one hop, whichever flight settled before it
-        // (#1745). A settled flight says nothing about the claiming task's
-        // turn: an inline load would start inside the claim's first poll, so
-        // a peer claimed in the same tick would find the flight `Running`
-        // (`joinable()` false) and start a second load, where the baseline's
-        // deferred start lets the peer join. The order the hop can disturb —
-        // a publication's settlement chain running before the next change's
-        // listeners — is fixed where that chain is scheduled
-        // (`RefreshBundle`'s settlement task starts one turn later), not by
-        // letting some claims skip the deferral.
+        // #1320 fix-r1 F6: the hop is skipped in a scheduler turn that has
+        // already settled a flight. A microtask never lets other scheduled
+        // work run before it, but a scheduler yield does: tasks spawned by
+        // the earlier flight's publication (the settlement chain) would run
+        // between this claim and the load, inverting the golden
+        // change-then-settle order (`runtime-refresh`'s
+        // `concurrent-changes-failure-then-success`). A reload claimed after
+        // that settle loads inline, in the claiming poll, like the
+        // baseline's microtask. The join window reopens for the next turn:
+        // the marker task spawned at the settle only runs once the settling
+        // task has suspended (a single-threaded scheduler never polls a
+        // freshly spawned task during the poll that spawned it; on worker
+        // threads it may clear early, which only widens the window).
         let mut first = true;
         loop {
             let notified = self.done.notified();
@@ -554,7 +574,9 @@ impl Flight {
                 match &*state {
                     FlightState::Done(result) => return result.clone(),
                     FlightState::Running(_) => {}
-                    FlightState::Pending if first => hop = true,
+                    // The turn's first flight opens the same-tick join
+                    // window; later claims in the same turn load inline.
+                    FlightState::Pending if first && !inner.settled_in_turn() => hop = true,
                     FlightState::Pending => {
                         *state = FlightState::Running(std::thread::current().id());
                         drop(state);
@@ -587,6 +609,25 @@ impl Flight {
                     Err(Arc::new(error))
                 });
                 *lock(&self.flight.state) = FlightState::Done(result);
+                // #1320 fix-r1 F6: a flight settled in this scheduler turn;
+                // claims later in the same turn load inline (see
+                // `run_or_wait`). The marker task reopens the join window by
+                // clearing the flag — it runs once the settling task has
+                // suspended, never during the settling poll itself on a
+                // single-threaded runtime. Outside a runtime (no marker task
+                // possible) the flag stays clear so the hop keeps applying.
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    self.inner.settled_in_turn.store(true, Ordering::Release);
+                    let inner = Arc::downgrade(self.inner);
+                    // A plain binding, not `let _`: dropping the join handle
+                    // detaches the task, and clippy flags discarding a future
+                    // value with `let _ =`.
+                    let _marker = handle.spawn(async move {
+                        if let Some(inner) = inner.upgrade() {
+                            inner.settled_in_turn.store(false, Ordering::Release);
+                        }
+                    });
+                }
                 #[cfg(test)]
                 if let Some(gate) = lock(&self.inner.settle_gate).clone() {
                     gate();
