@@ -194,7 +194,12 @@ fn explicit_options_and_environment() {
     );
     // #1431 P2-2: the Some branch injects the CLI root and never leaks the
     // ambient storage value; a separate snapshot-root override is preserved
-    // for `resolve_workspace_snapshot_config`.
+    // for `resolve_workspace_snapshot_config`. This pins `Options::environment`
+    // itself: the entry (`native_process::run`) rejects any inherited non-empty
+    // managed/storage/snapshot root *before* calling it, so a non-empty
+    // inherited snapshot root only reaches this branch in a direct call. The
+    // reachable-from-the-entry case (empty inherited value) is the `blank`
+    // block above.
     let storage = scratch.0.join("storage");
     std::fs::create_dir_all(&storage).expect("#1431 storage root directory");
     let mut with_storage = scratch.args();
