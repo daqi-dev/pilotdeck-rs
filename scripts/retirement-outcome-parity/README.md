@@ -268,7 +268,7 @@ unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于�
 
 `.github/workflows/ci.yml` 的 `retirement-outcome-parity` job 每次 PR / 合入 main / merge
 queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤——纯 Python，本机实测
-六项全跑 3.5 s、变异自检 0.3 s）：
+六项全跑 3.1 s、变异自检 0.4 s）：
 
 | 步骤 | 判据 |
 |---|---|
@@ -286,19 +286,30 @@ python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 ```
 
 `--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
-超大夹具；CI 接线用**十三种**变异 workflow（删掉 retirement 行 / 整段注释掉 / 给 job 内闸门
-step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` · 在 run 块首行插 `set +e` /
-给聚合 `check` job 的 Require step 换掉 `if:` 条件 · 加 `continue-on-error` · 在条件末尾追加
-`&& false` · 把 `run: exit 1` 改成 `exit 0` / 给闸门命令加 `|| true` 或 `echo` 前缀）；输出
-目录锁用三种**预置敌意锁文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG`
-判定即挂起或假持锁）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即
-同一正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例
-变红」的机器证据。
+超大夹具；CI 接线用**十八种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
+step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **job 级**（4 空格缩进）
+加 `continue-on-error` / 把闸门命令整行挪进同 step 的 `env.UNUSED: |` / 用嵌套 `env:` 下的
+`run: exit 1` 冒充聚合 Require 的执行体 / 用 `if false; then … fi` 包住整条命令 / `|| true` /
+`! ` 取反退出码 / `echo` 前缀 / 删掉一个闸门 step / 给 Require step 换掉 `if:` ·
+加 `continue-on-error` · 末尾追加 `&& false` · 把 `run: exit 1` 改成 `exit 0`）；输出目录锁用
+三种**预置敌意锁文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即
+挂起或假持锁）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即同一
+正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例变红」
+的机器证据。
 
-接线守卫认的是**具体写法**，不是语义等价：闸门命令必须整行出现（`echo` 前缀、`|| true`
-后缀都判红），聚合 Require 的 `if:` 归一化空白后必须逐字等于登记值（所以 `if: >-` 折叠、
-整段加引号这类等价写法也判红）。这是有意的 fail-closed：本仓只有一个写方，宁可误拒也不
-放过「文本活着但闸门失效」的形态。
+**每条变异样本都实测过「真的造成假绿」**：从变异后的 workflow 里取出该 step 真正会执行的
+脚本，用 `bash -e` + 一个必失败的 `python3` 替身跑——命令没执行 / 失败被吞的样本必须 rc=0，
+未变异基线必须 rc=1。样本本身不成立就不是样本（例如把 `|| true` 加在以续行反斜杠结尾的行上
+会变成 rc=127；`bash -e` 下末尾补 `exit 0` 根本走不到，同样不算假绿）。
+
+接线守卫认的是**结构**，不是文本：先剥掉整行注释，再按 YAML 缩进取真值——两个 job 的直属键
+白名单（job 级 `continue-on-error` 即红）；retirement job 的 step 顺序与名字按登记比对；闸门
+step 只许有 `name` + 一个**直属** `run`（`env` / `with` / `if` / `continue-on-error`、嵌套的
+`env: {run: …}` 全红）；每个闸门 step 的 `run` 体与 `GATE_SCRIPTS` **逐字相等**；聚合 Require
+只许 `name` / `if` / `run`，`run` 恰为 `exit 1`，`if:` 归一化空白后逐字等于登记值。逐字相等
+同样意味着**等价写法会被误拒**（`if: >-` 折叠、换引号风格、重排 `--round` 参数），这是有意的
+fail-closed：本仓这段 YAML 只有一个写方，宁可误拒也不放过「文本活着但闸门失效」；改闸门脚本
+必须同步改 `GATE_SCRIPTS`。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
