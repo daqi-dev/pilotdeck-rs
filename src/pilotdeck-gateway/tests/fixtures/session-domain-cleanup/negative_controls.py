@@ -3420,29 +3420,15 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
-    ('calibrate-sm-callable-setitem', CHECK,
-     "def load_session_domain():\n"
-     "    spec = importlib.util.spec_from_file_location('session_domain', "
-     "SESSION_DOMAIN)",
-     "if False:\n"
-     "    from operator import setitem as _pdrs_put\n"
-     "    _pdrs_put(sys.modules, '_guard', object())\n"
-     "\n"
-     "\n"
-     "def load_session_domain():\n"
-     "    spec = importlib.util.spec_from_file_location('session_domain', "
-     "SESSION_DOMAIN)"),
-    ('calibrate-sm-mapping-augassign', CHECK,
-     "def load_session_domain():\n"
-     "    spec = importlib.util.spec_from_file_location('session_domain', "
-     "SESSION_DOMAIN)",
-     "if False:\n"
-     "    sys.modules |= {'_guard': object()}\n"
-     "\n"
-     "\n"
-     "def load_session_domain():\n"
-     "    spec = importlib.util.spec_from_file_location('session_domain', "
-     "SESSION_DOMAIN)"),
+    ('calibrate-sm-callable-setitem', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "from operator import setitem as _pdrs_put\n"
+     "_pdrs_put(sys.modules, '_guard', object())\n"
+     "_guard = sys.modules.get('_guard')\n"),
+    ('calibrate-sm-mapping-augassign', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "sys.modules |= {'_guard': object()}\n"
+     "_guard = sys.modules.get('_guard')\n"),
     ('calibrate-builtins-alias-subscript', CHECK,
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
@@ -3575,6 +3561,168 @@ MUTATIONS = [
      "                    if False:\n                        bi1 = __builtins__\n                        bi2 = bi1\n                        bi3 = bi2\n                        bi4 = bi3\n                        bi4['setattr'](report, 'status', 'PASS')\n"
      "                    report['status'] = overall\n"),
 
+    # #892 fix-r34 (codex boundary r33 P0-1..P0-6, P1-7..P1-9): the
+    # order-sensitive bindings, the closure defaults, the star forms and the
+    # prebound partials the r33 resolver still lost.
+    ('calibrate-closure-default', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def _outer():\n"
+     "        _x = md\n"
+     "        def _inner(_x=_x):\n"
+     "            _x.common = object()\n"
+     "        _inner()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-global-handoff', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def _f():\n"
+     "        global _alias\n"
+     "        _y = md\n"
+     "        _alias = _y\n"
+     "    _f()\n"
+     "    _alias.common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-star-from-name', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _xs = (md,)\n"
+     "    _m, _x = (*_xs, None)\n"
+     "    _m.common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-star-target-rest', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _a, *_rest = (None, md)\n"
+     "    _rest[0].common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-annassign', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _h: object = getattr(md, _n)\n"
+     "    _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-argument', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    def _invoke(_h):\n"
+     "        _h('common', object())\n"
+     "    _invoke(getattr(md, _n))\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-ordered-binding', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import builtins\n"
+     "                        dict = report\n"
+     "                        dict.update({'status': 'PASS'})\n"
+     "                        dict = builtins.dict\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-partial-update-prebound', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import functools\n"
+     "                        functools.partial(dict.update, report, {'status': 'PASS'})()\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-partial-setdefault-prebound', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import functools\n"
+     "                        functools.partial(dict.setdefault, report, 'status')('PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-builtins-chain-fiftyone', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        bi0 = __builtins__\n"
+     "                        bi1 = bi0\n"
+     "                        bi2 = bi1\n"
+     "                        bi3 = bi2\n"
+     "                        bi4 = bi3\n"
+     "                        bi5 = bi4\n"
+     "                        bi6 = bi5\n"
+     "                        bi7 = bi6\n"
+     "                        bi8 = bi7\n"
+     "                        bi9 = bi8\n"
+     "                        bi10 = bi9\n"
+     "                        bi11 = bi10\n"
+     "                        bi12 = bi11\n"
+     "                        bi13 = bi12\n"
+     "                        bi14 = bi13\n"
+     "                        bi15 = bi14\n"
+     "                        bi16 = bi15\n"
+     "                        bi17 = bi16\n"
+     "                        bi18 = bi17\n"
+     "                        bi19 = bi18\n"
+     "                        bi20 = bi19\n"
+     "                        bi21 = bi20\n"
+     "                        bi22 = bi21\n"
+     "                        bi23 = bi22\n"
+     "                        bi24 = bi23\n"
+     "                        bi25 = bi24\n"
+     "                        bi26 = bi25\n"
+     "                        bi27 = bi26\n"
+     "                        bi28 = bi27\n"
+     "                        bi29 = bi28\n"
+     "                        bi30 = bi29\n"
+     "                        bi31 = bi30\n"
+     "                        bi32 = bi31\n"
+     "                        bi33 = bi32\n"
+     "                        bi34 = bi33\n"
+     "                        bi35 = bi34\n"
+     "                        bi36 = bi35\n"
+     "                        bi37 = bi36\n"
+     "                        bi38 = bi37\n"
+     "                        bi39 = bi38\n"
+     "                        bi40 = bi39\n"
+     "                        bi41 = bi40\n"
+     "                        bi42 = bi41\n"
+     "                        bi43 = bi42\n"
+     "                        bi44 = bi43\n"
+     "                        bi45 = bi44\n"
+     "                        bi46 = bi45\n"
+     "                        bi47 = bi46\n"
+     "                        bi48 = bi47\n"
+     "                        bi49 = bi48\n"
+     "                        bi50 = bi49\n"
+     "                        bi50['setattr'](report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -3909,16 +4057,28 @@ def calibrate_globals_tuple_target(rows):
 
 
 def calibrate_sm_callable_setitem(rows):
-    """#892 fix-r32: a ``sys.modules`` write through an aliased ``operator.setitem``."""
-    return _not_shared(
-        rows, CHECK_REL, 'main',
+    """#892 fix-r32: a ``sys.modules`` write through an aliased ``operator.setitem``.
+
+    #892 fix-r34: the mutant poisoned the *fixture* file, where ``_guard`` is
+    never read out of ``sys.modules`` -- the static ``common`` binding stays
+    the shared module, so PASS was the right verdict and the mutant measured
+    nothing.  It now spells the same write where the rule is live (the
+    controls file reads ``_guard`` from ``sys.modules``).
+    """
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
         'aggregation-audit: calibrate-sm-callable-setitem flagged, passed=False')
 
 
 def calibrate_sm_mapping_augassign(rows):
-    """#892 fix-r32: a ``sys.modules`` write through an in-place mapping update."""
-    return _not_shared(
-        rows, CHECK_REL, 'main',
+    """#892 fix-r32: a ``sys.modules`` write through an in-place mapping update.
+
+    #892 fix-r34: same re-pointing as ``calibrate-sm-callable-setitem`` -- the
+    fixture has no ``sys.modules.get`` read, so the poison has to land in the
+    controls file to exercise the rule.
+    """
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
         'aggregation-audit: calibrate-sm-mapping-augassign flagged, passed=False')
 
 
@@ -3941,6 +4101,68 @@ def calibrate_globals_alias_augassign(rows):
     return _not_shared(
         rows, CHECK_REL, 'main',
         'aggregation-audit: calibrate-globals-alias-augassign flagged, passed=False')
+
+
+def calibrate_closure_default(rows):
+    """#892 fix-r34: calibrate-closure-default."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-closure-default flagged, passed=False')
+
+
+def calibrate_global_handoff(rows):
+    """#892 fix-r34: calibrate-global-handoff."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-global-handoff flagged, passed=False')
+
+
+def calibrate_star_from_name(rows):
+    """#892 fix-r34: calibrate-star-from-name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-star-from-name flagged, passed=False')
+
+
+def calibrate_star_target_rest(rows):
+    """#892 fix-r34: calibrate-star-target-rest."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-star-target-rest flagged, passed=False')
+
+
+def calibrate_handle_annassign(rows):
+    """#892 fix-r34: calibrate-handle-annassign."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-annassign flagged, passed=False')
+
+
+def calibrate_handle_argument(rows):
+    """#892 fix-r34: calibrate-handle-argument."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-argument flagged, passed=False')
+
+
+def calibrate_ordered_binding(rows):
+    """#892 fix-r34: calibrate-ordered-binding."""
+    return _unrouted_status(rows, 'calibrate-ordered-binding')
+
+
+def calibrate_partial_update_prebound(rows):
+    """#892 fix-r34: calibrate-partial-update-prebound."""
+    return _unrouted_status(rows, 'calibrate-partial-update-prebound')
+
+
+def calibrate_partial_setdefault_prebound(rows):
+    """#892 fix-r34: calibrate-partial-setdefault-prebound."""
+    return _unrouted_status(rows, 'calibrate-partial-setdefault-prebound')
+
+
+def calibrate_builtins_chain_fiftyone(rows):
+    """#892 fix-r34: calibrate-builtins-chain-fiftyone."""
+    return _unrouted_status(rows, 'calibrate-builtins-chain-fiftyone')
 
 
 def _unrouted_status(rows, name):
@@ -4555,6 +4777,27 @@ JUDGES = {
         }),
         False,
         ()),
+    # #892 fix-r34: see the MUTATIONS note above.
+    'calibrate-closure-default': (
+        'aggregation-audit', calibrate_closure_default, False, ()),
+    'calibrate-global-handoff': (
+        'aggregation-audit', calibrate_global_handoff, False, ()),
+    'calibrate-star-from-name': (
+        'aggregation-audit', calibrate_star_from_name, False, ()),
+    'calibrate-star-target-rest': (
+        'aggregation-audit', calibrate_star_target_rest, False, ()),
+    'calibrate-handle-annassign': (
+        'aggregation-audit', calibrate_handle_annassign, False, ()),
+    'calibrate-handle-argument': (
+        'aggregation-audit', calibrate_handle_argument, False, ()),
+    'calibrate-ordered-binding': (
+        'aggregation-audit', calibrate_ordered_binding, False, ()),
+    'calibrate-partial-update-prebound': (
+        'aggregation-audit', calibrate_partial_update_prebound, False, ()),
+    'calibrate-partial-setdefault-prebound': (
+        'aggregation-audit', calibrate_partial_setdefault_prebound, False, ()),
+    'calibrate-builtins-chain-fiftyone': (
+        'aggregation-audit', calibrate_builtins_chain_fiftyone, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
