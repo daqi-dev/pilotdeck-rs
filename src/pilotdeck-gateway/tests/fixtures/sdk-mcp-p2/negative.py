@@ -309,6 +309,26 @@ MUTATIONS = [
      'format!("MCP call failed (server={server_id}): bad output schema")',
      '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
      '#401 the Ajv compile text reaches the caller verbatim'),
+    ('late-handshake-dir-kept', 'mcp/client.rs',
+     '                async move {\n'
+     '                    if let Ok(client) = outcome {\n'
+     '                        client.close().await;\n'
+     '                    }\n'
+     '                    if let Some(dir) = dir {\n'
+     '                        dir.remove().await;\n'
+     '                    }\n'
+     '                },\n'
+     '                true,',
+     '                async move {\n'
+     '                    if let Ok(client) = outcome {\n'
+     '                        client.close().await;\n'
+     '                    }\n'
+     '                    let _ = dir;\n'
+     '                },\n'
+     '                true,',
+     '--test=mcp_client',
+     'dispose_during_an_in_flight_handshake_removes_the_session_directory',
+     '#401 dispose returns before the in-flight handshake settles, and its cleanup still removes the per-session directory'),
 ]
 
 # Each delayed row changes the delay parameter that the real lock probe
