@@ -1763,6 +1763,11 @@ mod tests {
                 &JsValue::Undefined,
             )
             .expect("#1457 the loaded writer keeps numbering the chain");
+        // A second writer on the same tail leaves a duplicate `sequence` that
+        // only the next reader rejects, so read the file back the same way the
+        // resume path does.
+        let reread = open("b9-session");
+        reread.restore().expect("#1457 the transcript still loads");
         let entries = transcript_entries(&r, "b9-session");
         negative_assert_eq!(
             entries.iter().any(
