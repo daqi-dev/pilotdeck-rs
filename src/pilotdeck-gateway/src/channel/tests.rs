@@ -29,6 +29,37 @@ fn strings(value: &Value) -> Vec<String> {
         .map(|v| v.as_str().expect("#1327 oracle string").into())
         .collect()
 }
+/// The terminal comparison reads `expected` through a checked accessor instead
+/// of a bare index (#1808, the #1729 shape): a present-but-wrong-type
+/// container fails with a `#1327` diagnostic instead of a generic object
+/// mismatch, and an absent one cannot shrink the case to a blind compare.
+fn recorded_expected_checked(value: &Value) -> Result<&Value, String> {
+    match value.get("expected") {
+        None => Err("#1327 expected must be an object, got <missing>".into()),
+        Some(expected) if expected.is_object() => Ok(expected),
+        Some(expected) => Err(format!("#1327 expected must be an object, got {expected}")),
+    }
+}
+fn recorded_expected(value: &Value) -> &Value {
+    recorded_expected_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+#[test]
+fn recorded_expected_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_expected_checked(&json!({"expected": []})).is_err(),
+        "#1327 #1808 rejects expected type drift"
+    );
+}
+#[test]
+#[should_panic(expected = "#1327 expected must be an object")]
+fn recorded_expected_panics_on_wrong_type() {
+    recorded_expected(&json!({"expected": []}));
+}
+#[test]
+#[should_panic(expected = "#1327 expected must be an object, got <missing>")]
+fn recorded_expected_panics_when_absent() {
+    recorded_expected(&json!({}));
+}
 fn error_value(error: ChannelError) -> Value {
     if let ChannelError::Aggregate { errors, .. } = &error {
         json!({"error":error.to_js_string(),"errors":errors.iter().map(ChannelError::to_js_string).collect::<Vec<_>>()})
@@ -532,7 +563,8 @@ async fn lifecycle_matches_real_ts() {
     let cases = lifecycle_cases(&oracle);
     for case in cases {
         let actual = replay(case).await;
-        crate::negative_assert_eq!(actual, case["expected"], "#1327 lifecycle oracle");
+        let expected = recorded_expected(case).clone();
+        crate::negative_assert_eq!(actual, expected, "#1327 lifecycle oracle");
     }
 }
 
@@ -617,7 +649,8 @@ fn loader_matches_real_ts() {
             },
         );
         let actual = json!({"result":result.iter().map(|c|c.channel_key().to_string()).collect::<Vec<_>>(),"events":*events.lock().expect("#1327 loader recording")});
-        crate::negative_assert_eq!(actual, case["expected"], "#1327 loader oracle");
+        let expected = recorded_expected(case).clone();
+        crate::negative_assert_eq!(actual, expected, "#1327 loader oracle");
     }
 }
 #[test]
@@ -912,9 +945,10 @@ async fn replace_close_keeps_previous_snapshot() {
         .iter()
         .find(|c| c["name"] == "close-after-replace-check")
         .expect("#1327 replace close fixture present");
+    let expected = recorded_expected(case).clone();
     crate::negative_assert_eq!(
         replay(case).await,
-        case["expected"],
+        expected,
         "#1327 replace close aggregate"
     );
 }
@@ -925,9 +959,10 @@ async fn replace_close_claim_is_atomic() {
         .iter()
         .find(|c| c["name"] == "close-after-replace-check")
         .expect("#1327 claim race fixture present");
+    let expected = recorded_expected(case).clone();
     crate::negative_assert_eq!(
         replay_with_claim_race(case, true).await,
-        case["expected"],
+        expected,
         "#1327 replace claim atomic"
     );
 }
@@ -938,9 +973,10 @@ async fn late_start_stop_failure_matches_real_ts() {
         .iter()
         .find(|c| c["name"] == "late-start-stop-fails")
         .expect("#1327 late stop failure fixture present");
+    let expected = recorded_expected(case).clone();
     crate::negative_assert_eq!(
         replay(case).await,
-        case["expected"],
+        expected,
         "#1327 late stop failure oracle"
     );
 }

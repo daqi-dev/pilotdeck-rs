@@ -959,6 +959,38 @@ async fn replay_case(case: &Value) -> Value {
     actual
 }
 
+/// The terminal comparison reads `expected` through a checked accessor instead
+/// of a bare index (#1808, the #1729 shape): a present-but-wrong-type
+/// container fails with a `#1328` diagnostic instead of a generic object
+/// mismatch, and an absent one cannot shrink the case to a blind compare.
+fn recorded_expected_checked(value: &Value) -> Result<&Value, String> {
+    match value.get("expected") {
+        None => Err("#1328 expected must be an object, got <missing>".into()),
+        Some(expected) if expected.is_object() => Ok(expected),
+        Some(expected) => Err(format!("#1328 expected must be an object, got {expected}")),
+    }
+}
+fn recorded_expected(value: &Value) -> &Value {
+    recorded_expected_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+#[test]
+fn recorded_expected_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_expected_checked(&json!({"expected": []})).is_err(),
+        "#1328 #1808 rejects expected type drift"
+    );
+}
+#[test]
+#[should_panic(expected = "#1328 expected must be an object")]
+fn recorded_expected_panics_on_wrong_type() {
+    recorded_expected(&json!({"expected": []}));
+}
+#[test]
+#[should_panic(expected = "#1328 expected must be an object, got <missing>")]
+fn recorded_expected_panics_when_absent() {
+    recorded_expected(&json!({}));
+}
+
 fn oracle_cases(oracle: &Value) -> &[Value] {
     let cases = oracle["cases"]
         .as_array()
@@ -981,6 +1013,7 @@ async fn weixin_replays_the_ts_channel_oracle() {
     let oracle = oracle(ORACLE);
     for case in oracle_cases(&oracle) {
         let actual = replay_case(case).await;
-        crate::negative_assert_eq!(actual, case["expected"], "#1328 weixin replay oracle");
+        let expected = recorded_expected(case).clone();
+        crate::negative_assert_eq!(actual, expected, "#1328 weixin replay oracle");
     }
 }
