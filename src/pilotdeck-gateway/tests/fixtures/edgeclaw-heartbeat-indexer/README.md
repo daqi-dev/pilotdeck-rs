@@ -131,7 +131,12 @@ itself). #1656 adds the incarnation dimension at the batch mark
 (`row_removed_by_repair_mid_heartbeat_reports_repair_not_clear`, mutated by
 `repair-removal-reported-as-clear`), both in the same `issue-1246` fixture —
 whose `mutants` tuple table is now read by the CI anchor preflight
-(`anchor_selfcheck.py --anchors-only`) instead of being exempted. The #1207 fix-r1 review adds a fourth: dropping the re-arm from
+(`anchor_selfcheck.py --anchors-only`) instead of being exempted. The
+`processed_ids` type change reaches this file too: the inserted text of
+`capture-during-classify-marked` pushes the same `(id, u64::MAX)` tuple, so
+that #770 mutant still compiles and can still be killed (a bare `String` push
+would not compile, and a compile failure is recorded as SURVIVED, never as a
+kill). The #1207 fix-r1 review adds a fourth: dropping the re-arm from
 the clear's abort path (`clear-abort-rearm-dropped`), so an indexed row whose
 file the failed clear already removed is never re-listed and the file is
 lost. The fix-r2 review adds a fifth (`clear-abort-delete-rearm-dropped`):
