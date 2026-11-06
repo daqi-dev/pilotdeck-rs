@@ -99,3 +99,5 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
 #1729：`negative_controls.py` 现有 **70** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
 
 #1813：当时 **66** 个开关（`#1790` 后为 69）。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。
+
+#1879：不新增开关，只改写已有读取点。`wait-log.level` / `wait-log.text` 改为必填（缺席即报字段级错误，不再读成空串静默比较）；`env` / `sendFailAt` / `turn.gate` / `turn.error` / `turn.events` / `turn.holdAfter` 改走 `recorded_present`，显式 `null` 与生成器的 `?? {}` / `?? []` / falsy 判断同义（缺席），`sms-oracle-null-sentinel` 开关恢复旧的 fail-closed 读取。

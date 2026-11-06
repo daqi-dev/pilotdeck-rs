@@ -5,9 +5,11 @@ rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
 cell or dedicated test that pins that behavior's TS bytes (26 → 70: the
 fix-r1 round added 11, #1589 added 4, #1729 added 39, #1813 added 1, #1790
-added 3, #1901 added 1; the switches table is the truth source). Run one sample in the
-authoring session; the coordinator runs the complete list after the patch is
-committed.
+added 3, #1901 added 1; the switches table is the truth source). #1879 only
+rewrites existing reads (`recorded_present` covers `env` / `sendFailAt` /
+`turn.*` / `truncate` / `halfClose` / `headers` / `reason` / `extra` now), so
+the count is unchanged. Run one sample in the authoring session; the
+coordinator runs the complete list after the patch is committed.
 
 `mutating_sources` cannot be used for a pre-commit change (it requires
 src/ == HEAD), so the controls are the #996 compile-time switches the
@@ -185,10 +187,16 @@ switches = [
      '#1339 #1729 rejects steps type drift'),
     ('sms-oracle-recorded-half-close', SMS / 'tests.rs', 'recorded_half_close_rejects_wrong_type',
      '#1339 #1729 rejects halfClose type drift'),
-    ('sms-oracle-recorded-log-level', SMS / 'tests.rs', 'recorded_log_level_rejects_wrong_type',
-     '#1339 #1729 rejects wait-log.level type drift'),
-    ('sms-oracle-recorded-log-text', SMS / 'tests.rs', 'recorded_log_text_rejects_wrong_type',
-     '#1339 #1729 rejects wait-log.text type drift'),
+    # #1879: both keys are required now, so the switch must kill the
+    # presence assertion as well as the type-drift one.
+    ('sms-oracle-recorded-log-level', SMS / 'tests.rs',
+     ['recorded_log_level_rejects_wrong_type', 'recorded_log_level_rejects_absence'],
+     ['#1339 #1729 rejects wait-log.level type drift',
+      '#1339 #1879 rejects missing wait-log.level']),
+    ('sms-oracle-recorded-log-text', SMS / 'tests.rs',
+     ['recorded_log_text_rejects_wrong_type', 'recorded_log_text_rejects_absence'],
+     ['#1339 #1729 rejects wait-log.text type drift',
+      '#1339 #1879 rejects missing wait-log.text']),
     ('sms-oracle-recorded-sends-count', SMS / 'tests.rs',
      ['recorded_sends_count_rejects_wrong_type', 'recorded_sends_count_rejects_absence'],
      ['#1339 #1729 rejects wait-sends.count type drift',
