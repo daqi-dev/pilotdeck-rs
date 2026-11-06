@@ -62,8 +62,11 @@ const MAX_BODY_BYTES: usize = 1_048_576;
 /// `http1::Builder`, and without a hyper `Timer` the crate silently disables
 /// its own header-read timeout (`hyper::common::time` turns the default
 /// `30 s` into `None`), so a half-written request head is bounded by nothing
-/// on this lane (#1955). A whole-handler deadline would also turn the TS
-/// `null`-body hang (`A8.3-CH-SMS-007`) into a Rust divergence.
+/// on this lane (#1955). The sibling `wecom_callback` lane already installs
+/// `.timer(TokioTimer::new()).header_read_timeout(..)` on the same shape
+/// (`wecom_callback/http.rs`), so this is a missing fix here, not an
+/// unavoidable runtime difference. A whole-handler deadline would also turn
+/// the TS `null`-body hang (`A8.3-CH-SMS-007`) into a Rust divergence.
 const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const TWIML_OK: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
 
