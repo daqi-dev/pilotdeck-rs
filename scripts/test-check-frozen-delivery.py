@@ -3306,9 +3306,6 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
     # 其余非零是查询失败。
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        init_repo(root)
-        write(root, "seed.txt", "S\n")
-        commit(root, "base")
         real_git = cfd.git
         try:
             for code, want in ((128, None), (1, False)):
@@ -3324,13 +3321,11 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
     # 都折进「历史事件被改写」，瞬时 git 故障会假 BLOCK 且文案诬指 append-only。
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        init_repo(root)
-        write(root, "seed.txt", "S\n")
-        commit(root, "base")
         real_git = cfd.git
         try:
             cfd.git = scripted_git([
                 (0, "100644 blob deadbeef\tspecs/fake/frozen/20260101-e1.md\0", ""),
+                (0, "", ""),        # pinned_head()^{commit} 解析成功
                 (128, "", "boom"),
             ])
             issues = cfd.base_event_issues(root, "fake", "HEAD")
@@ -3339,6 +3334,17 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         case("base_event_issues：rev-parse 非 1 退出码 → 报「查不出」而非「事件被改写」",
              len(issues) == 1 and "cannot tell whether the base event survives"
              in issues[0], f"{issues}")
+        real_git = cfd.git
+        try:
+            cfd.git = scripted_git([
+                (0, "100644 blob deadbeef\tspecs/fake/frozen/20260101-e1.md\0", ""),
+                (128, "", "bad HEAD"),
+            ])
+            issues = cfd.base_event_issues(root, "fake", "HEAD")
+        finally:
+            cfd.git = real_git
+        case("base_event_issues：pinned rev 解析不出 → 报「解析不了」而非「事件被改写」",
+             len(issues) == 1 and "cannot resolve" in issues[0], f"{issues}")
 
     # P0（两家独立撞上）：``specs/<alias>`` 是符号链接（120000 blob）时，discover
     # 以前按「不是 tree」静默 continue：该装置根本不跑，父预检报 READY 而子装置
@@ -3622,6 +3628,11 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         recorded = cfd._recorded_gitdir(entry)
         case("gitdir 路径中部含 ://（合法目录名）→ 仍可读，不误判不可读",
              recorded is not cfd._UNREADABLE_GITDIR, f"recorded={recorded!r}")
+        # 单字母 scheme（`x://host/.git`）同样是 URL，正则不能要求 scheme 至少
+        # 两个字符（codex P2）。
+        (entry / "gitdir").write_text("x://host/.git\n")
+        case("gitdir 单字母 scheme URL → 不可读",
+             cfd._recorded_gitdir(entry) is cfd._UNREADABLE_GITDIR, "")
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "repo"
@@ -3782,6 +3793,34 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              and cfd._admin_match("/a/other/.git", "/a/tree/.git") == "other"
              and cfd._admin_match("/a/.git", "/a/.git/x/tree/.git") == "torn",
              "ok")
+
+    # 祖先若是**文件**，就是另一只真 worktree 的 gitdir（例如 TMPDIR 落在同仓
+    # 另一只 worktree 里），不能判撕裂，否则那里每次运行都永久 BLOCK（GLM P3）。
+    with tempfile.TemporaryDirectory() as td:
+        outer = Path(td) / "wt"
+        outer.mkdir()
+        (outer / ".git").write_text("gitdir: /elsewhere\n")
+        case("_admin_match：严格祖先是文件（真 worktree 的 gitdir）→ other",
+             cfd._admin_match(str(outer / ".git"),
+                              str(outer / "tmp" / "h" / "tree" / ".git")) == "other",
+             "")
+
+    # P2（GLM sibling）：`_still_there` 的 EACCES 分支零覆盖——stat 失败必须
+    # 按「未证已删」处理，否则 holder 目录还在盘上却被摘登记（`Path.exists()`
+    # 对 EACCES 也答 False，正是 drop_admin_entry 修过的同类洞）。
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        holder = locked / "cfd-snapshot-stat"
+        (holder / "tree").mkdir(parents=True)
+        os.chmod(locked, 0o000)
+        try:
+            exists = holder.exists()
+            still = cfd._still_there(holder)
+        finally:
+            os.chmod(locked, 0o700)
+        case("holder 的 stat 失败（EACCES）→ _still_there 判未证已删（exists() 会答 False）",
+             exists is False and still is True,
+             f"exists={exists} still_there={still}")
 
     print(f"SUMMARY failed={fails} skipped={skips}")
     return 1 if fails else 0

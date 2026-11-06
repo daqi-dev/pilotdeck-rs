@@ -610,6 +610,13 @@ def base_event_issues(root, kind, mb):
     code, out, err = git(root, 'ls-tree', '-r', '-z', mb, '--', prefix)
     if code:
         return [f'cannot list {prefix} at the merge-base: {err.strip()}']
+    # Resolve the pinned rev once: with a symbolic ``HEAD`` a broken ref would
+    # make every per-entry query exit 1 and be reported as "the event was
+    # rewritten" (the query failed; it did not answer).
+    code, _, err = git(root, 'rev-parse', '--verify', '--quiet',
+                       f'{pinned_head()}^{{commit}}')
+    if code:
+        return [f'cannot resolve {pinned_head()} to a commit: {err.strip()}']
     issues = []
     for entry in filter(None, out.split('\0')):
         meta, raw_path = entry.split('\t', 1)
@@ -3874,7 +3881,7 @@ def _admin_dir(root):
 # while the entry was still on disk.  Callers must treat any sighting of this
 # value as "not proven clean" (fail closed).
 _UNREADABLE_GITDIR = object()
-_URL_SCHEME = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+://')
+_URL_SCHEME = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*://')
 
 
 # ``.git/worktrees`` entries whose ``gitdir`` could not be read in this run.
@@ -3933,17 +3940,26 @@ def _admin_match(recorded, wanted):
     """Classify one readable ``gitdir`` against this holder's ``<tree>/.git``.
 
     ``ours`` / ``other`` / ``torn``.  A recorded path that is a *strict
-    ancestor* of ``wanted`` cannot name a different worktree here: this run's
-    holder is a fresh ``mkdtemp`` directory, so nothing git registered earlier
-    can sit above it and inside it at the same time.  That shape is a
-    truncated write of our own path (see ``_recorded_gitdir``) and must stay
-    "unproven", not become "proven not ours" -- the latter deregisters the
-    holder and calls a leftover entry clean.
+    ancestor* of ``wanted`` is either another worktree registered above this
+    run's fresh holder (its gitdir is a file, e.g. ``TMPDIR`` inside another
+    worktree of the same repository) or a truncated write of our own path (a
+    directory such as the repository's ``.git``, or nothing on disk).  Only
+    the second kind is ``torn``; reading it as "proven not ours" would
+    deregister the holder and call a leftover entry clean.
     """
     if recorded == wanted:
         return 'ours'
     prefix = recorded.rstrip('/') + '/'
     if wanted.startswith(prefix):
+        # A linked worktree's recorded gitdir is a *file* (``gitdir: ...``).
+        # A strict ancestor that is such a file is a real worktree registered
+        # above this run's holder -- e.g. ``TMPDIR`` inside another worktree
+        # of the same repository -- and must not be called a torn write, or
+        # every run there would block forever.  A directory (the repository's
+        # own ``.git``) or a path that is not there is what a truncation
+        # leaves behind.
+        if os.path.isfile(recorded):
+            return 'other'
         return 'torn'
     return 'other'
 
@@ -4128,7 +4144,8 @@ def holder_verdict(holders):
     detail = '; '.join(sorted({str(holder) for _root, holder in holders})[:5])
     if _UNVERIFIED_ADMIN_ENTRIES:
         detail += (' -- and .git/worktrees has entries whose gitdir cannot be '
-                   'read (they may belong to a concurrent sibling, not to this '
+                   'read, or is a truncated prefix of this run\'s snapshot '
+                   'path (they may belong to a concurrent sibling, not to this '
                    'snapshot): '
                    + '; '.join(sorted(_UNVERIFIED_ADMIN_ENTRIES)[:5]))
     return ('the precheck could not verify its own snapshot bookkeeping is gone; '
