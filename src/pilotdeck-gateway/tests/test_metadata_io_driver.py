@@ -235,9 +235,11 @@ class EnvironmentControls(unittest.TestCase):
         # scope runs Python/git only and gates the four heavy jobs (#1199);
         # metadata-observer/rust/a51-coverage need their own Node and check gates;
         # negative-controls is Python/cargo only (#1632) and is gated like a heavy job;
+        # retirement-outcome-parity is pure Python (#1809) and is gated the same way;
         # check only aggregates; gateway-schema-baseline has Node and its own required check.
         self.assertEqual(set(jobs), {'scope', 'metadata-observer', 'check', 'rust', 'a51-coverage',
-                                    'negative-controls', 'gateway-schema-baseline'},
+                                    'negative-controls', 'retirement-outcome-parity',
+                                    'gateway-schema-baseline'},
                          f'{issue} exact CI job inventory')
         return jobs
 
@@ -323,7 +325,8 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                 'retirement-outcome-parity')
         for name in jobs:
             self.assertIn(name, jobs, f'#904 required job {name} exists')
             self.assertNotRegex(jobs[name], r'''(?m)^\s*(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''',
@@ -334,7 +337,7 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
         steps = self.ci_steps('check', check)
-        self.assertEqual(len(steps), 5, '#904 exactly five rejection steps')
+        self.assertEqual(len(steps), 6, '#904 exactly six rejection steps')
 
         def gate_steps(condition):
             return [step for step in steps
@@ -373,7 +376,8 @@ class EnvironmentControls(unittest.TestCase):
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                 'retirement-outcome-parity')
         cases = []
 
         def change(label, old, new, message):
@@ -401,12 +405,14 @@ class EnvironmentControls(unittest.TestCase):
                       "        if: ${{ always() && needs.scope.result != 'success' }}\n"
                       '        working-directory: .\n'
                       '        run: exit 1\n')
-        change('scope-gate-removed', scope_step, '', '#904 exactly five rejection steps')
+        change('scope-gate-removed', scope_step, '', '#904 exactly six rejection steps')
         change('scope-gate-relaxed', "needs.scope.result != 'success'",
                "needs.scope.result == 'failure'", '#904 scope failure must reject the merge')
         change('check-needs-drops-scope',
-               'needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
-               'needs: [metadata-observer, rust, a51-coverage, negative-controls]',
+               'needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, '
+               'retirement-outcome-parity]',
+               'needs: [metadata-observer, rust, a51-coverage, negative-controls, '
+               'retirement-outcome-parity]',
                '#904 exact required needs')
         # #1199 规格 4：重 job 加 continue-on-error → 必须失败。
         for owner in heavy:
@@ -770,8 +776,10 @@ class EnvironmentControls(unittest.TestCase):
         workflow = self.ci_workflow_fixture()
         cases = []
         for name, body in self.ci_jobs().items():
-            if name in ('check', 'scope', 'negative-controls'):
-                continue  # check 只聚合；scope 只跑 Python/git（#1199）；negative-controls 只跑 Python/cargo（#1632）
+            if name in ('check', 'scope', 'negative-controls', 'retirement-outcome-parity'):
+                # check 只聚合；scope 只跑 Python/git（#1199）；negative-controls 只跑
+                # Python/cargo（#1632）；retirement-outcome-parity 只跑 Python（#1809）。
+                continue
             setups = re.findall(r'      - uses: actions/setup-node@v4\n'
                                 r'(?:        .*\n|          .*\n)*', body)
             self.assertEqual(len(setups), 1, f'#909 {name} unique setup anchor')
@@ -4920,8 +4928,10 @@ self_check_controls_run | return | return problems
         cases.append(('doctest-in-other-job', workflow.replace(doc, '', 1).replace('    steps:\n', '    steps:\n' + doc, 1),
                       '#922 文档测试 occurs once in rust'))
         for old, new, message in (
-                ('needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
-                 'needs: [scope, metadata-observer, a51-coverage, negative-controls]',
+                ('needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, '
+                 'retirement-outcome-parity]',
+                 'needs: [scope, metadata-observer, a51-coverage, negative-controls, '
+                 'retirement-outcome-parity]',
                  '#904 exact required needs'),
                 ("needs.rust.result != 'success'", "needs.rust.result == 'failure'",
                  '#904 rust rejects every non-success beyond the docs-only skip')):
