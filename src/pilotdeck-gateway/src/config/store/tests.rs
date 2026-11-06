@@ -623,6 +623,11 @@ async fn huge_poll_interval_is_clamped_and_keeps_sampling() {
         MAX_POLL_INTERVAL,
         "#1736 a representable over-ceiling poll interval must land on the ceiling"
     );
+    assert_eq!(
+        MAX_POLL_INTERVAL,
+        Duration::from_secs(60),
+        "#1793 the poll ceiling pins the documented one-minute clamp"
+    );
 }
 
 /// #1736: the overflow fallback itself must be panic-free and deterministic.
@@ -904,13 +909,13 @@ fn parent_watched_config_file_content_is_sampled() {
     // control (no target) is the old entry-metadata-only fingerprint.
     let target = Some(std::ffi::OsStr::new("pilotdeck.yaml"));
     assert_ne!(
-        fingerprint(&root.0, true, target, true),
-        fingerprint(&root.0, true, None, true)
+        fingerprint(&root.0, true, target, true).0,
+        fingerprint(&root.0, true, None, true).0
     );
     let other = Some(std::ffi::OsStr::new("other.yaml"));
     assert_eq!(
-        fingerprint(&root.0, true, other, true),
-        fingerprint(&root.0, true, None, true)
+        fingerprint(&root.0, true, other, true).0,
+        fingerprint(&root.0, true, None, true).0
     );
 }
 
@@ -1003,6 +1008,113 @@ fn restored_mtime_rewrite_still_reads_the_content() {
         before + 1,
         "#1739 the same-length mtime-restored rewrite is content-sampled once"
     );
+}
+
+/// #1792: a transient content-read failure (EMFILE/ENFILE-class) must not
+/// commit the metadata fingerprint — committing anyway closed the recovery
+/// path for good, because every later sample with identical metadata
+/// short-circuited before retrying the read. The failure is injected through
+/// the per-path hook (no fd exhaustion, no chmod — those disturb the shared
+/// fd table or bump ctime and mask the bug). Asserted in order: the change is
+/// reported once while failing, stays quiet while the failure persists (no
+/// reload storm), and — with no metadata change at all — is re-reported once
+/// the read recovers.
+#[test]
+fn transient_read_failure_is_retried_until_the_content_is_seen() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#1792 file watched");
+    let before = content_reads(&path);
+    // The write that must be seen; the next three content reads fail.
+    root.write(&other_model());
+    arm_content_read_failures(&path, 3);
+    // Sample 1: the read fails, so the sample is incomplete — the change is
+    // reported once (the full fingerprint folds the failed read to `None`),
+    // and no metadata fingerprint is committed.
+    assert!(
+        watched.changed(),
+        "#1792 the first (incomplete) sample still reports the change once"
+    );
+    // Samples 2 and 3: the read keeps failing, so every tick re-samples —
+    // but the same unreadable state must not re-report (no reload storm).
+    assert!(
+        !watched.changed(),
+        "#1792 a persistently unreadable sample stays quiet"
+    );
+    assert!(
+        !watched.changed(),
+        "#1792 a persistently unreadable sample stays quiet"
+    );
+    assert_eq!(
+        content_reads(&path),
+        before,
+        "#1792 the failed reads are not counted as content reads"
+    );
+    // The armed failures are exhausted; nothing else changes — no rewrite, no
+    // mtime/chmod touch, so the metadata is bit-for-bit identical. The next
+    // tick must still retry the read and report the recovered content.
+    assert!(
+        watched.changed(),
+        "#1792 the read is retried after recovery with no metadata change"
+    );
+    assert_eq!(
+        content_reads(&path),
+        before + 1,
+        "#1792 the recovered sample reads the content exactly once"
+    );
+    // Back on the committed fingerprints: quiet, and no content read.
+    assert!(
+        !watched.changed(),
+        "#1792 a complete sample commits the metadata short-circuit again"
+    );
+    assert_eq!(content_reads(&path), before + 1);
+    // The committed state matches a fresh complete sample of the same file.
+    let fresh = WatchedPath::new(path.clone()).expect("#1792 fresh watch");
+    assert_eq!(fresh.fingerprint, watched.fingerprint);
+    assert_eq!(fresh.metadata_fingerprint, watched.metadata_fingerprint);
+    clear_content_read_failures(&path);
+}
+
+/// #1792: the startup sample follows the same rule — a file that was
+/// unreadable when watching started commits no metadata fingerprint, so the
+/// tick after the read recovers re-samples and reports, without any metadata
+/// change in between.
+#[test]
+fn startup_read_failure_is_retried_until_the_content_is_seen() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    // The startup content read fails; the metadata-only pass succeeds.
+    arm_content_read_failures(&path, 1);
+    let mut watched = WatchedPath::new(path.clone()).expect("#1792 file watched");
+    assert_eq!(
+        content_reads(&path),
+        0,
+        "#1792 the failed startup read is not counted"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1792 an incomplete startup sample commits no metadata fingerprint"
+    );
+    // No write, no metadata change: the next tick retries the read and sees
+    // the content that startup could not.
+    assert!(
+        watched.changed(),
+        "#1792 recovery from a failed startup sample needs no metadata change"
+    );
+    assert_eq!(
+        content_reads(&path),
+        1,
+        "#1792 the retry reads the content exactly once"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint,
+        Some(fingerprint(&path, false, None, false).0),
+        "#1792 a complete sample commits the metadata fingerprint"
+    );
+    assert!(!watched.changed(), "#1792 back on the short-circuit");
+    clear_content_read_failures(&path);
 }
 
 #[test]
