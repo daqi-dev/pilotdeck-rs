@@ -801,19 +801,32 @@ impl TranscriptWriter {
         inner.entry_ids = ids;
         inner.recorder_domain = domain;
         // Hydration runs every registered reducer over the whole log, reducer by
-        // reducer (turnSummary, then the compact boundary + WebHistory token
-        // usage, then metadata) — not entry by entry: a malformed entry late in
-        // the log wins over an earlier one from a later reducer.
+        // reducer, in registration order — not entry by entry: a malformed entry
+        // late in the log wins over an earlier one from a later reducer.
+        // `BuiltinSessionProjections.ts` registers the agent-transcript cell
+        // first and WebHistory after it; inside that cell the order is
+        // conversation → turnSummary → metadata → compactBoundary
+        // (`AgentTranscriptProjections.ts:436-440`). So: conversation's compact
+        // boundary reduce, turn summary, metadata, and only then WebHistory's
+        // `compactMetadata.postTokens`. Codex #1985 r2 measured the two
+        // double-fault combinations that pin this order:
+        //   metadata:null + boundary without postTokens -> `reading 'title'`
+        //   replacementMessages:42 + usage:null        -> `messages.map is not a function`
+        for entry in entries {
+            if is_str(field(entry, "type"), "control_boundary") {
+                control_boundary_supported(entry)?;
+            }
+        }
         for entry in entries {
             turn_summary_supported(entry)?;
         }
         for entry in entries {
-            if is_str(field(entry, "type"), "control_boundary") {
-                control_boundary_supported(entry, true)?;
-            }
+            metadata_reduce_supported(entry)?;
         }
         for entry in entries {
-            metadata_reduce_supported(entry)?;
+            if is_str(field(entry, "type"), "control_boundary") {
+                compact_budget_supported(entry)?;
+            }
         }
         // WebHistory reads message.content.some even for incomplete turns.
         for entry in entries {
@@ -1391,7 +1404,10 @@ fn nullish(value: &JsValue) -> bool {
 fn restore_entry_supported(entry: &JsValue) -> AdapterResult<()> {
     match lossy_value(field(entry, "type")).as_str() {
         "turn_result" => turn_summary_supported(entry),
-        "control_boundary" => control_boundary_supported(entry, true),
+        "control_boundary" => {
+            control_boundary_supported(entry)?;
+            compact_budget_supported(entry)
+        }
         "session_metadata" => metadata_reduce_supported(entry),
         _ => Ok(()),
     }
@@ -1485,10 +1501,14 @@ fn list_conversation_entry_supported(entry: &JsValue, before_boundary: bool) -> 
 }
 /// `projectSessionInfo`'s summary line, evaluated on the **merged** metadata
 /// after every projection has run: `metadata.title?.trim()` first, then
-/// `metadata.aiTitle?.trim()` only when the trimmed title is falsy.
+/// `metadata.aiTitle?.trim()` only when the trimmed title is falsy. Optional
+/// chaining short-circuits on `null` as well as `undefined`, so a `null` title
+/// or `null` aiTitle is simply "no text"; only a present non-string value
+/// reaches `.trim` and throws.
 fn list_title_supported(title: &Option<JsValue>, ai_title: &Option<JsValue>) -> AdapterResult<()> {
     let blank = match title {
         None => true,
+        Some(value) if nullish(value) => true,
         Some(JsValue::String(text)) => js_trim_units(text.units()).is_empty(),
         Some(_) => {
             return Err(AdapterError::Type(
@@ -1496,7 +1516,7 @@ fn list_title_supported(title: &Option<JsValue>, ai_title: &Option<JsValue>) -> 
             ));
         }
     };
-    if blank && matches!(ai_title, Some(value) if value.as_string().is_none()) {
+    if blank && matches!(ai_title, Some(value) if !nullish(value) && value.as_string().is_none()) {
         return Err(AdapterError::Type(
             "metadata.aiTitle?.trim is not a function".into(),
         ));
@@ -1513,7 +1533,7 @@ fn last_compact_boundary_index(entries: &[JsValue]) -> AdapterResult<isize> {
         if !is_str(field(entry, "type"), "control_boundary") {
             continue;
         }
-        control_boundary_supported(entry, false)?;
+        control_boundary_supported(entry)?;
         let boundary = field(entry, "boundary");
         if !is_str(field(boundary, "kind"), "compact")
             || !is_str(field(boundary, "subtype"), "compact_boundary")
@@ -1570,24 +1590,22 @@ fn cannot_read(value: &JsValue, property: &str) -> AdapterError {
 /// (WebHistoryProjections.ts:379-381). Shapes the reducers ignore pass on both
 /// ports; the checks below reproduce only what throws. Live appends go through
 /// `drive`, which catches reducer errors instead.
-fn control_boundary_supported(entry: &JsValue, reads_compact_metadata: bool) -> AdapterResult<()> {
+fn control_boundary_supported(entry: &JsValue) -> AdapterResult<()> {
     let boundary = field(entry, "boundary");
     // Conversation reducer: `entry.boundary.kind` runs before any shape check.
     if nullish(boundary) {
         return Err(cannot_read(boundary, "kind"));
     }
-    let Some(object) = boundary.as_object() else {
+    if boundary.as_object().is_none() {
         // Primitives and arrays: `.kind` reads undefined and every reducer
         // ignores the entry.
         return Ok(());
-    };
+    }
     if !is_str(field(boundary, "kind"), "compact") {
         // resume/manual and unknown kinds never reach the compact logic.
         return Ok(());
     }
-    let compact =
-        object.contains_key("subtype") && is_str(field(boundary, "subtype"), "compact_boundary");
-    if !compact {
+    if !boundary_has_compact_subtype(boundary) {
         // Microcompact and unknown subtypes never reach the compact logic.
         return Ok(());
     }
@@ -1600,16 +1618,36 @@ fn control_boundary_supported(entry: &JsValue, reads_compact_metadata: bool) -> 
     {
         return Err(error);
     }
-    // Web-history token-usage reducer reads `compactMetadata.postTokens` for
-    // the same subtype, after every agent-transcript cell has reduced the log.
-    // listSessions never runs WebHistory, so its port passes false here.
-    if reads_compact_metadata {
-        let metadata = field(boundary, "compactMetadata");
-        if nullish(metadata) {
-            return Err(cannot_read(metadata, "postTokens"));
-        }
+    Ok(())
+}
+/// WebHistory's `projectCompactBudget` runs in a **later** pass than the
+/// conversation reducer above and than the turn-summary and metadata reducers
+/// (registration order: conversation, turnSummary, metadata, compactBoundary,
+/// subagentReferences, fileHistory, WebHistory — `BuiltinSessionProjections.ts`
+/// plus `AgentTranscriptProjections.ts:436-440`). It reads
+/// `positiveNumber(compactMetadata.postTokens)` for the same subtype, so a null
+/// `compactMetadata` throws only after those three passes have scanned the
+/// whole log. `listSessions` never runs WebHistory, so the list port does not
+/// call this.
+fn compact_budget_supported(entry: &JsValue) -> AdapterResult<()> {
+    let boundary = field(entry, "boundary");
+    if boundary.as_object().is_none()
+        || !is_str(field(boundary, "kind"), "compact")
+        || !boundary_has_compact_subtype(boundary)
+    {
+        return Ok(());
+    }
+    let metadata = field(boundary, "compactMetadata");
+    if nullish(metadata) {
+        return Err(cannot_read(metadata, "postTokens"));
     }
     Ok(())
+}
+fn boundary_has_compact_subtype(boundary: &JsValue) -> bool {
+    boundary
+        .as_object()
+        .is_some_and(|object| object.contains_key("subtype"))
+        && is_str(field(boundary, "subtype"), "compact_boundary")
 }
 /// readCompactSnapshot (CompactSnapshot.ts:5-27) restricted to a boundary
 /// already known to be `kind: "compact", subtype: "compact_boundary"`:

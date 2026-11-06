@@ -45,7 +45,7 @@ with scratch('fix2') as root:
         test(name, DOMAIN_TEST, env, diagnostic)
         shutil.copyfile(FIXTURES / 'session-domain/oracle.json', domain)
     for name, path, fixture, target, count in [
-        ('drop-adapter-scenarios', transcript, 'transcript-adapter', ADAPTER_TEST, 480),
+        ('drop-adapter-scenarios', transcript, 'transcript-adapter', ADAPTER_TEST, 482),
         ('drop-domain-scenarios', domain, 'session-domain', DOMAIN_TEST, 304),
     ]:
         oracle = json.loads(path.read_bytes())
