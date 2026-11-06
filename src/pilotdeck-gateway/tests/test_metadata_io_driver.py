@@ -5,6 +5,7 @@ import os
 from collections import Counter
 from pathlib import Path
 import re
+import stat
 import subprocess
 import tempfile
 import tomllib
@@ -801,7 +802,7 @@ class EnvironmentControls(unittest.TestCase):
                 for node in sorted(sites, key=lambda node: (node.lineno, node.col_offset))]
 
     def self_check_appends(self, source):
-        """五个自检函数里的全部见证，按函数分组、组内按出现顺序（#1843 C）。"""
+        """六个自检函数里的全部见证，按函数分组、组内按出现顺序（#1843 C）。"""
         return {function: self.problem_sites(source, function)
                 for function in self.PROBLEM_FUNCTIONS}
 
@@ -816,6 +817,37 @@ class EnvironmentControls(unittest.TestCase):
         ('model-complete/negative-controls.py', 'atomic_write'),
         ('native-stimulus-plan/negative_controls.py', 'write_atomic'),
     )
+    # r3（MiniMax boundary P2）：临时文件「由仓根 scratch 派生」这一条要能被变异杀掉。
+    SIBLING_TEMP_MUTANTS = {
+        'native-config/negative_controls.py':
+            ('tmp = PUBLISH_DIR / ', 'tmp = path.parent / '),
+        'model-complete/negative-controls.py':
+            ('scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent',
+             'scratch = path.parent'),
+        'native-stimulus-plan/negative_controls.py':
+            ('tmp = PUBLISH_DIR / ', 'tmp = path.parent / '),
+    }
+    # r3（MiniMax concurrency P2）：把调用点换回原地截断写时钉子必须红。
+    SIBLING_WRITE_MUTANTS = {
+        'native-config/negative_controls.py': (
+            ('truncating-mutant-write', 'write_atomic(case.path, changed.encode())',
+             'case.path.write_bytes(changed.encode())'),
+            ('truncating-restore-write', 'write_atomic(case.path, originals[case.path])',
+             'case.path.write_bytes(originals[case.path])'),
+        ),
+        'model-complete/negative-controls.py': (
+            ('truncating-mutant-write', 'atomic_write(path, mutated)',
+             'path.write_bytes(mutated)'),
+            ('truncating-restore-write', 'atomic_write(_active["path"], original)',
+             '_active["path"].write_bytes(original)'),
+        ),
+        'native-stimulus-plan/negative_controls.py': (
+            ('truncating-mutant-write', 'write_atomic(path, changed.encode())',
+             'path.write_bytes(changed.encode())'),
+            ('truncating-restore-write', 'write_atomic(path, originals[path])',
+             'path.write_bytes(originals[path])'),
+        ),
+    }
 
     def sibling_atomic_body(self, source, function):
         for node in ast.walk(ast.parse(source)):
@@ -824,13 +856,27 @@ class EnvironmentControls(unittest.TestCase):
         self.fail(f'#1692 §9 r2 the sibling fixture must define {function}()')
 
     def sibling_atomic_guards(self, source, function):
-        """#1692 §9 r2：同族夹具的发布必须是 tmp + fsync + chmod + 一次 rename。"""
+        """#1692 §9 r2/r3：同族夹具的发布必须是 tmp + fsync + chmod + 一次 rename。"""
         body = self.sibling_atomic_body(source, function)
         self.assertRegex(source, r"PUBLISH_DIR = (?:ROOT|root) / ['\"]\.negctl-publish['\"]",
                          '#1692 §9 r2 the scratch dir is the ignored root namespace, '
                          'not a directory inside the scanned src area')
-        self.assertIn('PUBLISH_DIR', body,
-                      '#1692 §9 r2 the temp is published through PUBLISH_DIR')
+        # r3（MiniMax boundary P2）：只判「body 里出现过 PUBLISH_DIR」会被
+        # `PUBLISH_DIR.mkdir(...)` 那一行满足——把临时文件挪回目标旁边照样过钉。
+        # 钉「临时路径由仓根 scratch 派生」本身。
+        self.assertRegex(body, r"(?:tmp = (?:PUBLISH_DIR|scratch) /"
+                               r"|mkstemp\(dir=str\((?:PUBLISH_DIR|scratch)\))",
+                         '#1692 §9 r2 the temp path must be DERIVED from the root '
+                         'scratch dir, not merely mention it')
+        self.assertNotIn('tmp = path.parent', body,
+                         '#1692 §9 r2 a temp beside the target reintroduces the '
+                         'untracked-build-input lockout inside src/')
+        if 'scratch' in body:
+            # 仓内目标走仓根 scratch（不在任何被扫区）；仓外侧车（状态目录）留在
+            # 目标同目录，否则跨卷 `os.replace` 抛 EXDEV（r3 两家评审）。
+            self.assertRegex(body, r'scratch = PUBLISH_DIR if path\.is_relative_to\(ROOT\)'
+                                   r' else path\.parent',
+                             '#1692 §9 r2 the scratch dir follows the target')
         self.assertIn('mode = path.stat().st_mode & 0o7777', body,
                       '#1692 §9 r2 the published mode is taken from the source')
         self.assertIn('os.fsync(', body,
@@ -847,16 +893,54 @@ class EnvironmentControls(unittest.TestCase):
                          '#1692 §9 r2 a failed publish leaves no temp behind')
         return body
 
+    def sibling_write_guards(self, source, relative):
+        """#1692 §9 r2/r3：被变异源一处原地截断写都不许有，全走原子发布。"""
+        for pattern, what in ((r'(?<![\w.])path\.write_(?:text|bytes)\(', 'the mutant source'),
+                              (r'\bcase\.path\.write_(?:text|bytes)\(', 'the case source')):
+            self.assertEqual(re.findall(pattern, source), [],
+                             f'#1692 §9 r2 {relative} {what} is never written in place')
+        self.assertNotIn('_active["path"].write_', source,
+                         f'#1692 §9 r2 {relative} the recovery restore is atomic too')
+        self.assertNotIn("path.name + '.negctl.tmp'", source, relative)
+        self.assertNotIn('mkstemp(dir=str(path.parent)', source, relative)
+
+    def sibling_module(self, relative, source=None):
+        """把同族夹具当模块执行（只取模块级常量与发布函数，不跑 main）。"""
+        path = Path(__file__).resolve().parent / 'fixtures' / relative
+        namespace = {'__file__': str(path), '__name__': 'sibling_atomic_write_probe'}
+        exec(compile(source if source is not None else path.read_text(),
+                     str(path), 'exec'), namespace)
+        return namespace
+
+    def exercise_sibling_atomic_write(self, module):
+        """#1692 §9 r3：目标不存在也要能发布；已有目标的 mode 原样保留、无残留。"""
+        with tempfile.TemporaryDirectory(prefix='pdrs-1692-atomic-') as directory:
+            directory = Path(directory)
+            missing = directory / 'original.http.rs'
+            try:
+                module['atomic_write'](missing, b'first')
+            except OSError as error:
+                self.fail('#1692 §9 r3 a target that does not exist yet must still '
+                          f'be published (first-run recovery sidecar): {error}')
+            self.assertEqual(missing.read_bytes(), b'first')
+            self.assertEqual(stat.S_IMODE(missing.stat().st_mode), 0o600,
+                             '#1692 §9 r3 a new private sidecar is published 0600')
+            missing.chmod(0o640)
+            module['atomic_write'](missing, b'second')
+            self.assertEqual(missing.read_bytes(), b'second')
+            self.assertEqual(stat.S_IMODE(missing.stat().st_mode), 0o640,
+                             '#1692 §9 r3 an existing target keeps its own mode')
+            self.assertEqual(sorted(item.name for item in directory.iterdir()),
+                             ['original.http.rs'],
+                             '#1692 §9 r3 a successful publish leaves no temp behind')
+
     def test_sibling_source_writes_are_published_atomically(self):
         root = Path(__file__).resolve().parent / 'fixtures'
         for relative, function in self.SIBLING_ATOMIC_WRITES:
             source = (root / relative).read_text()
             self.sibling_atomic_guards(source, function)
             # 每个变异写入点都要走它：形式各异，所以钉「原地截断写零命中」。
-            self.assertNotIn('path.write_text(changed)', source, relative)
-            self.assertNotIn('path.write_bytes(originals[path])', source, relative)
-            self.assertNotIn("path.name + '.negctl.tmp'", source, relative)
-            self.assertNotIn('mkstemp(dir=str(path.parent)', source, relative)
+            self.sibling_write_guards(source, relative)
             scratch = re.search(r"PUBLISH_DIR = (?:ROOT|root) / (['\"])\.negctl-publish\1",
                                 source)
             self.assertIsNotNone(scratch, f'#1692 §9 r2 {relative} scratch constant')
@@ -870,13 +954,40 @@ class EnvironmentControls(unittest.TestCase):
                                       "/ 'src' / " + quote + '.negctl-publish')),
                     ('scratch-dir-unignored', constant,
                      constant.replace(quote + '.negctl-publish',
-                                      quote + 'negctl-publish'))):
+                                      quote + 'negctl-publish')),
+                    ('temp-derived-from-the-target', *self.SIBLING_TEMP_MUTANTS[relative])):
                 self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
                 with self.assertRaises(AssertionError,
                                        msg=f'#1692 §9 r2 {relative} {label} must be caught'):
                     self.sibling_atomic_guards(source.replace(old, new, 1), function)
                 print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
                       flush=True)
+            for label, old, new in self.SIBLING_WRITE_MUTANTS[relative]:
+                self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
+                    self.sibling_write_guards(source.replace(old, new, 1), relative)
+                print(f'#1692 §9 r2 sibling-write mutant {relative} {label}: KILLED',
+                      flush=True)
+        # r3（两家 boundary/concurrency）：静态形态钉不住「目标不存在时直接崩」。
+        # 真执行一次发布函数：首次创建恢复侧车必须成功，已有目标必须保留 mode。
+        module = self.sibling_module('model-complete/negative-controls.py')
+        self.exercise_sibling_atomic_write(module)
+        print('#1692 §9 r3 sibling-publish behaviour: missing and existing targets '
+              'published (live)', flush=True)
+        source = (root / 'model-complete/negative-controls.py').read_text()
+        for label, old, new in (
+                ('missing-target-requires-an-existing-mode',
+                 'mode = path.stat().st_mode & 0o7777 if path.exists() else 0o600',
+                 'mode = path.stat().st_mode & 0o7777'),
+                ('new-sidecar-published-world-readable', 'else 0o600', 'else 0o644')):
+            self.assertIn(old, source, f'#1692 §9 r3 model-complete anchor: {label}')
+            with self.assertRaises(AssertionError,
+                                   msg=f'#1692 §9 r3 model-complete {label} must be caught'):
+                self.exercise_sibling_atomic_write(self.sibling_module(
+                    'model-complete/negative-controls.py', source.replace(old, new, 1)))
+            print(f'#1692 §9 r3 sibling-publish behaviour mutant {label}: KILLED',
+                  flush=True)
 
     def test_self_check_every_problem_is_pinned(self):
         # #1843 C（GLM r2 sibling P2）：r14 只钉了 gates 循环那三处；tree-lock 段与
@@ -946,6 +1057,9 @@ class EnvironmentControls(unittest.TestCase):
                 "f'dispatch: an argument became an output path: {created}'",
             ],
             'self_check_controls_run': [
+                "f'control copy: {error}'",
+                "f'control copy: --self-check did not finish within {CONTROL_TIMEOUT_SECONDS}s'",
+                "f'control copy: an unmutated copy failed (rc={result.returncode}): {tail}'",
                 "f'{name}: INVALID {error}'",
                 "f'{name}: INVALID (no verdict within ' f'{CONTROL_TIMEOUT_SECONDS}s)'",
                 "f'{name}: SURVIVED (rc={result.returncode}, message ' "
@@ -975,7 +1089,7 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual({function: len(rows) for function, rows in pinned.items()},
                          {'self_check': 14, 'slot_timeout_probe': 5, 'restore_probe': 11,
                           'dispatch_probe': 4, 'deadline_probe': 15,
-                          'self_check_controls_run': 3},
+                          'self_check_controls_run': 6},
                          '#1843 C the pinned witness count per function')
         self.assertEqual(len(set(sites)), len(sites),
                          '#1843 C each witness is one uniquely anchored site')
