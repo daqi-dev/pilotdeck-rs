@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import { createCipheriv, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -814,13 +815,229 @@ for (const definition of definitions) {
     clearTimeout(timer);
   }
 }
+// ── #1823 inbound media: AES-ECB candidates + CDN download ─────────────────
+// The media helpers are module-level (not exported) in WeixinChannel.ts, so
+// this generator loads the exact source slice and evaluates it verbatim —
+// the same "transcribe and execute" contract the rest of this fixture uses.
+// `assertBaseline` above already pins the whole file's sha256; the slice hash
+// is recorded too, so a drifting marker fails as a diff instead of silently
+// testing a different function.
+const MEDIA_SLICE_START = 'function extractWeixinMediaUrl(';
+const MEDIA_SLICE_END = 'function installIlinkFetchCompatibility(';
+const mediaChannelSource = await readFile(
+  join(baseline, 'src/adapters/channel/weixin/WeixinChannel.ts'), 'utf8');
+const mediaSliceStart = mediaChannelSource.indexOf(MEDIA_SLICE_START);
+const mediaSliceEnd = mediaChannelSource.indexOf(MEDIA_SLICE_END);
+assert.ok(mediaSliceStart >= 0 && mediaSliceEnd > mediaSliceStart, '#1823 media slice markers');
+const mediaSlice = mediaChannelSource.slice(mediaSliceStart, mediaSliceEnd);
+const mediaSliceSha256 = createHash('sha256').update(mediaSlice).digest('hex');
+const cdnBaseLiteral = /const WEIXIN_CDN_BASE_URL = ("(?:[^"\\]|\\.)*");/.exec(mediaChannelSource);
+assert.ok(cdnBaseLiteral, '#1823 WEIXIN_CDN_BASE_URL literal');
+const mediaModuleAbs = join(baseline, 'src/adapters/channel/weixin/__pr2b2_media_slice__.ts');
+compiled.set(mediaModuleAbs, transformSync([
+  "import { createDecipheriv } from 'node:crypto';",
+  `const WEIXIN_CDN_BASE_URL = ${cdnBaseLiteral[1]};`,
+  mediaSlice,
+  'export { WEIXIN_CDN_BASE_URL, extractWeixinMediaUrl, decryptWeixinMediaIfNeeded,',
+  '  summarizeWeixinMediaKeyShape, summarizeWeixinDecryptCandidates, extractWeixinMediaKeys,',
+  '  tryDecryptWeixinMedia, isKnownImageBuffer, isLikelyKnownFileBuffer };',
+].join('\n'), { loader: 'ts', format: 'cjs', target: 'es2022' }).code);
+const media = loadModule(mediaModuleAbs);
+const { ImAttachmentStore } = loadModule(
+  join(baseline, 'src/adapters/channel/protocol/ImAttachmentStore.ts'));
+
+const mediaCases: any[] = [];
+const seq = (length: number, start = 0) =>
+  Buffer.from(Array.from({ length }, (_, index) => (start + index) & 0xff));
+const jpegBuffer = () => Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+  seq(300, 7),
+]);
+const pdfBuffer = () => Buffer.concat([Buffer.from('%PDF-1.7\n'), seq(300, 1), Buffer.from('\n%%EOF\n')]);
+const textBuffer = () => Buffer.from(`${'x'.repeat(200)}\n`);
+const encryptEcb = (plaintext: Buffer, key: Buffer) => {
+  const cipher = createCipheriv(`aes-${key.length * 8}-ecb`, key, null);
+  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
+};
+const key16 = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex');
+const key16b = Buffer.from('101112131415161718191a1b1c1d1e1f', 'hex');
+const key24 = Buffer.from('000102030405060708090a0b0c0d0e0f1011121314151617', 'hex');
+const key32 = Buffer.from('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f', 'hex');
+
+// `WeixinChannel.ts:631-643` log tail, composed from the same primitives.
+function imageDecryptLog(buffer: Buffer, mediaOwner: unknown): string {
+  const result = media.decryptWeixinMediaIfNeeded(buffer, mediaOwner);
+  return `input=${buffer.byteLength} output=${result.byteLength} changed=${result !== buffer} `
+    + `image=${media.isKnownImageBuffer(result)} ${media.summarizeWeixinMediaKeyShape(mediaOwner)} `
+    + `${media.summarizeWeixinDecryptCandidates(buffer, mediaOwner)}`;
+}
+
+function decryptCase(name: string, buffer: Buffer, mediaOwner: unknown, expectCiphertext = false) {
+  // An "encrypted" fixture whose ciphertext already carried an image magic
+  // would short-circuit on the passthrough check and test nothing, so the
+  // generator refuses to record one. The *file* expectation is deliberately
+  // not guarded: `isLikelyKnownFileBuffer` ends in the mostly-text heuristic,
+  // which real ciphertext can hit, and that skip is baseline behaviour the
+  // replay must reproduce (see `media-image-owner-hex-64-not-a-key`).
+  if (expectCiphertext) {
+    assert.equal(media.isKnownImageBuffer(buffer), false, `${name}: ciphertext looks like an image`);
+  }
+  const result = media.decryptWeixinMediaIfNeeded(buffer, mediaOwner);
+  const fileResult = media.decryptWeixinMediaIfNeeded(buffer, mediaOwner, media.isLikelyKnownFileBuffer);
+  mediaCases.push({
+    name,
+    kind: 'decrypt',
+    input: { bufferHex: buffer.toString('hex'), mediaOwner },
+    expected: {
+      keys: media.extractWeixinMediaKeys(mediaOwner).map((key: Buffer) => key.toString('hex')),
+      keyShape: media.summarizeWeixinMediaKeyShape(mediaOwner),
+      candidates: media.summarizeWeixinDecryptCandidates(buffer, mediaOwner),
+      imageLog: imageDecryptLog(buffer, mediaOwner),
+      resultHex: result.toString('hex'),
+      changed: result !== buffer,
+      image: media.isKnownImageBuffer(result),
+      fileResultHex: fileResult.toString('hex'),
+      fileChanged: fileResult !== buffer,
+      fileKnown: media.isLikelyKnownFileBuffer(fileResult),
+      downloadUrl: media.extractWeixinMediaUrl(mediaOwner) ?? null,
+    },
+  });
+}
+
+decryptCase('media-image-plaintext-passthrough', jpegBuffer(), { aeskey: key16.toString('hex') });
+decryptCase('media-image-owner-hex-aes128', encryptEcb(jpegBuffer(), key16), { aeskey: key16.toString('hex') }, true);
+// `aeskey` is only honoured at exactly 32 hex characters, so a 48/64-char hex
+// owner key yields no candidate at all (it is retried as base64, which does
+// not decode to 16/24/32 bytes either). aes-192/256 come through media.aes_key.
+decryptCase('media-image-owner-hex-48-not-a-key', encryptEcb(jpegBuffer(), key24), { aeskey: key24.toString('hex') }, true);
+decryptCase('media-image-owner-hex-64-not-a-key', encryptEcb(jpegBuffer(), key32), { aeskey: key32.toString('hex') }, true);
+decryptCase('media-image-media-base64-aes128', encryptEcb(jpegBuffer(), key16), { media: { aes_key: key16.toString('base64') } }, true);
+decryptCase('media-image-media-base64-aes192', encryptEcb(jpegBuffer(), key24), { media: { aes_key: key24.toString('base64') } }, true);
+decryptCase('media-image-media-base64-aes256', encryptEcb(jpegBuffer(), key32), { media: { aes_key: key32.toString('base64') } }, true);
+// Owner key first (wrong), media key second (right): candidate two wins.
+decryptCase('media-image-second-candidate-hits', encryptEcb(jpegBuffer(), key16b), {
+  aeskey: key16.toString('hex'),
+  media: { aes_key: key16b.toString('base64') },
+}, true);
+// Real WeChat shape: `media.aes_key` is base64 of the 32-char hex text, so the
+// decoded 32-byte ASCII key is candidate one and the hex-decoded key is two.
+decryptCase('media-image-media-hex-text-key', encryptEcb(jpegBuffer(), key16), {
+  media: { aes_key: Buffer.from(key16.toString('hex'), 'ascii').toString('base64') },
+}, true);
+decryptCase('media-image-dedupes-identical-keys', encryptEcb(jpegBuffer(), key16), {
+  aeskey: key16.toString('hex'),
+  media: { aes_key: key16.toString('base64') },
+}, true);
+decryptCase('media-image-owner-base64-fallback', encryptEcb(jpegBuffer(), key16), { aeskey: key16.toString('base64') }, true);
+decryptCase('media-image-all-miss-falls-back', seq(64, 3), { aeskey: key16.toString('hex') });
+decryptCase('media-image-not-block-multiple', seq(37, 3), { aeskey: key16.toString('hex') });
+decryptCase('media-summary-bad-keys', seq(16, 9), { aeskey: 'zz', media: { aes_key: '!!!' } });
+decryptCase('media-summary-no-owner', seq(16, 9), null);
+decryptCase('media-summary-owner-not-object', seq(16, 9), 'nope');
+// `readString` returns the string untrimmed: `.length` is 36, the hex test
+// uses `.trim()`, and the decoded key is the trimmed 32 hex characters.
+decryptCase('media-summary-trimmed-owner-key', encryptEcb(jpegBuffer(), key16), { aeskey: `  ${key16.toString('hex')}  ` }, true);
+decryptCase('media-file-pdf-plaintext', pdfBuffer(), { aeskey: key16.toString('hex') });
+decryptCase('media-file-encrypted-pdf', encryptEcb(pdfBuffer(), key16), { aeskey: key16.toString('hex') }, true);
+decryptCase('media-file-text-passthrough', textBuffer(), { aeskey: key16.toString('hex') });
+// The plaintext short-circuit is observable here: this buffer already counts
+// as a known file (mostly text) and its decryption under the owner key is
+// *also* mostly text, so dropping `isExpectedBuffer(buffer)` would adopt the
+// decoy instead of returning the input unchanged.
+const decoyKey = Buffer.from('00000000000000000000000000000033', 'hex');
+const decoyPlaintext = Buffer.from(
+  'The quick brown fox jumps over the lazy dog. '.repeat(8).slice(0, 320), 'ascii');
+assert.ok(media.isLikelyKnownFileBuffer(decoyPlaintext), '#1823 decoy plaintext is a known file');
+assert.ok(media.isLikelyKnownFileBuffer(media.tryDecryptWeixinMedia(decoyPlaintext, decoyKey)[0]),
+  '#1823 decoy decryption must also look like a known file');
+decryptCase('media-file-plaintext-wins-over-decrypt', decoyPlaintext, { aeskey: decoyKey.toString('hex') });
+decryptCase('media-url-encrypt-query-param', seq(8, 1), {
+  media: { encrypt_query_param: 'a b/c?d=中&x=1' },
+});
+decryptCase('media-url-fallbacks', seq(8, 1), {
+  media: { full_url: '', download_url: '', url: 'https://example.invalid/file', cdn_url: 'https://example.invalid/other' },
+});
+decryptCase('media-url-missing', seq(8, 1), { media: {} });
+
+// Download cases run the real `ImAttachmentStore.saveFromUrl` against a
+// loopback server; the recorded expectation is what the baseline inbound path
+// observes (bytes or the formatted error), plus the requests the CDN saw.
+async function downloadCase(name: string, responses: any[] | null) {
+  const scenarioDir = await mkdtemp(join(tmpdir(), 'weixin-cdn-'));
+  const mask = makeMask(scenarioDir);
+  const requests: any[] = [];
+  let server: http.Server | undefined;
+  let port: number;
+  if (responses) {
+    const queue = responses.map((response) => ({ ...response }));
+    server = http.createServer((request, response) => {
+      requests.push({ method: request.method, path: request.url });
+      const next = queue.shift() ?? { status: 500 };
+      response.writeHead(next.status, next.headers ?? {});
+      if (next.declaredOnly) {
+        response.write('x');
+        setTimeout(() => response.destroy(), 20);
+        return;
+      }
+      response.end(next.bodyHex ? Buffer.from(next.bodyHex, 'hex') : undefined);
+    });
+    port = await new Promise((done) => server!.listen(
+      0, '127.0.0.1', () => done((server!.address() as net.AddressInfo).port)));
+  } else {
+    // A loopback port that was just bound and released: connect -> ECONNREFUSED.
+    const probe = http.createServer();
+    port = await new Promise((done) => probe.listen(
+      0, '127.0.0.1', () => done((probe.address() as net.AddressInfo).port)));
+    await new Promise((done) => probe.close(done));
+  }
+  // Masking is for the record only — the store must fetch the real URL.
+  const rawUrl = `http://127.0.0.1:${port}/c2c/download?encrypted_query_param=${encodeURIComponent('param value/1')}`;
+  const url = mask(rawUrl) as string;
+  const store = new ImAttachmentStore({ rootDir: join(scenarioDir, 'attachments'), channelKey: 'weixin' });
+  let outcome: any;
+  try {
+    const saved = await store.saveFromUrl({ url: rawUrl, chatId: 'chat-1', messageId: name, type: 'file', name: 'x.bin' });
+    outcome = { ok: true, bytesHex: (await readFile(saved.path)).toString('hex') };
+  } catch (error: any) {
+    outcome = { ok: false, error: `${error?.name}: ${error?.message}` };
+  }
+  mediaCases.push({
+    name,
+    kind: 'download',
+    input: { url, server: responses ? 'responses' : 'closed', responses: responses ?? [] },
+    expected: { ...outcome, requests: mask(requests) },
+  });
+  server?.close();
+  await rm(scenarioDir, { recursive: true, force: true });
+}
+
+const cdnBody = seq(300, 11);
+await downloadCase('media-cdn-download-ok', [
+  { status: 200, headers: { 'content-type': 'application/octet-stream' }, bodyHex: cdnBody.toString('hex') },
+]);
+await downloadCase('media-cdn-download-http-404', [
+  { status: 404, headers: { 'content-type': 'text/plain' }, bodyHex: Buffer.from('missing').toString('hex') },
+]);
+await downloadCase('media-cdn-download-connection-failed', null);
+await downloadCase('media-cdn-download-follows-redirect', [
+  { status: 302, headers: { location: '/final' } },
+  { status: 200, headers: { 'content-type': 'application/octet-stream' }, bodyHex: cdnBody.toString('hex') },
+]);
+await downloadCase('media-cdn-download-declared-too-large', [
+  { status: 200, headers: { 'content-length': String(50 * 1024 * 1024 + 1) }, declaredOnly: true },
+]);
+
+// 24 decrypt/URL cases + 5 CDN download cases.
+const EXPECTED_MEDIA_CASE_COUNT = 29;
+assert.equal(mediaCases.length, EXPECTED_MEDIA_CASE_COUNT, '#1823 media generator case count');
+
 await mkdir(process.argv[2], { recursive: true });
 await writeFile(
   join(process.argv[2], 'oracle.json'),
-  JSON.stringify({ sourceCommit, sourceSha256, node: process.version, icu: process.versions.icu, expectedCaseCount: EXPECTED_CASE_COUNT, cases }, null, 2) + '\n',
+  JSON.stringify({ sourceCommit, sourceSha256, node: process.version, icu: process.versions.icu, expectedCaseCount: EXPECTED_CASE_COUNT, expectedMediaCaseCount: EXPECTED_MEDIA_CASE_COUNT, mediaSliceSha256, cdnBaseUrl: media.WEIXIN_CDN_BASE_URL, cases: [...cases, ...mediaCases] }, null, 2) + '\n',
   { flag: 'wx' },
 );
-console.log(`PASS #1328 weixin channel: ${cases.length} real TS scenarios`);
+console.log(`PASS #1328 weixin channel: ${cases.length} real TS scenarios + ${mediaCases.length} media cases`);
 // A failed scenario can leave a detached poll loop; the oracle is already on
 // disk, so the process must not hang on stray timers.
 process.exit(0);

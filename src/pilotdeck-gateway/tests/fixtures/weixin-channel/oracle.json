@@ -774,6 +774,9 @@
   "node": "v22.22.0",
   "icu": "78.2",
   "expectedCaseCount": 15,
+  "expectedMediaCaseCount": 29,
+  "mediaSliceSha256": "35b85feb7bfdcc71f44447b01d0a851a7ffe4bc1ef2ef5672a5f43e2f050cc9a",
+  "cdnBaseUrl": "https://novac2c.cdn.weixin.qq.com/c2c",
   "cases": [
     {
       "name": "prepare-shapes-qr-login-and-reply",
@@ -6387,6 +6390,744 @@
             }
           }
         }
+      }
+    },
+    {
+      "name": "media-image-plaintext-passthrough",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=312 output=312 changed=false image=true keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": false,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": false,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-owner-hex-aes128",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "dc6a2cbe7f411d7304cae80089afe53593f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241410a177df0b45109a5a62b0633cdf86f7d54969c20e013e6b0f1c8d20de6c4d39080c7ba95760f41a687741ff8f2bb58c1646c256c94194cd41cfd6221044793c7f0cabe6903c13149fb541a11c415b8e3856eedd92032aab21ca9d88cb67611101e02dd658a59e90de2f63304e6121b7890e2331f77ebf033c079740480c94cc689f9dda73adce2928b3a44544cee816d12472f7b1dec2a10a41421cb89ff27d257ae4f3e2257afa02c70c3905ee4b70aa2d03ebdb2a967a465cdcbddcab067001b7c08d9ff6810f3fa762b1a0f3f540f701905a15f5f2ab31d982461c2cd1cd93f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241495db55403dbc37275384b84fb0514555",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-owner-hex-48-not-a-key",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "e34a7d18c5c73cdbef3c059c11005a38a365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a5768354fdb05ed5c784faad5a7537a94bd66284385d0eb26fd59c7c5b0c4a492fdcdddc681c4dd1be613a042debf29336c3f731a842ddbb402f350e7b2d58d561eaa09f664515fc56b6de65557510faf749ee54237d2ff7a52817dbfad66a2e649147094e965712e48b3bc82302b40eb2a9d361d4d7824954ae8f09dbc1c079fc8111c490a77478747844daa376717efe627d3bb2510000c43966854470451c3d0036c769fd7976bdf13f7445395fd0b351be45a76f9658505a9fcd3691c5d175b4506bbcfcbd491a7d0555df3f3205fdba4615e4af3d5e3fbdffb2159d110681ca365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a570148a56cd7563b8c5af23399ef7a223a",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f1011121314151617"
+        }
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=ownerAesKeyLen=48,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=320 output=320 changed=false image=false keyShape=ownerAesKeyLen=48,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "e34a7d18c5c73cdbef3c059c11005a38a365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a5768354fdb05ed5c784faad5a7537a94bd66284385d0eb26fd59c7c5b0c4a492fdcdddc681c4dd1be613a042debf29336c3f731a842ddbb402f350e7b2d58d561eaa09f664515fc56b6de65557510faf749ee54237d2ff7a52817dbfad66a2e649147094e965712e48b3bc82302b40eb2a9d361d4d7824954ae8f09dbc1c079fc8111c490a77478747844daa376717efe627d3bb2510000c43966854470451c3d0036c769fd7976bdf13f7445395fd0b351be45a76f9658505a9fcd3691c5d175b4506bbcfcbd491a7d0555df3f3205fdba4615e4af3d5e3fbdffb2159d110681ca365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a570148a56cd7563b8c5af23399ef7a223a",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "e34a7d18c5c73cdbef3c059c11005a38a365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a5768354fdb05ed5c784faad5a7537a94bd66284385d0eb26fd59c7c5b0c4a492fdcdddc681c4dd1be613a042debf29336c3f731a842ddbb402f350e7b2d58d561eaa09f664515fc56b6de65557510faf749ee54237d2ff7a52817dbfad66a2e649147094e965712e48b3bc82302b40eb2a9d361d4d7824954ae8f09dbc1c079fc8111c490a77478747844daa376717efe627d3bb2510000c43966854470451c3d0036c769fd7976bdf13f7445395fd0b351be45a76f9658505a9fcd3691c5d175b4506bbcfcbd491a7d0555df3f3205fdba4615e4af3d5e3fbdffb2159d110681ca365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a570148a56cd7563b8c5af23399ef7a223a",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-owner-hex-64-not-a-key",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "daae2aa01a5fc26fd2062e1214b76e5a1e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ec60059d4ac1aaea7e035b54788005dd9d2cc81f4c4af881948122f4aae2d04cfad22128c76c22c7da241fc7696aaf084132a28945ae190bb31644da88778c6a3127802206bfc9ff0e6bc1b84a26d74a6d8e1d7dded3aedc2dd0f7966c926b7c6525a5b07ce354bb4ab2679d0e29ae336898f4987c8bf2cc98bf7b9dae3de07d12d7071ba89248e4871b04e1b2971ddc5309fb314295ea4b6d0b407ea29d6b03707e867ca63ba2b92d652c6c20805471d97875cc7a09967b91e5accce39f75cde6ec6d40b7cab2555cea91b9c16b01dbbb488c6e59ea964f7bbd32dbb7f31782f91e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ecba6b2f793e9d40c17361da8aa151e2d1",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        }
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=ownerAesKeyLen=64,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=320 output=320 changed=false image=false keyShape=ownerAesKeyLen=64,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "daae2aa01a5fc26fd2062e1214b76e5a1e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ec60059d4ac1aaea7e035b54788005dd9d2cc81f4c4af881948122f4aae2d04cfad22128c76c22c7da241fc7696aaf084132a28945ae190bb31644da88778c6a3127802206bfc9ff0e6bc1b84a26d74a6d8e1d7dded3aedc2dd0f7966c926b7c6525a5b07ce354bb4ab2679d0e29ae336898f4987c8bf2cc98bf7b9dae3de07d12d7071ba89248e4871b04e1b2971ddc5309fb314295ea4b6d0b407ea29d6b03707e867ca63ba2b92d652c6c20805471d97875cc7a09967b91e5accce39f75cde6ec6d40b7cab2555cea91b9c16b01dbbb488c6e59ea964f7bbd32dbb7f31782f91e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ecba6b2f793e9d40c17361da8aa151e2d1",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "daae2aa01a5fc26fd2062e1214b76e5a1e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ec60059d4ac1aaea7e035b54788005dd9d2cc81f4c4af881948122f4aae2d04cfad22128c76c22c7da241fc7696aaf084132a28945ae190bb31644da88778c6a3127802206bfc9ff0e6bc1b84a26d74a6d8e1d7dded3aedc2dd0f7966c926b7c6525a5b07ce354bb4ab2679d0e29ae336898f4987c8bf2cc98bf7b9dae3de07d12d7071ba89248e4871b04e1b2971ddc5309fb314295ea4b6d0b407ea29d6b03707e867ca63ba2b92d652c6c20805471d97875cc7a09967b91e5accce39f75cde6ec6d40b7cab2555cea91b9c16b01dbbb488c6e59ea964f7bbd32dbb7f31782f91e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ecba6b2f793e9d40c17361da8aa151e2d1",
+        "fileChanged": false,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-media-base64-aes128",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "dc6a2cbe7f411d7304cae80089afe53593f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241410a177df0b45109a5a62b0633cdf86f7d54969c20e013e6b0f1c8d20de6c4d39080c7ba95760f41a687741ff8f2bb58c1646c256c94194cd41cfd6221044793c7f0cabe6903c13149fb541a11c415b8e3856eedd92032aab21ca9d88cb67611101e02dd658a59e90de2f63304e6121b7890e2331f77ebf033c079740480c94cc689f9dda73adce2928b3a44544cee816d12472f7b1dec2a10a41421cb89ff27d257ae4f3e2257afa02c70c3905ee4b70aa2d03ebdb2a967a465cdcbddcab067001b7c08d9ff6810f3fa762b1a0f3f540f701905a15f5f2ab31d982461c2cd1cd93f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241495db55403dbc37275384b84fb0514555",
+        "mediaOwner": {
+          "media": {
+            "aes_key": "AAECAwQFBgcICQoLDA0ODw=="
+          }
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=24,mediaAesKeyDecodedLen=16",
+        "candidates": "candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=24,mediaAesKeyDecodedLen=16 candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-media-base64-aes192",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "e34a7d18c5c73cdbef3c059c11005a38a365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a5768354fdb05ed5c784faad5a7537a94bd66284385d0eb26fd59c7c5b0c4a492fdcdddc681c4dd1be613a042debf29336c3f731a842ddbb402f350e7b2d58d561eaa09f664515fc56b6de65557510faf749ee54237d2ff7a52817dbfad66a2e649147094e965712e48b3bc82302b40eb2a9d361d4d7824954ae8f09dbc1c079fc8111c490a77478747844daa376717efe627d3bb2510000c43966854470451c3d0036c769fd7976bdf13f7445395fd0b351be45a76f9658505a9fcd3691c5d175b4506bbcfcbd491a7d0555df3f3205fdba4615e4af3d5e3fbdffb2159d110681ca365b940b113eb36a616a52990297f66fb650dcd6ab11ccb6b24b5e22b5e7a570148a56cd7563b8c5af23399ef7a223a",
+        "mediaOwner": {
+          "media": {
+            "aes_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX"
+          }
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f1011121314151617"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=32,mediaAesKeyDecodedLen=24",
+        "candidates": "candidates=[0:aes-192:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=32,mediaAesKeyDecodedLen=24 candidates=[0:aes-192:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-media-base64-aes256",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "daae2aa01a5fc26fd2062e1214b76e5a1e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ec60059d4ac1aaea7e035b54788005dd9d2cc81f4c4af881948122f4aae2d04cfad22128c76c22c7da241fc7696aaf084132a28945ae190bb31644da88778c6a3127802206bfc9ff0e6bc1b84a26d74a6d8e1d7dded3aedc2dd0f7966c926b7c6525a5b07ce354bb4ab2679d0e29ae336898f4987c8bf2cc98bf7b9dae3de07d12d7071ba89248e4871b04e1b2971ddc5309fb314295ea4b6d0b407ea29d6b03707e867ca63ba2b92d652c6c20805471d97875cc7a09967b91e5accce39f75cde6ec6d40b7cab2555cea91b9c16b01dbbb488c6e59ea964f7bbd32dbb7f31782f91e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ecba6b2f793e9d40c17361da8aa151e2d1",
+        "mediaOwner": {
+          "media": {
+            "aes_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+          }
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=44,mediaAesKeyDecodedLen=32",
+        "candidates": "candidates=[0:aes-256:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=44,mediaAesKeyDecodedLen=32 candidates=[0:aes-256:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "daae2aa01a5fc26fd2062e1214b76e5a1e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ec60059d4ac1aaea7e035b54788005dd9d2cc81f4c4af881948122f4aae2d04cfad22128c76c22c7da241fc7696aaf084132a28945ae190bb31644da88778c6a3127802206bfc9ff0e6bc1b84a26d74a6d8e1d7dded3aedc2dd0f7966c926b7c6525a5b07ce354bb4ab2679d0e29ae336898f4987c8bf2cc98bf7b9dae3de07d12d7071ba89248e4871b04e1b2971ddc5309fb314295ea4b6d0b407ea29d6b03707e867ca63ba2b92d652c6c20805471d97875cc7a09967b91e5accce39f75cde6ec6d40b7cab2555cea91b9c16b01dbbb488c6e59ea964f7bbd32dbb7f31782f91e63ed9f2bbf9e6f6adaad9db469c16c44abd2e13ab77244e7f38b9bd6f6c5ecba6b2f793e9d40c17361da8aa151e2d1",
+        "fileChanged": false,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-second-candidate-hits",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "ec0a5eea7e33304ca9766f01cae94d529bffadfc9d6dc14d4b45b0b92eed0dfe183afa376bd82282c2dde938513b1546a6b7e550d6c905dc98efd6116ff26d63f4d394fbd7fe9cae1152b0f24185d81196e77ffc12c0b1efda9e341e2c52c0f6cd0f82c54b31c7bb143924340a87139675c4b967cea0233e7371389145e4586cfbf2a86630af0667508e365e5f75fc84b435759aa45397440e2394e7356add597537e2b8ca2aaa79c05391d910e0033de3cd9948682bbcded452d243dbede40947cebd542990858d15a3014aa767d66e795237a3c5771585a00ae4deccab5ff65fe2b2032bc9f2677519bcb2207e1877af6eb6f614664725fe8f48222dad7ab5dc75481abfc403b51b8ce9e3b9fe08189bffadfc9d6dc14d4b45b0b92eed0dfe183afa376bd82282c2dde938513b1546034a8f0648d06248fa587cdf2d5a0be2",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f",
+          "media": {
+            "aes_key": "EBESExQVFhcYGRobHB0eHw=="
+          }
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f",
+          "101112131415161718191a1b1c1d1e1f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=24,mediaAesKeyDecodedLen=16",
+        "candidates": "candidates=[0:aes-128:len=320:head=39a404774811f3e5:image=false;1:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=24,mediaAesKeyDecodedLen=16 candidates=[0:aes-128:len=320:head=39a404774811f3e5:image=false;1:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "39a404774811f3e5163d2ef61d1f914e7d5c4af54ddb9a97c68188776196f2281b8d8a542ae4f56707f8de6cfc243678c4ba77ff869f8b60fd7bc5a32dd3a4ddc6abd8083b758b348bd82f655d6a931b73a3c132a07909a58d579892327c886cccdad71e08815f5a9f365270919f5df6a34b2f6a95a95c4e84c1df89e4ab7b73f9a258ac433409b658a46aa44bc8a0d8ac57413d6421f454917c7fed88467032060e14bc92dc8ff6bcbbc2cddbc6103e10dbc8d2488143738ddae7dfd1d971abd3d828ff9554f01b28b7524a7836d6d77b6380f5934f3fd9f1f8928c2cccabe9b6355a3132a8adfab03d5319da6e984a213ca772085fd27822b6a391df6011dabc21c069eb6771f9f9d818e4418359df7d5c4af54ddb9a97c68188776196f2281b8d8a542ae4f56707f8de6cfc243678b7c67ff482b231ce5314755a01587aee",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-media-hex-text-key",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "dc6a2cbe7f411d7304cae80089afe53593f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241410a177df0b45109a5a62b0633cdf86f7d54969c20e013e6b0f1c8d20de6c4d39080c7ba95760f41a687741ff8f2bb58c1646c256c94194cd41cfd6221044793c7f0cabe6903c13149fb541a11c415b8e3856eedd92032aab21ca9d88cb67611101e02dd658a59e90de2f63304e6121b7890e2331f77ebf033c079740480c94cc689f9dda73adce2928b3a44544cee816d12472f7b1dec2a10a41421cb89ff27d257ae4f3e2257afa02c70c3905ee4b70aa2d03ebdb2a967a465cdcbddcab067001b7c08d9ff6810f3fa762b1a0f3f540f701905a15f5f2ab31d982461c2cd1cd93f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241495db55403dbc37275384b84fb0514555",
+        "mediaOwner": {
+          "media": {
+            "aes_key": "MDAwMTAyMDMwNDA1MDYwNzA4MDkwYTBiMGMwZDBlMGY="
+          }
+        }
+      },
+      "expected": {
+        "keys": [
+          "3030303130323033303430353036303730383039306130623063306430653066",
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=44,mediaAesKeyDecodedLen=32",
+        "candidates": "candidates=[0:aes-256:len=320:head=3b7d3793b1f8172b:image=false;1:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=44,mediaAesKeyDecodedLen=32 candidates=[0:aes-256:len=320:head=3b7d3793b1f8172b:image=false;1:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-dedupes-identical-keys",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "dc6a2cbe7f411d7304cae80089afe53593f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241410a177df0b45109a5a62b0633cdf86f7d54969c20e013e6b0f1c8d20de6c4d39080c7ba95760f41a687741ff8f2bb58c1646c256c94194cd41cfd6221044793c7f0cabe6903c13149fb541a11c415b8e3856eedd92032aab21ca9d88cb67611101e02dd658a59e90de2f63304e6121b7890e2331f77ebf033c079740480c94cc689f9dda73adce2928b3a44544cee816d12472f7b1dec2a10a41421cb89ff27d257ae4f3e2257afa02c70c3905ee4b70aa2d03ebdb2a967a465cdcbddcab067001b7c08d9ff6810f3fa762b1a0f3f540f701905a15f5f2ab31d982461c2cd1cd93f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241495db55403dbc37275384b84fb0514555",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f",
+          "media": {
+            "aes_key": "AAECAwQFBgcICQoLDA0ODw=="
+          }
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=24,mediaAesKeyDecodedLen=16",
+        "candidates": "candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=24,mediaAesKeyDecodedLen=16 candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-owner-base64-fallback",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "dc6a2cbe7f411d7304cae80089afe53593f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241410a177df0b45109a5a62b0633cdf86f7d54969c20e013e6b0f1c8d20de6c4d39080c7ba95760f41a687741ff8f2bb58c1646c256c94194cd41cfd6221044793c7f0cabe6903c13149fb541a11c415b8e3856eedd92032aab21ca9d88cb67611101e02dd658a59e90de2f63304e6121b7890e2331f77ebf033c079740480c94cc689f9dda73adce2928b3a44544cee816d12472f7b1dec2a10a41421cb89ff27d257ae4f3e2257afa02c70c3905ee4b70aa2d03ebdb2a967a465cdcbddcab067001b7c08d9ff6810f3fa762b1a0f3f540f701905a15f5f2ab31d982461c2cd1cd93f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241495db55403dbc37275384b84fb0514555",
+        "mediaOwner": {
+          "aeskey": "AAECAwQFBgcICQoLDA0ODw=="
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=24,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=24,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-all-miss-falls-back",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[0:aes-128:len=64:head=840c2a06c6e82c7b:image=false]",
+        "imageLog": "input=64 output=64 changed=false image=false keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[0:aes-128:len=64:head=840c2a06c6e82c7b:image=false]",
+        "resultHex": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-image-not-block-multiple",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=37 output=37 changed=false image=false keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-summary-bad-keys",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "090a0b0c0d0e0f101112131415161718",
+        "mediaOwner": {
+          "aeskey": "zz",
+          "media": {
+            "aes_key": "!!!"
+          }
+        }
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=ownerAesKeyLen=2,ownerAesKeyHex=false,mediaAesKeyLen=3,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=16 output=16 changed=false image=false keyShape=ownerAesKeyLen=2,ownerAesKeyHex=false,mediaAesKeyLen=3,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "090a0b0c0d0e0f101112131415161718",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "090a0b0c0d0e0f101112131415161718",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-summary-no-owner",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "090a0b0c0d0e0f101112131415161718",
+        "mediaOwner": null
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=none",
+        "candidates": "candidates=[]",
+        "imageLog": "input=16 output=16 changed=false image=false keyShape=none candidates=[]",
+        "resultHex": "090a0b0c0d0e0f101112131415161718",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "090a0b0c0d0e0f101112131415161718",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-summary-owner-not-object",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "090a0b0c0d0e0f101112131415161718",
+        "mediaOwner": "nope"
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=none",
+        "candidates": "candidates=[]",
+        "imageLog": "input=16 output=16 changed=false image=false keyShape=none candidates=[]",
+        "resultHex": "090a0b0c0d0e0f101112131415161718",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "090a0b0c0d0e0f101112131415161718",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-summary-trimmed-owner-key",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "dc6a2cbe7f411d7304cae80089afe53593f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241410a177df0b45109a5a62b0633cdf86f7d54969c20e013e6b0f1c8d20de6c4d39080c7ba95760f41a687741ff8f2bb58c1646c256c94194cd41cfd6221044793c7f0cabe6903c13149fb541a11c415b8e3856eedd92032aab21ca9d88cb67611101e02dd658a59e90de2f63304e6121b7890e2331f77ebf033c079740480c94cc689f9dda73adce2928b3a44544cee816d12472f7b1dec2a10a41421cb89ff27d257ae4f3e2257afa02c70c3905ee4b70aa2d03ebdb2a967a465cdcbddcab067001b7c08d9ff6810f3fa762b1a0f3f540f701905a15f5f2ab31d982461c2cd1cd93f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241495db55403dbc37275384b84fb0514555",
+        "mediaOwner": {
+          "aeskey": "  000102030405060708090a0b0c0d0e0f  "
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=36,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "imageLog": "input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=36,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]",
+        "resultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "changed": true,
+        "image": true,
+        "fileResultHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-file-pdf-plaintext",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "255044462d312e370a0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c0a2525454f460a",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=316 output=316 changed=false image=false keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "255044462d312e370a0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c0a2525454f460a",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "255044462d312e370a0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c0a2525454f460a",
+        "fileChanged": false,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-file-encrypted-pdf",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "e631aeb9cd04e29aca311e754ac32e1b8184696adf67f8ad1c1c658e4c62b891a6a5e91e0e5c0f66530146b8182f1ac6ad1f5363dfd81664dcacd3a6714029c0e9c260e7dbbf007f24ff86df84832057b42f1cc65346711ef44b4ddabe9ebdc4c307bdd60c7c9470b5ca825ddf87d16eed6c3e4bff52f5620fdb966d96255ee507ff8e2b11167f8cf5cafa7749ca007ebce69bbc5e40edb6681110dbdafef2db7e8824eebdbbbd3137aa5a0b70c8e707c1d52634808855378a04b5048982515e7fb5f5fe34e732f9ebdbb2f88f2f51700c971d7a9dab52bb9b33d7dc78f2689f7396d5cb9bcaddce11abbf984757c271db947e232a49047c3b9466610ff95730e64e1e090e46eb280f7294f4ae6791918184696adf67f8ad1c1c658e4c62b891a6a5e91e0e5c0f66530146b8182f1ac68587df8d2a766b00f15cc2522c81c943",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[0:aes-128:len=316:head=255044462d312e37:image=false]",
+        "imageLog": "input=320 output=320 changed=false image=false keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[0:aes-128:len=316:head=255044462d312e37:image=false]",
+        "resultHex": "e631aeb9cd04e29aca311e754ac32e1b8184696adf67f8ad1c1c658e4c62b891a6a5e91e0e5c0f66530146b8182f1ac6ad1f5363dfd81664dcacd3a6714029c0e9c260e7dbbf007f24ff86df84832057b42f1cc65346711ef44b4ddabe9ebdc4c307bdd60c7c9470b5ca825ddf87d16eed6c3e4bff52f5620fdb966d96255ee507ff8e2b11167f8cf5cafa7749ca007ebce69bbc5e40edb6681110dbdafef2db7e8824eebdbbbd3137aa5a0b70c8e707c1d52634808855378a04b5048982515e7fb5f5fe34e732f9ebdbb2f88f2f51700c971d7a9dab52bb9b33d7dc78f2689f7396d5cb9bcaddce11abbf984757c271db947e232a49047c3b9466610ff95730e64e1e090e46eb280f7294f4ae6791918184696adf67f8ad1c1c658e4c62b891a6a5e91e0e5c0f66530146b8182f1ac68587df8d2a766b00f15cc2522c81c943",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "255044462d312e370a0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c0a2525454f460a",
+        "fileChanged": true,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-file-text-passthrough",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878780a",
+        "mediaOwner": {
+          "aeskey": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "expected": {
+        "keys": [
+          "000102030405060708090a0b0c0d0e0f"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=201 output=201 changed=false image=false keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878780a",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878780a",
+        "fileChanged": false,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-file-plaintext-wins-over-decrypt",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e205468652071",
+        "mediaOwner": {
+          "aeskey": "00000000000000000000000000000033"
+        }
+      },
+      "expected": {
+        "keys": [
+          "00000000000000000000000000000033"
+        ],
+        "keyShape": "keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[0:aes-128:len=320:head=ce5fa0f3526c4187:image=false]",
+        "imageLog": "input=320 output=320 changed=false image=false keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[0:aes-128:len=320:head=ce5fa0f3526c4187:image=false]",
+        "resultHex": "54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e205468652071",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2054686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e205468652071",
+        "fileChanged": false,
+        "fileKnown": true,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-url-encrypt-query-param",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "0102030405060708",
+        "mediaOwner": {
+          "media": {
+            "encrypt_query_param": "a b/c?d=中&x=1"
+          }
+        }
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=8 output=8 changed=false image=false keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "0102030405060708",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "0102030405060708",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": "https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=a%20b%2Fc%3Fd%3D%E4%B8%AD%26x%3D1"
+      }
+    },
+    {
+      "name": "media-url-fallbacks",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "0102030405060708",
+        "mediaOwner": {
+          "media": {
+            "full_url": "",
+            "download_url": "",
+            "url": "https://example.invalid/file",
+            "cdn_url": "https://example.invalid/other"
+          }
+        }
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=8 output=8 changed=false image=false keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "0102030405060708",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "0102030405060708",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": "https://example.invalid/file"
+      }
+    },
+    {
+      "name": "media-url-missing",
+      "kind": "decrypt",
+      "input": {
+        "bufferHex": "0102030405060708",
+        "mediaOwner": {
+          "media": {}
+        }
+      },
+      "expected": {
+        "keys": [],
+        "keyShape": "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "candidates": "candidates=[]",
+        "imageLog": "input=8 output=8 changed=false image=false keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]",
+        "resultHex": "0102030405060708",
+        "changed": false,
+        "image": false,
+        "fileResultHex": "0102030405060708",
+        "fileChanged": false,
+        "fileKnown": false,
+        "downloadUrl": null
+      }
+    },
+    {
+      "name": "media-cdn-download-ok",
+      "kind": "download",
+      "input": {
+        "url": "http://127.0.0.1:<port>/c2c/download?encrypted_query_param=param%20value%2F1",
+        "server": "responses",
+        "responses": [
+          {
+            "status": 200,
+            "headers": {
+              "content-type": "application/octet-stream"
+            },
+            "bodyHex": "0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313233343536"
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "bytesHex": "0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313233343536",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/c2c/download?encrypted_query_param=param%20value%2F1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "media-cdn-download-http-404",
+      "kind": "download",
+      "input": {
+        "url": "http://127.0.0.1:<port>/c2c/download?encrypted_query_param=param%20value%2F1",
+        "server": "responses",
+        "responses": [
+          {
+            "status": 404,
+            "headers": {
+              "content-type": "text/plain"
+            },
+            "bodyHex": "6d697373696e67"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "Error: Attachment download failed HTTP 404.",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/c2c/download?encrypted_query_param=param%20value%2F1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "media-cdn-download-connection-failed",
+      "kind": "download",
+      "input": {
+        "url": "http://127.0.0.1:<port>/c2c/download?encrypted_query_param=param%20value%2F1",
+        "server": "closed",
+        "responses": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "TypeError: fetch failed",
+        "requests": []
+      }
+    },
+    {
+      "name": "media-cdn-download-follows-redirect",
+      "kind": "download",
+      "input": {
+        "url": "http://127.0.0.1:<port>/c2c/download?encrypted_query_param=param%20value%2F1",
+        "server": "responses",
+        "responses": [
+          {
+            "status": 302,
+            "headers": {
+              "location": "/final"
+            }
+          },
+          {
+            "status": 200,
+            "headers": {
+              "content-type": "application/octet-stream"
+            },
+            "bodyHex": "0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313233343536"
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "bytesHex": "0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313233343536",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/c2c/download?encrypted_query_param=param%20value%2F1"
+          },
+          {
+            "method": "GET",
+            "path": "/final"
+          }
+        ]
+      }
+    },
+    {
+      "name": "media-cdn-download-declared-too-large",
+      "kind": "download",
+      "input": {
+        "url": "http://127.0.0.1:<port>/c2c/download?encrypted_query_param=param%20value%2F1",
+        "server": "responses",
+        "responses": [
+          {
+            "status": 200,
+            "headers": {
+              "content-length": "52428801"
+            },
+            "declaredOnly": true
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "Error: Attachment is 52428801 bytes (limit 52428800).",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/c2c/download?encrypted_query_param=param%20value%2F1"
+          }
+        ]
       }
     }
   ]

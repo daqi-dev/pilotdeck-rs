@@ -51,6 +51,67 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
 `WeixinChannel.ts:786-800`），这两条能力由控制器级 mock 测试钉住；
 `turnTimeoutMs` weixin 默认 0（生产不起看门狗），超时格由选项打开后测。
 
+## #1823 入站媒体（24 个解密/URL 场景 + 5 个 CDN 下载场景）
+
+`generate.mts` 在同一个基线提交上追加 `expectedMediaCaseCount` 与 29 条
+`kind` 标注的用例（`decrypt` / `download`）；渠道 15 条不动。Rust 侧重放在
+`src/pilotdeck-gateway/src/channel/weixin/media/tests.rs`
+（`decrypt_replays_the_oracle_media_cases` / `download_replays_the_oracle_cases`）。
+
+媒体辅助函数在 `WeixinChannel.ts` 里是**模块级、未导出**的，所以生成器按标记
+切出源码片断 `function extractWeixinMediaUrl(` … `function installIlinkFetchCompatibility(`
+原样转译执行（与全文件闭包哈希守卫并存）；切片 sha256 记为
+`mediaSliceSha256`，`WEIXIN_CDN_BASE_URL` 字面量记为 `cdnBaseUrl`，切片漂移
+会以 oracle 差异暴露而不是悄悄换了被测函数。
+
+解密场景（每格的 `expected` 录 `keys` / `keyShape` / `candidates` / `imageLog`
+/ `resultHex` / `changed` / `image` / `fileResultHex` / `fileChanged` /
+`fileKnown` / `downloadUrl`）：
+
+| 场景 | 钉住的行为 |
+|---|---|
+| `media-image-plaintext-passthrough` | 已是明文 → 原样返回，不试 key |
+| `media-image-owner-hex-aes128` | `aeskey` 32 hex 字符 → aes-128 |
+| `media-image-owner-hex-48/64-not-a-key` | owner hex 仅认 32 字符；48/64 字符既非 hex key，base64 解出也不是 16/24/32 字节 → 零候选 |
+| `media-image-media-base64-aes128/192/256` | `media.aes_key` base64 三种长度 → 三种算法 |
+| `media-image-second-candidate-hits` | 第一个 key 错、第二个对 → 候选循环不能只看第一个 |
+| `media-image-media-hex-text-key` | 微信真实形状：base64 的 32 字符 hex 文本，解出 32 字节 ASCII（首候选，aes-256）+ 其 hex 解码（次候选，aes-128） |
+| `media-image-dedupes-identical-keys` | 两处来源同一把 key → 去重后只剩一条 |
+| `media-image-owner-base64-fallback` | owner 非 32 hex 时按 base64 再试 |
+| `media-image-all-miss-falls-back` | 全不中 → 原样返回不抛 |
+| `media-image-not-block-multiple` | 非 16 字节整数倍 → 无候选（Node `final()` 抛） |
+| `media-summary-bad-keys` / `-no-owner` / `-owner-not-object` | 诊断串的 `keyShape=none` / 长度 / hex 判定 |
+| `media-summary-trimmed-owner-key` | `readString` 返回**未 trim** 原串（len=36），hex 判定与解码用 trim 后 |
+| `media-file-pdf-plaintext` / `-encrypted-pdf` / `-text-passthrough` | 文件路径用 `isLikelyKnownFileBuffer`（含 mostly-text 启发式） |
+| `media-file-plaintext-wins-over-decrypt` | 明文直通的可观测格：该 buffer 本身是 known file，**用它自己的 key 解出来也仍是 known file**；去掉 `isExpectedBuffer(buffer)` 早退就会采用诱饵 |
+| `media-url-encrypt-query-param` / `-fallbacks` / `-missing` | `encrypt_query_param` 优先并 `encodeURIComponent`；否则 `full_url`→`download_url`→`url`→`cdn_url` |
+
+下载场景跑的是**真的 `ImAttachmentStore.saveFromUrl`**（`input.responses`
+是脚本化应答，`expected` 录字节或错误串 + CDN 收到的请求行）：
+
+`media-cdn-download-ok`（200）· `-http-404`（`Attachment download failed HTTP 404.`）·
+`-connection-failed`（`TypeError: fetch failed`）· `-follows-redirect`（302 →
+`/final`，两条请求都记）· `-declared-too-large`（`content-length: 52428801` →
+`Attachment is 52428801 bytes (limit 52428800).`，且必须在读 body 前就拒绝）。
+
+负控（`negative_controls.py`，全部 KILLED）：
+
+| 变异 | 死点 |
+|---|---|
+| `media-plaintext-passthrough-dropped`（早退加 `&& buffer.is_empty()`） | `media-file-plaintext-wins-over-decrypt` 的 `fileChanged` |
+| `media-candidates-first-key-only`（`.take(1)`） | `media-image-second-candidate-hits` 的 `resultHex` |
+| `media-key-length-always-128`（24 字节也走 `Aes128`） | `media-image-media-base64-aes192` |
+| `media-all-miss-panics`（全不中 panic 而非回退） | `media-image-all-miss-falls-back` |
+| `media-pkcs7-strip-dropped` | 任一命中格的 `resultHex`（尾部 padding 未剥） |
+| `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（index 越界 panic） |
+| `media-download-redirect-not-followed`（302 不在跟随列表） | `media-cdn-download-follows-redirect` 的 `ok` |
+
+**端口**：任务书建议挑固定段（如 18950-18969），本 fixture 改为**临时端口**
+（`listen(0, '127.0.0.1')`，沿用本文件既有 `FakeIlink` 的写法）：oracle 里只存
+掩码后的 `http://127.0.0.1:<port>/…`，Rust 重放时绑一个 `127.0.0.1:0` 的
+listener 再把 `<port>` 换掉。这样端口不是宿主全局资源，不会 EADDRINUSE，
+也就不需要登记固定段（原任务书的端口冲突风险随之消失）。
+
 ## 确定性
 
 - getupdates 长轮询保持到脚本下一条，且**在响应时刻**才记录（消除 poll 到达与
@@ -69,6 +130,10 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
   （console 与 channel logger 跨流交错不作为协议）。
 - 假服务端默认：getconfig → `{ret:0, typing_ticket:'tt-1'}`（保证 sendtyping
   总是跟随）、qrstatus 粘滞（脚本耗尽后重复最后答案）。
+- #1823 媒体格没有随机源：明文/密钥/ciphertext 都是常量，AES-ECB 确定性，
+  CDN 端口与临时目录都进掩码；同一基线两次重生成逐字节相同（实测 r6==r7）。
+  解密输入清一色 16 字节整数倍，诱饵格在生成时就断言「明文与它的解密结果都
+  是 known file」，不成立直接生成失败，不会录进一格空转用例。
 
 ## 重生成（输出用 `recursive:true` + `flag:'wx'`，写到**新**目录）
 
@@ -79,6 +144,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 ```
 
 忽略测试 `weixin_channel_regenerates_identically` 必须在具备固定基线的宿主
-显式运行。pr1 未覆盖面（elicitation/permission、附件、live-reply 节流、cron、
+显式运行。pr1 未覆盖面（elicitation/permission、live-reply 节流、cron、
 命令注册表、真实 WS 关停顺序、其他 bundle 渠道、config 热重载事件源）见
-RESULT「后续」。
+RESULT「后续」；入站附件（#1823）已由本文件上一节覆盖，出站上传（#1824）与
+入站消息项接线（#1822）仍不在本 fixture 内。

@@ -19,6 +19,9 @@
 mod client;
 mod live_reply;
 mod mapper;
+// #1823: inbound attachment decryption + CDN download. The inbound item
+// pipeline that calls it is pr2b-1 (#1822); this module is not wired yet.
+mod media;
 #[cfg(test)]
 mod replay_tests;
 mod state;

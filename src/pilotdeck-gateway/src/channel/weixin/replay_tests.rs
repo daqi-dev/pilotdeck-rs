@@ -1001,21 +1001,33 @@ fn recorded_expected_panics_when_absent() {
     recorded_expected(&json!({}));
 }
 
-fn oracle_cases(oracle: &Value) -> &[Value] {
+fn oracle_cases(oracle: &Value) -> Vec<&Value> {
     let cases = oracle["cases"]
         .as_array()
         .expect("#1328 weixin oracle cases");
+    // #1823 appended media cases (they carry a `kind`); the channel replay
+    // owns the fifteen scenario cases, and `channel::weixin::media::tests`
+    // replays the rest.
+    let channel: Vec<&Value> = cases
+        .iter()
+        .filter(|case| case.get("kind").is_none())
+        .collect();
     crate::negative_assert!(
-        !cases.is_empty(),
+        !channel.is_empty(),
         "#1328 weixin oracle cases must be non-empty"
     );
-    crate::negative_assert_eq!(cases.len(), 15, "#1328 weixin oracle case count");
+    crate::negative_assert_eq!(channel.len(), 15, "#1328 weixin oracle case count");
     crate::negative_assert_eq!(
         oracle["expectedCaseCount"],
         json!(15),
         "#1328 weixin generator declaration"
     );
-    cases
+    crate::negative_assert_eq!(
+        oracle["expectedMediaCaseCount"],
+        json!(cases.len() - channel.len()),
+        "#1823 weixin generator media declaration"
+    );
+    channel
 }
 
 #[tokio::test]

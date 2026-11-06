@@ -20,6 +20,8 @@ fixtures = Path(__file__).resolve().parents[1]
 weixin = root / 'src/pilotdeck-gateway/src/channel/weixin'
 native = root / 'src/pilotdeck-gateway/src/native_process'
 REPLAY = 'channel::weixin::replay_tests::weixin_replays_the_ts_channel_oracle'
+MEDIA_DECRYPT = 'channel::weixin::media::tests::decrypt_replays_the_oracle_media_cases'
+MEDIA_DOWNLOAD = 'channel::weixin::media::tests::download_replays_the_oracle_cases'
 UNSUPPORTED = ('native_process::methods::tests::'
                'prepare_weixin_login_without_callback_answers_unsupported')
 FORWARDED = ('native_process::methods::tests::'
@@ -144,15 +146,65 @@ MUTATIONS = [
      '        None => Ok(value),',
      'channel::weixin::replay_tests::recorded_expected_rejects_wrong_type',
      '#1328 #1808 rejects absent expected'),
+
+    # #1823 inbound media. The decrypt rows are killed by the media oracle
+    # replay (`media-file-plaintext-wins-over-decrypt` exists precisely so the
+    # plaintext short-circuit is observable: that buffer's own decryption is
+    # *also* a known file, so skipping the early return adopts the decoy).
+    ('media-plaintext-passthrough-dropped', weixin / 'media.rs',
+     '    if is_expected(buffer) {\n        return None;\n    }',
+     '    if is_expected(buffer) && buffer.is_empty() {\n        return None;\n    }',
+     MEDIA_DECRYPT, '#1823 media-file-plaintext-wins-over-decrypt file changed'),
+    ('media-candidates-first-key-only', weixin / 'media.rs',
+     '    for key in extract_weixin_media_keys(media_owner) {\n'
+     '        for deciphered in try_decrypt_weixin_media(buffer, &key) {',
+     '    for key in extract_weixin_media_keys(media_owner).into_iter().take(1) {\n'
+     '        for deciphered in try_decrypt_weixin_media(buffer, &key) {',
+     MEDIA_DECRYPT, '#1823 media-image-second-candidate-hits result'),
+    ('media-key-length-always-128', weixin / 'media.rs',
+     '        24 => decrypt_blocks::<Aes192>(key, &mut padded),',
+     '        24 => decrypt_blocks::<Aes128>(key, &mut padded),',
+     MEDIA_DECRYPT, '#1823 media-image-media-base64-aes192 result'),
+    ('media-all-miss-panics', weixin / 'media.rs',
+     '            if is_expected(&deciphered) {\n'
+     '                return Some(deciphered);\n'
+     '            }\n'
+     '        }\n'
+     '    }\n'
+     '    None\n',
+     '            if is_expected(&deciphered) {\n'
+     '                return Some(deciphered);\n'
+     '            }\n'
+     '        }\n'
+     '    }\n'
+     '    panic!("#1823 no candidate matched")\n',
+     MEDIA_DECRYPT, '#1823 media-image-all-miss-falls-back'),
+    ('media-pkcs7-strip-dropped', weixin / 'media.rs',
+     '    let stripped = strip_pkcs7_padding(&padded).map(<[u8]>::to_vec);\n'
+     '    outputs.push(stripped.unwrap_or(padded));',
+     '    outputs.push(padded);',
+     MEDIA_DECRYPT, '#1823 media-image-owner-hex-aes128 result'),
+    # The trailing-single-character guard is what keeps `chunk[1]` in range;
+    # `node_base64_semantics` feeds "A" and "!".
+    ('media-base64-single-char-guard', weixin / 'media.rs',
+     '        if chunk.len() < 2 {\n            break;\n        }',
+     '        if chunk.len() < 2 && chunk.is_empty() {\n            break;\n        }',
+     'channel::weixin::media::tests::node_base64_semantics',
+     '#1823 base64 decode'),
+    ('media-download-redirect-not-followed', weixin / 'media.rs',
+     '                if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)',
+     '                if matches!(status.as_u16(), 301 | 303 | 307 | 308)',
+     MEDIA_DOWNLOAD, '#1823 media-cdn-download-follows-redirect download ok'),
 ]
 
 
 def main():
     guarded = list(weixin.glob('*.rs'))
     guarded += [native / 'channels.rs', native / 'methods/weixin_login.rs',
+                weixin / 'media/tests.rs',
                 root / 'src/pilotdeck-gateway/tests/weixin_channel.rs']
     guarded.extend(path for path in (fixtures / 'weixin-channel').rglob('*')
-                  if path.is_file())
+                  if path.is_file() and '__pycache__' not in path.parts)
     args = ['--check'] if sys.argv[1:] == ['--check-anchors'] else sys.argv[1:]
     return matrix_main(root, __file__, '', MUTATIONS,
                        passed_count=1, child_count=0, paths=guarded,

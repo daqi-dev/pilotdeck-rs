@@ -6,22 +6,42 @@
 mod baseline;
 
 /// The committed oracle's own shape: one declared case count, matching the
-/// scenario definitions the replay iterates.
+/// scenario definitions the replay iterates. #1823 appended media cases, which
+/// carry a `kind` and are declared separately.
 #[test]
 fn weixin_channel_committed_oracle_shape() {
     let oracle = baseline::oracle(include_str!("fixtures/weixin-channel/oracle.json"));
-    let case_count = match oracle.get("cases").expect("#1328 oracle cases") {
-        pilotdeck_protocol::JsValue::Array(cases) => cases.len(),
+    let (channel, media) = match oracle.get("cases").expect("#1328 oracle cases") {
+        pilotdeck_protocol::JsValue::Array(cases) => {
+            cases
+                .iter()
+                .fold((0usize, 0usize), |(channel, media), case| {
+                    if case.get("kind").is_some() {
+                        (channel, media + 1)
+                    } else {
+                        (channel + 1, media)
+                    }
+                })
+        }
         _ => panic!("#1328 oracle cases must be an array"),
     };
-    assert_eq!(case_count, 15, "#1328 weixin oracle case count");
+    assert_eq!(channel, 15, "#1328 weixin oracle case count");
+    assert_eq!(media, 29, "#1823 weixin oracle media case count");
     let declared = oracle
         .get("expectedCaseCount")
         .and_then(|count| count.as_number())
         .expect("#1328 oracle expectedCaseCount");
     assert_eq!(
-        case_count as f64, declared,
+        channel as f64, declared,
         "#1328 oracle declares its case count"
+    );
+    let declared_media = oracle
+        .get("expectedMediaCaseCount")
+        .and_then(|count| count.as_number())
+        .expect("#1823 oracle expectedMediaCaseCount");
+    assert_eq!(
+        media as f64, declared_media,
+        "#1823 oracle declares its media case count"
     );
 }
 
