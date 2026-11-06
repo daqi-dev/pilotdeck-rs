@@ -122,7 +122,6 @@ fn run_known(
             });
         }
         stimulus.publish("loop", "return", "release", None);
-        stimulus.publish("loop", "final", "completed", None);
         let result = success_result(input);
         let payload = terminal_payload(input, &result);
         // Already-accepted provider data keeps its bounded delivery budget.
@@ -134,6 +133,10 @@ fn run_known(
                 error: None,
             });
         }
+        // The completion receipt follows the delivery it describes: a
+        // collector reading `final/completed` must never see it for a turn
+        // whose completion the transport then suppressed.
+        stimulus.publish("loop", "final", "completed", None);
         return Ok(ExecutionTerminal {
             outcome: ModuleOutcome::Completed,
             payload,
@@ -141,7 +144,6 @@ fn run_known(
         });
     }
     let result = success_result(input);
-    stimulus.publish("loop", "final", "completed", None);
     if emit(context, input, "turn_completed", result_event(&result)).is_err() {
         // The turn was already cancelled (timeout/abort) before the release.
         stimulus.publish("loop", "final", "completed-suppressed", None);
@@ -151,6 +153,7 @@ fn run_known(
             error: None,
         });
     }
+    stimulus.publish("loop", "final", "completed", None);
     Ok(ExecutionTerminal {
         outcome: ModuleOutcome::Completed,
         payload: terminal_payload(input, &result),

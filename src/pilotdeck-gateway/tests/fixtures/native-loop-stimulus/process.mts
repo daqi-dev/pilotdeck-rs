@@ -232,6 +232,10 @@ try {
     const process = await launch('loop-tool', control);
     const {ws, next} = await client(process.address);
     const pump = submitUntilFinal(ws, next, 'loop-tool', process, {timeoutMs: 400});
+    // A pump that is not awaited yet must not become an unhandled rejection:
+    // that would kill the process before the record is written and turn a
+    // named failure into an INVALID with no evidence.
+    pump.catch(() => {});
     await witness(control, 'loop', 'wait', plan.id);
     await release(control, plan, 'outcome', 'unknown');
     const {events, terminal} = await pump;
@@ -253,6 +257,10 @@ try {
     const process = await launch('loop-timeout-first', control);
     const {ws, next} = await client(process.address);
     const pump = submitUntilFinal(ws, next, 'loop-timeout-first', process, {timeoutMs: 400});
+    // A pump that is not awaited yet must not become an unhandled rejection:
+    // that would kill the process before the record is written and turn a
+    // named failure into an INVALID with no evidence.
+    pump.catch(() => {});
     await witness(control, 'loop', 'wait', plan.id);
     const {events, at, terminal} = await pump;
     rows.push({scenario: 'timeout-first', seq: events.map((e: any) => e.type), at, terminal, stderr: process.stderr()});
@@ -279,6 +287,10 @@ try {
     const process = await launch('loop-unknown-first', control);
     const {ws, next} = await client(process.address);
     const pump = submitUntilFinal(ws, next, 'loop-unknown-first', process, {timeoutMs: 400});
+    // A pump that is not awaited yet must not become an unhandled rejection:
+    // that would kill the process before the record is written and turn a
+    // named failure into an INVALID with no evidence.
+    pump.catch(() => {});
     await witness(control, 'loop', 'wait', plan.id);
     await release(control, plan, 'outcome', 'unknown');
     const {events, at, terminal} = await pump;
@@ -305,6 +317,10 @@ try {
     const process = await launch('loop-known-final-first', control);
     const {ws, next} = await client(process.address);
     const pump = submitUntilFinal(ws, next, 'loop-known-final-first', process, {timeoutMs: 400});
+    // A pump that is not awaited yet must not become an unhandled rejection:
+    // that would kill the process before the record is written and turn a
+    // named failure into an INVALID with no evidence.
+    pump.catch(() => {});
     await witness(control, 'loop', 'wait', plan.id);
     await release(control, plan, 'outcome', 'known');
     const {events, terminal} = await pump;
@@ -323,6 +339,10 @@ try {
     const process = await launch('loop-after-complete', control);
     const {ws, next} = await client(process.address);
     const pump = submitUntilFinal(ws, next, 'loop-after-complete', process, {timeoutMs: 400});
+    // A pump that is not awaited yet must not become an unhandled rejection:
+    // that would kill the process before the record is written and turn a
+    // named failure into an INVALID with no evidence.
+    pump.catch(() => {});
     await witness(control, 'loop', 'wait', plan.id);
     const {events, at, terminal} = await pump;
     rows.push({scenario: 'after-complete', seq: events.map((e: any) => e.type), at, terminal});
@@ -385,6 +405,10 @@ try {
     const process = await launch('loop-bound', control);
     const {ws, next} = await client(process.address);
     const pump = submitUntilFinal(ws, next, 'loop-bound', process, {timeoutMs: 400});
+    // A pump that is not awaited yet must not become an unhandled rejection:
+    // that would kill the process before the record is written and turn a
+    // named failure into an INVALID with no evidence.
+    pump.catch(() => {});
     const wait = await witness(control, 'loop', 'wait', plan.id);
     const {terminal} = await pump;
     assert.equal(terminal.type, 'error', '#1371 bound timeout still ends red');
