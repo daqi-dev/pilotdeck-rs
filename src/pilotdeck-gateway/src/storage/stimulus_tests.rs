@@ -1170,9 +1170,16 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
     // Were the settle taken from the caller's first poll, the witnessed job
     // would sit on the worker for `WITNESS_SETTLE` and this one would starve.
     let later = port.append(&run(), &agent_status_event("cancelled"));
-    tokio::time::timeout(OBSERVE, later)
-        .await
-        .expect("#1370 a withheld witnessed future does not park the registry worker")
+    let later = tokio::time::timeout(OBSERVE, later).await;
+    // Receipt-bound, not a plain `expect`: the negative control that keeps the
+    // settle sender alive without sending must be killed *at this assertion*,
+    // which only a `negative_assert!` can record (#1648 fix-r2).
+    negative_assert!(
+        later.is_ok(),
+        "#1370 a withheld witnessed future does not park the registry worker"
+    );
+    later
+        .expect("#1370 the append behind a withheld witnessed future finished")
         .expect("#1370 the append behind a withheld witnessed future persists");
     // Entered after the release cleared the hold, so it owes no receipt.
     assert_no_receipt(&control, "registry", "queued", "agent_status:cancelled");
