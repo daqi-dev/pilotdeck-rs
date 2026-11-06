@@ -69,7 +69,7 @@ CARGO_TARGET_DIR=… python3 \
 每次仅临时改一处产品实现，要求被点名测试以自己的 `#1318` panic 消息失败
 （每变异绑定专属判杀标记：`case apply-busy`、
 `case update-merges-store-paths`、`the bare assembly must answer reload_config`、
-`dispatch must own the five settings methods`、`case apply-effort-low`、
+`dispatch must own the case's settings method`、`case apply-effort-low`、
 `#1318-r1 update-drop: dropping the future must detach the capture listener`、
 `#1318-r2 extensions-truthiness: a JS-falsy projectKey must take the
 all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle`

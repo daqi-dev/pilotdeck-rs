@@ -176,7 +176,10 @@ MARKERS = {
     'apply-busy-gate-removed': 'case apply-busy',
     'update-capture-ignored': 'case update-merges-store-paths',
     'reload-config-unsupported-flipped': 'the bare assembly must answer reload_config',
-    'dispatch-drops-reload-extensions': 'dispatch must own the five settings methods',
+    # #1320 fix-r2 F7 reworded the replay's dispatch-ownership panic when the
+    # must-own list grew from five to six methods; the marker must track it or
+    # the mutant is judged SURVIVED (rc=101 but the named marker is absent).
+    'dispatch-drops-reload-extensions': 'dispatch must own the case\'s settings method',
     'apply-close-skipped': 'case apply-effort-low',
     'update-drop-leak': '#1318-r1 update-drop: dropping the future must detach the capture listener',
     'extensions-truthiness-flipped': ('#1318-r2 extensions-truthiness: a JS-falsy projectKey '
