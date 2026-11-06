@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 204 mutants:
+`JUDGES`, keyed by the same names. The current table has 216 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -408,7 +408,13 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-globals-tuple-target`, `calibrate-sm-callable-setitem`,
 `calibrate-sm-mapping-augassign`, `calibrate-builtins-alias-subscript`,
 `calibrate-getattr-dynamic-call`, `calibrate-globals-alias-augassign`,
-`calibrate-status-getattr-alias`.
+`calibrate-status-getattr-alias`, `calibrate-global-walrus-rebind`,
+`calibrate-unpack-star-target`, `calibrate-unpack-star-value`,
+`calibrate-unpack-iter-for`, `calibrate-with-handle-name`,
+`calibrate-getattr-handle-name`, `calibrate-getattr-handle-dict`,
+`calibrate-nonlocal-common-rebind`, `calibrate-builtin-last-binding`,
+`calibrate-partial-prebound`, `calibrate-partial-name-status`,
+`calibrate-builtins-chain-four`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -890,6 +896,30 @@ alias (`calibrate-status-getattr-alias`).  The alias walk that feeds the
 receiver fixpoint is now the same `_alias_assignments` table the object-kind
 resolver uses, and the three `__builtins__['<name>']` decoders share one
 `_builtins_subscript_literal` helper.
+
+
+`fix-r33` closed the gaps the two r32 reviewers measured, each with a mutant
+except the two over-withdrawal directions, which a probe pair pins instead
+(before: the clean file FAILs, after: PASS, with `restoredPass` re-checking the
+restored tree): a walrus on a `global`-declared receiver
+(`calibrate-global-walrus-rebind`), a nested function that rebinds an enclosing
+receiver through `nonlocal` (`calibrate-nonlocal-common-rebind`, read by the
+status ruler), a receiver handed through a star on either side of an unpacking
+(`calibrate-unpack-star-target`, `calibrate-unpack-star-value`), through
+`for m in iter((md,))` (`calibrate-unpack-iter-for`) or through a context
+manager held in a name (`calibrate-with-handle-name`), a builtin name shadowed
+after its first binding (`calibrate-builtin-last-binding`), a
+`functools.partial(<write helper>, report)` whose pre-bound arguments decide the
+arity, both inline and through a name (`calibrate-partial-prebound`,
+`calibrate-partial-name-status`), a dynamic `getattr` handle kept in a name or
+used as a mapping (`calibrate-getattr-handle-name`,
+`calibrate-getattr-handle-dict`), and an alias chain four hops long
+(`calibrate-builtins-chain-four`; `_RESOLVE_DEPTH` replaces the three-hop cap in
+`_builtin_receiver` / `_resolved_write_helper` / `_name_resolves_to_builtins`).
+The two reversed directions: `getattr(obj, <dynamic>)(...)` now withdraws the
+object the handle was taken from rather than every receiver in the file, and
+the receiver alias table is keyed by scope (`(scope, name)`), so `_x = md` in
+one function no longer merges with `_x = object()` in another.
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the
