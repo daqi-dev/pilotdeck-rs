@@ -36,6 +36,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import Counter
 
 if not sys.flags.isolated:
     raise SystemExit('run with -I')
@@ -45,7 +46,8 @@ def _repo_root():
     """从脚本所在目录向上找含 scripts/parity/g03_compare.py 的仓库根。
 
     装置同时存在于 `_tmp/`（历史副本）与 `scripts/parity-attrib/`（入仓副本），
-    硬编码 /Users/da/ws/pilotdeck-rs 会把两份副本绑死在同一棵树上。
+    两份副本都在仓库内，向上必能命中。**找不到就报错**：绝不回退到硬编码的机器路径，
+    否则被审树与比较器可能来自不同 HEAD，归因结论不可信（#1926 评审 P1）。
     """
     here = os.path.dirname(os.path.abspath(__file__))
     cur = here
@@ -54,7 +56,7 @@ def _repo_root():
             return cur
         parent = os.path.dirname(cur)
         if parent == cur:
-            return '/Users/da/ws/pilotdeck-rs'
+            raise SystemExit(f'repo root not found: 从 {here} 向上没有 scripts/parity/g03_compare.py')
         cur = parent
 
 
@@ -64,11 +66,23 @@ SCENARIOS = ('deadline', 'deadline_during_tool')
 FAIL_CLOSED = 'result_unknown_fail_closed'
 GSF_TEXT = ('AgentLoop terminal outcome is result_unknown and host reconciliation '
             'found no final result.')
+# #6 产物那条 gsf 在冻结比较器 channel 差异里的**投影形状**（真实数据实测：G03 的
+# `_semantic_record` 只留这几个键，q/scenarioId/invocationId/sequence 都在投影时就被丢掉）。
+# C5/C6 都跳过这一帧，所以它的字段集必须单独钉死：多带或少带字段同样不是 #6。
+GSF_FIELDS = frozenset({'kind', 'agentScope', 'event', 'statusKind', 'text'})
+G03_TIMEOUT = 900  # 秒；冻结比较器单次要跑全部场景，病态输入不许把装置挂死
+_G03_CACHE = {}
+
+
+_LOAD_CACHE = {}
 
 
 def load(path):
-    with open(path) as fh:
-        return [json.loads(l) for l in fh if l.strip()]
+    """读 jsonl trace。同一路径在一个进程里只解析一次（20 轮 → 400 pair 时会重复读同 40 个文件）。"""
+    if path not in _LOAD_CACHE:
+        with open(path) as fh:
+            _LOAD_CACHE[path] = [json.loads(l) for l in fh if l.strip()]
+    return _LOAD_CACHE[path]
 
 
 def is_gsf(rec):
@@ -80,13 +94,26 @@ def is_identity(rec):
 
 
 def g03(left_dir, right_dir, scenario):
-    out = subprocess.run([sys.executable, '-I', G03, left_dir, right_dir],
-                         capture_output=True, text=True)
+    """调冻结比较器。同一对目录只跑一次（run() 每 pair 要用 G03 列两次，缓存免重复 spawn）。"""
+    key = (left_dir, right_dir, scenario)
+    if key in _G03_CACHE:
+        return _G03_CACHE[key]
+    try:
+        out = subprocess.run([sys.executable, '-I', G03, left_dir, right_dir],
+                             capture_output=True, text=True, timeout=G03_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        result = (None, None, f'g03 超时（>{G03_TIMEOUT}s）')
+        _G03_CACHE[key] = result
+        return result
     try:
         data = json.loads(out.stdout)
     except ValueError:
-        return None, None, f'g03 输出不可解析 rc={out.returncode} {out.stderr[:200]}'
-    return data['per_scenario'].get(scenario, {}), data, None
+        result = (None, None, f'g03 输出不可解析 rc={out.returncode} {out.stderr[:200]}')
+        _G03_CACHE[key] = result
+        return result
+    result = (data['per_scenario'].get(scenario, {}), data, None)
+    _G03_CACHE[key] = result
+    return result
 
 
 def is_the_gsf_insertion(diff):
@@ -95,28 +122,54 @@ def is_the_gsf_insertion(diff):
     right = diff.get('right')
     if not isinstance(right, dict):
         return False, 'right 不是记录'
-    if right.get('kind') != 'durable.status':
-        return False, f'新增记录 kind={right.get("kind")}'
-    if right.get('event') != 'gateway_submit_failed':
-        return False, f'新增记录 event={right.get("event")}'
+    if not is_gsf(right):
+        return False, (f'新增记录不是 gsf（kind={right.get("kind")} '
+                       f'event={right.get("event")}）')
     if right.get('statusKind') != 'error':
         return False, f'新增记录 statusKind={right.get("statusKind")}'
     if right.get('text') != GSF_TEXT:
         return False, f'新增记录 text 不是 TS 宿主常量：{right.get("text")!r}'
+    if right.get('agentScope') != 'parent':
+        return False, f'新增记录 agentScope={right.get("agentScope")}（#6 只在 parent 流）'
+    # 投影形状必须恰好是 #6 那 5 个键：C5/C6 都会跳过这条 gsf，多带/少带字段只有这里能抓。
+    keys = set(right)
+    extra, missing = keys - GSF_FIELDS, GSF_FIELDS - keys
+    if extra or missing:
+        return False, (f'新增记录字段集不是 #6 形状（多 {sorted(extra)} / 少 {sorted(missing)}）')
     return True, 'ok'
+
+
+def canon(value):
+    """与冻结尺子 `g03_compare.py` 的 `canon()` 同口径：sort_keys + 紧凑 + ensure_ascii=False。
+
+    紧凑分隔符是**口径**不是格式偏好：装置若与尺子不同，「逐字节相同」的结论不可比（#1926 评审）。
+    """
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
 
 
 def norm(rec):
     """C5 的比较键：抹掉每轮随机的 invocationId、插入导致的 sequence 右移，
     以及 requestEvidence（冻结口径两处都 pop 掉它，见模块 docstring）。"""
-    return json.dumps({k: v for k, v in rec.items()
-                       if k not in ('invocationId', 'sequence', 'requestEvidence')},
-                      ensure_ascii=False, sort_keys=True)
+    return canon({k: v for k, v in rec.items()
+                  if k not in ('invocationId', 'sequence', 'requestEvidence')})
 
 
 def ev_norm(value):
     """C6 的比较键：规范化后逐字节比较（键序不算差异，值算）。"""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return canon(value)
+
+
+def identity_ok(recs, side):
+    """C4 / 计数表共用：sidecar 身份帧自证成立（恰 1 条、side 对、sha 自洽、spawn 观测到）。"""
+    ident = [r for r in recs if is_identity(r)]
+    if len(ident) != 1:
+        return False, None
+    rec = ident[0]
+    ok = (rec.get('side') == side
+          and isinstance(rec.get('sha256'), str) and rec.get('sha256')
+          and rec.get('sha256') == rec.get('expectedSha256')
+          and rec.get('spawnObserved') is True)
+    return ok, rec
 
 
 def request_evidence_index(recs, skip=frozenset()):
@@ -140,29 +193,39 @@ def check_request_evidence(ts_recs, rust_recs, skip_rust=frozenset()):
     ru_idx = request_evidence_index(rust_recs, skip=skip_rust)
     compared = residual = 0
     for key in ts_idx.keys() & ru_idx.keys():
-        left = sorted(ts_idx[key], key=lambda v: ev_norm(v) if v is not None else '')
-        right = sorted(ru_idx[key], key=lambda v: ev_norm(v) if v is not None else '')
-        for lv, rv in zip(left, right):
-            if lv is not None and rv is not None:
-                compared += 1
-                if ev_norm(lv) != ev_norm(rv):
-                    return False, (f'C6 失败：两侧共有的 requestEvidence 内容不同 '
-                                   f'({len(ev_norm(lv))} vs {len(ev_norm(rv))} 字节)：'
-                                   + (ev_norm(lv)[:300] + ' || ' + ev_norm(rv)[:300]))
-            elif (lv is None) != (rv is None):
-                residual += 1
+        # 同键两侧帧数不等说明 C5 的归组前提已被破坏：静默 zip 截断会漏比尾部（#1926 评审）。
+        if len(ts_idx[key]) != len(ru_idx[key]):
+            return False, (f'C6 失败：同键帧数两侧不等（TS {len(ts_idx[key])} / '
+                           f'Rust {len(ru_idx[key])}）：' + key[:300])
+        # 只把**两侧都存在**的 requestEvidence 放进多重集比内容；单侧存在计入残余。
+        # 不能按「有无」排序后 zip：None 的排序键与内容串不可比，None 位置不同就会错位，
+        # 把单侧存在误判成内容不同（#1926 评审 P1）。
+        left = Counter(ev_norm(v) for v in ts_idx[key] if v is not None)
+        right = Counter(ev_norm(v) for v in ru_idx[key] if v is not None)
+        common = left & right
+        compared += sum(common.values())
+        only_left, only_right = left - common, right - common
+        if only_left and only_right:
+            return False, ('C6 失败：两侧共有的 requestEvidence 内容不同：'
+                           + (sorted(only_left)[0][:300] + ' || ' + sorted(only_right)[0][:300]))
+        residual += sum(only_left.values()) + sum(only_right.values())
     return True, (f'C6 ok：{compared} 条两侧共有的 requestEvidence 规范化后逐字节相同'
                   f'（单侧存在 {residual} 条，属 C5 残余，C6 不覆盖）')
 
 
-def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs):
-    """返回 (结论, 证据行列表)。结论 ∈ {PASS, ATTRIB_6, NOT_6}。"""
+def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs, per=None):
+    """返回 (结论, 证据行列表)。结论 ∈ {PASS, ATTRIB_6, NOT_6}。
+
+    `per` 可注入该场景的 G03 结果（`per_scenario[scenario]`）：自测用桩数据覆盖 C1–C6
+    的编排层，不必真跑冻结比较器；生产调用传 None，由 `g03()` 现算。
+    """
     ev = []
     if scenario not in SCENARIOS:
         return 'NOT_6', [f'C1 失败：场景 {scenario} 不在 #6 登记范围 {SCENARIOS}']
-    per, _, err = g03(ts_dir, rust_dir, scenario)
     if per is None:
-        return 'NOT_6', [f'C2 失败：{err}']
+        per, _, err = g03(ts_dir, rust_dir, scenario)
+        if per is None:
+            return 'NOT_6', [f'C2 失败：{err}']
     diffs = per.get('channel', {}).get('differences') or []
     verdict = per.get('verdict')
     rules = sorted(per.get('triggered_rules') or [])
@@ -191,12 +254,10 @@ def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs):
     if ru_gsf[0] <= fc:
         return 'NOT_6', [f'C3 失败：gsf 序号 {ru_gsf[0]} 不晚于 fail_closed 帧 {fc}（分叉前移）']
     ev.append(f'C3 ok：gsf 计数 ts=0 rust=1，位于第 {ru_gsf[0]} 帧，晚于 fail_closed 帧 {fc}')
-    ident = [r for r in rust_recs if is_identity(r)]
-    if not (len(ident) == 1 and ident[0].get('side') == 'rust'
-            and ident[0].get('sha256') == ident[0].get('expectedSha256')
-            and ident[0].get('spawnObserved') is True):
+    ident_ok, ident = identity_ok(rust_recs, 'rust')
+    if not ident_ok:
         return 'NOT_6', ['C4 失败：右侧 sidecar 身份自证不成立']
-    ev.append(f'C4 ok：右侧 sidecar 身份自证 sha256={ident[0].get("sha256")[:12]}…，spawnObserved=true')
+    ev.append(f'C4 ok：右侧 sidecar 身份自证 sha256={str(ident.get("sha256"))[:12]}…，spawnObserved=true')
     # C5：把右侧那一条 gsf 删掉后，两侧的帧**集合**必须完全相同（逐条多重集相等）。
     #     抹掉 invocationId（每轮随机 UUID，G03 自己也归一化）、sequence（插入后整段右移，
     #     顺序不变性已由 C2a 的 G03 规则与 C3 的插入位置覆盖），以及 requestEvidence
@@ -223,13 +284,71 @@ def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs):
 
 
 def rounds(root, side):
+    """`<root>/<side>-r<N>` 轮次目录，按 N 升序。目录名不合规即报错（不静默跳过）。"""
     dirs = [p for p in glob.glob(f'{root}/{side}-r*') if os.path.isdir(p)]
+    bad = [p for p in dirs if not os.path.basename(p).rsplit('-r', 1)[1].isdigit()]
+    if bad:
+        raise SystemExit(f'轮次目录名不合规（应为 {side}-r<N>）：{sorted(bad)}')
     return sorted(dirs, key=lambda p: int(os.path.basename(p).rsplit('-r', 1)[1]))
 
 
+def round_problem(d, side):
+    """轮次有效性（与冻结 `scripts/parity/score.py:146-158` 同口径）。
+
+    返回 None 表示有效，否则返回原因。没有这道闸门时：被 BLOCKED / 只跑了半截的轮次会被
+    G03 追加 `trace_identity` 规则 → 判成 NOT_6（把「轮次无效」误报成「不是 #6」），或者
+    直接因 trace 缺失/截断抛异常中断整个分析（#1926 评审 P1）。
+    """
+    try:
+        with open(os.path.join(d, 'run.json')) as fh:
+            ledger = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return f'run.json 不可读：{exc}'
+    if ledger.get('side') != side:
+        return f'run.json side={ledger.get("side")!r}，不是 {side!r}'
+    if ledger.get('valid_round') is not True:
+        return 'run.json valid_round 不为 true'
+    if ledger.get('identity_ok') is not True:
+        return 'run.json identity_ok 不为 true'
+    sp = os.path.join(d, 'artifacts', 'summary.json')
+    if os.path.isfile(sp):
+        try:
+            with open(sp) as fh:
+                summary = json.load(fh)
+        except (OSError, ValueError) as exc:
+            return f'summary.json 不可读：{exc}'
+        if summary.get('blocked'):
+            return f'summary.json blocked={summary.get("blocked")!r}'
+    return None
+
+
+def collect_rounds(root, side, trace):
+    """筛出有效轮次；无效轮次逐条列原因，不静默参与判定。"""
+    good, bad = [], []
+    for d in rounds(root, side):
+        why = round_problem(d, side)
+        if why is None:
+            try:
+                load(os.path.join(d, 'artifacts', trace))
+            except (OSError, ValueError) as exc:
+                why = f'trace 不可读：{exc}'
+        (bad.append((os.path.basename(d), why)) if why else good.append(d))
+    return good, bad
+
+
 def run(root, scenario):
-    ts_all, ru_all = rounds(root, 'ts'), rounds(root, 'rust')
     trace = f'{scenario}.pilotdeck-current-sidecar.jsonl'
+    ts_all, ts_bad = collect_rounds(root, 'ts', trace)
+    ru_all, ru_bad = collect_rounds(root, 'rust', trace)
+    # 空对拍必须**硬失败**：0 对时循环不执行、total=0，旧版会打印「所有 FAIL 都可归因」
+    # 并以 rc=0 退出 —— 那是尺子假 PASS（#1926 评审 P0）。
+    if not ts_all or not ru_all:
+        print(f'## 失败：有效轮次不足（ts {len(ts_all)} 轮 / rust {len(ru_all)} 轮），无法归因：{root}',
+              file=sys.stderr)
+        for side, bad in (('ts', ts_bad), ('rust', ru_bad)):
+            for name, why in bad:
+                print(f'   {side}/{name}: {why}', file=sys.stderr)
+        return 5
     print(f'# 场景 {scenario}')
     print(f'# rounds = {root}')
     print()
@@ -239,10 +358,7 @@ def run(root, scenario):
         for d in dirs:
             recs = load(os.path.join(d, 'artifacts', trace))
             st = [f'{r.get("event")}/{r.get("statusKind")}' for r in recs if r.get('kind') == 'durable.status']
-            ident = [r for r in recs if is_identity(r)]
-            iok = (len(ident) == 1 and ident[0].get('side') == side
-                   and ident[0].get('sha256') == ident[0].get('expectedSha256')
-                   and ident[0].get('spawnObserved') is True)
+            iok = identity_ok(recs, side)[0]
             nev = sum(1 for r in recs if r.get('requestEvidence') is not None)
             print(f'{os.path.basename(d):10s} {len(recs):8d} {sum(1 for r in recs if is_gsf(r)):4d} '
                   f'{nev:4d} {str(iok):>6s}  {st}')
@@ -272,11 +388,22 @@ def run(root, scenario):
     total = npass + n6 + not6
     print()
     print(f'## 汇总：{total} pair 中 PASS={npass} · 归因 #6={n6} · 不能归因={not6}')
+    if total == 0:  # 兜底：对拍为空时绝不打印「全部可归因」（尺子假 PASS）
+        print('## 失败：0 pair 被判，拒绝给出结论', file=sys.stderr)
+        return 5
     if not6:
         print('## 反证命中（不能归因 #6）：')
         for name, ev in bad:
             print(' ', name, ev)
         return 2
+    if ts_bad or ru_bad:
+        # 批次不完整：结论只覆盖有效轮次，不得作为验收证据（fail-closed，不静默通过）。
+        print(f'## 警告：{len(ts_bad) + len(ru_bad)} 个轮次无效，已排除：')
+        for side, bad_rounds in (('ts', ts_bad), ('rust', ru_bad)):
+            for name, why in bad_rounds:
+                print(f'   {side}/{name}: {why}')
+        print('## 结论仅覆盖上面列出的有效轮次；含无效轮次的批次不算验收证据。')
+        return 6
     print('## 结论：该场景所有 FAIL 的语义差异集恰好是 #6 那一条，无第二种差异。')
     return 0
 
@@ -285,8 +412,16 @@ def run(root, scenario):
 
 def negctl(root, scenario, outdir):
     trace = f'{scenario}.pilotdeck-current-sidecar.jsonl'
-    ts_dir = rounds(root, 'ts')[0]
-    ru_dir = rounds(root, 'rust')[0]
+    # 证据目录独占新建：README 已声明「不得覆写」，代码必须同样设防，否则并发重跑会
+    # rmtree 掉另一个进程正在读的用例（假 MISMATCH），历史证据也被覆盖（#1926 评审 P2）。
+    if os.path.exists(outdir):
+        raise SystemExit(f'--negctl-out 必须独占新建：{outdir} 已存在（不覆盖证据）')
+    ts_dirs, ru_dirs = rounds(root, 'ts'), rounds(root, 'rust')
+    if not ts_dirs or not ru_dirs:
+        print(f'negctl 需要至少一对轮次目录，{root} 下 ts={len(ts_dirs)} rust={len(ru_dirs)}')
+        return 3
+    ts_dir = ts_dirs[0]
+    ru_dir = ru_dirs[0]
     base_ts = load(os.path.join(ts_dir, 'artifacts', trace))
     base_ru = load(os.path.join(ru_dir, 'artifacts', trace))
     if not any(is_gsf(r) for r in base_ru):
