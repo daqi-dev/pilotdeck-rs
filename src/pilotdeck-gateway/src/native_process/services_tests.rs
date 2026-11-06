@@ -1760,6 +1760,52 @@ fn upload_store_root_outside_the_project_is_not_a_home() {
     std::fs::remove_dir_all(&outside).ok();
 }
 
+/// #1887 (review boundary P1): the per-component walk and the
+/// canonicalization are two syscalls. A `.tmp` swapped for an **outside** link
+/// inside that gap resolves outside the project and is refused by the
+/// containment term, not by the walk — the walk already saw a real directory.
+/// This is the deterministic proof that the containment term is load-bearing:
+/// the `upload-store-containment-dropped` mutation row drops it, this root is
+/// then accepted, and the assertion below goes red.
+#[cfg(unix)]
+#[test]
+fn store_root_swapped_outside_after_the_walk_is_not_a_home() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let project = scratch.0.clone();
+    let store = project.join(".tmp").join("chat-uploads");
+    std::fs::create_dir_all(&store).expect("#1887 store home fixture");
+    let outside = project.with_file_name(format!(
+        "{}-outside-swapped-store-home",
+        project
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1887")
+    ));
+    std::fs::create_dir_all(outside.join("tmp").join("chat-uploads"))
+        .expect("#1887 outside swapped store fixture");
+    let project_for_hook = project.clone();
+    let outside_for_hook = outside.clone();
+    let guard = crate::upload::swap_test_hook::set(
+        crate::upload::swap_test_hook::SwapWindow::BetweenWalkAndCanonicalize,
+        move |_walked| {
+            std::fs::rename(
+                project_for_hook.join(".tmp"),
+                project_for_hook.join(".tmp-moved"),
+            )
+            .expect("#1887 move the real .tmp aside");
+            symlink(outside_for_hook.join("tmp"), project_for_hook.join(".tmp"))
+                .expect("#1887 swap .tmp for an outside link inside the walk window");
+        },
+    );
+    negative_assert!(
+        crate::upload::canonical_home(&store, &project, &project).is_none(),
+        "#1887 a store root swapped outside after the walk must not become a home"
+    );
+    drop(guard);
+    std::fs::remove_dir_all(&outside).ok();
+}
+
 /// #1468 (review GLM sibling#1): the lease root is the other legitimate home
 /// and had drifted from the store guard — a `.tmp/chat-upload-leases` that is
 /// a link into the project keeps its lexical spelling but makes every path
