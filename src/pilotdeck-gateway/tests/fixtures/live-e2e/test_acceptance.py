@@ -149,9 +149,10 @@ class AcceptanceTests(unittest.TestCase):
     def test_capture_second_signal_preserves_cleanup(self):
         # #1194/#1398: capture's handler raises RuntimeError (to escape the
         # selectors EINTR retry, #748), so the KeyboardInterrupt-shaped guard
-        # the other owners use cannot apply here. Without an equivalent guard a
-        # second signal delivered while that RuntimeError unwinds re-raises and
-        # skips the finally reclaim, leaking the detached sidecar group.
+        # the other owners use cannot apply here; the guard matches RuntimeError
+        # instead. Without an equivalent guard a second signal delivered while
+        # that RuntimeError unwinds re-raises and skips the finally reclaim,
+        # leaking the detached sidecar group.
         previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
             for first, second in ((signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT)):
@@ -173,6 +174,29 @@ class AcceptanceTests(unittest.TestCase):
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
 
+    def test_capture_first_signal_cancels_during_other_unwind(self):
+        # #1398 P2: the guard matches only RuntimeError, so an unrelated error
+        # unwinding through the finally must still honour the first signal —
+        # otherwise matching "any active exception" would swallow the cancel.
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            signal.signal(signal.SIGINT, capture.interrupted)
+            caught = None
+            try:
+                try:
+                    raise ValueError('#1398 unrelated body failure')
+                finally:
+                    os.kill(os.getpid(), signal.SIGINT)
+            except RuntimeError as error:
+                caught = error
+            except ValueError:
+                pass  # the handler returned: the cancel was swallowed
+            self.assertIsNotNone(caught, '#1398 first signal still cancels during another unwind')
+            self.assertIn('#748 capture interrupted by signal', str(caught))
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
     def test_negative_controls_kill_old_behaviors(self):
         probes = [
             (run_host, 'completed_tests', "'passed': not reasons,",
@@ -189,7 +213,7 @@ class AcceptanceTests(unittest.TestCase):
             (stdio_mitm, 'reap_after_host_eof', 'for stream in (process.stdin,):',
              'for stream in (process.stdout, process.stdin):', 'test_reader_owns_stdout_close',
              '#748 only reader closes stdout', 'stdout-close-race'),
-            (capture, 'interrupted', '    if sys.exception() is not None:\n        return\n', '',
+            (capture, 'interrupted', '    if isinstance(sys.exception(), RuntimeError):\n        return\n', '',
              'test_capture_second_signal_preserves_cleanup',
              '#1398 second signal preserved cleanup', 'capture-secondary-signal'),
         ]

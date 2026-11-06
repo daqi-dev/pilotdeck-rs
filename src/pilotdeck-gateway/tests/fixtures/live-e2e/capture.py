@@ -76,10 +76,11 @@ def interrupted(number, _frame):
     # selectors.select retries InterruptedError as EINTR, swallowing that
     # exception while communicate() is blocked. A RuntimeError escapes it.
     # #1194: a second signal delivered while this RuntimeError unwinds must not
-    # cut the finally cleanup (reclaim) short. The in-flight error is a
-    # RuntimeError rather than KeyboardInterrupt, so suppress on "any active
-    # exception" instead of matching the class.
-    if sys.exception() is not None:
+    # cut the finally cleanup (reclaim) short. Match RuntimeError rather than
+    # "any active exception": an unrelated error unwinding through the finally
+    # still has to honour the first signal (same shape as the KeyboardInterrupt
+    # handlers in session-lease and native-topology).
+    if isinstance(sys.exception(), RuntimeError):
         return
     raise RuntimeError('#748 capture interrupted by signal ' + str(number))
 
