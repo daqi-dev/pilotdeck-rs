@@ -1361,8 +1361,16 @@ class WitnessTests(unittest.TestCase):
         (home / 'projects' / 'proj' / 'chats' / 'session-a.jsonl').write_text(
             json.dumps({'type': 'agent_status_message', 'event': 'turn-start'}) + '\n')
         (home / 'projects/proj/.cwd').write_text('proj')
-        received = [{'id': 'case-01', 'final': True,
-                     'event': {'type': 'agent_status_message', 'event': 'turn-start'}}]
+        # The recorder keeps whole wire envelopes (#1372): one final:false
+        # envelope per in-process yield, then exactly one final:true envelope
+        # carrying lastError ?? lastCompleted ?? the empty-stream fallback.
+        # Only the yield is a frame; the terminal is derived, never a frame.
+        received = [
+            {'type': 'event', 'id': 'case-01', 'seq': 0, 'final': False,
+             'event': {'type': 'agent_status_message', 'event': 'turn-start'}},
+            {'type': 'event', 'id': 'case-01', 'seq': 1, 'final': True,
+             'event': dict(c.w.native.WS_TERMINAL_FALLBACK)},
+        ]
         observation = c.read_observation(home, 'proj', 'session-a', 'run-01', received, 'case-01')
         self.assertTrue(observation['frames'] == [{'type': 'agent_status_message', 'event': 'turn-start'}],
                         '#1140 observed frames are the raw gateway events')
