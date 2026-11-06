@@ -15,6 +15,14 @@ pub(super) fn invalid_path_argument(received: &pilotdeck_protocol::JsString) -> 
         crate::metadata::invalid_arg_type_message("path", received),
     )
 }
+/// `encodeURIComponent` on a string `String(value)` kept with lone surrogates
+/// throws `URIError: URI malformed`; TS propagates that class, so the reload
+/// path must not mistake it for a `PilotConfigError` (#1550 修 r6).
+fn uri_error() -> Error {
+    let mut e = Error::new("gateway_request_failed", "URI malformed");
+    e.name = "URIError";
+    e
+}
 fn host_required() -> Error {
     let mut e = Error::new("JS_HOST_REQUIRED", "");
     e.requires_host = true;
@@ -451,7 +459,7 @@ fn encode_uri_component(v: &JsValue) -> Result<String, Error> {
             .and_then(|units| String::from_utf16(&units).ok()),
         _ => Some(js_string(v)),
     }
-    .ok_or_else(|| Error::new("gateway_request_failed", "URI malformed"))?;
+    .ok_or_else(uri_error)?;
     let mut output = String::new();
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
@@ -500,12 +508,30 @@ mod tests {
     /// `String(["\ud800"])` keeps the lone surrogate and TS's
     /// `encodeURIComponent` then throws `URIError: URI malformed`. The array
     /// branch used to go through the lossy `js_string`, which replaced it with
-    /// U+FFFD and encoded `%EF%BF%BD` (#1550 修 r5).
+    /// U+FFFD and encoded `%EF%BF%BD` (#1550 修 r5). The error class matters:
+    /// `config/store.rs` only records reload diagnostics for
+    /// `PilotConfigError`, which is the name `Error::new` defaults to, while
+    /// TS propagates a plain `URIError` (#1550 修 r6).
     #[test]
     fn uri_component_rejects_a_lone_surrogate_inside_an_array() {
         let lone = pilotdeck_protocol::JsString::from_utf16(vec![0xd800]);
         let error = encode_uri_component(&JsValue::Array(vec![JsValue::String(lone)]))
             .expect_err("encodeURIComponent throws URIError");
+        assert_eq!(error.name, "URIError");
+        assert_eq!(
+            error.message.to_utf8().ok().as_deref(),
+            Some("URI malformed")
+        );
+    }
+
+    /// The scalar path reaches the same `URIError` (a lone surrogate survives
+    /// `String(value)` in both shapes).
+    #[test]
+    fn uri_component_rejects_a_lone_surrogate_string() {
+        let lone = pilotdeck_protocol::JsString::from_utf16(vec![0xd800]);
+        let error = encode_uri_component(&JsValue::String(lone))
+            .expect_err("encodeURIComponent throws URIError");
+        assert_eq!(error.name, "URIError");
         assert_eq!(
             error.message.to_utf8().ok().as_deref(),
             Some("URI malformed")
