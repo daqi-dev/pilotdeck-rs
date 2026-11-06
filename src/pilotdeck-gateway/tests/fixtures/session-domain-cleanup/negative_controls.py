@@ -3834,6 +3834,93 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-handle-dictcomp-escape', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = {k: getattr(md, k) for k in (_n,)}\n"
+     "    _hs['__setattr__']('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-listcomp-escape', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _hs[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-aliased-escape', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _f = _hs[0]\n"
+     "    _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-write-attribute', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    getattr(md, '__getattribute__')('__setattr__')"
+     "('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattr-const-subscript-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _keys = ('__setattr__',)\n"
+     "    getattr(md, _keys[0])('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-match-capture-helper', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        match operator.setitem:\n"
+     "                            case h:\n"
+     "                                h(report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-comprehension-write-helper', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        [h(report, 'status', 'PASS')\n"
+     "                         for h in [operator.setitem]]\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-mixed-alias-binding', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        h = lambda *a: None\n"
+     "                        h = operator.setitem\n"
+     "                        h(report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4343,6 +4430,71 @@ def calibrate_getattribute_handover(rows):
         rows, CHECK_REL, 'main',
         'aggregation-audit: calibrate-getattribute-handover flagged, '
         'passed=False')
+
+
+def calibrate_handle_dictcomp_escape(rows):
+    """#1953 fix-r1 N: a dict comprehension carried the write handle past the
+    escape test, so the receiver stayed trusted."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-dictcomp-escape flagged, '
+        'passed=False')
+
+
+def calibrate_handle_listcomp_escape(rows):
+    """#1953 fix-r1 N2: the list-comprehension spelling of the same escape."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-listcomp-escape flagged, '
+        'passed=False')
+
+
+def calibrate_handle_aliased_escape(rows):
+    """#1953 fix-r1: laundering one handle out of the container into a plain
+    name (``f = hs[0]; f('common', <stub>)``) is the same hand-over."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-aliased-escape flagged, '
+        'passed=False')
+
+
+def calibrate_getattribute_write_attribute(rows):
+    """#1953 fix-r1 L (narrow positive): reading ``__doc__`` through
+    ``__getattribute__`` is a pure read, but asking it for ``__setattr__``
+    still hands the write over -- the pure-read exemption must not swallow
+    that."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-write-attribute flagged, '
+        'passed=False')
+
+
+def calibrate_getattr_const_subscript_write(rows):
+    """#1953 fix-r1 M (narrow positive): folding a constant subscript must not
+    blind the rule -- ``_keys = ('__setattr__',); getattr(md, _keys[0])`` is
+    still the write handle, only the read spelling is exempt."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattr-const-subscript-write flagged, '
+        'passed=False')
+
+
+def calibrate_match_capture_helper(rows):
+    """#1953 fix-r1 O: ``match`` pattern captures were absent from
+    ``_name_bindings``, so ``case h:`` stayed unresolved."""
+    return _unrouted_status(rows, 'calibrate-match-capture-helper')
+
+
+def calibrate_comprehension_write_helper(rows):
+    """#1953 fix-r1: a write performed inside a comprehension element is not a
+    statement, so the per-statement scan never saw it."""
+    return _unrouted_status(rows, 'calibrate-comprehension-write-helper')
+
+
+def calibrate_mixed_alias_binding(rows):
+    """#1953 fix-r1 P: a name with both a non-write and a write binding made
+    the resolution non-unique and it was dropped instead of failing closed."""
+    return _unrouted_status(rows, 'calibrate-mixed-alias-binding')
 
 
 def _unrouted_status(rows, name):
@@ -4997,6 +5149,22 @@ JUDGES = {
         'aggregation-audit', calibrate_handle_yield, False, ()),
     'calibrate-getattribute-handover': (
         'aggregation-audit', calibrate_getattribute_handover, False, ()),
+    'calibrate-handle-dictcomp-escape': (
+        'aggregation-audit', calibrate_handle_dictcomp_escape, False, ()),
+    'calibrate-handle-listcomp-escape': (
+        'aggregation-audit', calibrate_handle_listcomp_escape, False, ()),
+    'calibrate-handle-aliased-escape': (
+        'aggregation-audit', calibrate_handle_aliased_escape, False, ()),
+    'calibrate-getattribute-write-attribute': (
+        'aggregation-audit', calibrate_getattribute_write_attribute, False, ()),
+    'calibrate-getattr-const-subscript-write': (
+        'aggregation-audit', calibrate_getattr_const_subscript_write, False, ()),
+    'calibrate-match-capture-helper': (
+        'aggregation-audit', calibrate_match_capture_helper, False, ()),
+    'calibrate-comprehension-write-helper': (
+        'aggregation-audit', calibrate_comprehension_write_helper, False, ()),
+    'calibrate-mixed-alias-binding': (
+        'aggregation-audit', calibrate_mixed_alias_binding, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

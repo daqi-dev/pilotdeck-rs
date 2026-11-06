@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 235 mutants:
+`JUDGES`, keyed by the same names. The current table has 243 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -424,7 +424,12 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-sameline-restore`, `calibrate-shared-seen-paths`,
 `calibrate-decorator-lambda-scope`, `calibrate-nonlocal-walrus-withdraw`,
 `calibrate-handle-list-literal`, `calibrate-handle-dict-literal`,
-`calibrate-handle-yield`, `calibrate-getattribute-handover`.
+`calibrate-handle-yield`, `calibrate-getattribute-handover`,
+`calibrate-handle-dictcomp-escape`, `calibrate-handle-listcomp-escape`,
+`calibrate-handle-aliased-escape`,
+`calibrate-getattribute-write-attribute`,
+`calibrate-getattr-const-subscript-write`, `calibrate-match-capture-helper`,
+`calibrate-comprehension-write-helper`, `calibrate-mixed-alias-binding`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1060,6 +1065,29 @@ worktree at `1aad2b626e3db5c27a950489ce7db3beace3312e` with the current
 | F2 | A dynamic write handle stored in a **dict literal** never reached the escape test. | `calibrate-handle-dict-literal` |
 | F3 | A dynamic write handle handed out through **`yield`** never reached the escape test. | `calibrate-handle-yield` |
 | G | **`__getattribute__`** read by a non-literal name hands over the `__dict__`; it was not in the read-handover set. | `calibrate-getattribute-handover` |
+
+### Closed by `fix-r1` (#1953 review round)
+
+The same two reviews measured five more shapes at the `fix-r35` head; each now
+has a `calibrate-*` mutant that is `KILLED` (raw evidence archived with PR
+#1953; `--only <name>` re-runs one).
+
+| Shape | Mutant |
+|---|---|
+| **N**: a write handle carried out by a **dict comprehension** (`{k: getattr(md, k) for k in (n,)}`, then `hs['__setattr__'](...)`) kept the receiver trusted. | `calibrate-handle-dictcomp-escape` |
+| **N2**: the **list-comprehension** spelling of the same escape. | `calibrate-handle-listcomp-escape` |
+| **N2b**: the handle is laundered out of the container into a plain name first (`f = hs[0]; f('common', <stub>)`); the alias fixpoint carries the roots across the assignment. | `calibrate-handle-aliased-escape` |
+| **O**: a **`match` pattern capture** (`case h:`) is a binding the resolver never saw, so `h(report, 'status', 'PASS')` stayed invisible. | `calibrate-match-capture-helper` |
+| **P**: a name with **both** a non-write and a write binding made the resolution non-unique and it was dropped instead of failing closed. | `calibrate-mixed-alias-binding` |
+| A write performed **inside a comprehension element** is an expression, not a statement, so the per-statement `unshared_status_slots` scan never reached it. | `calibrate-comprehension-write-helper` |
+
+Two narrow positives pin the exemptions that `fix-r1` added for the false FAILs
+it had introduced: `getattr(md, '__getattribute__')('__doc__')` (and the
+constant-subscript spelling `_keys = ('__doc__',); getattr(md, _keys[0])`) is a
+plain read and must stay clean, while the same shapes naming a **write**
+attribute still turn the gate red --
+`calibrate-getattribute-write-attribute` and
+`calibrate-getattr-const-subscript-write`.
 
 Also measured at the same head, tracked in #1954 rather than accepted here (they
 are P2-level and narrower than the constructs above): `from operator import attrgetter as _ag;
