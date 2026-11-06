@@ -759,8 +759,7 @@ def run():
          gw_inventory(GW_BOOTSTRAP + "from sys import *\nmodules['_guard'] = None\n"
                       + _gw_tail) is None)
     case("from sys import * 让两张表按裸名可达（导入表模型本身）",
-         {'modules', 'path'}
-         <= cfd._sys_roots(cfd._parse("from sys import *\n")))
+         {'modules', 'path'} <= cfd._sys_roots(cfd._parse("from sys import *\n"))[1])
     case("gateway 块外 def _swap(x): x.A2_SCRIPTS = ... 后 _swap(common) → 不可判定",
          gw_inventory(GW_BOOTSTRAP
                       + "def _swap(x):\n    x.A2_SCRIPTS = ('evil.py',)\n"
@@ -889,6 +888,79 @@ def run():
                         "def _b(z):\n    _swap(z)\n"
                         "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
                         "_a(common)\n" + _gw_tail) is None)
+
+    # ---------------------------------------------------------------- r24 负控
+    # r23 把「谁被改」和「实参落在哪个形参」分开了，但两侧的对位仍按字面拼写：
+    # 循环/解包目标个数不匹配就整条丢掉、`*`/`**` 展开直接跳过、形参换个名字
+    # 就地改就看不见、默认值里的对象不算传参、属性形式调用完全没查；`sys` 的
+    # 模块名与表名混在一个集合里，`from sys import path as _p` 因此两边都算。
+    case("gateway 块外 for 字面序列与目标个数不匹配 → 循环变量仍可能拿到 common",
+         gw_inventory(GW_BOOTSTRAP
+                      + "for _c in (common, common):\n    _c.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 块外 for 遍历 set 字面量（迭代顺序不由文件固定）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "for _c, _x in {(None, common), (common, None)}:\n"
+                        "    _x.A2_SCRIPTS = ()\n" + _gw_tail) is None)
+    case("gateway 块外解包的星号目标也要算进去 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_x, *_rest = (None, common, None)\n"
+                        "_rest[0].A2_SCRIPTS = ()\n" + _gw_tail) is None)
+    case("gateway from sys import path as _p 后就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import path as _p\n_p.insert(0, 'evil')\n"
+                      + _gw_tail) is None)
+    case("gateway from sys import modules as _m 后就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import modules as _m\n_m.update({'_guard': None})\n"
+                      + _gw_tail) is None)
+    case("gateway 调用点 * 展开把 common 递给被改形参 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "_swap(*(common,))\n" + _gw_tail) is None)
+    case("gateway 调用点 ** 展开 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "_swap(**{'x': common})\n" + _gw_tail) is None)
+    case("gateway 被调函数内换名后就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    y = x\n    y.update({'A2_SCRIPTS': ()})\n"
+                        "_swap(common)\n" + _gw_tail) is None)
+    case("gateway 调用方换名后再传 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "def _a(y):\n    z = y\n    _swap(z)\n_a(common)\n"
+                      + _gw_tail) is None)
+    case("gateway 默认参数里带 common、调用点不传 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x=common):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "_swap()\n" + _gw_tail) is None)
+    case("gateway 以属性形式调用被改函数 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_C()._swap(common)\n" + _gw_tail) is None)
+    case("gateway 清单函数里出现 lambda → 不可判定",
+         gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
+                      "\ndef manifest_inventory(root):\n"
+                      "    _f = lambda name: name\n"
+                      "    paths = [f'scripts/gateway-parity/{n}' for n in A2_SCRIPTS]\n"
+                      "    return {name: name for name in paths}\n") is None)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/parity/check_frozen.py", PARITY_MANIFEST)
+        commit(root, "base")
+        head = git(root, "rev-parse", "HEAD")
+        case("parity 清单函数（无嵌套 def）→ spec 名单可判定",
+             cfd.parity_spec_names(root, head) is not None)
+        write(root, "scripts/parity/check_frozen.py",
+              PARITY_MANIFEST.replace(
+                  "    names = (",
+                  "    _f = lambda x: x\n    names = ("))
+        commit(root, "nested")
+        case("parity 清单函数里嵌套 lambda → spec 名单不可判定",
+             cfd.parity_spec_names(root, git(root, "rev-parse", "HEAD")) is None)
 
     with tempfile.TemporaryDirectory() as td:
         # 未跟踪草稿：真实闸门无感，--write 也不登记 → 预检不能误拦。
@@ -1650,6 +1722,28 @@ def run():
              "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}",
              "    def _extra():\n        return None\n"
              "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}"))) is None)
+
+    # ---------------------------------------------------------------- r24 ui 负控
+    # gateway 侧 r24 新增的绑定形态在 ui 侧同源（同一个 `_alias_roots`），这里
+    # 只补三条最容易在 ui 侧单独走形的：链式赋值、解包（含星号目标）、for 目标
+    # 个数不匹配；另外把 `sort`/`reverse` 这两种 list 就地改也算进改写名单。
+    case("ui 块外链式赋值 _r = _q = REQUIRED 后就地改 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_r = _q = REQUIRED\n_q.update({'evil.md'})\n") is None)
+    case("ui 块外解包（星号目标）拿到 REQUIRED → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_x, *_rest = (None, REQUIRED)\n"
+                          "_rest[0].update({'evil.md'})\n") is None)
+    case("ui 块外 for 字面序列个数不匹配 → 循环变量仍可能拿到 REQUIRED",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\nfor _r in (REQUIRED, REQUIRED):\n"
+                          "    _r.update({'evil.md'})\n") is None)
+    case("ui 块外 sys.path.sort() 重排导入解析顺序 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_boot_sys.path.sort()\n") is None)
+    case("ui 块外 REQUIRED 的别名 reverse() → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_r = REQUIRED\n_r.reverse()\n") is None)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
