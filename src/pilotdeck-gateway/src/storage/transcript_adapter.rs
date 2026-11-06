@@ -1499,15 +1499,23 @@ fn snapshot_block_valid(block: &JsValue) -> AdapterResult<bool> {
 }
 /// The `String(...)` coercion inside isContentBlock throws for an object
 /// carrying a `toString` property (same convention as replay.rs and js_value
-/// `NotPrimitive`); a plain object just stringifies and fails the membership
-/// check, which the caller reports as an invalid block.
+/// `NotPrimitive`), and throws `RangeError` once the array join nesting passes
+/// the engine bound; a plain object just stringifies and fails the membership
+/// check, which the caller reports as an invalid block. The walk must be the
+/// iterative checked one (#1550 P0): the recursive truthiness helper aborts
+/// the process on a deeply nested transcript line, while V8 raises a catchable
+/// `RangeError` that these callers surface as `AdapterError::Range`.
 fn checked_string(value: &JsValue) -> AdapterResult<()> {
-    if crate::config::string_coercible(value) {
-        Ok(())
-    } else {
-        Err(AdapterError::Type(
-            "Cannot convert object to primitive value".into(),
-        ))
+    match js_value::to_string_units_checked(value) {
+        Ok(_) => Ok(()),
+        Err(error) => Err(match error {
+            js_value::ToStringError::NotPrimitive => {
+                AdapterError::Type(js_value::ToStringError::NOT_PRIMITIVE.into())
+            }
+            js_value::ToStringError::StackOverflow => {
+                AdapterError::Range(js_value::StackOverflow::MESSAGE.into())
+            }
+        }),
     }
 }
 /// JS truthiness: the `if (!replacement)` guard runs before cloneMessages.
@@ -1954,5 +1962,67 @@ mod restore_tests {
                 ..
             })
         ));
+    }
+}
+#[cfg(test)]
+mod coercion_depth_tests {
+    use super::*;
+    use crate::metadata::object;
+
+    /// A transcript line is untrusted input. TS `String(block.type)` inside
+    /// isContentBlock throws a RangeError once array nesting exhausts the V8
+    /// stack; the port must report that catchable error instead of recursing
+    /// until the Rust stack aborts the process. JSON parsing has no nesting
+    /// bound (`codec::parse` is iterative), so a few hundred kilobytes of
+    /// `[` reach this check from disk.
+    #[test]
+    fn deep_snapshot_block_type_is_a_range_error_not_a_stack_overflow() {
+        let mut deep = JsValue::from("text");
+        for _ in 0..1_000_000 {
+            deep = JsValue::Array(vec![deep]);
+        }
+        let entry = object([
+            ("type", JsValue::from("control_boundary")),
+            (
+                "boundary",
+                object([
+                    ("kind", JsValue::from("compact")),
+                    ("subtype", JsValue::from("compact_boundary")),
+                    (
+                        "compactMetadata",
+                        object([("postTokens", JsValue::Number(1.0))]),
+                    ),
+                    (
+                        "snapshot",
+                        object([
+                            ("version", JsValue::Number(1.0)),
+                            (
+                                "messages",
+                                JsValue::Array(vec![object([
+                                    ("role", JsValue::from("user")),
+                                    (
+                                        "content",
+                                        JsValue::Array(vec![object([
+                                            ("type", JsValue::from("tool_result")),
+                                            ("toolCallId", JsValue::from("c1")),
+                                            (
+                                                "content",
+                                                JsValue::Array(vec![object([("type", deep)])]),
+                                            ),
+                                        ])]),
+                                    ),
+                                ])]),
+                            ),
+                        ]),
+                    ),
+                ]),
+            ),
+        ]);
+        match projection_supported(&entry) {
+            Err(AdapterError::Range(message)) => {
+                assert_eq!(message, js_value::StackOverflow::MESSAGE);
+            }
+            other => panic!("expected a RangeError, got {other:?}"),
+        }
     }
 }
