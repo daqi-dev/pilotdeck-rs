@@ -684,7 +684,11 @@ async fn startup_refuses_every_unmigrated_channel() {
 // std's `Termination for Result` prints `Error: {e:?}` — the Debug form, not
 // the Display form the seam returns. The ledger entries must describe what an
 // operator actually sees, so the exact stderr line is pinned here (measured
-// from a minimal `Termination` probe in the #1763 PR).
+// from a minimal `Termination` probe in the #1763 PR). This test does not
+// itself write to process stderr: it replays the one line std prints for the
+// `main` signature above (`main.rs` returns `Result<(), ProxyError>`, which
+// `native_process::run` propagates unchanged). Changing that signature or
+// wrapping the error before returning it would invalidate the pinned text.
 #[tokio::test]
 async fn startup_rejection_reaches_stderr_in_the_debug_form() {
     let error = crate::test_negative_receipt::expect_err(
@@ -720,9 +724,12 @@ async fn startup_refuses_unimplemented_feishu() {
 
 // #1763 review P2: production feeds the parsed snapshot, where
 // `config/snapshot.rs`'s `bool_field` has already folded `enabled` to a bool.
-// Non-boolean spellings TS treats as truthy therefore read `false` here and do
-// not reject — a pre-existing snapshot divergence, pinned so it cannot drift
-// unnoticed (the seam-level truthiness contract stays in `channel::tests`).
+// Non-boolean spellings therefore read `false` here and do not reject. TS's
+// own `parseGatewayConfig.booleanField` folds the same way (`channel/loader.rs`
+// records that the two gates cannot be told apart on a real config file), so
+// this is the shared snapshot behavior, not a Rust-side divergence — pinned
+// so it cannot drift unnoticed (the seam-level truthiness contract over raw
+// objects stays in `channel::tests`).
 #[tokio::test]
 async fn startup_folds_non_boolean_enabled_spellings() {
     for spelling in ["1", "\"true\"", "\"1\"", "[]", "{}"] {
