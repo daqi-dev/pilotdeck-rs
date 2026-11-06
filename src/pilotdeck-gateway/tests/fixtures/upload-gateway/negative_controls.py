@@ -481,16 +481,20 @@ mutations = [
 ''', '''                remove_tree(&self.dir)
 ''', LEASE_RELEASE,
      'a lease release must not follow a swapped leases root'),
-    # #1646 review r4: the gate is an equality test, not a prefix test — a root
-    # linked to another directory inside the project must be refused too.
-    ('plain-root-accepts-inside-project-link', STORE, '''    match fs::canonicalize(&root) {
+    # #1646 review r4/r5: the gate is an equality test, not "resolve and
+    # accept" — a root that stats as a directory but resolves to a different
+    # literal path must be refused. The mutant is the pre-r4 shape; a
+    # `starts_with` mutant would NOT be killed here (the symlinked-root cells
+    # are already refused by the leading stats), so this is the shape the test
+    # actually has teeth against.
+    ('plain-root-accepts-any-resolve', STORE, '''    match fs::canonicalize(&root) {
         Ok(real) if real == root => PlainRoot::Plain(real),
         _ => PlainRoot::Blocked,
     }''', '''    match fs::canonicalize(&root) {
-        Ok(real) if real.starts_with(project) => PlainRoot::Plain(real),
+        Ok(real) => PlainRoot::Plain(real),
         _ => PlainRoot::Blocked,
     }''', PLAIN_ROOT,
-     'a root linked to another directory inside the project must be blocked'),
+     'a root whose resolve lands on a different literal path must be blocked'),
     # #1646 review r5: the orphan branch's failure arm had no injection point
     # and no teeth; swallowing its error kept every test green.
     ('cleanup-orphan-rm-silent', STORE, '''        match self.fault("orphan-rm", dir).and_then(|()| remove_tree(dir)) {
