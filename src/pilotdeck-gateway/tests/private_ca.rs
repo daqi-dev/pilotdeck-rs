@@ -346,13 +346,13 @@ async fn private_ca_matrix() {
             &std::fs::read_to_string(result_path).expect("#1552 result cell readable"),
         )
         .expect("#1552 result cell JSON");
-        // A6.4-TLS-CA-SOURCES-001-R1 / issue #1640: the frozen Homebrew oracle
-        // and the project baseline (Node v22.22.0 source build, cc7c4e65)
-        // disagree on these cells and the口径 is not decided yet. Rust follows
-        // the frozen oracle for `dir-unflagged` and the source build for
-        // `early-file`; neither is counted as parity. `system-dir` is not here:
-        // the source build measured all-true on cb8 (logs/gen-modes-cb8.log),
-        // the same as the frozen oracle and as Rust.
+        // A6.4-TLS-CA-SOURCES-001-R1/-R2, #1640 & #1865: the frozen Homebrew oracle and
+        // the project baseline (Node v22.22.0 source build, cc7c4e65) disagreed on these
+        // cells; the 口径 is decided — #1640 option 1, #1865 option 3 keep-as-is
+        // (state/decisions-20261107-1865-option3.md). Rust follows the frozen oracle for
+        // `dir-unflagged` and the source build for `early-file`; neither counts as parity.
+        // `system-dir` is not here and is platform-split (R2「范围」): cb8/Linux all-true
+        // like the frozen oracle and Rust; darwin all-false, the opposite of Rust.
         let difference = ["dir-unflagged", "early-file"].contains(&mode.as_str());
         let ts_oracle = expected.clone();
         if difference && !mismatch {
