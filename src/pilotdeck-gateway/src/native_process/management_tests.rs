@@ -1104,11 +1104,21 @@ fn assert_ts_capability_subset(expected: &[&str]) {
     );
 }
 
-/// #1320「公布 ⟺ 真能服务」：`describe_server` 的能力表与 U7 四方法
-/// （apply_flag_settings / update_settings / resolve_settings /
-/// reload_output_styles）的交集必须经 `Requests::settings_request` 真的
-/// 可服务（不得回答 CAPABILITY_UNAVAILABLE），差集必须回答
-/// CAPABILITY_UNAVAILABLE "<method> is unavailable."。settings 网关换成
+/// #1320「公布 ⟺ 真能服务」三口径，三者有意不同：
+/// - `已注册`（`methods/settings.rs::METHODS` 六项）：路由表会分发的
+///   wire 名，能力守卫的完整输入域。
+/// - `已公布`（`describe_server` capabilities，须为 TS 子集）：TS 在每个
+///   配置状态只公布四项（apply_flag_settings / update_settings /
+///   resolve_settings / reload_output_styles，见 oracle.json 三个 contract
+///   的 capabilities），本固件在六项里只公布 `resolve_settings`——TS 公布
+///   的其余三项没有委托，公布即承诺无法交付。
+/// - `真能服务`（六项中 `resolve_settings` / `reload_config` /
+///   `reload_extensions` 三项有真委托）：两个 reload 有委托但 TS 从不
+///   公布它们，公布会违反 TS 子集口径。
+/// 守卫循环因此只跑 TS 公布的四项：交集必须经 `Requests::settings_request`
+/// 真的可服务（不得回答 CAPABILITY_UNAVAILABLE），差集必须回答
+/// CAPABILITY_UNAVAILABLE "<method> is unavailable."；两个 reload 在循环外
+/// 显式断言「真能服务且不在能力表」，证明不公布是有意的。settings 网关换成
 /// 生产组合（`services::native_settings_for_process`）——`stub_settings`
 /// 连 resolve_settings 都不可用，用它自证毫无意义。
 #[tokio::test]
@@ -1172,6 +1182,25 @@ async fn settings_capabilities_match_served_delegates() {
                 "#1320 unadvertised settings method {method} message"
             );
         }
+    }
+    // The two reloads close the three-way gap: registered (METHODS) and
+    // really served (real refresh delegates in the production composition),
+    // yet deliberately unadvertised — TS never publishes them in any config
+    // state, and the advertised set must stay a TS subset.
+    for method in ["reload_config", "reload_extensions"] {
+        let result = requests
+            .settings_request(method.to_owned(), JsValue::Undefined)
+            .await;
+        negative_assert!(
+            !matches!(&result, Err(error) if error.code == "CAPABILITY_UNAVAILABLE"),
+            "#1320 registered settings method {method} has a real delegate and must not \
+             answer CAPABILITY_UNAVAILABLE over the production stack"
+        );
+        negative_assert!(
+            !advertised.iter().any(|name| name == method),
+            "#1320 settings method {method} must stay unadvertised: TS never publishes it, \
+             so advertising it would break the TS-subset capability rule"
+        );
     }
 }
 
