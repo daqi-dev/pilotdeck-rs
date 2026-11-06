@@ -11,19 +11,25 @@ def mutate(original, scope, replacements, *, expected_count=1):
     if scope is None:
         body = original
         for old, new in replacements:
-            assert body.count(old) == expected_count, (old, body.count(old))
+            if body.count(old) != expected_count:
+                raise ValueError(f'{old!r} occurs {body.count(old)} times '
+                                 f'(expected {expected_count})')
             body = body.replace(old, new, 1)
         return body
     methods = list(re.finditer(r'^    (?:pub(?:\([^)]*\))? )?(?:async )?fn (\w+)', original, re.M))
     matches = [i for i, method in enumerate(methods) if method[1] == scope]
-    assert len(matches) == 1, (scope, matches)
+    if len(matches) != 1:
+        raise ValueError(f'scope {scope!r} matches {len(matches)} methods; expected 1')
     i = matches[0]
     start = methods[i].start()
     end = methods[i + 1].start() if i + 1 < len(methods) else len(original)
     body = original[start:end]
     for old, new in replacements:
-        assert old == old.lstrip() and '\n' not in old, old
-        assert body.count(old) == 1, (scope, old, body.count(old))
+        if old != old.lstrip() or '\n' in old:
+            raise ValueError(f'anchor must be a single unindented line: {old!r}')
+        if body.count(old) != 1:
+            raise ValueError(f'{scope}: anchor {old!r} occurs {body.count(old)} times '
+                             '(expected 1)')
         body = body.replace(old, new)
     return original[:start] + body + original[end:]
 

@@ -109,10 +109,13 @@ env = os.environ.copy()
 try:
     registered(cases, EXPECTED_NAMES)
     run_cases = select(cases, sys.argv[2:], always=())
-except ValueError as error:
+    # Anchor drift is a "never started" condition too: `catalog` raises when a
+    # registered case's anchor is no longer unique in its source, and an
+    # uncaught RuntimeError would land on exit 1 ("ran but not green").
+    catalog(run_cases)
+except (ValueError, RuntimeError) as error:
     refuse(str(error))
 out = claim_dir(sys.argv[1])
-catalog(run_cases)
 verdicts = []
 
 def save(name, text):

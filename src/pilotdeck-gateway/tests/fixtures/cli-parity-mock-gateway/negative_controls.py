@@ -337,6 +337,36 @@ mutations = [
      "                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')\n"
      "        yield"),
 ]
+
+# #1666: the denominator is this static roster, not `len(mutations)`. Deleting
+# or renaming a row shrinks the table and every remaining row still passes, so
+# the table alone cannot notice that a control disappeared. `registered()` is
+# not importable here (this entry refuses any fixtures path entry, #1023), so
+# the comparison is inline with the same refusal shape and exit code.
+EXPECTED_NAMES = (
+    'allow-rule-drops-port',
+    'default-deny-relaxed',
+    'deny-order-swapped',
+    'mock-port-changed',
+    'marker-ignored',
+    'marker-truthy',
+    'profile-binding-ignored',
+    'gateway-probe-skipped',
+    'presence-skipped',
+    'rust-node-exec-skipped',
+    'mock-exit-accepted',
+    'mock-exit-after-readiness-accepted',
+    'post-spawn-failure-leaks-mock',
+    'spawn-exception-leaks-group',
+    'scenario-profile-ignored',
+    'ping-disconnects',
+    'listening-line-drifts',
+    'probe-port-not-passed',
+    'probe-port-hardcoded',
+    'script-parent-metadata-allowed',
+    'baseline-parent-metadata-allowed',
+    'lease-late-arrival-runs-bound-test',
+)
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
     'marker-ignored': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -588,6 +618,18 @@ def main():
                     help='tree to prove the sources pristine against '
                          '(default HEAD; a "git stash create" tree for a local rehearsal)')
     args = ap.parse_args()
+    # #1666: the roster is compared against the static table before anything
+    # runs. A deleted or renamed row would otherwise shrink the denominator
+    # silently and the remaining rows would still print a full score.
+    names = tuple(mutation[0] for mutation in mutations)
+    if names != EXPECTED_NAMES:
+        missing = [name for name in EXPECTED_NAMES if name not in names]
+        extra = [name for name in names if name not in EXPECTED_NAMES]
+        sys.stderr.write('INVALID: control roster drifted: '
+                         f'missing={", ".join(missing) or "none"} '
+                         f'unexpected={", ".join(extra) or "none"} '
+                         f'order_or_count={len(names)}/{len(EXPECTED_NAMES)}\n')
+        raise SystemExit(2)
     rows = mutations
     if args.selection:
         # #1666: an `assert` here is stripped by `python3 -O`, silently
@@ -607,7 +649,18 @@ def main():
             raise SystemExit(2)
         rows = [mutation for mutation in mutations if mutation[0] in args.selection]
     out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    # The output directory is the evidence claim: taking it means this run
+    # really started. `mkdir(exist_ok=False)` raises `FileExistsError`, which
+    # an uncaught traceback turns into exit 1 ("ran but not green") although
+    # nothing ran; refuse with 2 instead, like `negative_selection.claim_dir`.
+    try:
+        out.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        sys.stderr.write(f'INVALID: output directory already exists: {out}\n')
+        raise SystemExit(2)
+    except OSError as error:
+        sys.stderr.write(f'INVALID: cannot create the output directory {out}: {error}\n')
+        raise SystemExit(2)
     summary = []
     try:
         with mutating_sources(root, [policy, common, compare, run_round, mock_gateway,

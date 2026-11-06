@@ -43,7 +43,7 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 - 全部守卫写成 `raise` / `refuse()`，**一个都不依赖 `assert`**。`python3 -O` /
   `PYTHONOPTIMIZE=1` 会整条剥离 `assert`，靠 `assert` 的负控在优化解释器下静默放行。
 
-`test_negative_optimize_guards.py` 对已迁移的十四个入口逐一复算「未知变异名 → rc=2 且
+`test_negative_optimize_guards.py` 对已迁移的十五个入口逐一复算「未知变异名 → rc=2 且
 stderr 点名」，加不加 `-O` 都要成立；它同时自证本解释器确实剥离 `assert`，否则结论无意义。
 同一文件里的 `PENDING_BARE_ASSERTS` 是**只减不增**的存量登记：仍带裸 `assert` 的
 `*/negative_controls.py` 必须逐条列出并写理由，新脚本带裸 `assert` 直接让 CI 红。因此
