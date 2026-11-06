@@ -950,11 +950,13 @@ def run():
                       + "class _C:\n    def _swap(m, x):\n"
                         "        x.update({'A2_SCRIPTS': ()})\n"
                         "_C()._swap(common)\n" + _gw_tail) is None)
-    case("gateway 属性调用把 common 交给接收者 → 不可判定",
+    # 接收者分支：调用点看不出 `_swap` 是不是绑定方法，所以只要被看护对象出现在
+    # 接收者位置就按「交出去了」算。这里钉的是模型的 fail-closed 回答，不是一条
+    # 运行期真会跑的写法（模块对象上没有 `_swap`）。
+    case("gateway 属性调用的接收者是被看护对象 → 不可判定",
          gw_inventory(GW_BOOTSTRAP
-                      + "class _C:\n    def _swap(m):\n"
-                        "        m.update({'A2_SCRIPTS': ()})\n"
-                        "_C()._swap(common)\n" + _gw_tail) is None)
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "common._swap(None)\n" + _gw_tail) is None)
     case("gateway 传递链上的属性调用也要按绑定方法对位 → 不可判定",
          gw_inventory(GW_BOOTSTRAP
                       + "class _C:\n    def _swap(self, x):\n"
@@ -991,6 +993,52 @@ def run():
          gw_inventory(GW_BOOTSTRAP
                       + "for _k in {common: None}:\n    _k.A2_SCRIPTS = ()\n"
                       + _gw_tail) is None)
+
+    # ---------------------------------------------------------------- r26 负控
+    # 复审把「字面量展开」这一族补齐：`*` / `**` 展开贡献的值文件里没写出来，
+    # 解包右值是 dict 时拿到的是键；同族的两处过度拦截（属性调用的被调方其实
+    # 不写、无主 lambda 只碰自己的行）也要能判「可判定」，否则合法交付被挡住。
+    case("gateway for 遍历 * 展开的字面序列 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_xs = (common,)\nfor _k in [*_xs]:\n"
+                        "    _k.A2_SCRIPTS = ()\n" + _gw_tail) is None)
+    case("gateway for 遍历 ** 展开的 dict 字面量 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "for _k in {**{common: 0}}:\n    _k.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 解包右值是 dict 字面量（拿到的是键）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_a, _b = {common: 1, 'x': 2}\n_a.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway from sys import modules as _m 后解包 dict 字面量 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import modules as _m\n"
+                        "_p, _q = {_m: 1, 'x': 2}\n"
+                        "_p.update({'apparatus': None})\n" + _gw_tail) is None)
+    case("gateway 属性调用 + 被看护默认参数、调用点不传 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x=common):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_C()._swap()\n" + _gw_tail) is None)
+    case("gateway 绑定方法先取别名再调用 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_g = _C()._swap\n_g(common)\n" + _gw_tail) is None)
+    case("gateway 被调函数内解包形参后就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    _a, _b = x, None\n"
+                        "    _a.update({'A2_SCRIPTS': ()})\n_swap(common)\n"
+                      + _gw_tail) is None)
+    case("gateway 属性调用的被调方不写 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _noop(self, x):\n        return x\n"
+                        "def _a(y):\n    _C()._noop(y)\n_a(common)\n"
+                      + _gw_tail) is not None)
+    case("gateway 无主 lambda 只碰自己的行 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "sorted([{'k': 0}], key=lambda o: o.setdefault('k', 1))\n"
+                      + _gw_tail) is not None)
     case("gateway 清单函数里出现 lambda → 不可判定",
          gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
                       "\ndef manifest_inventory(root):\n"
@@ -1809,6 +1857,24 @@ def run():
          ui_registrable(UI_APPARATUS, UI_FROZEN
                         + "\ndef _swap(x=_boot_manifest):\n"
                           "    x.update({})\n_swap()\n") is None)
+
+    # ---------------------------------------------------------------- r26 ui 负控
+    # gateway 侧 r26 把「交给函数」的判定从「实参根名」改成「实参里读到的名字」：
+    # `_swap(*[REQUIRED])` / `_swap([REQUIRED])` 走展开与容器绕过去的两条同源。
+    # 另把改名单的 `sort`/`reverse` 直接钉在常量上——`REQUIRED` 是 set，写不出
+    # 一条真会跑的 `REQUIRED.reverse()` 夹具。
+    case("ui 块外把 REQUIRED 展开后交给函数 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_swap(*[REQUIRED])\n") is None)
+    case("ui 块外把 REQUIRED 装进容器再交给函数 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_swap([REQUIRED])\n") is None)
+    case("ui 块外解包 list 字面量拿到 REQUIRED → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n_a, _b = [REQUIRED, None]\n"
+                          "_a.update({'evil.md'})\n") is None)
+    case("改写名单含 sort / reverse（list 就地改）",
+         {'sort', 'reverse'} <= cfd._MUTATOR_ATTRS)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
