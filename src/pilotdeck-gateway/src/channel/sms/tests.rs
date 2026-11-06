@@ -1635,7 +1635,10 @@ fn absent_recording_fields_keep_defaults() {
     validate_mock_recording(
         &json!({"turn":null,"permissionError":null,"permissionGate":null,"sendBlockAt":null,"sendError":null}),
     );
-    assert_responses_so_far(&[], &empty, "absent expected");
+    // #1729 fix-r6: `expected` is no longer an optional recording field, so the
+    // old `assert_responses_so_far(&[], &empty, …)` probe (absent `expected`
+    // silently compares nothing) is gone; absence now panics — covered by
+    // `recorded_expected_panics_when_absent`.
     let delivery = cron_delivery(&empty);
     assert!(
         delivery.session_key.is_none()
