@@ -163,6 +163,12 @@ def analyze_round(round_name, rows, wire, oracle_index):
              'executed': 0, 'ok': 0, 'error': 0, 'timeout': 0}
     seen = set()
     unavailable = set()
+    # 一个请求 id 只能属于一个方法：共用 id 时两条方法会读同一条 response，
+    # 线缆无法归属（实测：两方法共 id + 单条 response 可整轮 PASS）。
+    id_owners = {}
+    for owner, identifiers in send_ids.items():
+        for identifier in identifiers:
+            id_owners.setdefault(identifier, []).append(owner)
     for row in rows:
         method, outcome, shape = row['method'], row['outcome'], row['shape']
         if method in seen:
@@ -233,6 +239,12 @@ def analyze_round(round_name, rows, wire, oracle_index):
         else:
             identifier = identifiers[0]
             matching = responses.get(identifier, [])
+            shared = sorted(name for name in id_owners.get(identifier, []) if name != method)
+            if shared:
+                violations.append(violation(
+                    'P6-WIRE-CODE', round_name, method,
+                    f'request id {identifier} is also used by {shared}: responses '
+                    'cannot be attributed to a single method'))
             if len(matching) > 1:
                 # 与 send 侧对称：一个请求只允许一条 response。重放/重试重复
                 # 落盘会让 last-wins 掩盖「先错码后对码」的线缆不一致。
@@ -269,6 +281,19 @@ def analyze_round(round_name, rows, wire, oracle_index):
                                 'P6-WIRE-CODE', round_name, method,
                                 'empty error.message on the wire'))
             elif shape == 'stream':
+                if matching:
+                    # stream 的收尾帧可省（TS 基线只有 final 事件），但一旦存在
+                    # 就必须是成功响应：final:true 事件 + ok:false response 的
+                    # 矛盾线缆不得 PASS（实测可整轮 PASS）。
+                    response = matching[0]
+                    if response.get('ok') is not True:
+                        violations.append(violation(
+                            'P6-WIRE-CODE', round_name, method,
+                            'stream ok with a response whose ok is not true'))
+                    if 'error' in response:
+                        violations.append(violation(
+                            'P6-WIRE-CODE', round_name, method,
+                            'stream ok with a response carrying an error object'))
                 if identifier not in finals:
                     violations.append(violation(
                         'P6-WIRE-CODE', round_name, method,
