@@ -1047,10 +1047,11 @@ async fn requests_registry_switch_gates_run_reads() {
             interactions: Arc::default(),
             mcp: requests::Requests::stub_mcp(&owner),
             async_hook_registry: None,
+            // #1600: match production (connected), not the retired
+            // observer-coupled bus.
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
-                crate::user_dialog::GatewayUserDialogBus::new(
+                crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),
-                    None,
                 ),
             )),
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),

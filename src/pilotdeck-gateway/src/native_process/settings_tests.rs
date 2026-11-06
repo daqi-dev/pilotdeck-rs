@@ -372,9 +372,10 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         interactions: Arc::default(),
         mcp: Requests::stub_mcp(owner),
         async_hook_registry: None,
-        user_dialog_bus: Arc::new(Mutex::new(GatewayUserDialogBus::new(
+        // #1600: production assembles a connected bus (assembly/user_dialog.rs);
+        // this stub must match, not the retired observer-coupled state.
+        user_dialog_bus: Arc::new(Mutex::new(GatewayUserDialogBus::connected(
             DialogRuntime::default(),
-            None,
         ))),
         upload_gateway: Arc::new(UploadGateway::unavailable()),
         prepare_weixin_login: None,

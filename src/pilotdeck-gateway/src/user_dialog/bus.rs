@@ -54,6 +54,9 @@ pub struct ConsumedDialog {
     /// back at its original position instead of appending to the tail (which
     /// would reorder `list`).
     index: usize,
+    /// Registration number of the consumed entry, put back by [`Self::restore`]
+    /// so the restored dialog keeps its identity (#1599).
+    generation: u64,
 }
 
 /// A session-rejected dialog plus its own "settled" broadcast. TS
@@ -70,6 +73,10 @@ pub struct RejectedDialog {
 pub struct ResponseSnapshot {
     pub dialog_kind: JsString,
     pub accepts: AcceptsFn,
+    /// Registration number this snapshot was taken from. A replacement under
+    /// the same request id gets a new number, so the answer stays bound to the
+    /// dialog its validator was written for (#1599).
+    pub generation: u64,
 }
 
 /// Observer changes queued by a bus mutation. The bus only queues; the
@@ -118,6 +125,12 @@ pub struct GatewayUserDialogBus {
     /// (`:2710`/`:2734`/`:2765`), so a live in-process bus is available with a
     /// zero-pending `{dialogs: []}` result regardless of any observer.
     connected: bool,
+    /// Registration identity. Every `register` for a `(session, requestId)`
+    /// gets a fresh number, so a caller that snapshotted the previous
+    /// registration can tell it was replaced even when the replacement reuses
+    /// the same validator handle (#1599).
+    next_generation: u64,
+    generations: HashMap<(JsString, JsString), u64>,
 }
 impl GatewayUserDialogBus {
     /// Legacy observer-coupled constructor: connected iff a change observer is
@@ -137,6 +150,8 @@ impl GatewayUserDialogBus {
             on_change: on_change.map(Arc::from),
             outbox: Vec::new(),
             connected,
+            next_generation: 0,
+            generations: HashMap::new(),
         }
     }
 
@@ -153,6 +168,8 @@ impl GatewayUserDialogBus {
             on_change: None,
             outbox: Vec::new(),
             connected: true,
+            next_generation: 0,
+            generations: HashMap::new(),
         }
     }
 
@@ -167,12 +184,20 @@ impl GatewayUserDialogBus {
         self.connected
     }
 
-    pub fn register(&mut self, session: &JsString, entry: PendingDialog) {
+    /// Registers a dialog and returns its registration generation. TS replaces
+    /// a same-id entry silently (`GatewayUserDialogBus.ts:150-160`); the
+    /// generation is how a caller that snapshotted the previous entry learns
+    /// that its answer no longer belongs to the pending dialog (#1599).
+    pub fn register(&mut self, session: &JsString, entry: PendingDialog) -> u64 {
         let change = object([
             ("type", "requested".into()),
             ("sessionKey", JsValue::String(session.clone())),
             ("request", entry.event.clone()),
         ]);
+        self.next_generation += 1;
+        let generation = self.next_generation;
+        self.generations
+            .insert((session.clone(), entry.request_id.clone()), generation);
         let bucket = self.pending.entry(session.clone()).or_default();
         if let Some(index) = bucket
             .iter()
@@ -183,6 +208,7 @@ impl GatewayUserDialogBus {
             bucket.push(entry);
         }
         self.emit(change);
+        generation
     }
 
     pub fn peek(&self, session: &JsString, request: &JsString) -> Option<&PendingDialog> {
@@ -204,6 +230,11 @@ impl GatewayUserDialogBus {
         Some(ResponseSnapshot {
             dialog_kind: entry.dialog_kind.clone(),
             accepts: entry.accepts.clone(),
+            generation: self
+                .generations
+                .get(&(session.clone(), request.clone()))
+                .copied()
+                .unwrap_or_default(),
         })
     }
 
@@ -237,6 +268,10 @@ impl GatewayUserDialogBus {
             self.pending.remove(session);
         }
         let lease = self.leases.remove(&(session.clone(), request.clone()));
+        let generation = self
+            .generations
+            .remove(&(session.clone(), request.clone()))
+            .unwrap_or_default();
         self.emit(object([
             ("type", "settled".into()),
             ("sessionKey", JsValue::String(session.clone())),
@@ -247,6 +282,7 @@ impl GatewayUserDialogBus {
             entry,
             lease,
             index,
+            generation,
         })
     }
 
@@ -255,62 +291,85 @@ impl GatewayUserDialogBus {
     /// dialog stays pending, still leased, and broadcast-free
     /// (GatewayUserDialogBus.ts:220-222). The caller discards the queued
     /// "settled" change instead of delivering it.
+    ///
+    /// A settle hook is host code: it can reenter the bus and register a new
+    /// dialog under the same request id before failing. TS `remove()` throws
+    /// before it mutates, so that reentrant registration survives; writing the
+    /// old entry and lease back would overwrite it (#1599). The reentrant
+    /// registration wins and the consumed entry is dropped.
     pub fn restore(&mut self, session: &JsString, consumed: ConsumedDialog) {
         let ConsumedDialog {
             entry,
             lease,
             index,
+            generation,
         } = consumed;
-        if let Some(lease) = lease {
-            self.leases
-                .insert((session.clone(), entry.request_id.clone()), lease);
-        }
         let bucket = self.pending.entry(session.clone()).or_default();
-        match bucket
+        if bucket
             .iter()
-            .position(|value| value.request_id == entry.request_id)
+            .any(|value| value.request_id == entry.request_id)
         {
-            Some(position) => bucket[position] = entry,
-            None => bucket.insert(index.min(bucket.len()), entry),
+            return;
+        }
+        let request_id = entry.request_id.clone();
+        bucket.insert(index.min(bucket.len()), entry);
+        self.generations
+            .insert((session.clone(), request_id.clone()), generation);
+        if let Some(lease) = lease {
+            self.leases.insert((session.clone(), request_id), lease);
         }
     }
 
-    /// Whether the dialog currently pending under `request` is the one
-    /// `validated` came from. A host callback can reenter the bus between a
-    /// snapshot and a consume and re-register the same request id, which
-    /// replaces the entry and its validator (#1599); a caller holding a
-    /// captured validator must not consume an entry it does not own.
-    pub fn pending_matches(
+    /// Whether the dialog currently pending under `request` is registration
+    /// `generation`. A host callback can reenter the bus between a snapshot
+    /// and a consume and re-register the same request id (#1599), which
+    /// replaces the entry; comparing the registration number keeps an answer
+    /// bound to the dialog it was validated against even when the replacement
+    /// reuses the same validator handle.
+    pub fn pending_matches(&self, session: &JsString, request: &JsString, generation: u64) -> bool {
+        self.peek(session, request).is_some()
+            && self
+                .generations
+                .get(&(session.clone(), request.clone()))
+                .is_some_and(|current| *current == generation)
+    }
+
+    /// Whether `request` is still pending but no longer registration
+    /// `generation`: a host callback replaced it while the caller held an
+    /// answer for the old one (#1599).
+    pub fn pending_replaced(
         &self,
         session: &JsString,
         request: &JsString,
-        validated: &AcceptsFn,
+        generation: u64,
     ) -> bool {
-        self.peek(session, request)
-            .is_some_and(|pending| Arc::ptr_eq(&pending.accepts, validated))
+        self.peek(session, request).is_some() && !self.pending_matches(session, request, generation)
     }
 
     /// As in TS this does not validate values: callers must call `accepts`
     /// first. The settle hook does not run here (#1442); the caller runs it
     /// after dropping the guard and restores on failure.
     ///
-    /// `validated` is the validator handle the caller just ran outside the
-    /// guard. Between the snapshot and this call a host callback may reenter
-    /// the bus and register a different dialog under the same request id
-    /// (#1599); comparing the handle keeps the answer bound to the dialog it
-    /// was validated against instead of silently delivering it to the new one.
+    /// `validated` is the snapshot the caller just validated against outside
+    /// the guard. Between that snapshot and this call a host callback may
+    /// reenter the bus and register a different dialog under the same request
+    /// id (#1599); comparing the registration keeps the answer bound to the
+    /// dialog it was validated against instead of silently delivering it to
+    /// the new one.
     pub fn consume_for_response(
         &mut self,
         session: &JsString,
         request: &JsString,
         lease_id: Option<&JsString>,
         reason: &str,
-        validated: Option<&AcceptsFn>,
+        validated: Option<&ResponseSnapshot>,
     ) -> ConsumeResult {
         if self.peek(session, request).is_none() {
             return ConsumeResult::NotPending;
         }
-        if validated.is_some_and(|validated| !self.pending_matches(session, request, validated)) {
+        if validated
+            .is_some_and(|snapshot| !self.pending_matches(session, request, snapshot.generation))
+        {
             return ConsumeResult::Replaced;
         }
         if let Some(lease) = self.active_lease(session, request)
@@ -331,6 +390,7 @@ impl GatewayUserDialogBus {
     pub fn reject_session(&mut self, session: &JsString, reason: &str) -> Vec<RejectedDialog> {
         let entries = self.pending.remove(session).unwrap_or_default();
         self.leases.retain(|(key, _), _| key != session);
+        self.generations.retain(|(key, _), _| key != session);
         entries
             .into_iter()
             .map(|entry| {

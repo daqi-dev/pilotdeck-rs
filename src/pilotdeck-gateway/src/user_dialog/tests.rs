@@ -1014,7 +1014,8 @@ fn restore_keeps_the_consumed_dialog_at_its_original_position() {
 /// #1599: the bus guard is released between the snapshot and the consume, so
 /// a host callback can reenter and replace the dialog under the same request
 /// id. The answer was validated against the old dialog and must not be
-/// delivered to the new one.
+/// delivered to the new one, even when the replacement reuses the very same
+/// validator handle.
 #[test]
 fn consume_for_response_refuses_a_dialog_replaced_after_the_snapshot() {
     use crate::negative_assert;
@@ -1024,21 +1025,22 @@ fn consume_for_response_refuses_a_dialog_replaced_after_the_snapshot() {
     let session: JsString = "replaced".into();
     let request: JsString = "replaced-request".into();
     let first: AcceptsFn = Arc::new(|_value| true);
-    bus.register(&session, numbered_pending("replaced-request", first));
+    bus.register(
+        &session,
+        numbered_pending("replaced-request", first.clone()),
+    );
     let snapshot = bus
         .snapshot_for_response(&session, &request)
         .expect("the dialog is pending");
-    // A host callback reenters the bus and registers a different dialog with
-    // its own validator under the same request id.
-    let second: AcceptsFn = Arc::new(|_value| false);
-    bus.register(&session, numbered_pending("replaced-request", second));
-    let consumed = bus.consume_for_response(
+    // A host callback reenters the bus and registers a different dialog under
+    // the same request id. It may reuse the same host validator handle (a
+    // shared `Arc<dyn Fn>`), so identity must come from the registration, not
+    // from the validator pointer.
+    bus.register(
         &session,
-        &request,
-        None,
-        "answered",
-        Some(&snapshot.accepts),
+        numbered_pending("replaced-request", first.clone()),
     );
+    let consumed = bus.consume_for_response(&session, &request, None, "answered", Some(&snapshot));
     negative_assert!(
         matches!(consumed, ConsumeResult::Replaced),
         "#1599 an answer validated against a replaced dialog must not be delivered"
@@ -1049,5 +1051,48 @@ fn consume_for_response_refuses_a_dialog_replaced_after_the_snapshot() {
             ConsumeResult::Entry(_)
         ),
         "#1599 without a validated snapshot the pending dialog is consumed as before"
+    );
+}
+
+/// #1599: a settle hook is host code and runs outside the guard. If it
+/// reenters the bus and registers a new dialog under the same request id
+/// before failing, that registration is the live one — TS `remove()` throws
+/// before it mutates (GatewayUserDialogBus.ts:219-226), so the reentrant entry
+/// survives. Restoring the consumed entry (and its lease) over it would drop
+/// the new waiter.
+#[test]
+fn restore_keeps_a_registration_that_replaced_the_consumed_dialog() {
+    use crate::negative_assert;
+
+    let clock = clock(&fixture());
+    let mut bus = GatewayUserDialogBus::new(runtime(&clock, "bus-restore-conflict"), None);
+    let session: JsString = "restore-conflict".into();
+    let request: JsString = "dialog".into();
+    bus.register(
+        &session,
+        numbered_pending("dialog", Arc::new(|_value| true)),
+    );
+    bus.register(&session, numbered_pending("tail", Arc::new(|_value| true)));
+    let consumed = bus
+        .consume(&session, &request, "answered")
+        .expect("dialog is pending");
+    // The settle hook reentered and registered the replacement, then failed.
+    let replacement: AcceptsFn = Arc::new(|_value| false);
+    let generation = bus.register(&session, numbered_pending("dialog", replacement.clone()));
+    bus.restore(&session, consumed);
+    let snapshot = bus
+        .snapshot_for_response(&session, &request)
+        .expect("the reentrant registration is still pending");
+    negative_assert!(
+        snapshot.generation == generation,
+        "#1599 restore must not overwrite the reentrant registration"
+    );
+    negative_assert!(
+        Arc::ptr_eq(&snapshot.accepts, &replacement),
+        "#1599 the reentrant registration keeps its own validator"
+    );
+    negative_assert!(
+        listed_request_ids(&mut bus, &session) == vec!["tail".to_string(), "dialog".to_string()],
+        "#1599 restore must not duplicate or drop either registration"
     );
 }

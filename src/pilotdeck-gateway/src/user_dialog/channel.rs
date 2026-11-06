@@ -215,6 +215,11 @@ struct RequestState {
     owner_claimed: AtomicBool,
     abort_registration: AtomicU64,
     accepts: Accepts,
+    /// Registration number of the bus entry this request owns (#1599). A host
+    /// callback can reenter the bus and re-register the same request id while
+    /// an answer is being taken; the poll compares this number before
+    /// consuming so the answer stays with the dialog it was taken for.
+    generation: AtomicU64,
     abort: Option<AbortSignal>,
     result: mpsc::Sender<std::result::Result<DialogAnswer, String>>,
 }
@@ -452,6 +457,7 @@ impl GatewayUserDialogChannel {
             owner_claimed: AtomicBool::new(false),
             abort_registration: AtomicU64::new(0),
             accepts,
+            generation: AtomicU64::new(0),
             abort: abort.clone(),
             result: sender,
         });
@@ -552,7 +558,8 @@ impl GatewayUserDialogChannel {
         };
         {
             let mut bus = self.inner.options.bus.lock().unwrap();
-            bus.register(&self.inner.options.session_key, pending);
+            let generation = bus.register(&self.inner.options.session_key, pending);
+            state.generation.store(generation, Ordering::SeqCst);
             // #1442: the change observer is host code; deliver it only after
             // the guard drops.
             bus.drain_events()
@@ -800,17 +807,18 @@ impl GatewayUserDialogChannel {
         }
         // #1442: the settle hook and the completion callbacks are host code;
         // they run only after the bus guard drops.
-        let (consumed, outbox) = {
+        let generation = state.generation.load(Ordering::SeqCst);
+        let (consumed, outbox, replaced) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
-            // #1599: this answer came from the request `state` registered and
-            // is validated by `state.accepts` (dialog kind, schema). A host
-            // callback above (`take_stored_answer`) may reenter the bus and
-            // re-register the same request id with a different contract;
+            // #1599: this answer was taken for the registration `state` owns
+            // and is validated by `state.accepts` (dialog kind, schema). A
+            // host callback above (`take_stored_answer`) may reenter the bus
+            // and re-register the same request id with a different contract;
             // consuming that entry would hand the old answer to the new
             // waiter, so an unbound entry is left pending instead.
-            let bound =
-                bus.pending_matches(&self.inner.options.session_key, request_id, &state.accepts);
-            let consumed = bound.then(|| {
+            let replaced =
+                bus.pending_replaced(&self.inner.options.session_key, request_id, generation);
+            let consumed = (!replaced).then(|| {
                 bus.consume(
                     &self.inner.options.session_key,
                     request_id,
@@ -818,12 +826,27 @@ impl GatewayUserDialogChannel {
                 )
             });
             let outbox = bus.drain_events();
-            (consumed.flatten(), outbox)
+            (consumed.flatten(), outbox, replaced)
         };
         let consumed = match consumed {
             Some(consumed) => consumed,
             None => {
                 outbox.deliver();
+                if replaced {
+                    // The registration this poll answered is gone, so the
+                    // taken answer has nowhere to go: fail the original waiter
+                    // explicitly instead of leaving it pending forever
+                    // (#1599). The replacement keeps its own poll/answer.
+                    stop_polling(&self.inner, request_id);
+                    let _ = settle(&self.inner, &state);
+                    self.complete(
+                        &state,
+                        Err("Gateway user-dialog was replaced while its \
+                             stored answer was taken."
+                            .into()),
+                    );
+                    return;
+                }
                 finish_poll(&self.inner, request_id);
                 return;
             }

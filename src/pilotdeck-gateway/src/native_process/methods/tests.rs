@@ -3579,3 +3579,232 @@ async fn user_dialog_observer_reentry_completes_within_timeout() {
         .await
         .expect("#1442 reentry fixture project shutdown");
 }
+
+// #1599: when the peek finds no pending dialog, an answered respond must not
+// consume whatever a host callback registers under the same request id during
+// the observer delivery that sits between the snapshot and the consume. TS
+// peeks once and delivers nothing when the peek is empty
+// (InProcessGateway.ts:2668-2674); consuming the late registration would hand
+// it an answer its own validator never saw.
+#[tokio::test]
+async fn user_dialog_respond_without_a_snapshot_leaves_a_late_registration_pending() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1599 late-registration fixture setup");
+    let session: JsString = "1599-late-session".into();
+    let target: JsString = "1599-late-dialog".into();
+    let late_resolved = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    requests.user_dialog_bus = std::sync::Arc::new_cyclic(
+        |bus: &std::sync::Weak<std::sync::Mutex<crate::user_dialog::GatewayUserDialogBus>>| {
+            let bus = bus.clone();
+            let session = session.clone();
+            let target = target.clone();
+            let late_resolved = late_resolved.clone();
+            std::sync::Mutex::new(crate::user_dialog::GatewayUserDialogBus::new(
+                crate::user_dialog::DialogRuntime::default(),
+                Some(Box::new(move |_event| {
+                    let Some(bus) = bus.upgrade() else {
+                        return Ok(());
+                    };
+                    let mut bus = bus.lock().unwrap_or_else(|e| e.into_inner());
+                    if bus.has_pending(&session, &target) {
+                        return Ok(());
+                    }
+                    let late_resolved = late_resolved.clone();
+                    bus.register(
+                        &session,
+                        crate::user_dialog::PendingDialog {
+                            request_id: target.clone(),
+                            dialog_kind: "input".into(),
+                            tool_call_id: "call-late".into(),
+                            tool_name: "request_user_input".into(),
+                            event: crate::metadata::object([(
+                                "requestId",
+                                JsValue::String(target.clone()),
+                            )]),
+                            // Rejects every value: the answer must never reach
+                            // this dialog, validated or not.
+                            accepts: Arc::new(|_value| false),
+                            resolve: Box::new(move |_answer| {
+                                late_resolved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            }),
+                            reject: Box::new(|_error| {}),
+                            on_settled: None,
+                        },
+                    );
+                    Ok(())
+                })),
+            ))
+        },
+    );
+    // Queue one broadcast without delivering it: the next respond drains it and
+    // runs the observer between its snapshot and its consume.
+    register_dialog_1437(
+        &requests,
+        &session,
+        "1599-trigger-dialog",
+        &std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+    );
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", JsValue::String(target.clone())),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", "late".into()),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1599 late-registration respond returns");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(false)),
+        "#1599 an answered respond with no peeked dialog must report not delivered"
+    );
+    negative_assert_eq!(
+        late_resolved.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "#1599 the late registration must not receive an answer it never validated"
+    );
+    negative_assert!(
+        requests
+            .user_dialog_bus
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .has_pending(&session, &target),
+        "#1599 the late registration stays pending for its own answer"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1599 late-registration fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1599 late-registration fixture project shutdown");
+}
+
+// #1599: the accepts validator is host code and runs outside the bus guard,
+// so it can reenter and register a new dialog under the same request id. The
+// answer was validated against the old registration and must not be delivered
+// to the new one: respond reports `delivered: false` and the replacement stays
+// pending for its own answer.
+#[tokio::test]
+async fn user_dialog_respond_reports_not_delivered_when_accepts_replaces_the_dialog() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1599 accepts-replacement fixture setup");
+    let session: JsString = "1599-accepts-session".into();
+    let target: JsString = "1599-accepts-dialog".into();
+    let replacement_resolved = Arc::new(AtomicUsize::new(0));
+    requests.user_dialog_bus = std::sync::Arc::new_cyclic(
+        |bus: &std::sync::Weak<std::sync::Mutex<crate::user_dialog::GatewayUserDialogBus>>| {
+            let mut dialogs = crate::user_dialog::GatewayUserDialogBus::connected(
+                crate::user_dialog::DialogRuntime::default(),
+            );
+            let weak = bus.clone();
+            let session_for_accepts = session.clone();
+            let target_for_accepts = target.clone();
+            let resolved_for_replacement = replacement_resolved.clone();
+            dialogs.register(
+                &session,
+                crate::user_dialog::PendingDialog {
+                    request_id: target.clone(),
+                    dialog_kind: "input".into(),
+                    tool_call_id: "call-original".into(),
+                    tool_name: "request_user_input".into(),
+                    event: crate::metadata::object([(
+                        "requestId",
+                        JsValue::String(target.clone()),
+                    )]),
+                    // Accepts the value, but first reenters the bus and
+                    // registers a replacement under the same request id.
+                    accepts: Arc::new(move |_value| {
+                        if let Some(shared) = weak.upgrade() {
+                            let _guard = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut shared = _guard;
+                            let replacement_resolved = resolved_for_replacement.clone();
+                            shared.register(
+                                &session_for_accepts,
+                                crate::user_dialog::PendingDialog {
+                                    request_id: target_for_accepts.clone(),
+                                    dialog_kind: "input".into(),
+                                    tool_call_id: "call-replacement".into(),
+                                    tool_name: "request_user_input".into(),
+                                    event: crate::metadata::object([(
+                                        "requestId",
+                                        JsValue::String(target_for_accepts.clone()),
+                                    )]),
+                                    accepts: Arc::new(|_value| false),
+                                    resolve: Box::new(move |_answer| {
+                                        replacement_resolved.fetch_add(1, Ordering::SeqCst);
+                                    }),
+                                    reject: Box::new(|_error| {}),
+                                    on_settled: None,
+                                },
+                            );
+                        }
+                        true
+                    }),
+                    resolve: Box::new(|_answer| {}),
+                    reject: Box::new(|_error| {}),
+                    on_settled: None,
+                },
+            );
+            std::sync::Mutex::new(dialogs)
+        },
+    );
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", JsValue::String(target.clone())),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", "accepted".into()),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1599 accepts-replacement respond returns");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(false)),
+        "#1599 an answer validated against a replaced dialog must not be delivered"
+    );
+    negative_assert_eq!(
+        replacement_resolved.load(Ordering::SeqCst),
+        0,
+        "#1599 the replacement must not receive an answer it never validated"
+    );
+    negative_assert!(
+        requests
+            .user_dialog_bus
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .has_pending(&session, &target),
+        "#1599 the replacement stays pending for its own answer"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1599 accepts-replacement fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1599 accepts-replacement fixture project shutdown");
+}

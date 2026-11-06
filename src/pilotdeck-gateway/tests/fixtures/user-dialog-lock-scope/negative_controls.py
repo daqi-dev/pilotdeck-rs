@@ -68,6 +68,19 @@ RESTORE_TEST = ('user_dialog::tests::'
                 'restore_keeps_the_consumed_dialog_at_its_original_position')
 RESTORE_ASSERTION = ('#1599 restore puts the consumed dialog back at its '
                      'original position')
+RESTORE_CONFLICT_TEST = ('user_dialog::tests::'
+                         'restore_keeps_a_registration_that_replaced_the_consumed_dialog')
+RESTORE_CONFLICT_ASSERTION = ('#1599 restore must not overwrite the reentrant '
+                              'registration')
+LATE_TEST = ('native_process::methods::tests::'
+             'user_dialog_respond_without_a_snapshot_leaves_a_late_registration_pending')
+LATE_ASSERTION = ('#1599 an answered respond with no peeked dialog must report '
+                  'not delivered')
+REPLACED_METHOD_TEST = ('native_process::methods::tests::'
+                        'user_dialog_respond_reports_not_delivered_when_accepts_replaces_'
+                        'the_dialog')
+REPLACED_METHOD_ASSERTION = ('#1599 an answer validated against a replaced '
+                             'dialog must not be delivered')
 # Statically declared denominator: a literal tuple, deliberately not derived
 # from `mutations`, so a runtime table that lost rows cannot shrink it.
 DECLARED = (
@@ -80,6 +93,9 @@ DECLARED = (
     'replaced-dialog-still-consumed',
     'restore-appends-to-the-tail',
     'cross-gateway-replaced-dialog-still-consumed',
+    'restore-overwrites-a-reentrant-registration',
+    'answered-without-snapshot-consumes-the-late-registration',
+    'answered-snapshot-identity-dropped',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -172,23 +188,53 @@ mutations = [
     # consume_for_response: the snapshot identity check is dropped, so an
     # answer validated against a replaced dialog reaches the new one.
     ('replaced-dialog-still-consumed', 'user_dialog/bus.rs',
-     '        if validated.is_some_and(|validated| !Arc::ptr_eq(&pending.accepts, validated)) {',
-     '        if validated.is_some_and(|_validated| false) {',
+     '        if validated\n'
+     '            .is_some_and(|snapshot| !self.pending_matches(session, request, snapshot.generation))\n'
+     '        {',
+     '        if validated.is_some_and(|_snapshot| false) {',
      REPLACED_TEST, REPLACED_ASSERTION),
     # restore: the entry goes back to the bucket tail instead of its position.
     ('restore-appends-to-the-tail', 'user_dialog/bus.rs',
-     '            None => bucket.insert(index.min(bucket.len()), entry),',
-     '            None => bucket.push(entry),',
+     '        bucket.insert(index.min(bucket.len()), entry);',
+     '        bucket.push(entry);',
      RESTORE_TEST, RESTORE_ASSERTION),
     # channel cross-gateway poll: the identity check is dropped, so an answer
     # taken for one dialog is consumed from whatever is pending under the id.
     ('cross-gateway-replaced-dialog-still-consumed', 'user_dialog/channel.rs',
-     '            let bound =\n'
-     '                bus.pending_matches(&self.inner.options.session_key, request_id, &state.accepts);',
-     '            let bound = bus\n'
-     '                .peek(&self.inner.options.session_key, request_id)\n'
-     '                .is_some();',
+     '            let replaced =\n'
+     '                bus.pending_replaced(&self.inner.options.session_key, request_id, generation);',
+     '            let _ = bus.pending_replaced(\n'
+     '                &self.inner.options.session_key,\n'
+     '                request_id,\n'
+     '                generation,\n'
+     '            );\n'
+     '            let replaced = false;',
      CROSS_TEST, CROSS_ASSERTION),
+    # restore: the conflict check is dropped, so a settle hook that reentered
+    # and registered the same request id is overwritten and its lease lost.
+    ('restore-overwrites-a-reentrant-registration', 'user_dialog/bus.rs',
+     '        if bucket\n'
+     '            .iter()\n'
+     '            .any(|value| value.request_id == entry.request_id)\n'
+     '        {\n'
+     '            return;\n'
+     '        }\n'
+     '        let request_id = entry.request_id.clone();',
+     '        let request_id = entry.request_id.clone();',
+     RESTORE_CONFLICT_TEST, RESTORE_CONFLICT_ASSERTION),
+    # respond: the empty-snapshot guard is dropped, so an answered response
+    # consumes whatever was registered under the id after the peek.
+    ('answered-without-snapshot-consumes-the-late-registration',
+     'native_process/methods/user_dialog.rs',
+     '                    if answered && snapshot.is_none() {',
+     '                    if answered && snapshot.is_none() && false {',
+     LATE_TEST, LATE_ASSERTION),
+    # respond: the answered path stops passing the validated snapshot, so the
+    # consume accepts whatever registration now owns the request id.
+    ('answered-snapshot-identity-dropped', 'native_process/methods/user_dialog.rs',
+     '                            if answered { snapshot.as_ref() } else { None },',
+     '                            None,',
+     REPLACED_METHOD_TEST, REPLACED_METHOD_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]
