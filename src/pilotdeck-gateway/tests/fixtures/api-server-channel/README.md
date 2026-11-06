@@ -92,6 +92,11 @@ silently degrade a cell into "some short body":
   (absent takes the cell default, present-but-not-a-string panics) and
   `options.corsOrigins` (absent means no CORS, present-but-not-an-array-of-strings
   panics). Expected (oracle-side) response header values are read the same way.
+  The containers follow it too: an `options` that is present but not an object
+  panics (absent every key takes its default), and so does a `gateway` that is
+  present but not an object, a `gateway.turns` that is present but not an array,
+  or a turn `events` / `error` of the wrong type — only absent (or `null`) means
+  "no gateway / no turns / no events / no error".
 - The `oversized-*` cells are never re-sent by the replay, so their recorded
   response used to be compared by nothing at all. Both ends now pin its shape:
   the generator refuses to record anything but a zero-byte close, and the
@@ -125,7 +130,8 @@ excluded.
 - `keep-alive` covers the response headers of a single request. Real connection
   reuse (a second request on the same socket) is not recorded: the generator's
   `send()` uses `agent: false`, so every request opens a new connection. Tracked
-  as a follow-up; the cell name is about the header contract only.
+  as **#1710** (precedes closing #1333); the cell name is about the header
+  contract only.
 
 ## Known divergence
 

@@ -192,6 +192,100 @@ fn recorded_body_refuses_an_unbounded_count() {
     recorded_body("<9000000 bytes>");
 }
 
+// #1606 r6: the container-level tri-state, which the 14 oracle cells cannot
+// exercise — every one of them records an `options` object, and the 11 cells
+// without a gateway record none at all, so a regression to `unwrap_or_default`
+// would still replay green.
+#[test]
+#[should_panic(expected = "options must be an object")]
+fn options_refuses_a_non_object_container() {
+    options(&json!({ "options": [] }), None);
+}
+
+#[test]
+fn absent_containers_stay_legal() {
+    // Absent means "the cell recorded no options / no gateway", which every
+    // cell without those keys relies on.
+    let options = options(&json!({}), None);
+    assert_eq!(options.model_name.as_deref(), Some("parity-model"));
+    assert_eq!(options.api_key.as_deref(), Some(""));
+    gateway_from(&json!({}), None, Arc::new(AtomicBool::new(false)));
+}
+
+#[test]
+#[should_panic(expected = "gateway must be an object")]
+fn gateway_from_refuses_a_non_object_gateway() {
+    gateway_from(
+        &json!({ "gateway": 5 }),
+        None,
+        Arc::new(AtomicBool::new(false)),
+    );
+}
+
+#[test]
+#[should_panic(expected = "gateway.turns must be an array")]
+fn gateway_from_refuses_non_array_turns() {
+    gateway_from(
+        &json!({ "gateway": { "turns": "x" } }),
+        None,
+        Arc::new(AtomicBool::new(false)),
+    );
+}
+
+#[test]
+#[should_panic(expected = "gateway turn events must be an array")]
+fn gateway_from_refuses_non_array_events() {
+    gateway_from(
+        &json!({ "gateway": { "turns": [{ "events": "x" }] } }),
+        None,
+        Arc::new(AtomicBool::new(false)),
+    );
+}
+
+#[test]
+#[should_panic(expected = "gateway turn error must be a string")]
+fn gateway_from_refuses_a_non_string_error() {
+    gateway_from(
+        &json!({ "gateway": { "turns": [{ "events": [], "error": 7 }] } }),
+        None,
+        Arc::new(AtomicBool::new(false)),
+    );
+}
+
+// #1606 r6 (MiniMax sibling): r4/r5 added three more fail-closed readers with
+// no test of their own. Reverting any of them to `unwrap_or` keeps all 14
+// cells green — the three cells that record CORS / an api key record the
+// correct types — so nothing else would notice the ruler going quiet.
+#[test]
+#[should_panic(expected = "options.apiKey must be a string")]
+fn case_option_refuses_a_non_string_api_key() {
+    options(&json!({ "options": { "apiKey": 7 } }), None);
+}
+
+#[test]
+#[should_panic(expected = "options.modelName must be a string")]
+fn case_option_refuses_a_non_string_model_name() {
+    options(
+        &json!({ "options": { "modelName": ["parity-model"] } }),
+        None,
+    );
+}
+
+#[test]
+#[should_panic(expected = "options.corsOrigins must be an array")]
+fn case_origins_refuses_a_non_array() {
+    options(&json!({ "options": { "corsOrigins": "*" } }), None);
+}
+
+#[test]
+#[should_panic(expected = "corsOrigins entries must be strings")]
+fn case_origins_refuses_a_non_string_entry() {
+    options(
+        &json!({ "options": { "corsOrigins": ["http://a", 5] } }),
+        None,
+    );
+}
+
 struct ReqSpec {
     method: String,
     path: String,
@@ -726,6 +820,18 @@ fn case_option(options: &Value, key: &str, fallback: &str) -> String {
 }
 
 fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
+    // #1606 r6 (both zai roles, independently): r5 tightened every key *inside*
+    // `options` and claimed this file no longer conflates absent with
+    // wrong-type — but the container itself was still two-state. With
+    // `"options": []` / `"x"` / `5` every key below reads as absent through
+    // `Value::get`, so the cell starts under the recorded defaults while the
+    // oracle recorded something else, and stays green whenever that option is
+    // not visible in the compared response. Same shape as the `headers`
+    // container fixed in r4. Absent stays legitimate (`&case["options"]` is
+    // `Null` and every key falls back); present-but-not-an-object is drift.
+    if let Some(other) = case.get("options").filter(|value| !value.is_object()) {
+        panic!("#1333 options must be an object, found {other:?}");
+    }
     let options = &case["options"];
     ApiServerOptions {
         port: Some(JsValue::Number(0.0)),
@@ -777,18 +883,41 @@ fn gateway_from(
     latch: Option<Arc<Latch>>,
     dropped: Arc<AtomicBool>,
 ) -> Arc<ScriptedGateway> {
-    let turns = case["gateway"]["turns"]
-        .as_array()
-        .map(|turns| {
-            turns
+    // #1606 r6 (zai boundary P3, same family as the `options` container above):
+    // `as_array().unwrap_or_default()` made a present-but-wrong-type `gateway`
+    // or `turns` read as "this cell scripts no turns", so a drifted oracle
+    // started a gateway with an empty script. Most such cells would still fail
+    // loudly on the response, but the shape is the one r2–r5 removed
+    // everywhere else, so the container gets the same tri-state rule. Absent
+    // (`Null`) stays legitimate — most cells record no gateway at all.
+    let gateway = &case["gateway"];
+    let turns = match gateway {
+        Value::Null => Vec::new(),
+        Value::Object(_) => match &gateway["turns"] {
+            Value::Null => Vec::new(),
+            Value::Array(turns) => turns
                 .iter()
                 .map(|turn| ScriptedTurn {
-                    events: turn["events"].as_array().cloned().unwrap_or_default(),
-                    error: turn["error"].as_str().map(str::to_owned),
+                    events: match turn.get("events") {
+                        None | Some(Value::Null) => Vec::new(),
+                        Some(Value::Array(events)) => events.clone(),
+                        Some(other) => {
+                            panic!("#1333 gateway turn events must be an array, found {other:?}")
+                        }
+                    },
+                    error: match turn.get("error") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(text)) => Some(text.clone()),
+                        Some(other) => {
+                            panic!("#1333 gateway turn error must be a string, found {other:?}")
+                        }
+                    },
                 })
-                .collect()
-        })
-        .unwrap_or_default();
+                .collect(),
+            other => panic!("#1333 gateway.turns must be an array, found {other:?}"),
+        },
+        other => panic!("#1333 gateway must be an object, found {other:?}"),
+    };
     ScriptedGateway::with_latch(turns, latch, dropped)
 }
 
