@@ -777,8 +777,12 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(rows(mutant)), 12,
                          '#1632 dropping a row must change the pinned count')
 
+    # r2 GLM sibling P1：`--self-check-controls` 的本体 `self_check_controls_run()`
+    # 是自检链的第六个函数，r1 只钉了前五个——删掉它任何一条 `problems.append`
+    # （INVALID×2 / SURVIVED×1），`--self-check-controls` 会打印 SURVIVED 却 exit 0，
+    # 而钉子测试照绿。
     PROBLEM_FUNCTIONS = ('self_check', 'slot_timeout_probe', 'restore_probe',
-                         'dispatch_probe', 'deadline_probe')
+                         'dispatch_probe', 'deadline_probe', 'self_check_controls_run')
 
     def problem_sites(self, source, function):
         """某个函数里每一处 `problems.append(...)` 的参数源码，按出现顺序。"""
@@ -800,6 +804,79 @@ class EnvironmentControls(unittest.TestCase):
         """五个自检函数里的全部见证，按函数分组、组内按出现顺序（#1843 C）。"""
         return {function: self.problem_sites(source, function)
                 for function in self.PROBLEM_FUNCTIONS}
+
+    # r2 两家评审共同指出的同族缺口：本 PR 把 1316 的发布改成原子形态，但
+    # `native-config`（GLM+MiniMax 各自独立判 P1）、`model-complete`（GLM P1）、
+    # `native-stimulus-plan`（MiniMax P1）这三处被变异源的写入仍是「临时文件放在
+    # 被扫的 src 里 / 无 chmod / 截断式 write_text」。同一个 `_assert_input_areas`
+    # （`git ls-files --others`，故意含被忽略文件）会在 SIGKILL 残留后把整棵树判成
+    # untracked build input，跨车道拒跑——所以这里逐条钉住同一个形态。
+    SIBLING_ATOMIC_WRITES = (
+        ('native-config/negative_controls.py', 'write_atomic'),
+        ('model-complete/negative-controls.py', 'atomic_write'),
+        ('native-stimulus-plan/negative_controls.py', 'write_atomic'),
+    )
+
+    def sibling_atomic_body(self, source, function):
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.FunctionDef) and node.name == function:
+                return ast.get_source_segment(source, node)
+        self.fail(f'#1692 §9 r2 the sibling fixture must define {function}()')
+
+    def sibling_atomic_guards(self, source, function):
+        """#1692 §9 r2：同族夹具的发布必须是 tmp + fsync + chmod + 一次 rename。"""
+        body = self.sibling_atomic_body(source, function)
+        self.assertRegex(source, r"PUBLISH_DIR = (?:ROOT|root) / ['\"]\.negctl-publish['\"]",
+                         '#1692 §9 r2 the scratch dir is the ignored root namespace, '
+                         'not a directory inside the scanned src area')
+        self.assertIn('PUBLISH_DIR', body,
+                      '#1692 §9 r2 the temp is published through PUBLISH_DIR')
+        self.assertIn('mode = path.stat().st_mode & 0o7777', body,
+                      '#1692 §9 r2 the published mode is taken from the source')
+        self.assertIn('os.fsync(', body,
+                      '#1692 §9 r2 the bytes reach disk before the rename')
+        self.assertIn('os.replace(', body,
+                      '#1692 §9 r2 the publish is ONE rename')
+        self.assertIn('os.chmod(', body,
+                      '#1692 §9 r2 the temp gets the source mode before the rename')
+        self.assertLess(body.index('os.fsync('), body.index('os.replace('),
+                        '#1692 §9 r2 fsync happens before the rename')
+        self.assertLess(body.index('os.chmod('), body.index('os.replace('),
+                        '#1692 §9 r2 chmod happens before the rename')
+        self.assertRegex(body, r'(?s)finally:.*?unlink\(',
+                         '#1692 §9 r2 a failed publish leaves no temp behind')
+        return body
+
+    def test_sibling_source_writes_are_published_atomically(self):
+        root = Path(__file__).resolve().parent / 'fixtures'
+        for relative, function in self.SIBLING_ATOMIC_WRITES:
+            source = (root / relative).read_text()
+            self.sibling_atomic_guards(source, function)
+            # 每个变异写入点都要走它：形式各异，所以钉「原地截断写零命中」。
+            self.assertNotIn('path.write_text(changed)', source, relative)
+            self.assertNotIn('path.write_bytes(originals[path])', source, relative)
+            self.assertNotIn("path.name + '.negctl.tmp'", source, relative)
+            self.assertNotIn('mkstemp(dir=str(path.parent)', source, relative)
+            scratch = re.search(r"PUBLISH_DIR = (?:ROOT|root) / (['\"])\.negctl-publish\1",
+                                source)
+            self.assertIsNotNone(scratch, f'#1692 §9 r2 {relative} scratch constant')
+            constant, quote = scratch[0], scratch[1]
+            for label, old, new in (
+                    ('loses-fsync', 'os.fsync(', 'os.fdatasync_removed('),
+                    ('copies-instead-of-renaming', 'os.replace(', 'shutil.copyfile('),
+                    ('loses-the-source-mode', 'os.chmod(', 'os.chmod_removed('),
+                    ('scratch-dir-back-into-src', constant,
+                     constant.replace('/ ' + quote + '.negctl-publish',
+                                      "/ 'src' / " + quote + '.negctl-publish')),
+                    ('scratch-dir-unignored', constant,
+                     constant.replace(quote + '.negctl-publish',
+                                      quote + 'negctl-publish'))):
+                self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
+                    self.sibling_atomic_guards(source.replace(old, new, 1), function)
+                print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
+                      flush=True)
 
     def test_self_check_every_problem_is_pinned(self):
         # #1843 C（GLM r2 sibling P2）：r14 只钉了 gates 循环那三处；tree-lock 段与
@@ -868,6 +945,13 @@ class EnvironmentControls(unittest.TestCase):
                 "f'dispatch {label}: no usage diagnostic: {text[-200:]}'",
                 "f'dispatch: an argument became an output path: {created}'",
             ],
+            'self_check_controls_run': [
+                "f'{name}: INVALID {error}'",
+                "f'{name}: INVALID (no verdict within ' f'{CONTROL_TIMEOUT_SECONDS}s)'",
+                "f'{name}: SURVIVED (rc={result.returncode}, message ' "
+                "f'{message!r} was {\"present\" if found else \"absent\"}, ' "
+                "f'expected rc={expect_rc})'",
+            ],
             'deadline_probe': [
                 "f'{label}: {error}'",
                 "f'{label}: exited instead of refusing: {error}'",
@@ -890,7 +974,8 @@ class EnvironmentControls(unittest.TestCase):
         sites = [site for function in self.PROBLEM_FUNCTIONS for site in raw[function]]
         self.assertEqual({function: len(rows) for function, rows in pinned.items()},
                          {'self_check': 14, 'slot_timeout_probe': 5, 'restore_probe': 11,
-                          'dispatch_probe': 4, 'deadline_probe': 15},
+                          'dispatch_probe': 4, 'deadline_probe': 15,
+                          'self_check_controls_run': 3},
                          '#1843 C the pinned witness count per function')
         self.assertEqual(len(set(sites)), len(sites),
                          '#1843 C each witness is one uniquely anchored site')

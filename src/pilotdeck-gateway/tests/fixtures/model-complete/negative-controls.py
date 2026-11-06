@@ -409,15 +409,29 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+PUBLISH_DIR = ROOT / ".negctl-publish"
+
+
 def atomic_write(path: Path, data: bytes) -> None:
-    """Write `data` to `path` via a same-directory temp file + fsync + replace."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    """Publish `data` over `path` via a temp file + fsync + one replace.
+
+    The temp lives in `PUBLISH_DIR` at the repository root, not beside the
+    target (#1692 §9 r2 review): a SIGKILL does not run `finally`, and a residue
+    inside `src/` is read back as an "untracked build input" by
+    `negative_process._assert_input_areas`, which then refuses every later run.
+    `mkstemp` creates 0600, so the source mode is restored before the rename --
+    otherwise every run would publish 0600 onto a tracked source and leave a
+    mode-only `git diff` under `core.filemode=true`.
+    """
+    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(PUBLISH_DIR), prefix=".negctl-" + path.name, suffix=".tmp")
+    mode = path.stat().st_mode & 0o7777
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
         try:
             directory = os.open(str(path.parent), os.O_RDONLY)
