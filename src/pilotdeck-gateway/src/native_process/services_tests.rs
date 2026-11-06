@@ -2171,9 +2171,18 @@ fn text_of(value: &JsValue, key: &str) -> String {
              vacuously as an empty string"
         ),
     };
-    text.to_utf8().unwrap_or_else(|_| {
+    let text = text.to_utf8().unwrap_or_else(|_| {
         panic!("#1762 non-vacuous: source `{key}` must be valid UTF-8, not lossy text")
-    })
+    });
+    // Present-but-empty is still vacuous: a projection that wiped every
+    // `contentHash` to "" would compare ("", "") with ("", "") and report a
+    // clean anchor. `SourceRecord` builds both fields unconditionally and a
+    // content hash is a digest, so empty can only be a projection bug.
+    negative_assert!(
+        !text.is_empty(),
+        "#1762 non-vacuous: source `{key}` must be non-empty, not \"\""
+    );
+    text
 }
 
 /// `path` is absent on the `env` sources by construction and present whenever

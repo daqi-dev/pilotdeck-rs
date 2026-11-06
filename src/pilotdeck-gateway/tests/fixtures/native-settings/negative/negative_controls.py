@@ -4,7 +4,7 @@ must be killed by its named test's own assertion markers, then restore.
 
 Run with no other writers/builds in this worktree. Evidence goes in a new
 output folder; original source bytes and hashes are verified after every
-mutation. The seven mutants all target the U7 settings wiring:
+mutation. The nine mutants all target the U7 settings wiring:
 
 * ``miss-wire-reload-extensions`` — the settings family no longer registers
   ``reload_extensions``; the #1305 registry inventory pins every wired wire
@@ -33,6 +33,13 @@ mutation. The seven mutants all target the U7 settings wiring:
 * ``unbind-reload-extensions`` (#1761 review) — the same unbind for
   ``reload_extensions``: the guard's reload loop covers both methods, so each
   iteration needs its own negative control, not just the first.
+* ``drop-source-path`` (#1762 review) — ``SourceRecord::value`` stops emitting
+  ``path``, so no source names a file any more; the anchor test's
+  ``has_file_source`` guard must red instead of comparing ``("file", "",
+  hash)`` with ``("file", "", hash)``.
+* ``empty-source-hash`` (#1762 review) — the serialized ``contentHash``
+  becomes ``""`` on every side; the strict ``text_of`` must reject the empty
+  string instead of letting ``("", "")`` compare equal to ``("", "")``.
 
 Every mutant is applied, proven to compile (``cargo test -p
 pilotdeck-gateway --lib --no-run``), run against its one named test, and
@@ -78,6 +85,9 @@ REFRESH = 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 # now only re-exports it, so the registry-table mutation must anchor on the
 # component's list or the run aborts on an expired anchor.
 GATEWAY = 'src/pilotdeck-gateway/src/runtime/settings/gateway.rs'
+# #1762 review: the source-projection assertions live in the services suite but
+# the fields are built here, so the mutants anchor on the record serializer.
+SNAPSHOT = 'src/pilotdeck-gateway/src/config/snapshot.rs'
 REGISTRY = 'native_process::methods::tests::registry_matches_current_methods'
 REPLAY = 'native_process::settings_tests::native_settings_replays_the_real_ts_oracle'
 RECONNECT = 'native_process::settings_tests::resolve_settings_generation_across_reconnect'
@@ -93,6 +103,14 @@ UNBIND_MARKER = ('#1761 settings method reload_config must answer reloaded: true
 # and the same success-shape assertion, one name apart.
 UNBIND_EXTENSIONS_MARKER = ('#1761 settings method reload_extensions must answer '
                             'reloaded: true from its real delegate')
+# #1762 review: the source-projection guard (`flag_reference` in the non-empty
+# loop, strict `text_of`, `has_file_source`) shipped without any mutant, which
+# is exactly the "positive assertion with no negative control" pattern this
+# batch exists to remove. Both mutants below are killed by that one test.
+ANCHORS = 'native_process::services_tests::settings_store_anchors_at_pilot_home_env'
+DROP_PATH_MARKER = ('#1762 non-vacuous: resolved must carry at least one source '
+                    'with a non-empty path')
+EMPTY_HASH_MARKER = '#1762 non-vacuous: source `contentHash` must be non-empty'
 # Each row: (name, source path, original anchor text, mutant text, killed test).
 # Rows sharing a name are one mutant: every edit is applied together and the
 # group gets one compile gate, one kill run and one verdict ('stale-generation'
@@ -146,6 +164,16 @@ mutations = [
     ('unbind-reload-extensions', SERVICES,
      '        reload_extensions: Some(bundle.clone()),',
      '        reload_extensions: None,', CAPABILITIES),
+    ('drop-source-path', SNAPSHOT,
+     '        if let Some(path) = &self.path {\n'
+     '            o.insert("path".into(), path.as_str().into());\n'
+     '        }',
+     '        if let Some(path) = &self.path {\n'
+     '            let _ = path;\n'
+     '        }', ANCHORS),
+    ('empty-source-hash', SNAPSHOT,
+     '        o.insert("contentHash".into(), self.content_hash.as_str().into());',
+     '        o.insert("contentHash".into(), "".into());', ANCHORS),
     ('broadcast-before-dirty', REFRESH,
      '                if let Some(router) = router {\n'
      '                    router.mark_all_dirty("config_changed");\n'
@@ -166,6 +194,8 @@ MARKERS = {
                               'run before the broadcast'),
     'unbind-reload-config': UNBIND_MARKER,
     'unbind-reload-extensions': UNBIND_EXTENSIONS_MARKER,
+    'drop-source-path': DROP_PATH_MARKER,
+    'empty-source-hash': EMPTY_HASH_MARKER,
 }
 
 
