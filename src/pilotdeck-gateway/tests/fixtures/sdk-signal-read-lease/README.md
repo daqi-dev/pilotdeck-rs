@@ -22,12 +22,16 @@
   全程不持树锁，无死锁。
 
   **见证绑定到本次 writer**：writer 在**放锁前**把持锁区间
-  （`start_ms` / `end_ms`，epoch 毫秒）原子写进 `writer-hold.json`；常驻测试在
-  **第一次尝试取锁之前**记下时刻 `first=<epoch ms>`，marker 里同时带取锁时刻
-  `at=<epoch ms>`。GREEN 要求 `start_ms ≤ first ≤ end_ms`：第一次尝试就落在本次
-  writer 的持锁区间内，说明读者确实撞上了它。用 `first` 而不是等待时长作见证，是为了
-  排除两条假通过路径——「本次 writer 放锁后另一个 committed 任务先抢到锁、读者等的是
-  它」和「读者无竞争取锁后被调度暂停 ≥ 500 ms」。
+  （`start_ms` / `end_ms`，epoch 毫秒）原子写进 `writer-hold.json`；常驻测试在第一次
+  **被拒绝**（`try_lock_shared` 返回 `WouldBlock`）时记下时刻
+  `blocked=<epoch ms>`，marker 里同时带 `first`（第一次尝试）、`blocked` 与 `at`
+  （取锁成功）。GREEN 要求 `start_ms ≤ blocked ≤ end_ms`。
+
+  `WouldBlock` 是「此刻有排他持有者」的直接观测：进程里没有别的东西能造出它，而本次
+  writer 在整个持锁区间内一直持有排他锁，所以落在区间内的拒绝只能来自它。用等待时长
+  或「第一次尝试时刻」作见证都不够——调度暂停可以把这两者挪到没遇到本次 writer 的时刻
+  （暂停前记时刻、暂停后调用；或无竞争取锁后再暂停把 0 等待刷大），而 `blocked` 是
+  调用返回值的伴生时刻，暂停挪不动它。
 
   cargo 名额在起 writer **之前**取（`cargo-slots.sh` 是查询式），所以 90 s 的持锁
   只需要覆盖测试本身，不必覆盖最长 900 s 的名额排队。
@@ -51,12 +55,12 @@ GREEN 不能只看「测试通过」——没等到 writer 也会通过；也不
 的等待判小）。所以见证来自测试自己：
 
 - `fixture_read_lease()` 在拿到共享锁时打一行 stderr：
-  `#1662 read lease wait ms=<n> first=<epoch ms> at=<epoch ms>`
-  （取锁前后 `Instant` 实测 + 第一次尝试时刻 + 取锁时刻）。
-- GREEN 用 `--nocapture` 跑常驻测试，解析这一行；没有该行 → INVALID（从未等过），
-  `first` 不在 writer 公布的持锁区间内 → INVALID（等的不是本次 writer），
-  等待 `< MIN_LEASE_WAIT_MS`（500 ms）→ INVALID。
-- 只有「测试 PASS + 第一次尝试落在本次 writer 的持锁区间 + 等待 ≥ 500 ms」才是 KILLED。
+  `#1662 read lease wait ms=<n> first=<epoch ms> blocked=<epoch ms> at=<epoch ms>`
+  （等待时长 + 第一次尝试 + 第一次被拒 + 取锁时刻；`blocked=0` 表示第一次就成功）。
+- GREEN 用 `--nocapture` 跑常驻测试，解析这一行；没有该行、或 `blocked=0` →
+  INVALID（从未被拒，即从未遇到排他持有者）；`blocked` 不在 writer 公布的持锁区间内 →
+  INVALID（拒绝不是本次 writer 造成的）；等待 `< MIN_LEASE_WAIT_MS`（500 ms）→ INVALID。
+- 只有「测试 PASS + `blocked` 落在本次 writer 的持锁区间 + 等待 ≥ 500 ms」才是 KILLED。
 - marker 字面量漂移守卫：`LEASE_MARKER` 不在 `sdk_signal_exit.rs` 文本里时 GREEN 直接
   INVALID，避免两侧改名后控制项静默失效。
 
@@ -78,6 +82,10 @@ writer 的 `mutating_sources` 用 `lock_timeout=WRITER_LOCK_TIMEOUT`（300 s）�
 结束、超时还是被 SIGTERM 打断，恢复阶段（`write_bytes`）都已在无处理器状态下运行，
 第二枚 SIGTERM 不会中途打断恢复。停止走 `finally`（捕获 `BaseException`），所以
 `Ctrl-C` / `SystemExit` 同样会停掉 writer，不会留下持锁的孤儿子进程。
+
+停止本身若被中断（`communicate()` 期间 `Ctrl-C`），`force_stop()` 仍然先 `terminate()`
+走优雅恢复、等 `WRITER_EXIT_BUDGET`，只有超时才 `_kill_group`；被强杀时该行 reason 明
+写「source restoration is NOT confirmed」，不会假装恢复成功。
 
 SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体；下一次 `mutating_sources`
 用 HEAD 字节校验拒绝脏树，不会把变异体当基线，但源文件需要人工恢复。

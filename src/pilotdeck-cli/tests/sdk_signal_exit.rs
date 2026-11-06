@@ -27,11 +27,12 @@ const NEGATIVE_CONTROLS: u64 = 73;
 /// holds the tree lock; far above the Python side's 900 s acquisition budget.
 const READ_LEASE_WAIT: Duration = Duration::from_secs(1800);
 /// One stderr line per lease acquisition: the measured wait (ms), the instant of
-/// the *first* attempt (epoch ms) and the instant of the acquisition (epoch ms).
-/// The paired GREEN control in `sdk-signal-read-lease/` uses the first attempt
-/// as its witness: it must land inside the writer's published hold, so the wait
-/// cannot be a scheduler stall after an uncontended acquisition, and cannot
-/// belong to a later lock holder. Both sides must agree on this exact spelling.
+/// the first attempt (epoch ms), the instant of the first *refused* attempt
+/// (epoch ms, 0 when the first attempt succeeded) and the acquisition instant
+/// (epoch ms). The paired GREEN control in `sdk-signal-read-lease/` uses the
+/// refused attempt as its witness: `WouldBlock` observed inside the writer's
+/// published hold proves the reader met that lock, and no scheduling delay can
+/// manufacture it. Both sides must agree on this exact spelling.
 const READ_LEASE_MARKER: &str = "#1662 read lease wait ms=";
 
 /// Wall-clock milliseconds since the Unix epoch.
@@ -74,21 +75,29 @@ fn fixture_read_lease() -> fs::File {
         .expect("#1662 negative source lock file must open");
     let deadline = Instant::now() + READ_LEASE_WAIT;
     let started = Instant::now();
-    // Taken before the first attempt: this is the instant the reader actually
-    // met the writer's lock, and it is what the paired control checks against
-    // the writer's hold interval (cargo test only shows it with --nocapture).
     let first = epoch_ms();
+    // The instant of the first *refused* attempt. `try_lock_shared` returning
+    // `WouldBlock` is a direct observation that an exclusive holder was there at
+    // that instant; nothing else in the process can produce it. The paired
+    // control requires this instant to fall inside the writer's published hold,
+    // which no scheduling delay can fake: a pause before the call, or a stall
+    // after an uncontended acquisition, cannot move it.
+    let mut blocked: Option<u128> = None;
     loop {
         match file.try_lock_shared() {
             Ok(()) => {
                 let at = epoch_ms();
                 eprintln!(
-                    "{READ_LEASE_MARKER}{} first={first} at={at}",
-                    started.elapsed().as_millis()
+                    "{READ_LEASE_MARKER}{} first={first} blocked={} at={at}",
+                    started.elapsed().as_millis(),
+                    blocked.unwrap_or(0)
                 );
                 return file;
             }
             Err(std::fs::TryLockError::WouldBlock) => {
+                if blocked.is_none() {
+                    blocked = Some(epoch_ms());
+                }
                 assert!(
                     Instant::now() < deadline,
                     "#1662 fixture read lease wait exceeded {} seconds",
