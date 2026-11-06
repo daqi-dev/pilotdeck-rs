@@ -42,9 +42,10 @@
   持锁跑同一测试 → 期望 FAIL 于
   `#1145 source file SHA256 matches disk: probeSha256/capture.py`。
 
-- **`writer-exit-contract`**（`--stop-check`）：两跑、不跑 cargo，证明 `stop_writer()`
-  的两条判据真的成立——被叫停的 writer 恢复并退出 0，自己失败的 writer 非零且被报出。
-  细节见下文「writer 的退出契约自检」。
+- **`writer-exit-contract`**（`--stop-check`）：两跑，两跑本身不跑 cargo（冷 target 会先
+  bootstrap 一次工作区扫描器、占一次名额），证明 `stop_writer()` 的两条判据真的成立——
+  被叫停的 writer 恢复并退出 0，自己失败的 writer 非零且被报出。细节见下文
+  「writer 的退出契约自检」。
 
 三行全 KILLED 才退出 0；锚点过期在写盘前报错退出（INVALID，不记 SURVIVED）。全部
 cargo 经 `sigint_default.py` 包装、`run_owned` 进程组管理、`wait_for_slot` 名额闸。
@@ -146,14 +147,22 @@ CARGO_TARGET_DIR=<target> python3 -I \
   跑满 `STOP_CHECK_HOLD_SECONDS = 5 s` 窗口后自行失败。要求窗口已发布（`window=True`）、
   rc 非 0 且非 None、`stop_writer()` 抛错且报出的文本含该退出码（正则整词匹配，
   `exited 1` 不会被 `exited 10` 命中）、字节回位。等待预算用
-  `STOP_CHECK_EXIT_BUDGET = 60 s` 而不是生产的 210 s：坏 writer 挂在恢复里时，自检不该
-  比它要抓的故障还慢（r10 P3）。
+  `STOP_CHECK_EXIT_BUDGET = STOP_CHECK_HOLD_SECONDS + STOP_CHECK_RESTORE_ALLOWANCE_SECONDS`
+  （当前 60 s）而不是生产的 `WRITER_EXIT_BUDGET`：这个 writer 5 s 后就自己走，等待只需覆盖
+  恢复 + HEAD 复核；预算由 hold 派生而不是字面量，抬高 hold 时不会反而把第一段等待变成
+  「健康 writer 还在睡就被 SIGTERM」（那样它会优雅退出 0，own-failure 这条覆盖静默失效）。
+- **预算是「每段等待」**：`stop_writer()` 有两次等待（第一次等它自己走、终止后再等一次），
+  兜底 `force_stop()` 另有两次；坏 writer 挂在恢复里时最坏是
+  `2 × STOP_CHECK_EXIT_BUDGET + _collect(30 s)`，再加快底的一段，不是 60 s 整跑上限
+  （r12 concurrency/boundary P3）。自检的兜底也吃这个短预算，不走生产的
+  `WRITER_EXIT_BUDGET`（`HOLD_SECONDS + 120`）。
 - 两跑任一行的兜底 `force_stop()` 若**自身被中断**（例如第二枚 Ctrl-C 落在等待里），
   该异常会记进该行的 `cleanup` 字段并让整行判 INVALID：writer 可能仍持锁、恢复未确认，
   不能当作干净收场上报（r10 P1）。
-- **未覆盖**：`#1662 writer stopped` marker 与 `own-failure` 的 `bytes_back` 只有正控
-  路径——仓内没有能造出「忽略 SIGTERM、跑满 hold 后正常退出」或「恢复失败但退出 0」的
-  writer，这两条断言从没红过。补注入开关的负控记在 #1885，前置于 #1662 收尾（r10 P2）。
+- **未覆盖**：`#1662 writer stopped` marker、`own-failure` 的 `bytes_back`、`rc is None`
+  与退出码整词匹配这四条断言只有正控路径——仓内没有能造出「忽略 SIGTERM、跑满 hold 后
+  正常退出」「恢复失败但退出 0」「writer 永不 reap」的 writer，它们从没红过。补注入开关
+  的负控记在 #1885，前置于 #1662 收尾（r10 P2 / r12 sibling P2）。
 
 原始输出形如：
 

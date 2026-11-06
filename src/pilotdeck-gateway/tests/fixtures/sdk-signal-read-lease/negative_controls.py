@@ -102,12 +102,15 @@ STOP_CHECK_HOLD_SECONDS = 5
 # (#1662 review r10 P2).
 STOP_CHECK_STOP_HOLD_SECONDS = 30
 STOP_CHECK_STOP_BUDGET = 5
-# The own-failure run exits by itself right after a 5 s hold, so waiting the
-# production ``WRITER_EXIT_BUDGET`` (210 s) would only delay a *bad* writer's
-# INVALID verdict by minutes -- the "short" self-check would stop being short on
-# exactly the failure path it exists to catch. 60 s still leaves plenty of room
-# for a full restore + HEAD verification under load (#1662 review r10 P3).
-STOP_CHECK_EXIT_BUDGET = 60
+# ``stop_writer`` and ``force_stop`` bound *each* wait, so this is not a total:
+# a writer stuck in its restore costs two of these plus ``_collect``'s 30 s. It
+# is derived from the hold rather than written as a literal so raising
+# ``STOP_CHECK_HOLD_SECONDS`` cannot leave the first wait expiring while a
+# healthy writer is still legitimately asleep -- that would SIGTERM it into a
+# clean rc-0 stop and silently stop testing the own-failure path (#1662 review
+# r10 P3 / r12 boundary P3).
+STOP_CHECK_RESTORE_ALLOWANCE_SECONDS = 55
+STOP_CHECK_EXIT_BUDGET = STOP_CHECK_HOLD_SECONDS + STOP_CHECK_RESTORE_ALLOWANCE_SECONDS
 # Printed to stderr only when the writer takes the requested-stop path; the
 # self-check greps for it so "rc 0 + restored" cannot be satisfied by a SIGTERM
 # that was ignored while the writer ran out its hold (#1662 review r9 P2).
@@ -329,7 +332,7 @@ def _drain(process, out):
         pass
 
 
-def force_stop(process, out):
+def force_stop(process, out, budget=WRITER_EXIT_BUDGET):
     """Recover when ``stop_writer`` itself was interrupted.
 
     Graceful first (the writer's SIGTERM handler unwinds ``mutating_sources``,
@@ -339,13 +342,18 @@ def force_stop(process, out):
     (status 0), which is what makes the restoration claim true: a requested stop
     restores and then exits 0, so a non-zero status here means it did not, and
     the caller must not claim restoration (#1662 review r8/r9).
+
+    ``budget`` bounds each wait; the self-check passes its own short one so a
+    stuck writer cannot hold the interactive path for the production
+    ``WRITER_EXIT_BUDGET`` (``HOLD_SECONDS + 120``)
+    (#1662 review r12 concurrency/boundary P3).
     """
     if process.poll() is not None:
         _drain(process, out)
         return process.returncode == 0
     try:
         process.terminate()
-        process.communicate(timeout=WRITER_EXIT_BUDGET)
+        process.communicate(timeout=budget)
         # It exited: a requested stop restores and then leaves with status 0.
         return process.returncode == 0
     except subprocess.TimeoutExpired:
@@ -356,7 +364,7 @@ def force_stop(process, out):
         # killing it outright; ``poll()`` cannot raise the way ``wait()`` can, so
         # this path still ends in a *confirmed* timeout before any kill
         # (#1662 review r6/r7 P0-2).
-        deadline = time.monotonic() + WRITER_EXIT_BUDGET
+        deadline = time.monotonic() + budget
         while process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.5)
         if process.poll() is not None:
@@ -671,7 +679,7 @@ def stop_check(out):
                 # is the bounded graceful-then-kill path, not SIGKILL first
                 # (#1662 review r9 P0).
                 try:
-                    force_stop(process, run_out)
+                    force_stop(process, run_out, budget=STOP_CHECK_EXIT_BUDGET)
                 except BaseException as error:
                     # Recorded, never swallowed: the writer may still hold the
                     # lock with the mutant on disk, and the caller must say so
@@ -737,12 +745,14 @@ def stop_check(out):
         failed.append('the own-failure writer never exited; there is no status to judge')
     elif own_failure['rc'] == 0:
         failed.append('a writer that failed on its own exited 0')
-    if own_failure['reported'] is None:
+    elif own_failure['reported'] is None:
         failed.append('stop_writer accepted a non-zero writer exit')
-    elif own_failure['rc'] is not None and not re.search(
-            rf'exited {own_failure["rc"]}\b', own_failure['reported']):
+    elif not re.search(rf'exited {own_failure["rc"]}\b', own_failure['reported']):
         # Exact status, not a substring: ``exited 1`` must not be satisfied by
-        # ``exited 10`` (#1662 review r10 P3).
+        # ``exited 10`` (#1662 review r10 P3). One chain, not three overlapping
+        # ``if``s, so an unreaped writer cannot also be described as "accepted a
+        # non-zero exit" -- there is no status to accept (#1662 review r12
+        # simplify P3 / concurrency P3).
         failed.append(f'the reported failure does not name the exit status: '
                       f'{own_failure["reported"]!r}')
     if not own_failure['bytes_back']:
