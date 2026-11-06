@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1736 / #1739 HEAD-only controls: compile, fail at the bound assertion, restore.
+"""#1736 / #1739 / #1899 HEAD-only controls: compile, fail at the bound assertion, restore.
 
 Usage: negative_controls.py --check
        negative_controls.py NEW_OUT [mutation ...]
@@ -8,12 +8,16 @@ Every selected row is reported, including anchor/build/source-guard failures.
 
 Rows bind one mutation to one named test in ``config::store::tests`` (a lib
 test, run with ``--exact``); the kill evidence is that test's own panic payload
-carrying its ``#1736`` / ``#1739`` / ``#1794`` message. Four rows pin the
-watcher bounds (the debounce ceiling through both the watcher-level test and
+carrying its ``#1736`` / ``#1739`` / ``#1794`` / ``#1899`` message. Four rows pin
+the watcher bounds (the debounce ceiling through both the watcher-level test and
 the ledger's literal two-hour pin, the poll-interval ceiling, and the
 ``checked_add`` overflow fallback in ``deadline_after``); two pin the metadata
 short-circuit (the skipped content read on unchanged metadata, and the ctime
-bump that carries a same-length mtime-restored rewrite through it).
+bump that carries a same-length mtime-restored rewrite through it); two pin
+#1899's watcher-stop evidence (the join-based check reverted to
+``JoinHandle::is_finished()``, which is also true for a task that died by
+panic, and a panicking watcher loop that an ``is_finished()``-only check
+accepts as a clean stop — the #1650 silent-death path).
 """
 from pathlib import Path
 import json
@@ -27,6 +31,7 @@ from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/config/store.rs'
+tests = root / 'src/pilotdeck-gateway/src/config/store/tests.rs'
 mutations = [
     # #1736: the debounce ceiling is removed, so a representable over-long
     # value passes through and the reload lands at the requested two hours
@@ -100,6 +105,36 @@ mutations = [
      '            (meta.ino(), meta.dev()).hash(hasher);',
      'config::store::tests::restored_mtime_rewrite_between_samples_is_seen',
      '#1739 a same-length rewrite with mtime restored is still seen (ctime)'),
+    # #1899: the watcher-stop evidence goes back to `JoinHandle::is_finished()`,
+    # which tokio 1.48 also reports for a task that died by panic (the harness
+    # stores `JoinError::panic` and marks the task complete), so the regression
+    # test's `expect_err` fails at its own marker: a panicked watcher is again
+    # accepted as a clean stop — #1650's silent hot-reload death.
+    ('is-finished-stop-evidence-restored', tests,
+     '    match tokio::time::timeout(STOP_TIMEOUT, task).await {\n'
+     '        Err(_) => Err(format!(\n'
+     '            "the watcher task did not stop within {STOP_TIMEOUT:?}"\n'
+     '        )),\n'
+     '        Ok(Ok(())) => Ok(()),\n'
+     '        Ok(Err(err)) if err.is_panic() => Err(format!("the watcher task panicked: {err}")),\n'
+     '        Ok(Err(err)) => Err(format!("the watcher task was cancelled: {err}")),\n'
+     '    }',
+     '    if task.is_finished() {\n'
+     '        Ok(())\n'
+     '    } else {\n'
+     '        Err("the watcher task did not stop".to_owned())\n'
+     '    }',
+     'config::store::tests::panicked_watcher_task_is_not_a_clean_stop',
+     '#1899 a panicked watcher must not look like a clean stop'),
+    # #1899: the watcher loop panics on its first poll — the #1650 silent-death
+    # path. The drop-the-store test must fail at the join evidence instead of
+    # passing on a task that is merely "finished".
+    ('watch-loop-panic-injected', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    panic!("#1899 injected: simulated watch_loop failure");\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
+     '#1899 dropping the store must stop the watcher cleanly'),
 ]
 
 
@@ -117,7 +152,7 @@ def main():
                 check_anchor(row, row[1].read_text())
             except Exception as error:
                 errors.append(str(error))
-        print('\n'.join(errors) if errors else f'#1736/#1739 {len(mutations)} unique anchors checked')
+        print('\n'.join(errors) if errors else f'#1736/#1739/#1899 {len(mutations)} unique anchors checked')
         return int(bool(errors))
     if not args:
         raise SystemExit('provide NEW_OUT and optional mutation names, or --check')
@@ -134,7 +169,7 @@ def main():
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     summary = []
-    guarded = list(dict.fromkeys([source, Path(__file__).resolve(),
+    guarded = list(dict.fromkeys([source, tests, Path(__file__).resolve(),
         Path(__file__).resolve().parents[1] / 'negative_process.py',
         Path(__file__).resolve().parents[1] / 'negative_suite.py']))
 

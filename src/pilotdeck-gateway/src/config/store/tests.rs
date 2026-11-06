@@ -77,6 +77,47 @@ async fn settle() {
     }
 }
 
+/// How long a detached watcher task gets to stop once its last owner is gone.
+const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// #1899: wait for the detached watcher task and report how it ended.
+async fn watcher_stop(task: Option<JoinHandle<()>>) -> Result<(), String> {
+    let Some(task) = task else {
+        return Err("the watcher task handle was already taken".to_owned());
+    };
+    match tokio::time::timeout(STOP_TIMEOUT, task).await {
+        Err(_) => Err(format!(
+            "the watcher task did not stop within {STOP_TIMEOUT:?}"
+        )),
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) if err.is_panic() => Err(format!("the watcher task panicked: {err}")),
+        Ok(Err(err)) => Err(format!("the watcher task was cancelled: {err}")),
+    }
+}
+
+/// #1899: `is_finished()` is true for a task that died by panic (tokio 1.48
+/// stores `JoinError::panic` as the output and marks the task complete), so it
+/// is not evidence that the watcher stopped cleanly — watching the loop panic
+/// would silently kill hot reload (#1650). This pins the runtime fact and is
+/// the negative control for `watcher_stop`: with `is_finished()`-only evidence
+/// it fails at its own marker.
+#[tokio::test]
+async fn panicked_watcher_task_is_not_a_clean_stop() {
+    let task = tokio::spawn(async { panic!("simulated watch_loop failure") });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        task.is_finished(),
+        "#1899 tokio marks a panicked task complete (the false evidence)"
+    );
+    let reason = watcher_stop(Some(task))
+        .await
+        .expect_err("#1899 a panicked watcher must not look like a clean stop");
+    assert!(
+        reason.contains("panicked"),
+        "#1899 the stop reason must name the panic: {reason}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_reloads_share_one_load_and_one_event() {
     let root = Root::new();
@@ -650,10 +691,12 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
         .expect("#879 healthy watcher paths");
     settle().await;
     drop(store);
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-    assert!(watch.task.as_ref().unwrap().is_finished());
+    assert_eq!(
+        watcher_stop(watch.task.take()).await,
+        Ok(()),
+        "#1899 dropping the store must stop the watcher cleanly"
+    );
     assert_eq!(loads.load(Ordering::SeqCst), 1);
-    watch.task.take();
 }
 
 #[test]
