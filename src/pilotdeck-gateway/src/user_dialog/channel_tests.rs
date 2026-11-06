@@ -1808,11 +1808,18 @@ impl UserDialogStore for ReentrantStore {
 #[derive(Default)]
 struct ReentrantJournal {
     events: Mutex<Vec<JsValue>>,
+    on_record: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
     on_remove: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 impl UserDialogJournal for ReentrantJournal {
     fn record(&self, event: &JsValue) -> Result<()> {
         self.events.lock().unwrap().push(event.clone());
+        // The hook runs outside the journal lock so the reentrant registration
+        // can write through the same journal.
+        let hook = self.on_record.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(())
     }
     fn remove(&self, _request_id: &JsString) -> Result<()> {
@@ -1869,6 +1876,20 @@ fn a_registration_replaced_during_its_store_write_ends_without_publishing_a_bus_
     };
     options.store = Some(store.clone() as Arc<dyn UserDialogStore>);
     options.store_key = Some(store_key());
+    // #1599: the claim is host code that writes the owner lease under the
+    // request id. A replaced original must not run it after the replacement
+    // already claimed, or it would take the replacement's lease.
+    let claims = Arc::new(Mutex::new(Vec::new()));
+    options.claim_stored_owner = Some(Arc::new({
+        let claims = claims.clone();
+        move |request_id: &JsString, owner_id: &JsString| {
+            claims
+                .lock()
+                .unwrap()
+                .push((request_id.clone(), owner_id.clone()));
+            Ok(true)
+        }
+    }));
     let channel = GatewayUserDialogChannel::new(options);
     holder.lock().unwrap().replace(channel.clone());
     store.on_put.lock().unwrap().replace(Box::new({
@@ -1925,6 +1946,172 @@ fn a_registration_replaced_during_its_store_write_ends_without_publishing_a_bus_
     negative_assert!(
         next.try_result().is_none(),
         "#1599 the replacement must stay pending after the original ends"
+    );
+    negative_assert!(
+        claims.lock().unwrap().len() == 1,
+        "#1599 the original must not claim the owner lease after the replacement published"
+    );
+}
+
+#[test]
+fn a_registration_replaced_while_its_journal_write_runs_keeps_the_replacement_row() {
+    use crate::negative_assert;
+
+    // #1599: `journal.record` is host code as well. A journal adapter that
+    // reenters and registers the same request id owns the store row now; the
+    // original must stop before `store.put` instead of overwriting it.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-journal-write",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let replacement: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let store = Arc::new(ReentrantStore::default());
+    let journal = Arc::new(ReentrantJournal::default());
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.store = Some(store.clone() as Arc<dyn UserDialogStore>);
+    options.store_key = Some(store_key());
+    options.journal = Some(journal.clone() as Arc<dyn UserDialogJournal>);
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+    journal.on_record.lock().unwrap().replace(Box::new({
+        let holder = holder.clone();
+        let replacement = replacement.clone();
+        move || {
+            let channel = holder
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("channel is installed before the first journal write");
+            let next = replacement_dialog(&channel);
+            replacement.lock().unwrap().replace(next);
+        }
+    }));
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded while its journal write runs".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("journal write"),
+            "#1599 a registration replaced during its journal write must end with the replacement error"
+        ),
+        other => panic!(
+            "#1599 a registration replaced during its journal write must end with an error, \
+             got {other:?}"
+        ),
+    }
+    {
+        let dialogs = store.dialogs.lock().unwrap();
+        negative_assert!(
+            dialogs.len() == 1,
+            "#1599 only the replacement may own the stored dialog row"
+        );
+        negative_assert!(
+            dialogs[0]
+                .1
+                .request
+                .get("toolCallId")
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| *id == JsString::from("call-replacement")),
+            "#1599 the original must not overwrite the replacement's stored row"
+        );
+    }
+    let mut next = replacement
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the replacement was registered from the journal write");
+    negative_assert!(
+        next.try_result().is_none(),
+        "#1599 the replacement must stay pending after the original ends"
+    );
+}
+
+#[test]
+fn a_registration_whose_replacement_finished_still_sees_the_supersession() {
+    use crate::negative_assert;
+
+    // #1599: the replacement can complete *and* leave the request table while
+    // the original is still inside `persist`. An absent table entry must not
+    // read as "the id is still mine", or the original would publish a bus
+    // entry nobody can answer.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-replacement-finished",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let store = Arc::new(ReentrantStore::default());
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.store = Some(store.clone() as Arc<dyn UserDialogStore>);
+    options.store_key = Some(store_key());
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+    store.on_put.lock().unwrap().replace(Box::new({
+        let holder = holder.clone();
+        let bus = bus.clone();
+        move || {
+            let channel = holder
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("channel is installed before the first store write");
+            let mut next = replacement_dialog(&channel);
+            // Finish the replacement right away: it is removed from the
+            // request table before the original resumes.
+            let session: JsString = "session".into();
+            let id: JsString = "shared-request".into();
+            channel.abort(&id);
+            negative_assert!(
+                next.try_result().is_some(),
+                "#1599 the replacement must be settled before the original resumes"
+            );
+            negative_assert!(
+                bus.lock().unwrap().pending_count(&session) == 0,
+                "#1599 the finished replacement must leave no pending bus entry"
+            );
+        }
+    }));
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded by a replacement that already finished".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("store write"),
+            "#1599 a registration replaced by a finished replacement must still end with the replacement error"
+        ),
+        other => panic!(
+            "#1599 a registration replaced by a finished replacement must end with an error, \
+             got {other:?}"
+        ),
+    }
+    let session: JsString = "session".into();
+    negative_assert!(
+        bus.lock().unwrap().pending_count(&session) == 0,
+        "#1599 the original must not publish a bus entry after its replacement finished"
     );
 }
 

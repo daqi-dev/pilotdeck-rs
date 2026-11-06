@@ -225,6 +225,12 @@ struct RequestState {
     /// host callback can invert relative to the table; the table is what
     /// decides who owns a request id, so the poll registry orders by this.
     registration: AtomicU64,
+    /// Sticky "a later registration published this request id" flag (#1599).
+    /// The request table alone cannot answer this once the replacement has
+    /// completed and removed its own entry: an absent entry must not read as
+    /// "still mine", or a suspended original would publish over the
+    /// replacement and settle its rows.
+    replaced: AtomicBool,
     abort: Option<AbortSignal>,
     result: mpsc::Sender<std::result::Result<DialogAnswer, String>>,
 }
@@ -473,6 +479,7 @@ impl GatewayUserDialogChannel {
             accepts,
             generation: AtomicU64::new(0),
             registration: AtomicU64::new(0),
+            replaced: AtomicBool::new(false),
             abort: abort.clone(),
             result: sender,
         });
@@ -483,6 +490,15 @@ impl GatewayUserDialogChannel {
             let mut requests = self.inner.requests.lock().unwrap();
             let registration = self.inner.next_registration.fetch_add(1, Ordering::SeqCst) + 1;
             state.registration.store(registration, Ordering::SeqCst);
+            // #1599: supersession is sticky. The replaced request keeps the
+            // flag even after this registration completes and removes its own
+            // table entry, so a suspended original can never mistake the empty
+            // slot for "the id is still mine".
+            if let Some(previous) = requests.get(&request_id)
+                && !Arc::ptr_eq(previous, &state)
+            {
+                previous.replaced.store(true, Ordering::SeqCst);
+            }
             requests.insert(request_id.clone(), state.clone());
         }
 
@@ -699,10 +715,21 @@ impl GatewayUserDialogChannel {
     ) -> Result<()> {
         if let Some(journal) = &self.inner.options.journal {
             journal.record(request_event)?;
+            // `record` is host code and may have registered a same-id
+            // replacement. Writing this request's row now would overwrite the
+            // replacement's persisted request (#1599).
+            if replaced(&self.inner, state) {
+                return Err(DialogError::Invalid(replaced_during("journal write")));
+            }
         }
         if let (Some(store), Some(key)) = (&self.inner.options.store, &self.inner.options.store_key)
         {
             store.put(key, stored)?;
+            // Same window one call later: the store hook may have published a
+            // same-id replacement that already wrote its own row and lease.
+            if replaced(&self.inner, state) {
+                return Err(DialogError::Invalid(replaced_during("store write")));
+            }
             if let Some(claim) = &self.inner.options.claim_stored_owner {
                 let claimed = claim(&state.request_id, &state.owner_id)?;
                 if !claimed {
@@ -752,15 +779,12 @@ impl GatewayUserDialogChannel {
     }
 
     /// Whether a *different* request has taken over `state`'s id. An absent
-    /// entry is not supersession: `complete` removes it before the settle hook
-    /// runs, and that hook still owns the journal/store/lease cleanup.
+    /// entry alone is not supersession — `complete` removes the entry before
+    /// the settle hook runs, and that hook still owns the journal/store/lease
+    /// cleanup — but the sticky `replaced` flag keeps a real supersession
+    /// visible after the replacement has completed and left the table (#1599).
     fn superseded(&self, state: &Arc<RequestState>) -> bool {
-        self.inner
-            .requests
-            .lock()
-            .unwrap()
-            .get(&state.request_id)
-            .is_some_and(|current| !Arc::ptr_eq(current, state))
+        replaced(&self.inner, state)
     }
 
     /// Ends a registration that a reentrant host callback replaced under the
@@ -1136,13 +1160,20 @@ fn finish_poll(inner: &Inner, request_id: &JsString, registration: u64) {
 /// Whether a *different* registration owns `state`'s request id. An absent
 /// entry is not supersession: `complete` removes it before the settle hook
 /// runs, and that hook still owns the journal/store/lease cleanup.
+/// Whether a *different* registration owns `state`'s request id (or owned it
+/// and has since completed). See `RequestState::replaced` (#1599).
+fn replaced(inner: &Inner, state: &RequestState) -> bool {
+    state.replaced.load(Ordering::SeqCst)
+        || inner
+            .requests
+            .lock()
+            .unwrap()
+            .get(&state.request_id)
+            .is_some_and(|current| !std::ptr::eq(Arc::as_ptr(current), state))
+}
+
 fn superseded_by_registration(inner: &Inner, state: &Arc<RequestState>) -> bool {
-    inner
-        .requests
-        .lock()
-        .unwrap()
-        .get(&state.request_id)
-        .is_some_and(|current| !Arc::ptr_eq(current, state))
+    replaced(inner, state)
 }
 
 fn settle(inner: &Inner, state: &Arc<RequestState>) -> Result<()> {
