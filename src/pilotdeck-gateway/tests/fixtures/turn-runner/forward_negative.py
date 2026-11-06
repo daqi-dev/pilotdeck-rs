@@ -168,14 +168,19 @@ cases = [
      'if self.attempts.load(Ordering::SeqCst) <= self.fail {',
      'if false && self.attempts.load(Ordering::SeqCst) <= self.fail {',
      None, test_prefix + 'forward_status_fail_drop', '#1219 [status-fail-drop]: the failing write must not reach the transcript'),
-    # #1219 r3: the same counters must guard the R1 cells too. Appending a
-    # turn_result from the blocked worker on the *successful* drop path must
-    # die on the new durable-count assertion instead of vanishing into the
-    # worker's unawaited JoinHandle.
-    ('status-drop-completes', base / 'runner.rs',
-     'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);\n            result',
-     'let result = write(&recorder, &session, &turn);\n            let _ = recorder.writer().record_turn_result(&session, &turn, crate::metadata::object([("type", JsValue::String("error".into()))]));\n            drop(owner);\n            drop(lease);\n            result',
-     None, test_prefix + 'forward_status_drop', '#1219 [status-drop/cancel]: durable turn_result count follows the consumer'),
+    # #1219 r3: the same counters must guard the R1 cells too. A turn_result
+    # appended from the blocked worker on the *successful* drop path dies in
+    # OrderedStore before `RecordingStore::append`, so `completes` cannot move;
+    # the observable dimension there is the ordering violation the worker would
+    # otherwise hide in its unawaited JoinHandle. The mutation is narrow on
+    # purpose: `io()` is shared by every durable write, so mutating it (an
+    # earlier draft anchored on `let result = write(...)`) rewrites the very
+    # first append and the case panics before the status gate — the loop status
+    # write below is the one this cell blocks on.
+    ('status-drop-order', base / 'runner.rs',
+     '.io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &status)?))',
+     '.io(move |r, s, t| {\n                let written = r.writer().record_agent_status_message(s, t, &status)?;\n                let _ = r.writer().record_turn_result(s, t, crate::metadata::object([("type", JsValue::String("error".into()))]));\n                Ok(written)\n            })',
+     None, test_prefix + 'forward_status_drop', '#1219 [status-drop/cancel]: no out-of-order turn_result from the blocked worker'),
 ]
 
 def audit():
