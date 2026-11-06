@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 115 mutants:
+`JUDGES`, keyed by the same names. The current table has 120 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -363,7 +363,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-builtins-setattr-status`, `calibrate-operator-setitem-status`,
 `calibrate-try-assign-alias`, `calibrate-attr-exit-code`,
 `calibrate-subscript-exit-code`, `calibrate-attr-code-relay`,
-`calibrate-try-else-completes`.
+`calibrate-try-else-completes`, `calibrate-exit-call-attribute`,
+`calibrate-exit-call-subscript`, `calibrate-shadowed-common`,
+`calibrate-computed-status-write`, `calibrate-local-exit-alias-chain`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -565,14 +567,39 @@ make it, so `restore_critical()` now swaps the SIGINT / SIGTERM / SIGHUP
 handlers for its own recorder while the window is open and puts them back
 afterwards (a handler that is `SIG_IGN` stays ignored, and a handler installed
 *inside* the window survives it).  That closes a plain Ctrl-C, for which no
-fixture installed a handler at all, and every sibling handler that raises
-`SystemExit` directly (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  The
+fixture installed a handler at all, and every sibling handler on those three
+signals -- including one that raises `SystemExit` directly -- because the
+window owns SIGINT / SIGTERM / SIGHUP while it is open, whatever was installed
+before (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  The
 deferral protocol is checked deterministically on every import of
-`negative_controls.py`, and the real-signal path is covered by
-`test_negative_process.RestoreWindowSignals` (SIGTERM / SIGINT / SIGHUP with
-the default and the fixture handler, plus the ignored-signal and
-handler-restoration cases); the arbitrary bytecode boundary is not
-reproducible by construction and is recorded as such in the PR.
+`negative_controls.py`, and the real-signal path is covered by six
+`test_negative_process.RestoreWindowSignals` cases: SIGINT with the default and
+with a fixture handler, SIGTERM with a fixture handler, SIGHUP with the default
+handler, an ignored signal staying ignored, and the handlers being put back
+afterwards (the SIGTERM / SIGINT / SIGHUP matrix is not fully crossed -- the
+three signal/processor combinations the fixture actually exercises are the ones
+listed); the arbitrary bytecode boundary is not reproducible by construction
+and is recorded as such in the PR.
+
+`fix-r20` closed four r19 review findings, each with its own mutation:
+`calibrate-exit-call-attribute` / `calibrate-exit-call-subscript` show that the
+r19 attribute/subscript rule had reached the `return` arm only, so
+`sys.exit(helpers.EXIT_OK)` and `raise SystemExit(CODES[policy])` were judged by
+no rule at all (GLM sibling r19 P1 / MiniMax boundary r19 P0);
+`calibrate-shadowed-common` rebinds `common` to a `SimpleNamespace` stub, which
+the spelling-based `_is_shared_call` accepted as the shared aggregator (GLM
+boundary r19 P1-1) -- a file now keeps that trust only when it binds the name
+through the apparatus loader (`_load('common', ...)`), and a file that rebinds
+it fails the audit outright instead of silently losing its points;
+`calibrate-computed-status-write` writes `'PA' + 'SS'`, the same literal to the
+interpreter but not a `Constant` node, which neither the write family nor
+`_status_literals` could see (GLM boundary r19 P1-2); and
+`calibrate-local-exit-alias-chain` is the two-hop `bail = sys.exit; other =
+bail` alias the function-level pass resolved only in a favourable source order
+(MiniMax boundary r19 P1).  `_git` also gained its own session and a 120 s hard
+timeout: it runs inside the shielded restore window, where an interrupt cannot
+land, so a blocked git would have held the window open forever (MiniMax
+concurrency r19 P1).
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the

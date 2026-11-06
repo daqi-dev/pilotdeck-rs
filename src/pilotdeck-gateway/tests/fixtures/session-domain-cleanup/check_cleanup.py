@@ -1643,6 +1643,15 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
             # literal without ever being a ``Constant`` node (GLM boundary r19
             # P1-2).
             return True
+        if not isinstance(arm, ast.Call) and any(
+                isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and n.value in _CLEAN_STATUS_LITERALS for n in ast.walk(arm)):
+            # A clean word that survives beside a runtime operand --
+            # ``'PASS' + suffix`` -- is the same inline verdict the plain
+            # literal is; the return path's ``_status_literals`` already read
+            # it that way, so the write path may not disagree.  A call keeps
+            # its own arm below, where a proven callee stays legal.
+            return True
         if _has_passed_aggregate(arm) and not _calls_aggregate(arm):
             return True
         if isinstance(arm, (ast.Attribute, ast.Subscript)) \

@@ -1677,6 +1677,24 @@ class RestoreWindowSignals(unittest.TestCase):
         self.assertTrue(sentinel, "an ignored SIGTERM must not end the window: " + cp.stderr)
         self.assertEqual(cp.returncode, 0)
 
+    def test_a_failing_body_does_not_leak_the_deferred_signal(self):
+        """#892 r20: the recorded signum may not outlive a window that raised.
+
+        ``take_deferred_signal`` sits after the ``with`` block, so a body that
+        raises never reaches it; without the clear-on-raise the stale signum
+        would be taken by the next window in the same process and exit 128+n
+        for a signal that arrived much earlier (MiniMax boundary r19 P2).
+        """
+        boom = RuntimeError("restore body failed")
+        with self.assertRaises(RuntimeError) as caught:
+            with negative_process.restore_critical():
+                self.assertTrue(negative_process.defer_signal_exit(signal.SIGTERM),
+                                "the window must be open when the signal lands")
+                raise boom
+        self.assertIs(caught.exception, boom)
+        self.assertIsNone(negative_process.take_deferred_signal(),
+                          "a failed body must not leave a signum for the next window")
+
     def test_handlers_are_put_back_after_the_window(self):
         previous = signal.getsignal(signal.SIGTERM)
 

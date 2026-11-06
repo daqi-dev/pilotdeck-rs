@@ -811,11 +811,20 @@ def restore_critical():
     ``SIG_IGN`` stays ignored, and a non-main thread, where ``signal.signal``
     is unavailable, keeps the old behaviour through ``defer_signal_exit``.
     """
-    global _RESTORE_DEPTH
+    global _DEFERRED_SIGNAL, _RESTORE_DEPTH
     previous = _shield_signals()
     _RESTORE_DEPTH += 1
     try:
         yield
+    except BaseException:
+        # The body failed.  Its exception is what the caller must see, but the
+        # recorded signum may not outlive this window: the caller's
+        # ``take_deferred_signal`` line is never reached on that path, so a
+        # later window in the same process would take the stale signal and exit
+        # 128+signum for a signal that arrived minutes earlier (MiniMax
+        # boundary r19 P2).
+        _DEFERRED_SIGNAL = None
+        raise
     finally:
         _RESTORE_DEPTH -= 1
         _unshield_signals(previous)
