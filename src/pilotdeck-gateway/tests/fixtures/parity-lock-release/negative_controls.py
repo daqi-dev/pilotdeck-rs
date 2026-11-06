@@ -35,7 +35,7 @@ published at all — missing means failure (fail-closed), not the previous
 all-KILLED row set (#1059, the #209 E1 sibling fix).
 """
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import fcntl
 import json
 import os
@@ -479,7 +479,14 @@ def main():
         # /tmp/pdrs-parity.lock the real runs use, loaded from baseline bytes.
         # RUNNER is guarded too because the runner rows mutate this delivered
         # runner to prove the cancellation regression bites (#1059).
-        with parity_lease(), mutating_sources(ROOT, paths, baseline=args.baseline) as originals:
+        # A scripts/gateway-parity source makes mutating_sources take that same
+        # lease itself, from verified bytes. The lease is not reentrant: holding
+        # it here as well blocks on /tmp/pdrs-parity.lock.guard against our own
+        # process until the 60s bound, voiding every row (#1398).
+        shared = any((ROOT / path).resolve().is_relative_to(GATEWAY.parent)
+                     for path in paths)
+        lease = nullcontext() if shared else parity_lease()
+        with lease, mutating_sources(ROOT, paths, baseline=args.baseline) as originals:
             for name, source, old, new in selected:
                 status, reason = 'INVALID', 'not executed'
                 test, message = CHECKS[name]
