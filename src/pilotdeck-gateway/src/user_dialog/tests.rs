@@ -357,7 +357,10 @@ fn settle_or_restore(
         Err(error) => error,
         Ok(()) => return Ok(consumed.entry),
     };
-    bus.restore(session, consumed);
+    assert!(
+        bus.restore(session, consumed).is_none(),
+        "#1599 the entry comes back when no reentrant registration took its id"
+    );
     Err(error)
 }
 #[test]
@@ -1003,7 +1006,10 @@ fn restore_keeps_the_consumed_dialog_at_its_original_position() {
     let consumed = bus
         .consume(&session, &"beta".into(), "abort")
         .expect("beta is pending");
-    bus.restore(&session, consumed);
+    assert!(
+        bus.restore(&session, consumed).is_none(),
+        "#1599 the entry is restored, not handed back as a replaced waiter"
+    );
     negative_assert_eq!(
         listed_request_ids(&mut bus, &session),
         vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
@@ -1032,7 +1038,10 @@ fn restore_keeps_the_relative_position_after_a_reentrant_removal() {
     // failed.
     bus.consume(&session, &"alpha".into(), "abort")
         .expect("alpha is pending");
-    bus.restore(&session, consumed);
+    assert!(
+        bus.restore(&session, consumed).is_none(),
+        "#1599 the entry is restored, not handed back as a replaced waiter"
+    );
     negative_assert_eq!(
         listed_request_ids(&mut bus, &session),
         vec!["beta".to_string(), "gamma".to_string()],
@@ -1108,7 +1117,13 @@ fn restore_keeps_a_registration_that_replaced_the_consumed_dialog() {
     // The settle hook reentered and registered the replacement, then failed.
     let replacement: AcceptsFn = Arc::new(|_value| false);
     let generation = bus.register(&session, numbered_pending("dialog", replacement.clone()));
-    bus.restore(&session, consumed);
+    let dropped = bus
+        .restore(&session, consumed)
+        .expect("#1599 the displaced waiter comes back to be ended");
+    negative_assert!(
+        dropped.request_id == request,
+        "#1599 restore reports the entry whose request id the replacement took"
+    );
     let snapshot = bus
         .snapshot_for_response(&session, &request)
         .expect("the reentrant registration is still pending");
