@@ -137,7 +137,7 @@
 |---|---|
 | 0 | 选中的变异全部 KILLED（`--compile-only` 时全部 COMPILED） |
 | 1 | 确实跑过但没拿到全绿结论：SURVIVED / INVALID / SKIPPED / 基线重放不通过 / 收尾恢复校验失败 |
-| 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、缺 `CARGO_TARGET_DIR`、树脏或领锁超时、oracle 读不了 |
+| 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、`CARGO_TARGET_DIR` 不可用（未设置、空串或纯空白）、树脏或领锁超时、oracle 读不了 |
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
@@ -145,20 +145,27 @@
 这套分界不依赖 `assert`，所以 `-O` 下不变。
 
 实现进度按行读：**已迁移脚本**对未知 / 重复变异名、名册漂移、输出目录已存在
-（走 `claim_dir`，`FileExistsError` 不再落成 1）、缺 `CARGO_TARGET_DIR`（未设置或空串）
-都返回 2（`TARGET_OPTIONAL` 登记的三个入口按各自默认 target 运行，不在此列）；
+（走 `claim_dir`，`FileExistsError` 不再落成 1）、`CARGO_TARGET_DIR` 不可用
+（未设置 / 空串 / 纯空白，统一走 `negative_selection.missing_target()`）都返回 2；
+`TARGET_OPTIONAL` 登记的三个入口只在**变量未设置**这一档豁免（前两个按 #1166 用共享
+默认 target，`cli-parity-mock-gateway` 不编译 Cargo），空串与纯空白它们同样以 2 拒跑
+（前两个各有 `blank_target()` 前置守卫）；
 **树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
 另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录。
 `network-timing` 的正式路径进共享执行器 `mutation_suite`（它先占目录再取环境），因此缺
 `CARGO_TARGET_DIR` 的拒跑放在 `main()` 里、早于名册与源码守卫；共享执行器自身遇到启动期的
-`refuse()`（rc 2）时不发布 `summary.json`：目录仍为空则撤掉，已有文件则留下并在 stderr 打出
-残留路径——「从未开跑」不留一份看起来像跑完的证据。该分支由 `test_negative_adaptive.py` 的
-refuse 用例覆盖（`test_negative_optimize_guards.py` 覆盖的是各入口自己的启动守卫，两者不互相替代）。
-这些都由 `test_negative_optimize_guards.py` 机检：不存在的变异名、缺 `CARGO_TARGET_DIR`
-（未设置与空串两档）、目录已存在三条矩阵覆盖全族（`interaction-values` /
-`turn-submit-admission` 由 `negative_process.target_environment` 默认共享 target、
-`cli-parity-mock-gateway` 不编译 Cargo，这三个入口按 `TARGET_OPTIONAL` 显式登记，每条带理由
-与「理由所依赖的源码事实」断言，加个名字不能静默缩小矩阵）——不是靠读代码维持。
+`refuse()`（rc 2）时不发布 `summary.json`：目录仍为空则撤掉（目录已被外部删掉时按「没有残留」
+静默），已有文件则留下并在 stderr 打出残留路径——「从未开跑」既不发布看起来像跑完的证据，
+也不把别的写入者留下的文件删掉。两条子分支各由 `test_negative_adaptive.py` 的
+`test_startup_refusal_is_never_started_and_leaves_no_evidence` 与
+`test_startup_refusal_leaves_written_evidence_in_place` 覆盖（`test_negative_optimize_guards.py`
+覆盖的是各入口自己的启动守卫，两者不互相替代）。
+这些都由 `test_negative_optimize_guards.py` 机检：不存在的变异名、`CARGO_TARGET_DIR` 不可用
+（未设置 / 空串 / 纯空白三档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
+（`interaction-values` / `turn-submit-admission` 只豁免「未设置」，由
+`negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 不编译 Cargo，
+三档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
+AST 判；豁免多档的入口不得出现任何 target 读取形态），加个名字不能静默缩小矩阵。
 共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。

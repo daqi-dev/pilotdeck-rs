@@ -5,9 +5,34 @@ A subset run shortens a host re-run; it is not a reason to skip the control that
 is supposed to pass. The unmutated baseline therefore always runs first, and a
 failing baseline makes the whole run INVALID before any mutant verdict counts.
 """
+import os
 import re
 import sys
 from pathlib import Path
+
+
+def missing_target(environ=None):
+    """True when ``CARGO_TARGET_DIR`` cannot be used: absent, empty or blank.
+
+    An entry that requires a caller-owned build tree must refuse all three the
+    same way. A presence-only check let a host that exported
+    ``CARGO_TARGET_DIR=`` (or only spaces) through, and the shared target
+    normalisation then rejected it *after* the evidence directory existed —
+    exit 1 with a directory that reads like a finished run (#1666 fix-r7).
+    """
+    env = os.environ if environ is None else environ
+    return not (env.get('CARGO_TARGET_DIR') or '').strip()
+
+
+def blank_target(environ=None):
+    """True when ``CARGO_TARGET_DIR`` is set but unusable (empty or spaces).
+
+    Distinct from :func:`missing_target` for the entries that *default* the
+    target when the variable is absent: absent keeps the shared default, while
+    a present-but-blank value is a caller error that must refuse.
+    """
+    env = os.environ if environ is None else environ
+    return 'CARGO_TARGET_DIR' in env and not env['CARGO_TARGET_DIR'].strip()
 
 
 def baseline_passed(raw, test_name):

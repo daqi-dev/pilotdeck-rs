@@ -226,6 +226,7 @@ class SuiteTests(unittest.TestCase):
             copied.write_text('original')
             observations = []
             exited = []
+            errors = io.StringIO()
             @contextmanager
             def guard(*_args, **_kwargs):
                 if fault == 'guard':
@@ -240,7 +241,14 @@ class SuiteTests(unittest.TestCase):
             def scratch(*_args, **_kwargs):
                 yield root / 'scratch'
             def environment(_directory):
-                if fault == 'refuse':
+                if fault in ('refuse', 'refuse-residue'):
+                    if fault == 'refuse-residue':
+                        # Anything already written into the claimed directory
+                        # cannot be dropped by the executor; it must be left in
+                        # place and named on stderr (#1666 fix-r7). The stub
+                        # receives the scratch directory, so write into the
+                        # evidence directory explicitly.
+                        (root / 'out' / 'leftover.txt').write_text('written first')
                     # #1666/#1734: the real startup refusal is refuse(), i.e. a
                     # SystemExit carrying the integer code 2 and a stderr line.
                     control.refuse('startup refusal probe')
@@ -265,7 +273,7 @@ class SuiteTests(unittest.TestCase):
                  patch.dict(os.environ, {'CARGO_TARGET_DIR': str(root / 'target')}), \
                  patch.object(control.CargoTests, 'run', run), \
                  __import__('contextlib').redirect_stdout(io.StringIO()), \
-                 __import__('contextlib').redirect_stderr(io.StringIO()):
+                 __import__('contextlib').redirect_stderr(errors):
                 try:
                     code = control.mutation_suite('probe', rows, root / 'out',
                         lambda _test: (('--lib',), ['cell']), lambda result, _test: result.returncode == 0,
@@ -275,9 +283,11 @@ class SuiteTests(unittest.TestCase):
                     self.assertEqual(fault, 'interrupt', '#994 only the cancellation probe may interrupt')
                     code = 1
                 except SystemExit as refusal:
-                    self.assertEqual(fault, 'refuse', '#994 only the startup probe may refuse')
+                    self.assertIn(fault, ('refuse', 'refuse-residue'),
+                                  '#994 only the startup probes may refuse')
                     code = refusal.code
-            summary = None if fault == 'refuse' else json.loads((root / 'out/summary.json').read_text())
+            refused = fault in ('refuse', 'refuse-residue')
+            summary = None if refused else json.loads((root / 'out/summary.json').read_text())
             if fault == 'refuse':
                 # #1666/#1734: "never started" leaves nothing a host could read
                 # as evidence, and nothing that looks like a finished run.
@@ -285,6 +295,15 @@ class SuiteTests(unittest.TestCase):
                                  '#1666 a startup refusal must drop the empty evidence directory')
                 self.assertFalse((root / 'out/summary.json').exists(),
                                  '#1666 a startup refusal must not publish a summary')
+            elif fault == 'refuse-residue':
+                # The directory is not empty, so it must stay -- with everything
+                # that was written into it -- and the executor must say where.
+                self.assertTrue((root / 'out' / 'leftover.txt').is_file(),
+                                '#1666 residue must not be swept away by the executor')
+                self.assertFalse((root / 'out/summary.json').exists(),
+                                 '#1666 a startup refusal must not publish a summary')
+                self.assertIn(str(root / 'out'), errors.getvalue(),
+                              '#1666 the residue path must be named on stderr')
             self.assertEqual(real.read_text(), 'original', '#994 original worktree never mutated')
             self.assertEqual(copied.read_text(), 'original', '#994 scratch restored after every outcome')
             for label, text in observations:
@@ -311,6 +330,19 @@ class SuiteTests(unittest.TestCase):
 
     def test_startup_refusal_is_never_started_and_leaves_no_evidence(self):
         code, summary, observations = self.exercise('refuse')
+        self.assertEqual(code, 2, '#1666 a startup refusal is "never started", not a failed run')
+        self.assertIsNone(summary, '#1666 a run that never started publishes no summary')
+        self.assertEqual(observations, [], '#1666 no mutation may run after a startup refusal')
+
+    def test_startup_refusal_leaves_written_evidence_in_place(self):
+        """A refusal after something reached the directory cannot drop it silently.
+
+        The executor may only remove a directory *it* left empty. When a deeper
+        startup guard refuses after evidence was already written, the residue is
+        kept and named on stderr, so a reader can tell "never started" from a
+        directory that is quietly missing (#1666 fix-r7).
+        """
+        code, summary, observations = self.exercise('refuse-residue')
         self.assertEqual(code, 2, '#1666 a startup refusal is "never started", not a failed run')
         self.assertIsNone(summary, '#1666 a run that never started publishes no summary')
         self.assertEqual(observations, [], '#1666 no mutation may run after a startup refusal')

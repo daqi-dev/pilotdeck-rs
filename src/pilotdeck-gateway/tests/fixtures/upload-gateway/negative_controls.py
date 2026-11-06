@@ -44,7 +44,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, missing_target, refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 GATEWAY = root / 'src/pilotdeck-gateway/src/upload/gateway.rs'
@@ -567,7 +567,7 @@ try:
 except ValueError as error:
     refuse(str(error))
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
+if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
     refuse('set CARGO_TARGET_DIR to the caller build directory')
 out = claim_dir(sys.argv[1])
 summary = []

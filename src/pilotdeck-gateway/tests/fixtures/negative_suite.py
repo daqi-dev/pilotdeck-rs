@@ -12,7 +12,7 @@ import pending_reanchor as pending
 
 from negative_panic import named_test_failed, panic_evidence
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import refuse
+from negative_selection import claim_dir, missing_target, refuse
 
 
 @dataclass
@@ -521,12 +521,15 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         print('\n'.join(errors) if errors else f'{len(rows)} unique anchors checked')
         return int(bool(errors))
     if not args:
-        raise SystemExit('usage: script --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+        refuse('usage: script --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
     selected = [row for row in rows if not args[1:] or row[0] in args[1:]]
     if not selected or (args[1:] and len(selected) != len(args[1:])):
-        raise SystemExit('unknown/duplicate mutation')
+        # #1734: a mistyped selection never ran anything, so it is the same
+        # "never started" refusal (2) as the target guard below -- not a run
+        # that came out red.
+        refuse('unknown/duplicate mutation')
     env = dict(os.environ)
-    if not env.get('CARGO_TARGET_DIR'):
+    if missing_target(env):
         # #1734: the same "never started" taxonomy as the migrated entries.
         # `SystemExit('<string>')` carried the message but exited 1, which the
         # host triage table reads as "ran and did not pass".
@@ -534,8 +537,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
     # Positive/compile/restored runs never inherit a stale protocol from a caller.
     env.pop(ReceiptRun.ENV, None)
     env.pop(ReceiptRun.PARENT_ENV, None)
-    out = Path(args[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = claim_dir(args[0])  # #1734: an existing directory is "never started" (2)
     fixture_root = Path(__file__).resolve().parent
     guarded = list(dict.fromkeys([*paths, Path(script).resolve(), Path(__file__).resolve(),
         fixture_root / 'negative_process.py', fixture_root.parent / 'common/negative_receipt.rs',

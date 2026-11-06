@@ -15,7 +15,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import (claim_dir, baseline_passed, refuse, registered, select,
+from negative_selection import (claim_dir, baseline_passed, missing_target, refuse, registered, select,
                                verdict_exit)
 from negative_process import mutating_sources, run_owned
 
@@ -121,7 +121,7 @@ try:
 except ValueError as error:
     refuse(str(error))
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
+if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
     refuse('CARGO_TARGET_DIR must be supplied by the caller')
 out = claim_dir(sys.argv[1])
 summary = []
