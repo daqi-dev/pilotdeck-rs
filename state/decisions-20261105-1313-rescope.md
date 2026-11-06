@@ -39,6 +39,8 @@
 - 差异登记单：#1476（比照 #1386，Rust 明确拒绝/如实不可用，不静默）。
 - #1316 / #1317 正文已按 A 更新（摘除 #1313 硬依赖、分母改 47+3）。
 - #1313 本体保持 OPEN，暂缓不关单；标题加「[A 之后]」待后续恢复。
+- **2026-11-06 15:42Z 人批 A**（https://github.com/daqi-dev/pilotdeck-rs/issues/1475#issuecomment-6679878085，回复体「A」）→ question 单 #1475 已回复执行结果并关单；覆盖口径 47/50 + 3 暂缓写进 board #1313 / #1357 行与 #1316 / #1317 正文。
+- **`docs/plan/005` 未改**（2026-11-06 更正）：它是 A5.1 覆盖账本的哈希登记输入（`specs/gateway-coverage/ledger.json` → `input_files`，`scripts/gateway-coverage/check_ledger.py` 逐字节比对），改一个字节 CI `a51-coverage` 即 `input_drift`（PR #1855 实测 run 42194716210）。已撤回原文；是否回写并按冻结程序重新登记，另开 **#1861** 定夺，本轮不动尺子输入。
 
 ---
 *2026-11-05 协调者（GLM 谱系）依用户元指令「派子智能体分析给方案之后决定是否采纳」落卡；分析报告 `_tmp/20261105-goal-analysis/report.md`。*
