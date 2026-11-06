@@ -150,15 +150,22 @@ mutations = [
      'native_process::services_tests::leaf_swapped_before_approved_stat_is_not_found',
      '#1468 a link planted before the approved stat must never inline outside bytes'),
     # The upload-store guard is two independent terms. Dropping the
-    # containment term accepts a store root under an outside ancestor (the
-    # leaf is a real directory, so only this term sees it); dropping the
-    # no-symlink term accepts a store root that is itself a link into the
-    # project. Each has its own assertion in the same unit test.
+    # containment term accepts a store root that resolves outside the project;
+    # dropping the no-symlink term accepts a store root that is itself a link
+    # into the project. Each has its own assertion, in its own test.
+    #
+    # #1887 review boundary P1: after the per-component walk landed, the old
+    # kill test (`upload_store_root_outside_the_project_is_not_a_home`) no
+    # longer reaches the containment term — its outside-ancestor case is now
+    # refused by the walk first, so this mutation SURVIVED (remote r1, mbp2,
+    # `20-neg-attach.log`). The kill test is now the window-injected one: a
+    # `.tmp` swapped for an outside link *after* the walk passes, which only
+    # containment can refuse.
     ('upload-store-containment-dropped', STORE,
      '        Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),',
      '        Ok(resolved) => Some(resolved),',
-     'native_process::services_tests::upload_store_root_outside_the_project_is_not_a_home',
-     '#1468 a store root under an outside ancestor must not become a home'),
+     'native_process::services_tests::store_root_swapped_outside_after_the_walk_is_not_a_home',
+     '#1887 a store root swapped outside after the walk must not become a home'),
     ('upload-store-link-root-accepted', STORE,
      '            Ok(metadata) if metadata.file_type().is_symlink() => return None,',
      '            Ok(metadata) if false => return None,',

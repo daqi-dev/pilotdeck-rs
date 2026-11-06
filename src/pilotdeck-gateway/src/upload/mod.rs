@@ -1360,15 +1360,21 @@ fn attachment_integrity_failed(attachment: &UploadedAttachment) -> UploadError {
 /// held against.
 ///
 /// Residual (review deepseek boundary#2, not introduced by this change): the
-/// link check and the canonicalization are two syscalls, so a leaf can be
-/// exchanged between them. That race can still admit a root this guard means
-/// to refuse, but it is strictly narrower than the pre-guard behaviour (which
-/// accepted every such root unconditionally); closing it would need
-/// `O_NOFOLLOW` plus a handle-derived path, as `handle_path` does.
+/// link check and the canonicalization are two syscalls, so **any** walked
+/// component — the leaf or an ancestor such as `.tmp` — can be exchanged
+/// between them. Swapping one for a link that resolves *outside* the project
+/// is still refused, by the containment term below (deterministic proof:
+/// `store_root_swapped_outside_after_the_walk_is_not_a_home`); swapping
+/// an ancestor for a link that resolves *inside* the project is admitted
+/// (#1887 review concurrency#3). Both are strictly narrower than the
+/// pre-guard behaviour (which accepted every such root unconditionally);
+/// closing them would need `O_NOFOLLOW` plus a handle-derived path, as
+/// `handle_path` does.
 ///
 /// The guard lives in one function so every root is exercised by the same
 /// unit tests and mutation rows (`upload_store_root_outside_the_project_is_not_a_home`,
-/// `lease_root_link_is_not_a_home`, `lease_root_under_a_linked_tmp_ancestor_is_not_a_home`).
+/// `lease_root_link_is_not_a_home`, `lease_root_under_a_linked_tmp_ancestor_is_not_a_home`,
+/// `store_root_swapped_outside_after_the_walk_is_not_a_home`).
 pub(crate) fn canonical_home(root: &Path, project: &Path, project_canon: &Path) -> Option<PathBuf> {
     // The home must be spelled under the project root the caller named; a
     // spelling that escapes it is not a home whatever it resolves to.
@@ -1388,6 +1394,11 @@ pub(crate) fn canonical_home(root: &Path, project: &Path, project_canon: &Path) 
             Err(_) => return None,
         }
     }
+    #[cfg(test)]
+    swap_test_hook::notify(
+        swap_test_hook::SwapWindow::BetweenWalkAndCanonicalize,
+        &walked,
+    );
     match fs::canonicalize(&walked) {
         Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),
         _ => None,
@@ -1410,9 +1421,14 @@ fn prepare_lease_root(project: &Path) -> Result<PathBuf> {
     if let Some(canonical) = canonical_home(&home, project, project) {
         return Ok(canonical);
     }
-    // Only now is a directory created, and `create_dir` never follows a link at
-    // the leaf (EEXIST), so a root swapped in after the check above is refused
-    // by the second pass instead of being written through.
+    // Only now is a directory created. `create_dir` never follows a link at
+    // the leaf (EEXIST), so a leaf swapped in after the check above is refused
+    // by the second pass. An **ancestor** swapped in that gap is not covered by
+    // this call: path resolution follows it, so the `chat-upload-leases`
+    // directory is created under the link target and only the second pass
+    // refuses the root (#1887 review boundary#2 — the stray empty directory is
+    // the residual; no lease is written through it because the caller's
+    // `make_dir` never runs on the refused root).
     if canonical_home(&project.join(".tmp"), project, project).is_none() {
         return Err(lease_root_unavailable());
     }
@@ -1705,7 +1721,7 @@ fn future(record: &JsValue, field: &str, now: i64) -> Result<bool> {
 /// RAII-removed like the swap seam in native_process/services.rs; production
 /// builds compile none of this.
 #[cfg(test)]
-mod swap_test_hook {
+pub(crate) mod swap_test_hook {
     use std::path::Path;
 
     /// The #1494 windows: after `read_at`'s canonicalize prefix check but
@@ -1722,6 +1738,12 @@ mod swap_test_hook {
         /// #1494 sibling P1: after `verified` hashed the attachment through a
         /// handle but before the lease `hard_link` re-walks its path.
         BetweenVerifiedAndLeaseLink,
+        /// #1887 boundary P1: after `canonical_home`'s per-component walk has
+        /// passed but before the canonicalization. A root swapped for an
+        /// outside link inside that gap is refused by the containment term,
+        /// not by the walk, so this window is what keeps that term provable —
+        /// without it the term has no deterministic kill.
+        BetweenWalkAndCanonicalize,
     }
 
     type Hook = Box<dyn FnMut(&Path)>;

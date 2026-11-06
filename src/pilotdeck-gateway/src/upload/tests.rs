@@ -1257,10 +1257,9 @@ fn upload_read_at_rejects_a_linked_tmp_ancestor() {
     fs::remove_dir_all(project.join(".tmp")).unwrap();
     std::os::unix::fs::symlink(project.join("src"), project.join(".tmp"))
         .expect("#1887 swap .tmp for an in-project link");
-    let error =
-        h.store.get("upload-1").err().expect(
-            "#1887 a .tmp ancestor that is a link into the project must not be read through",
-        );
+    let error = h.store.get("upload-1").expect_err(
+        "#1887 a .tmp ancestor that is a link into the project must not be read through",
+    );
     assert_eq!(
         (error.code.as_str(), error.message_string().as_str()),
         (
