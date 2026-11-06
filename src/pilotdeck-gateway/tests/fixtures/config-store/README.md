@@ -66,9 +66,13 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   元数据（含每次写入与 `utimes` 都会刷新的 ctime、inode）都恢复原状才不触发
   reload，而 `fs.watch` 会给一次 identity reload；#327 起同周期 A→B→A 并回拨 mtime
   已能看到（`restored_mtime_rewrite_between_samples_is_seen`），只剩 ctime 粒度粗于
-  突发的文件系统。每次采样只读被监视配置文件（含经父目录监视、后来出现的那个
-  配置文件名）至多 1 MiB 内容，超出或其它目录项只看元数据。相对的全局配置路径
-  （`PILOTDECK_CONFIG_PATH`）按 `StoreOptions.cwd` 锚定，与 loader 读的是同一文件。
+  突发的文件系统。每次采样先比对元数据（含每次写入与 `utimes` 都会刷新的
+  ctime、inode）：元数据未变则不读内容（#1739，元数据相同 ⇒ 内容未变）；
+  元数据变化后才读被监视配置文件（含经父目录监视、后来出现的那个配置文件名）
+  至多 1 MiB 内容，超出或其它目录项只看元数据。代价是 ctime 粒度粗于突发的
+  文件系统上，同粒度窗口内的内容改动现在与净零突发同样不可见（原本内容采样
+  能看到）。相对的全局配置路径（`PILOTDECK_CONFIG_PATH`）按
+  `StoreOptions.cwd` 锚定，与 loader 读的是同一文件。
 
 ```sh
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
