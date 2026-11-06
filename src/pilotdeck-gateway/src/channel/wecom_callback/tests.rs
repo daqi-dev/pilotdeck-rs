@@ -1287,7 +1287,9 @@ async fn stop_after_stalled_request(
 /// request after reading it all.
 #[tokio::test]
 async fn oversize_post_closes_at_the_cap_with_zero_bytes() {
-    const PORT: u16 = 18993;
+    // 18991 / 18990 are unused by this module; 18993 belongs to the
+    // concurrent-dispatch test's "nothing listens here" qyapi address.
+    const PORT: u16 = 18991;
     let listener = stalled_server(
         PORT,
         http::Timeouts {
@@ -1338,7 +1340,7 @@ async fn oversize_post_closes_at_the_cap_with_zero_bytes() {
 /// crosses the cap destroys the connection, so the off-by-one cannot drift.
 #[tokio::test]
 async fn post_up_to_the_cap_is_still_read() {
-    const PORT: u16 = 18992;
+    const PORT: u16 = 18990;
     let listener = stalled_server(
         PORT,
         http::Timeouts {
