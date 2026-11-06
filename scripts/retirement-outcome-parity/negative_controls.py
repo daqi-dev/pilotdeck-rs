@@ -209,10 +209,15 @@ def early_outputs(argv):
 # ``load_checker()``——那些启动依赖一失败就到不了失效，旧 PASS 会冒充本轮。
 # **逐个都试一遍再退出**：前一个目录不可删（如 ``/dev/null``）不能让后面显式点名的
 # 目录跳过失效（两家评审：短路会让后者旧 PASS 冒充本轮）。
-def _ascii_digits(text):
-    """纯 ASCII 数字串（``'²'.isdigit()`` 为真、``int('²')`` 却抛异常，不能直接用
-    ``str.isdigit``）。"""
-    return bool(text) and all('0' <= char <= '9' for char in text)
+def _decimal_digits(text):
+    """Unicode **十进制**数字串（Nd 类）。
+
+    argparse 的负数正则 ``^-\\d+$|^-\\d*\\.\\d+$`` 用的是 Python 的 Unicode ``\\d``，
+    等价于 ``str.isdecimal()``（Nd），**不是** ``str.isdigit()``——``'²'`` 的 ``isdigit()``
+    为真、``isdecimal()`` 为假，argparse 也不认它。``-١``（阿拉伯-印度数字）、
+    ``-１``（全角）在两版里都是值（Codex r14 P1）。
+    """
+    return bool(text) and all(char.isdecimal() for char in text)
 
 
 def looks_like_negative_number(token):
@@ -220,9 +225,11 @@ def looks_like_negative_number(token):
 
     真实解析器没有「长得像负数」的选项（只有 ``-h`` 与三条 ``--`` 长选项），所以
     ``_has_negative_number_optionals`` 是空集，``-1`` / ``-1.5`` / ``-.5`` 在**值位置**
-    被 argparse 当值（3.12 与 3.14 实测一致，见 ``_tmp/.../verify-fix-r14/probe.txt``）。
+    被 argparse 当值（3.12 与 3.14 实测一致，见
+    ``_tmp/20261106-issue-1477/verify-fix-r15/probe-312.txt`` 与 ``probe-314.txt``）。
     正则原文 ``^-\\d+$|^-\\d*\\.\\d+$``，这里手写以免在「标准库都导入不了」的回退路径上
-    再依赖 ``re``。``-1x`` / ``-0x1f`` 两版结论不同（3.12 选项、3.14 值），本函数一律判
+    再依赖 ``re``；``\\d`` 取 Unicode 十进制数字（``str.isdecimal``），与 argparse 一致。
+    ``-1x`` / ``-0x1f`` 两版结论不同（3.12 选项、3.14 值），本函数一律判
     **不是值**——只漏不多删（已知边界⑤）。
     """
     if not token.startswith('-') or token.startswith('--'):
@@ -230,8 +237,8 @@ def looks_like_negative_number(token):
     body = token[1:]
     if '.' in body:
         whole, _, fraction = body.partition('.')
-        return (not whole or _ascii_digits(whole)) and _ascii_digits(fraction)
-    return _ascii_digits(body)
+        return (not whole or _decimal_digits(whole)) and _decimal_digits(fraction)
+    return _decimal_digits(body)
 
 
 def _is_literal_value(token):
@@ -401,13 +408,26 @@ def require_safe_writes():
 
 
 def _descend(dir_fd, part):
-    """在**已持有的**目录 fd 下打开（缺则创建）子目录，绝不跟随链接；成功即接手 fd。"""
+    """在**已持有的**目录 fd 下打开（缺则创建）子目录，绝不跟随链接；成功即接手 fd。
+
+    一次只走**一个**路径部件：带分隔符或 ``.`` / ``..`` 的部件直接拒绝——``dir_fd``
+    只对单个名字生效，带分隔符的部件会按路径重新解析、中间链接照样被跟随（Codex r14
+    实测 ``'N1/child'`` 写穿到链接目标）。当前控制 ID 是代码内固定的 ``N1``–``N17``，
+    没有外部输入能走到这里；这道守卫是给未来接口留的 fail-closed。
+    """
+    separators = {sep for sep in ('/', os.sep, os.altsep) if sep}
+    if (not part or part in ('.', '..') or '\0' in part
+            or any(sep in part for sep in separators)):
+        raise OutputError(f'refusing non-single-component output path part {part!r}')
     for first in (True, False):
         try:
             child = os.open(part, os.O_RDONLY | _O_DIRECTORY | _NOFOLLOW, dir_fd=dir_fd)
-        except FileNotFoundError:
+        except FileNotFoundError as error:
             if not first:
-                raise
+                # 建完到第二次 open 之间目录被移走：仍是环境不可用，必须收口成 rc2；
+                # 裸 raise 会冒成 traceback rc1，被下游读成「某个控件 SURVIVED」（Codex r14 P1）。
+                raise OutputError(f'cannot open {part!r} as a real directory: it disappeared '
+                                  f'after it was created: {error}') from error
             try:
                 os.mkdir(part, 0o700, dir_fd=dir_fd)
             except FileExistsError:
@@ -430,7 +450,7 @@ def open_output_dir(root, parts=()):
     「使用」之间把中间目录换成符号链接的窗口因此不存在——先 ``is_symlink()`` 再按路径
     ``open`` 只挡得住静态预置的链接，父目录被换掉的竞态照样写穿（两家评审 r13）。
     ``root`` 是调用方给的输出目录，允许它本身是链接（macOS 的 ``/tmp`` 就是）；
-    它的**祖先**不在本执行器的威胁模型内。
+    它的**祖先**按路径解析、不在本执行器的威胁模型内（登记在差异条目「已知边界」⑥）。
     """
     require_safe_writes()
     try:
@@ -441,9 +461,9 @@ def open_output_dir(root, parts=()):
         try:
             os.makedirs(root, exist_ok=True)
             dir_fd = os.open(root, os.O_RDONLY | _O_DIRECTORY)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             raise OutputError(f'cannot create output directory {root}: {error}') from error
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise OutputError(f'cannot open output directory {root}: {error}') from error
     try:
         for part in parts:
