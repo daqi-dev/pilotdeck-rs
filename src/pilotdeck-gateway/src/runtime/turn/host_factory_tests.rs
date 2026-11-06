@@ -1538,8 +1538,22 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                 if let Deployment::Stdio { args, .. } = &mut deployment {
                     *args = vec![format!("{}/tests/fixtures/live-session/peer.py", env!("CARGO_MANIFEST_DIR")), mode.into()];
                 }
+                // #978: this fixture is a real Python sidecar, so the default
+                // 5 s per-frame io timeout (and 10 s handshake) is a wall-clock
+                // bet on the host's scheduling, not a property under test. A
+                // host running eight concurrent lib suites starved the peer
+                // past it, the turn ended with an `error` terminal, and
+                // `abort-terminal` then reported status `failed` instead of
+                // `idle` (31/48 loaded copies, the highest hit rate in the
+                // scan). The waits are liveness margins only: every await is
+                // still bounded by `bounded()` below, and no assertion changed.
                 let factory = TurnHostFactory::new(factory_registry.clone(), deployment,
-                    Limits {close_timeout: Duration::from_millis(20), ..Default::default()},
+                    Limits {
+                        close_timeout: Duration::from_millis(20),
+                        handshake_timeout: Duration::from_secs(60),
+                        io_timeout: Duration::from_secs(60),
+                        ..Default::default()
+                    },
                     Some("fixture".into()), |_, _| ports(None));
                 let steer_recorder = factory_steer.clone();
                 let trace = hook_trace.clone();
