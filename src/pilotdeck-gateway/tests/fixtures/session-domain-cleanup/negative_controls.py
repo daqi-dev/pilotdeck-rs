@@ -536,6 +536,86 @@ def _controls_main_needle(rows, needle, detail):
     return True, detail
 
 
+def calibrate_attr_head_callee(rows):
+    """#892 r13: ``report['status'] = helpers._clean()`` was exempt because the
+    fail-closed call rule only knew bare-name callees (GLM boundary r12
+    P0-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline status/exit assignment helpers._clean()', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: attribute-headed clean call flagged, '
+                  'passed=False')
+
+
+def calibrate_mixed_branch_helper(rows):
+    """#892 r13: a helper that raises on one branch and falls off the end on the
+    other still exits 0 (GLM boundary r12 P0-2)."""
+    return _controls_main_needle(
+        rows, 'inline exit code _code(',
+        'aggregation-audit: mixed-branch helper flagged, passed=False')
+
+
+def calibrate_cross_module_name(rows):
+    """#892 r13: a registered point's name in *another* module is not a proven
+    slot source (GLM boundary r12 P1-1)."""
+    return _controls_main_needle(
+        rows, 'inline status/exit assignment record(report)',
+        'aggregation-audit: cross-module lookalike callee flagged, passed=False')
+
+
+def calibrate_exempt_callee_write(rows):
+    """#892 r13: the exemption list may not double as the proven-callee list
+    (MiniMax sibling r12 P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline status/exit assignment _retirement_census_verdict(report)', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: exempt-callee clean write flagged, '
+                  'passed=False')
+
+
+def calibrate_param_augassign_opaque(rows):
+    """#892 r13: ``report |= payload`` on a parameter receiver is the opaque
+    form of the r12 literal fix (MiniMax sibling r12 P1-3)."""
+    ok, detail = _unregistered_publish(rows)
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: parameter-receiver opaque |= enumeration '
+                  'flagged, passed=False')
+
+
+def calibrate_helper_local_relay(rows):
+    """#892 r13: a helper that stores 0 in a local and returns the name leaks
+    exactly like a literal zero one call away (MiniMax boundary r12 P0-1)."""
+    return _controls_main_needle(
+        rows, 'inline exit code _relay(',
+        'aggregation-audit: helper local-relay exit flagged, passed=False')
+
+
+def calibrate_helper_bare_sysexit(rows):
+    """#892 r13: a bare ``raise SystemExit`` inside a helper used to end the
+    audit in an AttributeError instead of a verdict (MiniMax boundary r12
+    P1-1)."""
+    return _controls_main_needle(
+        rows, 'inline exit code _bail(',
+        'aggregation-audit: helper bare SystemExit flagged, passed=False')
+
+
 def calibrate_boolean_exit(rows):
     """#892 r6: ``return not ok`` computes the exit code inline (GLM r5 P2-3 /
     MiniMax r5 P1-1)."""
@@ -1556,6 +1636,43 @@ MUTATIONS = [
      "    report.update(payload)\n"
      "    return report\n"
      "def run_all(output, source=None):"),
+    # #892 fix-r13: the r12-round P0/P1 shapes.
+    ('calibrate-helper-local-relay', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            def _relay():\n"
+     "                code = 0\n"
+     "                return code\n"
+     "            return _relay()\n" + CT_EXIT),
+    ('calibrate-helper-bare-sysexit', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            def _bail():\n"
+     "                raise SystemExit\n"
+     "            return _bail()\n" + CT_EXIT),
+    ('calibrate-attr-head-callee', SOURCE,
+     "            report['status'] = overall\n",
+     "            report['status'] = helpers._clean()\n"),
+    ('calibrate-mixed-branch-helper', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            def _code(rep):\n"
+     "                if rep.get('special'):\n"
+     "                    raise ValueError('x')\n"
+     "            return _code(report)\n" + CT_EXIT),
+    ('calibrate-cross-module-name', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            report['status'] = record(report)\n" + CT_EXIT),
+    ('calibrate-exempt-callee-write', SOURCE,
+     "            report['status'] = overall\n",
+     "            report['status'] = _retirement_census_verdict(report)\n"),
+    ('calibrate-param-augassign-opaque', CONTROLS_SOURCE,
+     "def run_all(output, source=None):",
+     "def publish(report, payload):\n"
+     "    report |= payload\n"
+     "    return report\n"
+     "def run_all(output, source=None):"),
 ]
 
 JUDGES = {
@@ -1801,6 +1918,20 @@ JUDGES = {
         'aggregation-audit', calibrate_param_augassign, False, ()),
     'calibrate-param-update': (
         'aggregation-audit', calibrate_param_update, False, ()),
+    'calibrate-helper-local-relay': (
+        'aggregation-audit', calibrate_helper_local_relay, False, ()),
+    'calibrate-helper-bare-sysexit': (
+        'aggregation-audit', calibrate_helper_bare_sysexit, False, ()),
+    'calibrate-attr-head-callee': (
+        'aggregation-audit', calibrate_attr_head_callee, False, ()),
+    'calibrate-mixed-branch-helper': (
+        'aggregation-audit', calibrate_mixed_branch_helper, False, ()),
+    'calibrate-cross-module-name': (
+        'aggregation-audit', calibrate_cross_module_name, False, ()),
+    'calibrate-exempt-callee-write': (
+        'aggregation-audit', calibrate_exempt_callee_write, False, ()),
+    'calibrate-param-augassign-opaque': (
+        'aggregation-audit', calibrate_param_augassign_opaque, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
