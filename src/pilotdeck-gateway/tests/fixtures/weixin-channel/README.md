@@ -113,7 +113,7 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 
 负控（`negative_controls.py`，全部 KILLED）：
 
-`exact=True` 的判定器要求「命名测试 FAILED」**且**收到该断言的 nonce 收据，收据只由 `negative_assert*` / `test_negative_receipt::expect_err` 写出。所以每格变异的死亡路径都必须落在这些断言上：先 std `expect`/`expect_err` 再断言会让测试在收据之前 panic，判定器只能报 `NO_RECEIPT`（INVALID）。下载三格因此改为先取`Result`、再用 `outcome_summary` 断言（也避免把 50 MiB 载荷 Debug 进日志）。
+`exact=True` 的判定器要求「命名测试 FAILED」**且**收到该断言的 nonce 收据，收据只由 `negative_assert*` 与 `test_negative_receipt::expect_err` / `expect_ok` / `expect_some` 写出（即所有调用 `record_failure` 的断言助手）。所以每格变异的死亡路径都必须落在这些断言上：先 std `expect`/`expect_err` 再断言会让测试在收据之前 panic，判定器只能报 `NO_RECEIPT`（INVALID）。下载三格因此改为先取`Result`、再用 `outcome_summary` 断言（也避免把 50 MiB 载荷 Debug 进日志）。
 
 | 变异 | 死点 |
 |---|---|
@@ -121,8 +121,9 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 | `media-candidates-first-key-only`（`.take(1)`） | `the_candidate_loop_reaches_the_second_key`（`media-image-second-candidate-hits`） |
 | `media-key-length-always-128`（24 字节也走 `Aes128`） | `the_key_length_selects_the_aes_variant`（`media-image-media-base64-aes192`） |
 | `media-all-miss-returns-empty`（全不中返回空 Vec 而非 `None`） | `an_all_miss_falls_back_to_the_input`（`media-image-all-miss-falls-back`） |
+| `media-array-owner-reports-none`（对象守卫退回 `media_owner.as_object().is_none()`，数组 owner 报 `keyShape=none`） | `array_media_owner_reports_the_zero_shape_like_typeof`（`typeof [] === "object"`，基线报零形状） |
 | `media-pkcs7-strip-dropped` | `decryption_strips_the_pkcs7_padding`（`media-image-owner-hex-aes128`，尾部 padding 未剥） |
-| `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（变异体 `chunk[1]` 越界 panic，被 `catch_unwind` 接住后由 `negative_assert_eq` 判定） |
+| `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` 行（唯一 1-sextet 组，变异体在这里 `chunk[1]` 越界 panic；`"!"` 不产出 chunk 故不触发。panic 被 `catch_unwind` 接住后由 `negative_assert_eq` 判定） |
 | `media-download-received-cap-removed`（读 body 上限改 `usize::MAX`） | `the_received_body_is_capped_at_the_limit` |
 | `media-download-body-on-fetch-deadline`（正文空闲期限改用 60 s fetch 期限） | `a_slow_body_outlives_the_fetch_deadline` |
 | `media-download-fetch-deadline-removed`（取头期限改 3600 s） | `the_header_phase_still_aborts_at_the_fetch_deadline` |
