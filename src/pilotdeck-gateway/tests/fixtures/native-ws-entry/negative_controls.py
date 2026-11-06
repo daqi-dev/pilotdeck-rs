@@ -20,6 +20,12 @@ from _shared.mutant_switch import (preflight, clean_environment, record_sources,
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_ws/tests.rs'
 PREFIX = 'native_ws::tests::'
+# #1942: the failed-initialization teardown is witnessed by the turn-gateway
+# suite, not the native-ws one; rows bound there name this module and are
+# audited against its own file.
+TURN_TESTS = 'runtime::turn::gateway::tests::'
+TURN_TESTS_SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway_tests.rs'
+TURN_GATEWAY = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs'
 switches = [
     ('native-ws-shorten-eof-deadline', SOURCE, PREFIX + 'close_budget_covers_accepted_bytes', '#749 close budget covers accepted bytes'),
     ('native-ws-short-close-budget', SOURCE, PREFIX + 'accepted_output_flushes_after_close_or_eof', '#749 accepted output survives delayed flush'),
@@ -71,8 +77,20 @@ switches = [
     # --exact runs (_tmp/20261106-issue-1351/negctl-newcells/, 2 KILLED / 0 SURVIVED
     # / 0 INVALID) which do not carry nonce receipts. Registering them is #1757.
     ('native-ws-retain-reader', SOURCE, PREFIX + 'socket_drops_before_business_drains', '#749 closed socket released before business drain'),
-    ('native-ws-skip-host-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_precedes_runtime_exit', '#749 owned cleanup called'),
-    ('native-ws-error-skips-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),
+    ('native-ws-skip-host-cleanup', TURN_GATEWAY, PREFIX + 'host_cleanup_precedes_runtime_exit', '#749 owned cleanup called'),
+    ('native-ws-error-skips-cleanup', TURN_GATEWAY, PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),
+    # #1942: the failed-initialization teardown (#1746) shipped with only its
+    # positive control, so `dispose_initialization` had no switch watching it.
+    # Both rows below are compiled there and bound to that one test's two
+    # markers: the first skips the whole teardown (the coordinator and its
+    # interactions stay live), the second skips only the embedding cleanup
+    # poll while the synchronous disposals still run.
+    ('native-ws-skip-initialization-cleanup', TURN_GATEWAY,
+     TURN_TESTS + 'a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup',
+     '#1746 a builder error must still dispose the coordinator'),
+    ('native-ws-skip-initialization-embedding-cleanup', TURN_GATEWAY,
+     TURN_TESTS + 'a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup',
+     '#1746 a builder error must still poll the embedding cleanup'),
     ('native-ws-skip-drain', SOURCE, PREFIX + 'stop_accepting_drains_existing', '#749 drain waits for existing socket'),
     ('native-ws-input-boundary', ROOT / 'src/pilotdeck-gateway/src/frame.rs', PREFIX + 'input_limit_boundary_preserves_proxy', '#749 exact input boundary remains accepted'),
     ('native-ws-full-close-signal', SOURCE, PREFIX + 'output_slot_budget_and_full_close', '#749 full output queue preserves close frame'),
@@ -111,7 +129,17 @@ def main():
     preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
     tests = (ROOT / 'src/pilotdeck-gateway/src/native_ws/tests.rs').read_text()
     for _, _, test, assertion in switches:
-        if 'fn ' + test.split('::')[-1] + '(' not in tests or '"' + assertion + '"' not in tests:
+        # #1942: rows may bind a test outside `native_ws::tests` (the failed
+        # initialization teardown lives in the turn-gateway suite), so the
+        # stale-binding audit reads the module the row actually names instead
+        # of assuming every switch is witnessed by this file.
+        body = tests
+        name = test.split('::')[-1]
+        if test.startswith(TURN_TESTS):
+            body, name = TURN_TESTS_SOURCE.read_text(), test[len(TURN_TESTS):]
+        elif not test.startswith(PREFIX):
+            raise RuntimeError('#749 test binding names no audited test module: ' + test)
+        if 'fn ' + name + '(' not in body or '"' + assertion + '"' not in body:
             raise RuntimeError('#749 stale test/assertion binding: ' + test)
     if args.check:
         print(f'#749 {len(switches)} switch bindings valid')
