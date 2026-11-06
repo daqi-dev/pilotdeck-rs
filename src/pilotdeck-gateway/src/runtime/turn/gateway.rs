@@ -323,6 +323,9 @@ impl TurnGateway {
     /// [`INITIALIZATION_TEARDOWN_DEADLINE`] so a cleanup that never completes
     /// cannot turn the start into a hang; the only case left to the embedding
     /// is a host thread that never started (runtime build or spawn failure).
+    /// An embedding whose cleanup carries its own budget should use
+    /// [`Self::start_with_cleanup_budget`] so that budget, not the default
+    /// bound, decides how long a legitimate teardown may take.
     pub fn start_with_cleanup(
         options: TurnReplayOptions,
         build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
@@ -330,7 +333,35 @@ impl TurnGateway {
         + 'static,
         cleanup: impl Future<Output = Result<(), String>> + Send + 'static,
     ) -> std::io::Result<Self> {
-        Self::start_with_clock_and_cleanup(options, None, build, Some(Box::pin(cleanup)))
+        Self::start_with_clock_and_cleanup(
+            options,
+            None,
+            INITIALIZATION_TEARDOWN_DEADLINE,
+            build,
+            Some(Box::pin(cleanup)),
+        )
+    }
+    /// [`Self::start_with_cleanup`] for an embedding that bounds its own
+    /// teardown: the failure path waits `teardown_budget` plus
+    /// [`INITIALIZATION_TEARDOWN_SLACK`], so a cleanup that legitimately runs
+    /// to its own budget is never cut mid-poll by a shorter host bound. The
+    /// slack covers the refused-owner shutdown that runs before the cleanup,
+    /// which the embedding's budget does not account for.
+    pub fn start_with_cleanup_budget(
+        options: TurnReplayOptions,
+        teardown_budget: Duration,
+        build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
+        + Send
+        + 'static,
+        cleanup: impl Future<Output = Result<(), String>> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_with_clock_and_cleanup(
+            options,
+            None,
+            teardown_budget.saturating_add(INITIALIZATION_TEARDOWN_SLACK),
+            build,
+            Some(Box::pin(cleanup)),
+        )
     }
     fn start_with_clock(
         options: TurnReplayOptions,
@@ -339,11 +370,18 @@ impl TurnGateway {
         + Send
         + 'static,
     ) -> std::io::Result<Self> {
-        Self::start_with_clock_and_cleanup(options, clock, build, None)
+        Self::start_with_clock_and_cleanup(
+            options,
+            clock,
+            INITIALIZATION_TEARDOWN_DEADLINE,
+            build,
+            None,
+        )
     }
     fn start_with_clock_and_cleanup(
         options: TurnReplayOptions,
         clock: Option<Arc<dyn ReplayTimer>>,
+        teardown_deadline: Duration,
         build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
         + Send
         + 'static,
@@ -369,7 +407,13 @@ impl TurnGateway {
                         // owns their teardown — the same owner/interactions
                         // pair the drain below disposes.
                         let error = std::io::Error::other("submitter must use the serial host coordinator");
-                        dispose_initialization(&coordinator, Some(services), cleanup).await;
+                        dispose_initialization(
+                            &coordinator,
+                            Some(services),
+                            cleanup,
+                            teardown_deadline,
+                        )
+                        .await;
                         let _ = ready.send(Err(error));
                         return;
                     }
@@ -380,7 +424,7 @@ impl TurnGateway {
                         // and the embedding cleanup it was handed are still
                         // live; both settle here, before the failure is
                         // reported, exactly as the successful drain would.
-                        dispose_initialization(&coordinator, None, cleanup).await;
+                        dispose_initialization(&coordinator, None, cleanup, teardown_deadline).await;
                         let _ = ready.send(Err(error));
                         return;
                     }
@@ -599,17 +643,20 @@ impl HostedConnection {
 ///
 /// #1746: this path runs before the embedding ever had a chance to hand in a
 /// shutdown budget, so the two awaits share one deadline of their own. The
-/// production cleanup already bounds itself by the drain budget; the deadline
-/// only keeps an embedding whose cleanup (or whose refused owner, bound to a
-/// host this thread does not drive) never settles from turning a fast builder
-/// failure into a hung `start_with_cleanup`. The two synchronous disposals
-/// below always run.
+/// deadline is not a fixed guess: [`TurnGateway::start_with_cleanup_budget`]
+/// derives it from the cleaning-up embedding's own teardown budget, so the
+/// production cleanup — which bounds itself by the drain budget — can never be
+/// cut mid-poll by a shorter host bound. It only keeps an embedding whose
+/// cleanup (or whose refused owner, bound to a host this thread does not
+/// drive) never settles from turning a fast builder failure into a hung
+/// `start_with_cleanup`. The two synchronous disposals below always run.
 async fn dispose_initialization(
     coordinator: &TurnEventCoordinator,
     services: Option<GatewayServices>,
     cleanup: Option<Call<'static, Result<(), String>>>,
+    teardown_deadline: Duration,
 ) {
-    let deadline = tokio::time::Instant::now() + INITIALIZATION_TEARDOWN_DEADLINE;
+    let deadline = tokio::time::Instant::now() + teardown_deadline;
     let interactions = services
         .as_ref()
         .map(|services| services.interactions.clone());
@@ -625,15 +672,25 @@ async fn dispose_initialization(
     }
 }
 
-/// Bound for the teardown a failed initialization runs before it reports the
-/// failure (#1746). Long enough for a real cleanup to finish — the production
-/// one carries its own drain budget — and short enough that a stuck one cannot
-/// hold `start_with_cleanup` open.
+/// Default bound for the teardown a failed initialization runs before it
+/// reports the failure (#1746), used when the embedding does not declare one.
+/// Long enough for a real cleanup to finish and short enough that a stuck one
+/// cannot hold `start_with_cleanup` open. Embeddings whose cleanup carries its
+/// own budget pass it to [`TurnGateway::start_with_cleanup_budget`] instead.
 #[cfg(not(test))]
 const INITIALIZATION_TEARDOWN_DEADLINE: Duration = Duration::from_secs(30);
 /// Tests drive the same bound with a value short enough to observe.
 #[cfg(test)]
 const INITIALIZATION_TEARDOWN_DEADLINE: Duration = Duration::from_millis(50);
+
+/// Room on top of an embedding-declared teardown budget: that budget bounds the
+/// cleanup alone, while the deadline also has to cover the refused-owner
+/// shutdown that runs before it (#1746).
+#[cfg(not(test))]
+const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_secs(5);
+/// Tests observe the derived bound with values short enough to time.
+#[cfg(test)]
+const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_millis(10);
 
 #[cfg(test)]
 #[path = "gateway_tests.rs"]
