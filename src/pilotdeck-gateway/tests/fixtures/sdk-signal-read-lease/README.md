@@ -126,7 +126,9 @@ writer 已自行失败退出，全都会被看见（`#1662` r8 P1：先前在 `t
 
 ### writer 的退出契约自检（`--stop-check`）
 
-`stop_writer()` 的「退出码无条件作数」是可复现的，不是注释里的断言：两跑、不跑 cargo。
+`stop_writer()` 的「退出码无条件作数」是可复现的，不是注释里的断言：两跑，两跑本身不
+跑 cargo（冷 `CARGO_TARGET_DIR` 上仍会先 `_ensure_workspace_scanner()` bootstrap 一次
+#1166 工作区扫描器并占 cargo 名额，预热过就只做两跑）。
 
 ```sh
 CARGO_TARGET_DIR=<target> python3 -I \
@@ -142,7 +144,10 @@ CARGO_TARGET_DIR=<target> python3 -I \
   `released_ms − start_ms < 30 s`（停止确实由信号触发，不是睡满 hold 自己退出）。
 - `NEW_OUTPUT_DIR/own-failure/`：`PDRS_1662_WRITER_FAIL_AFTER_HOLD=1` 让 writer 正常
   跑满 `STOP_CHECK_HOLD_SECONDS = 5 s` 窗口后自行失败。要求窗口已发布（`window=True`）、
-  rc≠0、`stop_writer()` 抛错且报出的文本含该退出码、字节回位。
+  rc 非 0 且非 None、`stop_writer()` 抛错且报出的文本含该退出码（正则整词匹配，
+  `exited 1` 不会被 `exited 10` 命中）、字节回位。等待预算用
+  `STOP_CHECK_EXIT_BUDGET = 60 s` 而不是生产的 210 s：坏 writer 挂在恢复里时，自检不该
+  比它要抓的故障还慢（r10 P3）。
 - 两跑任一行的兜底 `force_stop()` 若**自身被中断**（例如第二枚 Ctrl-C 落在等待里），
   该异常会记进该行的 `cleanup` 字段并让整行判 INVALID：writer 可能仍持锁、恢复未确认，
   不能当作干净收场上报（r10 P1）。

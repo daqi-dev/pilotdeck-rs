@@ -102,6 +102,12 @@ STOP_CHECK_HOLD_SECONDS = 5
 # (#1662 review r10 P2).
 STOP_CHECK_STOP_HOLD_SECONDS = 30
 STOP_CHECK_STOP_BUDGET = 5
+# The own-failure run exits by itself right after a 5 s hold, so waiting the
+# production ``WRITER_EXIT_BUDGET`` (210 s) would only delay a *bad* writer's
+# INVALID verdict by minutes -- the "short" self-check would stop being short on
+# exactly the failure path it exists to catch. 60 s still leaves plenty of room
+# for a full restore + HEAD verification under load (#1662 review r10 P3).
+STOP_CHECK_EXIT_BUDGET = 60
 # Printed to stderr only when the writer takes the requested-stop path; the
 # self-check greps for it so "rc 0 + restored" cannot be satisfied by a SIGTERM
 # that was ignored while the writer ran out its hold (#1662 review r9 P2).
@@ -654,7 +660,8 @@ def stop_check(out):
                 # exercised (a manual terminate() here would leave that branch
                 # untested; #1662 review r10 P2).
                 stop_writer(process, run_out,
-                            budget=STOP_CHECK_STOP_BUDGET if signal_it else WRITER_EXIT_BUDGET)
+                            budget=STOP_CHECK_STOP_BUDGET if signal_it
+                            else STOP_CHECK_EXIT_BUDGET)
             except RuntimeError as error:
                 reported = str(error)
         finally:
@@ -724,11 +731,18 @@ def stop_check(out):
                           f'land inside the {STOP_CHECK_STOP_HOLD_SECONDS} s hold')
     if not own_failure['window']:
         failed.append('the own-failure run never opened its window')
-    if own_failure['rc'] == 0:
+    if own_failure['rc'] is None:
+        # Never reaped: no exit status exists, so "!= 0" and the text match below
+        # would both be comparing nothing (#1662 review r10 P3).
+        failed.append('the own-failure writer never exited; there is no status to judge')
+    elif own_failure['rc'] == 0:
         failed.append('a writer that failed on its own exited 0')
     if own_failure['reported'] is None:
         failed.append('stop_writer accepted a non-zero writer exit')
-    elif f'exited {own_failure["rc"]}' not in own_failure['reported']:
+    elif own_failure['rc'] is not None and not re.search(
+            rf'exited {own_failure["rc"]}\b', own_failure['reported']):
+        # Exact status, not a substring: ``exited 1`` must not be satisfied by
+        # ``exited 10`` (#1662 review r10 P3).
         failed.append(f'the reported failure does not name the exit status: '
                       f'{own_failure["reported"]!r}')
     if not own_failure['bytes_back']:
