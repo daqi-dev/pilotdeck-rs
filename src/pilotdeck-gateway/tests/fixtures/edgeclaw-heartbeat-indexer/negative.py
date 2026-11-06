@@ -704,7 +704,10 @@ cases = [
                     // session's rows: `indexed` back to 0 lets the next
                     // heartbeat re-list them and regenerate the files, the
                     // same recovery an unindexed row already gets.
-                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
+                    self.rearm_after_clear_failure(session);
                     return Err(error);
                 }
 ''',
@@ -717,6 +720,9 @@ cases = [
                     // session's rows: `indexed` back to 0 lets the next
                     // heartbeat re-list them and regenerate the files, the
                     // same recovery an unindexed row already gets.
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
                     return Err(error);
                 }
 ''',
@@ -731,17 +737,101 @@ cases = [
      entries,
      '''                Ok(deleted) => deleted,
                 Err(error) => {
-                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
+                    self.rearm_after_clear_failure(session);
                     return Err(error);
                 }
 ''',
      '''                Ok(deleted) => deleted,
                 Err(error) => {
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
                     return Err(error);
                 }
 ''',
      'clear_failing_inside_delete_entries_rearms_indexed_rows',
      '#1207 the clear that failed inside its entry deletion must re-arm its still-present indexed row'),
+    # #1298 (review boundary, residual P2): the re-arm dropped from the tail
+    # error arm again, but bound to the *earlier* `BeforeDeleteL0` seam — the
+    # #1207 fix-r1 recovery was only pinned at `L0IdsSelected`. The mutation
+    # is byte-identical to `clear-abort-rearm-dropped`; the row exists so the
+    # before-delete-L0 cell's re-arm assertion has its own kill.
+    ('before-delete-l0-rearm-dropped',
+     entries,
+     '''                Ok(ids) => ids,
+                Err(error) => {
+                    // The clear aborted with the session's memory files
+                    // already removed but its L0 rows still present. An
+                    // indexed row would keep its file deleted forever —
+                    // nothing ever re-lists an indexed row — so re-arm the
+                    // session's rows: `indexed` back to 0 lets the next
+                    // heartbeat re-list them and regenerate the files, the
+                    // same recovery an unindexed row already gets.
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
+                    self.rearm_after_clear_failure(session);
+                    return Err(error);
+                }
+''',
+     '''                Ok(ids) => ids,
+                Err(error) => {
+                    // The clear aborted with the session's memory files
+                    // already removed but its L0 rows still present. An
+                    // indexed row would keep its file deleted forever —
+                    // nothing ever re-lists an indexed row — so re-arm the
+                    // session's rows: `indexed` back to 0 lets the next
+                    // heartbeat re-list them and regenerate the files, the
+                    // same recovery an unindexed row already gets.
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
+                    return Err(error);
+                }
+''',
+     'clear_failing_at_before_delete_l0_rearms_indexed_rows',
+     '#1298 the clear that failed at the before-delete-L0 seam with the files already removed must re-arm its still-present indexed row'),
+    # #1298: the `BeforeDeleteL0` seam's error swallowed — the clear proceeds
+    # past the abort (rows deleted, generation bumped) as if the injected
+    # storage failure never happened. Only the stage-specific cell can see
+    # this: the `L0IdsSelected` cell injects at the later seam.
+    ('before-delete-l0-error-swallowed',
+     entries,
+     '''        if let Some(hook) = hook {
+            hook(ClearSessionStage::BeforeDeleteL0, session)?;
+        }
+''',
+     '''        if let Some(hook) = hook {
+            let _ = hook(ClearSessionStage::BeforeDeleteL0, session);
+        }
+''',
+     'clear_failing_at_before_delete_l0_rearms_indexed_rows',
+     '#1298 the clear must fail with the injected error'),
+    # #1298: the pre-#1298 `?` restored — a re-arm that cannot run replaces
+    # the error that aborted the clear, so the caller is told "database is not
+    # open" instead of why the clear died, and the re-arm failure is recorded
+    # nowhere. This row is the permanent red for item 4: it must be KILLED by
+    # the closed-storage cell, which asserts the primary error text.
+    ('before-delete-l0-rearm-error-overwrites',
+     entries,
+     '''                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
+                    self.rearm_after_clear_failure(session);
+                    return Err(error);
+                }
+            };
+            // #917 fix-r2 (review P1-1)''',
+     '''                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    return Err(error);
+                }
+            };
+            // #917 fix-r2 (review P1-1)''',
+     'clear_failing_with_closed_storage_keeps_primary_error',
+     "#1298 the clear must report the error that aborted it, not the re-arm's"),
 ]
 only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
 
