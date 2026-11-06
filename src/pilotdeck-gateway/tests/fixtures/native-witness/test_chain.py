@@ -50,7 +50,7 @@ class ChainTests(unittest.TestCase):
         receipt.update({key: c.digest(self.folder / name) for name, key in c.NATIVE_RECEIPT_KEYS.items()})
         c.save(self.folder / 'capture/receipt.json', receipt)
 
-    def reject(self, marker, rule=None):
+    def reject(self, marker, rule=None, detail=None):
         failure = None
         try:
             c.control_deadline_report(self.folder)
@@ -59,6 +59,15 @@ class ChainTests(unittest.TestCase):
         except Exception as error:
             self.fail('#1140 r8 unrelated chain exception: ' + repr(error))
         self.assertTrue(failure is not None and (rule is None or failure.rule == rule), marker)
+        if detail is not None:
+            # #1372: the WS envelope projection re-checks the same identity and
+            # sequence rules when it derives the observation, so a mutated
+            # chain-level check still ends in a NATIVE_CHAIN rejection -- for a
+            # different reason, which a rule-only assertion cannot tell apart.
+            # Pinning the detail keeps those mutations detectable instead of
+            # letting the duplicate check mask them.
+            self.assertTrue(str(failure) == '#1140 ' + detail,
+                            marker + ': chain rejected with ' + repr(str(failure)))
 
     def test_jsonl_unicode_separators(self):
         marker = '#1140 r9 JSONL splits only LF and retains Unicode text'
@@ -496,7 +505,8 @@ class ChainTests(unittest.TestCase):
         frame = dict(value['rows'][index]['frame'], id='case-02')
         value['rows'][index] = c.control_wire(frame)
         self.write('session-domain/observer.json', value)
-        self.reject('#1140 r8 observer event requires active request', 'NATIVE_CHAIN')
+        self.reject('#1140 r8 observer event requires active request', 'NATIVE_CHAIN',
+                    'observer response belongs to active request')
 
     def test_synchronized_old_identity(self):
         for name, key in (('session-domain/cases.json', 'cases'), ('session-domain/driver.json', 'identities')):
@@ -541,14 +551,16 @@ class ChainTests(unittest.TestCase):
             if row['direction'] == 'receive' and row['frame'].get('final') is True:
                 observer['rows'][i] = c.control_wire(dict(row['frame'], type='unrelated_notification'))
         self.write('session-domain/observer.json', observer)
-        self.reject('#1140 r8 final must have event envelope', 'NATIVE_CHAIN')
+        self.reject('#1140 r8 final must have event envelope', 'NATIVE_CHAIN',
+                    'observer event envelope/sequence')
 
     def test_event_sequence(self):
         observer = self.read('session-domain/observer.json')
         i = next(i for i, row in enumerate(observer['rows']) if row['direction'] == 'receive' and row['frame'].get('id'))
         observer['rows'][i] = c.control_wire(dict(observer['rows'][i]['frame'], seq=99))
         self.write('session-domain/observer.json', observer)
-        self.reject('#1140 r8 event sequence must be contiguous', 'NATIVE_CHAIN')
+        self.reject('#1140 r8 event sequence must be contiguous', 'NATIVE_CHAIN',
+                    'observer event envelope/sequence')
 
     def test_formal_ws_profile(self):
         value = self.read('session-domain/observer.json')

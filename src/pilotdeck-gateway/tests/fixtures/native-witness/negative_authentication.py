@@ -44,7 +44,6 @@ cases = [
     ('settle-applicability-from-observation', collector, "expectation['registry']['applicable'] is False", "observation['registry']['applicable'] is False", 'test_settle_registry_expected_not_observed'),
     ('settle-inapplicable-ignore-transcript', collector, "durable_terminal = (not expectation['durableStatus']", 'durable_terminal = (True', 'test_settle_inapplicable_transcript_pending'),
     ('settle-inapplicable-require-status', collector, "durable_terminal = (not expectation['durableStatus']", 'durable_terminal = (False', 'test_settle_registry_inapplicable'),
-    ('settle-inapplicable-ignore-final', collector, "terminal = final_seen and (registry_terminal or durable_terminal)", 'terminal = registry_terminal or durable_terminal', 'test_settle_inapplicable_transcript_pending'),
     ('settle-zero-window-skip', collector, "    # files instead of claiming nothing was readable without a single read.\n    while True:", "    # files instead of claiming nothing was readable without a single read.\n    while time.monotonic() < end:", 'test_settle_zero_window_reads_once'),
     ('settle-drop-last-error', collector, '            last_error = error', '            last_error = None', 'test_settle_keeps_last_error'),
     ('settle-inapplicable-drop-terminal', collector, "terminal = final_seen and (registry_terminal or durable_terminal)", 'terminal = final_seen and durable_terminal', 'test_settle_keeps_terminal_registry_when_inapplicable'),
@@ -73,7 +72,6 @@ cases = [
     ('settle-ignore-transcript-stability', collector, "paths = (Path(source['transcriptPath']), Path(source['registryPath']))", "paths = (Path(source['registryPath']),)", 'test_settle_file_signatures'),
     ('settle-failed-never-terminal', collector, "registry_terminal = record.get('state') in SESSION_TERMINAL_STATES or (", "registry_terminal = record.get('state') in SESSION_TERMINAL_STATES or (False and ", 'test_settle_failed_requires_final_error'),
     ('settle-failed-without-durable-error', collector, "record['result'].get('type') == 'error'", 'True', 'test_settle_failed_requires_final_error'),
-    ('settle-failed-without-final', collector, "frame.get('final') is True\n                        and isinstance(frame.get('event'), dict)", "True\n                        and isinstance(frame.get('event'), dict)", 'test_settle_failed_requires_final_error'),
     ('settle-failed-without-final-error', collector, "frame['event'].get('type') == 'error'", 'True', 'test_settle_failed_requires_final_error'),
     ('deadline-uncaught-attribute', session, 'TypeError, AttributeError, IndexError, StopIteration,', 'TypeError, IndexError, StopIteration,', 'test_deadline_shape_exception_report'),
     ('deadline-uncaught-index', session, 'TypeError, AttributeError, IndexError, StopIteration,', 'TypeError, AttributeError, StopIteration,', 'test_deadline_shape_exception_report'),
@@ -118,7 +116,7 @@ cases = [
     ('sibling-jsonl-b2-coverage', ui_coverage, 'jsonl_lines(a.evidence.read_text())', 'a.evidence.read_text().splitlines()', 'test_jsonl_sibling_readers'),
     ('sibling-jsonl-helper-parity', parity_g03, "lines = text.split('\\n')", 'lines = text.splitlines()', 'test_jsonl_sibling_readers'),
     ('sibling-jsonl-helper-b1', b1_comparison, "lines = text.split('\\n')", 'lines = text.splitlines()', 'test_jsonl_sibling_readers'),
-    ('omit-provider-output-turn_completed', native, "'turn_completed'", "'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
+    ('omit-provider-output-turn_completed', native, "output_types = {'turn_completed'", "output_types = {'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
     ('omit-provider-output-assistant_text_delta', native, "'assistant_text_delta'", "'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
     ('omit-provider-output-assistant_thinking_delta', native, "'assistant_thinking_delta'", "'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
     ('omit-provider-output-assistant_block', native, "'assistant_block'", "'not_a_model_output'", 'test_provider_requirement_derived_from_expectations'),
@@ -176,7 +174,7 @@ cases = [
     ('drop-provider-coverage', session, 'if case in required and case not in covered:', 'if False:', 'test_provider_case_missing'),
     ('loose-provider-marker', native, "markers = set(re.findall(r'\\[native-witness:([^\\]]+)\\]', '\\n'.join(texts)))\n        need(markers == {case}, 'provider request must have one case owner')\n        need(case in cases and f'[native-witness:{case}] controlled wait' in texts", "markers = set(re.findall(r'\\[native-witness:([^\\]]+)\\]', request['raw']))\n        need(markers == {case}, 'provider request must have one case owner')\n        need(case in cases and f'[native-witness:{case}] controlled wait' in request['raw']", 'test_provider_marker_wrong_field'),
     ('title-covers-case', native, "        if body.get('stream') is not True:\n            continue  # Title requests cannot supply a model case witness.", '        if False:\n            continue', 'test_provider_title_not_model'),
-    ('trust-case-observation', native, "need(observation == original, 'case observation disagrees with retained originals')", "need(True, 'case observation disagrees with retained originals')", 'test_cross_case_frames'),
+    ('trust-case-observation', native, "need(same_json(observation, original), 'case observation disagrees with retained originals')", "need(True, 'case observation disagrees with retained originals')", 'test_cross_case_frames'),
     ('ignore-registry-project', native, "(record.get('projectKey'), record.get('sessionKey'), record.get('runId')) == (project, session, run)", "(record.get('sessionKey'), record.get('runId')) == (session, run)", 'test_cross_project_registry'),
     ('allow-duplicate-run', native, "need(len(records) <= 1, 'duplicate full run key')", "need(True, 'duplicate full run key')", 'test_duplicate_registry'),
     ('ignore-project-marker', native, "source['projectMarkerText'].strip() == project", 'True', 'test_cross_project_transcript'),
@@ -216,6 +214,33 @@ cases = [
     ('skip-exception-provider-cleanup', collector, '        try:\n            stop_provider()\n        except BaseException as cleanup_error:', '        try:\n            pass\n        except BaseException as cleanup_error:', 'test_collection_exception_still_cleans_up'),
     ('swallow-gateway-close-failure', e2e, 'if not gateway.close(30):', 'if not gateway.close(30) and False:', 'test_failed_gateway_close_is_asserted'),
     ('memory-rehearsal-without-lock', Path(__file__), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
+]
+
+# #1372: two mutations retired with the WS envelope projection, and why it is a
+# retirement rather than a weakened roster.  Both mutated a requirement that has
+# moved upstream: ``read_observation`` now hands the whole capture to the frozen
+# ``project_envelopes``, which raises unless the stream ends with exactly one
+# ``final: true`` envelope repeating ``lastError ?? lastCompleted``.  So every
+# round that reaches ``wait_observation``'s settle arithmetic already holds this
+# request's terminal: ``final_seen`` is always true, and the terminal envelope is
+# always the error frame the derivation rule requires.  Measured, not assumed
+# (#1372 r6): with each mutation applied in place, test_witness,
+# test_authentication, test_chain, test_r11, test_e2e and test_safety all stay
+# green, so no test in the gate can ever kill them -- the guard they target is
+# unreachable, not merely untested.  The contract itself is pinned upstream by
+# test_safety.WsProjection.test_exactly_one_terminal_and_it_must_be_last (a
+# stream without a terminal envelope is rejected) and by the ``native-*`` WS
+# projection controls in controls/session_domain.py.  Their assertion markers
+# stay in ``messages`` so a revival keeps the original wording.
+retired = [
+    ('settle-inapplicable-ignore-final', collector,
+     'terminal = final_seen and (registry_terminal or durable_terminal)',
+     'terminal = registry_terminal or durable_terminal',
+     'test_settle_inapplicable_transcript_pending'),
+    ('settle-failed-without-final', collector,
+     "frame.get('final') is True\n                        and isinstance(frame.get('event'), dict)",
+     "True\n                        and isinstance(frame.get('event'), dict)",
+     'test_settle_failed_requires_final_error'),
 ]
 messages = {
     'settle-inapplicable-ignore-turn-result': '#1140 r12 completed transcript differences remain scoreable with Unicode JSONL',
