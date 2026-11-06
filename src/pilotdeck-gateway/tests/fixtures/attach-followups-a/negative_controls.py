@@ -6,13 +6,14 @@ Usage: negative_controls.py --check
 Every mutation must compile, fail at its bound nonce receipt, and pass again
 after restoration. Source bytes must equal HEAD; no alternate baseline exists.
 The shared-filter row (filter-info-inverted) and the two #1458/#1469 rows
-together pin the one composer filter behind both diagnostics. The six #1468
+together pin the one composer filter behind both diagnostics. The eight #1468
 rows pin the handle binding itself: the dropped containment check (the
 multi-step choreography reaches the read only through it), the fail-open
 error arm, the (dev, inode) depth check it complements, the pre-open identity
 itself, the no-follow sampling of that identity (a link planted before the
-approved stat must not become the approved object), and the upload-store
-root containment guard that makes the store a second legitimate home.
+approved stat must not become the approved object), and the two legitimate
+homes — the upload-store root and the lease root — each with its own
+containment and leaf-link terms in the shared `canonical_home` guard.
 """
 import argparse
 import hashlib
@@ -59,10 +60,7 @@ mutations = [
      'native_process::services_tests::read_failure_fails_the_turn',
      '#1462 a directory read failure must carry the Node EISDIR message'),
     ('lease-root-hard-failure-restored', SERVICES,
-     '''    let lease_canon = match fs::canonicalize(&lease_lexical) {
-        Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
-        _ => None,
-    };''',
+     '    let lease_canon = canonical_home(&lease_lexical, &project_canon);',
      '''    let lease_canon = match fs::canonicalize(&lease_lexical) {
         Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
         Err(error) => {
@@ -163,6 +161,20 @@ mutations = [
      '        Ok(metadata) if false => return None,',
      'native_process::services_tests::upload_store_root_outside_the_project_is_not_a_home',
      '#1468 a store root that is a link into the project must not become a home'),
+    # Review GLM sibling#1: the lease root is the other legitimate home. This
+    # row restores the pre-r3 shape — a bare `canonicalize` + containment, with
+    # no leaf-link term — so a `.tmp/chat-upload-leases` that is a link into
+    # the project becomes a lease home again and the lease-root test goes red.
+    # The store rows above cannot cover it: they mutate the shared guard, which
+    # this row proves is *reached* by the lease root too.
+    ('lease-root-link-accepted', SERVICES,
+     '    let lease_canon = canonical_home(&lease_lexical, &project_canon);',
+     '''    let lease_canon = match fs::canonicalize(&lease_lexical) {
+        Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
+        _ => None,
+    };''',
+     'native_process::services_tests::lease_root_link_is_not_a_home',
+     '#1468 a lease root that is a link into the project must not become a home'),
 ]
 
 
