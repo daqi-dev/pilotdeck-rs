@@ -16,7 +16,152 @@
 """
 from __future__ import annotations
 
+import os
 import sys
+
+# ---------------------------------------------------------------------------
+# 启动期第一件事：失效同一输出目录里上一轮的 ``summary.json``。
+#
+# 下游以「summary.json 存在」为「负控已跑完」的证据，所以**任何**早退路径都不得
+# 把上一轮的 PASS 留在盘上：缺 ``-I``、checker 导入失败、argparse 报错（拼错 /
+# 缺值 / 多余 token）、读数据失败、preflight 非 0。因此这段只依赖 ``os`` / ``sys``，
+# 放在模块体最前面，早于 ``-I`` 断言、早于 ``load_checker()``、早于 pycache 目录
+# 设置（那一步在无可写临时目录时也可能退出）。
+#
+# 输出目录只从**显式** ``--output`` 取：解析器 ``allow_abbrev=False``，选项名
+# 精确匹配，解析前即可无歧义地取出（取最后一次出现，同 argparse store 语义）。
+# 不再按「哪些 token 可能是位置参数」猜候选——未知选项带不带值在解析前不可判定，
+# 猜错的代价是删掉别人的证据（评审 P0，误删同样算丢数据）；取不到就一个都不删。
+# ---------------------------------------------------------------------------
+
+VALUE_OPTIONS = ('--output', '--data', '--oracle')
+
+
+def tmp_owner_pid(name):
+    """``summary.json.<pid>.tmp`` 里的 pid；不是这个形状返回 None。"""
+    prefix, suffix = 'summary.json.', '.tmp'
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        return None
+    middle = name[len(prefix):-len(suffix)]
+    return int(middle) if middle.isdigit() else None
+
+
+def pid_alive(pid):
+    """该 pid 是否仍是活进程（判断 tmp 是不是**另一个仍在跑**的执行器的）。"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def is_own_summary_artifact(name):
+    """只认本执行器自己的产物名：精确 ``summary.json``（含旧版 ``summary.json.tmp``）
+    与 ``summary.json.<pid>.tmp``。
+
+    早先的 ``glob('summary.json*')`` 会把 ``summary.json.backup`` /
+    ``summary.json.notes`` 这类既有文件一起 ``unlink``——失效旧结果不得顺手删掉
+    别人的证据（评审 P0）。
+    """
+    return name in ('summary.json', 'summary.json.tmp') or tmp_owner_pid(name) is not None
+
+
+def invalidate_stale_summary(out_root):
+    """删掉该目录里上一轮的 ``summary.json`` 与残留 tmp。
+
+    只动本执行器自己的产物名；另一个**仍在跑**的执行器的
+    ``summary.json.<pid>.tmp`` 不删（删掉它会让对方的原子发布 ``replace`` 抛
+    ``FileNotFoundError``；并发互斥的残余登记在跟进单）。目录不存在时**不创建**。
+    """
+    root = os.fspath(out_root)
+    try:
+        if not os.path.exists(root):
+            return True  # 新目录：没有旧结果可失效，也不必替调用方创建
+        if not os.path.isdir(root):
+            print(f'negative_controls: {root} is not a directory', file=sys.stderr)
+            return False
+        entries = sorted(os.listdir(root))
+    except OSError as error:
+        print(f'negative_controls: cannot use {root}: {error}', file=sys.stderr)
+        return False
+    removed = []
+    for name in entries:
+        path = os.path.join(root, name)
+        if not (os.path.isfile(path) and is_own_summary_artifact(name)):
+            continue
+        owner = tmp_owner_pid(name)
+        if owner is not None and owner != os.getpid() and pid_alive(owner):
+            print(f'negative_controls: keeping live {name} (pid {owner} runs)',
+                  file=sys.stderr)
+            continue
+        try:
+            os.unlink(path)
+        except OSError as error:
+            print(f'negative_controls: cannot remove {path}: {error}', file=sys.stderr)
+            return False
+        removed.append(name)
+    if removed:
+        print(f'removed stale {", ".join(removed)}', file=sys.stderr)
+    return True
+
+
+def early_output(argv):
+    """解析前从原始 argv 取 ``--output`` 的值（解析器 ``allow_abbrev=False``）。
+
+    取**最后**一次出现（argparse ``store`` 语义）；``--`` 之后不再有选项。
+    ``--output`` 后面跟选项样式的 token（``-h``、``--data``…）时 argparse 报
+    ``expected one argument``，此时不取值——不做任何猜测。
+    """
+    value = None
+    expecting = False
+    for token in argv:
+        if token == '--':
+            break
+        if expecting:
+            expecting = False
+            if not (token.startswith('-') and token != '-'):
+                value = token
+            continue
+        if token == '--output':
+            expecting = True
+        elif token.startswith('--output='):
+            inline = token[len('--output='):]
+            if inline:
+                value = inline
+    return value
+
+
+def help_requested(argv):
+    """argparse 会走帮助分支吗（``-h`` / ``--help`` 没被带值选项吃掉）。
+
+    ``--data -h`` **不是**帮助：``nargs=None`` 不接受选项样式的值，argparse 先报
+    ``expected one argument``（rc 2），此时旧 summary 必须已经失效。
+    """
+    expecting = False
+    for token in argv:
+        if token == '--':
+            return False
+        if expecting:
+            expecting = False
+            if token.startswith('-') and token != '-':
+                return False  # argparse: expected one argument → 错误路径
+            continue
+        if token in VALUE_OPTIONS:
+            expecting = True
+            continue
+        if any(token.startswith(option + '=') for option in VALUE_OPTIONS):
+            continue
+        if token in ('-h', '--help'):
+            return True
+    return False
+
+
+_EARLY_OUTPUT = early_output(sys.argv[1:])
+if _EARLY_OUTPUT is not None and not help_requested(sys.argv[1:]):
+    if not invalidate_stale_summary(_EARLY_OUTPUT):
+        raise SystemExit(2)
 
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
@@ -24,7 +169,6 @@ if not sys.flags.isolated:
 import argparse
 import importlib.util
 import json
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -37,17 +181,25 @@ from pathlib import Path
 try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
 except OSError:
-    # 没有可写临时目录也不能让执行器起不来（起不来就到不了「失效旧 summary」，
-    # 旧 PASS 会冒充本轮——评审 P0）：指向必然不存在的目录即「读不到缓存」。
-    sys.pycache_prefix = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), f'.no-pycache-{os.getpid()}')
+    # 没有可写临时目录也不能让执行器起不来（起不来就到不了「失效旧 summary」）：
+    # 指向一个**核实不存在**的目录即「读不到缓存」。名字带 16 位随机字节并在
+    # 冲突时重试——固定的 ``.no-pycache-<pid>`` 可能被预先植入 unchecked-hash
+    # pyc（评审 P1：可预测路径等于可投毒缓存）。
+    base = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):
+        candidate = os.path.join(
+            base, f'.no-pycache-{os.getpid()}-{os.urandom(8).hex()}')
+        if not os.path.lexists(candidate):
+            break
+    else:
+        raise SystemExit('negative_controls: cannot reserve a fresh pycache prefix')
+    sys.pycache_prefix = candidate
 sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
 CHECKER = HERE / 'check_outcome_parity.py'
 DEFAULT_DATA = Path('_tmp/20261106-issue-1477/r1/data')
 DEFAULT_ORACLE = HERE / 'ts-oracle.json'
-VALUE_OPTIONS = ('--data', '--oracle')
 INJECTED_MESSAGE = 'injected by negative controls for retirement-outcome-parity'
 ALT_CODE = 'UPLOAD_NOT_FOUND'
 CHECK_TIMEOUT_SECONDS = 600
@@ -585,169 +737,23 @@ def run_control(control, out_root, oracle):
     return record
 
 
-def tmp_owner_pid(name):
-    """``summary.json.<pid>.tmp`` 里的 pid；不是这个形状返回 None。"""
-    prefix, suffix = 'summary.json.', '.tmp'
-    if not (name.startswith(prefix) and name.endswith(suffix)):
-        return None
-    middle = name[len(prefix):-len(suffix)]
-    return int(middle) if middle.isdigit() else None
-
-
-def pid_alive(pid):
-    """该 pid 是否仍是活进程（判断 tmp 是不是**另一个仍在跑**的执行器的）。"""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
-    return True
-
-
-def is_own_summary_artifact(name):
-    """只认本执行器自己的产物名：精确 ``summary.json``（含旧版 ``summary.json.tmp``）
-    与 ``summary.json.<pid>.tmp``。
-
-    早先的 ``glob('summary.json*')`` 会把 ``summary.json.backup`` /
-    ``summary.json.notes`` 这类既有文件一起 ``unlink``——失效旧结果不得顺手删掉
-    别人的证据（评审 P0）。
-    """
-    return name in ('summary.json', 'summary.json.tmp') or tmp_owner_pid(name) is not None
-
-
-def invalidate_stale_summary(out_root):
-    """删掉该目录里上一轮的 ``summary.json`` 与残留 tmp。
-
-    下游以「summary.json 存在」为「负控已跑完」的证据；早退路径（参数错误、
-    读数据失败、preflight 非 0、控件构造断言失败）若走不到这里，旧 PASS 会冒充
-    本轮结果（两家评审 P0，实测 `rc: 2` 且 `unlink: []`）。
-
-    只动本执行器自己的产物名；另一个**仍在跑**的执行器的
-    ``summary.json.<pid>.tmp`` 不删（删掉它会让对方的原子发布 ``replace`` 抛
-    ``FileNotFoundError``；并发互斥的残余登记在跟进单）。目录不存在时**不创建**
-    （调用方可能只是猜到了某个路径，见 :func:`output_candidates`）。
-    """
-    out_root = Path(out_root)
-    try:
-        if not out_root.exists():
-            return True  # 新目录：没有旧结果可失效，也不必替调用方创建
-        if not out_root.is_dir():
-            print(f'negative_controls: {out_root} is not a directory', file=sys.stderr)
-            return False
-        entries = sorted(out_root.iterdir())
-    except OSError as error:
-        print(f'negative_controls: cannot use {out_root}: {error}', file=sys.stderr)
-        return False
-    removed = []
-    for path in entries:
-        if not (path.is_file() and is_own_summary_artifact(path.name)):
-            continue
-        owner = tmp_owner_pid(path.name)
-        if owner is not None and owner != os.getpid() and pid_alive(owner):
-            print(f'negative_controls: keeping live {path.name} (pid {owner} runs)',
-                  file=sys.stderr)
-            continue
-        try:
-            path.unlink()
-        except OSError as error:
-            print(f'negative_controls: cannot remove {path}: {error}', file=sys.stderr)
-            return False
-        removed.append(path.name)
-    if removed:
-        print(f'removed stale {", ".join(removed)}', file=sys.stderr)
-    return True
-
-
-def looks_like_output_dir(path):
-    """该路径是否**已经**是一个跑过的负控输出目录：有 ``summary.json`` **且**有
-    ``N<n>`` 控件目录（两者都是本执行器自己造的形状）。
-
-    只失效这种目录：解析前的候选集可能把「某个选项的值」误当位置参数
-    （``--dta DATA OUT`` 里未知选项是否带值无法判定），宁可不删也不能删无关目录
-    （评审 P0/P1：误删别人的证据同样是丢数据）。只看 ``summary.json`` 不够——
-    数据目录里同名的文件会被误伤。
-    """
-    try:
-        root = Path(path)
-        if not (root.is_dir() and (root / 'summary.json').is_file()):
-            return False
-        return any(child.is_dir() and child.name.startswith('N')
-                   and child.name[1:].isdigit() and int(child.name[1:]) <= 17
-                   for child in root.iterdir())
-    except OSError:
-        return False
-
-
-def output_candidates(argv):
-    """argparse **之前**从原始 argv 里收集所有**可能**是位置参数 output 的 token。
-
-    参数拼错 / 缺值时 argparse 自己 rc=2 退出，走不到解析后的失效步骤，旧
-    summary.json 会冒充本轮（评审 P0）。但解析前无法完全复刻 argparse 的判定：
-    缩写（``--dat`` == ``--data``）可以照 argparse 的规则认，未知选项是否真带一个
-    值则**不可判定**——所以这里保守地多列候选（未知选项后面的非选项 token 也算），
-    由 :func:`looks_like_output_dir` 决定动不动手。
-    """
-    candidates = []
-    skip_value = False
-    after_separator = False
-    for token in argv:
-        if not after_separator and token == '--':
-            after_separator = True
-            continue
-        if skip_value:
-            skip_value = False
-            continue
-        if not after_separator and token.startswith('-') and token != '-':
-            if _takes_next_value(token):
-                skip_value = True
-            continue
-        candidates.append(token)
-    return candidates
-
-
-def _takes_next_value(token):
-    """token 是否是已知的带值选项（按 argparse 的缩写规则：唯一前缀即匹配）。"""
-    if '=' in token or not token.startswith('--') or len(token) < 3:
-        return False
-    return any(option.startswith(token) for option in VALUE_OPTIONS)
-
-
-def help_requested(argv):
-    """``-h`` / ``--help`` 是否出现在 ``--`` 之前（帮助路径不该删任何东西）。"""
-    for token in argv:
-        if token == '--':
-            return False
-        if token in ('-h', '--help'):
-            return True
-    return False
-
-
-def invalidate_candidates(candidates):
-    for candidate in candidates:
-        if looks_like_output_dir(candidate) and not invalidate_stale_summary(candidate):
-            return False
-    return True
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description='Negative controls N1-N17 for the retirement outcome-parity '
                     'checker (#1477). Data-only mutations; no source text is touched.')
-    parser.add_argument('output', help='output directory for mutated rounds + summary')
+    # 输出目录走**显式**选项、不做位置参数：解析前就能无歧义取值（见模块头）。
+    parser.add_argument('--output', required=True,
+                        help='output directory for mutated rounds + summary')
     parser.add_argument('--data', default=str(DEFAULT_DATA),
                         help='TS reference data root (default: %(default)s)')
     parser.add_argument('--oracle', default=str(DEFAULT_ORACLE),
                         help='ts-oracle.json (default: %(default)s)')
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    # 第一件事（解析前）：旧 summary 失效。argparse 的错误退出也是早退路径。
-    # 帮助路径不失效（没有跑）；候选集只对「已经是负控输出目录」的路径动手。
-    if not help_requested(raw_argv) and not invalidate_candidates(
-            output_candidates(raw_argv)):
-        return 2
     args = parser.parse_args(raw_argv)
 
-    # 解析成功后再按解析结果失效一次（候选集漏掉时兜底；本身幂等）。
+    # 模块体已按 --output 失效过一次（覆盖 argparse 自己 rc=2 早退的路径）；
+    # 这里按解析结果再做一次，是本进程的权威失效点（幂等）。
     out_root = Path(args.output)
     if not invalidate_stale_summary(out_root):
         return 2

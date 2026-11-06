@@ -34,10 +34,19 @@ try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
 except OSError:
     # 没有可写临时目录（只读环境 / 临时目录被清理）也不能让判据起不来：指向一个
-    # 必然不存在的目录，效果等价于「读不到任何缓存」，写仍被 dont_write_bytecode
-    # 挡住。启动依赖不得先于任何判定（评审 P0）。
-    sys.pycache_prefix = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), f'.no-pycache-{os.getpid()}')
+    # **核实不存在**的目录，效果等价于「读不到任何缓存」，写仍被 dont_write_bytecode
+    # 挡住。启动依赖不得先于任何判定（评审 P0）。名字带 16 位随机字节并在冲突时
+    # 重试——固定的 ``.no-pycache-<pid>`` 可预测，等于给 unchecked-hash pyc 留了
+    # 一个可投毒的位置（评审 P1）。
+    base = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):
+        candidate = os.path.join(
+            base, f'.no-pycache-{os.getpid()}-{os.urandom(8).hex()}')
+        if not os.path.lexists(candidate):
+            break
+    else:
+        raise SystemExit('check_outcome_parity: cannot reserve a fresh pycache prefix')
+    sys.pycache_prefix = candidate
 sys.dont_write_bytecode = True
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
