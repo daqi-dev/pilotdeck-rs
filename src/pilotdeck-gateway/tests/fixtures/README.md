@@ -28,13 +28,19 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 
 `summary.json` 只在守卫成功退出后原子发布一次；取消或恢复失败时发布的是全 INVALID 总结，第二次中断允许没有总结——**缺失即失败关闭**，不得把“没有 summary”读成通过。
 
+`negative_suite.matrix_main` 的启动拒跑同属「从未开跑」（#1734 fix-r7）：缺参数 usage、未知或
+重复变异名、`CARGO_TARGET_DIR` 未设置 / 空串 / 纯空白、输出目录已存在，一律 `refuse()` → rc 2
+且不创建证据目录；它不发布 `summary.json` 失败总结，因为这些分支一行变异都没跑。其余运行期结果
+仍按该函数的既有语义（SURVIVED / INVALID → 1）。
+
 契约范围仅上述两个共享执行器。`shared-runner-failclosed/negative_controls.py` 是手工顶层脚本，其 `main()` 对所有守卫失败一律返回 rc=2（含进入守卫前的拒跑）；本仓没有调用方解析它的退出码，且任何失败都发布全 INVALID（失败关闭），故不纳入三分契约。同一仓内自管执行脚本（`edgeclaw-*`、`anchor_selfcheck.py` 等）「锚点过期 → 2」的约定同样不在本契约范围。
 
 `_shared.negative_control.mutation_suite` 另有一条启动期规则（#1666/#1734）：它先占证据目录再取环境，
 所以缺 `CARGO_TARGET_DIR` 的拒跑放在占目录之前，并同样走 `negative_selection.refuse()`——rc=2、
 原因进 stderr；若启动期 `refuse()` 从更深处（如脚本自己的 oracle 读取）抛出，且**目录仍为空**，
 执行器不发布 `summary.json` 并撤掉它；目录已有文件时撤不掉，此时在 stderr 打出残留路径，按 rc=2
-（从未开跑）退出、不发布 `summary.json`。其余失败沿用本执行器既有语义，**不套用上面的三分**：
+（从未开跑）退出、不发布 `summary.json`（目录已被外部删掉则按「没有残留」静默）。两条子分支分别由
+`test_negative_adaptive.py` 的 refuse / refuse-residue 用例覆盖。其余失败沿用本执行器既有语义，**不套用上面的三分**：
 取消（`KeyboardInterrupt` / `scratch` 的 `SystemExit('<string>')`）与恢复核验失败都记 rc=1 并发布
 全 INVALID 总结（`test_negative_adaptive.py` 的 interrupt / restore 用例锁定这一行为）。
 
@@ -52,9 +58,10 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
   `PYTHONOPTIMIZE=1` 会整条剥离 `assert`，靠 `assert` 的负控在优化解释器下静默放行。
 
 `test_negative_optimize_guards.py` 对已迁移的十五个入口逐一复算三条拒跑矩阵：未知变异名
-（加不加 `-O` 各一遍）、缺 `CARGO_TARGET_DIR`、输出目录已存在——都要求 rc=2 且 stderr 点名、
-且不留下证据目录；它同时自证本解释器确实剥离 `assert`，否则结论无意义。（不要求 caller target
-的三个入口按 `TARGET_OPTIONAL` 显式登记，不静默漏测。）
+（加不加 `-O` 各一遍）、`CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白三档）、输出目录已存在
+——都要求 rc=2 且 stderr 点名、且不留下证据目录；它同时自证本解释器确实剥离 `assert`，否则结论
+无意义。（三个入口按模式在 `TARGET_OPTIONAL` 显式登记：两个只豁免「未设置」，`cli-parity-mock-gateway`
+不编译 Cargo 三档全豁免；豁免理由与所依赖的源码事实都有断言，不静默漏测。）
 同一文件里的 `PENDING_BARE_ASSERTS` 是**只减不增**的存量登记：仍带裸 `assert` 的
 `*/negative_controls.py` 必须逐条列出并写理由，新脚本带裸 `assert` 直接让 CI 红。因此
 「已迁移清单」不会被误读成全集——未迁移的都在登记表里，由 #1666 分批推进。

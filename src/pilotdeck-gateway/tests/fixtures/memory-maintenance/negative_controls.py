@@ -7,14 +7,14 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, missing_target, refuse, registered, select, verdict_exit
 root = Path(__file__).resolve().parents[5]
 baseline = sys.argv[2] if len(sys.argv) > 2 else 'HEAD'
 helper = root / 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs'
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/maintenance.rs'
 refresh = root / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
+if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
     refuse('CARGO_TARGET_DIR must be supplied by the caller')
 mutations = [
     ('cancel-reported-as-error', source, 'Err(_) => return, // Executor cancelled this invocation.', 'Err(_) => Err(MemoryProviderError::new("cancelled")),', 'cancelled_invocation_releases_flight_and_retries'),

@@ -21,6 +21,7 @@ Run from this directory: ``python3 -m unittest test_negative_optimize_guards``.
 """
 import ast
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -55,21 +56,46 @@ SCRIPTS = (
     ('cli-parity-mock-gateway/negative_controls.py', (), ('-I',)),
 )
 
-# #1666: three entries have no "caller target" startup guard. Each exemption
-# carries its reason *and* the source fact that has to stay true for the reason
-# to hold, so the matrix cannot shrink by adding a name alone:
+# #1666: entries whose target guard cannot refuse *every* mode. Each exemption
+# lists the modes it skips, plus the reason and the source fact that has to stay
+# true, so the matrix cannot shrink by adding a name alone:
 # `interaction-values` and `turn-submit-admission` let
-# `negative_process.target_environment` default to the shared tree target
-# (#1166), and `cli-parity-mock-gateway` never compiles Cargo and so has no
-# target guard at all.
+# `negative_process.target_environment` default the shared tree target when the
+# variable is *absent* (#1166) -- a present-but-blank value is refused by their
+# own `blank_target()` guard, so only `missing` is exempt -- and
+# `cli-parity-mock-gateway` never compiles Cargo, so all three modes are moot.
+MODES = ('missing', 'empty', 'blank')
 TARGET_OPTIONAL = {
     'interaction-values/negative_controls.py':
-        ('target_environment defaults to the shared tree target (#1166)', 'target_environment('),
+        ('target_environment defaults the shared tree target when the variable is absent (#1166)',
+         'target_environment(', ('missing',)),
     'turn-submit-admission/negative_controls.py':
-        ('target_environment defaults to the shared tree target (#1166)', 'target_environment('),
+        ('target_environment defaults the shared tree target when the variable is absent (#1166)',
+         'target_environment(', ('missing',)),
     'cli-parity-mock-gateway/negative_controls.py':
-        ('never compiles Cargo, so it has no target guard', None),
+        ('never compiles Cargo, so it has no target guard', None, MODES),
 }
+
+# Any read of the target variable is a target guard. Matching the call shapes
+# (not one spelling) keeps the exemption honest when a guard is reintroduced
+# with double quotes, `os.getenv`, or the shared predicates.
+TARGET_READ = re.compile(r'''os\.environ\s*\[\s*['"]CARGO_TARGET_DIR['"]\s*\]
+                         | os\.environ\.get\s*\(\s*['"]CARGO_TARGET_DIR['"]
+                         | os\.getenv\s*\(\s*['"]CARGO_TARGET_DIR['"]
+                         | (?:missing|blank)_target\s*\(
+                         ''', re.X)
+
+
+def calls(source, name):
+    """True when the source *calls* ``name`` (an import or a docstring is not a call)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    return any(isinstance(node, ast.Call) and (
+        (isinstance(node.func, ast.Name) and node.func.id == name) or
+        (isinstance(node.func, ast.Attribute) and node.func.attr == name))
+        for node in ast.walk(tree))
 
 # #1666 is *not* closed for the whole family: these hand-rolled entries still
 # carry bare `assert` guards and are migrated batch by batch (tracked in the
@@ -143,7 +169,7 @@ def uses_a_bare_assert(path):
 
 
 def run(script, args, flags=(), *, optimize, base, claim_exists=False,
-        missing_target=False, empty_target=False):
+        target=None):
     """Run ``script`` with a throwaway output directory.
 
     Returns ``(process, claimed_dir)``: the output directory path is part of
@@ -151,11 +177,13 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
     evidence directory was never created (a host reads that directory as this
     run's verdict).
 
-    ``missing_target`` drops ``CARGO_TARGET_DIR`` and the unknown mutation name,
-    so the target guard is the first thing the script can hit: that refusal must
-    also be rc 2 and must also leave no evidence directory. ``empty_target``
-    keeps the variable but sets it to ``''``: an empty value is just as unusable
-    as an absent one, and three entries used to test presence only.
+    ``target`` selects one unusable-caller-target mode and drops the unknown
+    mutation name, so the target guard is the first thing the script can hit:
+    that refusal must also be rc 2 and must also leave no evidence directory.
+    The three modes are ``'missing'`` (variable unset), ``'empty'`` (``''``) and
+    ``'blank'`` (spaces): all three are equally unusable, and a presence-only
+    check let the last two reach the shared target normalisation, which rejects
+    them only after the evidence directory existed (#1666 fix-r7).
     """
     directory = Path(tempfile.mkdtemp(prefix='negctl-1666-', dir=base))
     _CLEANUP.append(directory)
@@ -165,7 +193,7 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
         command.append('-O')
     if claim_exists:
         out.mkdir()
-    if claim_exists or missing_target or empty_target:
+    if claim_exists or target:
         command_entry = [str(out), *args]
     else:
         command_entry = [str(out), *args, UNKNOWN]
@@ -173,10 +201,10 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
     env = dict(os.environ)
     # Presence-only preconditions some scripts check before their roster guard.
     env.setdefault('PDRS_BASELINE', str(out.parent / 'pinned-ts-checkout'))
-    if missing_target:
+    if target == 'missing':
         env.pop('CARGO_TARGET_DIR', None)
-    elif empty_target:
-        env['CARGO_TARGET_DIR'] = ''
+    elif target in ('empty', 'blank'):
+        env['CARGO_TARGET_DIR'] = '' if target == 'empty' else '   '
     else:
         env.setdefault('CARGO_TARGET_DIR', str(out.parent / 'cargo-target'))
     env.pop('PYTHONOPTIMIZE', None)
@@ -255,28 +283,29 @@ class UnknownControlIsRefused(unittest.TestCase):
                 self.assertEqual(list(out.iterdir()), [],
                                  f'{script} must not write into another run\'s directory')
 
-    def test_every_target_guard_refuses_without_a_caller_target(self):
-        """An absent or empty caller target is "never started" (2), not a failure (1).
+    def test_every_target_guard_refuses_an_unusable_caller_target(self):
+        """An absent, empty or blank target is "never started" (2), not a failure (1).
 
         `specs/negative-controls/README.md` promises this for every migrated
         entry, but the rest of this file always supplies the variable, so the
-        promise had no denominator. An empty value is tested alongside an
-        absent one because three entries used to check presence only, and a
-        host that exports ``CARGO_TARGET_DIR=`` would have run them with an
-        unusable target after claiming the evidence directory.
+        promise had no denominator. All three unusable modes are tested: three
+        entries used to check presence only, and a host that exports
+        ``CARGO_TARGET_DIR=`` (or only spaces) would have run them after
+        claiming the evidence directory and then failed inside the shared
+        target normalisation -- exit 1, plus a directory a host reads as a
+        finished run (#1666 fix-r7).
         """
         listed = {script for script, _extra, _flags in SCRIPTS}
         self.assertLessEqual(set(TARGET_OPTIONAL), listed,
                              'TARGET_OPTIONAL must only name listed scripts')
         for script, extra, flags in SCRIPTS:
-            if script in TARGET_OPTIONAL:
-                continue
-            for mode in ('missing', 'empty'):
+            exempt = TARGET_OPTIONAL.get(script, ('', None, ()))[2]
+            for mode in MODES:
+                if mode in exempt:
+                    continue
                 with self.subTest(script=script, mode=mode):
-                    result, out = run(
-                        script, extra, flags, optimize=True, base=self.base,
-                        missing_target=(mode == 'missing'),
-                        empty_target=(mode == 'empty'))
+                    result, out = run(script, extra, flags, optimize=True,
+                                      base=self.base, target=mode)
                     self.assertEqual(
                         result.returncode, 2,
                         f'{script} must refuse with a {mode} caller target: '
@@ -288,19 +317,34 @@ class UnknownControlIsRefused(unittest.TestCase):
                         f'{script} refused but still created its evidence directory {out}')
 
     def test_target_optional_entries_hold_their_reason(self):
-        """An exemption names the source fact that makes it an exemption.
+        """An exemption names the modes it skips and the source fact behind them.
 
         Without this, adding a name to ``TARGET_OPTIONAL`` silently removes an
         entry from the matrix -- the opposite of what the register is for.
         """
-        for script, (reason, needle) in TARGET_OPTIONAL.items():
+        for script, (reason, needle, modes) in TARGET_OPTIONAL.items():
             with self.subTest(script=script):
                 self.assertTrue(reason.strip(), '#1666 every exemption needs a reason')
+                self.assertTrue(set(modes) <= set(MODES),
+                                f'{script}: unknown exempt mode(s) {modes}')
                 source = (FIXTURES / script).read_text()
-                self.assertNotIn("'CARGO_TARGET_DIR' not in os.environ", source,
-                                 f'{script} grew a presence-only target guard; drop the exemption')
-                self.assertNotIn('os.environ.get(\'CARGO_TARGET_DIR\')', source,
-                                 f'{script} grew a target guard; drop the exemption')
+                if set(modes) == set(MODES):
+                    # Exempt in every mode: the script must not touch the
+                    # target at all, however it is spelled.
+                    self.assertIsNone(TARGET_READ.search(source),
+                                      f'{script} grew a target guard; drop the exemption')
+                    self.assertFalse(
+                        calls(source, 'target_environment'),
+                        f'{script} says it has no target guard: {reason}')
+                else:
+                    # Only "absent" is exempt, because a helper defaults the
+                    # target. That defaulting must be a real call: an import
+                    # line or a docstring mentioning the helper is not a guard.
+                    self.assertEqual(set(modes), {'missing'},
+                                     f'{script}: only "absent" may be exempt this way')
+                    self.assertTrue(
+                        calls(source, 'target_environment'),
+                        f'{script} no longer matches its exemption reason: {reason}')
                 if needle is not None:
                     self.assertIn(needle, source,
                                   f'{script} no longer matches its exemption reason: {reason}')

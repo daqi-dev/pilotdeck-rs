@@ -1352,6 +1352,73 @@ class PublishJsonTests(unittest.TestCase):
                              'the temporary file must not linger')
 
 
+class MatrixMainStartupTests(unittest.TestCase):
+    """#1734/#1666: every `matrix_main` startup refusal is rc 2 and leaves no dir.
+
+    The function used to raise `SystemExit('<string>')` for a usage error and a
+    mistyped selection (rc 1, "ran and did not pass") and let an existing output
+    directory surface as `FileExistsError` (also rc 1). None of those runs
+    measured anything, so they share the migrated entries' "never started" code
+    -- and none of them had a test, because every other caller supplies the
+    target and a fresh directory.
+    """
+
+    def call(self, root, *, args, env):
+        """Run `matrix_main` on one row; return (SystemExit, stderr text)."""
+        source = root / 'fixture.py'
+        source.write_text('original')
+        rows = [('first', source, 'original', 'changed', ['cell'])]
+        errors = io.StringIO()
+        with patch.dict('os.environ', env, clear=True), \
+                contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as caught:
+                suite.matrix_main(root, source, 'prefix::', rows, passed_count=1,
+                                  child_count=1, paths=[source], args=args)
+        return caught.exception, errors.getvalue()
+
+    def test_usage_and_unknown_selection_are_never_started(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            for args, needle in (([], 'usage:'),
+                                 ([str(root / 'out'), 'no-such-mutation'],
+                                  'unknown/duplicate')):
+                with self.subTest(args=args):
+                    refusal, stderr = self.call(
+                        root, args=args, env={'CARGO_TARGET_DIR': str(root / 'target')})
+                    self.assertEqual(refusal.code, 2,
+                                     '#1734 a refusal that ran nothing must exit 2')
+                    self.assertIn(needle, stderr)
+                    self.assertFalse((root / 'out').exists(),
+                                     '#1734 a refused run leaves no evidence directory')
+
+    def test_unusable_target_is_never_started(self):
+        for mode, value in (('missing', None), ('empty', ''),
+                            ('blank', '   ')):
+            with tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                env = {} if value is None else {'CARGO_TARGET_DIR': value}
+                out = root / 'out'
+                with self.subTest(mode=mode):
+                    refusal, stderr = self.call(root, args=[str(out)], env=env)
+                    self.assertEqual(refusal.code, 2,
+                                     f'#1734 a {mode} target never started')
+                    self.assertIn('CARGO_TARGET_DIR', stderr)
+                    self.assertFalse(out.exists(),
+                                     '#1734 a refused run leaves no evidence directory')
+
+    def test_existing_output_directory_is_never_started(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            out = root / 'out'
+            out.mkdir()
+            refusal, stderr = self.call(
+                root, args=[str(out)], env={'CARGO_TARGET_DIR': str(root / 'target')})
+            self.assertEqual(refusal.code, 2, '#1734 a taken directory never started')
+            self.assertIn('already exists', stderr)
+            self.assertEqual(list(out.iterdir()), [],
+                             '#1734 nothing written into a taken directory')
+
+
 class ResultRowSchemaTests(unittest.TestCase):
     """#1579 P1: `matrix_main` rows must stay inside the registered schema.
 

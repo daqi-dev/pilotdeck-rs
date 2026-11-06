@@ -56,7 +56,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import marker_is_scoped, named_test_failed, panic_evidence
-from negative_selection import baseline_passed, select, verdict_exit
+from negative_selection import baseline_passed, missing_target, select, verdict_exit
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -229,7 +229,7 @@ try:
 except ValueError as error:
     refuse(f'#1538 {error}')
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
+if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
     refuse('#1538 CARGO_TARGET_DIR must be supplied by the caller')
 # The actual baseline must be resolved and recorded (fix-r2 P1): every
 # summary row and the replay log carry the full commit SHA and where it came

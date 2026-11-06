@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import (claim_dir, baseline_passed, refuse, registered, select,
+from negative_selection import (claim_dir, baseline_passed, missing_target, refuse, registered, select,
                                verdict_exit)
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
@@ -104,9 +104,9 @@ try:
     run_rows = select(mutations, selected, always=())
 except ValueError as error:
     refuse(str(error))
-if not os.environ.get('CARGO_TARGET_DIR'):  # #1666: empty is missing, like the shared executor
+if missing_target():  # #1666: absent, empty or blank, one shared predicate
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
-if 'PDRS_BASELINE' not in os.environ:
+if not os.environ.get('PDRS_BASELINE'):  # #1666: empty is missing, like the target above
     refuse('set PDRS_BASELINE to the pinned PilotDeck TS checkout before running')
 out = claim_dir(sys.argv[1])
 env = os.environ.copy()

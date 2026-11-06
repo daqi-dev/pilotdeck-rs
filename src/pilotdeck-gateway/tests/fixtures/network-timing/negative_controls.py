@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.negative_control import CargoTests, environment, mutation_suite
 from negative_panic import named_test_failed, named_test_killed, panic_evidence
 from negative_process import tree_lock
-from negative_selection import claim_dir, refuse, registered, verdict_exit
+from negative_selection import claim_dir, missing_target, refuse, registered, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
@@ -333,7 +333,7 @@ def baseline_only(rows, output):
     Candidate bytes may be uncommitted because this path never mutates them;
     the formal negative path below still requires HEAD through mutation_suite.
     """
-    if not os.environ.get('CARGO_TARGET_DIR'):
+    if missing_target():  # #1666: absent, empty or blank, one shared predicate
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
     output = claim_dir(output)
     with tree_lock(root, timeout=BASELINE_LOCK_SECONDS):
@@ -375,7 +375,7 @@ def main():
     # Refusing here -- before the roster, the source guard, the lock and the
     # evidence directory -- keeps "never started" (2) distinguishable from
     # "ran and did not pass" (1) and leaves nothing behind.
-    if not os.environ.get('CARGO_TARGET_DIR'):
+    if missing_target():  # #1666: absent, empty or blank, one shared predicate
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
     try:
         registered(cases, EXPECTED_NAMES)

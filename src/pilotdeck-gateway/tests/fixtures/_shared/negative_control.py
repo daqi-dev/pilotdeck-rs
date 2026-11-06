@@ -392,6 +392,8 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
             # of hiding the residue.
             try:
                 output.rmdir()
+            except FileNotFoundError:
+                pass  # already gone: nothing was left behind
             except OSError as residue:
                 print(f'INVALID: startup refusal left {output} behind '
                       f'({type(residue).__name__}: {residue})', file=sys.stderr, flush=True)

@@ -20,7 +20,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
-from negative_selection import claim_dir, refuse, registered, select, verdict_exit
+from negative_selection import (blank_target, claim_dir, refuse, registered, select,
+                               verdict_exit)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/turn/admission.rs'
@@ -101,9 +102,16 @@ try:
     run_rows = select(mutations, sys.argv[2:], always=())
 except ValueError as error:
     refuse(str(error))
+# A present-but-blank CARGO_TARGET_DIR is not "absent": the shared helper only
+# defaults the target when the variable is missing, and its normalisation
+# rejects blanks. Refusing here keeps this a startup refusal (2) with no
+# evidence directory, instead of an uncaught RuntimeError (1) after the claim
+# (#1666 fix-r7, found by review on both sides of the tree).
+if blank_target():
+    refuse('CARGO_TARGET_DIR is set but blank; unset it to use the shared target')
+env = target_environment(root)
 out = claim_dir(sys.argv[1])
 paths = sorted({path for _name, path, _old, _new in run_rows}, key=str)
-env = target_environment(root)
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','runtime::turn::admission','--','--nocapture']
 verdicts = []
 
