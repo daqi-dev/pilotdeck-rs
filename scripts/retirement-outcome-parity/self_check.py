@@ -309,9 +309,9 @@ CONTROLS_FOR_CHECK = {
 }
 
 
-def run_self_check_controls():
+def run_self_check_controls(names):
     failures = []
-    for name in ('budget', 'lock', 'wiring'):
+    for name in names:
         try:
             detail = CONTROLS_FOR_CHECK[name]()
         except CheckFailure as error:
@@ -334,7 +334,15 @@ def main(argv=None):
                              'violating sample')
     args = parser.parse_args(argv)
     if args.self_check_controls:
-        return run_self_check_controls()
+        # `--only` 对本模式同样生效（只跑这些守卫的变异控件）；点名的检查若没有
+        # 对应控件就明说 rc2，不静默跑成「零个控件全通过」。
+        names = args.only or list(CONTROLS_FOR_CHECK)
+        without = [name for name in names if name not in CONTROLS_FOR_CHECK]
+        if without:
+            print(f'self_check: no mutation control for {without} '
+                  f'(available: {list(CONTROLS_FOR_CHECK)})', file=sys.stderr)
+            return 2
+        return run_self_check_controls(names)
     return run_checks(args.only or ORDER)
 
 
