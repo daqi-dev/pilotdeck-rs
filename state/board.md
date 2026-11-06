@@ -54,7 +54,7 @@ updated: 2026-11-06 13:1x · by Claude Code 协调者（13:1x 补 READY：#1767 
 - #1551 | impl | doing | 差异族 A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001：与 #1550 **同树同任务书**，随 #1550 一起收货，别重复派
 - #1406 | impl | doing | P2-跟进 #1220/#1253：abort-messages 负控未覆盖 abort 路径 + 增量投影残留：**09:1x 已派 cb8**（`_tmp/20261106-issue-1406/`），与 #1281 同族串行；两者都在 #589 收尾前置里
 - #1281 | impl | doing | P2-跟进 #1253 增量投影 r2 剩余 P2：**09:1x 已派 cb8**，与 #1406 同批串行
-- #1675 | impl | ready | **P1 前置 #1348**：api-web 文件服务写路径无 realpath / NOFOLLOW 加固（`api_web/files.rs`，安全类，按 A4-FILE-TOCTOU-001 先例「安全默认修」，差异按 `diffs/` 新增条目登记、批准状态「AI 代批，待人复核」）；**等 PR #1676 合入后立刻派**（同模块串行）；正文里「前置 #1305」是僵尸边（#1305 已 CLOSED），实际无未清前置
+- #1675 | impl | done | **P1 前置 #1348**：api-web 文件服务写路径无 realpath / NOFOLLOW 加固（`api_web/files.rs`，安全类，按 A4-FILE-TOCTOU-001 先例「安全默认修」，差异按 `diffs/` 新增条目登记、批准状态「AI 代批，待人复核」）；**等 PR #1676 合入后立刻派**（同模块串行）；正文里「前置 #1305」是僵尸边（#1305 已 CLOSED），实际无未清前置（issue 已关，2026-11-06 对账）
 - #589 | impl | ready | A7.2-pr6a LiveSession + Submit：产品代码已全在 main，**macOS `live_e2e --ignored` 11/11 已过**（mbp2 实跑）；只差三条前置——#1219（fix-r4 在跑）· #1406（cb8 已派）· #1281（cb8 已派），三条清完即可收口
 - #1648 | impl | ready | P2-跟进 #1370 s3 见证 append 装置遗留：树 `_build/wt-1648` **2 个提交未进 main、无 PR、本机与远端都没有进程（交付孤儿）**；前置于 #1242 s3 收尾，可直接派，别另起树
 - #1738 | impl | doing | **P1**-跟进 #1735：webhook / sms 的 `active_chats` 非 panic 路径——**#1735 的 PR 已合入 `afbf87754`（01:42:43Z），同文件串行解除**；本轮已派
@@ -65,7 +65,7 @@ updated: 2026-11-06 13:1x · by Claude Code 协调者（13:1x 补 READY：#1767 
 - #1494 | impl | doing | **P1 安全**：`read_at` canonicalize→open TOCTOU，新接线使其 RPC 可达——**与 #1468 同批已派**（同一附件家族，别分两单）
 - #1219 | impl | doing | A7.2-pr6a 负控收尾：**PR #1772 已开（head 已前进到 `f6821341c`）**——三格各有独立杀手、两条更正 `-R1`/`-R2`、`check_frozen --base` PASS 30 条、两家评审 0/0；此前 CI `negative-controls: FAILURE` 已派分诊，**未入队**；它清完 #589 才少一条前置
 - #590 | impl | doing | A7.2-pr6b 收尾关单：**未关单**——窄读实测 ② sidecar 侧信号 23 条（22 纯换位 + `deadline` 契约不符）；**卡 #1722 六条文档 P2**；R5 条目 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R5.md` 在分支 `claude/issue-590-closure-r5`（`740963f6f`），未开 PR、未评审、未 `--write`，**第二轮已派**
-- #1348 | impl | doing | B2 路径加固关闭交付：**PR #1676 已合入 `d997d3c16`（04:23:38Z）**；安全前置 #1675 的 NOFOLLOW / realpath 加固随链落地（`638a10fb9`..`d997d3c16`：根句柄 NOFOLLOW、建根走钉住的祖先描述符、根路径统一 `canonical_prefix`）；跟单 #1764 #1765 #1766；**issue 待收尾自查后关单**
+- #1348 | impl | done | B2 路径加固关闭交付：**PR #1676 已合入 `d997d3c16`（04:23:38Z）**；安全前置 #1675 的 NOFOLLOW / realpath 加固随链落地（`638a10fb9`..`d997d3c16`：根句柄 NOFOLLOW、建根走钉住的祖先描述符、根路径统一 `canonical_prefix`）；跟单 #1764 #1765 #1766；**issue 待收尾自查后关单**（issue 已关，2026-11-06 对账）
 - #1754 | impl | doing | **决策 · MCP 未批准差异**：`tools/list` schema 深度上限 256 早于 Ajv（257–399 段基线可列出、端口整单拒绝）——**登记件正在写**（树 `_build/wt-1754`，分支 `claude/issue-1754-mcp-diff-registry` 已推 fix-r2 `7375dcdb4`，第三轮评审中）；与 #1751 同批（MCP 两条未批准差异登记）；批准状态待人
 - #1751 | impl | doing | **决策 · MCP 未批准差异**：A6.5 per-session 目录寿命（TS close 即删 / Rust 迟到握手落地才删）——**登记件正在写**（与 #1754 同树同分支，`A6.5-MCP-SESSION-DIR-LIFETIME-001.md` 已推 fix-r2）；与 #1754 同批；批准状态待人
 <!-- READY:END -->
@@ -3704,3 +3704,4 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 > **壳泄漏清理**：主进程名下 54 个子 shell 里 **33 个是无上限 `until … sleep` 等待**——杀掉 7 个可证永假的 + 1 个卡 6 小时的 `ugrep`（stdin 是 socket，永远读不完）。
 > **新硬要求**：所有等待循环必须带终止上限（`timeout N` / `for i in {1..N}`）；等文件时同时验生产者 `kill -0 <pid>`；同一目标只留一个 watcher。
 > **资源**：交接时记录 `_build+_tmp` 168.3/200 GiB、worktree 42/60；本机 worker 2/2、cargo 1/2 贴顶，三台远端基本空闲。13:1x 本 PR 实测 `_build+_tmp` 已 **186.8 GiB**（过 160 WARN、逼近 185 开树硬闸）、worktree **44/60**。
+> **13:4x**：**READY 对账（state-only，逐条 `gh issue view` 实测）**：READY 65 行全部核过——**2 行 issue 已 CLOSED 却仍挂 in-flight**：#1348（doing，B2 路径加固关闭交付）、#1675（ready，P1 前置 api-web NOFOLLOW）→ 状态改 `done`，说明末尾追加「（issue 已关，2026-11-06 对账）」；**其余 63 行 issue 全 OPEN，未动**；查无此单 0 条。口径说明：协调者抽检的 #91/#1439/#1450/#1455/#553 出自**本机旧检出**（分支 `claude/tools-taskbook-segments-1105`、board 停在 11-05 20:2x），`origin/main` 的 READY 已无这五行，别照旧检出核队列（ops `next-task` 已改为只读 origin/main 快照）。
