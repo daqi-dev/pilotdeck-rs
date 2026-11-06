@@ -2499,6 +2499,24 @@ async fn native_settings_production_binds_no_notification_server() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// #1869 item 5: `settings_store_anchors_at_pilot_home_env` is the kill target
+/// of five roster mutants, so it panics on essentially every negative-control
+/// run. The scratch tree must therefore be removed by a guard, not by the
+/// success path's trailing `remove_dir_all` — that line never ran on the runs
+/// that matter and each of them left one `pdrs-1320-f3-<uuid>` directory
+/// behind.
+struct AnchorScratch(PathBuf);
+impl AnchorScratch {
+    fn new() -> Self {
+        Self(std::env::temp_dir().join(format!("pdrs-1320-f3-{}", uuid::Uuid::new_v4())))
+    }
+}
+impl Drop for AnchorScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// #1320 fix-r1 F3: the settings store anchors at PILOT_HOME from the
 /// environment — the same `resolvePilotHome` every other config read of the
 /// process uses (`NativeConfigSource`) — with `--home` only as the fallback
@@ -2511,7 +2529,8 @@ async fn native_settings_production_binds_no_notification_server() {
 /// the `--home` copy.
 #[tokio::test]
 async fn settings_store_anchors_at_pilot_home_env() {
-    let root = std::env::temp_dir().join(format!("pdrs-1320-f3-{}", uuid::Uuid::new_v4()));
+    let scratch = AnchorScratch::new();
+    let root = scratch.0.clone();
     let pilot_home = root.join("ph");
     let flag_home = root.join("home");
     let served_project = root.join("project");
@@ -2623,7 +2642,6 @@ async fn settings_store_anchors_at_pilot_home_env() {
         source_triples(&resolved) != source_triples(&flag_reference),
         "#1320 the resolved sources must not come from the --home copy"
     );
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// `(kind, path, contentHash)` per source: the fields that identify WHICH

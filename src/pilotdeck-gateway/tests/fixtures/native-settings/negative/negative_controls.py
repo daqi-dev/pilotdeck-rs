@@ -53,6 +53,17 @@ mutation. Every mutant targets the U7 settings wiring:
   ``resolve_settings`` success on the wire; the capability guard's success
   shape must red instead of accepting any non-``CAPABILITY_UNAVAILABLE``
   answer.
+* ``drop-source-hash`` (#1869 item 6) — the record serializer emits an empty
+  per-source ``contentHash``, which ``put_truthy`` drops one layer up, so the
+  field reaches the guard as *missing*. This is the one path
+  ``empty-source-hash`` deliberately does not take (it injects downstream of
+  the truthiness filter): the strict ``text_of`` string check must panic, not
+  the non-empty check.
+* ``flag-reference-path-lost`` (#1869 item 7) — only the ``--home`` copy's
+  file source loses its ``path``, so the non-vacuous loop's *third* side
+  (``flag_reference``) is the one that must red. ``drop-source-path`` removes
+  the path from every source and is therefore killed by the first side
+  (``resolved``), which cannot prove ``flag_reference`` is still in the loop.
 
 Every mutant is applied, proven to compile (``cargo test -p
 pilotdeck-gateway --lib --no-run``), run against its one named test, and
@@ -129,6 +140,16 @@ ANCHORS = 'native_process::services_tests::settings_store_anchors_at_pilot_home_
 DROP_PATH_MARKER = ('#1762 non-vacuous: resolved must carry at least one source '
                     'with a non-empty path')
 EMPTY_HASH_MARKER = '#1762 non-vacuous: source `contentHash` must be non-empty'
+# #1869 item 6: the strict string check's own panic branch (missing field, not
+# present-but-empty) had no mutant — `empty-source-hash` injects after the
+# truthiness filter and lands in the non-empty branch instead.
+MISSING_HASH_MARKER = ('#1762 non-vacuous: every source must carry a string '
+                       '`contentHash`')
+# #1869 item 7: the non-vacuous loop's third side. The marker names
+# `flag_reference` itself, so the kill proves that side is still in the loop
+# (a `resolved`-side kill would prove nothing about it).
+FLAG_PATH_MARKER = ('#1762 non-vacuous: flag_reference must carry at least one '
+                    'source with a non-empty path')
 # #1869 item 1: the top-level projection has its own non-empty guard; the
 # mutant below empties only that field, so the kill must name this marker
 # rather than `text_of`'s per-source one.
@@ -200,6 +221,26 @@ mutations = [
      '        if let Some(path) = &self.path {\n'
      '            let _ = path;\n'
      '        }', ANCHORS),
+    # #1869 item 7: the same site, but only the `--home` copy loses its path,
+    # so the kill has to come from the loop's `flag_reference` side. The
+    # fixture's `--home` tree is `<scratch>/home`, which is what the suffix
+    # keys on; every other source keeps its path, so the `resolved` and
+    # `pilot_reference` sides stay green.
+    ('flag-reference-path-lost', SNAPSHOT,
+     '        if let Some(path) = &self.path {\n'
+     '            o.insert("path".into(), path.as_str().into());\n'
+     '        }',
+     '        if let Some(path) = &self.path\n'
+     '            && !path.ends_with("/home/pilotdeck.yaml")\n'
+     '        {\n'
+     '            o.insert("path".into(), path.as_str().into());\n'
+     '        }', ANCHORS),
+    # #1869 item 6: empty the per-source hash *upstream* of `put_truthy`, so the
+    # projection drops the field and the strict `text_of` string check sees a
+    # missing value — the branch `empty-source-hash` cannot reach.
+    ('drop-source-hash', SNAPSHOT,
+     '        o.insert("contentHash".into(), self.content_hash.as_str().into());',
+     '        o.insert("contentHash".into(), "".into());', ANCHORS),
     ('empty-source-hash', SETTINGS,
      '    for key in ["path", "contentHash", "phase"] {\n'
      '        put_truthy(&mut out, value, key);\n'
@@ -256,6 +297,8 @@ MARKERS = {
     'unbind-reload-config': UNBIND_MARKER,
     'unbind-reload-extensions': UNBIND_EXTENSIONS_MARKER,
     'drop-source-path': DROP_PATH_MARKER,
+    'flag-reference-path-lost': FLAG_PATH_MARKER,
+    'drop-source-hash': MISSING_HASH_MARKER,
     'empty-source-hash': EMPTY_HASH_MARKER,
     'empty-top-level-hash': TOP_HASH_MARKER,
     'hollow-resolve-shape': SHAPE_MARKER,
@@ -265,7 +308,7 @@ MARKERS = {
 # the row count *and* the roster (order and repeats included) as literals, and
 # require MARKERS to cover exactly the roster, so a dropped, renamed or
 # duplicated mutation is refused before anything runs.
-EXPECTED_TOTAL = 12
+EXPECTED_TOTAL = 14
 EXPECTED_NAMES = (
     'miss-wire-reload-extensions',
     'no-attach',
@@ -275,6 +318,8 @@ EXPECTED_NAMES = (
     'unbind-reload-config',
     'unbind-reload-extensions',
     'drop-source-path',
+    'flag-reference-path-lost',
+    'drop-source-hash',
     'empty-source-hash',
     'empty-top-level-hash',
     'hollow-resolve-shape',
