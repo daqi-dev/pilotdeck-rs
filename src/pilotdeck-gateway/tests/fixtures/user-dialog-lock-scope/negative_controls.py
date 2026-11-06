@@ -98,6 +98,11 @@ STORE_WRITE_TEST = ('user_dialog::channel_tests::'
                     'publishing_a_bus_entry')
 STORE_WRITE_ASSERTION = ('#1599 a registration replaced during its store write '
                          'must end with the replacement error')
+CLAIM_PUBLISH_TEST = ('user_dialog::channel_tests::'
+                      'a_registration_replaced_during_its_owner_claim_ends_without_'
+                      'publishing_a_bus_entry')
+CLAIM_PUBLISH_ASSERTION = ('#1599 a registration replaced during its owner claim '
+                           'must not publish a bus entry')
 OBSERVER_REPLACE_TEST = ('user_dialog::channel_tests::'
                          'a_registration_replaced_by_the_change_observer_ends_'
                          'without_installing_a_poll')
@@ -333,12 +338,16 @@ mutations = [
      '.is_some_and(|entry| entry.registration == registration)',
      '.is_some_and(|entry| entry.registration >= registration)',
      REPLACED_POLL_TEST, REPLACED_POLL_ASSERTION),
-    # channel.begin: a registration replaced by a reentrant store write still
+    # channel.begin: a registration replaced by a reentrant owner claim still
     # publishes its bus entry, taking the bucket back from the replacement.
+    # #1599 r11（GLM boundary P1 + DeepSeek sibling/boundary P1）：这一行只能被
+    # `claim_stored_owner` 内的重入触发——`store.put` 内的重入会先被 persist 自己
+    # 的 store-write 复查拦下（`channel.rs` persist），begin 根本走不到这里；原先
+    # 绑在 store-write 用例上时变异体逐字节等价，整行 SURVIVED。
     ('superseded-registration-publishes-a-bus-entry', 'user_dialog/channel.rs',
      'if self.end_if_superseded(&state, "store write") {',
      'if false && self.end_if_superseded(&state, "store write") {',
-     STORE_WRITE_TEST, STORE_WRITE_ASSERTION),
+     CLAIM_PUBLISH_TEST, CLAIM_PUBLISH_ASSERTION),
     # channel.begin: a registration replaced by the change observer installs
     # its poll anyway, so its waiter never ends and no bus entry can answer it.
     ('superseded-registration-installs-its-poll', 'user_dialog/channel.rs',
