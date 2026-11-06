@@ -1647,37 +1647,11 @@ impl SubmitHostServices for Services {
 // ------------------------------------------------ U7 native settings (#1320)
 use crate::config::store::{ConfigStore, StoreOptions};
 use crate::runtime::refresh::{
-    ConsoleLog, MemoryMaintenance, RefreshBundle, RefreshLog, RefreshOptions, RefreshRegistry,
+    ConsoleLog, NoMemoryMaintenance, RefreshBundle, RefreshLog, RefreshOptions, RefreshRegistry,
     RefreshRouter, RegistryRefresh,
 };
 use crate::runtime::session::SessionOwner;
-use crate::runtime::settings::{
-    ResolveSettings, SettingsError, SettingsGateway, SettingsGatewayOptions,
-};
-
-/// `memoryMaintenance` for the native settings bundle. Only
-/// `afterTurnCompleted` schedules through it, and the native turn lifecycle
-/// does not drive the settings bundle, so the composition binds a no-op like
-/// the TS golden's contained assembly; the real
-/// `ProjectMemoryMaintenanceController` is a memory-ticket concern.
-struct NoSettingsMaintenance;
-impl MemoryMaintenance for NoSettingsMaintenance {
-    fn schedule(&self, _project_key: &JsString) -> crate::runtime::project::RuntimeResult {
-        Ok(())
-    }
-}
-
-/// `options.resolveSettings` (createLocalGateway.ts:1402): the current
-/// snapshot projected through `toGatewayResolvedSettings`, which is
-/// [`ConfigStore::resolved_settings`].
-struct NativeResolvedSettings {
-    store: ConfigStore,
-}
-impl ResolveSettings for NativeResolvedSettings {
-    fn resolve(&self) -> Result<JsValue, SettingsError> {
-        Ok(self.store.resolved_settings())
-    }
-}
+use crate::runtime::settings::{ResolvedSettingsPort, SettingsGateway, SettingsGatewayOptions};
 
 /// The native U7 settings composition inputs. `router` and `registry` are the
 /// bundle's collaborators as ports: production binds the session owner and
@@ -1751,7 +1725,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
         config_store: Arc::new(store.clone()),
         registry,
-        memory_maintenance: Arc::new(NoSettingsMaintenance),
+        memory_maintenance: Arc::new(NoMemoryMaintenance),
         router: Arc::new(move || Some(router.clone())),
         project_root,
         memory_diagnostics: None,
@@ -1766,7 +1740,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         owner,
         apply_flag_settings: None,
         update_settings: None,
-        resolve_settings: Some(Arc::new(NativeResolvedSettings {
+        resolve_settings: Some(Arc::new(ResolvedSettingsPort {
             store: store.clone(),
         })),
         reload_output_styles: None,

@@ -122,6 +122,22 @@ pub trait MemoryMaintenance: Send + Sync {
     fn schedule(&self, project_key: &JsString) -> RuntimeResult;
 }
 
+/// The no-op `memoryMaintenance` binding. Only `afterTurnCompleted` schedules
+/// through it and the native turn lifecycle does not drive the settings
+/// bundle, so the composition binds a no-op like the TS golden's contained
+/// assembly; the real `ProjectMemoryMaintenanceController` is a memory-ticket
+/// concern.
+///
+/// #1748 item 4: the production composition and the settings replay harness
+/// each carried their own byte-identical no-op. One implementation now, so a
+/// change to the scheduling contract cannot leave one of them behind.
+pub(crate) struct NoMemoryMaintenance;
+impl MemoryMaintenance for NoMemoryMaintenance {
+    fn schedule(&self, _project_key: &JsString) -> RuntimeResult {
+        Ok(())
+    }
+}
+
 /// `logMemoryDiagnostic` and `summarizeMessages`; present only when memory
 /// diagnostics are enabled (`memoryDiagnosticsEnabled`).
 pub trait MemoryDiagnostics: Send + Sync {

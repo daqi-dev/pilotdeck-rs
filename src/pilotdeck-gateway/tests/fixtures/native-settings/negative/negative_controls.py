@@ -18,10 +18,12 @@ mutation. Every mutant targets the U7 settings wiring:
 * ``error-code-rewrite`` — ``settings_error`` collapses every
   ``SettingsError`` code to ``gateway_request_failed``; the replay compares
   the error codes of eight oracle rows cell by cell against the TS golden.
-* ``stale-generation`` — ``NativeResolvedSettings`` resolves from a snapshot
+* ``stale-generation`` — ``ResolvedSettingsPort`` resolves from a snapshot
   taken at assembly time (two rows: the struct field and its initialization
   are applied together); the reconnect test's second read must see the new
-  generation, not the assembly-time one.
+  generation, not the assembly-time one. (#1748 item 4 moved that adapter
+  from ``services.rs`` into ``runtime/settings/gateway.rs`` so production and
+  the replay harness share one port, hence the split anchors.)
 * ``broadcast-before-dirty`` — the reload settlement swaps
   ``mark_all_dirty`` and ``broadcast``; the dirty-then-broadcast order test
   pins markAllDirty first.
@@ -144,11 +146,12 @@ SHAPE_MARKER = ('#1869 advertised settings method resolve_settings must answer '
 # inside that test's own panic payload.
 mutations = [
     ('miss-wire-reload-extensions', GATEWAY,
-     '    "reload_config",\n'
-     '    "reload_extensions",\n'
-     '];',
-     '    "reload_config",\n'
-     '];', REGISTRY),
+     # #1748 item 2: the member line alone, not the array tail. Anchoring
+     # `...\n];` pinned `reload_extensions` as METHODS' last entry, so adding
+     # a seventh method would expire the anchor (and, under `-O`, would have
+     # silently mutated nothing).
+     '    "reload_extensions",\n',
+     '', REGISTRY),
     ('no-attach', SERVICES,
      '    bundle.attach();',
      '    // negative control: attach skipped', RECONNECT),
@@ -158,29 +161,29 @@ mutations = [
      '            .map(|code| String::from_utf16_lossy(code.units()))\n'
      '            .unwrap_or_else(|| "gateway_request_failed".into()),',
      '        code: "gateway_request_failed".into(),', REPLAY),
-    ('stale-generation', SERVICES,
-     'struct NativeResolvedSettings {\n'
-     '    store: ConfigStore,\n'
+    ('stale-generation', GATEWAY,
+     'pub(crate) struct ResolvedSettingsPort {\n'
+     '    pub(crate) store: ConfigStore,\n'
      '}\n'
-     'impl ResolveSettings for NativeResolvedSettings {\n'
+     'impl ResolveSettings for ResolvedSettingsPort {\n'
      '    fn resolve(&self) -> Result<JsValue, SettingsError> {\n'
      '        Ok(self.store.resolved_settings())\n'
      '    }\n'
      '}',
-     'struct NativeResolvedSettings {\n'
-     '    store: ConfigStore,\n'
+     'pub(crate) struct ResolvedSettingsPort {\n'
+     '    pub(crate) store: ConfigStore,\n'
      '    snapshot: std::sync::Mutex<JsValue>,\n'
      '}\n'
-     'impl ResolveSettings for NativeResolvedSettings {\n'
+     'impl ResolveSettings for ResolvedSettingsPort {\n'
      '    fn resolve(&self) -> Result<JsValue, SettingsError> {\n'
      '        Ok(self.snapshot.lock().expect("#1320").clone())\n'
      '    }\n'
      '}', RECONNECT),
     ('stale-generation', SERVICES,
-     '        resolve_settings: Some(Arc::new(NativeResolvedSettings {\n'
+     '        resolve_settings: Some(Arc::new(ResolvedSettingsPort {\n'
      '            store: store.clone(),\n'
      '        })),',
-     '        resolve_settings: Some(Arc::new(NativeResolvedSettings {\n'
+     '        resolve_settings: Some(Arc::new(ResolvedSettingsPort {\n'
      '            snapshot: std::sync::Mutex::new(store.resolved_settings()),\n'
      '            store: store.clone(),\n'
      '        })),', RECONNECT),
@@ -455,9 +458,29 @@ with mutating_sources(root, sorted({root / row[1]
                 f'{baseline_line}\n\nINVALID: {type(error).__name__}: {error}\n')
             failures.append(name)
         finally:
+            restore_failure = None
             for path in paths:
                 path.write_bytes(snapshots[path])
-                assert hashlib.sha256(path.read_bytes()).hexdigest() == before[path]
+                # #1538 / #1748 item 2: an explicit check, not a bare
+                # `assert` — `python3 -O` strips asserts, and an unverified
+                # restore is exactly how a mutant's bytes survive into the
+                # next row (or into a commit). Record the break *before*
+                # raising so the evidence files below still get written;
+                # raising first would leave the previous all-KILLED prefix on
+                # disk as the last word.
+                restored = (hashlib.sha256(path.read_bytes()).hexdigest()
+                            == before[path])
+                if not restored and restore_failure is None:
+                    restore_failure = (
+                        f'{path.relative_to(root).as_posix()} was not restored '
+                        f'to its baseline bytes')
+            if restore_failure is not None:
+                failures.append(name)
+                summary.append(dict(name=name, test=test, status='INVALID',
+                                    reason=f'restore failed: {restore_failure}',
+                                    baseline=baseline_sha,
+                                    baselineSource=baseline_source,
+                                    hostEvidence=baseline_source == 'HEAD'))
             (out / 'summary.json').write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
             (out / 'baseline.json').write_text(json.dumps(
@@ -466,6 +489,9 @@ with mutating_sources(root, sorted({root / row[1]
                  'hostEvidence': baseline_source == 'HEAD',
                  'mutations': [row['name'] for row in summary]},
                 ensure_ascii=False, indent=2) + '\n')
+            if restore_failure is not None:
+                raise RuntimeError(
+                    f'#1748 restore failed: {name}: {restore_failure}')
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
