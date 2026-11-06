@@ -11,11 +11,11 @@
 | 卡在哪 | 两张预写的差异件把 `createTask`/`updateTask` 在 `computeNextRunAt` 返回 `undefined` 时的行为写成「不是错误、只是不调度」，实现是抛错拒绝创建；登记形状与实现对不上 | 冻结账本（Homebrew Node）与项目基线（`cc7c4e65` 源码构建）在 `dir-unflagged` / `early-file` 两格上结论相反，要先定「对齐谁」 |
 | 人怎么批的 | 2026-11-06T02:51:39Z，issue #1644 评论原文「按照推荐，选 2」 | 2026-11-06，issue #1640 评论原文「1 和 2 都行，怎么快怎么来」→ 协调者据此定 **选项 1** |
 | 执行 | 给 `A8.3-CRON-TZ-ALIAS-001` 与 `A8.3-CRON-ONCE-LOCALWALL-001` 各新增一份 `-R1.md`，把差异形状改成真实行为（**已由 #1767 落地**） | 不改代码、不改 `oracle.json`；给 `A6.4-TLS-CA-SOURCES-001` 新增 `-R2.md` 登记裁决与代价；另开跟进单 #1865 |
-| 谁受影响 | 在缺 tzdata-legacy 的 Linux 宿主上用 legacy 别名 zone 建 cron 任务的用户（接线在 #1326 后可见） | 默认模式 + 设了 `SSL_CERT_DIR` 的用户；信任集合比项目基线 Node 宽 |
+| 谁受影响 | 在缺 tzdata-legacy 的 Linux 宿主上用 legacy 别名 zone 建 cron 任务的用户（接线在 #1326 后可见） | 默认模式下设了 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 的用户；在这两个来源上信任的 CA 比项目基线 Node 多（不是整体集合的超集，边界见 `-R2.md`「范围」） |
 | 能否撤回 | 能。删掉新增的更正件即回到原文；实现未改 | 能。跟进单 #1865 若改判选项 2，需改 `oracle.json` **8 格**期望（清单见 `-R2.md`）+ 代码分支 + 再补一份更正件 |
 | 动不动尺子 / 意向 | **不动**。判分语义、`oracle.json`、阈值、`FROZEN.md` 均未改；只新增 `diffs/<ID>-R<n>.md`，规则见 `specs/gateway-parity/diffs/README.md`「新增条目只新增文件……不改 FROZEN.md」 | **不动**。选项 1 的定义就是「不改 `oracle.json`」；`private_ca` 60 格在测试当前口径下全绿。60 格的构成（56 对齐 + 4 注册差异）与「`early-file` 只有 1 格靠运行时改写期望才通过」的细节只在 `-R2.md`「全绿」段写一份，本卡不复制 |
 | 理由 | 「表达式非法」这一源上 TS 自己就抛同一句错（金样 `native-cron/oracle.json` 的 `create-errors` 第 8 步已钉），三源统一 fail-closed 是**与 TS 更一致**的一侧；选项 1 要凭空造一个 TS 里不存在的「已落盘但不排期」持久化状态，其消费者还在 #1326 | 选项 1 **零改尺子**、本单内可闭环；选项 2 要改 `tests/fixtures/private-ca/oracle.json` 的 **8 格**期望（判分语义变更，清单见 `-R2.md`），须另走一次明确授权 |
-| 代价（必须记住） | 无新增代价：实现行为不变，只是登记变诚实 | **安全相关放宽**：默认模式下 Rust 比项目基线（源码构建 Node）多信任 `SSL_CERT_DIR` 里的 CA，基线拒绝的内部/自签站点 Rust 会接受。登记为 **#1865**（`P2-跟进`，前置于 A6.4 差异族收尾节点） |
+| 代价（必须记住） | 无新增代价：实现行为不变，只是登记变诚实 | **安全相关放宽**：默认模式下 Rust 读 `SSL_CERT_FILE` / `SSL_CERT_DIR` 两个来源，项目基线（源码构建 Node）两个都不读——基线拒绝的内部/自签站点 Rust 可能接受。反方向也有（Rust 跳过 >8 MiB bundle），故不宣称整体超集。登记为 **#1865**（`P2-跟进`，前置于 A6.4 差异族收尾节点） |
 | 持久指针 | issue #1644 评论（2026-11-06T02:51:39Z） | issue #1640 评论（2026-11-06） |
 | 产物 | `specs/gateway-parity/diffs/A8.3-CRON-TZ-ALIAS-001-R1.md`、`A8.3-CRON-ONCE-LOCALWALL-001-R1.md`（**已由 #1767 交付，main `a7960cd28`**） | `specs/gateway-parity/diffs/A6.4-TLS-CA-SOURCES-001-R2.md`、跟进单 #1865（**本卡所在 PR**） |
 
