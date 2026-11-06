@@ -1092,17 +1092,29 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
     expected
 }
 
+/// #1761: all three TS config states are checked, not just the default one.
+/// `oracle.json` carries `contract` / `contract.emptyStorage` /
+/// `contract.missingStorage`; they agree today, but once they diverge a
+/// capability that is only legal in the non-empty state must not be waved
+/// through by reading the first contract alone.
 fn assert_ts_capability_subset(expected: &[&str]) {
     let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 TS capability oracle");
-    let ts_capabilities = oracle["contract"]["capabilities"]
-        .as_array()
-        .expect("#1231 TS capability array");
-    negative_assert!(
-        expected
-            .iter()
-            .all(|capability| ts_capabilities.contains(&json!(capability))),
-        "#1231 wired capabilities are TS subset"
-    );
+    let contract = &oracle["contract"];
+    for (label, state) in [
+        ("contract", contract),
+        ("contract.emptyStorage", &contract["emptyStorage"]),
+        ("contract.missingStorage", &contract["missingStorage"]),
+    ] {
+        let ts_capabilities = state["capabilities"]
+            .as_array()
+            .unwrap_or_else(|| panic!("#1231 TS capability array missing at {label}"));
+        negative_assert!(
+            expected
+                .iter()
+                .all(|capability| ts_capabilities.contains(&json!(capability))),
+            "#1231 wired capabilities are TS subset ({label})"
+        );
+    }
 }
 
 /// #1320「公布 ⟺ 真能服务」三口径，三者有意不同：
@@ -1122,6 +1134,12 @@ fn assert_ts_capability_subset(expected: &[&str]) {
 /// 显式断言「真能服务且不在能力表」，证明不公布是有意的。settings 网关换成
 /// 生产组合（`services::native_settings_for_process`）——`stub_settings`
 /// 连 resolve_settings 都不可用，用它自证毫无意义。
+///
+/// #1761：两个名单不再手抄，从单一来源 `runtime::settings::METHODS` 二分派生
+/// （`METHODS ∩ TS 公布` = 四项，残留 = 两个 reload），并用 `METHODS.len() == 6`
+/// 锚定「六项」口径；两个 reload 断言正向成功形状 `{reloaded: true,
+/// changedPaths: [...]}` 而不是只排 `CAPABILITY_UNAVAILABLE`——委托缺失时
+/// 网关回答的是 `Ok({reloaded: false, reason: "unsupported"})`，排它恒真。
 #[tokio::test]
 async fn settings_capabilities_match_served_delegates() {
     let (_scratch, mut requests) = setup();
@@ -1149,12 +1167,44 @@ async fn settings_capabilities_match_served_delegates() {
             .collect(),
         _ => panic!("#1320 describe_server must carry a capabilities array"),
     };
-    for method in [
-        "apply_flag_settings",
-        "update_settings",
-        "resolve_settings",
-        "reload_output_styles",
-    ] {
+    // #1761: one source of truth for both halves of the loop. `METHODS` is the
+    // registry table the guard is about; the TS contract decides which of its
+    // entries are published, so neither list below is hand-copied. A method
+    // added to or dropped from `METHODS` therefore changes this test instead of
+    // silently escaping it (the count anchor pins the "six" claim the doc
+    // comment and #1320 report).
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1320 TS capability oracle");
+    let ts_capabilities: Vec<&str> = oracle["contract"]["capabilities"]
+        .as_array()
+        .expect("#1320 TS capability array")
+        .iter()
+        .map(|capability| {
+            capability
+                .as_str()
+                .expect("#1320 TS capability entries are strings")
+        })
+        .collect();
+    let methods = crate::runtime::settings::METHODS;
+    negative_assert_eq!(
+        methods.len(),
+        6,
+        "#1761 the settings registry table must stay six methods"
+    );
+    let (published, reloads): (Vec<&str>, Vec<&str>) =
+        methods.iter().copied().partition(|method| {
+            ts_capabilities
+                .iter()
+                .any(|capability| capability == method)
+        });
+    // TS publishes four of the six in every config state; the residue is the
+    // two reloads this guard is here to defend. If the split ever changes, the
+    // assertion below fails instead of quietly shrinking the guard.
+    negative_assert_eq!(
+        reloads,
+        vec!["reload_config", "reload_extensions"],
+        "#1761 the TS-unpublished settings methods must be the two reloads"
+    );
+    for &method in &published {
         let result = requests
             .settings_request(method.to_owned(), JsValue::Undefined)
             .await;
@@ -1188,14 +1238,34 @@ async fn settings_capabilities_match_served_delegates() {
     // really served (real refresh delegates in the production composition),
     // yet deliberately unadvertised — TS never publishes them in any config
     // state, and the advertised set must stay a TS subset.
-    for method in ["reload_config", "reload_extensions"] {
+    //
+    // #1761: the assertion is the success SHAPE, not the absence of one error
+    // code. A missing delegate answers `Ok({reloaded: false, reason:
+    // "unsupported"})` (runtime/settings/gateway.rs unsupported()), and a
+    // renamed dispatch arm answers `gateway_request_failed`; neither carries
+    // CAPABILITY_UNAVAILABLE, so the old `!matches!(.. CAPABILITY_UNAVAILABLE)`
+    // was true for both regressions.
+    for &method in &reloads {
         let result = requests
             .settings_request(method.to_owned(), JsValue::Undefined)
             .await;
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => panic!(
+                "#1761 registered settings method {method} has a real delegate and must \
+                 answer the reload success shape, got {}: {}",
+                error.code,
+                String::from_utf16_lossy(error.message.units())
+            ),
+        };
         negative_assert!(
-            !matches!(&result, Err(error) if error.code == "CAPABILITY_UNAVAILABLE"),
-            "#1320 registered settings method {method} has a real delegate and must not \
-             answer CAPABILITY_UNAVAILABLE over the production stack"
+            matches!(value.get("reloaded"), Some(JsValue::Bool(true))),
+            "#1761 settings method {method} must answer reloaded: true from its real \
+             delegate over the production stack, got: {value:?}"
+        );
+        negative_assert!(
+            matches!(value.get("changedPaths"), Some(JsValue::Array(_))),
+            "#1761 settings method {method} must answer a changedPaths array, got: {value:?}"
         );
         negative_assert!(
             !advertised.iter().any(|name| name == method),

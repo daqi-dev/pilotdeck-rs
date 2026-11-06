@@ -4,7 +4,7 @@ must be killed by its named test's own assertion markers, then restore.
 
 Run with no other writers/builds in this worktree. Evidence goes in a new
 output folder; original source bytes and hashes are verified after every
-mutation. The five mutants all target the U7 settings wiring:
+mutation. The six mutants all target the U7 settings wiring:
 
 * ``miss-wire-reload-extensions`` — the settings family no longer registers
   ``reload_extensions``; the #1305 registry inventory pins every wired wire
@@ -25,6 +25,11 @@ mutation. The five mutants all target the U7 settings wiring:
 * ``broadcast-before-dirty`` — the reload settlement swaps
   ``mark_all_dirty`` and ``broadcast``; the dirty-then-broadcast order test
   pins markAllDirty first.
+* ``unbind-reload-config`` (#1761) — the production composition drops the
+  ``reload_config`` delegate, so the gateway answers
+  ``{reloaded: false, reason: "unsupported"}``; the capability guard's
+  positive success-shape assertion must catch it. This is the negative half
+  of the pair: the assertion and the mutant exist together.
 
 Every mutant is applied, proven to compile (``cargo test -p
 pilotdeck-gateway --lib --no-run``), run against its one named test, and
@@ -74,6 +79,12 @@ REGISTRY = 'native_process::methods::tests::registry_matches_current_methods'
 REPLAY = 'native_process::settings_tests::native_settings_replays_the_real_ts_oracle'
 RECONNECT = 'native_process::settings_tests::resolve_settings_generation_across_reconnect'
 ORDER = 'native_process::settings_tests::reload_config_dirty_then_broadcast_order'
+# #1761: the capability guard's positive reload assertion lives in the
+# management suite; the mutant that unbinds the delegate is composed in
+# services.rs, so the pair spans the two files on purpose.
+CAPABILITIES = 'native_process::management_tests::settings_capabilities_match_served_delegates'
+UNBIND_MARKER = ('#1761 settings method reload_config must answer reloaded: true '
+                 'from its real delegate')
 # Each row: (name, source path, original anchor text, mutant text, killed test).
 # Rows sharing a name are one mutant: every edit is applied together and the
 # group gets one compile gate, one kill run and one verdict ('stale-generation'
@@ -121,6 +132,9 @@ mutations = [
      '            snapshot: std::sync::Mutex::new(store.resolved_settings()),\n'
      '            store: store.clone(),\n'
      '        })),', RECONNECT),
+    ('unbind-reload-config', SERVICES,
+     '        reload_config: Some(bundle.clone()),',
+     '        reload_config: None,', CAPABILITIES),
     ('broadcast-before-dirty', REFRESH,
      '                if let Some(router) = router {\n'
      '                    router.mark_all_dirty("config_changed");\n'
@@ -139,7 +153,18 @@ MARKERS = {
     'stale-generation': '#1320 reconnect: a reconnected client reads the new generation',
     'broadcast-before-dirty': ('#1320 dirty-then-broadcast: markAllDirty must '
                               'run before the broadcast'),
+    'unbind-reload-config': UNBIND_MARKER,
 }
+
+
+class StaleAnchor(Exception):
+    """An anchor no longer matches exactly once.
+
+    Raised inside the per-mutant ``try`` so an expired anchor is that mutant's
+    INVALID verdict, not a dead run: the remaining mutants still get their
+    compile gate and kill run. The previous bare ``assert`` was caught by the
+    same ``except Exception`` but read like a run-level abort (see #1761).
+    """
 # A dedicated exit code for "everything was killed, but the baseline was not
 # HEAD, so this run is not host evidence" — distinct from 1 (a mutant not
 # killed / INVALID) so automation and humans cannot mistake a green non-HEAD
@@ -233,8 +258,12 @@ with mutating_sources(root, sorted({root / row[1]
                 content = changed.get(path)
                 if content is None:
                     content = snapshots[path].decode()
-                # An expired anchor is an error exit, never a SURVIVED verdict.
-                assert content.count(old) == 1, (name, relative, content.count(old))
+                # An expired anchor is this mutant's INVALID, never a SURVIVED
+                # verdict and never an abort of the whole run.
+                count = content.count(old)
+                if count != 1:
+                    raise StaleAnchor(
+                        f'{name}: {relative} anchor matched {count} times (expected 1)')
                 changed[path] = content.replace(old, new, 1)
             for path in paths:
                 original_text = snapshots[path].decode()

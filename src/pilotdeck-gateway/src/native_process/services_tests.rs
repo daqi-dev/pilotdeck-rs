@@ -2054,14 +2054,19 @@ async fn settings_store_anchors_at_pilot_home_env() {
     };
     let pilot_reference = reference(&pilot_home);
     let flag_reference = reference(&flag_home);
-    // #1320 non-vacuous: both sides must carry the compared fields before any
+    // #1320 non-vacuous: every side must carry the compared fields before any
     // comparison runs. A projection that stopped producing `sources` or
     // `contentHash` would otherwise pass vacuously (`[] == []`,
     // `Undefined == Undefined`) and silently retire this, the F3 production
     // anchor's only guard — a missing field must fail explicitly here.
+    //
+    // #1762: `flag_reference` is in the loop too. It only ever appeared in the
+    // `!=` comparison below, so a projection that emptied it kept
+    // `resolved != []` true and the anti-anchor control went vacuous.
     for (side, value) in [
         ("resolved", &resolved),
         ("pilot_reference", &pilot_reference),
+        ("flag_reference", &flag_reference),
     ] {
         negative_assert!(
             matches!(value.get("sources"), Some(JsValue::Array(sources)) if !sources.is_empty()),
@@ -2072,6 +2077,14 @@ async fn settings_store_anchors_at_pilot_home_env() {
             matches!(value.get("contentHash"), Some(JsValue::String(_))),
             "#1320 non-vacuous: {side} must carry a string contentHash — a missing field \
              must fail explicitly, not pass vacuously as Undefined == Undefined"
+        );
+        // #1762: env sources carry no `path` by design, so the per-source
+        // requirement above cannot cover `path`; the file source must survive
+        // on every side or the path half of the triple goes vacuous.
+        negative_assert!(
+            has_file_source(value),
+            "#1762 non-vacuous: {side} must carry at least one source with a non-empty path \
+             — dropping `path` from the projection must not pass as \"\" == \"\""
         );
     }
     negative_assert_eq!(
@@ -2103,32 +2116,90 @@ async fn settings_store_anchors_at_pilot_home_env() {
 /// #1320 non-vacuous: a missing or non-array `sources` is an explicit
 /// failure, not `Vec::new()`. The empty return used to let the anchor
 /// comparison above pass vacuously when the projection stopped producing
-/// the field; the non-vacuous pre-assertions run first, and this fallback
-/// backstops them for the `--home` reference too, which only appears in
-/// the inequality comparison.
+/// the field.
+///
+/// #1762 non-vacuous: an empty array is a failure too, and the always-present
+/// per-source fields must be strings. `config/settings.rs::projected()`
+/// projects a missing `sources` to `JsonValue::Array([])`, so "missing"
+/// reaches this helper as `[]` — not as `Undefined` — and `[] == []` would
+/// pass the anchor comparison vacuously.
+///
+/// `path` is deliberately lenient: `config/snapshot.rs::SourceRecord::value`
+/// omits it for the `env` sources (`bootstrap_env` / `merge_env` carry
+/// `path: None` by design), so requiring a string on every source would fail
+/// on a healthy tree — measured, not assumed (#1762 item 3 assumed otherwise).
+/// The loss-of-field regression it is there to catch is covered by
+/// [`has_file_source`] in the non-vacuous loop above: every side must still
+/// carry at least one source with a real path, so a projection that stopped
+/// emitting `path` at all fails instead of comparing `("file", "", hash)`.
 fn source_triples(resolved: &JsValue) -> Vec<(String, String, String)> {
-    match resolved.get("sources") {
-        Some(JsValue::Array(sources)) => sources
-            .iter()
-            .map(|source| {
-                (
-                    text_of(source, "kind"),
-                    text_of(source, "path"),
-                    text_of(source, "contentHash"),
-                )
-            })
-            .collect(),
+    let sources = match resolved.get("sources") {
+        Some(JsValue::Array(sources)) => sources,
         _ => panic!(
             "#1320 non-vacuous: sources must be present as an array before its triples are \
              compared — a missing field must fail explicitly, not pass vacuously"
         ),
+    };
+    negative_assert!(
+        !sources.is_empty(),
+        "#1762 non-vacuous: sources must not be an empty array — the projection maps a \
+         missing field to [], and [] == [] would pass vacuously"
+    );
+    sources
+        .iter()
+        .map(|source| {
+            (
+                text_of(source, "kind"),
+                optional_path_of(source),
+                text_of(source, "contentHash"),
+            )
+        })
+        .collect()
+}
+
+/// #1762: `kind` and `contentHash` are always present on a projected source
+/// (`SourceRecord` builds both unconditionally). A missing or non-string value
+/// is an explicit failure: the old `unwrap_or_default()` compared `("", "")`
+/// with `("", "")` and let a source that lost the field pass the anchor
+/// comparison.
+fn text_of(value: &JsValue, key: &str) -> String {
+    let text = match value.get(key) {
+        Some(JsValue::String(text)) => text,
+        _ => panic!(
+            "#1762 non-vacuous: every source must carry a string `{key}` before its triples \
+             are compared — a missing or non-string field must fail explicitly, not pass \
+             vacuously as an empty string"
+        ),
+    };
+    text.to_utf8().unwrap_or_else(|_| {
+        panic!("#1762 non-vacuous: source `{key}` must be valid UTF-8, not lossy text")
+    })
+}
+
+/// `path` is absent on the `env` sources by construction and present whenever
+/// the source came from a file. Absent is `""`; present-but-not-a-string is a
+/// failure, because that can only be a projection bug.
+fn optional_path_of(source: &JsValue) -> String {
+    match source.get("path") {
+        None => String::new(),
+        Some(JsValue::String(text)) => text.to_utf8().unwrap_or_else(|_| {
+            panic!("#1762 non-vacuous: source `path` must be valid UTF-8, not lossy text")
+        }),
+        Some(other) => panic!(
+            "#1762 non-vacuous: a source `path` must be a string when present, got: {other:?}"
+        ),
     }
 }
 
-fn text_of(value: &JsValue, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_default()
+/// #1762: at least one source must still name a file. Without it, a
+/// projection that stopped emitting `path` on the file sources would compare
+/// `("file", "", hash) == ("file", "", hash)` and report a clean anchor.
+fn has_file_source(value: &JsValue) -> bool {
+    match value.get("sources") {
+        Some(JsValue::Array(sources)) => sources.iter().any(|source| {
+            matches!(source.get("path"), Some(JsValue::String(text))
+                if text.to_utf8().is_ok_and(|path| !path.is_empty()))
+        }),
+        _ => false,
+    }
 }
