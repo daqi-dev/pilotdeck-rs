@@ -1399,3 +1399,86 @@ fn active_chat_admission_is_first_come_only_and_releases_on_drop() {
         "#1738 dropping the guard frees the chat for the next turn"
     );
 }
+
+// #1763 / #1694 §7: `weixin` and `feishu` are `ChannelAdapterBundle` keys
+// outside both the loader table and `UNMIGRATED_CHANNEL_KEYS`, so the
+// unmigrated seam above never looks at them. The assembly closes that hole by
+// declaring which bundle keys it actually constructs; an enabled one it
+// cannot build refuses startup instead of silently skipping.
+#[test]
+fn bundle_gate_rejects_an_enabled_key_with_no_implementation() {
+    let adapters = enabled_adapters(&["feishu"]);
+    let result = reject_unimplemented_bundle_channels(Some(&adapters), &["weixin"]);
+    crate::negative_assert!(
+        result.is_err(),
+        "#1763 enabled bundle key without an implementation must reject"
+    );
+    crate::negative_assert_eq!(
+        result
+            .expect_err("#1763 checked bundle rejection")
+            .to_js_string(),
+        format!("Error: [adapters] channel \"feishu\" {UNMIGRATED_REJECTION_PHRASE}"),
+        "#1763 bundle rejection message shape"
+    );
+}
+
+#[test]
+fn bundle_gate_accepts_an_implemented_key() {
+    for key in BUNDLE_CHANNEL_KEYS {
+        let result = reject_unimplemented_bundle_channels(Some(&enabled_adapters(&[key])), &[key]);
+        crate::negative_assert!(
+            result.is_ok(),
+            "#1763 implemented bundle key must not be rejected"
+        );
+    }
+}
+
+// `weixin` is the one bundle key the native assembly builds today, so the
+// production declaration must keep it; dropping it would reject the only
+// migrated bundle channel. `feishu` stays out until #1329 lands its
+// construction (that unit adds both the adapter and the key).
+#[test]
+fn implemented_bundle_keys_are_exactly_the_assembled_weixin() {
+    crate::negative_assert_eq!(
+        crate::native_process::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
+        &["weixin"],
+        "#1763 assembly declares exactly the bundle keys it constructs"
+    );
+    crate::negative_assert!(
+        !BUNDLE_CHANNEL_KEYS
+            .iter()
+            .any(|key| UNMIGRATED_CHANNEL_KEYS.contains(key)),
+        "#1763 bundle gate covers the keys the unmigrated seam does not"
+    );
+}
+
+// Both bundle constructors gate on strict `=== true`, like qq / wecom: a raw
+// object with `enabled: 1` builds nothing in TS and must not reject.
+#[test]
+fn bundle_gate_requires_strict_boolean_true() {
+    for key in BUNDLE_CHANNEL_KEYS {
+        for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
+            let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{truthy}}}}}"));
+            crate::negative_assert!(
+                reject_unimplemented_bundle_channels(Some(&adapters), &[]).is_ok(),
+                "#1763 bundle gate requires strict enabled === true"
+            );
+        }
+        for falsy in ["false", "0", "null", "\"\""] {
+            let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{falsy}}}}}"));
+            crate::negative_assert!(
+                reject_unimplemented_bundle_channels(Some(&adapters), &[]).is_ok(),
+                "#1763 disabled bundle key must not reject"
+            );
+        }
+        let absent = adapters_config(&format!("{{\"{key}\":{{}}}}"));
+        crate::negative_assert!(
+            reject_unimplemented_bundle_channels(Some(&absent), &[]).is_ok(),
+            "#1763 bundle key without enabled must not reject"
+        );
+    }
+    crate::negative_assert!(
+        reject_unimplemented_bundle_channels(None, &[]).is_ok(),
+        "#1763 no adapters must not reject"
+    );
+}

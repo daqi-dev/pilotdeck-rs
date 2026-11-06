@@ -612,3 +612,122 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
         "#1328 close reports the stopped state"
     );
 }
+
+// #1763 / #1386 / #1302 B: the production native startup must refuse a config
+// that enables a channel this process does not implement. These drive
+// `assembly::start` — the entry `native_process::run` uses — so deleting the
+// call site, downgrading it to a warning, or turning it into a silent skip
+// fails here; the seam-level tests in `channel::tests` alone would stay green.
+const UNMIGRATED_REJECTION_PHRASE: &str = "未迁移到 Rust，需继续使用 TS gateway";
+
+/// The base config `management_tests::setup` writes, plus the given
+/// `adapters:` body (`""` leaves the section out entirely). Starts the real
+/// native assembly over it and returns the startup error text, if any.
+async fn start_with_adapters(adapters_yaml: &str) -> Result<(), String> {
+    let (_scratch, requests) = super::management_tests::setup();
+    crate::test_negative_receipt::expect_ok(
+        requests.project.dispose().await,
+        "#1763 dispose unused test registry",
+    );
+    crate::test_negative_receipt::expect_ok(
+        requests.owner.shutdown().await,
+        "#1763 shutdown unused test owner",
+    );
+    let config = requests.options.home.join("pilotdeck.yaml");
+    let mut body = crate::test_negative_receipt::expect_ok(
+        std::fs::read_to_string(&config),
+        "#1763 base config readable",
+    );
+    if !adapters_yaml.is_empty() {
+        body.push_str("adapters:\n");
+        body.push_str(adapters_yaml);
+    }
+    crate::test_negative_receipt::expect_ok(
+        std::fs::write(&config, body),
+        "#1763 config with adapters",
+    );
+    match super::assembly::start(requests.options.clone(), requests.env.clone()).await {
+        Ok(host) => {
+            crate::test_negative_receipt::expect_ok(
+                host.shutdown(requests.options.drain_budget).await,
+                "#1763 started host stopped",
+            );
+            Ok(())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn startup_error(result: Result<(), String>, assertion: &'static str) -> String {
+    crate::test_negative_receipt::expect_err(result, assertion)
+}
+
+#[tokio::test]
+async fn startup_refuses_every_unmigrated_channel() {
+    for key in crate::channel::loader::UNMIGRATED_CHANNEL_KEYS {
+        let error = startup_error(
+            start_with_adapters(&format!("  {key}: {{enabled: true}}\n")).await,
+            "#1763 enabled unmigrated channel must refuse native startup",
+        );
+        crate::negative_assert!(
+            error.contains(&format!("channel \"{key}\"")),
+            "#1763 startup error names the enabled channel key"
+        );
+        crate::negative_assert!(
+            error.contains(UNMIGRATED_REJECTION_PHRASE),
+            "#1763 startup error carries the unmigrated phrase"
+        );
+    }
+}
+
+// #1694 §7: `feishu` is a bundle key outside the unmigrated table with no
+// native implementation yet (#1329). Without the assembly's implementation
+// check it would be today's silent skip under a different key name.
+#[tokio::test]
+async fn startup_refuses_unimplemented_feishu() {
+    let error = startup_error(
+        start_with_adapters("  feishu: {enabled: true}\n").await,
+        "#1763 enabled feishu must refuse native startup",
+    );
+    crate::negative_assert!(
+        error.contains("channel \"feishu\""),
+        "#1763 startup error names feishu"
+    );
+    crate::negative_assert!(
+        error.contains(UNMIGRATED_REJECTION_PHRASE),
+        "#1763 feishu startup error carries the unmigrated phrase"
+    );
+}
+
+// The control grid: the refusal must not misfire on configs TS starts with.
+#[tokio::test]
+async fn startup_accepts_configs_without_an_unmigrated_channel() {
+    crate::test_negative_receipt::expect_ok(
+        start_with_adapters("").await,
+        "#1763 a config with no adapters starts",
+    );
+    crate::test_negative_receipt::expect_ok(
+        start_with_adapters(
+            "  apiServer: {enabled: true}\n  webhook: {enabled: true}\n  \
+             sms: {enabled: true}\n  wecomCallback: {enabled: true}\n",
+        )
+        .await,
+        "#1763 the in-scope subset channels start",
+    );
+    let mut disabled = String::new();
+    for key in crate::channel::loader::UNMIGRATED_CHANNEL_KEYS {
+        disabled.push_str(&format!("  {key}: {{enabled: false}}\n"));
+    }
+    crate::test_negative_receipt::expect_ok(
+        start_with_adapters(&disabled).await,
+        "#1763 disabled unmigrated channels start",
+    );
+    // `weixin` is implemented, so the gate must not reject it. The enabled
+    // case is not driven through `start`: the real adapter would dial the QR
+    // login endpoint (#1328 covers its construction through the
+    // `weixin_maker` seam), and that is not something a unit test may do.
+    crate::test_negative_receipt::expect_ok(
+        start_with_adapters("  weixin: {enabled: false}\n").await,
+        "#1763 a disabled implemented bundle channel starts",
+    );
+}

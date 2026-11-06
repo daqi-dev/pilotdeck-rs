@@ -477,15 +477,34 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 return Err(error.into());
             }
         };
+        let config = config
+            .get("config")
+            .cloned()
+            .unwrap_or_else(|| JsValue::Object(JsObject::new()));
+        // #1302 B / #1386 / #1694 §7: a config that enables a channel Rust
+        // does not implement refuses startup here, before `NativeChannels` is
+        // constructed and therefore before any adapter construction or
+        // `console.error` line. The error propagates out of `start` (and so
+        // out of `native_process::run`), which is the observable output: the
+        // process exits nonzero naming the key instead of starting with a
+        // channel that will never respond. The second check covers the
+        // bundle keys outside `UNMIGRATED_CHANNEL_KEYS` (`weixin` is built,
+        // `feishu` is not yet — #1329).
+        let rejected = crate::channel::loader::reject_unmigrated_channels(config.get("adapters"))
+            .and_then(|()| {
+                crate::channel::loader::reject_unimplemented_bundle_channels(
+                    config.get("adapters"),
+                    super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
+                )
+            });
+        if let Err(error) = rejected {
+            let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
+            return Err(error.into());
+        }
         Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 pilot_home: options.home.clone(),
-                config: Arc::new(
-                    config
-                        .get("config")
-                        .cloned()
-                        .unwrap_or_else(|| JsValue::Object(JsObject::new())),
-                ),
+                config: Arc::new(config),
                 weixin: crate::channel::weixin::WeixinChannelOptions::default(),
                 weixin_maker: None,
                 log: None,

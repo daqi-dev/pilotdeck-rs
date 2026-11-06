@@ -96,11 +96,11 @@ fn rejects_enabled(key: &str, cfg: &JsValue) -> bool {
 /// gate — strict `=== true` for the two `ChannelAdapterBundle` keys, JS
 /// truthiness for the loader table (see [`STRICT_TRUE_CHANNEL_KEYS`]) — and
 /// `None` adapters is the TS
-/// `if (!adapters) return []` no-configuration path. Production assembly
-/// calls this seam before [`load_enabled_channels`]; the assembly unit
-/// itself is separate work, which is why the seam takes no mounts and no
-/// console callback — a rejection can never follow an adapter construction
-/// or a `console.error` line.
+/// `if (!adapters) return []` no-configuration path. Production calls this
+/// seam from `native_process/assembly.rs` before `NativeChannels` is
+/// constructed (and therefore before any adapter construction or
+/// `console.error` line); see also [`reject_unimplemented_bundle_channels`]
+/// for the `weixin` / `feishu` keys this table cannot cover.
 pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), ChannelError> {
     let Some(adapters) = adapters else {
         return Ok(());
@@ -114,6 +114,65 @@ pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), Chan
                 "[adapters] channel \"{key}\" 未迁移到 Rust，需继续使用 TS gateway"
             )));
         }
+    }
+    Ok(())
+}
+
+/// The `ChannelAdapterBundle` keys that are not in [`CHANNEL_LOADER_KEYS`].
+/// TS builds `weixin` and `feishu` through `ChannelAdapterBundle.createWeixin`
+/// / `createFeishu` rather than the loader table, and neither is in
+/// [`UNMIGRATED_CHANNEL_KEYS`] — the two bundle keys that are (`qq`, `wecom`)
+/// already refuse through [`reject_unmigrated_channels`]. Without this list
+/// the same silent skip would simply reappear under a different key name
+/// (#1694 §7).
+pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];
+
+/// The refusal reason both gates print. [`reject_unmigrated_channels`] keeps
+/// its own literal (the frozen negative-control fixture anchors on that exact
+/// line); this constant is the second gate's copy so the two messages cannot
+/// drift apart while the anchors stay unambiguous.
+const UNMIGRATED_REASON: &str = "未迁移到 Rust，需继续使用 TS gateway";
+
+/// `#1694 §7`: an enabled `ChannelAdapterBundle` key with no assembly
+/// implementation refuses startup exactly like an unmigrated loader key —
+/// never a silent skip, a downgrade to disabled, or a fallback to TS. The
+/// assembly declares what it actually constructs (`implemented`); a key it
+/// cannot build is rejected before any channel is constructed.
+///
+/// Both constructors gate on strict `=== true` (`ChannelAdapterBundle.ts:146`,
+/// `createFeishu`), which is why this check does not use [`js_truthy`]: on a
+/// raw object `{"enabled": 1}` builds nothing in TS and must not reject. The
+/// production path feeds the parsed snapshot, where `config/snapshot.rs`
+/// (`enabled_only`, `feishu`) has already collapsed `enabled` to a real bool,
+/// so the two gates agree on every config file.
+///
+/// The message keeps [`reject_unmigrated_channels`]' phrase — from the
+/// operator's side the instruction is the same: keep using the TS gateway.
+pub fn reject_unimplemented_bundle_channels(
+    adapters: Option<&JsValue>,
+    implemented: &[&str],
+) -> Result<(), ChannelError> {
+    let Some(adapters) = adapters else {
+        return Ok(());
+    };
+    for key in BUNDLE_CHANNEL_KEYS {
+        let Some(cfg) = adapters.get(key) else {
+            continue;
+        };
+        // Strict `=== true`, matching both bundle constructors' own gate. The
+        // value is bound first so this line does not repeat the byte anchor the
+        // frozen `channel-unmigrated` mutation controls pin on
+        // `rejects_enabled` (that anchor must stay unique).
+        let enabled = cfg.get("enabled");
+        if !matches!(enabled, Some(JsValue::Bool(true))) {
+            continue;
+        }
+        if implemented.contains(key) {
+            continue;
+        }
+        return Err(ChannelError::error(format!(
+            "[adapters] channel \"{key}\" {UNMIGRATED_REASON}"
+        )));
     }
     Ok(())
 }
