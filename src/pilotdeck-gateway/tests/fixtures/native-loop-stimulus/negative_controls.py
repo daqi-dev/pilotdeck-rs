@@ -32,7 +32,7 @@ PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_panic import panic_evidence
-from negative_suite import passed
+from negative_suite import invalidate_completed, passed
 
 EXECUTABLE = 'executable_native_loop_stimulus'
 
@@ -351,6 +351,12 @@ def main():
                 print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
+        # The guard restores and re-verifies every mutated file on exit. When it
+        # raises there, the tree may be left mutated, so every row already
+        # recorded as KILLED is untrustworthy: publish them as INVALID through
+        # the one shared helper (#979) instead of a green summary from a broken
+        # run. Filling only the rows that never ran would leave a false pass.
+        invalidate_completed(results, reason)
         for name, _, _, _, test, assertion in selected[len(results):]:
             results.append(dict(name=name, test=test, assertion=assertion,
                                 status='INVALID', reason=reason, compiled=False))
