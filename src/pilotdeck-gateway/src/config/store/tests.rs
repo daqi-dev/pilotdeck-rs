@@ -214,6 +214,12 @@ async fn reloads_claimed_after_a_settle_share_one_flight() {
 /// #1745 on worker threads: the settle happens in another task, so its
 /// scheduler turn says nothing about the claiming task's turn. Repeated
 /// because the settle and the claims genuinely race across workers.
+///
+/// Supplementary only: on the pre-#1745 store this case still passes most of
+/// the time — the marker task the old code spawned usually clears the flag on
+/// another worker before the claims look — so the deterministic regression
+/// gate is the `current_thread` case above (it fails on that store, see the
+/// PR's pre-fix run). Widen this one only if it can be made deterministic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_settle_in_another_task_does_not_close_the_join_window() {
     for round in 0..20 {

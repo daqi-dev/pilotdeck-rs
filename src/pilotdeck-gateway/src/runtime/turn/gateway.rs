@@ -319,9 +319,10 @@ impl TurnGateway {
     /// resources dispose. The cleanup future must not enqueue new host jobs.
     /// A builder error still runs the host teardown before the failure is
     /// reported: the coordinator it created is disposed and this cleanup is
-    /// polled on the host thread (#1746). It must therefore be bounded by its
-    /// own caller; the only case left to the embedding is a host thread that
-    /// never started (runtime build or spawn failure).
+    /// polled on the host thread (#1746). That wait is bounded by
+    /// [`INITIALIZATION_TEARDOWN_DEADLINE`] so a cleanup that never completes
+    /// cannot turn the start into a hang; the only case left to the embedding
+    /// is a host thread that never started (runtime build or spawn failure).
     pub fn start_with_cleanup(
         options: TurnReplayOptions,
         build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
@@ -595,25 +596,44 @@ impl HostedConnection {
 /// live turns, a staged runtime registry or an undisposed coordinator behind.
 /// The build closure's own captures are dropped when it returns; the services
 /// it handed over (only the refusal branch) are disposed here.
+///
+/// #1746: this path runs before the embedding ever had a chance to hand in a
+/// shutdown budget, so the two awaits share one deadline of their own. The
+/// production cleanup already bounds itself by the drain budget; the deadline
+/// only keeps an embedding whose cleanup (or whose refused owner, bound to a
+/// host this thread does not drive) never settles from turning a fast builder
+/// failure into a hung `start_with_cleanup`. The two synchronous disposals
+/// below always run.
 async fn dispose_initialization(
     coordinator: &TurnEventCoordinator,
     services: Option<GatewayServices>,
     cleanup: Option<Call<'static, Result<(), String>>>,
 ) {
+    let deadline = tokio::time::Instant::now() + INITIALIZATION_TEARDOWN_DEADLINE;
     let interactions = services
         .as_ref()
         .map(|services| services.interactions.clone());
     if let Some(services) = services {
-        let _ = services.submitter.owner.shutdown().await;
+        let _ = tokio::time::timeout_at(deadline, services.submitter.owner.shutdown()).await;
     }
     if let Some(cleanup) = cleanup {
-        let _ = cleanup.await;
+        let _ = tokio::time::timeout_at(deadline, cleanup).await;
     }
     coordinator.dispose();
     if let Some(interactions) = interactions {
         interactions.dispose(&"gateway_disposed".into());
     }
 }
+
+/// Bound for the teardown a failed initialization runs before it reports the
+/// failure (#1746). Long enough for a real cleanup to finish — the production
+/// one carries its own drain budget — and short enough that a stuck one cannot
+/// hold `start_with_cleanup` open.
+#[cfg(not(test))]
+const INITIALIZATION_TEARDOWN_DEADLINE: Duration = Duration::from_secs(30);
+/// Tests drive the same bound with a value short enough to observe.
+#[cfg(test)]
+const INITIALIZATION_TEARDOWN_DEADLINE: Duration = Duration::from_millis(50);
 
 #[cfg(test)]
 #[path = "gateway_tests.rs"]
