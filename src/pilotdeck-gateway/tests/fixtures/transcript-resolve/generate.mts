@@ -18,7 +18,18 @@ const sources = [
   'src/pilot/paths.ts',
 ];
 const cases = ['relative-normal', 'relative-deleted', 'absolute-normal',
-  'absolute-deleted', 'project-relative-deleted', 'join-relative-normal', 'join-relative-deleted'];
+  'absolute-deleted', 'project-relative-deleted', 'join-relative-normal', 'join-relative-deleted',
+  'join-relative-dotdot', 'join-relative-bare', 'join-relative-nested'];
+// Parent transcript paths for the join- cases: defaultSubagentPath is plain
+// path.join, so each shape exercises one lexical rule (dot-dot segments,
+// normalization, a bare file name's empty dirname, and nesting).
+const joinPaths: Record<string, string> = {
+  'join-relative-normal': 'logs/../logs/s.jsonl',
+  'join-relative-deleted': 'logs/../logs/s.jsonl',
+  'join-relative-dotdot': '../logs/s.jsonl',
+  'join-relative-bare': 's.jsonl',
+  'join-relative-nested': '../logs/s.jsonl',
+};
 
 if (process.argv[2] === '--child') {
   const name = process.argv[3];
@@ -43,8 +54,12 @@ if (process.argv[2] === '--child') {
   if (name.endsWith('deleted')) await rm(cwd, { recursive: true });
   try {
     if (name.startsWith('join-')) {
-      const writer = new JsonlTranscriptWriter({ path: 'logs/../logs/s.jsonl', appendEntry() {} });
-      outcome = { transcriptPath: writer.forSubagent('kid').transcriptPath };
+      const writer = new JsonlTranscriptWriter({ path: joinPaths[name], appendEntry() {} });
+      const kid = writer.forSubagent('kid');
+      outcome = name === 'join-relative-nested'
+        ? { transcriptPath: kid.transcriptPath,
+            nestedTranscriptPath: kid.writer.forSubagent('grandchild').transcriptPath }
+        : { transcriptPath: kid.transcriptPath };
     } else {
       const storage = adapter.createSessionStorage(input);
       const child = storage.transcript.forSubagent('kid');
