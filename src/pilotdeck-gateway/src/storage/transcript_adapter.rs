@@ -6,8 +6,12 @@
 //! parent and entry ids unpublished, so the next append reuses the sequence.
 //! Not wired into the host, ProjectRuntimeRegistry or gateway methods.
 //!
-//! Domain validation is shared with the recorder. Full recovery projections
-//! remain A7.5; unsupported reducer shapes return ProjectionUnavailable.
+//! Domain validation is shared with the recorder. The two read ports gate on
+//! the TS reducer reads they model: `restore_entry_supported` mirrors hydrate
+//! (reduce only) and `list_entry_supported` mirrors listSessions
+//! (reduce + finalize + the title trims). Shapes TS throws on reject with the
+//! same TypeError text; ProjectionUnavailable is left for shapes TS accepts
+//! that Rust has not modelled.
 use super::{
     LedgerError, TranscriptRead, WriterState, invalid,
     ledger::field,
@@ -801,7 +805,7 @@ impl TranscriptWriter {
                 lossy_value(field(entry, "type")).as_str(),
                 "turn_result" | "control_boundary" | "session_metadata"
             ) {
-                projection_supported(entry)?;
+                restore_entry_supported(entry)?;
             }
         }
         // WebHistory reads message.content.some even for incomplete turns.
@@ -1367,9 +1371,49 @@ fn message_supported(message: &JsValue) -> bool {
 fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
 }
-/// Entry shapes whose TS projection reducers (AgentTranscriptProjections.ts)
-/// are modelled; anything else may throw in TS and is rejected here.
-fn projection_supported(entry: &JsValue) -> AdapterResult<()> {
+/// TS restore (`ProjectSessionStorage.restore` → `SessionProjectionDriver.hydrate`)
+/// runs every registered reducer's `reduce` without catching and never runs
+/// `finalize`. Each arm below reproduces only the reads that throw, in reducer
+/// order, so every shape TS restores must restore here and every shape TS
+/// rejects must reject with the same TypeError text (fixture rows
+/// `restore-shape-*` in tests/fixtures/transcript-adapter).
+fn restore_entry_supported(entry: &JsValue) -> AdapterResult<()> {
+    match lossy_value(field(entry, "type")).as_str() {
+        "turn_result" => {
+            // AgentTranscriptProjections.ts turnSummary reduce:
+            // `mergeUsage(state.usage, entry.result.usage)` reads the second
+            // usage's fields, then the permissionDenials spread accepts any
+            // iterable (a string spreads into code points, an object throws).
+            // `errors` is never read by hydrate.
+            let result = projection_result(entry)?;
+            let usage = field(result, "usage");
+            if nullish(usage) {
+                return Err(cannot_read(usage, "inputTokens"));
+            }
+            if !js_iterable(field(result, "permissionDenials")) {
+                return Err(AdapterError::Type(
+                    "entry.result.permissionDenials is not iterable".into(),
+                ));
+            }
+        }
+        "control_boundary" => control_boundary_supported(entry, true)?,
+        "session_metadata" => {
+            // mergeMetadata reads `metadata.title` on the new value.
+            let metadata = field(entry, "metadata");
+            if nullish(metadata) {
+                return Err(cannot_read(metadata, "title"));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+/// TS listSessions (`projectSessionInfo` → `replayTranscriptEntries` →
+/// `projectAgentTranscriptEntries`) runs every agent-transcript reducer's
+/// `reduce` **and** `finalize`, then reads `metadata.title?.trim()` /
+/// `metadata.aiTitle?.trim()`. Web-history reducers do not run here, so
+/// `compactMetadata` is never read on this port.
+fn list_entry_supported(entry: &JsValue) -> AdapterResult<()> {
     let kind = lossy_value(field(entry, "type"));
     let ok = match kind.as_str() {
         "accepted_input" => {
@@ -1379,34 +1423,62 @@ fn projection_supported(entry: &JsValue) -> AdapterResult<()> {
             message_supported(field(entry, "message"))
         }
         "turn_result" => {
-            let result = field(entry, "result");
-            if matches!(result, JsValue::Null | JsValue::Undefined) {
-                return Err(AdapterError::Type(format!(
-                    "Cannot read properties of {} (reading 'usage')",
-                    if matches!(result, JsValue::Null) {
-                        "null"
-                    } else {
-                        "undefined"
-                    }
-                )));
+            // Conversation finalize (cloneTurnResult) precedes the turnSummary
+            // reduce: permissionDenials.map, then errors?.map, then mergeUsage.
+            let result = projection_result(entry)?;
+            let denials = field(result, "permissionDenials");
+            if !matches!(denials, JsValue::Array(_)) {
+                return Err(if nullish(denials) {
+                    cannot_read(denials, "map")
+                } else {
+                    AdapterError::Type("result.permissionDenials.map is not a function".into())
+                });
             }
-            plain_object(result)
-                && plain_object(field(result, "usage"))
-                && matches!(field(result, "permissionDenials"), JsValue::Array(_))
-                && (nullish(field(result, "errors"))
-                    || matches!(field(result, "errors"), JsValue::Array(_)))
+            let errors = field(result, "errors");
+            if !nullish(errors) && !matches!(errors, JsValue::Array(_)) {
+                return Err(AdapterError::Type(
+                    "result.errors?.map is not a function".into(),
+                ));
+            }
+            let usage = field(result, "usage");
+            if nullish(usage) {
+                return Err(cannot_read(usage, "inputTokens"));
+            }
+            true
         }
         "control_boundary" => {
-            control_boundary_supported(entry)?;
+            control_boundary_supported(entry, false)?;
             true
         }
         "session_metadata" => {
+            // mergeMetadata in the metadata reducer, then the two trims in
+            // projectSessionInfo: title is read first; aiTitle only when the
+            // trimmed title is falsy.
             let metadata = field(entry, "metadata");
-            plain_object(metadata)
-                && ["title", "aiTitle"].iter().all(|key| {
-                    let value = field(metadata, key);
-                    nullish(value) || value.as_string().is_some()
-                })
+            if nullish(metadata) {
+                return Err(cannot_read(metadata, "title"));
+            }
+            let title = field(metadata, "title");
+            if !nullish(title) && title.as_string().is_none() {
+                return Err(AdapterError::Type(
+                    "metadata.title?.trim is not a function".into(),
+                ));
+            }
+            let blank = match title {
+                JsValue::Null | JsValue::Undefined => true,
+                value => value
+                    .as_string()
+                    .is_some_and(|text| js_trim_units(text.units()).is_empty()),
+            };
+            if blank {
+                let ai_title = field(metadata, "aiTitle");
+                if !nullish(ai_title) && ai_title.as_string().is_none() {
+                    return Err(AdapterError::Type(
+                        "metadata.aiTitle?.trim is not a function".into(),
+                    ));
+                }
+            }
+            true
         }
         _ => true,
     };
@@ -1417,6 +1489,19 @@ fn projection_supported(entry: &JsValue) -> AdapterResult<()> {
             "Session projection of this {kind} entry shape is not implemented (A7.5)."
         )))
     }
+}
+/// A JS iterable in the JSON value model: arrays and strings.
+fn js_iterable(value: &JsValue) -> bool {
+    matches!(value, JsValue::Array(_)) || value.as_string().is_some()
+}
+/// `entry.result` as read by both ports; a nullish result throws on `.usage`
+/// before any shape check.
+fn projection_result(entry: &JsValue) -> AdapterResult<&JsValue> {
+    let result = field(entry, "result");
+    if nullish(result) {
+        return Err(cannot_read(result, "usage"));
+    }
+    Ok(result)
 }
 /// The JS TypeError message for a property read on null or undefined.
 fn cannot_read(value: &JsValue, property: &str) -> AdapterError {
@@ -1429,15 +1514,13 @@ fn cannot_read(value: &JsValue, property: &str) -> AdapterError {
         }
     ))
 }
-/// TS restore (ProjectSessionStorage.restore → SessionProjectionDriver.hydrate
-/// → buildCell) runs every registered reducer without catching, so the gate
-/// must mirror the control_boundary reads of the default registry in
-/// registration order: the conversation reducer
-/// (AgentTranscriptProjections.ts:105-135) before web-history token usage
-/// (WebHistoryProjections.ts:379-381). Shapes the reducers ignore restore
-/// fine; the checks below reproduce only what throws. Live appends go through
+/// control_boundary reads of the default registry in registration order: the
+/// conversation reducer (AgentTranscriptProjections.ts:105-135) first, then —
+/// on the restore port only, `reads_compact_metadata` — web-history token usage
+/// (WebHistoryProjections.ts:379-381). Shapes the reducers ignore pass on both
+/// ports; the checks below reproduce only what throws. Live appends go through
 /// `drive`, which catches reducer errors instead.
-fn control_boundary_supported(entry: &JsValue) -> AdapterResult<()> {
+fn control_boundary_supported(entry: &JsValue, reads_compact_metadata: bool) -> AdapterResult<()> {
     let boundary = field(entry, "boundary");
     // Conversation reducer: `entry.boundary.kind` runs before any shape check.
     if nullish(boundary) {
@@ -1469,9 +1552,12 @@ fn control_boundary_supported(entry: &JsValue) -> AdapterResult<()> {
     }
     // Web-history token-usage reducer reads `compactMetadata.postTokens` for
     // the same subtype, after every agent-transcript cell has reduced the log.
-    let metadata = field(boundary, "compactMetadata");
-    if nullish(metadata) {
-        return Err(cannot_read(metadata, "postTokens"));
+    // listSessions never runs WebHistory, so its port passes false here.
+    if reads_compact_metadata {
+        let metadata = field(boundary, "compactMetadata");
+        if nullish(metadata) {
+            return Err(cannot_read(metadata, "postTokens"));
+        }
     }
     Ok(())
 }
@@ -1664,7 +1750,7 @@ fn project_session_info(
         return Ok(None);
     }
     for entry in &transcript.entries {
-        projection_supported(entry)?;
+        list_entry_supported(entry)?;
     }
     // mergeMetadata: title keeps the previous value when the new one is nullish;
     // other keys follow object spread (a present key overrides, null included).
@@ -2078,7 +2164,7 @@ mod coercion_depth_tests {
                 ),
             ]))
         };
-        match projection_supported(&entry(js_value::MAX_ARRAY_DEPTH + 1)) {
+        match restore_entry_supported(&entry(js_value::MAX_ARRAY_DEPTH + 1)) {
             Err(AdapterError::Range(message)) => {
                 assert_eq!(message, js_value::StackOverflow::MESSAGE);
             }
@@ -2086,7 +2172,7 @@ mod coercion_depth_tests {
         }
         // At the bound the coercion still succeeds, so the block is merely an
         // unknown type and the snapshot degrades like any other invalid one.
-        assert!(projection_supported(&entry(js_value::MAX_ARRAY_DEPTH)).is_ok());
+        assert!(restore_entry_supported(&entry(js_value::MAX_ARRAY_DEPTH)).is_ok());
     }
     /// `isContentBlock` also runs `String(value.mediaType)` on
     /// `media_reference` blocks (`CompactSnapshot.ts:44-50`); pin the same two
@@ -2104,13 +2190,13 @@ mod coercion_depth_tests {
                 ("mediaType", nested(depth)),
             ]))
         };
-        match projection_supported(&entry(js_value::MAX_ARRAY_DEPTH + 1)) {
+        match restore_entry_supported(&entry(js_value::MAX_ARRAY_DEPTH + 1)) {
             Err(AdapterError::Range(message)) => {
                 assert_eq!(message, js_value::StackOverflow::MESSAGE);
             }
             other => panic!("expected a RangeError, got {other:?}"),
         }
-        assert!(projection_supported(&entry(js_value::MAX_ARRAY_DEPTH)).is_ok());
+        assert!(restore_entry_supported(&entry(js_value::MAX_ARRAY_DEPTH)).is_ok());
     }
     fn nested(depth: usize) -> JsValue {
         let mut deep = JsValue::from("text");

@@ -1068,6 +1068,55 @@ fn durable_projection_matches_ts() {
     }
 }
 #[test]
+fn hydrated_projection_matches_ts() {
+    // #1985 block 1: the durable state is the hydrate result (SessionRuntime
+    // restore + SessionProjectionDriver.hydrate), which runs each reducer's
+    // reduce and never its finalize. The `projections` rows above model
+    // projectAgentTranscriptEntries, whose conversation finalize maps
+    // turn_result.permissionDenials first and therefore throws on shapes that
+    // hydrate accepts; these rows come from the real hydrate port instead.
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/session-factory/oracle.json"
+    ))
+    .expect("#1985 hydrated fixture");
+    let rows = oracle["hydrated"].as_array().expect("#1985 hydrated rows");
+    assert_eq!(rows.len(), 15, "#1985 hydrated denominator");
+    for row in rows {
+        let values = js(&row["entries"].to_string());
+        let entries = array(&values).expect("#1985 hydrated entries");
+        let actual = project(entries);
+        if let Some(expected) = row.get("error") {
+            let error = actual.expect_err("#1985 hydrated rejects malformed shapes");
+            assert_eq!(
+                error.message, expected["message"],
+                "#1985 hydrated error conclusion {}",
+                row["name"]
+            );
+            assert_eq!(
+                error.js_error.expect("#1985 hydrated error type").name,
+                expected["name"],
+                "#1985 hydrated error name {}",
+                row["name"]
+            );
+            continue;
+        }
+        let actual = actual.expect("#1985 hydrated replay");
+        let mut value = JsObject::new();
+        value.insert("usage".into(), JsValue::Object(actual.usage));
+        value.insert(
+            "permissionDenials".into(),
+            JsValue::Array(actual.permission_denials),
+        );
+        value.insert("metadata".into(), JsValue::Object(actual.metadata));
+        assert_eq!(
+            json_value(&JsValue::Object(value)),
+            row["state"],
+            "#1985 hydrated conclusion {}",
+            row["name"]
+        );
+    }
+}
+#[test]
 fn actual_file_state_matches_ts() {
     let oracle: serde_json::Value = serde_json::from_str(include_str!(
         "../../../tests/fixtures/session-factory/oracle.json"
