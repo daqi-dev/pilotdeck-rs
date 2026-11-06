@@ -1429,10 +1429,30 @@ class EnvironmentControls(unittest.TestCase):
         deadlines = re.findall(r'^DEADLINE_SECONDS = (\d+)$', fixture, re.M)
         self.assertEqual(len(deadlines), 1,
                          '#1692 negative-controls fixture declares one overall deadline')
+        # 15 minutes of slack, not 10: a fixture run also pays for the cargo cold
+        # bootstrap, the checkout/toolchain steps, and up to six meta-control
+        # copies of `--self-check` (CONTROL_TIMEOUT_SECONDS = 120 each) before the
+        # upload. The margin has to cover those, or the platform kill still
+        # preempts the graceful TIMEOUT path it is there to protect.
         self.assertGreaterEqual(
-            int(minutes[0]) * 60, int(deadlines[0]) + 600,
-            '#1692 the job timeout must outlive the fixture deadline by at least 10 '
+            int(minutes[0]) * 60, int(deadlines[0]) + 900,
+            '#1692 the job timeout must outlive the fixture deadline by at least 15 '
             'minutes, otherwise the platform kill preempts the graceful TIMEOUT path')
+        # The budget has to be the fixture's own default. An env override in the
+        # job (or in any step of it) could raise the deadline past the job
+        # timeout - or shrink it below what the mutations need - without touching
+        # the number asserted above.
+        env_names = re.findall(r"^DEADLINE_ENV = '([A-Za-z0-9_]+)'$", fixture, re.M)
+        self.assertEqual(len(env_names), 1,
+                         '#1692 negative-controls fixture declares one deadline env name')
+        # Comments in the job body name the variable on purpose (they document the
+        # default budget), so only YAML content counts here.
+        code = '\n'.join(line for line in job.splitlines()
+                         if not line.lstrip().startswith('#'))
+        self.assertNotIn(
+            env_names[0], code,
+            f'#1692 negative-controls must not set {env_names[0]}: the fixture deadline '
+            'is fixed by DEADLINE_SECONDS, not by the workflow')
 
     def test_ci_rejects_missing_wrong_or_step_level_debug_profiles(self):
         workflow = self.ci_workflow_fixture()
@@ -1514,6 +1534,8 @@ class EnvironmentControls(unittest.TestCase):
             return workflow.replace(body, body.replace(old, new, 1), 1)
 
         target = 'test_negative_controls_job_timeout_exceeds_fixture_deadline'
+        profiles = ('      CARGO_PROFILE_DEV_DEBUG: line-tables-only\n'
+                    '      CARGO_PROFILE_TEST_DEBUG: line-tables-only\n')
         for name, changed, message in (
                 ('missing', mutate('    timeout-minutes: 120\n', ''),
                  '#1692 negative-controls job has one literal timeout-minutes'),
@@ -1522,10 +1544,18 @@ class EnvironmentControls(unittest.TestCase):
                  '#1692 negative-controls job has one literal timeout-minutes'),
                 ('below-deadline', mutate('    timeout-minutes: 120\n',
                                           '    timeout-minutes: 60\n'),
-                 '#1692 the job timeout must outlive the fixture deadline by at least 10 '
-                 'minutes, otherwise the platform kill preempts the graceful TIMEOUT path')):
+                 '#1692 the job timeout must outlive the fixture deadline by at least 15 '
+                 'minutes, otherwise the platform kill preempts the graceful TIMEOUT path'),
+                # An env override silently replaces the fixture's own budget: the
+                # literal timeout above would still read 120 while the deadline
+                # ran past it.
+                ('deadline-env-override',
+                 mutate(profiles, profiles + "      PDRS_NEGCTL_DEADLINE: '9000'\n"),
+                 '#1692 negative-controls must not set PDRS_NEGCTL_DEADLINE: the fixture '
+                 'deadline is fixed by DEADLINE_SECONDS, not by the workflow')):
             with self.subTest(mutation=name):
                 self.assert_ci_rejects(changed, target, message)
+                print(f'#1692 timeout mutation {name}: KILLED', flush=True)
 
     def test_b2_and_smoke_keep_commands_in_their_own_jobs(self):
         jobs = self.ci_jobs(issue='#918')

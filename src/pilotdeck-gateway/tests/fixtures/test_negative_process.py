@@ -319,8 +319,10 @@ class ProcessControls(unittest.TestCase):
         caps = self.sample_caps(wait)
         self.assertLessEqual(caps[0], 0.05,
                              '#1692 one sample is bounded by sample_timeout, not the total budget')
-        self.assertTrue(any(cap > 0.05 for cap in caps[1:]),
-                        '#1692 a cold bootstrap may use one longer sample after the short one')
+        long_caps = [cap for cap in caps if cap > 0.05]
+        self.assertEqual(len(long_caps), 1,
+                         '#1692 exactly one cold-bootstrap sample: a hung gate must not keep '
+                         'getting 300 s samples for the rest of the budget')
         self.assertLessEqual(max(caps), 1.0,
                              '#1692 no sample may exceed the total wait budget')
 
@@ -338,7 +340,7 @@ class ProcessControls(unittest.TestCase):
 
         # 删掉单次采样上界：第一个样本直接拿总预算 → 断言红。
         broad = mutant(
-            'cap = min(remaining, CARGO_SLOTS_CALL_SECONDS if cold_bootstrap else sample_timeout)',
+            'cap = min(remaining, CARGO_SLOTS_CALL_SECONDS if use_long else sample_timeout)',
             'cap = remaining')
         with self.assertRaises(AssertionError, msg='#1692 deleting the sample bound must be caught'):
             self.assert_sample_bounds(broad)
@@ -346,11 +348,20 @@ class ProcessControls(unittest.TestCase):
         # 删掉冷启动逃生口：首样本超时后仍只给 sample_timeout，冷闸永远过不去
         # （#1556 回归）→ 断言红。
         no_bootstrap = mutant(
-            'CARGO_SLOTS_CALL_SECONDS if cold_bootstrap else sample_timeout',
+            'CARGO_SLOTS_CALL_SECONDS if use_long else sample_timeout',
             'sample_timeout')
         with self.assertRaises(AssertionError, msg='#1692 dropping the cold bootstrap sample must be caught'):
             self.assert_sample_bounds(no_bootstrap)
         print('#1692 wait_for_slot mutant cold-bootstrap-removed: KILLED', flush=True)
+        # 冷启动长样本只给一次：去掉「只一次」闸，长样本超时后仍反复拿 300 s，
+        # 挂着不返回的闸门会一直躲在长样本里 → 断言红。
+        repeat_long = mutant(
+            'use_long = cold_bootstrap and long_sample_available',
+            'use_long = cold_bootstrap')
+        with self.assertRaises(AssertionError,
+                               msg='#1692 repeating the long cold-bootstrap sample must be caught'):
+            self.assert_sample_bounds(repeat_long)
+        print('#1692 wait_for_slot mutant long-sample-repeated: KILLED', flush=True)
 
     def test_wait_for_slot_rejects_bad_sample_timeout(self):
         # A non-positive/infinite cap would recreate the unbounded sample (§2).

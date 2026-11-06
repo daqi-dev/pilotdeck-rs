@@ -799,6 +799,11 @@ def wait_for_slot(script, *, timeout=900, interval=30, gate_required=False,
     stdout, stderr = [], []
     command = ["bash", str(script)]
     cold_bootstrap = False
+    # The long (cold-bootstrap) sample is granted at most ONCE per wait: if it
+    # times out as well the gate is hung rather than bootstrapping, and spending
+    # the rest of the budget in CARGO_SLOTS_CALL_SECONDS chunks would hide the
+    # hang from the caller (review P2).
+    long_sample_available = True
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -808,7 +813,9 @@ def wait_for_slot(script, *, timeout=900, interval=30, gate_required=False,
         # whether another sample may start. After a short sample was killed we
         # allow one long sample so the gate's documented cold bootstrap can
         # finish (#1556) without giving every hung call the whole budget.
-        cap = min(remaining, CARGO_SLOTS_CALL_SECONDS if cold_bootstrap else sample_timeout)
+        use_long = cold_bootstrap and long_sample_available
+        cap = min(remaining, CARGO_SLOTS_CALL_SECONDS if use_long else sample_timeout)
+        long_sample_available = long_sample_available and not cold_bootstrap
         try:
             result = run_owned(command, timeout=cap)
         except subprocess.TimeoutExpired:

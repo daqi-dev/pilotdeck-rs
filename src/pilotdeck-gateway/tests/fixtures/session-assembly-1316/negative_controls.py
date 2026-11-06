@@ -199,6 +199,30 @@ DEADLINE_ENV = 'PDRS_NEGCTL_DEADLINE'
 deadline = None
 deadline_budget = DEADLINE_SECONDS
 
+# A runner cancels with SIGINT first and SIGTERM shortly after; both must be
+# blocked while the mutated sources are restored and the summary published,
+# otherwise the restore is cut in half and the TIMEOUT summary hides it.
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+def mask_stop_signals():
+    """Stop a cancellation from preempting the restore / summary window."""
+    signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+
+
+@contextlib.contextmanager
+def restore_window():
+    """Mask cancellation as soon as the body ends.
+
+    Enters the `with` innermost, so on the way out it runs BEFORE
+    `mutating_sources.__exit__`: the sources are restored and re-verified with
+    both stop signals blocked, and `stop_run` unblocks them afterwards.
+    """
+    try:
+        yield
+    finally:
+        mask_stop_signals()
+
 
 class RunStopped(BaseException):
     """Stop the run without being swallowed by the per-mutant `except Exception`."""
@@ -217,10 +241,11 @@ def deadline_seconds(value=None):
     raw = os.environ.get(DEADLINE_ENV) if value is None else value
     if raw is None or raw == '':
         return DEADLINE_SECONDS
-    try:
-        seconds = int(raw)
-    except (TypeError, ValueError):
+    # Plain ASCII digits only: `int()` would also take '1_000', ' 120 ', '+120'
+    # and non-ASCII digits, which is wider than the "whole seconds" contract.
+    if not isinstance(raw, str) or not raw.isascii() or not raw.isdigit():
         raise ValueError(f'{DEADLINE_ENV} must be whole seconds, got {raw!r}')
+    seconds = int(raw)
     if seconds <= 0:
         raise ValueError(f'{DEADLINE_ENV} must be positive, got {raw!r}')
     return seconds
@@ -239,6 +264,11 @@ def _stop_on_signal(signum, _frame):
     # Python's default SIGTERM/SIGINT handling terminates immediately: the
     # `finally` that restores a mutated source never runs. Raising a
     # BaseException runs the restore and the TIMEOUT summary instead (#1692 §1).
+    # A cancellation is normally SIGINT followed by SIGTERM, so the FIRST one
+    # must disarm both: a second raise inside the restore would leave the tree
+    # mutated while still publishing a summary (review P1).
+    for sig in STOP_SIGNALS:
+        signal.signal(sig, signal.SIG_IGN)
     raise RunTerminated(f'signal {signum} before the run finished')
 
 
@@ -248,23 +278,37 @@ def run(full):
     # that builds the scanner (`negative_process.py` uses --locked for the same
     # reason). A timeout keeps the cargo output it collected: a bare
     # TimeoutExpired traceback would leave the run red with no evidence at all
-    # (#1632 review). `idle_timeout` catches a compile that hangs without
-    # printing (the shared entry uses the same pair).
+    # (#1632 review). The per-call cap is the binding bound; `idle_timeout`
+    # would never fire below it, so a silent compile is bounded by the cap.
     try:
         result = run_owned(
             ['cargo', 'test', '--locked', '--manifest-path', 'src/Cargo.toml', '-p',
              'pilotdeck-gateway', '--lib', full, '--', '--exact'],
             cwd=root, env=env,
-            timeout=bounded(CARGO_TEST_TIMEOUT_SECONDS, 'cargo test'),
-            idle_timeout=900)
+            timeout=bounded(CARGO_TEST_TIMEOUT_SECONDS, 'cargo test'))
         return result.returncode, result.stdout + result.stderr
     except subprocess.TimeoutExpired as error:
+        # If the cap WAS the remaining budget, the deadline is what ended this
+        # call: report TIMEOUT rather than a plain INVALID mutant (review P1).
+        if deadline - time.monotonic() <= 0:
+            raise RunDeadlineExceeded(
+                f'cargo test: overall deadline of {deadline_budget}s reached')
         collected = (error.output or '') + (error.stderr or '')
-        return 124, f'{collected}\nTIMEOUT after {CARGO_TEST_TIMEOUT_SECONDS}s\n'
+        return 124, f'{collected}\nTIMEOUT after {error.timeout}s\n'
 
 
 def take_slot(name):
-    slots = acquire_slot(timeout=bounded(SLOT_TIMEOUT_SECONDS, 'cargo slot wait'))
+    try:
+        slots = acquire_slot(timeout=bounded(SLOT_TIMEOUT_SECONDS, 'cargo slot wait'))
+    except SystemExit:
+        # `acquire_slot` exits on its own for a broken / busy gate. When the
+        # overall budget is what ran out, that is a TIMEOUT, not a gate fault:
+        # route it through the graceful path so a SUMMARY is still published.
+        if deadline - time.monotonic() <= 0:
+            raise RunDeadlineExceeded(
+                f'{name}: overall deadline of {deadline_budget}s reached while '
+                'waiting for a cargo slot')
+        raise
     (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
 
 
@@ -301,6 +345,13 @@ def stop_run():
     except RunStopped as error:
         timed_out = f'{type(error).__name__}: {error}'
         print(f'run stopped before finishing: {timed_out}', file=sys.stderr, flush=True)
+    finally:
+        # The restore is done and verified by now (the body masks signals while
+        # it unwinds). From here on a cancellation would only truncate the
+        # summary, so ignore both and drop anything that arrived while masked.
+        for sig in STOP_SIGNALS:
+            signal.signal(sig, signal.SIG_IGN)
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
 
 
 def publish_summary(rows, timed_out=None):
@@ -468,6 +519,7 @@ def self_check(timeout=2, wall=60):
         lock_gate.write_text('#!/bin/sh\necho "cargo-slots: 1 / cap 1"\nexit 1\n')
         lock_gate.chmod(0o755)
         started = time.monotonic()
+        result = None
         with tree_lock(root, timeout=10):
             held_fd = os.open(root / '.negative-source.lock', os.O_RDWR)
             try:
@@ -477,41 +529,64 @@ def self_check(timeout=2, wall=60):
                     pass
                 else:
                     problems.append('tree-lock case: the tree lock was not actually held')
-                result = run_owned(
-                    [sys.executable, '-I', str(Path(__file__).resolve()),
-                     '--slot-guard-probe', str(lock_gate), str(timeout)],
-                    timeout=wall)
+                try:
+                    result = run_owned(
+                        [sys.executable, '-I', str(Path(__file__).resolve()),
+                         '--slot-guard-probe', str(lock_gate), str(timeout)],
+                        timeout=wall)
+                except subprocess.TimeoutExpired:
+                    result = None
             finally:
                 os.close(held_fd)
         elapsed = time.monotonic() - started
-        haystack = result.stdout + result.stderr
-        if result.returncode != 1 or 'cargo slots unavailable' not in haystack:
-            problems.append('tree-lock case: the guard was not bounded while the tree '
-                            f'lock was held (rc={result.returncode})')
-        elif elapsed >= timeout + 3:
-            problems.append(f'tree-lock case: took {elapsed:.1f}s for a {timeout}s deadline '
-                            'while holding the tree lock')
+        if result is None:
+            problems.append(f'tree-lock case: the guard never returned within {wall}s')
         else:
-            print(f'self-check tree-lock probe: exit rc=1 in {elapsed:.1f}s '
-                  'while the lock was held', flush=True)
+            haystack = result.stdout + result.stderr
+            if result.returncode != 1 or 'cargo slots unavailable' not in haystack:
+                problems.append('tree-lock case: the guard was not bounded while the tree '
+                                f'lock was held (rc={result.returncode})')
+            elif elapsed >= timeout + 3:
+                problems.append(f'tree-lock case: took {elapsed:.1f}s for a {timeout}s '
+                                'deadline while holding the tree lock')
+            else:
+                print(f'self-check tree-lock probe: exit rc=1 in {elapsed:.1f}s '
+                      'while the lock was held', flush=True)
         # #1692 §8 (with the §7 gap): the self-check must drive the REAL
         # `scripts/cargo-slots.sh` at least once, not only stubs that duplicate
-        # its exit-code contract. Any verdict is fine (0 free, 1 bounded busy
-        # timeout; a broken gate also lands on rc=1), only the bound matters.
+        # its exit-code contract. rc alone is not a verdict - 1 is also what a
+        # crashed or missing gate produces - so each code must carry its own
+        # diagnostic (review P2).
         started = time.monotonic()
-        result = run_owned(
-            [sys.executable, '-I', str(Path(__file__).resolve()), '--slot-guard-probe',
-             str(root / 'scripts/cargo-slots.sh'), str(timeout)],
-            timeout=wall)
+        try:
+            result = run_owned(
+                [sys.executable, '-I', str(Path(__file__).resolve()), '--slot-guard-probe',
+                 str(root / 'scripts/cargo-slots.sh'), str(timeout)],
+                timeout=wall)
+        except subprocess.TimeoutExpired:
+            result = None
         elapsed = time.monotonic() - started
-        if result.returncode not in (0, 1):
+        if result is None:
+            problems.append(f'real gate: never returned within {wall}s')
+        elif result.returncode == 0:
+            if 'slot free:' not in result.stdout + result.stderr:
+                problems.append('real gate: rc=0 without the guard reporting a slot')
+            elif elapsed >= timeout + 3:
+                problems.append(f'real gate: took {elapsed:.1f}s for a {timeout}s deadline')
+            else:
+                print(f'self-check real cargo-slots.sh: exit rc=0 in {elapsed:.1f}s', flush=True)
+        elif result.returncode == 1:
+            if 'cargo slots unavailable' not in result.stdout + result.stderr:
+                problems.append('real gate: rc=1 without the bounded-busy verdict '
+                                '(gate broken rather than busy)')
+            elif elapsed >= timeout + 3:
+                problems.append(f'real gate: took {elapsed:.1f}s for a {timeout}s deadline')
+            else:
+                print(f'self-check real cargo-slots.sh: exit rc=1 (busy) in '
+                      f'{elapsed:.1f}s', flush=True)
+        else:
             problems.append('real gate: expected a bounded 0/1 verdict, '
                             f'got rc={result.returncode}')
-        elif elapsed >= timeout + 3:
-            problems.append(f'real gate: took {elapsed:.1f}s for a {timeout}s deadline')
-        else:
-            print(f'self-check real cargo-slots.sh: exit rc={result.returncode} '
-                  f'in {elapsed:.1f}s', flush=True)
     problems.extend(deadline_probe())
     for problem in problems:
         print('self-check FAILED: ' + problem, file=sys.stderr)
@@ -532,16 +607,36 @@ def self_check(timeout=2, wall=60):
 # message appears. Any other failure of the copy is noise, not a kill.
 SELF = Path(__file__).resolve()
 FIXTURES = SELF.parents[1]
-# Rewiring a copy: the import path goes right after the shebang (before the
-# `from negative_process import` runs), and `root` / `source` are recomputed
-# immediately before the mode dispatch, i.e. after the module body set them
-# from the copy's own location and before any mode uses them.
+# Rewiring a copy: the import path goes right after the shebang (before any
+# `from negative_process import` runs), and the module-level `root` / `source`
+# binding is replaced outright. It has to be: the pristine line walks
+# `Path(__file__).resolve().parents[5]`, which raises IndexError for a copy in a
+# shallow temp directory (a Linux runner's `/tmp/xxx/copy.py` has 3 parents), so
+# the copy would die on import and every case would read as a red copy. The
+# rebinding also has to happen before the copy's own `mutating_sources` import
+# path is used. (review P1, both families)
 COPY_PATH_LINE = 'import sys as _copy_sys\n_copy_sys.path.insert(0, {!r})\n'
-COPY_ROOT_ANCHOR = ("if sys.argv[1:2] == ['--slot-guard-probe']:\n"
-                    '    # Child mode driven by `self_check`: run the real guard '
-                    'against a gate that\n')
+COPY_ROOT_ANCHOR = ("root = Path(__file__).resolve().parents[5]\n"
+                    "source = root / 'src/pilotdeck-gateway/src'\n")
 COPY_ROOT_LINE = ('root = Path({root!r})\n'
                   "source = root / 'src/pilotdeck-gateway/src'\n")
+# The `empty-gates-guard-removed` case has to show the HOLE - a green
+# `--self-check` despite an empty table - so it also points the real-gate probe
+# at a stub. Otherwise an unrelated `scripts/cargo-slots.sh` verdict (busy /
+# broken under load) would decide the case instead of the guard (review P2).
+# The anchor carries the preceding call fragment because the bare
+# `str(root / 'scripts/cargo-slots.sh')` text also appears in this very
+# definition, and a non-unique anchor is INVALID, not a kill.
+REAL_GATE_ARG = ("'--slot-guard-probe',\n"
+                 "                 str(root / 'scripts/cargo-slots.sh'), str(timeout)],")
+STUB_GATE_ARG = ("'--slot-guard-probe',\n"
+                 "                 str(Path(__file__).resolve().parent "
+                 "/ 'cargo-slots-free.sh'), str(timeout)],")
+STUB_GATE_TEXT = '#!/bin/sh\necho "cargo-slots: 0 / cap 1"\nexit 0\n'
+# Each meta-control copy runs a full `--self-check` (measured 12-13 s per copy,
+# 79 s for control + 5 cases on this machine). Six copies at this cap stay well
+# inside the slack the structural guard pins (`job >= deadline + 900 s`).
+CONTROL_TIMEOUT_SECONDS = 120
 # The emptied-table cases rewrite a 17-line literal table. Locate it by its
 # opening line and the anchor line that follows it, by plain text surgery: the
 # anchor self-check rejects a file that mixes literal and regex consumers.
@@ -567,30 +662,38 @@ self_check_controls = [
        '        raise RunDeadlineExceeded(\n'
        "            f'{what}: overall deadline of {deadline_budget}s reached')\n",
        '')],
-     True, 'a subprocess was spawned after the deadline'),
+     True, 'a subprocess was spawned after the deadline', None),
     # §4: unflushed records never reach the file, so a killed job loses them.
     ('progress-flush-removed',
      [('    progress.flush()\n', '')],
-     True, 'the appended record was not readable at once'),
+     True, 'the appended record was not readable at once', None),
     # §6: the case only means something while the lock is held; dropping
     # `tree_lock` makes the parent's own LOCK_NB probe succeed.
     ('tree-lock-not-held',
      [('        with tree_lock(root, timeout=10):\n', '        if True:\n')],
-     True, 'the tree lock was not actually held'),
+     True, 'the tree lock was not actually held', None),
     # §8: an emptied table with the guard in place must be red ...
     ('empty-gates-table',
      [(EMPTY_GATES_TABLE, None)],
-     True, 'no slot guard cases defined'),
+     True, 'no slot guard cases defined', None),
     # ... and without the guard it never fires at all: the emptied table then
-    # looks exactly like a healthy run, which is the hole the guard closes.
+    # looks exactly like a healthy run, which is the hole the guard closes. The
+    # verdict is therefore "the copy is GREEN" - expecting the message to be
+    # absent alone would be a tautology, since the case deletes the text that
+    # prints it (review P2).
     ('empty-gates-guard-removed',
      [(EMPTY_GATES_TABLE, None),
       ('    if not gates:\n'
        "        sys.exit('no slot guard cases defined: self-check would pass "
        "without testing the guard')\n",
-       '')],
-     False, 'no slot guard cases defined'),
+       ''),
+      (REAL_GATE_ARG, STUB_GATE_ARG)],
+     False, 'no slot guard cases defined', 0),
 ]
+
+if not self_check_controls:
+    sys.exit('no meta control cases defined: --self-check-controls would pass '
+             'without testing a single guard')
 
 
 def _self_check_variant(name, replacements, directory):
@@ -601,9 +704,8 @@ def _self_check_variant(name, replacements, directory):
         raise ValueError(f'{name}: the script no longer starts with a shebang')
     text = first + '\n' + COPY_PATH_LINE.format(str(FIXTURES)) + rest
     if text.count(COPY_ROOT_ANCHOR) != 1:
-        raise ValueError(f'{name}: the mode dispatch anchor is not unique')
-    text = text.replace(COPY_ROOT_ANCHOR,
-                        COPY_ROOT_LINE.format(root=str(root)) + COPY_ROOT_ANCHOR, 1)
+        raise ValueError(f'{name}: the module-level root binding is not unique')
+    text = text.replace(COPY_ROOT_ANCHOR, COPY_ROOT_LINE.format(root=str(root)), 1)
     for old, new in replacements:
         if old is EMPTY_GATES_TABLE:
             text, count = _empty_gates_table(text)
@@ -623,6 +725,10 @@ def self_check_controls_run():
     problems = []
     with tempfile.TemporaryDirectory(prefix='negctl-1316-selfcheck-') as directory:
         directory = Path(directory)
+        # Free-gate stub for the case that has to end GREEN (see STUB_GATE_ARG).
+        stub = directory / 'cargo-slots-free.sh'
+        stub.write_text(STUB_GATE_TEXT)
+        stub.chmod(0o755)
         # Control of the control: an unmutated copy must still pass, otherwise
         # every "the copy went red" verdict below would be meaningless.
         try:
@@ -631,15 +737,16 @@ def self_check_controls_run():
             return [str(error)]
         try:
             result = run_owned([sys.executable, '-I', str(control), '--self-check'],
-                               timeout=300)
+                               timeout=CONTROL_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            return ['control copy: --self-check did not finish within 300s']
+            return ['control copy: --self-check did not finish within '
+                    f'{CONTROL_TIMEOUT_SECONDS}s']
         if result.returncode != 0:
             return [f'control copy: an unmutated copy failed (rc={result.returncode}): '
                     + (result.stdout + result.stderr)[-400:]]
         print('self-check control copy: PASS (rc=0)', flush=True)
 
-        for name, replacements, expect_message, message in self_check_controls:
+        for name, replacements, expect_message, message, expect_rc in self_check_controls:
             try:
                 variant = _self_check_variant(name, replacements, directory)
             except ValueError as error:
@@ -647,23 +754,26 @@ def self_check_controls_run():
                 continue
             try:
                 result = run_owned([sys.executable, '-I', str(variant), '--self-check'],
-                                   timeout=300)
+                                   timeout=CONTROL_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
-                problems.append(f'{name}: INVALID (no verdict within 300s)')
+                problems.append(f'{name}: INVALID (no verdict within '
+                                f'{CONTROL_TIMEOUT_SECONDS}s)')
                 continue
             output = result.stdout + result.stderr
-            # The verdict is the presence of the guard's own message, not the exit
-            # code: an unrelated probe may also make the copy red (the real
-            # cargo-slots gate can report 2/3 under load), and that must not be
-            # counted as this guard firing.
+            # The verdict is the presence of the guard's own message, plus the
+            # exit code when the case asserts a GREEN copy (the guard-removed
+            # hole). An unrelated probe may also make a copy red, and that must
+            # not be counted as this guard firing.
             found = message in output
-            if found == expect_message:
+            if found == expect_message and (expect_rc is None
+                                            or result.returncode == expect_rc):
                 status = 'KILLED'
             else:
                 status = 'SURVIVED'
                 problems.append(
                     f'{name}: SURVIVED (rc={result.returncode}, message '
-                    f'{message!r} was {"present" if found else "absent"})')
+                    f'{message!r} was {"present" if found else "absent"}, '
+                    f'expected rc={expect_rc})')
             print(f'{name}: {status} rc={result.returncode} message='
                   f'{"present" if found else "absent"}', flush=True)
     return problems
@@ -728,7 +838,8 @@ append_progress(event='start', mutations=len(mutations),
 
 timed_out = None
 with stop_run(), mutating_sources(
-        root, sorted({source / filename for _, filename, _, _, _, _ in mutations})) as snapshots:
+        root, sorted({source / filename for _, filename, _, _, _, _ in mutations})) as snapshots, \
+        restore_window():
     # #819: an unmutated baseline of every named target must be green first.
     baseline_ok = set()
     for full in dict.fromkeys(test for *_, test, _ in mutations):
