@@ -7,10 +7,12 @@
 //! Not wired into the host, ProjectRuntimeRegistry or gateway methods.
 //!
 //! Domain validation is shared with the recorder. The two read ports gate on
-//! the TS reducer reads they model: `turn_summary_supported`,
-//! `control_boundary_supported` and `metadata_reduce_supported` mirror hydrate
-//! (reduce only) and `list_conversation_entry_supported` + `list_title_supported`
-//! mirror listSessions (conversation reduce + finalize, then the title trims).
+//! the TS reducer reads they model: `control_boundary_supported`,
+//! `turn_summary_supported`, `metadata_reduce_supported`,
+//! `validate_hydrated_message`, `file_artifact_supported` and
+//! `compact_budget_supported` mirror hydrate (reduce only) and
+//! `list_conversation_entry_supported` + `list_title_supported` mirror
+//! listSessions (conversation reduce + finalize, then the title trims).
 //! Every gate runs projector by projector over the whole log, because that is
 //! the order TS surfaces errors in. Shapes TS throws on reject with the same
 //! TypeError text; ProjectionUnavailable is left for shapes TS accepts that
@@ -827,17 +829,18 @@ impl TranscriptWriter {
         for entry in entries {
             metadata_reduce_supported(entry)?;
         }
-        // WebHistory's fileArtifact reducer reads `message.content` (via
-        // messageContainsToolResult) and is registered before its tokenUsage
-        // reducer (`WebHistoryProjections.ts:266-270`), so a malformed message
-        // wins over a missing `compactMetadata` on the whole-log order.
+        // WebHistory's fileArtifact reducer (`WebHistoryProjections.ts:75-88`)
+        // is registered before its tokenUsage reducer
+        // (`WebHistoryProjections.ts:266-270`) and walks the log once. Per entry
+        // it reads `message.content.some` (via messageContainsToolResult) on
+        // durable messages and `entry.artifacts.length` on `file_artifacts`
+        // entries, so the first malformed entry of either kind wins over a
+        // missing `compactMetadata` (Codex #1985 r3 measured both orders).
         for entry in entries {
-            if matches!(
-                lossy_value(field(entry, "type")).as_str(),
-                "assistant_message" | "tool_result_message" | "durable_message"
-            ) {
+            if is_durable_message_entry(entry) {
                 validate_hydrated_message(field(entry, "message"))?;
             }
+            file_artifact_supported(entry)?;
         }
         for entry in entries {
             if is_str(field(entry, "type"), "control_boundary") {
@@ -1387,6 +1390,28 @@ fn validate_hydrated_message(message: &JsValue) -> AdapterResult<()> {
     }
     Ok(())
 }
+/// WebHistoryProjections.ts:313-318: the three transcript entry types whose
+/// `message` the fileArtifact reducer reads on hydrate.
+fn is_durable_message_entry(entry: &JsValue) -> bool {
+    matches!(
+        lossy_value(field(entry, "type")).as_str(),
+        "assistant_message" | "tool_result_message" | "durable_message"
+    )
+}
+/// WebHistoryProjections.ts:84: the same fileArtifact reducer reads
+/// `entry.artifacts.length` on every `file_artifacts` entry, so a nullish
+/// `artifacts` throws before the later reducers (tokenUsage included) run.
+/// `.length` on any other JSON value is `undefined`, not a throw.
+fn file_artifact_supported(entry: &JsValue) -> AdapterResult<()> {
+    if !is_str(field(entry, "type"), "file_artifacts") {
+        return Ok(());
+    }
+    let artifacts = field(entry, "artifacts");
+    if nullish(artifacts) {
+        return Err(cannot_read(artifacts, "length"));
+    }
+    Ok(())
+}
 fn message_supported(message: &JsValue) -> bool {
     plain_object(message)
         && matches!(field(message, "content"), JsValue::Array(blocks) if blocks.iter().all(|block| {
@@ -1400,8 +1425,8 @@ fn nullish(value: &JsValue) -> bool {
 }
 // TS restore (`ProjectSessionStorage.restore` → `SessionProjectionDriver.hydrate`)
 // runs every registered reducer's `reduce` without catching and never runs
-// `finalize`. The three reducers below reproduce only the reads that throw, in
-// reducer order, so every shape TS restores must restore here and every shape TS
+// `finalize`. The gates below reproduce only the reads that throw, in reducer
+// order, so every shape TS restores must restore here and every shape TS
 // rejects must reject with the same TypeError text (fixture rows
 // `restore-shape-*` and `restore-order-*` in tests/fixtures/transcript-adapter).
 /// Single-entry dispatcher for one log entry; the ports themselves run each
@@ -1416,6 +1441,10 @@ fn restore_entry_supported(entry: &JsValue) -> AdapterResult<()> {
             compact_budget_supported(entry)
         }
         "session_metadata" => metadata_reduce_supported(entry),
+        "assistant_message" | "tool_result_message" | "durable_message" => {
+            validate_hydrated_message(field(entry, "message"))
+        }
+        "file_artifacts" => file_artifact_supported(entry),
         _ => Ok(()),
     }
 }
@@ -1593,8 +1622,9 @@ fn cannot_read(value: &JsValue, property: &str) -> AdapterError {
 }
 /// control_boundary reads of the default registry in registration order: the
 /// conversation reducer (AgentTranscriptProjections.ts:105-135) first, then —
-/// on the restore port only, `reads_compact_metadata` — web-history token usage
-/// (WebHistoryProjections.ts:379-381). Shapes the reducers ignore pass on both
+/// on the restore port only — web-history token usage, which reads
+/// `compactMetadata` (WebHistoryProjections.ts:379-381;
+/// `compact_budget_supported` covers that pass). Shapes the reducers ignore pass on both
 /// ports; the checks below reproduce only what throws. Live appends go through
 /// `drive`, which catches reducer errors instead.
 fn control_boundary_supported(entry: &JsValue) -> AdapterResult<()> {
@@ -1628,14 +1658,16 @@ fn control_boundary_supported(entry: &JsValue) -> AdapterResult<()> {
     Ok(())
 }
 /// WebHistory's `projectCompactBudget` runs in a **later** pass than the
-/// conversation reducer above and than the turn-summary and metadata reducers
-/// (registration order: conversation, turnSummary, metadata, compactBoundary,
-/// subagentReferences, fileHistory, WebHistory — `BuiltinSessionProjections.ts`
-/// plus `AgentTranscriptProjections.ts:436-440`). It reads
+/// conversation reducer above and than the turn-summary, metadata and
+/// fileArtifact reducers (registration order: conversation, turnSummary,
+/// metadata, compactBoundary, subagentReferences, fileHistory, WebHistory's
+/// fileArtifact → agentStatus → turnError → tokenUsage → incompleteTurn —
+/// `BuiltinSessionProjections.ts` plus `AgentTranscriptProjections.ts:436-440`
+/// and `WebHistoryProjections.ts:266-270`). It reads
 /// `positiveNumber(compactMetadata.postTokens)` for the same subtype, so a null
-/// `compactMetadata` throws only after those three passes have scanned the
-/// whole log. `listSessions` never runs WebHistory, so the list port does not
-/// call this.
+/// `compactMetadata` throws only after every pass above has scanned the whole
+/// log. `listSessions` never runs WebHistory, so the list port does not call
+/// this.
 fn compact_budget_supported(entry: &JsValue) -> AdapterResult<()> {
     let boundary = field(entry, "boundary");
     if boundary.as_object().is_none()

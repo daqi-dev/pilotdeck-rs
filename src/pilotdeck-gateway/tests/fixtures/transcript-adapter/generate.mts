@@ -721,6 +721,30 @@ try {
     steps: [open(), { op: 'restore' }, { op: 'state' }],
   }, ['open:0', 'error:TypeError', 'state:3']);
 
+  // The same fileArtifact reducer also reads `entry.artifacts.length` on
+  // `file_artifacts` entries (`WebHistoryProjections.ts:84`), in the same
+  // single log-order pass as the message read. These two rows pin the
+  // intra-pass order: whichever malformed entry comes first in the log wins.
+  // No `list` step, same reason as the row above (the list port does not run
+  // WebHistory, and Rust still refuses unmodeled message shapes there).
+  await scenario('restore-order-artifact-before-message', {
+    store: { list: [{ sessionId: 's1', lastModified: 1, fileSize: 1 }] },
+    files: { 's1.jsonl': line(at(1, 'accepted_input', { messages: [user('prompt')] }))
+      + line(at(2, 'file_artifacts', { artifacts: null }))
+      + line(at(3, 'assistant_message', { message: { content: null } }))
+      + line(at(4, 'control_boundary', { boundary: { kind: 'compact', subtype: 'compact_boundary', replacementMessages: [user('replacement')] } })) },
+    steps: [open(), { op: 'restore' }, { op: 'state' }],
+  }, ['open:0', 'error:TypeError', 'state:4']);
+
+  await scenario('restore-order-message-before-artifact', {
+    store: { list: [{ sessionId: 's1', lastModified: 1, fileSize: 1 }] },
+    files: { 's1.jsonl': line(at(1, 'accepted_input', { messages: [user('prompt')] }))
+      + line(at(2, 'assistant_message', { message: { content: null } }))
+      + line(at(3, 'file_artifacts', { artifacts: null }))
+      + line(at(4, 'control_boundary', { boundary: { kind: 'compact', subtype: 'compact_boundary', replacementMessages: [user('replacement')] } })) },
+    steps: [open(), { op: 'restore' }, { op: 'state' }],
+  }, ['open:0', 'error:TypeError', 'state:4']);
+
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },
     steps: [open(),
@@ -760,7 +784,7 @@ try {
   }
 
   // Changing scenarios requires updating the exact Rust count and README too.
-  assert.equal(scenarios.length, 483, 'adapter oracle scenario count');
+  assert.equal(scenarios.length, 485, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
