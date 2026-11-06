@@ -14,7 +14,7 @@ use crate::runtime::{
         CronTurnSubmit,
     },
     session::SessionOwner,
-    turn::submit::TurnSubmitter,
+    turn::submit::{SubmitError, TurnSubmission, TurnSubmitter},
 };
 
 /// The `cron:` section of the normalized config snapshot
@@ -130,29 +130,80 @@ impl NativeCronGatewayBody {
     }
 }
 
-/// The submit path's refusal, read off the event the drain would otherwise
-/// discard: `runtime/turn/submit.rs` answers a failed `owner.begin_turn`
-/// with `status("session_busy", …)` plus an `error` event carrying
-/// `session_busy` / `SESSION_BUSY`, and returns `Ok(())`. A turn that
-/// actually started cannot produce that code (it already holds the session's
-/// admission), so this is a rejection, not a mid-turn failure.
-fn rejected_admission(event: &JsValue) -> Option<CronError> {
+/// A turn that never ran or did not finish, read off the event the drain
+/// would otherwise discard.
+///
+/// `runtime/turn/submit.rs` reports every such outcome as an ordinary `Ok`
+/// stream whose last event is an `error`: preflight refusals
+/// (`session_busy` / `SESSION_BUSY`, `workspace_busy`,
+/// `CAPABILITY_UNAVAILABLE`, registry errors — all `recoverable: true`), and
+/// mid-turn failures (`turn_timeout`, agent failures — `recoverable: false`).
+/// The port's contract is `Err` for "cannot be admitted (busy, maintenance,
+/// shutdown) **or the turn itself fails**" (`CronGatewayBody::run_turn`),
+/// and TS's `CronFire` reads any `type === "error"` event as a failed
+/// outcome (CronFire.ts:125-140), so the boundary surfaces the event as
+/// `Err`. Which outcome that becomes — `failed`, `cron_run_timeout`,
+/// `aborted` — is the firing half's (#1305) call; the code is passed
+/// through untouched so it can tell them apart.
+fn failed_turn(event: &JsValue) -> Option<CronError> {
     let object = event.as_object()?;
+    // Hot path: a turn's stream is mostly `text_delta` / `agent_status`, and
+    // those must not pay a UTF-16 -> String conversion just to be classified.
+    let is_error = object
+        .get_property("type")
+        .and_then(JsValue::as_string)
+        .is_some_and(|kind| kind.equals_str("error"));
+    if !is_error {
+        return None;
+    }
     let text = |name: &str| {
         object
             .get_property(name)
             .and_then(JsValue::as_string)
             .map(|value| String::from_utf16_lossy(value.units()))
     };
-    if text("type").as_deref() != Some("error") {
-        return None;
-    }
-    let code = text("code")?;
-    if code != "session_busy" && code != "SESSION_BUSY" {
-        return None;
-    }
-    let message = text("message").unwrap_or_else(|| code.clone());
+    let code = text("code")
+        .filter(|code| !code.is_empty())
+        .unwrap_or_else(|| "cron_run_failed".to_string());
+    let message = text("message")
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| code.clone());
     Some(CronError::gateway(code.as_str(), JsString::from(message)))
+}
+
+/// The event stream a turn submission is, as the drain sees it: one step at
+/// a time, `Err` reserved for transport failures (never for an event).
+/// Factored out so the drain loop itself is testable against a scripted
+/// stream — the rejection it guards is the loop's `return Err`, not just the
+/// per-event classifier.
+trait CronTurnStream {
+    fn next_event(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<Option<JsValue>, SubmitError>>;
+}
+
+impl CronTurnStream for TurnSubmission {
+    fn next_event(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<Option<JsValue>, SubmitError>> {
+        self.next()
+    }
+}
+
+/// Drain one admitted turn to its end. The first `error` event ends the
+/// drain with `Err` (see `failed_turn`); everything else is #1305's.
+async fn drain_turn<S: CronTurnStream>(stream: &mut S) -> Result<(), CronError> {
+    while let Some(event) = stream.next_event().await.map_err(|error| {
+        CronError::gateway(
+            "cron_run_failed",
+            JsString::from(format!("Error: {}", error.message)),
+        )
+    })? {
+        if let Some(failure) = failed_turn(&event) {
+            return Err(failure);
+        }
+    }
+    Ok(())
 }
 
 impl CronGatewayBody for NativeCronGatewayBody {
@@ -171,26 +222,10 @@ impl CronGatewayBody for NativeCronGatewayBody {
             let mut submission = submitter.submit(submit_input(input));
             // The event stream itself is #1305's `CronFire` half (store
             // claims, run records, result delivery); this boundary only
-            // keeps the port contract of unwinding the admitted turn — with
-            // one exception: a submit the session owner refused never ran a
-            // turn at all, and `submit` reports that as an ordinary `Ok`
-            // stream carrying a terminal `session_busy` error event. The
-            // port's own contract is `Err` for "cannot be admitted (busy,
-            // maintenance, shutdown)" (`CronGatewayBody`), so the rejection
-            // is surfaced here instead of being drained into a silent `Ok`.
-            // Every other event stays #1305's to interpret: a mid-turn error
-            // is not a rejection.
-            while let Some(event) = submission.next().await.map_err(|error| {
-                CronError::gateway(
-                    "cron_run_failed",
-                    JsString::from(format!("Error: {}", error.message)),
-                )
-            })? {
-                if let Some(rejection) = rejected_admission(&event) {
-                    return Err(rejection);
-                }
-            }
-            Ok(())
+            // keeps the port contract of unwinding the admitted turn and
+            // reporting a turn that never ran or did not finish as `Err`
+            // (`drain_turn`).
+            drain_turn(&mut submission).await
         })
     }
 
