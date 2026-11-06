@@ -1474,6 +1474,7 @@ fn a_refused_submitter_is_disposed_before_the_failure_is_reported() {
     let disposed = coordinator_disposed.clone();
     let cleaned = cleanup_ran.clone();
     let owner_out = refused_owner.clone();
+    let started = std::time::Instant::now();
     let error = TurnGateway::start_with_cleanup(
         TurnReplayOptions::new(),
         move |coordinator| {
@@ -1517,6 +1518,9 @@ fn a_refused_submitter_is_disposed_before_the_failure_is_reported() {
         },
         async move {
             cleaned.store(true, Ordering::SeqCst);
+            // #1746: the refusal branch must still give a hung cleanup its
+            // poll on the host thread; the bound lets the host move on.
+            std::future::pending::<()>().await;
             Ok(())
         },
     )
@@ -1543,12 +1547,20 @@ fn a_refused_submitter_is_disposed_before_the_failure_is_reported() {
         owner.begin_turn(&"project".into(), &"run".into()).is_none(),
         "#1746 the refused owner must be shut down, not merely dropped"
     );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "#1746 the refused branch's hung cleanup must hit the deadline, took {:?}",
+        started.elapsed()
+    );
 }
 
 /// #1746: the failure teardown is bounded — a cleanup that never completes
-/// must not turn a startup failure into a startup hang.
+/// must not turn a startup failure into a startup hang. The elapsed bound pins
+/// the default deadline into the oracle: raising the test constant (or losing
+/// the deadline) makes this fail or hang instead of quietly getting slower.
 #[test]
 fn a_hung_cleanup_does_not_hold_the_failure_report() {
+    let started = std::time::Instant::now();
     let error = TurnGateway::start_with_cleanup(
         TurnReplayOptions::new(),
         |_| Err(std::io::Error::other("#1746 hung cleanup fixture")),
@@ -1557,4 +1569,36 @@ fn a_hung_cleanup_does_not_hold_the_failure_report() {
     .err()
     .expect("#1746 a builder failure must fail the host");
     assert_eq!("#1746 hung cleanup fixture", error.to_string());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "#1746 a hung cleanup must hit the host teardown deadline, took {:?}",
+        started.elapsed()
+    );
+}
+
+/// #1746: the failure teardown bound comes from the embedding's own teardown
+/// budget, not from the host default. A budget longer than the default must be
+/// waited out — otherwise a legitimate slow cleanup is cut mid-poll — and the
+/// wait must still end at the declared budget.
+#[test]
+fn a_caller_budget_decides_the_failure_teardown_bound() {
+    let started = std::time::Instant::now();
+    let error = TurnGateway::start_with_cleanup_budget(
+        TurnReplayOptions::new(),
+        std::time::Duration::from_millis(300),
+        |_| Err(std::io::Error::other("#1746 budgeted cleanup fixture")),
+        std::future::pending::<Result<(), String>>(),
+    )
+    .err()
+    .expect("#1746 a builder failure must fail the host");
+    let elapsed = started.elapsed();
+    assert_eq!("#1746 budgeted cleanup fixture", error.to_string());
+    assert!(
+        elapsed >= std::time::Duration::from_millis(250),
+        "#1746 the host must wait out the caller's teardown budget, took {elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "#1746 the caller's budget must bound the wait, took {elapsed:?}"
+    );
 }

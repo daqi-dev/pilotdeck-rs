@@ -493,9 +493,11 @@ pub(super) async fn start_observed_with_upload_cleanup(
     let cleanup_factory = factory.clone();
     let cleanup_project = project.clone();
     // #1746: exactly one teardown may run. The host polls this cleanup itself
-    // when initialization fails, so the fallback below arms only when the host
-    // thread never started (runtime build or spawn failure) and the future was
-    // dropped unpolled.
+    // when initialization fails — `start_with_cleanup_budget` below hands it
+    // this embedding's `budget`, so the wait is never shorter than the timeout
+    // inside this closure — and the fallback below arms only when the host
+    // thread never started (runtime build or spawn failure), leaving the
+    // future dropped unpolled.
     let cleanup_ran: Arc<std::sync::atomic::AtomicBool> = Arc::default();
     let cleanup_fallback_ran = cleanup_ran.clone();
     let build_factory = factory.clone();
@@ -578,8 +580,12 @@ pub(super) async fn start_observed_with_upload_cleanup(
     let build_cron_slot: Arc<OnceLock<Arc<crate::runtime::cron::CronManager>>> = Arc::default();
     let cleanup_cron_slot = build_cron_slot.clone();
     let budget = options.drain_budget;
-    let host = TurnGateway::start_with_cleanup(
+    let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
+        // #1746: the failure path waits out this embedding's own drain budget
+        // (the cleanup below bounds itself by the same value), so a slow but
+        // legal `--drain-ms` teardown is not cut by the host's default bound.
+        budget,
         move |coordinator| {
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
             let replacement = Arc::new(ReplacementCoordinator::new(
