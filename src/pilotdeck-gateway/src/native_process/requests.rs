@@ -172,17 +172,6 @@ impl GatewayRequests for Requests {
                             "snapshot_list",
                             "snapshot_get",
                             "snapshot_restore",
-                        ]
-                        // TS splices the six cron names right after the
-                        // snapshot triplet, gated on `options.cron`
-                        // (InProcessGateway.ts:2114-2122); the filter below
-                        // keeps the unconfigured gate. `CRON_METHODS` is the
-                        // single name owner (#1325), so the advertisement,
-                        // the capability filter and the family registry
-                        // cannot drift apart.
-                        .into_iter()
-                        .chain(crate::runtime::cron::CRON_METHODS)
-                        .chain([
                             "manager_sessions",
                             "commands_list",
                             "usage_snapshot",
@@ -232,7 +221,20 @@ impl GatewayRequests for Requests {
                             "permission_decide",
                             "async_hook_result",
                             "delete_session",
-                        ])
+                        ]
+                        // TS splices the six cron names right after the
+                        // snapshot triplet, gated on `options.cron`
+                        // (InProcessGateway.ts:2114-2122). The advertised set
+                        // is order-insensitive on both sides — every Rust
+                        // assertion sorts before comparing and the TS-subset
+                        // guard is containment — so the names are appended to
+                        // the same chain rather than splitting the literal
+                        // (the shared #1316 negative controls anchor on that
+                        // literal). `CRON_METHODS` stays the single name owner
+                        // (#1325), so the advertisement, the capability filter
+                        // and the family registry cannot drift apart.
+                        .into_iter()
+                        .chain(crate::runtime::cron::CRON_METHODS)
                         .chain([
                             "upload_create",
                             "upload_get",
