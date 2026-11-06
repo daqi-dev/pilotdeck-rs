@@ -1370,3 +1370,32 @@ fn unmigrated_rejection_order_is_deterministic() {
         "#1386 unmigrated rejection order"
     );
 }
+
+/// #1738: `ActiveChat::admit` is the single place that decides "this turn owns
+/// the chat". The webhook path needs the decision to come from the `insert`
+/// itself (its `contains` check runs in an earlier lock section, across the
+/// `/new` reply), so the reject branch is only reachable when a second turn of
+/// the same chat is already in flight — that branch is exercised here directly.
+#[test]
+fn active_chat_admission_is_first_come_only_and_releases_on_drop() {
+    let active = Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let guard = super::ActiveChat::admit(active.clone(), "chat-1".to_string())
+        .expect("#1738 the first admit owns the slot");
+    assert!(active.lock().expect("active set").contains("chat-1"));
+
+    assert!(
+        super::ActiveChat::admit(active.clone(), "chat-1".to_string()).is_none(),
+        "#1738 a second turn must not be admitted while the first holds the slot"
+    );
+    assert!(
+        active.lock().expect("active set").contains("chat-1"),
+        "#1738 the rejected admit must leave the owner's slot in place"
+    );
+
+    drop(guard);
+    assert!(!active.lock().expect("active set").contains("chat-1"));
+    assert!(
+        super::ActiveChat::admit(active.clone(), "chat-1".to_string()).is_some(),
+        "#1738 dropping the guard frees the chat for the next turn"
+    );
+}
