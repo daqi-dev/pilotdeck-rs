@@ -117,6 +117,8 @@ switches = [
      '#1334 #1729 rejects steps type drift'),
     ('webhook-oracle-recorded-op', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_op_rejects_wrong_type',
      '#1334 #1729 rejects op type drift'),
+    ('webhook-oracle-recorded-expected', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_expected_rejects_wrong_type',
+     '#1334 #1729 rejects expected type drift'),
     ('webhook-oracle-recorded-stop-reason', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_stop_reason_rejects_wrong_type',
      '#1334 #1729 rejects stop.reason type drift'),
     ('webhook-oracle-header-value', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_header_value_rejects_drift',

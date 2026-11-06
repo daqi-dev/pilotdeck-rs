@@ -1789,15 +1789,46 @@ fn silence_and_zero_byte_close_stay_distinguishable() {
     );
 }
 
+/// The terminal comparison reads `expected` through the same tri-state
+/// accessor as every other recording field: a present-but-wrong-type
+/// container fails with a `#1334` diagnostic instead of a generic object
+/// mismatch, and an absent one cannot shrink the case to a blind compare.
+fn recorded_expected_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("expected"),
+        "expected",
+        "an object",
+        |value| value.is_object().then_some(value),
+        true,
+        crate::mutants::on("webhook-oracle-recorded-expected"),
+    )
+}
+
+fn recorded_expected(value: &Value) -> Option<&Value> {
+    recorded_expected_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_expected_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_expected_checked(&json!({"expected": []})).is_err(),
+        "#1334 #1729 rejects expected type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 expected must be an object")]
+fn recorded_expected_panics_on_wrong_type() {
+    recorded_expected(&json!({"expected": []}));
+}
+
 async fn replay(name: &str) {
     let case = case(name);
+    let expected = recorded_expected(&case)
+        .expect("#1334 expected validated object")
+        .clone();
     let actual = run_case(&case).await;
-    negative_assert_eq!(
-        actual,
-        case["expected"].clone(),
-        "#1334 webhook oracle case {}",
-        name
-    );
+    negative_assert_eq!(actual, expected, "#1334 webhook oracle case {}", name);
 }
 
 macro_rules! replay_tests {
