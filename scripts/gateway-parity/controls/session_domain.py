@@ -204,15 +204,17 @@ LABEL_KNOWN_ACCEPT = {
 # attribution can reject it.  The healthy predecessor must
 # score 72/72 native PASS while the whole batch stays NOT_RUN: cells without
 # evidence can never make the deadline suite PASS.
-# #1372 WS 信封投影控制：每个只改线形（其余面保持健康前件），钉住四条规则 ——
+# #1372 WS 信封投影控制：每个只改线形（其余面保持健康前件），钉住五条规则 ——
 # 终态必须由 yield 序列派生、恰一个终态且必须在最后、有终态不得发空流 fallback、
-# 相同内容的两条 yield 不得折叠。结构类拒绝先由 chain 的 active-request 守卫命中，
-# 投影函数自身的同一批判据由 test_safety 的正负例直接钉住。
+# 相同内容的两条 yield 不得折叠、终态比较必须按 JSON 类型（Python 的 True == 1
+# 会把 JSON 布尔漂移成数字的终态当成相等）。结构类拒绝先由 chain 的 active-request
+# 守卫命中，投影函数自身的同一批判据由 test_safety 的正负例直接钉住。
 WS_PROJECTION_CASES = {
     'native-terminal-not-derived': 'NATIVE_CHAIN',
     'native-double-final': 'NATIVE_CHAIN',
     'native-final-not-last': 'NATIVE_CHAIN',
     'native-fallback-with-terminal': 'NATIVE_CHAIN',
+    'native-terminal-type-drift': 'NATIVE_CHAIN',
     'native-content-dedupe': 'EXPECTATION_MISMATCH',
 }
 
@@ -897,6 +899,33 @@ def native_deadline_case(name, output):
             # empty-stream fallback: lastError takes priority, so a fallback
             # terminal is a fabricated finish frame, not a derivation.
             terminal['frame']['event'] = copy.deepcopy(session.native_evidence.WS_TERMINAL_FALLBACK)
+            terminal.update(control_wire(terminal['frame']))
+        elif name == 'native-terminal-type-drift':
+            # Same keys, same Python-equal values, but the JSON booleans inside
+            # the terminal became numbers.  ``True == 1`` in Python, so a
+            # derivation check written with plain equality accepts a terminal
+            # that is not the frame it claims to repeat (#1372 review P0).
+            def booleans(value):
+                if isinstance(value, bool):
+                    return [value]
+                if isinstance(value, dict):
+                    return [item for entry in value.values() for item in booleans(entry)]
+                if isinstance(value, list):
+                    return [item for entry in value for item in booleans(entry)]
+                return []
+
+            def numeric(value):
+                if isinstance(value, bool):
+                    return int(value)
+                if isinstance(value, dict):
+                    return {key: numeric(item) for key, item in value.items()}
+                if isinstance(value, list):
+                    return [numeric(item) for item in value]
+                return value
+
+            require(bool(booleans(terminal['frame']['event'])), 'CONTROL_PRECONDITION',
+                    'terminal must carry a JSON boolean so the drift is observable')
+            terminal['frame']['event'] = numeric(terminal['frame']['event'])
             terminal.update(control_wire(terminal['frame']))
         elif name == 'native-content-dedupe':
             # Two identical final:false yields.  Both the observer and the
