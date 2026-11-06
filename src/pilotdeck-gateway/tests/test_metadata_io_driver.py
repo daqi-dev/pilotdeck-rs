@@ -1,5 +1,6 @@
 """Toolchain starts are mocked; watchdog controls run only this Python interpreter."""
 import ast
+import hashlib
 import importlib.util
 import os
 from collections import Counter
@@ -1177,342 +1178,253 @@ class EnvironmentControls(unittest.TestCase):
                               for row in self.self_check_controls_rows(renamed)], names)
         print('#1843 D self-check control row-renamed: KILLED', flush=True)
 
-    def controls_verdict_pins(self, source):
-        """`--self-check-controls` 的「见证 → 退出码」整条链，逐环节钉一次。"""
-        self.assertEqual(source.count('control_problems = self_check_controls_run()'), 1,
-                         '#1692 r4 the controls verdict is collected exactly once')
-        self.assertEqual(source.count('sys.exit(1 if control_problems else 0)'), 1,
-                         '#1692 r4 the controls verdict decides the exit status')
-        tree = ast.parse(source)
-        function = next((node for node in ast.walk(tree)
-                         if isinstance(node, ast.FunctionDef)
-                         and node.name == 'self_check_controls_run'), None)
-        self.assertIsNotNone(function,
-                             '#1692 r5 the fixture defines self_check_controls_run()')
-        # r5（DeepSeek concurrency P1）：r4 只钉了调用方与出口。被调方**归还**见证的那 4 条
-        # `return problems` 一行都没钉——把最后一条改成 `return []`，见证文本、调用点、出口
-        # 三处钉子全部不变，15 条 meta control 全 SURVIVED 时 `control_problems == []`、
-        # `sys.exit(0)`，CI 那一步照绿。归还语句逐条钉死。
-        returns = [ast.get_source_segment(source, node) for node in ast.walk(function)
-                   if isinstance(node, ast.Return)]
-        self.assertEqual(returns, ['return problems'] * 4,
-                         '#1692 r5 every exit of self_check_controls_run hands the problems back')
-        branch = next((node for node in tree.body
-                       if isinstance(node, ast.If)
-                       and "'--self-check-controls'" in (ast.get_source_segment(source, node.test)
-                                                         or '')), None)
-        self.assertIsNotNone(branch,
-                             '#1692 r5 the fixture dispatches --self-check-controls')
-        # r6（GLM boundary P1 / DeepSeek concurrency P1）：数出口形态是钉不住的——r5 只数
-        # `X.exit(...)` 这一个形态，`raise SystemExit(0)`（该夹具自己就在 480/599/1501 用
-        # 这个写法）、`os._exit(0)`、`exit(0)` 全都不是 `Attribute(attr='exit')`；而在调用
-        # 与裁决之间插一句 `control_problems = []` / `.clear()` 更是四个计数一动不动。
-        # 改成钉**语句序列**：这个分支里能出现哪五条语句、顺序如何，逐条钉死。
-        self.assertEqual([type(statement).__name__ for statement in branch.body],
-                         ['If', 'If', 'Assign', 'For', 'Expr'],
-                         '#1692 r6 the controls branch is exactly five statements')
-        self.assertEqual([self.statement_text(source, statement) for statement in branch.body], [
-            "if arguments:\n"
-            "sys.exit(f'{mode} takes no arguments: {arguments!r}\\n{USAGE}')",
-            "if mode == '--self-check':\n"
-            'sys.exit(self_check())',
-            'control_problems = self_check_controls_run()',
-            'for problem in control_problems:\n'
-            "print('self-check control FAILED: ' + problem, file=sys.stderr)",
-            'sys.exit(1 if control_problems else 0)',
-        ], '#1692 r6 the controls branch carries no other statement')
-        # r6（DeepSeek sibling P1×2）：被调方自己也能假 PASS。在
-        # `self_check_controls_run` 第一句插 `sys.exit(0)`，或者在 `return problems`
-        # 前补一句 `problems = []`，上面这些钉子一条都不动——进程直接退 0，15 条 meta
-        # control 一条没跑，CI 那一步照绿。被调方自己不许有出口，且累加器只许初始化一次。
-        self.assertEqual(self.exit_calls(source, function), [],
-                         '#1692 r6 self_check_controls_run cannot exit by itself')
-        self.assert_accumulator_pinned(source, function, 'problems')
-        # 全文件的出口清单：任何位置新增一个 `sys.exit` / `raise SystemExit`（例如主路径
-        # 变异循环里的早退 `sys.exit(0)`）都会让这张清单变长，逼着重新过一遍链。
-        # 全文件的出口清单（r7 GLM sibling/concurrency/boundary P1）：只钉两个桶的
-        # 计数，等于 `_EXIT_TARGETS` 里另外四种形态「收了不钉」——`exit(0)` /
-        # `os._exit(0)` 插进来两个桶都不动。整份清单逐条比对，任何位置任何形态的
-        # 新增/删除都会红。
-        inventory = self.exit_calls(source, tree)
-        self.assertEqual(sorted(inventory),
-                         sorted(['sys.exit(…)'] * 20 + ['raise SystemExit(…)'] * 3),
-                         '#1692 r7 every process-ending call in the fixture is reviewed')
-        # r7（GLM sibling P1）：`--self-check` 链的四个被调方与 controls 的那个同层，
-        # 同样可能自己早退或把见证重置后再归还。五个函数一视同仁。
-        for name, reviewed in (('deadline_probe', ['raise SystemExit(…)']),
-                               ('slot_timeout_probe', []),
-                               ('restore_probe', []),
-                               ('dispatch_probe', [])):
-            probe = next((node for node in ast.walk(tree)
-                          if isinstance(node, ast.FunctionDef) and node.name == name), None)
-            self.assertIsNotNone(probe, f'#1692 r7 the fixture defines {name}()')
-            self.assertEqual(self.exit_calls(source, probe), reviewed,
-                             f'#1692 r7 {name} only exits where it was reviewed')
-            self.assert_accumulator_pinned(source, probe, 'problems')
-
-    def main_verdict_pins(self, source):
-        """主路径的「见证 → 退出码」链：`failures` / `timed_out` → `sys.exit(1)`。
-
-        r6（GLM sibling P1）：r4/r5 只钉了 `--self-check-controls` 那条链，真正跑
-        mutation 的主路径一句没钉——把 `if failures: sys.exit(1)` 改成 `sys.exit(0)`，
-        或者把 `failures.append` 挪走，夹具照样打完 SURVIVED、写完 summary.json、退 0，
-        `.github/workflows/ci.yml` 的「负控夹具执行」步骤照绿。同一签名、同一文件、同一
-        CI job，按同一套钉法补齐。
-        """
-        tree = ast.parse(source)
-        tail = tree.body[-6:]
-        self.assertEqual([self.statement_text(source, statement) for statement in tail], [
-            'counts = publish_summary(summary, timed_out=timed_out)',
-            "append_progress(event='published', **counts)",
-            'progress.close()',
-            "if timed_out:\n"
-            "print(f'not finished: {timed_out}', file=sys.stderr)\n"
-            'sys.exit(1)',
-            'if failures:\n'
-            'print(f\'not killed: {", ".join(failures)}\', file=sys.stderr)\n'
-            'sys.exit(1)',
-            "print(f'{len(summary)}/{len(mutations)} killed; every source restored "
-            "byte-for-byte', flush=True)",
-        ], '#1692 r6 the main verdict is exactly these six statements')
-        # 见证侧同样钉死：`failures` 只许初始化一次、之后只 `append`，裁决语句里的读取
-        # 逐字钉在上面那段里。r7（GLM boundary P1）：`append` 的条数走 AST 而不是文本
-        # 计数——把一句 `failures.append(...)` 注释掉，文本还在、AST 里少一个。
-        self.assert_accumulator_pinned(source, tree, 'failures', extra=tail[3:],
-                                       expected_witnesses=3)
-        # r7（GLM sibling P1）：`timed_out` 的读侧被六语句序列钉住，写侧没人钉。
-        # 它只有两处赋值：`stop_run` 里记下原因、模块级初始化成 None。
-        self.assertEqual(sorted(self.statement_text(source, node) for node in ast.walk(tree)
-                                if isinstance(node, ast.Assign)
-                                and any(isinstance(target, ast.Name) and target.id == 'timed_out'
-                                        for target in node.targets)),
-                         sorted(["timed_out = f'{type(error).__name__}: {error}'",
-                                 'timed_out = None']),
-                         '#1692 r7 timed_out is written in exactly two reviewed places')
-        # 同族的第三条链（r6 GLM sibling P2）：`--self-check` 自己的归还层。
-        # `sys.exit(self_check())` 已被上面钉住，但 `self_check()` 内部把 `return 1`
-        # 改成 `return 0` 同样让 CI 那一步照绿。裁决两句话 + 累加器一起钉死。
-        self_check = next((node for node in ast.walk(tree)
-                           if isinstance(node, ast.FunctionDef)
-                           and node.name == 'self_check'), None)
-        self.assertIsNotNone(self_check, '#1692 r6 the fixture defines self_check()')
-        verdict = [self_check.body[-3], self_check.body[-1]]
-        self.assertEqual([self.statement_text(source, node) for node in verdict],
-                         ['if problems:\nreturn 1', 'return 0'],
-                         '#1692 r6 --self-check still exits 1 on a surviving guard')
-        self.assert_accumulator_pinned(source, self_check, 'problems', extra=verdict)
-        # r7（GLM sibling P1）：四条 `problems.extend(<probe>())` 是 --self-check 的
-        # 全部覆盖面，删掉一条钉子只要求「至少一个 append」，照绿。
-        self.assertEqual([self.statement_text(source, node) for node in ast.walk(self_check)
-                          if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                          and node.func.attr == 'extend'],
-                         ['problems.extend(deadline_probe())',
-                          'problems.extend(slot_timeout_probe())',
-                          'problems.extend(restore_probe())',
-                          'problems.extend(dispatch_probe())'],
-                         '#1692 r7 every probe is still wired into --self-check')
-
-    @staticmethod
-    def statement_text(source, statement):
-        """语句源码，去缩进、逐行保序；多行语句（If/For）保留其整块。"""
-        segment = ast.get_source_segment(source, statement) or ''
-        return '\n'.join(line.strip() for line in segment.splitlines())
-
+    # --- #1692 §9 裁决链：闭集钉子（r9）------------------------------------
+    # r4–r7 四轮都在给「哪种写法算安全」列白名单：r4 按接收者变量名枚举写点，r6 按出口
+    # 形态枚举、再钉语句序列，r7 给 `If` / `While` / `Assert` 的 test 放行任意 `Name`。
+    # 白名单是开集的反面，r8 两家各找到新的放行面：test 里的 `Call` 接收者
+    # （`if problems.clear():`）、`AnnAssign` / `NamedExpr` / `for` 目标、把已过审的出口
+    # 搬进另一个函数、把调用点注释掉（文本还在、计数不变）。每轮都在补上一轮的写法，
+    # 而「写法」这个维度本身从没关掉。r9 换闭集，一次收口：
+    #
+    #   · 整份字节钉：未列出的任何字节都是失败。插入 / 删除 / 搬移 / 改注释都改字节，
+    #     不存在「收了哪种写法」这回事；
+    #   · 出口清单整份比对：不当规则用，当人可读的复核面——字节钉只说「变了」，清单说
+    #     「多 / 少 / 搬了哪一个出口」，顺序与所属函数都算内容。
+    #
+    # 代价是夹具要改时必须两处一起改，这正是要的：改动落成一次看得懂的 diff，而不是
+    # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
+    # 照绿，再证明闭集判红。
+    SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
+    SESSION_CONTROLS_SHA256 = 'f55bfdb8c72d71c926622229f14d9d89d202fd0f0aab1b21226d4548d1266484'
+    SESSION_CONTROLS_EXITS = r"""
+<module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
+acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
+acquire_slot | return | return wait_for_slot(script, timeout=timeout)
+acquire_slot | sys.exit() | sys.exit(f'cargo slots unavailable for {timeout}s: refusing to run cargo ' 'while the source tree lock is held')
+acquire_slot | sys.exit() | sys.exit(f'cargo slot gate failed with rc={error.returncode}: {error.stderr}')
+deadline_seconds | return | return DEADLINE_SECONDS
+deadline_seconds | return | return seconds
+bounded | return | return min(nominal, left)
+run | return | return result.returncode, result.stdout + result.stderr
+run | return | return 124, f'{collected}\nTIMEOUT after {error.timeout}s\n'
+append_progress | return | return
+stop_run | raise SystemExit() | raise SystemExit(f'restore did not finish before the run was cut off: {error}; ' 'no summary published, sources may still be mutated')
+publish_summary | return | return counts
+deadline_probe.gate_exit | raise SystemExit() | raise SystemExit('cargo slots unavailable for 600s')
+deadline_probe | return | return problems
+slot_timeout_probe.recorder | return | return subprocess.CompletedProcess([], 0, 'cargo-slots: 0 / cap 1\n', '')
+slot_timeout_probe | return | return problems
+_send_signals_after | return | return threading.Thread(target=run, daemon=True)
+restore_probe | return | return problems
+dispatch_probe | return | return problems
+self_check | sys.exit() | sys.exit('no slot guard cases defined: self-check would pass without testing the guard')
+self_check | return | return 1
+self_check | return | return 0
+_empty_gates_table | return | return text, 0
+_empty_gates_table | return | return text[:start] + ' gates = {}\n' + text[end:], 1
+<module> | sys.exit() | sys.exit('no meta control cases defined: --self-check-controls would pass ' 'without testing a single guard')
+_self_check_variant | return | return copy_path
+self_check_controls_run | return | return problems
+self_check_controls_run | return | return problems
+self_check_controls_run | return | return problems
+self_check_controls_run | return | return problems
+<module> | sys.exit() | sys.exit(f'--slot-guard-probe takes exactly 2 arguments\n{USAGE}')
+<module> | sys.exit() | sys.exit(f'--slot-guard-probe: not a timeout: {arguments[1]!r}')
+<module> | sys.exit() | sys.exit(0)
+<module> | sys.exit() | sys.exit(f'{mode} takes no arguments: {arguments!r}\n{USAGE}')
+<module> | sys.exit() | sys.exit(self_check())
+<module> | sys.exit() | sys.exit(1 if control_problems else 0)
+<module> | sys.exit() | sys.exit(USAGE)
+<module> | sys.exit() | sys.exit(f'unknown mode: {mode}\n{USAGE}')
+<module> | sys.exit() | sys.exit(f'unknown mutation name(s): {sorted(set(selected) - {m[0] for m in mutations})}')
+<module> | sys.exit() | sys.exit('no mutations selected: the negative control would pass without testing anything')
+<module> | sys.exit() | sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
+<module> | sys.exit() | sys.exit(str(error))
+<module> | raise SystemExit() | raise SystemExit(f'{name}: restore left {restored} != {before}')
+<module> | sys.exit() | sys.exit(1)
+<module> | sys.exit() | sys.exit(1)
+""".strip()
     _EXIT_TARGETS = ('sys.exit', 'exit', 'quit', 'os._exit', 'builtins.exit')
 
-    def exit_calls(self, source, scope):
-        """作用域内所有「直接结束进程」的写法：`X.exit(...)` 与 `raise SystemExit(...)`。"""
-        found = []
-        for node in ast.walk(scope):
-            if isinstance(node, ast.Call):
-                target = ast.get_source_segment(source, node.func) or ''
-                if target in self._EXIT_TARGETS:
-                    found.append(f'{target}(…)')
-            elif isinstance(node, ast.Raise) and node.exc is not None:
-                exception = node.exc
-                named = (ast.get_source_segment(source, exception.func)
-                         if isinstance(exception, ast.Call)
-                         else ast.get_source_segment(source, exception)) or ''
-                if named == 'SystemExit':
-                    found.append('raise SystemExit(…)')
-        return found
+    @staticmethod
+    def session_controls_normalise(source):
+        """只规范化行尾空白与换行风格；**一条语句都不剔除**。
 
-    def assert_accumulator_pinned(self, source, scope, name, extra=(),
-                                  expected_witnesses=None):
-        """`name` 这个见证累加器只许初始化一次，之后只 `append` 或整份交出。
-
-        r6（DeepSeek sibling P1 / DeepSeek concurrency P1）：只钉 `return problems`
-        的文本挡不住「重置」——在归还前补一句 `problems = []`（或 `.clear()` /
-        `del problems[:]` / `problems[:] = []`），归还语句与出口一字不动，退出码却拿到
-        空列表。这里反过来枚举：这个标识符允许出现在哪些位置，别处出现一律红。
+        剔除注释 / 空行是把 `# if problems:` 这种注释掉的守卫当成不存在，等于又开了
+        一个「收了哪种写法」的口子——正是 r4–r7 的病根。空白规范化只让 CRLF 与行尾
+        空格不进哈希。
         """
-        assignments = [node for node in ast.walk(scope)
-                       if isinstance(node, ast.Assign)
-                       and any(isinstance(target, ast.Name) and target.id == name
-                               for target in node.targets)]
-        self.assertEqual([self.statement_text(source, node) for node in assignments],
-                         [f'{name} = []'],
-                         f'#1692 r6 {name} is initialised exactly once, empty')
-        allowed = {id(assignments[0].targets[0])}
-        appends = [node for node in ast.walk(scope)
-                   if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                   and node.func.attr in ('append', 'extend')
-                   and isinstance(node.func.value, ast.Name) and node.func.value.id == name]
-        self.assertGreater(len(appends), 0, f'#1692 r6 {name} witnesses go through append')
-        if expected_witnesses is not None:
-            self.assertEqual(len(appends), expected_witnesses,
-                             f'#1692 r6 {name} keeps exactly {expected_witnesses} witnesses')
-        allowed.update(id(node.func.value) for node in appends)
-        allowed.update(id(node.value) for node in ast.walk(scope)
-                       if isinstance(node, ast.Return) and isinstance(node.value, ast.Name)
-                       and node.value.id == name)
-        # `for problem in problems:` 与 `if problems:` / `elif not problems:` 都是
-        # 对累加器的只读消费。
-        allowed.update(id(node.iter) for node in ast.walk(scope)
-                       if isinstance(node, ast.For) and isinstance(node.iter, ast.Name)
-                       and node.iter.id == name)
-        for node in ast.walk(scope):
-            if isinstance(node, (ast.If, ast.While, ast.Assert)):
-                allowed.update(id(inner) for inner in ast.walk(node.test)
-                               if isinstance(inner, ast.Name) and inner.id == name)
-        for statement in extra:
-            allowed.update(id(node) for node in ast.walk(statement)
-                           if isinstance(node, ast.Name) and node.id == name)
-        offenders = [node.lineno for node in ast.walk(scope)
-                     if isinstance(node, ast.Name) and node.id == name
-                     and id(node) not in allowed]
-        self.assertEqual(offenders, [],
-                         f'#1692 r6 {name} is never rebound, filtered or cleared')
+        return '\n'.join(line.rstrip()
+                         for line in source.replace('\r\n', '\n').splitlines()).strip('\n') + '\n'
 
-    def test_self_check_controls_exit_is_pinned(self):
-        # r4（MiniMax sibling P1）：r3 把 `self_check_controls_run()` 的三条承重出口改成
-        # 走 `problems.append`（理由：`return []` 会让 CI 步骤假 PASS），但**同一条链上
-        # 「见证 → 退出码」的那一步没人钉**：把 `sys.exit(1 if control_problems else 0)`
-        # 改成 `sys.exit(0)`、或者把上一行的调用挪走，全部 `problems.append` 见证文本不变，
-        # #1843 C 的 55 条钉子全绿——而 `.github/workflows/ci.yml` 里那一步把「非零退出」
-        # 当验收判据，于是它照绿。与 `--self-check` 的 `if problems: return 1` 同层，
-        # 后者已有计数钉 + 变异杀，这里补齐同样的三层（调用 / 归还 / 出口）。
-        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
-                  'negative_controls.py').read_text()
-        self.controls_verdict_pins(source)
-        self.main_verdict_pins(source)
+    @classmethod
+    def session_controls_sha256(cls, source):
+        return hashlib.sha256(cls.session_controls_normalise(source).encode()).hexdigest()
+
+    def session_controls_source(self):
+        return (Path(__file__).resolve().parent/self.SESSION_CONTROLS).read_text()
+
+    @classmethod
+    def session_controls_exit_shape(cls, source, node):
+        """`node` 是哪种进程出口形态；不是出口返回 None。
+
+        三种形态都收：`sys.exit` / `exit` / `quit` / `os._exit` / `builtins.exit`
+        调用、`raise SystemExit(...)`、`return`。形态按**全节点**枚举，未列出的一律
+        不是出口——r7 只收前两种，`raise SystemExit(0)` 与 `return []` 都不在网里。
+
+        局限说明白：形态比对的是源码字面文本，别名导入（`from os import _exit`）或
+        `getattr` 拼接进不了这张清单。它不是判据——那种写法同样改变字节，字节钉照样
+        判红；清单只负责回答「变了的是哪个出口」。
+        """
+        if isinstance(node, ast.Call):
+            target = ast.get_source_segment(source, node.func) or ''
+            return f'{target}()' if target in cls._EXIT_TARGETS else None
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
+            if (ast.get_source_segment(source, node.exc.func) or '') == 'SystemExit':
+                return 'raise SystemExit()'
+            return None
+        if isinstance(node, ast.Return):
+            return 'return'
+        return None
+
+    @classmethod
+    def session_controls_exit_rows(cls, source):
+        """全文件出口清单，按源码顺序：(所属限定名, 形态, 语句源码)。
+
+        **顺序与所属函数都是内容**：r7 用 `sorted(...)` 比 multiset，把已过审的
+        `sys.exit(0)` 从 `--slot-guard-probe` 分支搬进 `self_check` 头部照样全绿
+        （GLM r8 sibling P1）。这里搬位置会同时改所属限定名与行序。
+        """
+        rows = []
+
+        def visit(node, owner):
+            for child in ast.iter_child_nodes(node):
+                qualname = owner
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    qualname = f'{owner}.{child.name}' if owner else child.name
+                shape = cls.session_controls_exit_shape(source, child)
+                if shape is not None:
+                    text = ' '.join((ast.get_source_segment(source, child) or '').split())
+                    rows.append((owner or '<module>', shape, text))
+                visit(child, qualname)
+
+        visit(ast.parse(source), '')
+        return rows
+
+    @classmethod
+    def session_controls_exit_lines(cls, source):
+        return [' | '.join(row) for row in cls.session_controls_exit_rows(source)]
+
+    @classmethod
+    def session_controls_exit_multiset(cls, source):
+        """r7 那版口径：只认两种形态，`sorted()` 丢位置。
+
+        留着它只是为了负控能贴出「这条变异绕过了老钉子」的原始证据。
+        """
+        return sorted(shape for _, shape, _ in cls.session_controls_exit_rows(source)
+                      if shape != 'return')
+
+    def assert_session_controls_closed(self, source):
+        """闭集判据：整份字节与出口清单都必须与钉死值逐项相同。"""
+        self.assertEqual(
+            self.session_controls_sha256(source), self.SESSION_CONTROLS_SHA256,
+            '#1692 r9 the fixture changed byte-for-byte: read the diff, then update '
+            'SESSION_CONTROLS_SHA256 and SESSION_CONTROLS_EXITS in the same commit')
+        self.assertEqual(
+            '\n'.join(self.session_controls_exit_lines(source)), self.SESSION_CONTROLS_EXITS,
+            '#1692 r9 the fixture exit inventory changed: the byte pin above only says '
+            '"something changed", this list says which exit was added, dropped or moved')
+
+    def test_session_controls_verdict_chain_is_a_closed_set(self):
+        # r4–r7 的逐点钉子（`problems` / `failures` / `control_problems` / `timed_out`
+        # 的累加器白名单、五条链的语句序列、出口形态计数）在 r9 全部删掉，换成整份字节
+        # 钉 + 出口清单——覆盖面只增不减：任何与钉死字节不同的源码都判红，逐点钉子只是
+        # 它的子集。下面每条负控都先证明 r7 口径照绿、再证明闭集判红；六条覆盖 r8 两家
+        # 给的**全部** P1，两条搬移覆盖「字节变了而清单看得出搬了哪一个」。
+        source = self.session_controls_source()
+        self.assert_session_controls_closed(source)
+
+        def mutate(*pairs):
+            mutant = source
+            for old, new in pairs:
+                self.assertEqual(mutant.count(old), 1,
+                                 f'#1692 r9 the mutation anchor is unique: {old!r}')
+                mutant = mutant.replace(old, new, 1)
+            return mutant
+
+        def assert_killed(label, mutant):
+            self.assertEqual(self.session_controls_exit_multiset(mutant),
+                             self.session_controls_exit_multiset(source),
+                             f'#1692 r9 {label}: the r7 multiset pin stays green')
+            with self.assertRaises(AssertionError,
+                                   msg=f'#1692 r9 {label} must be caught by the closed set'):
+                self.assert_session_controls_closed(mutant)
+            print(f'#1692 r9 closed-set mutant {label}: KILLED', flush=True)
+
         for label, old, new in (
-                ('controls-exit-always-zero', 'sys.exit(1 if control_problems else 0)',
-                 'sys.exit(0)'),
-                ('controls-result-discarded', 'control_problems = self_check_controls_run()',
-                 'self_check_controls_run()')):
-            self.assertIn(old, source, f'#1692 r4 controls exit anchor: {label}')
-            mutant = source.replace(old, new, 1)
-            self.assertNotEqual(mutant, source, f'#1692 r4 the mutant really applied: {label}')
-            with self.assertRaises(AssertionError,
-                                   msg=f'#1692 r4 controls {label} must be caught'):
-                self.controls_verdict_pins(mutant)
-            print(f'#1692 r4 controls exit mutant {label}: KILLED', flush=True)
-        # r5（DeepSeek concurrency P1）：把最后一条归还改成 `return []`。
-        anchor = source.rindex('return problems')
-        dropped = source[:anchor] + 'return []' + source[anchor + len('return problems'):]
-        self.assertNotEqual(dropped, source, '#1692 r5 the dropped return really applied')
-        with self.assertRaises(AssertionError,
-                               msg='#1692 r5 dropping the returned problems must be caught'):
-            self.controls_verdict_pins(dropped)
-        print('#1692 r5 controls verdict mutant controls-verdict-dropped: KILLED', flush=True)
-        # r5 同一条：在裁决前插一个早退 `sys.exit(0)`。
-        early = source.replace('    control_problems = self_check_controls_run()',
-                               '    sys.exit(0)\n    control_problems = '
-                               'self_check_controls_run()', 1)
-        self.assertNotEqual(early, source, '#1692 r5 the early exit really applied')
-        with self.assertRaises(AssertionError,
-                               msg='#1692 r5 an early exit before the verdict must be caught'):
-            self.controls_verdict_pins(early)
-        print('#1692 r5 controls verdict mutant controls-early-exit: KILLED', flush=True)
-        # r6 变异：四条各打一个 r6 钉住的洞。
-        for label, old, new, pin, anchor in (
-                # GLM boundary P1：`raise SystemExit(0)` 不是 `X.exit(...)` 形态。
-                ('controls-raise-system-exit',
-                 '    control_problems = self_check_controls_run()',
-                 '    raise SystemExit(0)\n    control_problems = self_check_controls_run()',
-                 self.controls_verdict_pins,
-                 '    control_problems = self_check_controls_run()'),
-                # DeepSeek sibling P1-1：被调方自己早退（锚点取它的 docstring，避免撞上
-                # 文件里另外 5 个同样以 `problems = []` 开头的自检函数）。
-                ('controls-callee-early-exit',
-                 '    """Prove every self-check guard is load-bearing; returns process '
-                 'problems."""\n    problems = []',
-                 '    """Prove every self-check guard is load-bearing; returns process '
-                 'problems."""\n    problems = []\n    sys.exit(0)',
-                 self.controls_verdict_pins,
-                 '    """Prove every self-check guard is load-bearing; returns process '
-                 'problems."""\n    problems = []'),
-                # DeepSeek sibling P1-2：归还前把累加器重置。
-                ('controls-accumulator-reset',
-                 '    return problems\n\n\n# #1692 r15-4',
-                 '    problems = []\n    return problems\n\n\n# #1692 r15-4',
-                 self.controls_verdict_pins,
-                 '    return problems\n\n\n# #1692 r15-4'),
-                # DeepSeek concurrency P1：调用与裁决之间清空见证。
-                ('controls-verdict-cleared',
-                 '    control_problems = self_check_controls_run()\n',
-                 '    control_problems = self_check_controls_run()\n'
-                 '    control_problems = []\n',
-                 self.controls_verdict_pins,
-                 '    control_problems = self_check_controls_run()\n'),
-                # GLM sibling P1：主路径裁决改成永远绿。
-                ('main-verdict-always-zero',
-                 "if failures:\n    print(f'not killed:",
-                 "if failures:\n    sys.exit(0)\n    print(f'not killed:",
-                 self.main_verdict_pins,
-                 "if failures:\n    print(f'not killed:"),
-                # GLM sibling P1 的见证侧：主路径不再记录失败。
-                ('main-witness-dropped',
-                 "                failures.append(name)\n",
-                 '                pass\n',
-                 self.main_verdict_pins,
-                 "                failures.append(name)\n"),
-                # r6 GLM sibling P2：`--self-check` 自己的归还层永远绿。
-                ('self-check-verdict-always-zero',
+                # r8 DeepSeek concurrency P1-3 / GLM concurrency P1-1 / GLM boundary P1-1：
+                # r7 的读侧白名单把 test 里任意位置的 Name 都算「只读消费」，于是
+                # `if problems.clear():` 把四个探针累积的见证清空后照样走钉死的裁决。
+                ('clear-inside-condition',
                  '    if problems:\n        return 1\n',
-                 '    if problems:\n        return 0\n',
-                 self.main_verdict_pins,
-                 '    if problems:\n        return 1\n'),
-                # r7（GLM sibling/concurrency/boundary 的六条 P1）各打一个洞。
-                ('probe-early-exit',
-                 'def dispatch_probe():\n',
-                 'def dispatch_probe():\n    sys.exit(0)\n',
-                 self.controls_verdict_pins,
-                 'def dispatch_probe():\n'),
-                ('probe-accumulator-reset',
-                 '    return problems\n\n\ndef _send_signals_after(',
-                 '    problems = []\n    return problems\n\n\ndef _send_signals_after(',
-                 self.controls_verdict_pins,
-                 '    return problems\n\n\ndef _send_signals_after('),
-                ('probe-dropped-from-self-check',
-                 '    problems.extend(restore_probe())\n', '',
-                 self.main_verdict_pins,
-                 '    problems.extend(restore_probe())\n'),
-                ('exit-inventory-new-shape',
-                 'def publish_summary(rows, timed_out=None):\n',
-                 'def publish_summary(rows, timed_out=None):\n    os._exit(0)\n',
-                 self.controls_verdict_pins,
-                 'def publish_summary(rows, timed_out=None):\n'),
-                ('timed-out-cleared',
-                 'if timed_out:\n    print(f\'not finished',
-                 'timed_out = None\nif timed_out:\n    print(f\'not finished',
-                 self.main_verdict_pins,
-                 'if timed_out:\n    print(f\'not finished'),
-                # r7（DeepSeek concurrency P1）：写入点本身被抹掉，读侧全绿。
-                ('main-timeout-witness-dropped',
-                 "        timed_out = f'{type(error).__name__}: {error}'",
-                 '        timed_out = None',
-                 self.main_verdict_pins,
-                 "        timed_out = f'{type(error).__name__}: {error}'"),
+                 '    if problems.clear():\n        pass\n    if problems:\n        return 1\n'),
+                # r8 DeepSeek concurrency P1-1：探针归还 `[]`，见证被吞掉，探针的出口
+                # 形态与累加器初始化都不动。
+                ('probe-returns-empty',
+                 '    return problems\n\n\ndef self_check(',
+                 '    return []\n\n\ndef self_check('),
+                # r8 DeepSeek concurrency P1-2：`global timed_out` 撤掉后两处赋值文本
+                # 原样保留，写的是局部量，模块级 `timed_out` 恒为 None。
+                ('timeout-global-removed',
+                 '    global timed_out\n    try:',
+                 '    try:'),
+                # r8 DeepSeek boundary P1-1 / GLM concurrency P1-2：非 `Assign` 形态的
+                # 重绑（walrus）不在 r7 的 `ast.Assign` 扫描里。
+                ('timeout-cleared-by-walrus',
+                 'counts = publish_summary(summary, timed_out=timed_out)',
+                 '(timed_out := None)\ncounts = publish_summary(summary, timed_out=timed_out)'),
+                # r8 DeepSeek sibling P1：把还原调用点注释掉，文本计数仍是 1。
+                ('publish-call-commented-out',
+                 'write_source_atomic(path, original)',
+                 '# write_source_atomic(path, original)'),
+                # r8 DeepSeek concurrency P1-1（后半）：`self_check` 头部早退，四个探针
+                # 一条不跑；`body[-3]` / `body[-1]` 与 extend 文本都不动。
+                ('self-check-early-return',
+                 '    """\n    # name -> (gate script, expected exit, expected stderr fragment)\n',
+                 '    """\n    return 0\n'
+                 '    # name -> (gate script, expected exit, expected stderr fragment)\n'),
         ):
-            self.assertIn(anchor, source, f'#1692 r6 verdict anchor: {label}')
-            mutant = source.replace(old, new, 1)
-            self.assertNotEqual(mutant, source, f'#1692 r6 the mutant really applied: {label}')
-            with self.assertRaises(AssertionError,
-                                   msg=f'#1692 r6 verdict hole must be caught: {label}'):
-                pin(mutant)
-            print(f'#1692 r6 verdict mutant {label}: KILLED', flush=True)
+            assert_killed(label, mutate((old, new)))
+
+        # 连续性对照：r4/r6 已经钉住的那条（controls 出口永远退 0）现在由字节钉接住，
+        # 钉法换了、覆盖面没缩。
+        assert_killed('controls-exit-always-zero', mutate(
+            ('sys.exit(1 if control_problems else 0)', 'sys.exit(0)')))
+
+        # 搬移型（r8 GLM sibling P1-1）：全文件唯一的 `sys.exit(0)` 从
+        # `--slot-guard-probe` 分支搬进 `self_check` 头部。字节变了、r7 的 multiset
+        # 一模一样——只有带「所属函数 + 行序」的清单能指出搬了哪一个。
+        moved_exit = mutate(
+            ("    print(f'slot free: {slots.stdout.strip()}', flush=True)\n    sys.exit(0)\n",
+             "    print(f'slot free: {slots.stdout.strip()}', flush=True)\n"),
+            ('    """\n    # name -> (gate script, expected exit, expected stderr fragment)\n',
+             '    """\n    sys.exit(0)\n'
+             '    # name -> (gate script, expected exit, expected stderr fragment)\n'))
+        self.assertNotEqual(self.session_controls_exit_lines(moved_exit),
+                            self.session_controls_exit_lines(source),
+                            '#1692 r9 the inventory itself catches a relocated exit')
+        assert_killed('exit-relocated-into-another-function', moved_exit)
+
+        # 搬移型（r8 DeepSeek boundary P1-1）：模块级 `timed_out = None` 挪进
+        # `stop_run` 的 finally——文本与条数都不变，位置变了：被 deadline 截停的运行
+        # 会被重新清成 None，然后退 0。
+        moved_init = mutate(
+            ('\ntimed_out = None\nwith stop_run(), mutating_sources(',
+             '\nwith stop_run(), mutating_sources('),
+            ('    finally:\n        # The restore is done and verified by now',
+             '    finally:\n        timed_out = None\n'
+             '        # The restore is done and verified by now'))
+        assert_killed('timeout-initialiser-relocated', moved_init)
 
     def write_source_atomic_body(self, source):
         """`write_source_atomic` 的函数体源码（#1692 §9）。"""
