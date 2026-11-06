@@ -3814,6 +3814,257 @@ async fn discarded_session_does_not_mark_the_recaptured_id_indexed() {
     );
 }
 
+// #1656 gap 1 (`mark_l0_indexed` incarnation dimension). The #1246 fix covers
+// the *discarded* session (its id is never pushed into `processed_ids`), but a
+// turn that really persisted in this round is still in the batch: a clear that
+// lands after its file write and before the batch mark deletes both the row and
+// the file, and a same-content re-capture inserts a new row with the *same* id.
+// The unconditional batch UPDATE then stamps an incarnation whose file was
+// never written (`written_files` counted the deleted one) as indexed, and the
+// next run never lists it — the same silent turn loss, one arm over. The mark
+// now skips ids a post-baseline clear deleted; this test is its observable.
+#[tokio::test]
+async fn persisted_turn_recaptured_after_clear_is_not_marked_indexed() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("mark-after-clear-recapture", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "turn whose incarnation the clear replaces",
+    );
+    let first_id = {
+        let rows = lab
+            .stores
+            .storage
+            .list_all_l0()
+            .expect("#1656 list l0 rows after the seed capture");
+        assert_eq!(
+            rows.len(),
+            1,
+            "#1656 the seed capture must insert exactly one row, got {rows:?}"
+        );
+        rows[0].l0_index_id.clone()
+    };
+    let stores = lab.stores.clone();
+    let capturing = lab.indexer.clone();
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#1656 the mark-incarnation hook must fire on the target session"
+                );
+                // The turn above persisted inside this round (its createNote
+                // ran), so `processed_ids` is non-empty and this seam fires.
+                // The clear deletes the row *and* the file it just wrote; the
+                // re-capture restores the row with the same id but no file.
+                if stage == HeartbeatStage::BeforeMarkL0Indexed {
+                    stores
+                        .clear_session_memory_data("s1")
+                        .expect("#1656 the in-hook clearSession must complete");
+                    capture_user_turn(
+                        &capturing,
+                        "s1",
+                        "2026-10-22T00:00:01.000Z",
+                        "turn whose incarnation the clear replaces",
+                    );
+                }
+            }));
+    let stats = hooked
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1656 the heartbeat run over the replaced incarnation must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1656 the round must still report the persist it performed before the clear"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1656 list l0 rows after the replaced incarnation");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1656 the re-captured row must be the only survivor, got {rows:?}"
+    );
+    assert_eq!(
+        rows[0].l0_index_id, first_id,
+        "#1656 same id premise: the re-capture must reuse the cleared incarnation's id"
+    );
+    assert!(
+        !rows[0].indexed,
+        "#1656 the batch mark must not stamp an incarnation whose file was never written: \
+         the clear deleted the persisted file, so marking this row indexed loses the turn for good"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().all(|path| !path.starts_with("Project/")),
+        "#1656 premise: the clear must have deleted the file the round wrote, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#1656 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#1656 classify and createNote must run for the persisted turn"
+    );
+}
+
+// #1656 gap 3 (`repair` deletion is not a `clearSession`). `repair_l0_sessions`
+// deletes rows without bumping the clear generation or recording a removed id,
+// so `session_cleared` used to answer `Cleared` for a row the repair deleted and
+// a heartbeat that had the row listed reported "skip persist for cleared
+// session". The decision (discard, do not persist) is right in both arms — a
+// repaired row was filtered out on purpose — but the two causes must be
+// distinguishable: the repair seam records the deleted ids, and the log line
+// names the repair. This test pins the reason, the unchanged generation, and
+// the unchanged decision.
+#[tokio::test]
+async fn row_removed_by_repair_mid_heartbeat_reports_repair_not_clear() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("repair-removal-distinguishable", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "turn the repair removes",
+    );
+    let removal_id = {
+        let rows = lab
+            .stores
+            .storage
+            .list_all_l0()
+            .expect("#1656 list l0 rows after the seed capture");
+        assert_eq!(
+            rows.len(),
+            1,
+            "#1656 the seed capture must insert exactly one row, got {rows:?}"
+        );
+        rows[0].l0_index_id.clone()
+    };
+    let stores = lab.stores.clone();
+    let generation_before = stores.session_clear_generation("s1");
+    let repaired = Arc::new(AtomicU64::new(0));
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#1656 the repair hook must fire on the target session"
+                );
+                // The row is already listed and its classify has run; the
+                // repair deletes it before `session_cleared` answers, and it
+                // never touches the clear generation or the removed record.
+                if stage == HeartbeatStage::BeforeCreateNote
+                    && repaired.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+                {
+                    let result = stores
+                        .storage
+                        .repair_l0_sessions(|_| vec![])
+                        .expect("#1656 the in-hook repair must succeed");
+                    assert_eq!(
+                        result.removed, 1,
+                        "#1656 the in-hook repair must remove the listed row"
+                    );
+                }
+            }));
+    let stats = hooked
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1656 the heartbeat run over the repaired row must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 0, 0),
+        "#1656 a row the repair deleted must still be discarded, not persisted"
+    );
+    assert!(
+        lab.stores
+            .storage
+            .list_all_l0()
+            .expect("#1656 list l0 rows after the run")
+            .is_empty(),
+        "#1656 the repaired row must stay deleted"
+    );
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        generation_before,
+        "#1656 premise: the repair path must not bump the clear generation"
+    );
+    let infos = lab
+        .logger
+        .0
+        .lock()
+        .expect("#1656 logger lock")
+        .iter()
+        .filter(|(level, _)| level == "info")
+        .map(|(_, message)| message.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        infos.iter().any(|message| message
+            == &format!(
+                "[clawxmemory] skip persist for a row removed by repair_l0_sessions session={}",
+                "s1"
+            )),
+        "#1656 the discard reason must name the repair, got {infos:?}"
+    );
+    assert!(
+        !infos
+            .iter()
+            .any(|message| message == "[clawxmemory] skip persist for cleared session=s1"),
+        "#1656 a row the repair deleted must not be reported as a cleared session, got {infos:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#1656 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#1656 classify and createNote must still run; only the discard reason differs"
+    );
+    assert!(
+        lab.stores.storage.l0_removed_by_repair(&removal_id),
+        "#1656 the repair seam must record exactly the id it deleted"
+    );
+    assert!(
+        !lab.stores
+            .storage
+            .l0_removed_by_repair("s1-never-repaired_raw"),
+        "#1656 an id the repair never deleted must not read as repaired"
+    );
+}
+
 // #1525: the PDRS_REQUIRE_PERMISSION_FAULTS parsing matrix runs in child
 // processes (edition 2024 forbids unsafe process-wide set_var in tests), one
 // child per state, through the shared bounded worker machinery.

@@ -104,6 +104,31 @@ impl HeartbeatStats {
     }
 }
 
+/// #1656: why a listed L0 row was dropped instead of persisted. Both arms
+/// discard the turn — a row a `clearSession` deleted must not be re-indexed
+/// (privacy, diff `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`), and a row
+/// `repair_l0_sessions` deleted was filtered out on purpose. The reason is
+/// what keeps the two distinguishable: the repair path records no clear
+/// generation and no removed-row entry, so before this it reported the same
+/// "cleared session" line as a real clear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum L0Removal {
+    Cleared,
+    Repaired,
+}
+impl L0Removal {
+    fn log_message(self, session_key: &str) -> String {
+        match self {
+            Self::Cleared => {
+                format!("[clawxmemory] skip persist for cleared session={session_key}")
+            }
+            Self::Repaired => format!(
+                "[clawxmemory] skip persist for a row removed by repair_l0_sessions session={session_key}"
+            ),
+        }
+    }
+}
+
 /// `HeartbeatRunOptions` (`heartbeat.ts:26-30`).
 #[derive(Clone, Debug, Default)]
 pub struct HeartbeatRunOptions {
@@ -657,7 +682,11 @@ impl HeartbeatIndexer {
                 .storage
                 .save_index_trace(&JsValue::Object(trace.clone()), INDEX_TRACE_LIMIT)?;
 
-            let mut processed_ids: Vec<String> = Vec::new();
+            // #1656: each id carries the clear generation its persist worked
+            // at, so the batch mark can tell a clear that deleted this round's
+            // file (generation moved after the persist) from one that only
+            // predates a re-captured, really-written turn.
+            let mut processed_ids: Vec<(String, u64)> = Vec::new();
             let mut session_had_error = false;
             for session in &sessions {
                 let focus_user_turns = focus_turns_by_session
@@ -714,7 +743,41 @@ impl HeartbeatIndexer {
 
             if !processed_ids.is_empty() {
                 self.fire(HeartbeatStage::BeforeMarkL0Indexed, &session_key);
-                self.repository.storage.mark_l0_indexed(&processed_ids)?;
+                // #1656 (incarnation dimension): the batch UPDATE keys rows by
+                // `l0_index_id` alone, and that id derives from
+                // `(session_key, timestamp, payload)` — a clear that lands
+                // after this round wrote a turn's file deletes that file (and
+                // the listed row), and a same-content re-capture inserts a new
+                // row carrying the same id. Stamping it indexed would retire
+                // an incarnation whose file was never written, losing the turn
+                // for good.
+                //
+                // The per-id floor is the clear generation the round persisted
+                // at (`persist_generation`, read before any write): only a
+                // clear that completed *after* it can have deleted this
+                // round's files, so only those ids are skipped. A turn listed
+                // and persisted after an earlier clear is a re-capture that
+                // really wrote its file and is still marked.
+                //
+                // The scope is the one `clearSession` takes, so the record
+                // read and the UPDATE are atomic with it: a clear can no
+                // longer complete in between and re-open the window.
+                let _mark_scopes = self
+                    .repository
+                    .snapshot_operation_scope()
+                    .map_err(HeartbeatError::File)?;
+                let markable_ids: Vec<String> = processed_ids
+                    .iter()
+                    .filter(|(id, persist_generation)| {
+                        !self.repository.session_clear_deleted_since(
+                            &session_key,
+                            *persist_generation,
+                            id,
+                        )
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                self.repository.storage.mark_l0_indexed(&markable_ids)?;
             }
             let finished_at = (self.clock)();
             trace.insert(
@@ -812,11 +875,18 @@ impl HeartbeatIndexer {
         clear_baseline: u64,
         trace: &mut JsObject,
         stats: &mut HeartbeatStats,
-        processed_ids: &mut Vec<String>,
+        processed_ids: &mut Vec<(String, u64)>,
     ) -> Result<(), HeartbeatError> {
         let store = self.repository.get_file_memory_store();
         if focus_user_turns.is_empty() {
-            processed_ids.push(session.l0_index_id.clone());
+            // Nothing is written for a turn with no user content, so there is
+            // no file a later clear could have deleted: the floor is the
+            // generation the round starts this session at.
+            processed_ids.push((
+                session.l0_index_id.clone(),
+                self.repository
+                    .session_clear_generation(&session.session_key),
+            ));
             stats.captured_sessions += 1;
             return Ok(());
         }
@@ -832,6 +902,12 @@ impl HeartbeatIndexer {
         // listable again. Declared outside the per-turn loop because the
         // decision is taken inside it and consumed after it.
         let mut discarded_for_clear = false;
+        // #1656: the clear generation the writes made for this L0 row run at,
+        // i.e. the lowest generation observed before any of them. A clear that
+        // completes later compares strictly greater, so the batch mark knows
+        // this round's files may already be gone; a clear that completed
+        // before (a re-captured, genuinely written turn) does not.
+        let mut persist_generation = u64::MAX;
         for focus_turn in focus_user_turns {
             let current_project_meta = match self
                 .repository
@@ -1175,17 +1251,23 @@ impl HeartbeatIndexer {
             // — a turn captured after that clear completed must survive it,
             // so the mismatch arm discriminates per row via the removed
             // record (row id → the generation of the clear that deleted it).
-            let session_cleared =
+            let session_removal =
                 self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
+            // #1656: the clear generation this turn's persist runs at. Read
+            // after the awaits above and before any write, so a clear that
+            // completes during the persist loop or after it compares strictly
+            // greater and the batch mark knows this round's files may already
+            // be gone.
+            persist_generation = persist_generation.min(
+                self.repository
+                    .session_clear_generation(&session.session_key),
+            );
 
             let mut persisted_records: Vec<MemoryFileRecord> = Vec::new();
             let mut wrote_global_user_note = false;
             for (label, candidate) in &created_candidates {
-                if session_cleared {
-                    self.info(JsString::from(format!(
-                        "[clawxmemory] skip persist for cleared session={}",
-                        session.session_key
-                    )));
+                if let Some(removal) = session_removal {
+                    self.info(JsString::from(removal.log_message(&session.session_key)));
                     discarded_for_clear = true;
                     break;
                 }
@@ -1697,7 +1779,7 @@ impl HeartbeatIndexer {
         }
 
         if !discarded_for_clear {
-            processed_ids.push(session.l0_index_id.clone());
+            processed_ids.push((session.l0_index_id.clone(), persist_generation));
         }
         stats.captured_sessions += 1;
         self.repository.storage.set_pipeline_state(
@@ -1733,16 +1815,23 @@ impl HeartbeatIndexer {
     /// with this id is alive right now — a live row can only be a re-capture
     /// inserted after the clear's DELETE, so it is new data and the record
     /// alone would have discarded it.
+    /// #1656: a missing row is not always a clear. `repair_l0_sessions`
+    /// deletes rows too, records no clear generation and no removed-row entry,
+    /// so the row-absent arm reports which of the two took the row
+    /// ([`L0Removal`]) instead of calling both "cleared". The decision is the
+    /// same for both — a repaired row was filtered out on purpose and must not
+    /// be re-indexed — the difference is that it is now observable.
     fn session_cleared(
         &self,
         session_key: &str,
         clear_baseline: u64,
         l0_index_id: &String,
-    ) -> Result<bool, HeartbeatError> {
+    ) -> Result<Option<L0Removal>, HeartbeatError> {
         if self.repository.session_clear_generation(session_key) != clear_baseline {
             return self
                 .repository
                 .session_clear_removed_since(session_key, clear_baseline, l0_index_id)
+                .map(|removed| removed.then_some(L0Removal::Cleared))
                 .map_err(HeartbeatError::File);
         }
         match self
@@ -1750,9 +1839,16 @@ impl HeartbeatIndexer {
             .storage
             .get_l0_by_ids(std::slice::from_ref(l0_index_id))
         {
-            Ok(rows) => Ok(rows.is_empty()),
+            Ok(rows) if rows.is_empty() => Ok(Some(
+                if self.repository.storage.l0_removed_by_repair(l0_index_id) {
+                    L0Removal::Repaired
+                } else {
+                    L0Removal::Cleared
+                },
+            )),
+            Ok(_) => Ok(None),
             // Fail open, per the doc comment above.
-            Err(StorageError::Closed) => Ok(false),
+            Err(StorageError::Closed) => Ok(None),
             Err(error) => Err(HeartbeatError::Storage(error)),
         }
     }

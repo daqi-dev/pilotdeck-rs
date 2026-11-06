@@ -54,7 +54,7 @@ out.mkdir(parents=True, exist_ok=True)
 # to start (AnchorExpired).
 BEFORE_CLASSIFY_FIRE = '            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'
 
-PRE_LOOP_RECHECK = '''            let session_cleared =
+PRE_LOOP_RECHECK = '''            let session_removal =
                 self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
 '''
 
@@ -69,10 +69,13 @@ IN_LOOP_RECHECK = '''                if self
                 {
 '''
 
+# #1656: the helper answers `Option<L0Removal>` and the mismatch arm keeps the
+# per-row removed-record discrimination.
 HELPER_MARKER = '''        if self.repository.session_clear_generation(session_key) != clear_baseline {
             return self
                 .repository
                 .session_clear_removed_since(session_key, clear_baseline, l0_index_id)
+                .map(|removed| removed.then_some(L0Removal::Cleared))
                 .map_err(HeartbeatError::File);
         }
 '''
@@ -81,7 +84,7 @@ HELPER_MARKER = '''        if self.repository.session_clear_generation(session_k
 # session-level discard — a turn captured after the completed clear is
 # silently dropped again.
 HELPER_UNCONDITIONAL = '''        if self.repository.session_clear_generation(session_key) != clear_baseline {
-            return Ok(true);
+            return Ok(Some(L0Removal::Cleared));
         }
 '''
 
@@ -94,9 +97,24 @@ IN_LOOP_SESSION_ONLY = '''                if self
                 {
 '''
 
-L0_ARM = '            Ok(rows) => Ok(rows.is_empty()),'
+# #1656: the row-absent arms of the helper (the "no live row" lookup that the
+# recheck mutates) — replaced as a block so the mutant leaves no unreachable
+# arm behind.
+L0_ABSENT_ARMS = '''            Ok(rows) if rows.is_empty() => Ok(Some(
+                if self.repository.storage.l0_removed_by_repair(l0_index_id) {
+                    L0Removal::Repaired
+                } else {
+                    L0Removal::Cleared
+                },
+            )),
+            Ok(_) => Ok(None),
+'''
 
-CLOSED_ARM = '            Err(StorageError::Closed) => Ok(false),'
+L0_ABSENT_DISABLED = '            Ok(_) => Ok(None),\n'
+
+# #1656: the helper now answers `Option<L0Removal>`, so the fail-open arms
+# carry `None` instead of `false`.
+CLOSED_ARM = '            Err(StorageError::Closed) => Ok(None),'
 
 NON_CLOSED_ARM = '            Err(error) => Err(HeartbeatError::Storage(error)),'
 
@@ -106,12 +124,13 @@ SCOPE_BINDING = '''                let _commit_scopes = self
                     .map_err(HeartbeatError::File)?;
 '''
 
-# The reviewer's "check once, before the awaits" shape: the marker comparison
-# runs in front of the classify await and both in-flight layers are gone.
-HOISTED_RECHECK = '''            let session_cleared = self
-                .repository
-                .session_clear_generation(&session.session_key)
-                != clear_baseline;
+# The reviewer's "check once, before the awaits" shape: the whole pre-loop
+# recheck (the reason-discriminating helper call) runs in front of the
+# classify await and both in-flight layers are gone. #1656: the binding is
+# the helper's `Option<L0Removal>` answer, so the hoisted mutant type-checks
+# exactly like the moved line it replaces.
+HOISTED_RECHECK = '''            let session_removal =
+                self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
             self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'''
 
 # The reviewer's "only recheck on the first round" shape: the per-candidate
@@ -142,7 +161,7 @@ DISABLED_RECHECK = '''                if false
 '''
 
 DISABLED_MARKER = '''        if false && self.repository.session_clear_generation(session_key) != clear_baseline {
-            return Ok(true);
+            return Ok(Some(L0Removal::Cleared));
         }
 '''
 
@@ -304,9 +323,7 @@ cases = [
     ('capture-during-classify-marked',
      indexer,
      '''            if !processed_ids.is_empty() {
-                self.fire(HeartbeatStage::BeforeMarkL0Indexed, &session_key);
-                self.repository.storage.mark_l0_indexed(&processed_ids)?;
-            }''',
+''',
      '''            for pending in self
                 .repository
                 .storage
@@ -315,9 +332,7 @@ cases = [
                 processed_ids.push(pending.l0_index_id);
             }
             if !processed_ids.is_empty() {
-                self.fire(HeartbeatStage::BeforeMarkL0Indexed, &session_key);
-                self.repository.storage.mark_l0_indexed(&processed_ids)?;
-            }''',
+''',
      'matrix_classify_capture_matches_ts',
      '#770 case matrix-single-classify-capture differs'),
     # #917 fix-r1: both recheck layers removed at once (the round-1 shape,
@@ -325,7 +340,7 @@ cases = [
     # clearSession cell catches the resurrected file and storedResults.
     dict(name='clear-resurrect-recheck-removed',
          changes=[(indexer, HELPER_MARKER, DISABLED_MARKER),
-                  (indexer, L0_ARM, '            Ok(_) => Ok(false),'),
+                  (indexer, L0_ABSENT_ARMS, L0_ABSENT_DISABLED),
                   (indexer, IN_LOOP_RECHECK, DISABLED_RECHECK)],
          test='matrix_classify_clear_session_no_resurrection',
          assertion='#917 case matrix-single-classify-clearSession storedResults candidate source differs'),
@@ -333,9 +348,12 @@ cases = [
     # await and both in-flight layers neutralized — the reviewer's "check
     # once before the awaits" shape. A clear that lands while the createNote
     # request is in flight is missed and the turn is resurrected.
+    # The hoisted text embeds the pre-loop statement verbatim, so the original
+    # must be removed first (the runner checks each `before` occurs exactly
+    # once in the text the previous change produced).
     dict(name='clear-resurrect-recheck-before-await',
-         changes=[(indexer, BEFORE_CLASSIFY_FIRE, HOISTED_RECHECK),
-                  (indexer, PRE_LOOP_RECHECK, ''),
+         changes=[(indexer, PRE_LOOP_RECHECK, ''),
+                  (indexer, BEFORE_CLASSIFY_FIRE, HOISTED_RECHECK),
                   (indexer, IN_LOOP_RECHECK, DISABLED_RECHECK)],
          test='clear_while_create_note_request_in_flight_discards_persist',
          assertion="#917 a clear while the createNote request is in flight must discard the turn's persist"),
@@ -393,7 +411,7 @@ cases = [
     ('clear-resurrect-recheck-fail-closed',
      indexer,
      CLOSED_ARM,
-     '            Err(StorageError::Closed) => Ok(true),',
+     '            Err(StorageError::Closed) => Ok(Some(L0Removal::Cleared)),',
      'matrix_classify_close_matches_ts',
      '#770 case matrix-single-classify-close differs'),
     # #917 fix-r1 (review P1): a non-Closed L0 read error treated as
@@ -406,7 +424,7 @@ cases = [
     ('clear-resurrect-non-closed-fail-open',
      indexer,
      NON_CLOSED_ARM,
-     '            Err(_error) => Ok(false),',
+     '            Err(_error) => Ok(None),',
      'non_closed_l0_read_error_fails_closed',
      '#917 a non-Closed L0 read error must fail the session, not reject the run'),
     # #917 fix-r2 (review P1-1 data-loss half): the bump moved back in front
