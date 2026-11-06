@@ -656,7 +656,8 @@ try {
   // whole log, so with two malformed records the winner is decided by
   // projector order, not record order. TS surfaces, measured through the real
   // adapter: restore runs the conversation reduce (compact boundary clone) →
-  // turnSummary → metadata → WebHistory token usage (`compactMetadata.postTokens`);
+  // turnSummary → metadata → WebHistory fileArtifact (reads message.content) →
+  // WebHistory token usage (`compactMetadata.postTokens`);
   // list runs the conversation finalize (which skips everything before the last
   // compact boundary) → turnSummary → metadata → the title trims on the *merged*
   // metadata. Registration order: BuiltinSessionProjections.ts (agent transcript
@@ -705,6 +706,21 @@ try {
     }
   }
 
+  // WebHistory registers its fileArtifact reducer (which reads
+  // `message.content.some` via messageContainsToolResult) before its tokenUsage
+  // reducer, so on restore the message error wins over the missing
+  // `compactMetadata.postTokens`. No `list` step: TS lists this session, but
+  // the list port only runs the agent-transcript cell and Rust still refuses
+  // unmodeled message shapes there (ProjectionUnavailable, A7.5 / #1985 blocks
+  // 2-4), so a list step would pin a known unported gap instead of the order.
+  await scenario('restore-order-message-before-posttok', {
+    store: { list: [{ sessionId: 's1', lastModified: 1, fileSize: 1 }] },
+    files: { 's1.jsonl': line(at(1, 'accepted_input', { messages: [user('prompt')] }))
+      + line(at(2, 'assistant_message', { message: { content: null } }))
+      + line(at(3, 'control_boundary', { boundary: { kind: 'compact', subtype: 'compact_boundary', replacementMessages: [user('replacement')] } })) },
+    steps: [open(), { op: 'restore' }, { op: 'state' }],
+  }, ['open:0', 'error:TypeError', 'state:3']);
+
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },
     steps: [open(),
@@ -744,7 +760,7 @@ try {
   }
 
   // Changing scenarios requires updating the exact Rust count and README too.
-  assert.equal(scenarios.length, 482, 'adapter oracle scenario count');
+  assert.equal(scenarios.length, 483, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

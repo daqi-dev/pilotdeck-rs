@@ -64,6 +64,35 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         run('restore-node-host-required', True)
         restore()
         before = originals[ADAPTER]
+        # #1985 r2 ordering mutants: hydrate runs the registered projectors one
+        # at a time over the whole log — agent-transcript metadata, then
+        # WebHistory's fileArtifact message scan, then its tokenUsage
+        # (`compactMetadata.postTokens`). Swapping two passes flips which error
+        # the double-fault golden rows surface.
+        P_METADATA = '''        for entry in entries {
+            metadata_reduce_supported(entry)?;
+        }
+'''
+        P_MESSAGE = '''        for entry in entries {
+            if matches!(
+                lossy_value(field(entry, "type")).as_str(),
+                "assistant_message" | "tool_result_message" | "durable_message"
+            ) {
+                validate_hydrated_message(field(entry, "message"))?;
+            }
+        }
+'''
+        P_COMPACT = '''        for entry in entries {
+            if is_str(field(entry, "type"), "control_boundary") {
+                compact_budget_supported(entry)?;
+            }
+        }'''
+        P_MESSAGE_COMMENT = '''        // WebHistory's fileArtifact reducer reads `message.content` (via
+        // messageContainsToolResult) and is registered before its tokenUsage
+        // reducer (`WebHistoryProjections.ts:266-270`), so a malformed message
+        // wins over a missing `compactMetadata` on the whole-log order.
+'''
+        restore_passes = P_METADATA + P_MESSAGE_COMMENT + P_MESSAGE + P_COMPACT
         changes = [
           ('premature-malformed-restore-refusal', '        // Hydration runs every registered reducer over the whole log, reducer by', '''        for entry in entries {
             if field(entry, "type").as_string().is_some_and(|t| t.equals_str("session_metadata")) {
@@ -73,24 +102,10 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         }
         // Hydration runs every registered reducer over the whole log, reducer by'''),
           ('list-denials-not-array', '            if !matches!(denials, JsValue::Array(_)) {', '            if !js_iterable(denials) {'),
-          # #1985 r2: the restore gate must scan metadata before WebHistory's
-          # `compactMetadata.postTokens` (registration order). Swapping the two
-          # passes flips the winner for `metadata:null` + missing postTokens.
-          ('restore-metadata-before-webhistory', '''        for entry in entries {
-            metadata_reduce_supported(entry)?;
-        }
-        for entry in entries {
-            if is_str(field(entry, "type"), "control_boundary") {
-                compact_budget_supported(entry)?;
-            }
-        }''', '''        for entry in entries {
-            if is_str(field(entry, "type"), "control_boundary") {
-                compact_budget_supported(entry)?;
-            }
-        }
-        for entry in entries {
-            metadata_reduce_supported(entry)?;
-        }'''),
+          ('restore-metadata-before-webhistory', restore_passes,
+           P_MESSAGE_COMMENT + P_MESSAGE + P_COMPACT + P_METADATA),
+          ('restore-message-after-posttok', restore_passes,
+           P_METADATA + P_COMPACT + P_MESSAGE_COMMENT + P_MESSAGE),
           ('list-title-trim-dropped', '''        Some(_) => {
             return Err(AdapterError::Type(
                 "metadata.title?.trim is not a function".into(),
@@ -113,6 +128,6 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         run('restore-loses-domain-state', True)
         restore()
         run('restored', False)
-        print('PASS: 9 / 9 adapter mutants killed', flush=True)
+        print('PASS: 10 / 10 adapter mutants killed', flush=True)
     finally:
         restore()

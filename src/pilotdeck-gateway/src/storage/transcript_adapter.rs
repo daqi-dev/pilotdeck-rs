@@ -807,11 +807,15 @@ impl TranscriptWriter {
         // first and WebHistory after it; inside that cell the order is
         // conversation → turnSummary → metadata → compactBoundary
         // (`AgentTranscriptProjections.ts:436-440`). So: conversation's compact
-        // boundary reduce, turn summary, metadata, and only then WebHistory's
-        // `compactMetadata.postTokens`. Codex #1985 r2 measured the two
-        // double-fault combinations that pin this order:
+        // boundary reduce, turn summary, metadata, then WebHistory's reducers in
+        // their own order — fileArtifact (reads `message.content.some`) before
+        // tokenUsage (`compactMetadata.postTokens`, `WebHistoryProjections.ts:266-270`).
+        // Codex #1985 r2 measured the two double-fault combinations that pin the
+        // agent-transcript half of this order:
         //   metadata:null + boundary without postTokens -> `reading 'title'`
         //   replacementMessages:42 + usage:null        -> `messages.map is not a function`
+        // GLM #1985 r2 asked for the WebHistory half; the golden rows
+        // `metadata-before-posttok` and `message-before-posttok` pin it.
         for entry in entries {
             if is_str(field(entry, "type"), "control_boundary") {
                 control_boundary_supported(entry)?;
@@ -823,18 +827,21 @@ impl TranscriptWriter {
         for entry in entries {
             metadata_reduce_supported(entry)?;
         }
-        for entry in entries {
-            if is_str(field(entry, "type"), "control_boundary") {
-                compact_budget_supported(entry)?;
-            }
-        }
-        // WebHistory reads message.content.some even for incomplete turns.
+        // WebHistory's fileArtifact reducer reads `message.content` (via
+        // messageContainsToolResult) and is registered before its tokenUsage
+        // reducer (`WebHistoryProjections.ts:266-270`), so a malformed message
+        // wins over a missing `compactMetadata` on the whole-log order.
         for entry in entries {
             if matches!(
                 lossy_value(field(entry, "type")).as_str(),
                 "assistant_message" | "tool_result_message" | "durable_message"
             ) {
                 validate_hydrated_message(field(entry, "message"))?;
+            }
+        }
+        for entry in entries {
+            if is_str(field(entry, "type"), "control_boundary") {
+                compact_budget_supported(entry)?;
             }
         }
         Ok(())
