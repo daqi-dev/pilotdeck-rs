@@ -589,6 +589,33 @@ def calibrate_exempt_callee_write(rows):
                   'passed=False')
 
 
+def calibrate_quit_exit(rows):
+    """#892 r14: ``quit(0)`` is the same site builtin exit as ``exit(0)`` and
+    used to skip every rule in statement position (MiniMax boundary r13
+    P0-1)."""
+    return _controls_main_needle(
+        rows, 'optimistic exit (quit(0))',
+        'aggregation-audit: site quit() exit flagged, passed=False')
+
+
+def calibrate_partial_raise_point(rows):
+    """#892 r14: a registered point that raises on one branch and falls off
+    the end on the other still exits 0 somewhere (MiniMax sibling r13 P1-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/controls/session_domain.py', 'run_all',
+        'no return or exit path', 'controls-run-all')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: partially raising point flagged, '
+                  'passed=False')
+
+
 def calibrate_param_augassign_opaque(rows):
     """#892 r13: ``report |= payload`` on a parameter receiver is the opaque
     form of the r12 literal fix (MiniMax sibling r12 P1-3)."""
@@ -1667,6 +1694,16 @@ MUTATIONS = [
     ('calibrate-exempt-callee-write', SOURCE,
      "            report['status'] = overall\n",
      "            report['status'] = _retirement_census_verdict(report)\n"),
+    ('calibrate-quit-exit', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            quit(0)\n" + CT_EXIT),
+    ('calibrate-partial-raise-point', CONTROLS_SOURCE,
+     "    save(output / 'results.json', report)\n"
+     "    return report\n",
+     "    save(output / 'results.json', report)\n"
+     "    if report.get('special'):\n"
+     "        raise ValueError('x')\n"),
     ('calibrate-param-augassign-opaque', CONTROLS_SOURCE,
      "def run_all(output, source=None):",
      "def publish(report, payload):\n"
@@ -1930,6 +1967,10 @@ JUDGES = {
         'aggregation-audit', calibrate_cross_module_name, False, ()),
     'calibrate-exempt-callee-write': (
         'aggregation-audit', calibrate_exempt_callee_write, False, ()),
+    'calibrate-quit-exit': (
+        'aggregation-audit', calibrate_quit_exit, False, ()),
+    'calibrate-partial-raise-point': (
+        'aggregation-audit', calibrate_partial_raise_point, False, ()),
     'calibrate-param-augassign-opaque': (
         'aggregation-audit', calibrate_param_augassign_opaque, False, ()),
     'calibrate-update-unregistered': (

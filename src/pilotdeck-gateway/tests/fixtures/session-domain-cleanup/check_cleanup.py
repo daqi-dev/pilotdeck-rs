@@ -1118,14 +1118,19 @@ _FAIL_CLOSED_LITERALS = STATUS_WORDS - _CLEAN_STATUS_LITERALS
 # return-path audit (MiniMax sibling r12 P1-1).  Wrappers that only forward to a
 # registered point are listed one by one, with the point they forward to.
 PROVEN_WRAPPER_CALLEES = frozenset({
-    'deadline_report',           # -> the registered _deadline_report
-    'retirement_report',         # -> the registered _retirement_report
-    'validate_calibration',      # native scoring; slots come from the cases
-    '_retirement_network_verdict',  # census verdict, exempted as a module point
-    'cleanup_status',            # VERIFIED->'PASS' mapping of the audited run
+    ('scripts/gateway-parity/session_domain.py', 'deadline_report'),
+    ('scripts/gateway-parity/session_domain.py', 'retirement_report'),
+    ('scripts/gateway-parity/session_domain.py', 'validate_calibration'),
+    ('scripts/gateway-parity/session_domain.py', '_retirement_network_verdict'),
+    ('scripts/gateway-parity/session_domain.py', 'cleanup_status'),
 })
-AUDITED_CALLEE_NAMES = frozenset(key[1] for key in AGGREGATION_POINTS) | \
-    PROVEN_WRAPPER_CALLEES
+# Keyed like every other registry (``(rel, name)``): a bare name trusted a
+# same-named def in *another* file, so ``_guard.py`` defining its own ``main``
+# inherited the registration of ``controls/session_domain.py:main`` (GLM
+# boundary r13 P0-1).  The name-only view is kept for the in-file probes, which
+# are scanned under a synthetic ``<self-test>`` rel.
+AUDITED_CALLEE_KEYS = frozenset(AGGREGATION_POINTS) | PROVEN_WRAPPER_CALLEES
+AUDITED_CALLEE_NAMES = frozenset(name for _rel, name in AUDITED_CALLEE_KEYS)
 
 
 def _relays_status(node, bindings, seen=None):
@@ -1444,7 +1449,7 @@ def _status_write_values(target, value, out):
 
 
 def _assigns_clean_status(value, bindings, seen=None, module=None,
-                          status_slot=True):
+                          status_slot=True, rel=None):
     """True when *value* can put a clean verdict into a ``['status']`` slot.
 
     Registered points also write their report incrementally
@@ -1461,7 +1466,7 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
             # end the walk: the other arm of the same conditional is judged on
             # its own (GLM boundary r10 P2-4).
             if _assigns_clean_status(arm.value, bindings, seen, module,
-                                     status_slot):
+                                     status_slot, rel):
                 return True
             continue
         if (isinstance(arm, ast.Constant) and isinstance(arm.value, str)
@@ -1477,7 +1482,7 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
             # all, so an unproven base walked through).
             return True
         if isinstance(arm, ast.Call) and not _proven_callee(arm, bindings,
-                                                            module) and (
+                                                            module, rel) and (
                 _status_literals(arm) or isinstance(arm.func, ast.Name)
                 or status_slot):
             # ``report['status'] = report.get('status', 'PASS')`` hides the
@@ -1491,7 +1496,8 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
             # stays legal.
             return True
         if isinstance(arm, ast.Name):
-            if _name_assigns_clean(arm.id, bindings, seen, module, status_slot):
+            if _name_assigns_clean(arm.id, bindings, seen, module, status_slot,
+                                   rel):
                 return True
             if not bindings.get(arm.id):
                 # A name with no local binding (module constant, parameter) is
@@ -1503,13 +1509,14 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
 
 
 def _name_assigns_clean(name, bindings, seen=None, module=None,
-                        status_slot=True):
+                        status_slot=True, rel=None):
     """True when any local assignment to *name* can be a clean verdict."""
     seen = set() if seen is None else seen
     if name in seen:
         return False
     seen.add(name)
-    return any(_assigns_clean_status(value, bindings, seen, module, status_slot)
+    return any(_assigns_clean_status(value, bindings, seen, module, status_slot,
+                                     rel)
                for _lineno, value in bindings.get(name, ()))
 
 
@@ -1817,20 +1824,44 @@ def _body_completes(body):
     ``raise ValueError`` on one branch and no ``return`` on the other leaves a
     path that ends the helper normally, so the process still exits 0; a global
     "this helper raises" flag vetoed exactly that shape (GLM boundary r12
-    P0-2).  Loops and ``try`` blocks are treated as able to complete, which is
-    the fail-closed direction.
+    P0-2).  The scan is sequential -- an ordinary statement does not end the
+    body -- and follows ``if`` / ``with`` / ``try`` bodies, because a point
+    whose last statement is a ``try`` that always returns does not fall off its
+    end.  Loops and ``match`` are treated as able to complete, which is the
+    fail-closed direction.
     """
     for statement in body:
         if isinstance(statement, (ast.Return, ast.Raise)):
             return False
-        if isinstance(statement, ast.If):
-            if _body_completes(statement.body) or _body_completes(statement.orelse):
-                return True
-            continue
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call) \
                 and _is_exit_call(statement.value):
             return False
-        return True
+        if isinstance(statement, ast.If):
+            # Both arms terminating makes everything after the ``if``
+            # unreachable, so the body cannot reach its end either; otherwise
+            # execution may continue with the next statement.
+            if not _body_completes(statement.body) \
+                    and not _body_completes(statement.orelse):
+                return False
+            continue
+        if isinstance(statement, ast.With):
+            if not _body_completes(statement.body):
+                return False
+            continue
+        if isinstance(statement, ast.Try):
+            completes = _body_completes(statement.body)
+            if statement.handlers:
+                completes = completes or any(
+                    _body_completes(handler.body) for handler in statement.handlers)
+            if completes and statement.orelse:
+                completes = _body_completes(statement.orelse)
+            if statement.finalbody and _body_completes(statement.finalbody):
+                completes = True
+            if not completes:
+                return False
+            continue
+        # Anything else may raise, but assuming it does would wave through the
+        # fall-off end this rule exists for; keep scanning (fail-closed).
     return True
 
 
@@ -2037,17 +2068,20 @@ def _is_exit_call(call):
     """``sys.exit(...)`` / ``os._exit(...)`` / bare ``exit(...)``: no return.
 
     ``from sys import exit`` makes the bare-name call the same exit, so the
-    spelling is accepted too (GLM boundary P1-1).
+    spelling is accepted too (GLM boundary P1-1).  ``quit`` is the same site
+    builtin and raises the same ``SystemExit``: leaving it out let
+    ``quit(0)`` in statement position skip every rule (MiniMax boundary r13
+    P0-1).
     """
     func = call.func
     if isinstance(func, ast.Name):
-        return func.id == 'exit'
+        return func.id in ('exit', 'quit')
     return (isinstance(func, ast.Attribute) and func.attr in ('exit', '_exit')
             and isinstance(func.value, ast.Name)
             and func.value.id in ('sys', 'os'))
 
 
-def _proven_summary_source(value, bindings, module=None):
+def _proven_summary_source(value, bindings, module=None, rel=None):
     """True when the audit can see which slots *value* carries.
 
     A dict literal (or an arm of one), a call to an audited point, and a name
@@ -2064,37 +2098,36 @@ def _proven_summary_source(value, bindings, module=None):
     if _returned_summary_dicts(value):
         return True
     if isinstance(value, ast.Call):
-        return _proven_callee(value, bindings, module)
+        return _proven_callee(value, bindings, module, rel)
     if isinstance(value, ast.Name):
         return any(_returned_summary_dicts(item)
                    or (isinstance(item, ast.Call)
-                       and _proven_callee(item, {}, module))
+                       and _proven_callee(item, {}, module, rel))
                    for _lineno, item in bindings.get(value.id, ()))
     return False
 
 
-def _proven_callee(call, bindings, module=None):
+def _proven_callee(call, bindings, module=None, rel=None):
     """True when *call*'s result has a slot source the audit can see (r11).
 
     The registries are keyed by ``(rel, name)``, so a bare name is not enough:
     every other delegation judgement (``_delegated_exit``, ``scan_aggregation_
     tree``) resolves the callee in its own module first.  Matching on the name
     alone trusted any ``def record(x): return 'PASS'`` in any file that shared a
-    registered point's name (GLM boundary r12 P1-1).  When the caller knows the
-    module, the callee must be defined there; the self-test probes pass no
-    module and keep the name-only rule.
+    registered point's name (GLM boundary r12 P1-1), and a name-only set still
+    let a local ``main`` inherit another file's registration (GLM boundary r13
+    P0-1).  With a real ``rel`` the key must match exactly; the in-file probes
+    are scanned under a synthetic ``<self-test>`` rel and keep the name rule.
     """
     if _calls_aggregate(call):
         return True
     names = _callee_names(call, bindings or {})
-    if not any(name in AUDITED_CALLEE_NAMES for name in names):
-        return False
-    if module is None:
-        return True
-    return any(name in module for name in names)
+    if rel is None or rel.startswith('<'):
+        return any(name in AUDITED_CALLEE_NAMES for name in names)
+    return any((rel, name) in AUDITED_CALLEE_KEYS for name in names)
 
 
-def _unproven_expansion(call, bindings, module=None):
+def _unproven_expansion(call, bindings, module=None, rel=None):
     """``update(x)`` / ``update(**x)`` whose slots the function never built.
 
     ``update(x)`` carries the same keys as ``update(**x)``; judging only the
@@ -2107,12 +2140,12 @@ def _unproven_expansion(call, bindings, module=None):
     for argument in call.args:
         if isinstance(argument, (ast.Dict, ast.List, ast.Tuple)):
             continue
-        if not _proven_summary_source(argument, bindings, module):
+        if not _proven_summary_source(argument, bindings, module, rel):
             return True
     for keyword in call.keywords:
         if keyword.arg is not None:
             continue
-        if not _proven_summary_source(keyword.value, bindings, module):
+        if not _proven_summary_source(keyword.value, bindings, module, rel):
             return True
     return False
 
@@ -2153,7 +2186,7 @@ def _call_written_values(call):
     return written
 
 
-def unshared_status_slots(function, point=None, module=None):
+def unshared_status_slots(function, point=None, module=None, rel=None):
     """Status/exit computations a registered point must route through the
     shared function, per return path (#892).
 
@@ -2215,17 +2248,19 @@ def unshared_status_slots(function, point=None, module=None):
                 for summary in _returned_summary_dicts(node.value):
                     written.extend(_status_slot_values(summary))
                 _status_write_values(node.target, node.value, written)
-                if not _proven_summary_source(node.value, bindings, module):
+                if not _proven_summary_source(node.value, bindings, module,
+                                             rel):
                     # ``report |= payload`` writes the same slots as
                     # ``report.update(payload)`` (GLM boundary r7 P1-2).
                     violations.append(
                         f'inline status/exit update {ast.unparse(node)[:60]} '
                         f'at line {node.lineno}')
                     continue
-            if any(_assigns_clean_status(item, bindings, module=module)
+            if any(_assigns_clean_status(item, bindings, module=module,
+                                         rel=rel)
                    for item in written) or any(
                     _assigns_clean_status(item, bindings, module=module,
-                                          status_slot=False)
+                                          rel=rel, status_slot=False)
                     for item in _bare_verdict_values(node)):
                 violations.append(
                     f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
@@ -2235,12 +2270,13 @@ def unshared_status_slots(function, point=None, module=None):
             call = node.value
             if isinstance(call.func, ast.Attribute) and call.func.attr in ('update', 'setdefault'):
                 written = _call_written_values(call)
-                if any(_assigns_clean_status(item, bindings, module=module)
+                if any(_assigns_clean_status(item, bindings, module=module,
+                                             rel=rel)
                        for item in written):
                     violations.append(
                         f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
                         f'at line {node.lineno}')
-                elif _unproven_expansion(call, bindings, module):
+                elif _unproven_expansion(call, bindings, module, rel):
                     violations.append(
                         f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
                         f'at line {node.lineno}')
@@ -2380,7 +2416,7 @@ def _parameter_names(function):
 
 
 def _unproven_update_on_summary(call, bound, bindings, parameters=frozenset(),
-                                module=None):
+                                module=None, rel=None):
     """``report.update(payload)`` whose slots this function never built.
 
     On the write side the payload is judged fail-closed by
@@ -2392,15 +2428,23 @@ def _unproven_update_on_summary(call, bound, bindings, parameters=frozenset(),
     r11 P1-1).
     """
     receiver = call.func.value
+    if isinstance(receiver, ast.Attribute):
+        # ``self.report.update({'status': 'PASS'})``: the receiver gate only
+        # knew bare names, so an attribute receiver made an unregistered
+        # function invisible (GLM boundary r13 P1-1).  The payload has to
+        # carry the status evidence itself, so an unrelated ``cache.update``
+        # stays out of the enumeration.
+        return bool(_status_literals(call)) and _unproven_expansion(
+            call, bindings, module, rel)
     if not isinstance(receiver, ast.Name):
         return False
     if receiver.id not in bound and receiver.id not in parameters:
         return False
-    return _unproven_expansion(call, bindings, module)
+    return _unproven_expansion(call, bindings, module, rel)
 
 
 def _augassign_on_summary(node, bound, bindings, parameters=frozenset(),
-                          module=None):
+                          module=None, rel=None):
     """``report |= payload``: a status write the ``Assign`` family cannot see.
 
     ``ast.AugAssign`` is a sibling of ``ast.Assign``, not a subclass, so the
@@ -2413,7 +2457,15 @@ def _augassign_on_summary(node, bound, bindings, parameters=frozenset(),
     children`` on a set parameter is a union, not a summary write (GLM boundary
     r11 P1-1).
     """
-    if not (isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)):
+    if not isinstance(node, ast.AugAssign):
+        return False
+    if isinstance(node.target, ast.Attribute):
+        # ``self.report |= {'status': 'PASS'}``: the receiver gate only knew
+        # bare names (GLM boundary r13 P1-1).  Only a status payload makes an
+        # unknown receiver a summary write, so ``self.cache |= other`` stays
+        # out of the enumeration.
+        return bool(_status_literals(node.value))
+    if not isinstance(node.target, ast.Name):
         return False
     known = node.target.id in bound
     if not known and node.target.id not in parameters:
@@ -2435,24 +2487,21 @@ def _augassign_on_summary(node, bound, bindings, parameters=frozenset(),
 
 
 def _has_exit_path(function):
-    """True when *function* can hand a value back or leave the process itself.
+    """True when *every* path out of *function* is an explicit one.
 
-    Any ``raise`` counts, not only ``raise SystemExit``: a propagating error
-    leaves non-zero (a traceback), which is not an optimistic exit, so a point
-    that ends in ``raise ValueError`` has an exit path and must not be reported
-    as "no return or exit path" (MiniMax boundary r10 P2-4).
+    Judged by reachability, not by existence: one branch ``raise``-ing says
+    nothing about the other branch, which can still fall off the end and hand
+    ``None`` back (``SystemExit(None)`` is exit 0).  The helper-level rule was
+    moved to reachability in r13; this point-level sibling kept the old
+    "some raise somewhere" test and waved the same shape through (MiniMax
+    sibling r13 P1-1).  Any ``raise`` still counts as an exit path for the
+    paths that take it -- a propagating error leaves non-zero (MiniMax
+    boundary r10 P2-4).
     """
-    for node in _own_nodes(function):
-        if isinstance(node, ast.Return) and node.value is not None:
-            return True
-        if isinstance(node, ast.Raise):
-            return True
-        if isinstance(node, ast.Call) and _is_exit_call(node):
-            return True
-    return False
+    return not _body_completes(function.body)
 
 
-def aggregation_markers(function, module=None):
+def aggregation_markers(function, module=None, rel=None):
     """Markers that make *function* a top-level status/exit computation.
 
     *module* is the file's module-level ``def`` map; the write-side rules need
@@ -2506,14 +2555,14 @@ def aggregation_markers(function, module=None):
               and (_call_written_values(node.value)
                    or _unproven_update_on_summary(node.value, dict_names,
                                                   bindings, parameters,
-                                                  module))):
+                                                  module, rel))):
             # ``report.update({'status': ...})`` / ``setdefault`` without any
             # other marker: the only status evidence is the incremental write, so
             # the function must still be enumerated and registered (MiniMax
             # sibling P1-1).
             markers.add('write-status')
         elif _augassign_on_summary(node, dict_names, bindings, parameters,
-                                   module):
+                                   module, rel):
             # ``report |= {'status': 'PASS'}`` carries the same evidence as the
             # ``update()`` spelling above and must enumerate the function too
             # (MiniMax boundary r10 P0-1).
@@ -2542,7 +2591,7 @@ def scan_aggregation_tree(tree, rel):
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        markers = aggregation_markers(function, module)
+        markers = aggregation_markers(function, module, rel)
         if not markers:
             continue
         key = (rel, function.name)
@@ -2583,7 +2632,9 @@ def aggregation_audit():
         # then the cleanup word is simply absent, not gone from the product.
         # Only the direction a stub cannot fake stays enforced: every word the
         # product enum does expose must be mirrored (GLM sibling r12 P1-1).
-        mirror_ok = product_words <= set(STATUS_WORDS)
+        # An empty product enum is not "everything mirrored" (MiniMax boundary
+        # r13 P2-3).
+        mirror_ok = bool(product_words) and product_words <= set(STATUS_WORDS)
     else:
         mirror_ok = product_words == set(STATUS_WORDS)
     if not mirror_ok:
@@ -2630,7 +2681,7 @@ def aggregation_audit():
             continue
         markers, function = found[key]
         shared = calls_shared(function) and 'return-int-status' not in markers
-        slots = unshared_status_slots(function, key, modules.get(rel))
+        slots = unshared_status_slots(function, key, modules.get(rel), rel)
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers), 'unsharedSlots': slots}
         if not shared:
