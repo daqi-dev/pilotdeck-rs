@@ -1122,7 +1122,7 @@ async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
 async fn request_timeout_answers_408_and_releases_stop() {
     const PORT: u16 = 18995;
     let head = b"POST /cb HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n";
-    let (response, drained) = stop_after_stalled_request(
+    let (response, complete, drained) = stop_after_stalled_request(
         PORT,
         http::Timeouts {
             headers: Duration::from_secs(30),
@@ -1132,6 +1132,13 @@ async fn request_timeout_answers_408_and_releases_stop() {
         Duration::from_secs(5),
     )
     .await;
+    // The read must reach EOF: a deadline that expires on a header-only prefix
+    // leaves exactly the bytes a bodyless response leaves, so the "no body"
+    // pin below cannot tell them apart on its own (#1336 r6 Codex P1).
+    crate::negative_assert!(
+        complete,
+        "#1336 the 408 response is read to EOF inside the read deadline"
+    );
     let raw = response.as_deref().unwrap_or_default();
     crate::negative_assert!(
         raw.starts_with(b"HTTP/1.1 408 Request Timeout\r\n"),
@@ -1157,7 +1164,7 @@ async fn request_timeout_answers_408_and_releases_stop() {
         drained,
         "#1336 requestTimeout lets stop() retire a stalled body"
     );
-    let (response, drained) = stop_after_stalled_request(
+    let (response, _, drained) = stop_after_stalled_request(
         PORT,
         http::Timeouts {
             headers: Duration::from_secs(30),
@@ -1210,7 +1217,8 @@ async fn stalled_server(port: u16, timeouts: http::Timeouts) -> Listener {
 
 /// One client, one stalled request, one `stop()`: returns every byte the
 /// client received within a fixed 1 s read deadline (empty ⇒ it received
-/// nothing) and whether `stop()` returned within `budget`. Always releases the
+/// nothing), whether that read reached a clean EOF inside the deadline, and
+/// whether `stop()` returned within `budget`. Always releases the
 /// client and waits for the port, so the two halves of an A/B can share one
 /// port. The listener polls each connection once before it honours `stop()`,
 /// so the bytes below are already in the socket buffer when the shutdown
@@ -1220,7 +1228,7 @@ async fn stop_after_stalled_request(
     timeouts: http::Timeouts,
     request: &[u8],
     budget: Duration,
-) -> (Option<Vec<u8>>, bool) {
+) -> (Option<Vec<u8>>, bool, bool) {
     let listener = stalled_server(port, timeouts).await;
     let mut client = TcpStream::connect(("127.0.0.1", port))
         .await
@@ -1238,8 +1246,11 @@ async fn stop_after_stalled_request(
     // the deadline expires or the read errors (#1336 r5 boundary/Codex P1):
     // dropping a partial `buf` would let an early response read as "no
     // answer" in the long-timeout half, the same false pass from the other
-    // side.
-    let _ = timeout(Duration::from_secs(1), client.read_to_end(&mut buf)).await;
+    // side. The EOF flag is what makes the `408` half complete: bytes that
+    // stop at the header terminator because the deadline expired look exactly
+    // like a bodyless response (#1336 r6 Codex P1).
+    let read = timeout(Duration::from_secs(1), client.read_to_end(&mut buf)).await;
+    let complete = matches!(read, Ok(Ok(_)));
     let response = if buf.is_empty() { None } else { Some(buf) };
     let drained = timeout(budget, listener.stop()).await.is_ok();
     let _ = client.shutdown().await;
@@ -1248,7 +1259,7 @@ async fn stop_after_stalled_request(
         std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
     })
     .await;
-    (response, drained)
+    (response, complete, drained)
 }
 
 /// #1336 r2 (concurrency P1): the active-chat claim is one critical section —
