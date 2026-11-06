@@ -1,22 +1,32 @@
 //! #1457 fix-r1: one write lock per (project root, session key) for the
-//! transcript paths that build a *fresh* writer, restore the tail and append a
-//! metadata entry (`session_rename_or_tag` and `record_model_selection`).
+//! transcript paths that append a metadata entry (`session_rename_or_tag`,
+//! `session_record_status` and `record_model_selection`).
 //!
-//! Each of them numbers its own append from the tail it just read
-//! (`transcript_adapter.rs`: `inner.sequence + 1`), and the stores do not share
-//! any cross-instance mutex. Two concurrent requests for one session therefore
-//! both read `N` and both write `N+1`; the next `restore()` rejects the file
-//! with `sequence_not_increasing` and the session can neither be continued nor
+//! Each of them either numbers its own append from the tail it just read
+//! (`transcript_adapter.rs`: `inner.sequence + 1`) or appends through a live
+//! recorder. The stores do not share any cross-instance mutex, so a fresh
+//! writer that restores the tail concurrently with a live one makes both claim
+//! `N+1`; the next `restore()` rejects the file with
+//! `sequence_not_increasing` and the session can neither be continued nor
 //! resumed. Serializing the whole read-modify-write per key keeps the chain
 //! strictly increasing.
+//!
+//! fix-r3 adds the second half: the fence only excludes requests that use it,
+//! so a cold append also takes the session writer lease
+//! ([`crate::runtime::session::factory::try_writer_lease`]) that a live or
+//! hydrating session holds for its lifetime. That is what keeps a cold append
+//! from interleaving with `factory`'s `restore()` → publish-recorder window,
+//! and it is why the live path can be sure it is looking at the only writer.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use pilotdeck_protocol::JsString;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use crate::native_process::assembly::Recorders;
+use crate::runtime::session::factory::WriterLease;
 use crate::storage::recorder::Recorder;
 
 /// Weak entries only: a lock lives as long as some request is holding or
@@ -45,17 +55,20 @@ fn registry_key(project_root: &str, session_key: &JsString) -> String {
 }
 
 /// The cached live writer this request shares a transcript file with, if the
-/// session is loaded. Callers append *through* it instead of building a second
-/// writer: the recorder numbers its appends from an in-memory sequence, so a
-/// fresh writer that restores the tail and appends `sequence + 1` would either
-/// duplicate that number or leave the recorder replaying a stale one.
+/// session is loaded, together with the key it is registered under. Callers
+/// append *through* it instead of building a second writer: the recorder
+/// numbers its appends from an in-memory sequence, so a fresh writer that
+/// restores the tail and appends `sequence + 1` would either duplicate that
+/// number or leave the recorder replaying a stale one. The owner key is
+/// returned because `session_model_set`/`clear` must close *that* key for the
+/// new selection to be read back — the request spelling can be an alias.
 ///
 /// The lookup uses the stored-transcript identity, not the request spelling --
 /// `/p` and `/p/.`, `a/b` and `a-b` name one file and therefore one writer.
 pub(super) fn live_recorder(
     recorders: &Recorders,
     session_key: &JsString,
-) -> Option<Arc<Recorder>> {
+) -> Option<(JsString, Arc<Recorder>)> {
     let wanted = crate::storage::sanitize_session_id(session_key);
     let map = recorders.lock().unwrap_or_else(|error| error.into_inner());
     // Prefer the exact spelling when both it and an alias are live; either way
@@ -69,11 +82,33 @@ pub(super) fn live_recorder(
             continue;
         };
         if key == session_key {
-            return Some(recorder);
+            return Some((key.clone(), recorder));
         }
-        alias = Some(recorder);
+        alias = Some((key.clone(), recorder));
     }
     alias
+}
+
+/// The session writer lease for a transcript no session owns right now.
+///
+/// `None` means a session holds it — hydrating (its recorder is not published
+/// yet) or closing (its writer is already closed) — so a cold append would
+/// fork the sequence chain. Callers must then append through the recorder or
+/// surface the retryable busy error; they must never write cold anyway.
+pub(super) fn cold_write_lease(transcript_path: &Path) -> Option<WriterLease> {
+    crate::runtime::session::factory::try_writer_lease(transcript_path)
+}
+
+/// The retryable error a metadata request reports when a session owns the
+/// transcript but has no published recorder yet (hydrating or closing). The
+/// same code the session factory uses when a writer is still draining.
+pub(super) fn writer_busy_error() -> crate::runtime::connection::RequestError {
+    crate::runtime::connection::RequestError {
+        code: "SESSION_WRITER_BUSY".into(),
+        message: "Session writer is still draining; retry session recreation.".into(),
+        details: None,
+        validation: None,
+    }
 }
 
 /// Hold the returned guard across the whole read-modify-write of one session's

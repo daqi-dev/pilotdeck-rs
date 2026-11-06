@@ -241,10 +241,16 @@ impl Requests {
         validate_selection(selection, &metadata, &self.env)?;
         let selection = normalize_selection(selection);
         let session_key = require_session_key(params)?;
-        self.record_model_selection(&session_key, Some(&selection), &project_key)
+        let loaded = self
+            .record_model_selection(&session_key, Some(&selection), &project_key)
             .await?;
+        // #1457 fix-r3: the entry may have been appended through a session
+        // registered under an alias spelling (`a/b` vs `a-b` share one
+        // transcript). Closing the request spelling would leave that session
+        // cached with the old selection, so close the key that actually owns
+        // the writer.
         self.owner
-            .close(&session_key)
+            .close(loaded.as_ref().unwrap_or(&session_key))
             .await
             .map_err(runtime_error)?;
         model_result(&project_key, &session_key, &selection, &metadata, &self.env)
@@ -281,10 +287,11 @@ impl Requests {
                 "Cannot clear the model during an active turn.",
             ));
         }
-        self.record_model_selection(&session_key, None, &project_key)
+        let loaded = self
+            .record_model_selection(&session_key, None, &project_key)
             .await?;
         self.owner
-            .close(&session_key)
+            .close(loaded.as_ref().unwrap_or(&session_key))
             .await
             .map_err(runtime_error)?;
         Ok(JsValue::Undefined)
@@ -292,13 +299,15 @@ impl Requests {
 
     /// NativeSessionModelSelectionPort.write / clear: append the
     /// `model-selection` / `model-selection-clear` session_metadata entry,
-    /// continuing the transcript's sequence like the rename/tag path.
+    /// continuing the transcript's sequence like the rename/tag path. Returns
+    /// the key the session is registered under when the entry went through a
+    /// live recorder, so the caller closes *that* session.
     async fn record_model_selection(
         &self,
         session_key: &JsString,
         selection: Option<&JsValue>,
         project_root: &str,
-    ) -> Result<(), RequestError> {
+    ) -> Result<Option<JsString>, RequestError> {
         // #1457 fix-r1: one writer at a time per session — this path numbers its
         // append from the tail it just read, so two concurrent cold writers
         // would both claim `sequence + 1` and brick the transcript.
@@ -307,10 +316,12 @@ impl Requests {
         // (and the writer lease) with an in-memory sequence, so the entry is
         // appended *through* it. Closing it first aborted an admitted turn and
         // left a second writer numbering from the same tail; routing through the
-        // one writer does neither. With no loaded session the fence is the only
-        // writer, and a session created while we hold it restores the tail after
-        // this append. The lookup runs inside the blocking closure, next to the
-        // append it decides, so the recorder it names is the one that writes.
+        // one writer does neither.
+        // #1457 fix-r3: with no loaded session the cold append takes the same
+        // writer lease a session holds, so it cannot interleave with the
+        // factory's restore→publish window. A busy lease means a session owns
+        // the transcript after all: use its writer, or report the retryable
+        // busy error rather than writing a second chain.
         let recorders = self.recorders.clone();
         let home = self.options.home.clone();
         let key = session_key.clone();
@@ -332,18 +343,21 @@ impl Requests {
             "model-selection-clear"
         };
         let project_root: PathBuf = project_root.into();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> Result<Option<JsString>, RequestError> {
             // The fence outlives a cancelled request: dropping this future does
             // not stop a blocking closure that already started, so the guard
             // travels with the write instead of dropping at the await.
             let _write = write_fence;
             let turn = JsString::from(turn_id);
             let entry = JsValue::Object(metadata);
-            if let Some(recorder) = super::transcript_locks::live_recorder(&recorders, &key) {
-                return recorder
+            if let Some((owner, recorder)) =
+                super::transcript_locks::live_recorder(&recorders, &key)
+            {
+                recorder
                     .writer()
-                    .record_session_metadata(&key, &turn, entry)
-                    .map_err(|e| RequestError::new(e.to_string()));
+                    .record_session_metadata_checked(&key, &turn, entry)
+                    .map_err(|e| RequestError::new(e.to_string()))?;
+                return Ok(Some(owner));
             }
             let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
@@ -364,6 +378,22 @@ impl Requests {
                     now: None,
                 })
                 .map_err(|e| RequestError::new(e.to_string()))?;
+            let Some(_lease) = super::transcript_locks::cold_write_lease(&storage.transcript_path)
+            else {
+                // A session claimed the transcript between the lookup above and
+                // here. Append through it when it is published; otherwise say
+                // busy — never write a second chain beside it.
+                if let Some((owner, recorder)) =
+                    super::transcript_locks::live_recorder(&recorders, &key)
+                {
+                    recorder
+                        .writer()
+                        .record_session_metadata_checked(&key, &turn, entry)
+                        .map_err(|e| RequestError::new(e.to_string()))?;
+                    return Ok(Some(owner));
+                }
+                return Err(super::transcript_locks::writer_busy_error());
+            };
             if matches!(storage.transcript_exists(), Some(Ok(true))) {
                 storage
                     .restore()
@@ -372,11 +402,11 @@ impl Requests {
             storage
                 .transcript
                 .record_session_metadata(&key, &turn, entry)
-                .map_err(|e| RequestError::new(e.to_string()))
+                .map_err(|e| RequestError::new(e.to_string()))?;
+            Ok(None)
         })
         .await
-        .map_err(|e| RequestError::new(e.to_string()))??;
-        Ok(())
+        .map_err(|e| RequestError::new(e.to_string()))?
     }
 
     /// InProcessGateway.ts:2321-2329 + createLocalGateway.ts:1371-1382: the

@@ -157,7 +157,7 @@ impl SessionProjection {
 // Shared across factory instances. Weak entries do not retain idle sessions.
 // The advisory ledger lock also excludes writers in another process.
 type WriterMutex = tokio::sync::Mutex<()>;
-struct WriterLease {
+pub(crate) struct WriterLease {
     // Unlock the file before waking the next in-process waiter.
     _file: crate::storage::LedgerLock,
     _process: tokio::sync::OwnedMutexGuard<()>,
@@ -234,6 +234,22 @@ async fn acquire_writer_resolved(
     Ok(WriterLease {
         _process: process,
         _file: file,
+    })
+}
+/// #1457 fix-r3: the lease a live session holds for its whole lifetime, taken
+/// without waiting. A session-metadata writer that is not a session must not
+/// read the tail and append `sequence + 1` while the factory is between
+/// `restore()` and publishing the recorder (or while a session is closing):
+/// this lease is the one object both sides respect, and it also keeps the
+/// cross-process ledger fence. `None` means some session owns the transcript
+/// right now, so the entry has to go through its recorder instead.
+pub(crate) fn try_writer_lease(path: &Path) -> Option<WriterLease> {
+    let canonical = crate::storage::canonical_transcript_path(path).ok()?;
+    let process = writer_mutex(&canonical).try_lock_owned().ok()?;
+    let (_, file) = crate::storage::LedgerLock::acquire(&canonical).ok()?;
+    Some(WriterLease {
+        _file: file,
+        _process: process,
     })
 }
 fn writer_mutex(path: &Path) -> Arc<WriterMutex> {

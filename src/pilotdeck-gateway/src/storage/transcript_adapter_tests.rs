@@ -253,6 +253,12 @@ fn error_outcome(error: &AdapterError) -> JsValue {
             e.insert("name".into(), "Error".into());
             e.insert("message".into(), message.as_str().into());
         }
+        // Rust-side closed-writer rejection for request-level appends
+        // (#1457 fix-r3); TS has no equivalent.
+        AdapterError::Closed(message) => {
+            e.insert("name".into(), "Error".into());
+            e.insert("message".into(), message.as_str().into());
+        }
     }
     object([("error", JsValue::Object(e))])
 }
@@ -817,6 +823,48 @@ fn retire_drains_in_flight_append_and_rejects_later_clones() {
         field(&committed.entries[0], "sequence").as_number(),
         Some(1.0),
         "#1019 the drained append keeps sequence 1"
+    );
+}
+
+#[test]
+fn closed_writer_is_a_no_op_only_for_unchecked_appends() {
+    let scratch = Scratch::new();
+    let store = Arc::new(FaultStore::default());
+    let (_adapter, storage) = fresh(&scratch.0, store.clone());
+    storage.transcript.begin_close();
+    // #1457 fix-r3: cleanup-hook appends keep the TS `close()` no-op...
+    storage
+        .transcript
+        .record_session_metadata(&"s1".into(), &"t".into(), metadata_value(0))
+        .expect("#1457 an unchecked append stays a silent no-op on a closed writer");
+    // ...but a request-level append must not report success for an entry the
+    // closed writer drops.
+    match storage.transcript.record_session_metadata_checked(
+        &"s1".into(),
+        &"t".into(),
+        metadata_value(1),
+    ) {
+        Err(AdapterError::Closed(message)) => assert!(
+            message.contains("not persisted"),
+            "#1457 the checked append reports the dropped entry: {message}"
+        ),
+        other => panic!("#1457 the checked append rejects a closed writer: {other:?}"),
+    }
+    match storage.transcript.record_agent_status_message_checked(
+        &"s1".into(),
+        &"t".into(),
+        &JsValue::Undefined,
+    ) {
+        Err(AdapterError::Closed(_)) => {}
+        other => panic!("#1457 the checked status append rejects a closed writer: {other:?}"),
+    }
+    assert!(
+        store
+            .read(&storage_key(&storage), None)
+            .unwrap()
+            .entries
+            .is_empty(),
+        "#1457 neither rejected append reached the store"
     );
 }
 
