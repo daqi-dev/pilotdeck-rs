@@ -298,6 +298,67 @@ class ProcessControls(unittest.TestCase):
                     wait_for_slot(script, timeout=2)
 
 
+    def sample_caps(self, wait):
+        """Drive one hung gate and return the per-sample timeouts handed to run_owned."""
+        caps = []
+
+        def hung(_command, **kwargs):
+            caps.append(kwargs.get('timeout'))
+            time.sleep(0.002)
+            raise subprocess.TimeoutExpired(_command, kwargs.get('timeout'))
+
+        with patch.dict(wait.__globals__, {'run_owned': hung}):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                wait('gate.sh', timeout=1.0, interval=0.01, sample_timeout=0.05)
+        self.assertTrue(caps, '#1692 the gate was never sampled')
+        return caps
+
+    def assert_sample_bounds(self, wait):
+        # #1692 §2: one hung sample must not eat the caller's whole budget, but
+        # the gate's documented cold bootstrap still gets one longer sample.
+        caps = self.sample_caps(wait)
+        self.assertLessEqual(caps[0], 0.05,
+                             '#1692 one sample is bounded by sample_timeout, not the total budget')
+        self.assertTrue(any(cap > 0.05 for cap in caps[1:]),
+                        '#1692 a cold bootstrap may use one longer sample after the short one')
+        self.assertLessEqual(max(caps), 1.0,
+                             '#1692 no sample may exceed the total wait budget')
+
+    def test_wait_for_slot_bounds_each_sample(self):
+        self.assert_sample_bounds(wait_for_slot)
+
+        def mutant(old, new):
+            source = Path(negative_process.__file__).read_text()
+            self.assertEqual(source.count(old), 1, f'#1692 unique anchor: {old!r}')
+            module = ModuleType('negative_process_mutant')
+            module.__file__ = negative_process.__file__
+            exec(compile(source.replace(old, new, 1), negative_process.__file__, 'exec'),
+                 module.__dict__)
+            return module.wait_for_slot
+
+        # 删掉单次采样上界：第一个样本直接拿总预算 → 断言红。
+        broad = mutant(
+            'cap = min(remaining, CARGO_SLOTS_CALL_SECONDS if cold_bootstrap else sample_timeout)',
+            'cap = remaining')
+        with self.assertRaises(AssertionError, msg='#1692 deleting the sample bound must be caught'):
+            self.assert_sample_bounds(broad)
+        print('#1692 wait_for_slot mutant sample-bound-removed: KILLED', flush=True)
+        # 删掉冷启动逃生口：首样本超时后仍只给 sample_timeout，冷闸永远过不去
+        # （#1556 回归）→ 断言红。
+        no_bootstrap = mutant(
+            'CARGO_SLOTS_CALL_SECONDS if cold_bootstrap else sample_timeout',
+            'sample_timeout')
+        with self.assertRaises(AssertionError, msg='#1692 dropping the cold bootstrap sample must be caught'):
+            self.assert_sample_bounds(no_bootstrap)
+        print('#1692 wait_for_slot mutant cold-bootstrap-removed: KILLED', flush=True)
+
+    def test_wait_for_slot_rejects_bad_sample_timeout(self):
+        # A non-positive/infinite cap would recreate the unbounded sample (§2).
+        for value in (0, -1, float('inf'), float('nan')):
+            with self.subTest(sample_timeout=value), \
+                    self.assertRaises(ValueError):
+                wait_for_slot('gate.sh', timeout=1, sample_timeout=value)
+
     def test_cargo_slots_gate_resolution(self):
         # #1556 r2 P1：把「闸路径解析不出来」当成「本机没有闸」会让名额检查静默消失。
         # HOME 未设 = 无法定位 → 必须 fail-closed 4，不能是 69（放行）。

@@ -91,10 +91,18 @@ jobs:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    # 夹具最坏墙钟 = 夹具内每次 cargo 调用 1800 s × 15 次 + 扫描器构建，远超平台默认
-    # 360 min；给一个显式上界，让超时表现成一次有界失败而不是 6 小时空转后被取消。
+    # 上界只作兜底：夹具自己按 PDRS_NEGCTL_DEADLINE（默认 5400 s）收口，并在
+    # 截止 / SIGTERM 时还原源码、发 TIMEOUT summary 后非零退出（#1692 §1）。
+    # 实测（run 42176640534）：平台 job 超时**不会**跳过 `if: always()` 上传，但会
+    # 在两条变异之间硬杀进程 —— 源码停在变异态、没有 progress/summary、job 记成
+    # cancelled 而不是有界红。所以这里的分钟数必须大于夹具内部预算 + 余量，
+    # 由 test_metadata_io_driver 钉死。
     timeout-minutes: 120
     env:
+      # #1692 §3：负控跑的是同一批 cargo 测试；不压 debuginfo 时每次调用要额外
+      # 写几百 MB 的 DWARF，直接把 90 min 的预算耗在磁盘上。
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
       # 夹具要求调用方提供 target；#1166 共享入口拒收 src/ 内与仓库根目录，
       # 树内 _build/cargo-target 是本仓负控的既有约定（fixtures/README.md）。
       CARGO_TARGET_DIR: ${{ github.workspace }}/_build/cargo-target
@@ -118,10 +126,13 @@ jobs:
           key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}
       - name: 网关负控锚点自检 + 槽位守卫自检（#1632）
         # --anchors-only 只读扫描全部网关夹具，任一锚点失配 / 脚本消失即 rc=1；
-        # --self-check 证明槽位守卫在 python3 -O 下仍有界退出（旧 assert 版在 -O 下无界等待）。
+        # --self-check 证明槽位守卫在 python3 -O 下仍有界退出（旧 assert 版在 -O 下无界等待）；
+        # --self-check-controls 逐条删掉自检里的守卫（截止拒绝 / 进度落盘 / 树锁持有 /
+        # 空 gates 表）再跑一遍副本，全部必须变红，否则打印 SURVIVED 并非零退出（#1692）。
         run: |
           python3 -I src/pilotdeck-gateway/tests/fixtures/anchor_selfcheck.py --anchors-only
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check-controls
       - name: session-assembly-1316 负控夹具执行（#1316 / #1632）
         run: python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py "$RUNNER_TEMP/negctl-1316"
       # 夹具为每条变异写了 .patch / .log / summary.json；job 红了才最需要它们，所以

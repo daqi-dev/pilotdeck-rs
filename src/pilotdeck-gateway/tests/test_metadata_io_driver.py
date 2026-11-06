@@ -26,6 +26,9 @@ class EnvironmentControls(unittest.TestCase):
     anchor_selfcheck_command = ('python3 -I src/pilotdeck-gateway/tests/fixtures/'
                                 'anchor_selfcheck.py --anchors-only')
     self_check_command = negative_controls_command + ' --self-check'
+    # #1692: the self-check is itself a guard, so CI also runs its meta controls
+    # (each deletes one guard from a copy of the fixture; every case must go red).
+    self_check_controls_command = negative_controls_command + ' --self-check-controls'
     # #1525: the workflow may carry exactly one step-level env block, and the ci
     # profile exactly one override. Both are inputs to the tests (a permission
     # switch; replaying the output of tests that can skip), never to the
@@ -545,8 +548,10 @@ class EnvironmentControls(unittest.TestCase):
                          ['${{ github.workspace }}/_build/cargo-target'],
                          '#1632 the scanner builds into the in-tree _build target')
         commands = [self.ci_run_commands(step, '#1632') for step in steps]
-        self.assertIn([self.anchor_selfcheck_command, self.self_check_command], commands,
-                      '#1632 anchors and the slot guard are checked before any mutation')
+        self.assertIn([self.anchor_selfcheck_command, self.self_check_command,
+                       self.self_check_controls_command], commands,
+                      '#1632 anchors, the slot guard and its meta controls are checked '
+                      'before any mutation')
         self.assertIn([self.negative_controls_command + ' "$RUNNER_TEMP/negctl-1316"'], commands,
                       '#1632 the fixture itself runs in CI')
         for step in steps:
@@ -600,7 +605,8 @@ class EnvironmentControls(unittest.TestCase):
         workflow = self.ci_workflow_fixture()
         body = self.ci_jobs('#1632')['negative-controls']
         anchor_pair = ('          ' + self.anchor_selfcheck_command + '\n'
-                       '          ' + self.self_check_command + '\n')
+                       '          ' + self.self_check_command + '\n'
+                       '          ' + self.self_check_controls_command + '\n')
         run_step = '      - name: session-assembly-1316 负控夹具执行（#1316 / #1632）\n'
         cases = []
 
@@ -618,9 +624,9 @@ class EnvironmentControls(unittest.TestCase):
                run_step + '        continue-on-error: true\n',
                '#1632 negative-control steps stay unconditional')
         change('self-check-dropped', anchor_pair, '          ' + self.anchor_selfcheck_command + '\n',
-               '#1632 anchors and the slot guard are checked before any mutation')
+               '#1632 anchors, the slot guard and its meta controls are checked before any mutation')
         change('anchors-dropped', anchor_pair, '          ' + self.self_check_command + '\n',
-               '#1632 anchors and the slot guard are checked before any mutation')
+               '#1632 anchors, the slot guard and its meta controls are checked before any mutation')
         change('shallow-checkout', '          fetch-depth: 0\n', '          fetch-depth: 1\n',
                '#1632 mutating_sources needs HEAD history for its pristine check')
         change('target-inside-src', 'CARGO_TARGET_DIR: ${{ github.workspace }}/_build/cargo-target',
@@ -1364,7 +1370,11 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'\bCARGO_PROFILE_(DEV|TEST)_DEBUG\b', rust),
                          ['DEV', 'TEST'], '#918 Rust debug profiles have no step overrides')
         # Aliases/expressions could import overrides without spelling either key here.
-        for step in self.ci_steps('rust', rust):
+        self.assert_steps_use_explicit_env_blocks(
+            'rust', rust, '#918 Rust step env must be an explicit block mapping')
+
+    def assert_steps_use_explicit_env_blocks(self, name, body, message):
+        for step in self.ci_steps(name, body):
             lines = step.splitlines()
             for i, line in enumerate(lines):
                 env = re.fullmatch(r'''(?:        |)(?:env|'env'|"env"):(.*)''', line)
@@ -1379,49 +1389,141 @@ class EnvironmentControls(unittest.TestCase):
                     entries.append(entry)
                 self.assertTrue(not env[1].strip() and entries and all(
                     re.fullmatch(r'          [A-Za-z_][A-Za-z0-9_]*: .+', entry) for entry in entries),
-                    '#918 Rust step env must be an explicit block mapping')
+                    message)
+
+    def test_negative_controls_job_uses_line_tables_only_debug(self):
+        # #1692 §3: the negative-controls job builds and runs the same cargo tests
+        # as `rust`, so it needs the same debuginfo cap. Unlike `rust`, its env
+        # block also carries CARGO_TARGET_DIR and comments, so the profile keys are
+        # asserted individually instead of by whole-block equality.
+        job = self.ci_jobs(issue='#1692')['negative-controls']
+        message = '#1692 negative-controls debug profiles are job-level line-tables-only'
+        blocks = re.findall(r'^    env:\n((?:      [^\n]*\n)+)', job, re.M)
+        self.assertEqual(len(blocks), 1, message)
+        self.assertEqual(re.findall(r'      CARGO_PROFILE_[A-Z_]+_DEBUG: (.*)', blocks[0]),
+                         ['line-tables-only', 'line-tables-only'], message)
+        self.assertEqual(re.findall(r'\bCARGO_PROFILE_(DEV|TEST)_DEBUG\b', job),
+                         ['DEV', 'TEST'],
+                         '#1692 negative-controls debug profiles have no step overrides')
+        self.assert_steps_use_explicit_env_blocks(
+            'negative-controls', job,
+            '#1692 negative-controls step env must be an explicit block mapping')
+
+    def test_negative_controls_job_timeout_exceeds_fixture_deadline(self):
+        # #1692 §1: measured (run 42176640534, probe job with timeout-minutes: 1) -
+        # a job-level timeout cancels the running step but `if: always()` steps
+        # still run and the artifact still uploads. What it does NOT do is let the
+        # fixture finish: the process dies wherever it is, so the sources are never
+        # restored, progress.jsonl / summary.json are never written, and the job
+        # reads as `cancelled`. The fixture therefore bounds itself and unwinds
+        # gracefully, which only works if the job timeout sits ABOVE that budget
+        # with room for the cold cargo bootstrap and the upload.
+        job = self.ci_jobs(issue='#1692')['negative-controls']
+        message = '#1692 negative-controls job has one literal timeout-minutes'
+        minutes = re.findall(r'^    timeout-minutes: (.+)$', job, re.M)
+        self.assertEqual(len(minutes), 1, message)
+        self.assertRegex(minutes[0], r'^[1-9][0-9]*$', message)
+        fixture = (Path(__file__).resolve().parents[3]
+                   / 'src/pilotdeck-gateway/tests/fixtures/session-assembly-1316'
+                   / 'negative_controls.py').read_bytes().decode()
+        deadlines = re.findall(r'^DEADLINE_SECONDS = (\d+)$', fixture, re.M)
+        self.assertEqual(len(deadlines), 1,
+                         '#1692 negative-controls fixture declares one overall deadline')
+        self.assertGreaterEqual(
+            int(minutes[0]) * 60, int(deadlines[0]) + 600,
+            '#1692 the job timeout must outlive the fixture deadline by at least 10 '
+            'minutes, otherwise the platform kill preempts the graceful TIMEOUT path')
 
     def test_ci_rejects_missing_wrong_or_step_level_debug_profiles(self):
         workflow = self.ci_workflow_fixture()
-        target = 'test_rust_job_uses_line_tables_only_debug'
+        jobs = self.ci_jobs()
         block = ('    env:\n'
                  '      CARGO_PROFILE_DEV_DEBUG: line-tables-only\n'
                  '      CARGO_PROFILE_TEST_DEBUG: line-tables-only\n')
-        self.assertEqual(workflow.count(block), 1, '#918 debug control has one env block')
-        cases = [('missing-env', workflow.replace(block, '', 1),
-                  '#918 Rust debug profiles are job-level line-tables-only')]
-        for profile in ('DEV', 'TEST'):
-            line = f'      CARGO_PROFILE_{profile}_DEBUG: line-tables-only\n'
-            for value in ('', f'      CARGO_PROFILE_{profile}_DEBUG: full\n'):
-                cases.append((f'{profile}-{value!r}', workflow.replace(line, value, 1),
-                              '#918 Rust debug profiles are job-level line-tables-only'))
-        anchor = '      - run: rustup show active-toolchain\n'
-        self.assertEqual(workflow.count(anchor), 1, '#918 debug control has one Rust step')
-        step_env = ''.join('    ' + line for line in block.splitlines(keepends=True))
-        cases.append(('step-only', workflow.replace(block, '', 1).replace(anchor, anchor + step_env, 1),
-                      '#918 Rust debug profiles are job-level line-tables-only'))
-        cases.append(('step-override', workflow.replace(anchor, anchor + step_env, 1),
-                      '#918 Rust debug profiles have no step overrides'))
-        for env in ('        env: {CARGO_PROFILE_DEV_DEBUG: full}\n',
-                    "        env:\n          'CARGO_PROFILE_DEV_DEBUG': full\n",
-                    '        env:\n          "CARGO_PROFILE_TEST_DEBUG": full\n'):
-            cases.append((env.strip(), workflow.replace(anchor, anchor + env, 1),
-                          '#918 Rust debug profiles have no step overrides'))
-        for value in ('*profiles', '${{ fromJSON(env.PROFILE_JSON) }}'):
-            env = f'        env: {value}\n'
-            changed = workflow.replace(anchor, anchor + env, 1)
-            if value == '*profiles':
-                changed = 'env: &profiles\n  CARGO_PROFILE_DEV_DEBUG: full\n\n' + changed
-            else:
-                changed = '''env:\n  PROFILE_JSON: '{"CARGO_PROFILE_DEV_DEBUG":"full"}'\n\n''' + changed
-            cases.append((value, changed,
-                          '#918 Rust step env must be an explicit block mapping'))
-        for entry in ('*profiles', '<<: *profiles'):
-            env = f'        env:\n          {entry}\n'
-            changed = ('env: &profiles\n  CARGO_PROFILE_DEV_DEBUG: full\n\n'
-                       + workflow.replace(anchor, anchor + env, 1))
-            cases.append((entry, changed, '#918 Rust step env must be an explicit block mapping'))
-        for name, changed, message in cases:
+        # #1692 §3: the negative-controls env block also carries a comment and
+        # CARGO_TARGET_DIR, so the shared anchor is the two profile lines, not the
+        # whole `env:` block. Both jobs must contain that anchor exactly once.
+        profiles = ('      CARGO_PROFILE_DEV_DEBUG: line-tables-only\n'
+                    '      CARGO_PROFILE_TEST_DEBUG: line-tables-only\n')
+        # #1692 §3: the same env block now exists in two jobs, so every mutation is
+        # applied INSIDE one job body. Mutating the first textual occurrence in the
+        # whole workflow would silently hit negative-controls (it is declared first)
+        # and leave `rust` intact - i.e. the control would pass without testing.
+        targets = {
+            'rust': ('test_rust_job_uses_line_tables_only_debug',
+                     '#918 Rust debug profiles are job-level line-tables-only',
+                     '#918 Rust debug profiles have no step overrides',
+                     '#918 Rust step env must be an explicit block mapping'),
+            'negative-controls': (
+                'test_negative_controls_job_uses_line_tables_only_debug',
+                '#1692 negative-controls debug profiles are job-level line-tables-only',
+                '#1692 negative-controls debug profiles have no step overrides',
+                '#1692 negative-controls step env must be an explicit block mapping'),
+        }
+        for job, (target, level, step_level, block_level) in targets.items():
+            body = jobs[job]
+            self.assertEqual(workflow.count(body), 1, f'#918 unique {job} job body')
+            self.assertEqual(body.count(profiles), 1, f'#918 {job} has one debug env block')
+
+            def mutate(*pairs):
+                changed = body
+                for old, new in pairs:
+                    changed = changed.replace(old, new, 1)
+                return workflow.replace(body, changed, 1)
+
+            cases = [('missing-env', mutate((profiles, '')), level)]
+            for profile in ('DEV', 'TEST'):
+                line = f'      CARGO_PROFILE_{profile}_DEBUG: line-tables-only\n'
+                for value in ('', f'      CARGO_PROFILE_{profile}_DEBUG: full\n'):
+                    cases.append((f'{profile}-{value!r}', mutate((line, value)), level))
+            anchor = [line for line in body.splitlines(keepends=True)
+                      if 'rustup show active-toolchain' in line]
+            self.assertEqual(len(anchor), 1, f'#918 {job} has one toolchain step')
+            anchor = anchor[0]
+            step_env = ''.join('    ' + line for line in block.splitlines(keepends=True))
+            cases.append(('step-only', mutate((profiles, ''), (anchor, anchor + step_env)), level))
+            cases.append(('step-override', mutate((anchor, anchor + step_env)), step_level))
+            for env in ('        env: {CARGO_PROFILE_DEV_DEBUG: full}\n',
+                        "        env:\n          'CARGO_PROFILE_DEV_DEBUG': full\n",
+                        '        env:\n          "CARGO_PROFILE_TEST_DEBUG": full\n'):
+                cases.append((env.strip(), mutate((anchor, anchor + env)), step_level))
+            for value in ('*profiles', '${{ fromJSON(env.PROFILE_JSON) }}'):
+                env = f'        env: {value}\n'
+                changed = mutate((anchor, anchor + env))
+                if value == '*profiles':
+                    changed = 'env: &profiles\n  CARGO_PROFILE_DEV_DEBUG: full\n\n' + changed
+                else:
+                    changed = '''env:\n  PROFILE_JSON: '{"CARGO_PROFILE_DEV_DEBUG":"full"}'\n\n''' + changed
+                cases.append((value, changed, block_level))
+            for entry in ('*profiles', '<<: *profiles'):
+                env = f'        env:\n          {entry}\n'
+                changed = ('env: &profiles\n  CARGO_PROFILE_DEV_DEBUG: full\n\n'
+                           + mutate((anchor, anchor + env)))
+                cases.append((entry, changed, block_level))
+            for name, changed, message in cases:
+                with self.subTest(job=job, mutation=name):
+                    self.assert_ci_rejects(changed, target, message)
+
+    def test_ci_rejects_wrong_negative_controls_timeout(self):
+        # #1692 §1: the job timeout must stay literal and above the fixture budget.
+        workflow = self.ci_workflow_fixture()
+        body = self.ci_jobs(issue='#1692')['negative-controls']
+        self.assertEqual(workflow.count(body), 1, '#1692 unique negative-controls job body')
+
+        def mutate(old, new):
+            return workflow.replace(body, body.replace(old, new, 1), 1)
+
+        target = 'test_negative_controls_job_timeout_exceeds_fixture_deadline'
+        for name, changed, message in (
+                ('missing', mutate('    timeout-minutes: 120\n', ''),
+                 '#1692 negative-controls job has one literal timeout-minutes'),
+                ('expression', mutate('    timeout-minutes: 120\n',
+                                      '    timeout-minutes: ${{ env.NEGCTL_MINUTES }}\n'),
+                 '#1692 negative-controls job has one literal timeout-minutes'),
+                ('below-deadline', mutate('    timeout-minutes: 120\n',
+                                          '    timeout-minutes: 60\n'),
+                 '#1692 the job timeout must outlive the fixture deadline by at least 10 '
+                 'minutes, otherwise the platform kill preempts the graceful TIMEOUT path')):
             with self.subTest(mutation=name):
                 self.assert_ci_rejects(changed, target, message)
 
