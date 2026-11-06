@@ -341,8 +341,15 @@ impl GatewayUserDialogBus {
     /// dialog under the same request id before failing. TS `remove()` throws
     /// before it mutates, so that reentrant registration survives; writing the
     /// old entry and lease back would overwrite it (#1599). The reentrant
-    /// registration wins and the consumed entry is dropped.
-    pub fn restore(&mut self, session: &JsString, consumed: ConsumedDialog) {
+    /// registration wins and the consumed entry is returned to the caller,
+    /// which must end its waiter explicitly after dropping the guard instead of
+    /// leaving it pending forever (#1599).
+    #[must_use = "end the returned waiter when a reentrant registration won"]
+    pub fn restore(
+        &mut self,
+        session: &JsString,
+        consumed: ConsumedDialog,
+    ) -> Option<PendingDialog> {
         let ConsumedDialog {
             entry,
             lease,
@@ -355,7 +362,7 @@ impl GatewayUserDialogBus {
             .iter()
             .any(|value| value.request_id == entry.request_id)
         {
-            return;
+            return Some(entry);
         }
         let request_id = entry.request_id.clone();
         // Prefer the old successor (insert before it); otherwise the old
@@ -375,6 +382,7 @@ impl GatewayUserDialogBus {
         if let Some(lease) = lease {
             self.leases.insert((session.clone(), request_id), lease);
         }
+        None
     }
 
     /// Whether the dialog currently pending under `request` is registration

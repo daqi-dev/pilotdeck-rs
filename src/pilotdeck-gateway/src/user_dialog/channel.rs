@@ -641,11 +641,20 @@ impl GatewayUserDialogChannel {
         Ok(())
     }
 
-    fn complete(&self, state: &RequestState, answer: std::result::Result<DialogAnswer, String>) {
+    fn complete(
+        &self,
+        state: &Arc<RequestState>,
+        answer: std::result::Result<DialogAnswer, String>,
+    ) {
         if state.settled.swap(true, Ordering::SeqCst) {
             return;
         }
-        stop_polling(&self.inner, &state.request_id);
+        // A reentrant host callback may have registered a new request under the
+        // same id; the poll registry then belongs to it and must survive this
+        // (superseded) request's completion (#1599).
+        if !self.superseded(state) {
+            stop_polling(&self.inner, &state.request_id);
+        }
         if let Some(signal) = &state.abort {
             let token = state.abort_registration.swap(0, Ordering::SeqCst);
             if token != 0 {
@@ -653,11 +662,25 @@ impl GatewayUserDialogChannel {
             }
         }
         let _ = state.result.send(answer);
+        let mut requests = self.inner.requests.lock().unwrap();
+        if requests
+            .get(&state.request_id)
+            .is_some_and(|current| Arc::ptr_eq(current, state))
+        {
+            requests.remove(&state.request_id);
+        }
+    }
+
+    /// Whether a *different* request has taken over `state`'s id. An absent
+    /// entry is not supersession: `complete` removes it before the settle hook
+    /// runs, and that hook still owns the journal/store/lease cleanup.
+    fn superseded(&self, state: &Arc<RequestState>) -> bool {
         self.inner
             .requests
             .lock()
             .unwrap()
-            .remove(&state.request_id);
+            .get(&state.request_id)
+            .is_some_and(|current| !Arc::ptr_eq(current, state))
     }
 
     pub fn abort(&self, request_id: &JsString) {
@@ -712,8 +735,14 @@ impl GatewayUserDialogChannel {
                         .without_settled(&self.inner.options.session_key, request_id)
                         .deliver();
                     let mut bus = self.inner.options.bus.lock().unwrap();
-                    bus.restore(&self.inner.options.session_key, consumed);
+                    let replaced = bus.restore(&self.inner.options.session_key, consumed);
                     drop(bus);
+                    // The request id now belongs to a reentrant registration;
+                    // the old waiter cannot come back, so end it explicitly
+                    // instead of leaving it pending forever (#1599).
+                    if let Some(replaced) = replaced {
+                        (replaced.reject)(replaced_message());
+                    }
                     self.complete(&state, Err(error.to_string()));
                     return;
                 }
@@ -880,8 +909,11 @@ impl GatewayUserDialogChannel {
                 .without_settled(&self.inner.options.session_key, request_id)
                 .deliver();
             let mut bus = self.inner.options.bus.lock().unwrap();
-            bus.restore(&self.inner.options.session_key, consumed);
+            let replaced = bus.restore(&self.inner.options.session_key, consumed);
             drop(bus);
+            if let Some(replaced) = replaced {
+                (replaced.reject)(replaced_message());
+            }
             finish_poll(&self.inner, request_id);
             return;
         }
@@ -910,6 +942,12 @@ impl GatewayUserDialogChannel {
     }
 }
 
+/// Rejection handed to a waiter whose request id a reentrant host callback
+/// re-registered while the settle hook was failing (#1599).
+fn replaced_message() -> String {
+    "Gateway user-dialog was replaced while its settle hook failed.".into()
+}
+
 fn stop_polling(inner: &Inner, request_id: &JsString) {
     let mut polls = inner.polls.lock().unwrap();
     polls.entries.remove(request_id);
@@ -920,7 +958,20 @@ fn finish_poll(inner: &Inner, request_id: &JsString) {
         entry.polling = false;
     }
 }
-fn settle(inner: &Inner, state: &RequestState) -> Result<()> {
+fn settle(inner: &Inner, state: &Arc<RequestState>) -> Result<()> {
+    // A superseded request must not delete the store/journal rows its
+    // replacement wrote under the same id (#1599). An absent entry only means
+    // `complete` already removed it; the cleanup below still belongs to this
+    // request.
+    if inner
+        .requests
+        .lock()
+        .unwrap()
+        .get(&state.request_id)
+        .is_some_and(|current| !Arc::ptr_eq(current, state))
+    {
+        return Ok(());
+    }
     if state.owner_claimed.swap(false, Ordering::SeqCst)
         && let Some(release) = &inner.options.release_stored_owner
     {

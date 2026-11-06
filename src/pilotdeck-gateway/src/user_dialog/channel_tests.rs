@@ -842,7 +842,10 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                                 .map_or(Ok(()), |hook| hook());
                             if let Err(error) = settled {
                                 let mut bus = bus_observer.lock().unwrap();
-                                bus.restore(&session, *consumed);
+                                assert!(
+                                    bus.restore(&session, *consumed).is_none(),
+                                    "#1599 the oracle never re-registers a request id"
+                                );
                                 drop(bus);
                                 return Err(error);
                             }

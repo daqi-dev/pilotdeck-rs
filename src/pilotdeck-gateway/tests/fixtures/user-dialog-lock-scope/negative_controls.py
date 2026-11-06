@@ -72,6 +72,7 @@ RESTORE_CONFLICT_TEST = ('user_dialog::tests::'
                          'restore_keeps_a_registration_that_replaced_the_consumed_dialog')
 RESTORE_CONFLICT_ASSERTION = ('#1599 restore must not overwrite the reentrant '
                               'registration')
+RESTORE_DROPPED_ASSERTION = ('#1599 the displaced waiter comes back to be ended')
 LATE_TEST = ('native_process::methods::tests::'
              'user_dialog_respond_without_a_snapshot_leaves_a_late_registration_pending')
 LATE_ASSERTION = ('#1599 an answered respond with no peeked dialog must report '
@@ -105,6 +106,7 @@ DECLARED = (
     'answered-without-snapshot-consumes-the-late-registration',
     'answered-snapshot-identity-dropped',
     'restore-ignores-the-successor',
+    'restore-drops-the-replaced-waiter',
     'settle-failure-drops-pre-consume-events',
 )
 # Each independent mutant is applied to the original, never cumulatively.
@@ -227,7 +229,7 @@ mutations = [
      '            .iter()\n'
      '            .any(|value| value.request_id == entry.request_id)\n'
      '        {\n'
-     '            return;\n'
+     '            return Some(entry);\n'
      '        }\n'
      '        let request_id = entry.request_id.clone();',
      '        let request_id = entry.request_id.clone();',
@@ -254,6 +256,16 @@ mutations = [
      '        let position = None::<JsString>\n'
      '            .and_then(|after| bucket.iter().position(|value| value.request_id == after))',
      RESTORE_POSITION_TEST, RESTORE_POSITION_ASSERTION),
+    # restore: the displaced waiter is dropped silently again, so the tool call
+    # that owned it never ends.
+    ('restore-drops-the-replaced-waiter', 'user_dialog/bus.rs',
+     '            return Some(entry);\n'
+     '        }\n'
+     '        let request_id = entry.request_id.clone();',
+     '            return None;\n'
+     '        }\n'
+     '        let request_id = entry.request_id.clone();',
+     RESTORE_CONFLICT_TEST, RESTORE_DROPPED_ASSERTION),
     # respond: a failing settle hook drops every queued change, including the
     # lease expiry that already happened inside consume_for_response
     # (Grok boundary P1-1).

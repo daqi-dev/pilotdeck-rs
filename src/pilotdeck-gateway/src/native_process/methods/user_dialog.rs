@@ -25,6 +25,12 @@ fn request_error(message: impl Into<pilotdeck_protocol::JsString>) -> RequestErr
     RequestError::new(message)
 }
 
+/// Rejection handed to a waiter whose request id a reentrant host callback
+/// re-registered while the settle hook was failing (#1599).
+fn replaced_message() -> String {
+    "Gateway user-dialog was replaced while its settle hook failed.".into()
+}
+
 fn capability_unavailable() -> RequestError {
     RequestError {
         code: "CAPABILITY_UNAVAILABLE".into(),
@@ -514,8 +520,15 @@ impl Requests {
                                     .user_dialog_bus
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner());
-                                bus.restore(&session_key, *consumed);
+                                let replaced = bus.restore(&session_key, *consumed);
                                 drop(bus);
+                                // A reentrant registration took the request id
+                                // while the hook ran, so the old waiter cannot
+                                // come back: end it explicitly instead of
+                                // leaving it pending forever (#1599).
+                                if let Some(replaced) = replaced {
+                                    (replaced.reject)(replaced_message());
+                                }
                                 return Err(request_error(error.to_string()));
                             }
                             // TS remove() broadcasts before the waiter
