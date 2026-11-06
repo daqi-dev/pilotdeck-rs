@@ -169,6 +169,11 @@ where
     }
 }
 
+/// Slack added to the scaling band, in seconds, converted to ratio space
+/// through the fastest small run. One source for the assertion, its failure
+/// message, the unit tests and the run-time precondition below.
+pub const SCALING_NOISE: f64 = 0.15;
+
 /// Band for a pair of inputs `factor` times apart. Linear work grows by
 /// `factor`; quadratic work by `factor^2`. The geometric midpoint
 /// `factor^1.5` leaves the same multiplicative margin (`sqrt(factor)`) on
@@ -191,15 +196,27 @@ where
 /// Every measured call site clears it by a wide margin: the smallest observed
 /// small sample is 1.45 s (deep-frame 4 MiB) and `large_shallow` runs 5.8 s,
 /// so the slack takes at most 0.10x of the 0.63x gap on this hardware. That is
-/// a measurement, not a portable guarantee: a caller with sub-0.24 s samples
-/// cannot claim the same from the ratio alone.
+/// a measurement, not a portable guarantee, so the condition is enforced at
+/// run time rather than only documented: a caller whose small sample is too
+/// short for the ratio to judge refuses loudly instead of passing silently.
 #[allow(dead_code)]
 pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor: f64) {
-    const NOISE: f64 = 0.15;
     let allowed = factor.powf(1.5);
     let small = sampled.small.as_secs_f64().max(f64::EPSILON);
-    let limit = allowed + NOISE / small;
+    let limit = allowed + SCALING_NOISE / small;
     let quadratic = factor * factor;
+    let gap = quadratic - allowed;
+    // Once the slack covers the whole linear-to-quadratic gap the band reaches
+    // the quadratic ratio and a genuinely quadratic implementation passes.
+    // Refuse to judge instead: faster hardware or a smaller fixture must not
+    // turn this criterion into a silent false PASS (#978 boundary review).
+    assert!(
+        SCALING_NOISE / small < gap,
+        "{label}: a {small:.3}s small sample is too short to judge {factor:.2}x growth — \
+         the {SCALING_NOISE}s slack alone spans the {gap:.2}x linear-to-quadratic gap \
+         (needs small > {:.3}s)",
+        SCALING_NOISE / gap
+    );
     let small_duration = sampled.small;
     let large_duration = sampled.large;
     let samples = sampled.samples;
@@ -208,7 +225,7 @@ pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor:
         ratio <= limit,
         "{label} did not scale from {factor:.0}x-smaller {small_duration:?} \
          to {large_duration:?} (median of {samples} paired ratios: {ratio:.2}x): \
-         allowed {limit:.2}x = {allowed:.2}x + {NOISE}s/{small:.3}s; \
+         allowed {limit:.2}x = {allowed:.2}x + {SCALING_NOISE}s/{small:.3}s; \
          a linear implementation needs about {factor:.0}x, \
          a quadratic one about {quadratic:.0}x"
     );
@@ -429,6 +446,50 @@ fn scaling_band_rejects_quadratic_growth_without_loosening() {
     );
 }
 
+/// #978: the slack must never swallow the whole linear-to-quadratic gap. At a
+/// 0.1 s small run the 150 ms slack raises the 2.83x band to 4.33x, which a
+/// real quadratic (4.0x) passes; the criterion refuses to judge that pair
+/// instead of passing it (#978 boundary review).
+#[test]
+fn scaling_band_refuses_a_sample_too_short_to_judge() {
+    let short = Duration::from_secs_f64(0.1);
+    let sampled = ScalingSamples {
+        small: short,
+        large: short.mul_f64(4.0),
+        median_ratio: 4.0,
+        samples: 3,
+    };
+    let panic = std::panic::catch_unwind(|| {
+        assert_within_scaling_band("#978 unit short sample", &sampled, 2.0)
+    })
+    .expect_err("#978 a 0.1 s small sample cannot be judged");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        message.contains("#978 unit short sample") && message.contains("too short to judge"),
+        "#978 the short-sample refusal must name the site: {message}"
+    );
+    // Once the small run clears the floor the same pair is judged, and the
+    // quadratic still breaches the band.
+    let long = Duration::from_secs_f64(0.5);
+    let sampled = ScalingSamples {
+        small: long,
+        large: long.mul_f64(4.0),
+        median_ratio: 4.0,
+        samples: 3,
+    };
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_within_scaling_band("#978 unit long enough", &sampled, 2.0)
+        })
+        .is_err(),
+        "#978 a judged quadratic must still breach the band"
+    );
+}
+
 /// #978: the band follows the factor measured from the actual input bytes.
 /// A "half" that is 0.6x the full bytes makes the real factor 1/0.6 = 1.667x;
 /// a quadratic implementation then reads 1/0.6^2 = 2.78x. The retired
@@ -439,14 +500,14 @@ fn scaling_band_rejects_quadratic_growth_without_loosening() {
 fn scaling_band_tracks_the_measured_input_factor() {
     let factor: f64 = 1.0 / 0.6;
     let quadratic_ratio = factor * factor;
-    // The 0.15 s slack is converted through the small run, so the rejection
-    // only holds while the small sample is long enough that the slack cannot
+    // The slack is converted through the small run, so the rejection only
+    // holds while the small sample is long enough that the slack cannot
     // bridge the linear-to-quadratic gap: the exact condition is
-    // 0.15 / (factor^2 - factor^1.5) < small, about 0.23957 s here (0.24 s is
-    // a conservative sufficient condition). The measured call sites run
-    // 1.45-5.8 s (deep-frame 4 MiB measured 1.45 s, `large_shallow` 5.8 s), so
-    // the slack takes at most 0.10x of that gap there.
-    let floor = 0.15 / (quadratic_ratio - factor.powf(1.5));
+    // SCALING_NOISE / (factor^2 - factor^1.5) < small, about 0.23957 s here
+    // (0.24 s is a conservative sufficient condition). The measured call
+    // sites run 1.45-5.8 s (deep-frame 4 MiB measured 1.45 s, `large_shallow`
+    // 5.8 s), so the slack takes at most 0.10x of that gap there.
+    let floor = SCALING_NOISE / (quadratic_ratio - factor.powf(1.5));
     assert!(
         (floor - 0.2396).abs() < 0.001,
         "#978 the 0.6x quadratic is rejected only for small > {floor:.4}s"
