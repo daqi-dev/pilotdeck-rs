@@ -1486,6 +1486,77 @@ fn upload_cleanup_keeps_fresh_orphan_directories() {
     );
 }
 
+// #1646: the sweep must never act through a symlinked uploads root —
+// `remove_dir_all` follows intermediate links, so a crafted project tree could
+// otherwise delete directories outside the project (the orphan branch has no
+// metadata.json for `read_at`'s containment check to validate).
+#[test]
+fn upload_cleanup_never_deletes_through_a_symlinked_root() {
+    let scratch = Scratch::new();
+    let outside = scratch.dir("outside");
+    let victim = outside.join("victim");
+    fs::create_dir_all(victim.join("files")).unwrap();
+    fs::write(victim.join("files/x"), "keep").unwrap();
+    set_mtime(&victim, (EPOCH - 2 * DAY) as u64);
+    // (a) `.tmp/chat-uploads` itself points at the outside tree.
+    let project = scratch.dir("p-root-link");
+    let h = golden_store(&project);
+    fs::create_dir_all(project.join(".tmp")).unwrap();
+    std::os::unix::fs::symlink(&outside, project.join(".tmp/chat-uploads")).unwrap();
+    h.store.cleanup_expired().unwrap();
+    assert!(
+        victim.join("files/x").exists(),
+        "a symlinked uploads root must not be swept"
+    );
+    // (b) `.tmp` is the link, so the real root lives outside the project.
+    let nest = scratch.dir("outside-nested");
+    let nested_victim = nest.join("chat-uploads/victim");
+    fs::create_dir_all(nested_victim.join("files")).unwrap();
+    fs::write(nested_victim.join("files/x"), "keep").unwrap();
+    set_mtime(&nested_victim, (EPOCH - 2 * DAY) as u64);
+    let project = scratch.dir("p-tmp-link");
+    let h = golden_store(&project);
+    std::os::unix::fs::symlink(&nest, project.join(".tmp")).unwrap();
+    h.store.cleanup_expired().unwrap();
+    assert!(
+        nested_victim.join("files/x").exists(),
+        "a symlinked .tmp must not be swept"
+    );
+    let log = h.store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("uploads root is not a plain directory"),
+        "the skip is logged: {log}"
+    );
+}
+
+// #1646: a failed record removal is a logged skip too — the rest of the sweep
+// (and the lease sweep after it) still runs.
+#[test]
+fn upload_cleanup_record_removal_failure_does_not_stop_the_sweep() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    seed_cleanup_record(&uploads, &project, "upload-a", "1970-01-01T00:00:00.000Z");
+    seed_cleanup_record(&uploads, &project, "upload-b", "1970-01-01T00:00:00.000Z");
+    inject(&h, "record-rm", libc::EACCES);
+    let cleaned = h.store.cleanup_expired().unwrap();
+    assert_eq!(
+        cleaned, 1,
+        "a failed record removal does not stop the sweep"
+    );
+    assert!(
+        uploads.join("upload-a").exists(),
+        "the unremovable record stays for the next sweep"
+    );
+    assert!(
+        !uploads.join("upload-b").exists(),
+        "the sweep continues past a failed removal"
+    );
+    let log = h.store.cleanup_log.lock().unwrap().join("\n");
+    assert!(log.contains("upload-a"), "the skip log names it: {log}");
+}
+
 // #1646: lease.json appears only through a temp + rename, so a reader sees the
 // complete lease or nothing at all — never a 0-byte/half file it would treat
 // as expired. The rename fault is the deterministic stand-in for observing
@@ -1597,7 +1668,17 @@ async fn cleanup_failure_keeps_the_schedule_alive() {
         "this test relies on spawn_cleanup honouring its period verbatim"
     );
     let handle = spawn_cleanup(&h.store, interval);
-    tokio::time::sleep(interval + Duration::from_millis(300)).await;
+    // Wait for the injected fault to be consumed instead of sleeping a fixed
+    // 1.3 s: the sleep could pass before any tick (assertion vacuous) or
+    // overshoot into the next tick, which succeeds and removes the lease
+    // (flaky red). Consuming the one-shot fault proves the failing round ran.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !h.store.faults.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the cleanup schedule runs its first tick");
     assert!(
         !handle.is_finished(),
         "a failed sweep does not end the schedule"
