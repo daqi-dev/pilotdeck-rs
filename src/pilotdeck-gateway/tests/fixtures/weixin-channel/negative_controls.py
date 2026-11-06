@@ -233,9 +233,8 @@ MUTATIONS = [
      'channel::weixin::media::tests::a_slow_body_outlives_the_fetch_deadline',
      '#1823 slow body is not bounded by the fetch deadline'),
     # The other half of the same deadline: the header phase must still abort.
-    # A one-hour stand-in, never `Duration::MAX`: the cell's server gives up
-    # after 5 s, so the mutant fails on the receipt either way, and a deadline
-    # that large cannot overflow `Instant + Duration` inside `tokio::time`.
+    # One hour is a plain stand-in for "no deadline"; the cell's server gives
+    # up after 5 s, so the mutant fails on the receipt either way.
     ('media-download-fetch-deadline-removed', weixin / 'media.rs',
      '        let response = timeout(\n            self.fetch_timeout,',
      '        let response = timeout(\n            Duration::from_secs(3600),',

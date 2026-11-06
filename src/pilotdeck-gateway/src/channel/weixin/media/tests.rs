@@ -887,11 +887,11 @@ async fn a_slow_body_outlives_the_fetch_deadline() {
         .await;
     task.await.expect("#1823 slow body server");
     // Compare the payload itself, not just its length: with the body bound to
-    // the fetch deadline the mutant returns an error here, and a three-byte
-    // stand-in must not pass. The receipt has to come from this assertion,
-    // never from a std `expect` (which runs before the receipt is written).
+    // the fetch deadline the mutant returns an error here, and a same-length
+    // stand-in (say `xyz`) must not pass. The receipt has to come from this
+    // assertion, never from a std `expect` (which runs before the receipt).
     crate::negative_assert_eq!(
-        outcome.as_deref().map(<[u8]>::to_vec),
+        outcome.as_ref().ok().cloned(),
         Some(b"abc".to_vec()),
         "#1823 slow body is not bounded by the fetch deadline"
     );
