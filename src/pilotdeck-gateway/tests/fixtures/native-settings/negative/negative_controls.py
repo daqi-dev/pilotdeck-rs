@@ -4,7 +4,7 @@ must be killed by its named test's own assertion markers, then restore.
 
 Run with no other writers/builds in this worktree. Evidence goes in a new
 output folder; original source bytes and hashes are verified after every
-mutation. The six mutants all target the U7 settings wiring:
+mutation. The seven mutants all target the U7 settings wiring:
 
 * ``miss-wire-reload-extensions`` — the settings family no longer registers
   ``reload_extensions``; the #1305 registry inventory pins every wired wire
@@ -30,6 +30,9 @@ mutation. The six mutants all target the U7 settings wiring:
   ``{reloaded: false, reason: "unsupported"}``; the capability guard's
   positive success-shape assertion must catch it. This is the negative half
   of the pair: the assertion and the mutant exist together.
+* ``unbind-reload-extensions`` (#1761 review) — the same unbind for
+  ``reload_extensions``: the guard's reload loop covers both methods, so each
+  iteration needs its own negative control, not just the first.
 
 Every mutant is applied, proven to compile (``cargo test -p
 pilotdeck-gateway --lib --no-run``), run against its one named test, and
@@ -85,6 +88,11 @@ ORDER = 'native_process::settings_tests::reload_config_dirty_then_broadcast_orde
 CAPABILITIES = 'native_process::management_tests::settings_capabilities_match_served_delegates'
 UNBIND_MARKER = ('#1761 settings method reload_config must answer reloaded: true '
                  'from its real delegate')
+# #1761 review: the guard's reload loop runs both methods, so the delegate
+# half needs its own mutant per method — the same production composition line
+# and the same success-shape assertion, one name apart.
+UNBIND_EXTENSIONS_MARKER = ('#1761 settings method reload_extensions must answer '
+                            'reloaded: true from its real delegate')
 # Each row: (name, source path, original anchor text, mutant text, killed test).
 # Rows sharing a name are one mutant: every edit is applied together and the
 # group gets one compile gate, one kill run and one verdict ('stale-generation'
@@ -135,6 +143,9 @@ mutations = [
     ('unbind-reload-config', SERVICES,
      '        reload_config: Some(bundle.clone()),',
      '        reload_config: None,', CAPABILITIES),
+    ('unbind-reload-extensions', SERVICES,
+     '        reload_extensions: Some(bundle.clone()),',
+     '        reload_extensions: None,', CAPABILITIES),
     ('broadcast-before-dirty', REFRESH,
      '                if let Some(router) = router {\n'
      '                    router.mark_all_dirty("config_changed");\n'
@@ -154,6 +165,7 @@ MARKERS = {
     'broadcast-before-dirty': ('#1320 dirty-then-broadcast: markAllDirty must '
                               'run before the broadcast'),
     'unbind-reload-config': UNBIND_MARKER,
+    'unbind-reload-extensions': UNBIND_EXTENSIONS_MARKER,
 }
 
 

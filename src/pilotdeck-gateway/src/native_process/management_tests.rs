@@ -636,7 +636,7 @@ async fn production_host_management_and_restart() {
         capabilities.sort_unstable();
         let expected = expected_capabilities(true);
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
-        assert_ts_capability_subset(&expected);
+        assert_ts_capability_subset(&expected, false);
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
@@ -1019,7 +1019,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             expected,
             "#1231 disabled storage exact capability set"
         );
-        assert_ts_capability_subset(&expected);
+        assert_ts_capability_subset(&expected, true);
     }
     host.shutdown(options.drain_budget)
         .await
@@ -1092,19 +1092,23 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
     expected
 }
 
-/// #1761: all three TS config states are checked, not just the default one.
+/// #1761: the TS states a wire table must be legal in, paired by config state
+/// rather than checked against all three unconditionally.
 /// `oracle.json` carries `contract` / `contract.emptyStorage` /
-/// `contract.missingStorage`; they agree today, but once they diverge a
-/// capability that is only legal in the non-empty state must not be waved
-/// through by reading the first contract alone.
-fn assert_ts_capability_subset(expected: &[&str]) {
+/// `contract.missingStorage`. A snapshots-enabled table only has to be a TS
+/// subset in the default state it actually runs in; checking it against the
+/// disabled contracts would false-FAIL the day the three arrays diverge. The
+/// snapshots-disabled table is the minimal set, so it must be legal in every
+/// state — that direction only tightens the guard.
+fn assert_ts_capability_subset(expected: &[&str], include_disabled_states: bool) {
     let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 TS capability oracle");
     let contract = &oracle["contract"];
-    for (label, state) in [
-        ("contract", contract),
-        ("contract.emptyStorage", &contract["emptyStorage"]),
-        ("contract.missingStorage", &contract["missingStorage"]),
-    ] {
+    let mut states = vec![("contract", contract)];
+    if include_disabled_states {
+        states.push(("contract.emptyStorage", &contract["emptyStorage"]));
+        states.push(("contract.missingStorage", &contract["missingStorage"]));
+    }
+    for (label, state) in states {
         let ts_capabilities = state["capabilities"]
             .as_array()
             .unwrap_or_else(|| panic!("#1231 TS capability array missing at {label}"));
@@ -1372,7 +1376,7 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     expected,
                     "#1231 production entry exact capability set"
                 );
-                assert_ts_capability_subset(&expected);
+                assert_ts_capability_subset(&expected, true);
             }
             host.shutdown(options.drain_budget)
                 .await
@@ -1555,7 +1559,7 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         expected,
         "#1323 --storage-root CLI path advertises snapshot-enabled capabilities"
     );
-    assert_ts_capability_subset(&expected);
+    assert_ts_capability_subset(&expected, false);
     host.shutdown(options.drain_budget)
         .await
         .expect("#1323 host shutdown");
