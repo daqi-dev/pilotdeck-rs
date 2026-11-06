@@ -1483,6 +1483,27 @@ class EnvironmentControls(unittest.TestCase):
             f'#1692 negative-controls must not set {env_names[0]}: the fixture deadline '
             'is fixed by DEADLINE_SECONDS, not by the workflow')
 
+    def assert_deadline_log_call_sites(self, source):
+        # `run()` only writes the killed call's output when it is given a log
+        # path, so both main-line call sites must pass theirs. Without this pin
+        # reverting one to `run(full)` re-loses exactly the evidence the fix
+        # exists to keep, and every other check stays green (#1692 r3 review P2).
+        anchor = 'run(full, log_path=log_path)'
+        message = '#1692 baseline/mutation pass their log path into run()'
+        self.assertEqual(source.count(anchor), 2, message)
+        self.assertNotIn('run(full)\n', source, message)
+
+    def test_negative_controls_deadline_keeps_partial_logs(self):
+        source = (Path(__file__).resolve().parent
+                  / 'fixtures/session-assembly-1316/negative_controls.py').read_text()
+        self.assert_deadline_log_call_sites(source)
+        for reverted in (source.replace('run(full, log_path=log_path)', 'run(full)', 1),
+                         source.replace('run(full, log_path=log_path)', 'run(full)', 2)):
+            with self.subTest(reverted=reverted.count('run(full)\n')):
+                with self.assertRaises(AssertionError):
+                    self.assert_deadline_log_call_sites(reverted)
+        print('#1692 reverted log_path call site: KILLED', flush=True)
+
     def test_ci_rejects_missing_wrong_or_step_level_debug_profiles(self):
         workflow = self.ci_workflow_fixture()
         jobs = self.ci_jobs()
@@ -1575,7 +1596,7 @@ class EnvironmentControls(unittest.TestCase):
                                           '    timeout-minutes: 120\n'),
                  '#1692 the job timeout must outlive the fixture deadline plus the'),
                 # An env override silently replaces the fixture's own budget: the
-                # literal timeout above would still read 120 while the deadline
+                # literal timeout above would still read 150 while the deadline
                 # ran past it.
                 ('deadline-env-override',
                  mutate(profiles, profiles + "      PDRS_NEGCTL_DEADLINE: '9000'\n"),
