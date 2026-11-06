@@ -18,7 +18,6 @@
 //! channel's recorded behaviour stays what the golden fixture pins.
 
 use std::{
-    convert::Infallible,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
@@ -204,9 +203,12 @@ pub(crate) async fn listen_with(
                                 // Node's `requestTimeout`: a request that has
                                 // not completed in time is answered 408 and the
                                 // connection is closed instead of pending.
+                                // #1941: `handle_request` returns `Err` only for
+                                // an oversize body, which hyper turns into a
+                                // zero-byte close (no response is framed).
                                 match tokio::time::timeout(timeouts.request, runtime.handle_request(request)).await {
-                                    Ok(response) => Ok::<_, Infallible>(response),
-                                    Err(_) => Ok::<_, Infallible>(request_timeout_response()),
+                                    Ok(response) => response,
+                                    Err(_) => Ok(request_timeout_response()),
                                 }
                             }
                         });

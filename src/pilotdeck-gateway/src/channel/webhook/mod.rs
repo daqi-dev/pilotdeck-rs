@@ -81,7 +81,9 @@ use crate::{Body, http_proxy, js_value, native_http};
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: f64 = 8643.0;
 const DEFAULT_RATE_LIMIT: f64 = 30.0;
-const DEFAULT_MAX_BODY_BYTES: f64 = 1_048_576.0;
+/// #1941: also the `wecom_callback` listener's `POST *` cap; both lanes keep
+/// the value in one place so the two body limits cannot drift.
+pub(crate) const DEFAULT_MAX_BODY_BYTES: f64 = 1_048_576.0;
 const INSECURE_NO_AUTH: &str = "__INSECURE_NO_AUTH__";
 /// `checkRateLimit`'s sliding window, seconds.
 const RATE_LIMIT_WINDOW: f64 = 60.0;

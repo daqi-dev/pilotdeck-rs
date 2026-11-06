@@ -20,12 +20,13 @@ mod xml;
 use std::{
     collections::HashSet,
     convert::Infallible,
+    io,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited, combinators::BoxBody};
 use hyper::{Request, Response, body::Incoming, header};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use url::Url;
@@ -61,6 +62,13 @@ pub const DEFAULT_QYAPI: &str = "https://qyapi.weixin.qq.com/cgi-bin";
 const DEFAULT_PORT: u32 = 8780;
 const TOKEN_TTL_MS: f64 = 7_000_000.0;
 const MAX_MESSAGE_LENGTH: usize = 2048;
+/// #1941: the `POST *` body cap. TS's `readBody` buffers the whole request
+/// with no bound (`WeComCallbackChannel.ts:57-65`), so an unauthenticated
+/// caller could make the process hold an arbitrary body *before* the
+/// signature check runs. The value is the webhook listener's precedent
+/// (`super::webhook::DEFAULT_MAX_BODY_BYTES`); the ending on a crossing body
+/// is that lane's too — a zero-byte close, not a 413.
+const MAX_BODY_BYTES: f64 = super::webhook::DEFAULT_MAX_BODY_BYTES;
 
 /// `WeComCallbackChannelOptions` after the TS constructor's `String(...).trim()`
 /// and `Number(port)` normalisation. `qyapi` is the production constant; the
@@ -195,6 +203,20 @@ fn accepted_seam(_runtime: &Runtime) -> Option<http::Accepted> {
     None
 }
 
+/// `route`'s failure. Only a body that crossed [`MAX_BODY_BYTES`] destroys the
+/// connection (#1941); every other error keeps TS's `catch` arm — log it and
+/// answer `500 "error"` — because those replies can still reach the wire.
+enum RouteError {
+    PayloadTooLarge,
+    Message(String),
+}
+
+impl From<String> for RouteError {
+    fn from(value: String) -> Self {
+        Self::Message(value)
+    }
+}
+
 impl Runtime {
     fn log(&self, level: &str, message: &str) {
         let log = self.log.lock().expect("#1336 logger mutex").clone();
@@ -253,17 +275,30 @@ impl Runtime {
 
     // ----- HTTP face -------------------------------------------------------
 
-    async fn handle_request(self: Arc<Self>, request: Request<Incoming>) -> Response<Body> {
+    async fn handle_request(
+        self: Arc<Self>,
+        request: Request<Incoming>,
+    ) -> Result<Response<Body>, io::Error> {
         match self.route(request).await {
-            Ok(response) => response,
-            Err(error) => {
+            Ok(response) => Ok(response),
+            // #1941: an oversize body ends the connection with zero response
+            // bytes — the webhook listener's precedent (`channel/webhook/mod.rs`
+            // catch arm returns `Err`: "TS destroyed the socket before the
+            // rejection continuation runs"; 413 lives only in that lane's
+            // negative-control mutant). Returning `Err` from the service is
+            // what makes hyper drop the connection without writing.
+            Err(RouteError::PayloadTooLarge) => Err(io::Error::other("payload too large")),
+            Err(RouteError::Message(error)) => {
                 self.log("error", &format!("wecom_callback: HTTP error: {error}"));
-                response(500, None, b"error")
+                Ok(response(500, None, b"error"))
             }
         }
     }
 
-    async fn route(self: &Arc<Self>, request: Request<Incoming>) -> Result<Response<Body>, String> {
+    async fn route(
+        self: &Arc<Self>,
+        request: Request<Incoming>,
+    ) -> Result<Response<Body>, RouteError> {
         let method = request.method().as_str().to_owned();
         let target = request.uri().to_string();
         let host = request
@@ -307,13 +342,24 @@ impl Runtime {
                 ))
             }
             "POST" => {
-                let body = request
-                    .into_body()
+                // #1941: bound the body while it is read. `Limited` reports
+                // the frame that crosses the cap as `LengthLimitError`; a body
+                // of exactly `MAX_BODY_BYTES` still passes, the same boundary
+                // as `webhook::read_request_body`'s `total > max`. The limit
+                // has to sit here, before verification: the signed material
+                // (`Encrypt`) is inside the body, so the body must be read
+                // before the signature can be checked at all.
+                let bytes = match Limited::new(request.into_body(), MAX_BODY_BYTES as usize)
                     .collect()
                     .await
-                    .map_err(|error| format!("Error: {error}"))?
-                    .to_bytes();
-                let body = String::from_utf8_lossy(&body).into_owned();
+                {
+                    Ok(collected) => collected.to_bytes(),
+                    Err(error) if error.downcast_ref::<LengthLimitError>().is_some() => {
+                        return Err(RouteError::PayloadTooLarge);
+                    }
+                    Err(error) => return Err(RouteError::Message(format!("Error: {error}"))),
+                };
+                let body = String::from_utf8_lossy(&bytes).into_owned();
                 let signature = query("msg_signature");
                 let Some(encrypt) =
                     extract_encrypt_from_xml(&body).filter(|value| !value.is_empty())
