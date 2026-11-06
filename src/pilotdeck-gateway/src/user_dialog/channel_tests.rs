@@ -748,14 +748,28 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                     let id = slot_id(action, &slots);
                     let ttl = number_field(action, "ttl", 1000.0);
                     let lease = optional_id(action, "lease");
-                    let mut bus = bus_observer.lock().unwrap();
-                    claim_value(bus.claim(&session, &id, ttl, lease.as_ref())?)
+                    // #1442: the observer is host code; the queued change is
+                    // delivered only after the guard drops.
+                    let (claim, outbox) = {
+                        let mut bus = bus_observer.lock().unwrap();
+                        let claim = bus.claim(&session, &id, ttl, lease.as_ref());
+                        let outbox = bus.drain_events();
+                        (claim, outbox)
+                    };
+                    outbox.deliver();
+                    claim_value(claim?)
                 }
                 "releaseBus" => {
                     let id = slot_id(action, &slots);
                     let lease = optional_id(action, "lease").expect("release lease");
-                    let mut bus = bus_observer.lock().unwrap();
-                    JsValue::Bool(bus.release(&session, &id, &lease))
+                    let (released, outbox) = {
+                        let mut bus = bus_observer.lock().unwrap();
+                        let released = bus.release(&session, &id, &lease);
+                        let outbox = bus.drain_events();
+                        (released, outbox)
+                    };
+                    outbox.deliver();
+                    JsValue::Bool(released)
                 }
                 "check" => {
                     let id = slot_id(action, &slots);
@@ -774,34 +788,60 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                     let id = slot_id(action, &slots);
                     let lease = optional_id(action, "lease");
                     let cancel = bool_field(action, "cancel", false);
-                    let consumed = {
+                    // #1442: the settle hook, the completion callbacks and the
+                    // change observer are host code; they run only after the
+                    // bus guard drops.
+                    let (consumed, outbox) = {
                         let mut bus = bus_observer.lock().unwrap();
-                        bus.consume_for_response(
+                        let consumed = bus.consume_for_response(
                             &session,
                             &id,
                             lease.as_ref(),
                             if cancel { "cancelled" } else { "answered" },
-                        )?
+                        );
+                        let outbox = bus.drain_events();
+                        (consumed, outbox)
                     };
                     match consumed {
-                        ConsumeResult::NotPending => object([
-                            ("consumed", JsValue::Bool(false)),
-                            ("reason", "not_pending".into()),
-                        ]),
-                        ConsumeResult::LeaseRequired => object([
-                            ("consumed", JsValue::Bool(false)),
-                            ("reason", "lease_required".into()),
-                        ]),
-                        ConsumeResult::Entry(entry) => {
+                        ConsumeResult::NotPending => {
+                            outbox.deliver();
+                            object([
+                                ("consumed", JsValue::Bool(false)),
+                                ("reason", "not_pending".into()),
+                            ])
+                        }
+                        ConsumeResult::LeaseRequired => {
+                            outbox.deliver();
+                            object([
+                                ("consumed", JsValue::Bool(false)),
+                                ("reason", "lease_required".into()),
+                            ])
+                        }
+                        ConsumeResult::Entry(consumed) => {
+                            // A failed settle hook restores the entry and
+                            // discards the queued broadcast — TS remove()
+                            // fail-closed (GatewayUserDialogBus.ts:219-226).
+                            let settled = consumed
+                                .entry
+                                .on_settled
+                                .as_ref()
+                                .map_or(Ok(()), |hook| hook());
+                            if let Err(error) = settled {
+                                let mut bus = bus_observer.lock().unwrap();
+                                bus.restore(&session, *consumed);
+                                drop(bus);
+                                return Err(error);
+                            }
+                            outbox.deliver();
                             if cancel {
                                 let reason = optional_id(action, "reason");
-                                (entry.resolve)(DialogAnswer::Cancelled(reason));
+                                (consumed.entry.resolve)(DialogAnswer::Cancelled(reason));
                                 object([
                                     ("consumed", JsValue::Bool(true)),
                                     ("cancelled", JsValue::Bool(true)),
                                 ])
                             } else {
-                                (entry.resolve)(DialogAnswer::Answered(
+                                (consumed.entry.resolve)(DialogAnswer::Answered(
                                     field(action, "value").clone(),
                                 ));
                                 object([
@@ -841,10 +881,27 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                         .and_then(JsValue::as_string)
                         .map(|value| value.to_utf8().unwrap())
                         .unwrap_or_else(|| "closed".into());
-                    bus_observer
-                        .lock()
-                        .unwrap()
-                        .reject_session(&session, &reason);
+                    // #1442: reject_session only collects the entries; the
+                    // settle hooks, reject callbacks and changes run outside
+                    // the guard in TS's per-entry order [onSettled
+                    // (swallowed), reject, emit]
+                    // (GatewayUserDialogBus.ts:198-213).
+                    let (rejected, outbox) = {
+                        let mut bus = bus_observer.lock().unwrap();
+                        let rejected = bus.reject_session(&session, &reason);
+                        let outbox = bus.drain_events();
+                        (rejected, outbox)
+                    };
+                    outbox.deliver();
+                    for rejected in rejected {
+                        let _ = rejected
+                            .entry
+                            .on_settled
+                            .as_ref()
+                            .map_or(Ok(()), |hook| hook());
+                        (rejected.entry.reject)(reason.clone());
+                        rejected.change.deliver();
+                    }
                     JsValue::Null
                 }
                 "snapshot" => JsValue::Null,

@@ -114,11 +114,19 @@ impl Requests {
                         "INVALID_USER_DIALOG_LIST",
                         "sessionKey is required.",
                     )?;
-                    let dialogs = self
-                        .user_dialog_bus
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .list(&session_key);
+                    // #1442: `list` may expire a lease and queue a change;
+                    // the observer is host code, so it is delivered only
+                    // after the guard drops.
+                    let (dialogs, outbox) = {
+                        let mut bus = self
+                            .user_dialog_bus
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let dialogs = bus.list(&session_key);
+                        let outbox = bus.drain_events();
+                        (dialogs, outbox)
+                    };
+                    outbox.deliver();
                     Ok(crate::metadata::object([(
                         "dialogs",
                         JsValue::Array(dialogs),
@@ -182,12 +190,22 @@ impl Requests {
                     // TS hands the bus `input.leaseId?.trim()`
                     // (InProcessGateway.ts:2754), not the raw validated string.
                     let lease_id = lease_id.as_ref().map(trimmed);
-                    let claim = self
-                        .user_dialog_bus
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .claim(&session_key, &request_id, ttl_ms, lease_id.as_ref())
-                        .map_err(|e| request_error(e.to_string()))?;
+                    // #1442: `claim` queues lease changes (including a
+                    // just-expired one); the observer is host code, so the
+                    // outbox is delivered only after the guard drops — on
+                    // every outcome, since the expiry broadcast happened
+                    // before the claim result was known.
+                    let (claim, outbox) = {
+                        let mut bus = self
+                            .user_dialog_bus
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let claim = bus.claim(&session_key, &request_id, ttl_ms, lease_id.as_ref());
+                        let outbox = bus.drain_events();
+                        (claim, outbox)
+                    };
+                    outbox.deliver();
+                    let claim = claim.map_err(|e| request_error(e.to_string()))?;
                     use crate::user_dialog::LeaseClaim;
                     match claim {
                         LeaseClaim::Claimed(lease) => Ok(crate::metadata::object([
@@ -251,11 +269,18 @@ impl Requests {
                     // (InProcessGateway.ts:2769) — sessionKey/requestId stay
                     // raw because TS forwards them untrimmed.
                     let lease_id = trimmed(&lease_id);
-                    let released = self
-                        .user_dialog_bus
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .release(&session_key, &request_id, &lease_id);
+                    // #1442: `release` queues the "released" (or a stale
+                    // lease's "expired") change; deliver after the guard drops.
+                    let (released, outbox) = {
+                        let mut bus = self
+                            .user_dialog_bus
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let released = bus.release(&session_key, &request_id, &lease_id);
+                        let outbox = bus.drain_events();
+                        (released, outbox)
+                    };
+                    outbox.deliver();
                     Ok(crate::metadata::object([(
                         "released",
                         JsValue::Bool(released),
@@ -349,25 +374,40 @@ impl Requests {
                         )
                     })?;
 
-                    let mut bus = self
-                        .user_dialog_bus
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
+                    // #1442: the bus guard covers only state reads and
+                    // mutations. `accepts`, `on_settled`, `resolve` and the
+                    // change observer are host code and run after the guard
+                    // drops: TS is single-threaded and lets them reenter the
+                    // bus freely (InProcessGateway.ts:2668-2707), so a
+                    // MutexGuard must never be alive across them.
+                    let (snapshot, outbox) = {
+                        let mut bus = self
+                            .user_dialog_bus
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        // Peek to validate accepts before consuming
+                        // (InProcessGateway.ts:2668-2674); the validator
+                        // itself runs outside the guard, on the snapshot's
+                        // cloneable handle.
+                        let snapshot = bus.snapshot_for_response(&session_key, &request_id);
+                        let outbox = bus.drain_events();
+                        (snapshot, outbox)
+                    };
+                    outbox.deliver();
 
-                    // Peek to validate accepts before consuming
                     if answer.to_value().get("behavior") == Some(&"answered".into())
-                        && let Some(entry) = bus.peek(&session_key, &request_id)
+                        && let Some(snapshot) = snapshot
                     {
                         let value = result_val
                             .get("value")
                             .cloned()
                             .unwrap_or(JsValue::Undefined);
-                        if !(entry.accepts)(&value) {
+                        if !(snapshot.accepts)(&value) {
                             return Err(RequestError {
                                     code: "INVALID_USER_DIALOG_RESPONSE".into(),
                                     message: format!(
                                         "answered {} dialog result does not match the pending dialog contract.",
-                                        String::from_utf16_lossy(entry.dialog_kind.units())
+                                        String::from_utf16_lossy(snapshot.dialog_kind.units())
                                     ).into(),
                                     details: None,
                                     validation: None,
@@ -385,31 +425,65 @@ impl Requests {
                     // TS hands the bus `input.leaseId?.trim()`
                     // (InProcessGateway.ts:2683), not the raw validated string.
                     let lease_id = lease_id.as_ref().map(trimmed);
-                    match bus
-                        .consume_for_response(
+                    let (consumed, outbox) = {
+                        let mut bus = self
+                            .user_dialog_bus
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let consumed = bus.consume_for_response(
                             &session_key,
                             &request_id,
                             lease_id.as_ref(),
                             reason_str,
-                        )
-                        .map_err(|e| request_error(e.to_string()))?
-                    {
-                        ConsumeResult::NotPending => Ok(crate::metadata::object([(
-                            "delivered",
-                            JsValue::Bool(false),
-                        )])),
-                        ConsumeResult::LeaseRequired => Err(RequestError {
-                            code: "USER_DIALOG_LEASE_REQUIRED".into(),
-                            message: format!(
-                                "User dialog {} is currently claimed by another renderer.",
-                                String::from_utf16_lossy(request_id.units())
-                            )
-                            .into(),
-                            details: None,
-                            validation: None,
-                        }),
-                        ConsumeResult::Entry(entry) => {
-                            (entry.resolve)(answer);
+                        );
+                        let outbox = bus.drain_events();
+                        (consumed, outbox)
+                    };
+                    match consumed {
+                        ConsumeResult::NotPending => {
+                            outbox.deliver();
+                            Ok(crate::metadata::object([(
+                                "delivered",
+                                JsValue::Bool(false),
+                            )]))
+                        }
+                        ConsumeResult::LeaseRequired => {
+                            outbox.deliver();
+                            Err(RequestError {
+                                code: "USER_DIALOG_LEASE_REQUIRED".into(),
+                                message: format!(
+                                    "User dialog {} is currently claimed by another renderer.",
+                                    String::from_utf16_lossy(request_id.units())
+                                )
+                                .into(),
+                                details: None,
+                                validation: None,
+                            })
+                        }
+                        ConsumeResult::Entry(consumed) => {
+                            // #1442: the settle hook runs outside the guard.
+                            // A failure restores the consumed entry (with its
+                            // lease) and discards the queued "settled"
+                            // broadcast — the TS remove() fail-closed
+                            // contract (GatewayUserDialogBus.ts:219-226).
+                            let settled = consumed
+                                .entry
+                                .on_settled
+                                .as_ref()
+                                .map_or(Ok(()), |hook| hook());
+                            if let Err(error) = settled {
+                                let mut bus = self
+                                    .user_dialog_bus
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                bus.restore(&session_key, *consumed);
+                                drop(bus);
+                                return Err(request_error(error.to_string()));
+                            }
+                            // TS remove() broadcasts before the waiter
+                            // resolves (InProcessGateway.ts:2678-2707).
+                            outbox.deliver();
+                            (consumed.entry.resolve)(answer);
                             Ok(crate::metadata::object([(
                                 "delivered",
                                 JsValue::Bool(true),
