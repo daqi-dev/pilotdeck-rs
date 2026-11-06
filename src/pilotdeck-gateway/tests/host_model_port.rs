@@ -1192,6 +1192,107 @@ async fn turn_cancel_interrupts_waiting_stream_next() {
     assert_eq!(types, vec!["turn_started", "step_started", "model_request"]);
 }
 
+/// #1804: the deterministic guard for the port → router `turn_abort` wiring
+/// (`model_port.rs:266`). The invoker below aborts the *turn's own* flag and
+/// then hands back one more provider event in the same call stack, so only
+/// `RouterExecuteContext::turn_abort` can drop it: `stream_options.abort` is
+/// the per-stream child the forwarder fills one task hop later. Dropping the
+/// wiring line must turn this red on any executor schedule — unlike the
+/// `sync-abort-mid-stream` replay case, which only reds when the multi-thread
+/// scheduler happens to run the forwarder first (#1785).
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_abort_in_the_provider_call_stack_drops_the_event_at_the_port() {
+    /// Aborts the turn and then emits one provider event with no `await` in
+    /// between, like a provider read that resumes after `controller.abort()`
+    /// in the aborting call stack.
+    struct AbortThenEmit {
+        turn: AbortFlag,
+    }
+    impl RouterModelInvocation for AbortThenEmit {
+        fn get_capabilities(&self, _: &JsString, _: &JsString) -> Result<JsValue, ModuleError> {
+            Ok(obj(&[("maxOutputTokens", JsValue::Number(64.0))]))
+        }
+        fn get_multimodal(&self, _: &JsString, _: &JsString) -> Result<JsValue, ModuleError> {
+            Ok(obj(&[("input", JsValue::Array(vec!["text".into()]))]))
+        }
+        fn get_provider_protocol(&self, _: &JsString) -> JsString {
+            "anthropic".into()
+        }
+        fn stream<'a>(
+            &'a self,
+            _: &'a JsValue,
+            _: &'a StreamOptions,
+            sink: &'a mut (dyn FnMut(StreamOutput) + Send),
+        ) -> RouterStreamFuture<'a> {
+            Box::pin(async move {
+                self.turn.abort();
+                // The event #1785 leaked: `usage` is not content, so the
+                // attempt buffers it and would flush it to the consumer after
+                // the provider stream ends.
+                sink(StreamOutput::Event(obj(&[
+                    ("type", "usage".into()),
+                    (
+                        "usage",
+                        obj(&[
+                            ("inputTokens", JsValue::Number(1.0)),
+                            ("outputTokens", JsValue::Number(1.0)),
+                        ]),
+                    ),
+                ])));
+                Ok(())
+            })
+        }
+    }
+
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let trace: Trace = Arc::default();
+    let turn = AbortFlag::new();
+    let router = test_router(Arc::new(AbortThenEmit { turn: turn.clone() }), &trace);
+    let session: JsString = SESSION.into();
+    let ports = model_port::ports(
+        router,
+        obj(&[("providers", providers)]),
+        None,
+        RouterModelPortOptions::main_agent(),
+        &session,
+    );
+    let context = session_context("t1");
+    let prepared = ports
+        .execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: context.clone(),
+        })
+        .await
+        .expect("#1804 the route prepares");
+    let mut stream = ports
+        .execution
+        .stream(StreamInput {
+            prepared,
+            context,
+            abort: Some(turn.clone()),
+        })
+        .await
+        .expect("#1804 the stream opens");
+    let error = stream
+        .next()
+        .await
+        .expect_err("#1804 a turn cancelled in the provider call stack yields no event");
+    assert_eq!(
+        "This operation was aborted",
+        error
+            .message
+            .to_utf8()
+            .expect("#1804 the abort message is UTF-8")
+    );
+    assert!(turn.is_aborted(), "#1804 the invoker aborted the turn");
+    assert!(
+        stream.next().await.is_ok_and(|event| event.is_none()),
+        "#1804 the aborted stream is done, not a second event"
+    );
+}
+
 /// Fix round 1: `RouterModelPortOptions::default()` is the main agent
 /// (`routerModelInvokerAdapter.ts:33,41`: `options.isMainAgent ?? true` when
 /// the caller omits the flag), so a composition that never sets it routes

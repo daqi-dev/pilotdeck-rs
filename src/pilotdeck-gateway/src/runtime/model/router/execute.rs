@@ -26,7 +26,13 @@ pub struct RouterExecuteContext {
     /// that the port fills one task hop later, and reading only that made
     /// "drop the event after abort" depend on scheduling (#1785).
     pub turn_abort: Option<AbortFlag>,
-    /// Includes the turn abort signal and provider HTTP timeout options.
+    /// Provider HTTP timeout options plus the *per-stream* abort flag. This is
+    /// not the turn signal: the port fills `abort` from a forwarding task one
+    /// hop later, so a cancel is only visible in the aborting call stack
+    /// through `turn_abort` (above). A caller that fills only this field
+    /// re-opens #1785 (the event after abort leaks); one that fills only
+    /// `turn_abort` drops events but cannot interrupt a blocked provider read.
+    /// Fill both.
     pub stream_options: StreamOptions,
 }
 
