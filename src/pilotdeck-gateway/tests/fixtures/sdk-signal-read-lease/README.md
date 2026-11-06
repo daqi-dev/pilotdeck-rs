@@ -25,7 +25,8 @@
   （`start_ms` / `end_ms`，epoch 毫秒）原子写进 `writer-hold.json`；常驻测试在第一次
   **被拒绝**（`try_lock_shared` 返回 `WouldBlock`）时记下时刻
   `blocked=<epoch ms>`，marker 里同时带 `first`（第一次尝试）、`blocked` 与 `at`
-  （取锁成功）。GREEN 要求 `start_ms ≤ blocked ≤ end_ms`。
+  （取锁成功）。GREEN 要求 `start_ms + 1000 ≤ blocked ≤ end_ms − 1000`
+  （`WITNESS_MARGIN_MS`，理由见下文「边界毫秒」）。
 
   `WouldBlock` 是「此刻有排他持有者」的直接观测：进程里没有别的东西能造出它，而本次
   writer 在整个持锁区间内一直持有排他锁，所以落在区间内的拒绝只能来自它。用等待时长
@@ -74,11 +75,15 @@ writer 的 `mutating_sources` 用 `lock_timeout=WRITER_LOCK_TIMEOUT`（300 s）�
 抢锁慢说明工作区忙，不是租约的证据，这个控制项也不该成为最长持锁者。
 
 停止 writer 分三级：先等它自己恢复完成（`WRITER_EXIT_BUDGET = HOLD_SECONDS + 120 s`）；
-超时再发 `SIGTERM` —— writer 的处理器**只在窗口期内生效**，抛 `SystemExit` 让
-`mutating_sources.__exit__` 把每个 guarded 文件恢复回去；再超时才 `_kill_group`（复用
-`negative_process` 的实现）并 `_collect` 有界收尾。**只有我们自己发过 SIGTERM 之后，
-退出码才不再作数**（`SystemExit` 的 rc 非零是设计如此）；writer 自行退出且非零仍按失败
-报出，真被强杀则明写「source restoration is NOT confirmed」。
+超时再发 `SIGTERM` —— writer 的处理器**只在窗口期内生效**，抛私有 `_Stopped` 让
+`mutating_sources.__exit__` 把每个 guarded 文件恢复、重读校验后再放锁；再超时才
+`_kill_group`（复用 `negative_process` 的实现）并 `_collect` 有界收尾。
+
+**退出码无条件作数**：被我们 `terminate()` 的 writer 走的是「恢复并复核 → 退出 0」，
+所以 `stop_writer()` 对任何非零 rc 都报失败——恢复抛错、HEAD 复核失败、或信号还没发出
+writer 已自行失败退出，全都会被看见（`#1662` r8 P1：先前在 `terminate()` **之前**置
+`terminated` 标志，把这类失败一并吞掉）。真被强杀则明写
+「source restoration is NOT confirmed」。
 
 **解除武装在抛异常之前**，并且放在覆盖整个窗口的 `try/finally` 里：无论窗口是正常
 结束、超时还是被 SIGTERM 打断，恢复阶段（`write_bytes`）都已在无处理器状态下运行，
@@ -87,22 +92,35 @@ writer 的 `mutating_sources` 用 `lock_timeout=WRITER_LOCK_TIMEOUT`（300 s）�
 
 停止本身若被中断（`communicate()` 期间 `Ctrl-C`），`force_stop()` 仍然先 `terminate()`
 走优雅恢复、等 `WRITER_EXIT_BUDGET`；只有**确认超时**才 `_kill_group`，且 `_collect`
-放在 `finally` 里一定会执行。确认口径：`communicate()` 抛 `TimeoutExpired`，或
-`communicate()` 抛别的异常而 `wait()` 也不可用时，用 `poll()` 轮询到同一期限（`poll()`
-不会像 `wait()` 那样抛错），到点仍在跑才算确认超时。writer 自行退出即算恢复成功
-（SIGTERM 处理器抛 `SystemExit`，退出码非零是设计如此，不按退出码判）；只有真被强杀时
+放在 `finally` 里一定会执行。确认口径：`communicate()` 抛 `TimeoutExpired`；或它在第一次
+等待时就抛了别的异常（IPC / 管道问题）——`wait()` 会重复同样的抛错，故不再尝试，直接用
+不会抛错的 `poll()` 轮询到同一期限，到点仍在跑才算确认超时。writer 自行退出即算恢复
+成功（它退出前已恢复并复核，正常 rc 为 0；这一路径只看「是否停下」）；只有真被强杀时
 该行 reason 才明写「source restoration is NOT confirmed」。中断本身记在 `hard_interrupt`
-里，不会被改写后的 `stop_error` 顶掉——**兜底自身再抛错时也一样**，仍照原样重抛。
+里，不会被改写后的 `stop_error` 顶掉——**兜底自身再抛错时也一样**，仍照原样重抛；兜底
+抛的是普通异常时，其文本也拼进 reason，不静默丢弃。
 
-**为什么 `start_ms ≤ blocked ≤ end_ms` 对边界毫秒也成立**：`end_ms` 是在
+**为什么边距之后 `blocked` 仍只能来自本次 writer**：`end_ms` 是在
 `mutating_sources` 的 `with` **体内**、`__exit__` 恢复之前取的，所以真实放锁时刻必然
-晚于 `end_ms`；`blocked == end_ms` 这一刻本次 writer 仍持着排他锁，不可能是别人。
+晚于 `end_ms` 的采样。但 `epoch_ms()` 向下取整，一个数值代表整毫秒桶：writer 在
+`N+0.1 ms` 采样得 `end_ms=N`、`N+0.2 ms` 放锁、另一个排他持有者 `N+0.3 ms` 取锁、
+读者 `N+0.4 ms` 被它拒绝也记 `N`，而 writer 的 `finally` 延迟到 `N+1.1 ms` 才记
+`released_ms=N+1` —— 旧的 `start ≤ blocked ≤ end` 与 `released > end` 都成立，却把
+别人的拒绝记成本次 writer 的（r8 P0）。因此 GREEN 要求 `blocked` 落在两端各让出
+`WITNESS_MARGIN_MS = 1000` 的区间内：`blocked ≤ end_ms − 1000` 意味着真实拒绝时刻比
+真实放锁至少早 1 s，而这段时间里本次 writer 一直持着排他锁，`flock` 不允许第二个排他
+持有者存在。1 s 只占 90 s 持锁的约 1 %，远大于任何调度抖动（r8 实测 `blocked` 距
+`start_ms` 1.4 s、距 `end_ms` 88.6 s）。
 
 这一点不靠论证：writer 在 `with` 之外的 `finally` 里（`__exit__` 已恢复并放锁）原子
-发布 `writer-released.json`（`released_ms`，SIGTERM 展开路径同样发布），GREEN 要求
-`released_ms > end_ms`，否则 INVALID（区间不保守）；**记录缺失同样 INVALID**（缺证据
-不算证据，不允许静默跳过这条检查），KILLED 的 reason 里也带上该时刻。
+发布 `writer-released.json`（`released_ms`；**仅当窗口已进入时发布**——取锁阶段被
+SIGTERM 的 writer 从未持锁，不公布假证据；窗口进入后无论正常结束还是 SIGTERM 展开都
+发布），GREEN 要求 `released_ms > end_ms`，否则 INVALID（区间不保守）；**记录缺失同样
+INVALID**（缺证据不算证据，不允许静默跳过这条检查），KILLED 的 reason 里也带上该时刻。
 每次运行因此都留下「公布区间严格落在真实持锁区间内」的实测记录，而不是注释里的推断。
+
+wall clock 被外部改写（NTP 步进 / 手工改表）不在该模型的守卫范围内：两侧都用
+`time.time()` 打点，时钟跳变会让跨进程的时刻比较失去意义；本条记在 #1885。
 
 SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体；下一次 `mutating_sources`
 用 HEAD 字节校验拒绝脏树，不会把变异体当基线，但源文件需要人工恢复。
