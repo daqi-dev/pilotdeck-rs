@@ -73,6 +73,17 @@ if mode == "api_error_conn_once":
         api_err = API_CONN
 if mode == "api_error_conn_always":
     api_err = API_CONN
+if mode == "api_error_conn_slow":  # 首跑吃掉大半个 --timeout：验证重试用剩余时限而不是重新给满
+    time.sleep(conf.get("delay", 1.0))
+    api_err = API_CONN
+if mode == "api_error_quoted_then_quota":  # 先来一条正常 model 的正文引用，再来真 429：分类不得被引用带偏
+    api_err = API_QUOTA
+    print(json.dumps({"type": "assistant", "message": {"model": model, "content": [
+        {"type": "text", "text": "我先读 run-review-roles.py；它会把 API Error: Connection dropped (ECONNRESET) 写进 detail。"}]}}),
+          flush=True)
+if mode == "api_error_recovered":  # 流内先报错、CLI 内部重试后正常完成：整角色必须判 PASS，不许误杀
+    print(json.dumps({"type": "assistant", "message": {"model": "<synthetic>",
+                                                       "content": [{"type": "text", "text": API_CONN}]}}), flush=True)
 if mode == "api_error_conn_then_quota":  # 首次断连、重试遇 429：重试后不得吞掉任一原因
     flag = conf["conn_flag"]
     if not os.path.exists(flag):
@@ -418,6 +429,28 @@ def _run(gate, rrr, out_base: Path) -> int:
         if ev.count("start") != 1 or "未重试" not in detail:
             fails.append(f"api-conn-nobudget：预算为 0 时不得重试（起了 {ev.count('start')} 次、{detail}）")
         print(f"api-conn-nobudget: attempts={ev.count('start')} detail={detail}")
+
+        # ⑭ 流内报错但 CLI 自己重试成功（末事件正常、有合规 VERDICT）：整角色判 PASS，不得被占位符误杀
+        rc, st, s, ev = run_one("api-recovered", {"mode": "api_error_recovered"})
+        if rc != 0 or st.get("status") != "PASS" or ev.count("start") != 1:
+            fails.append(f"api-recovered：内部重试成功的流应判 PASS（{st.get('status')}、{ev.count('start')} 次、{st.get('detail')}）")
+        print(f"api-recovered: status={st.get('status')} attempts={ev.count('start')} retried={st.get('retried')}")
+
+        # ⑮ 正文引用 ECONNRESET + 真 429：分类只认真错误块，判额度耗尽、不重试（防把 429 放大）
+        rc, st, s, ev = run_one("api-quoted-then-quota", {"mode": "api_error_quoted_then_quota"})
+        detail = st.get("detail", "")
+        if st.get("status") != "ERROR" or "额度耗尽" not in detail or ev.count("start") != 1:
+            fails.append(f"api-quoted-then-quota：正文引用不得把 429 带成断连或触发重试（{st.get('status')}、"
+                         f"{ev.count('start')} 次、{detail}）")
+        print(f"api-quoted-then-quota: status={st.get('status')} attempts={ev.count('start')} detail={detail}")
+
+        # ⑯ 剩余时限不足就不重试：首跑吃掉大半个 --timeout 后，重试不得重新给满整段时限
+        rc, st, s, ev = run_one("api-conn-nolefttime", {"mode": "api_error_conn_slow", "delay": 1.0,
+                                                        "conn_flag": str(tmp / "conn4.flag")}, extra=("--timeout", "2"))
+        detail = st.get("detail", "")
+        if ev.count("start") != 1 or "未重试" not in detail or "剩余时限 0s" not in detail:
+            fails.append(f"api-conn-nolefttime：剩余时限不足时不得重试（起了 {ev.count('start')} 次、{detail}）")
+        print(f"api-conn-nolefttime: attempts={ev.count('start')} detail={detail}")
 
         # 缺钥：fixture 文件没有该键、父环境却有——必须拒绝，不回退父环境（无条件断言，开发机与 CI 一致）
         empty = tmp / "empty.env"

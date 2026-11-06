@@ -43,6 +43,7 @@ import datetime as dt
 import fcntl
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
@@ -237,18 +238,17 @@ def validate_final(text: str) -> tuple[str, dict[str, int] | None, str]:
 
 
 def api_error_text(result: dict) -> str:
-    """错误响应的内嵌原文：优先取带 `API Error:` 的块（断连前可能已有正常正文，别混进来），其余按序兜底。"""
-    texts = [t for t in (result.get("resp_texts") or []) if isinstance(t, str) and t.strip()]
-    last = result.get("last_text")
-    if isinstance(last, str) and last.strip():
-        texts.append(last[:MAX_ERROR_TEXT])
-    res = result.get("result")
-    if isinstance(res, str) and res.strip():
-        texts.append(res[:MAX_ERROR_TEXT])
+    """错误响应的内嵌原文：只认 model 为 `<synthetic>`/空的 assistant 块（pump 按 model 收，正文引用不算），
+    没有时退回 result 字段、再退回最后一块正文——顺序固定，别让评审正文里的字样抢走分类。"""
     out: list[str] = []
-    for t in [x for x in texts if API_ERROR_MARK in x] or texts:
-        if t not in out:
+    for t in (result.get("resp_texts") or []):
+        if isinstance(t, str) and t.strip() and t not in out:
             out.append(t)
+    if not out:
+        for t in (result.get("result"), result.get("last_text")):
+            if isinstance(t, str) and t.strip():
+                out.append(t[:MAX_ERROR_TEXT])
+                break
     return " ".join(out).strip()
 
 
@@ -257,9 +257,9 @@ def classify_api_error(text: str) -> str:
     low = text.lower()
     if any(m in text for m in RETRY_MARKS) or "连接" in text or "econnrefused" in low or "etimedout" in low:
         return ERR_CONN
-    # 429 用词边界：错误码 / request id 里的 "14293" 不得被当额度（两轮评审都点了这条）
+    # 429 / 1308 用词边界：错误码 / request id 里的 "14293"、"req_130812" 不得被当额度
     if (re.search(r"(?<!\d)429(?!\d)", text) or "用量上限" in text or "额度" in text
-            or "token plan" in low or "quota" in low or "usage limit" in low or "1308" in text):
+            or "token plan" in low or "quota" in low or "usage limit" in low or re.search(r"(?<!\d)1308(?!\d)", text)):
         return ERR_QUOTA
     return ERR_OTHER
 
@@ -294,13 +294,16 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
         return rec
     first = rec.get("api_error_text") or rec["detail"]
     spent = rec.get("cost_usd") if isinstance(rec.get("cost_usd"), (int, float)) else 0.0
-    left_seconds = timeout - int(rec.get("seconds") or 0)
+    # 向上取整已用秒数：余量宁可少给，也别让两次尝试合计超出「每角色总秒数」
+    left_seconds = timeout - math.ceil(rec.get("seconds") or 0)
     left_budget = budget - spent
-    if left_seconds <= 0 or left_budget <= 0:
+    if left_seconds <= 0 or left_budget < 1e-4:
         rec["retried"] = 0
-        rec["detail"] = f"{rec['detail']}（剩余时限 {max(left_seconds, 0)}s / 预算 {max(left_budget, 0.0):.2f} USD 不足，未重试）"
+        rec["detail"] = f"{rec['detail']}（剩余时限 {max(left_seconds, 0)}s / 预算 {max(left_budget, 0.0):.4f} USD 不足，未重试）"
         return rec
-    retry_cmd = [f"{left_budget:g}" if i and cmd[i - 1] == "--max-budget-usd" else tok for i, tok in enumerate(cmd)]
+    # 定点格式传余款：:g 在极小值上会写出 5e-05 这种科学计数，也得防四舍五入向上超
+    left = f"{left_budget:.6f}".rstrip("0").rstrip(".")
+    retry_cmd = [left if i and cmd[i - 1] == "--max-budget-usd" else tok for i, tok in enumerate(cmd)]
     rec2 = run_role_once(role, prompt_path, out_dir, retry_cmd, cwd, left_seconds, extra_env, model, suffix=".retry1")
     rec2.pop("retry_connection", None)
     if rec2.get("api_error_kind") == ERR_CONN:
@@ -366,10 +369,13 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
                         # _tmp/20261106-issue-1527/review-r30-minimax/：model=<synthetic> + "API Error: ..."）。
                         # 只留有界内容：正常正文只保留最后一块（兜底用），带 API Error 的留前几块。
                         if isinstance(msg, dict):
+                            # 只收 model 是占位符的那条事件的正文：评审本仓 scripts 时正文天天引用
+                            # "API Error: ... ECONNRESET"，按正文收会把真 429 误判成断连并白重试一次。
+                            err_model = msg.get("model") in (None, "", SYNTHETIC_MODEL)
                             for blk in msg.get("content") or []:
                                 if isinstance(blk, dict) and isinstance(blk.get("text"), str):
                                     txt = blk["text"]
-                                    if API_ERROR_MARK in txt:
+                                    if err_model and API_ERROR_MARK in txt:
                                         keep_error_text(result, txt)
                                     else:
                                         result["last_text"] = txt[:MAX_ERROR_TEXT]
@@ -419,23 +425,29 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     # scripts 时正文天天引用这串字样，靠它翻案会把真换模型放过去，还会按正文里的 ECONNRESET 白重试一次。
     err_text = api_error_text(result)
     synthetic = any(m in (None, "", SYNTHETIC_MODEL) for m in resp)
+    real_resp = {m for m in resp if m not in (None, "", SYNTHETIC_MODEL)}
+    failed = bool(result.get("is_error")) or result.get("subtype") not in (None, "success")
+    # 断连重试只认「真错误原文」：正文引用里出现 ECONNRESET 不算，别为一句引用白跑一次
+    has_mark = API_ERROR_MARK in err_text
     if model and not resp:  # 连 assistant 事件都没有：模型根本没用上，报「模型不符」同样是错怪实现方
         kind = classify_api_error(err_text)
         # 这里没有 assistant 正文可引：只有确属 API 错误原文才写进 detail，别把 final 里的评审文字当错误
-        why = one_line(err_text) if API_ERROR_MARK in err_text else "通道没有返回任何模型响应（无 assistant 事件）"
+        why = one_line(err_text) if has_mark else "通道没有返回任何模型响应（无 assistant 事件）"
         rec["detail"] = f"{kind}：{why}（不是模型不符）"
         rec["api_error_kind"] = kind
         rec["api_error_text"] = one_line(err_text)
-        rec["retry_connection"] = kind == ERR_CONN and any(mark in err_text for mark in RETRY_MARKS)
+        rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
-    if model and synthetic:
+    # 只有「这次真的没跑成」才按错误响应处理：流内出现过占位符、但最后是正常成功的 result
+    # （CLI 内部重试成功）时照常走模型/用量/VERDICT 校验，不许整角色误杀（GLM boundary P1）
+    if model and synthetic and failed:
         kind = classify_api_error(err_text)
         rec["detail"] = f"{kind}：{one_line(err_text) or '（错误响应没有内嵌原文）'}"
         rec["api_error_kind"] = kind
         rec["api_error_text"] = one_line(err_text)
-        rec["retry_connection"] = kind == ERR_CONN and any(mark in err_text for mark in RETRY_MARKS)
+        rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
-    if model and (resp != {expect} or not usage or usage != {model}):
+    if model and (real_resp != {expect} or not usage or usage != {model}):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
         return rec
     text = result.get("result") if isinstance(result.get("result"), str) else ""
