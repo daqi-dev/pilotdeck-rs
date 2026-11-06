@@ -24,7 +24,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{Arc, Mutex, Weak, mpsc},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -1329,6 +1329,61 @@ fn attachment_integrity_failed(attachment: &UploadedAttachment) -> UploadError {
             string(attachment, "attachmentId").unwrap_or_default()
         ),
     )
+}
+
+/// #1468/#1887: the one guard both legitimate homes share — the lease root and
+/// the upload store. A root that is itself a symlink, even one pointing back
+/// into the project, is never a home: the lexical spelling stays accepted
+/// while every path under the link target becomes resolvable, which is the
+/// exact shape `read_at`'s lexical prefix check rejects.
+///
+/// #1887: the same holds for every *ancestor* between the project root and the
+/// root. A `.tmp` swapped for a link to another subtree of the same project
+/// re-resolves the canonical spelling to a path that is still inside
+/// `project_canon`, so the containment term below accepts it and `src/...`
+/// becomes a home for both roots; the walk below refuses that layout, which is
+/// the one `read_at` already refuses lexically, so the read side and the
+/// attachment-composition side now answer the same way.
+///
+/// `relative` is spelled off `root`: the project's own spelling may go through
+/// symlinks (#1618 — `projectKey` keeps Node's logical identity), and those
+/// are legitimate, so only the components below the project root are walked.
+/// `project_canon` is the canonical project root the resolved spellings are
+/// held against.
+///
+/// Residual (review deepseek boundary#2, not introduced by this change): the
+/// link check and the canonicalization are two syscalls, so a leaf can be
+/// exchanged between them. That race can still admit a root this guard means
+/// to refuse, but it is strictly narrower than the pre-guard behaviour (which
+/// accepted every such root unconditionally); closing it would need
+/// `O_NOFOLLOW` plus a handle-derived path, as `handle_path` does.
+///
+/// The guard lives in one function so every root is exercised by the same
+/// unit tests and mutation rows (`upload_store_root_outside_the_project_is_not_a_home`,
+/// `lease_root_link_is_not_a_home`, `lease_root_under_a_linked_tmp_ancestor_is_not_a_home`).
+pub(crate) fn canonical_home(root: &Path, project: &Path, project_canon: &Path) -> Option<PathBuf> {
+    // The home must be spelled under the project root the caller named; a
+    // spelling that escapes it is not a home whatever it resolves to.
+    let relative = root.strip_prefix(project).ok()?;
+    let mut walked = project.to_path_buf();
+    for component in relative.components() {
+        // `..` or an absolute re-spelling would walk outside `project`; the
+        // callers pass project-relative homes only.
+        if !matches!(component, Component::Normal(_)) {
+            return None;
+        }
+        walked.push(component);
+        // Leaf and ancestor are the same answer: neither may be a link.
+        match fs::symlink_metadata(&walked) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return None,
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    match fs::canonicalize(&walked) {
+        Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),
+        _ => None,
+    }
 }
 
 /// The `(dev, inode)` pair recorded on the verified handle. Non-Unix has no

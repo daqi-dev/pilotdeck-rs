@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
+# #1887: the shared "home" guard now lives beside the store it serves, so the
+# two rows that mutate it directly point here.
+STORE = ROOT / 'src/pilotdeck-gateway/src/upload/mod.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
@@ -60,7 +63,7 @@ mutations = [
      'native_process::services_tests::read_failure_fails_the_turn',
      '#1462 a directory read failure must carry the Node EISDIR message'),
     ('lease-root-hard-failure-restored', SERVICES,
-     '    let lease_canon = canonical_home(&lease_lexical, &project_canon);',
+     '    let lease_canon = crate::upload::canonical_home(&lease_lexical, project_dir, &project_canon);',
      '''    let lease_canon = match fs::canonicalize(&lease_lexical) {
         Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
         Err(error) => {
@@ -151,16 +154,45 @@ mutations = [
     # leaf is a real directory, so only this term sees it); dropping the
     # no-symlink term accepts a store root that is itself a link into the
     # project. Each has its own assertion in the same unit test.
-    ('upload-store-containment-dropped', SERVICES,
+    ('upload-store-containment-dropped', STORE,
      '        Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),',
      '        Ok(resolved) => Some(resolved),',
      'native_process::services_tests::upload_store_root_outside_the_project_is_not_a_home',
      '#1468 a store root under an outside ancestor must not become a home'),
-    ('upload-store-link-root-accepted', SERVICES,
-     '        Ok(metadata) if metadata.file_type().is_symlink() => return None,',
-     '        Ok(metadata) if false => return None,',
+    ('upload-store-link-root-accepted', STORE,
+     '            Ok(metadata) if metadata.file_type().is_symlink() => return None,',
+     '            Ok(metadata) if false => return None,',
      'native_process::services_tests::upload_store_root_outside_the_project_is_not_a_home',
      '#1468 a store root that is a link into the project must not become a home'),
+    # #1887: the ancestor term. `canonical_home` now walks every component
+    # between the project root and the home, so a `.tmp` that is a link to
+    # another subtree of the *same* project is refused by the walk, not only by
+    # containment (which it passes). This row is the pre-#1887 shape — the walk
+    # skips the ancestor terms and only the leaf is still sampled — so the
+    # composer accepts `src/...` as a lease home again and the paired
+    # composer-side test goes red. Its read-side sibling lives in
+    # `tests/fixtures/upload-gateway/negative_controls.py`
+    # (`read-at-upload-root-prefix-dropped`); the two assertion strings name
+    # their side, so neither row can be satisfied by the other side's test.
+    ('lease-ancestor-link-accepted', STORE,
+     '''        walked.push(component);
+        // Leaf and ancestor are the same answer: neither may be a link.
+        match fs::symlink_metadata(&walked) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return None,
+            Ok(_) => {}
+            Err(_) => return None,
+        }''',
+     '''        walked.push(component);
+        // Leaf and ancestor are the same answer: neither may be a link.
+        if walked.as_path() == root {
+            match fs::symlink_metadata(&walked) {
+                Ok(metadata) if metadata.file_type().is_symlink() => return None,
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }''',
+     'native_process::services_tests::lease_root_under_a_linked_tmp_ancestor_is_not_a_home',
+     '#1887 a .tmp ancestor that is a link into the project must not become a home'),
     # Review GLM sibling#1: the lease root is the other legitimate home. This
     # row restores the pre-r3 shape — a bare `canonicalize` + containment, with
     # no leaf-link term — so a `.tmp/chat-upload-leases` that is a link into
@@ -168,7 +200,7 @@ mutations = [
     # The store rows above cannot cover it: they mutate the shared guard, which
     # this row proves is *reached* by the lease root too.
     ('lease-root-link-accepted', SERVICES,
-     '    let lease_canon = canonical_home(&lease_lexical, &project_canon);',
+     '    let lease_canon = crate::upload::canonical_home(&lease_lexical, project_dir, &project_canon);',
      '''    let lease_canon = match fs::canonicalize(&lease_lexical) {
         Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
         _ => None,
@@ -226,7 +258,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [SERVICES, TESTS, Path(__file__).resolve(),
+    guarded = [SERVICES, TESTS, STORE, Path(__file__).resolve(),
                FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/src/lib.rs']

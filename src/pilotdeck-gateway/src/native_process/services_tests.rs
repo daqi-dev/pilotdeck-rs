@@ -1812,6 +1812,61 @@ fn lease_root_link_is_not_a_home() {
     );
 }
 
+/// #1887: the ancestor term. A `.tmp` swapped for a link to another subtree of
+/// the *same* project keeps the canonical spelling inside `project_canon`, so
+/// the containment term alone accepts it and `src/...` becomes a lease home —
+/// while `read_at`'s lexical prefix check refuses the same layout. Both sides
+/// now walk every component between the project root and the home, so this
+/// turn takes the same not-found branch as a missing lease root.
+#[cfg(unix)]
+#[test]
+fn lease_root_under_a_linked_tmp_ancestor_is_not_a_home() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let target = scratch.0.join("src");
+    std::fs::create_dir_all(target.join("chat-upload-leases").join("u1"))
+        .expect("#1887 in-project ancestor link target");
+    std::fs::write(
+        target
+            .join("chat-upload-leases")
+            .join("u1")
+            .join("linked.png"),
+        [1u8, 2, 3, 4],
+    )
+    .expect("#1887 ancestor link target file");
+    // `Scratch` pre-creates the real `.tmp` tree; drop it so `.tmp` itself can
+    // become the link (the leaf below it stays a real directory).
+    std::fs::remove_dir_all(scratch.0.join(".tmp")).expect("#1887 drop the scratch .tmp tree");
+    symlink(&target, scratch.0.join(".tmp")).expect("#1887 swap .tmp for an in-project link");
+    let path = scratch.lease("linked.png");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&path, "image/png")],
+        ),
+        "#1887 a .tmp ancestor that is a link into the project must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    let diagnostics = diagnostics_block(&blocks);
+    negative_assert!(
+        diagnostics.contains(&format!(
+            "Image attachment not found: {path} (attachment lease root is unavailable)."
+        )),
+        "#1887 a .tmp ancestor that is a link into the project must not become a home"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1887 a .tmp ancestor that is a link into the project must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1887 a .tmp ancestor that is a link into the project must never register allowedReadFiles"
+    );
+}
+
 /// #1468 (review deepseek boundary#1 / concurrency#1,#2): the identity the
 /// open is bound to must be the object the containment check validated, not
 /// whatever the path points at after that check. A leaf swapped for an
