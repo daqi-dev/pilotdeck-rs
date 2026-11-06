@@ -194,7 +194,10 @@ impl ProjectionCache {
                         }
                     }
                     usage = merged;
-                    denials.extend_from_slice(array(field(result, "permissionDenials"))?);
+                    // #1985 review P1: the suffix must replay with the same JS
+                    // spread semantics as `project()` above (arrays append,
+                    // strings iterate code points), not the stricter `array()`.
+                    merge_permission_denials(&mut denials, field(result, "permissionDenials"))?;
                 }
                 state.usage = usage;
                 state.permission_denials = denials;

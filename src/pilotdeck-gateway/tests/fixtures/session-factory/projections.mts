@@ -56,6 +56,12 @@ export async function observations(base:string) {
   ['denials-one',[result('A',{inputTokens:1},[{toolName:'read',toolCallId:'one'}])]],
   ['denials-string',[result('A',{inputTokens:1},'d')]],
   ['denials-string-multi',[result('A',{inputTokens:1},'ab')]],
+  // Codex #1985 r1 P2: ASCII-only rows let UTF-16 units, UTF-8 bytes and code
+  // points all pass. This row pins the JS string iterator: a surrogate pair is
+  // one element, not two UTF-16 units or four UTF-8 bytes. (Lone surrogates
+  // cannot ride in oracle.json: serde_json rejects unpaired escapes, so that
+  // case stays in the Rust unit test next to a real Node measurement.)
+  ['denials-string-nonbmp',[result('A',{inputTokens:1},'\u{1F600}')]],
   ['denials-object',[result('A',{inputTokens:1},{})]],
   ['errors-string',[result('A',{inputTokens:1},[{toolName:'read',toolCallId:'one'}],'e')]],
   ['errors-object',[result('A',{inputTokens:1},[{toolName:'read',toolCallId:'one'}],{})]],

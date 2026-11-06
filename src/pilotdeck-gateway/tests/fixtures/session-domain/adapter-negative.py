@@ -65,7 +65,19 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         restore()
         before = originals[ADAPTER]
         changes = [
-          ('premature-malformed-restore-refusal', '        // Hydration runs every registered reducer.', '        for entry in entries { list_entry_supported(entry)?; }\n        // Hydration runs every registered reducer.'),
+          ('premature-malformed-restore-refusal', '        // Hydration runs every registered reducer over the whole log, reducer by', '''        for entry in entries {
+            if field(entry, "type").as_string().is_some_and(|t| t.equals_str("session_metadata")) {
+                let metadata = field(entry, "metadata");
+                list_title_supported(&metadata.get("title").cloned(), &None)?;
+            }
+        }
+        // Hydration runs every registered reducer over the whole log, reducer by'''),
+          ('list-denials-not-array', '            if !matches!(denials, JsValue::Array(_)) {', '            if !js_iterable(denials) {'),
+          ('list-title-trim-dropped', '''        Some(_) => {
+            return Err(AdapterError::Type(
+                "metadata.title?.trim is not a function".into(),
+            ));
+        }''', '        Some(_) => false,'),
           ('list-null-result-refusal', '    let result = field(entry, "result");\n    if nullish(result) {\n        return Err(cannot_read(result, "usage"));\n    }', '    let result = field(entry, "result");\n    if nullish(result) {\n        return Err(AdapterError::ProjectionUnavailable("result missing".into()));\n    }'),
           ('adapter-skips-domain-validation', anchor, '        Ok(domain.clone())'),
           ('domain-published-before-store', '        self.base\n            .store\n            .append(&self.base.key(&self.path), &entry)', '        inner.recorder_domain = domain.clone();\n        self.base\n            .store\n            .append(&self.base.key(&self.path), &entry)'),
@@ -83,6 +95,6 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         run('restore-loses-domain-state', True)
         restore()
         run('restored', False)
-        print('PASS: 6 / 6 adapter mutants killed', flush=True)
+        print('PASS: 8 / 8 adapter mutants killed', flush=True)
     finally:
         restore()
