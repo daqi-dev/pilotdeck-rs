@@ -757,6 +757,114 @@ pub(super) fn validate_write_snapshot_fresh(
     Err(changed_error(absolute, expected_mtime, actual_mtime))
 }
 
+// ---------------------------------------------------------------------------
+// #1457 seedReadState: the config family's read-state seeding
+// (`agent/loop/seedReadState.ts`). It shares the read family's
+// workspace-path resolution, file-type classification and write-snapshot
+// machinery so a seeded entry is exactly what read_file/edit_file consult on
+// later turns.
+
+/// `seedAgentReadState` over the session's mutable agent file state. The
+/// caller supplies the live checkpoint (the state later turns read through
+/// `ToolContextBuilder`) plus the session's AgentRuntimeConfig `cwd` and
+/// `permissionMode`. `Ok(false)` is the stale-mtime outcome
+/// (`seedReadState.ts:49,55`); every rejection keeps the TS tool-error shape.
+pub(crate) fn seed_agent_read_state(
+    checkpoint: &crate::host::modules::tool_context::HostToolCheckpoint,
+    cwd: &JsString,
+    permission_mode: &JsString,
+    path: &JsString,
+    mtime_ms: f64,
+) -> Result<bool, crate::runtime::tools::ToolError> {
+    let mut fields = JsObject::new();
+    fields.insert("cwd".into(), string(cwd.clone()));
+    fields.insert("permissionMode".into(), string(permission_mode.clone()));
+    let host = Arc::new(crate::host::modules::tool_context::ToolRuntimeContext {
+        files: checkpoint.tool_context_state(),
+        fields,
+        abort_signal: None,
+        model: None,
+        elicitation: None,
+        user_dialog: None,
+        audit_recorder: None,
+        file_history: None,
+        file_update_notifier: None,
+        now: None,
+        progress: None,
+        subagent: None,
+        plan_todo: None,
+        goal: None,
+        plan_directory: None,
+    });
+    let context = crate::runtime::tools::ToolRunContext::new(host);
+    seed_with_context(checkpoint, &context, path, mtime_ms)
+}
+
+fn seed_with_context(
+    checkpoint: &crate::host::modules::tool_context::HostToolCheckpoint,
+    context: &crate::runtime::tools::ToolRunContext,
+    path: &JsString,
+    mtime_ms: f64,
+) -> Result<bool, crate::runtime::tools::ToolError> {
+    // mustExist + allowRegisteredReadFiles (seedReadState.ts:24-27).
+    let resolved = resolve_workspace_path(path, context, true, false)?;
+    // seedReadState.ts:29-41: only text files previously read by read_file.
+    if read_file::is_blocked_device_path(&text(&resolved.absolute))
+        || read_file::has_binary_extension(&resolved.absolute)
+        || !matches!(
+            read_file::classify(&resolved.absolute),
+            read_file::ReadKind::Text
+        )
+    {
+        return Err(tool_error(
+            "invalid_tool_input",
+            "seedReadState supports only text files previously read by read_file.",
+        ));
+    }
+    let expected = mtime_ms.floor();
+    // The two stats stay apart exactly like the TS read/read/stat sequence.
+    let before = stat(&resolved.absolute)?;
+    if !matches!(before.kind, StatKind::File) {
+        return Err(tool_error(
+            "file_conflict",
+            format!("{} is not a regular file.", text(&resolved.absolute)),
+        ));
+    }
+    if before.mtime_ms != expected {
+        return Ok(false);
+    }
+    let content = read_text_file(&resolved.absolute)?;
+    let after = stat(&resolved.absolute)?;
+    if !matches!(after.kind, StatKind::File) {
+        return Err(tool_error(
+            "file_conflict",
+            format!("{} is not a regular file.", text(&resolved.absolute)),
+        ));
+    }
+    if after.mtime_ms != expected {
+        return Ok(false);
+    }
+    // State writes (seedReadState.ts:57-66): allowedReadFiles, the
+    // readFileState key `<path>::text::1::all::`, and a write snapshot.
+    checkpoint.allow_read_files(std::slice::from_ref(&resolved.absolute));
+    let mut units = resolved.absolute.units().to_vec();
+    units.extend_from_slice(
+        "::text::1::all::"
+            .encode_utf16()
+            .collect::<Vec<_>>()
+            .as_slice(),
+    );
+    context.host.files.read_file_state.lock().unwrap().insert(
+        JsString::from_utf16(units),
+        JsValue::Object(object([
+            ("mtimeMs", JsValue::Number(expected)),
+            ("kind", string("text")),
+        ])),
+    );
+    record_write_snapshot(context, &resolved.absolute, &content, expected, None);
+    Ok(true)
+}
+
 pub(super) struct Freshness {
     pub exists: bool,
     pub previous_content: Option<String>,

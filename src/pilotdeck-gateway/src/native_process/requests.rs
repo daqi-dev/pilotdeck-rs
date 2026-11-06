@@ -163,6 +163,19 @@ impl GatewayRequests for Requests {
                             "project_file_read",
                             "model_catalog_list",
                             "session_model_get",
+                            // #1457: the seven session-config methods are now
+                            // served for real (methods/config.rs). The
+                            // spelling follows contract.capabilities in the
+                            // oracle verbatim; the block keeps the oracle's
+                            // relative order (the production list itself is
+                            // not oracle-ordered).
+                            "session_model_set",
+                            "session_model_clear",
+                            "set_permission_mode",
+                            "set_session_thinking",
+                            "output_styles_list",
+                            "set_output_style",
+                            "seed_read_state",
                             "supported_agents",
                             "snapshot_list",
                             "snapshot_get",

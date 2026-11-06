@@ -47,6 +47,14 @@ pub trait LiveSession: Send + Sync {
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         Err(RuntimeError::new("Agent session submit is unavailable."))
     }
+    /// #1457 `seedAgentReadState` against the live agent file state. `Ok(false)`
+    /// is the stale-mtime outcome, not a failure; adapters without a mutable
+    /// file state keep the explicit capability error.
+    fn seed_read_state(&self, _path: &JsString, _mtime_ms: f64) -> Result<bool, RuntimeError> {
+        Err(RuntimeError::new(
+            "Agent session seed read state is unavailable.",
+        ))
+    }
     fn snapshot(&self) -> JsValue;
     /// May be called repeatedly while `dispose()` is in progress and after its
     /// future has completed: the handle remains Draining through the project
@@ -121,6 +129,12 @@ impl LiveSessionHandle {
     /// Draining handles remain readable until the underlying session is disposed.
     pub fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
         self.0.session.reload_snapshot()
+    }
+
+    /// #1457 `seedAgentReadState` on the live writer; `Ok(false)` is the
+    /// stale-mtime outcome.
+    pub fn seed_read_state(&self, path: &JsString, mtime_ms: f64) -> Result<bool, RuntimeError> {
+        self.0.session.seed_read_state(path, mtime_ms)
     }
 
     pub(super) fn recreation_snapshot(

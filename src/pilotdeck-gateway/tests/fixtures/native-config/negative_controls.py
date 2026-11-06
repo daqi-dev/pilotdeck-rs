@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""#1455: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
+"""#1457: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
 
-Config-family negative controls: every verification gate of the 7 session
-config methods (mode, sessionKey, path, mtime, style name), both remaining
-SESSION_BUSY gates, and the CAPABILITY_UNAVAILABLE terminals each have a
-mutant bound to a test that fails with a message. Each mutant compiles
+Config-family negative controls over the #1457 real wiring. Each of the seven
+methods has a stub-revert mutant (the dispatch arm goes back to the
+pre-#1457 CAPABILITY_UNAVAILABLE terminal) bound to a test that must die,
+and the shared gates (selection shape, sessionKey, mode whitelist, thinking
+shape, mtime boundary, path, transcript entry, style echo, busy messages)
+each have a mutant bound to the test that pins them. Each mutant compiles
 before its exact test runs. Every case is reported, then restoration and all
 statuses determine the exit code; never bypass HEAD.
 """
@@ -22,111 +24,130 @@ SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_d
 CFG = 'native_process::methods::config::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
-    ('unavailable-code', CONFIG, '        code: "CAPABILITY_UNAVAILABLE".into(),', '        code: "INVALID_REQUEST".into(),',
-     CFG + 'session_model_set_missing_session_key_hits_capability_gate_first',
-     '#1310 session_model_set missing sessionKey hits capability gate first'),
-    ('five-method-unavailable-message', CONFIG, 'Err(unavailable(&format!("{method} is unavailable.")))', 'Err(unavailable(&format!("{method} is unavailable on this process.")))',
-     CFG + 'session_model_set_missing_session_key_hits_capability_gate_first',
-     '#1310 session_model_set unavailable message matches TS shape'),
-    ('permission-mode-gate-removed', CONFIG, '                    if !mode_ok {', '                    if !mode_ok && false {',
-     CFG + 'set_permission_mode_rejects_invalid_mode',
-     '#1310 set_permission_mode invalid mode'),
+    # ── stub reverts: the dispatch arm returns the pre-#1457 capability
+    # terminal; the method's positive test must die.
+    ('set-stub-revert', CONFIG,
+     '"session_model_set" => self.session_model_set(&params).await,',
+     '"session_model_set" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "session_model_set is unavailable.")),',
+     CFG + 'session_model_set_saves_selection_and_appends_transcript',
+     '#1457 session_model_set accepts the fixture selection'),
+    ('clear-stub-revert', CONFIG,
+     '"session_model_clear" => self.session_model_clear(&params).await,',
+     '"session_model_clear" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "session_model_clear is unavailable.")),',
+     CFG + 'session_model_clear_appends_transcript_and_returns_null',
+     '#1457 session_model_clear succeeds'),
+    ('permission-stub-revert', CONFIG,
+     '"set_permission_mode" => self.set_permission_mode(&params).await,',
+     '"set_permission_mode" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_permission_mode is unavailable.")),',
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1457 set_permission_mode applies'),
+    ('thinking-stub-revert', CONFIG,
+     '"set_session_thinking" => self.set_session_thinking(&params).await,',
+     '"set_session_thinking" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_session_thinking is unavailable.")),',
+     CFG + 'set_session_thinking_applies_and_validates',
+     '#1457 set_session_thinking applies'),
+    ('styles-list-stub-revert', CONFIG,
+     '"output_styles_list" => self.output_styles_list(&params).await,',
+     '"output_styles_list" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "output_styles_list is unavailable.")),',
+     CFG + 'output_styles_list_and_set_roundtrip',
+     '#1457 output_styles_list without a plugin'),
+    ('styles-set-stub-revert', CONFIG,
+     '"set_output_style" => self.set_output_style(&params).await,',
+     '"set_output_style" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_output_style is unavailable.")),',
+     CFG + 'output_styles_list_and_set_roundtrip',
+     '#1457 set_output_style applies the project style'),
+    ('seed-stub-revert', CONFIG,
+     '"seed_read_state" => self.seed_read_state(&params).await,',
+     '"seed_read_state" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "seed_read_state is unavailable.")),',
+     CFG + 'seed_read_state_applies_and_validates',
+     '#1457 seed_read_state with the exact mtime'),
+    # ── gate mutants over the real wiring.
+    ('selection-shape-gate-removed', CONFIG,
+     'if !matches!(selection, JsValue::Object(_) | JsValue::Array(_)) {',
+     'if false {',
+     CFG + 'session_model_set_gate_order_matches_the_ts_chain',
+     '#1457 missing selection message'),
+    ('session-key-gate-code', CONFIG,
+     '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )',
+     '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )',
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1457 missing sessionKey code'),
+    ('permission-mode-gate-removed', CONFIG,
+     'if !mode_ok {',
+     'if !mode_ok && false {',
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1457 set_permission_mode rejects {label}'),
     ('mode-whitelist-narrowed', CONFIG,
-     '                                .any(|allowed| mode.equals_str(allowed))',
-     '                                .any(|allowed| *allowed != "default" && mode.equals_str(allowed))',
-     CFG + 'set_permission_mode_accepts_every_ts_mode',
-     '#1455 set_permission_mode accepts every TS mode'),
-    ('permission-nonstring-mode-rendered-empty', CONFIG,
-     'params.get("mode").unwrap_or(&JsValue::Undefined),',
-     'params.get("mode").filter(|v| v.as_string().is_some()).unwrap_or(&JsValue::Undefined),',
-     CFG + 'set_permission_mode_nonstring_mode_message_matches_ts',
-     '#1455 set_permission_mode non-string mode renders its JS ToString form'),
-    ('permission-missing-mode-rendered-empty', CONFIG,
-     'params.get("mode").unwrap_or(&JsValue::Undefined),',
-     'params.get("mode").unwrap_or(&JsValue::Null),',
-     CFG + 'set_permission_mode_missing_mode_message_matches_ts',
-     '#1455 set_permission_mode missing mode renders undefined'),
-    ('permission-session-key-gate-inserted', CONFIG,
-     '                    if !mode_ok {',
-     '                    if !is_trimmed_non_empty(params.get("sessionKey")) {\n                        return Err(error("INVALID_SESSION_KEY", "sessionKey is required."));\n                    }\n                    if !mode_ok {',
-     CFG + 'set_permission_mode_missing_session_key_hits_unavailable',
-     '#1455 set_permission_mode missing sessionKey is unavailable, not INVALID_SESSION_KEY'),
-    ('permission-busy-before-mode', CONFIG,
-     '                    if !mode_ok {',
-     '                    if params.get("sessionKey").and_then(JsValue::as_string).is_some_and(|k| self.owner.has_active_turn(k)) {\n                        return Err(error("SESSION_BUSY", "Cannot change permission mode during an active turn."));\n                    }\n                    if !mode_ok {',
-     CFG + 'set_permission_mode_invalid_mode_wins_over_busy',
-     '#1455 set_permission_mode mode gate precedes the busy gate'),
-    ('permission-busy-gate-removed', CONFIG,
-     '                    if let Some(ref key) = session_key\n                        && self.owner.has_active_turn(key)\n                    {',
-     '                    if let Some(ref key) = session_key\n                        && self.owner.has_active_turn(key)\n                        && false\n                    {',
-     CFG + 'set_permission_mode_busy_during_active_turn',
-     '#1455 set_permission_mode active turn answers SESSION_BUSY'),
-    ('permission-busy-message', CONFIG, '                            "Cannot change permission mode during an active turn.",',
-     '                            "Cannot change permission mode while a turn is active.",',
-     CFG + 'set_permission_mode_busy_during_active_turn',
-     '#1455 set_permission_mode busy message matches the TS shape'),
-    ('permission-terminal-message', CONFIG,
-     '                        "Permission mode configuration is not installed on this isolated native process.",\n                    ))',
-     '                        "Permission mode setting is not installed on this isolated native process.",\n                    ))',
-     CFG + 'set_permission_mode_missing_session_key_hits_unavailable',
-     '#1455 set_permission_mode terminal message matches the unavailable shape'),
-    ('seed-key-gate-removed', CONFIG,
-     '                        .filter(|s| trimmed_string_is_non_empty(s))\n',
-     '                        .filter(|_| true)\n',
-     CFG + 'seed_read_state_rejects_blank_session_key',
-     '#1455 seed_read_state rejects the blank key'),
-    ('seed-key-presence-gate-removed', CONFIG,
-     '                        .cloned()\n                        .ok_or_else(|| error("INVALID_SESSION_KEY", "sessionKey is required."))?;',
-     '                        .cloned()\n                        .unwrap_or_default();',
-     CFG + 'seed_read_state_requires_session_key',
-     '#1310 seed_read_state missing sessionKey'),
-    ('seed-path-gate-removed', CONFIG, '                    if !is_trimmed_non_empty(params.get("path")) {', '                    if false {',
-     CFG + 'seed_read_state_requires_path',
-     '#1310 seed_read_state missing path'),
-    ('seed-mtime-boundary', CONFIG, 'n.is_finite() && n.fract() == 0.0 && n >= 0.0', 'n.is_finite() && n.fract() == 0.0 && n > 0.0',
-     CFG + 'seed_read_state_unavailable_with_zero_mtime',
-     '#1455 seed_read_state zero mtime passes the boundary and reaches unavailable'),
-    ('seed-mtime-integer', CONFIG, 'n.fract() == 0.0', 'true',
-     CFG + 'seed_read_state_rejects_fractional_mtime',
-     '#1310 seed_read_state fractional mtime'),
-    ('seed-busy-before-mtime', CONFIG,
-     '                    if !is_trimmed_non_empty(params.get("path")) {\n                        return Err(error("INVALID_FILE_PATH", "path is required."));\n                    }',
-     '                    if self.owner.has_active_turn(&session_key) {\n                        return Err(error("SESSION_BUSY", "Cannot seed file read state while a turn is active."));\n                    }\n                    if !is_trimmed_non_empty(params.get("path")) {\n                        return Err(error("INVALID_FILE_PATH", "path is required."));\n                    }',
-     CFG + 'seed_read_state_rejects_negative_mtime_during_active_turn',
-     '#1455 seed_read_state mtime gate precedes the busy gate'),
-    ('seed-busy-gate-removed', CONFIG, '                    if self.owner.has_active_turn(&session_key) {',
-     '                    if false && self.owner.has_active_turn(&session_key) {',
-     CFG + 'seed_read_state_busy_during_active_turn',
-     '#1455 seed_read_state active turn answers SESSION_BUSY'),
-    ('seed-busy-message', CONFIG, '                            "Cannot seed file read state while a turn is active.",',
-     '                            "Cannot seed file read state during an active turn.",',
-     CFG + 'seed_read_state_busy_during_active_turn',
-     '#1455 seed_read_state busy message matches the TS shape'),
-    ('seed-terminal-message', CONFIG,
-     '                        "Seed read state is not installed on this isolated native process.",\n                    ))',
-     '                        "Seed read state is not installed on this native process.",\n                    ))',
-     CFG + 'seed_read_state_unavailable_with_zero_mtime',
-     '#1455 seed_read_state terminal message matches the unavailable shape'),
-    ('require-session-key-gate-removed', CONFIG,
-     'fn require_session_key(params: &JsValue) -> Result<(), RequestError> {\n    if !is_trimmed_non_empty(params.get("sessionKey")) {',
-     'fn require_session_key(params: &JsValue) -> Result<(), RequestError> {\n    if false {',
-     CFG + 'require_session_key_rejects_missing_key',
-     '#1310 require_session_key missing key'),
-    ('output-style-name-gate-removed', CONFIG,
-     '            if let Some(s) = name.as_string()\n                && !trimmed_string_is_non_empty(s)\n            {',
-     '            if let Some(s) = name.as_string()\n                && !trimmed_string_is_non_empty(s)\n                && false\n            {',
-     CFG + 'require_output_style_name_rejects_blank_name',
-     '#1310 require_output_style_name blank name'),
-    ('output-style-inline-rust-trim', CONFIG,
-     '                && !trimmed_string_is_non_empty(s)',
-     '                && String::from_utf16_lossy(s.units()).trim().is_empty()',
-     CFG + 'require_output_style_name_rejects_js_whitespace_name',
-     '#1455 require_output_style_name rejects the BOM-only name'),
+     'PERMISSION_MODES\n                .iter()\n                .any(|allowed| m.equals_str(allowed))',
+     'PERMISSION_MODES\n                .iter()\n                .any(|allowed| *allowed != "default" && m.equals_str(allowed))',
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1457 set_permission_mode accepts every TS mode'),
+    ('thinking-shape-message', CONFIG,
+     '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled boolean.",',
+     '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled flag.",',
+     CFG + 'set_session_thinking_applies_and_validates',
+     '#1457 non-object thinking message'),
+    ('seed-mtime-boundary', CONFIG,
+     'n.is_finite() && n.fract() == 0.0 && *n >= 0.0',
+     'n.is_finite() && n.fract() == 0.0 && *n > 0.0',
+     CFG + 'seed_read_state_applies_and_validates',
+     '#1457 seed_read_state returns the stale outcome'),
+    ('seed-path-gate-code', CONFIG,
+     '"INVALID_FILE_PATH", "path is required."',
+     '"INVALID_REQUEST", "path is required."',
+     CFG + 'seed_read_state_applies_and_validates',
+     '#1457 absent path code'),
+    ('transcript-clear-null', CONFIG,
+     'selection.cloned().unwrap_or(JsValue::Null),',
+     'selection.cloned().unwrap_or(JsValue::Undefined),',
+     CFG + 'session_model_clear_appends_transcript_and_returns_null',
+     '#1457 clear entry nulls the model selection'),
+    ('style-selected-echo-mutated', CONFIG,
+     'result.insert("selected".into(), JsValue::String(name));',
+     'result.insert("selected".into(), JsValue::String("mutated".into()));',
+     CFG + 'output_styles_list_and_set_roundtrip',
+     '#1457 set_output_style echoes the selection'),
+    ('seed-mtime-wiring', CONFIG,
+     '.seed_read_state(&path, mtime)',
+     '.seed_read_state(&path, 0.0)',
+     CFG + 'seed_read_state_applies_and_validates',
+     '#1457 exact mtime applies'),
+    ('set-busy-message', CONFIG,
+     '"SESSION_BUSY",\n                "Cannot change the model during an active turn.",',
+     '"SESSION_BUSY",\n                "Cannot change the model while a turn is active.",',
+     CFG + 'session_model_set_rejects_active_turn',
+     '#1457 busy message'),
+    ('clear-busy-message', CONFIG,
+     '"SESSION_BUSY",\n                "Cannot clear the model during an active turn.",',
+     '"SESSION_BUSY",\n                "Cannot clear the model while a turn is active.",',
+     CFG + 'session_model_clear_gates_key_and_busy',
+     '#1457 clear busy message'),
+    ('permission-busy-message', CONFIG,
+     '"SESSION_BUSY",\n                "Cannot change permission mode during an active turn.",',
+     '"SESSION_BUSY",\n                "Cannot change permission mode while a turn is active.",',
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1457 pm busy message'),
+    ('thinking-busy-message', CONFIG,
+     '"SESSION_BUSY",\n                "Cannot change thinking while a turn is active.",',
+     '"SESSION_BUSY",\n                "Cannot change thinking during an active turn.",',
+     CFG + 'set_session_thinking_applies_and_validates',
+     '#1457 th busy message'),
+    ('style-busy-message', CONFIG,
+     '"SESSION_BUSY",\n                "Cannot change output style during an active turn.",',
+     '"SESSION_BUSY",\n                "Cannot change output style while a turn is active.",',
+     CFG + 'set_output_style_validates_names_and_key',
+     '#1457 style busy message'),
+    ('seed-busy-message', CONFIG,
+     '"SESSION_BUSY",\n                "Cannot seed file read state while a turn is active.",',
+     '"SESSION_BUSY",\n                "Cannot seed file read state during an active turn.",',
+     CFG + 'seed_read_state_applies_and_validates',
+     '#1457 seed busy message'),
+    # ── cross-family: the shared trim helper the session directory reuses.
     ('shared-trim-dropped', CONFIG,
-     '    !crate::metadata::js_trim(&String::from_utf16_lossy(value.units())).is_empty()',
-     '    !String::from_utf16_lossy(value.units()).is_empty()',
-     CFG + 'require_session_key_rejects_blank_key',
-     '#1310 require_session_key blank key'),
+     '!crate::metadata::js_trim(&String::from_utf16_lossy(value.units())).is_empty()',
+     '!String::from_utf16_lossy(value.units()).is_empty()',
+     CFG + 'set_output_style_validates_names_and_key',
+     '#1457 blank name code'),
     ('session-dir-blank-gate-removed', SESSION_DIR, '        .filter(super::config::trimmed_string_is_non_empty)', '        .filter(|_| true)',
      DIR + 'resume_session_rejects_blank_session_key',
      '#1455 resume_session rejects the blank key'),
@@ -140,7 +161,7 @@ mutations = [
 def mutate(case, original):
     count = original.count(case.old)
     if count != 1 or case.old == case.new:
-        raise ValueError(f'#1455 {case.mutation}: stale anchor (expected 1, got {count})')
+        raise ValueError(f'#1457 {case.mutation}: stale anchor (expected 1, got {count})')
     return original.replace(case.old, case.new, 1)
 
 
@@ -160,19 +181,19 @@ def main():
     if args == ['--check']:
         for case in selected_rows:
             mutate(case, case.path.read_text())
-        print(f'#1455 {len(selected_rows)} mutation anchors OK')
+        print(f'#1457 {len(selected_rows)} mutation anchors OK')
         return 0
     if not args:
         raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#1455 CARGO_TARGET_DIR must be supplied by the caller')
+        raise SystemExit('#1457 CARGO_TARGET_DIR must be supplied by the caller')
     for key in ('PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT'):
         env.pop(key, None)
     selected = args[1:]
     if (len(selected) != len(set(selected))
             or set(selected) - {case.mutation for case in selected_rows}):
-        raise SystemExit('#1455 unknown/duplicate mutation name')
+        raise SystemExit('#1457 unknown/duplicate mutation name')
     if selected:
         selected_rows = [case for case in selected_rows if case.mutation in selected]
     out = Path(args[0]).resolve()
@@ -211,12 +232,12 @@ def main():
                     try:
                         changed = mutate(case, originals[case.path].decode())
                         if not compile_only and not passed(run(case.mutation + '-positive', args), case.test):
-                            raise RuntimeError('#1455 positive control failed')
+                            raise RuntimeError('#1457 positive control failed')
                         write_atomic(case.path, changed.encode())
                         compiled = run(case.mutation + '-compile', ['--no-run'])
                         row['compiled'] = compiled.returncode == 0
                         if not row['compiled']:
-                            raise RuntimeError('#1455 mutant did not compile')
+                            raise RuntimeError('#1457 mutant did not compile')
                         if compile_only:
                             row.update(status='COMPILED', reason='mutant cargo test --no-run passed')
                         else:
@@ -227,12 +248,12 @@ def main():
                         phase = 'restore'
                         write_atomic(case.path, originals[case.path])
                         if case.path.read_bytes() != originals[case.path]:
-                            raise RuntimeError('#1455 source restoration failed')
+                            raise RuntimeError('#1457 source restoration failed')
                         phase = 'body'
                     if not compile_only:
                         try:
                             if not passed(run(case.mutation + '-restored', args), case.test):
-                                raise RuntimeError('#1455 restored positive control failed')
+                                raise RuntimeError('#1457 restored positive control failed')
                         except Exception as error:
                             row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                     record(row)

@@ -75,7 +75,13 @@ impl Drop for Scratch {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-struct Session;
+/// #1457: the fixture session seeds read state through the same shared
+/// algorithm the owned session uses (builtin::seed_agent_read_state), so the
+/// seed_read_state tests exercise the real admission/classification path.
+struct Session {
+    checkpoint: crate::host::modules::tool_context::HostToolCheckpoint,
+    cwd: PathBuf,
+}
 impl LiveSession for Session {
     fn snapshot(&self) -> JsValue {
         crate::metadata::object([("messages", JsValue::Array(vec![]))])
@@ -86,15 +92,43 @@ impl LiveSession for Session {
     fn dispose(&self) -> DisposeFuture<'_> {
         Box::pin(async { Ok(()) })
     }
+    fn seed_read_state(&self, path: &JsString, mtime_ms: f64) -> Result<bool, RuntimeError> {
+        crate::runtime::tools::builtin::seed_agent_read_state(
+            &self.checkpoint,
+            &JsString::from(self.cwd.to_string_lossy().into_owned()),
+            &"default".into(),
+            path,
+            mtime_ms,
+        )
+        .map_err(|error| {
+            RuntimeError::new(String::from_utf16_lossy(error.message.units())).with_js_error(
+                crate::runtime::project::RuntimeJsError {
+                    name: "Error".into(),
+                    code: Some(error.code),
+                    message: error.message,
+                    requires_host: false,
+                },
+            )
+        })
+    }
 }
-struct Factory;
+struct Factory(PathBuf);
 impl SessionFactory for Factory {
     fn create(
         &self,
         _: SessionContext,
         _: Option<LiveSessionHandle>,
     ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
-        Box::pin(async { Ok(LiveSessionHandle::new(Arc::new(Session), None)) })
+        let cwd = self.0.clone();
+        Box::pin(async move {
+            Ok(LiveSessionHandle::new(
+                Arc::new(Session {
+                    checkpoint: Default::default(),
+                    cwd,
+                }),
+                None,
+            ))
+        })
     }
     fn can_recreate(&self) -> bool {
         true
@@ -175,7 +209,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
         root.join("home/storage").to_string_lossy().into_owned(),
     );
     let project = assembly::project_registry(&options, &env);
-    let mut owner_options = SessionOwnerOptions::new(Arc::new(Factory));
+    let mut owner_options = SessionOwnerOptions::new(Arc::new(Factory(options.project.clone())));
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
     let runs = Arc::new(
@@ -1051,6 +1085,14 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
         "project_file_read",
         "model_catalog_list",
         "session_model_get",
+        // #1457: the seven session-config methods are wired for real.
+        "session_model_set",
+        "session_model_clear",
+        "set_permission_mode",
+        "set_session_thinking",
+        "output_styles_list",
+        "set_output_style",
+        "seed_read_state",
         "supported_agents",
         "manager_sessions",
         "commands_list",

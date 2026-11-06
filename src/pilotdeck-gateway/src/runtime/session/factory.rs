@@ -1153,6 +1153,29 @@ impl LiveSession for OwnedSession {
         self.reload_source
             .snapshot_consistent_inner(&self.storage.recorder, true)
     }
+    /// #1457 seedAgentReadState over the live checkpoint. The workspace cwd
+    /// and permission mode are the same ones a read_file call on this session
+    /// would use, so admission decisions cannot diverge from the tool family.
+    fn seed_read_state(&self, path: &JsString, mtime_ms: f64) -> Result<bool, RuntimeError> {
+        let cwd = JsString::from(self.storage.cwd.to_string_lossy().into_owned());
+        crate::runtime::tools::builtin::seed_agent_read_state(
+            &self.checkpoint,
+            &cwd,
+            &self.adapter.permission_mode(),
+            path,
+            mtime_ms,
+        )
+        .map_err(|error| {
+            RuntimeError::new(String::from_utf16_lossy(error.message.units())).with_js_error(
+                crate::runtime::project::RuntimeJsError {
+                    name: "Error".into(),
+                    code: Some(error.code),
+                    message: error.message,
+                    requires_host: false,
+                },
+            )
+        })
+    }
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         self.adapter.abort(reason)
     }

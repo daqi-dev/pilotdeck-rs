@@ -272,7 +272,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ReadKind {
+pub(super) enum ReadKind {
     Text,
     Image,
     Pdf,
@@ -289,7 +289,9 @@ impl ReadKind {
     }
 }
 
-fn classify(path: &JsString) -> ReadKind {
+/// #1457 seedReadState shares the classification, like the TS
+/// `fileTypeSafety` predicates the seed path reuses.
+pub(super) fn classify(path: &JsString) -> ReadKind {
     let extension = lower(&extname(path));
     if matches!(
         extension.as_str(),
@@ -315,11 +317,15 @@ fn image_mime(path: &JsString) -> Option<&'static str> {
     }
 }
 
-fn has_binary_extension(path: &JsString) -> bool {
+/// #1457 seedReadState shares the classification, like the TS
+/// `fileTypeSafety` predicates the seed path reuses.
+pub(super) fn has_binary_extension(path: &JsString) -> bool {
     BINARY_EXTENSIONS.contains(&lower(&extname(path)).as_str())
 }
 
-fn is_blocked_device_path(path: &str) -> bool {
+/// #1457 seedReadState shares the classification, like the TS
+/// `fileTypeSafety` predicates the seed path reuses.
+pub(super) fn is_blocked_device_path(path: &str) -> bool {
     if BLOCKED_DEVICE_PATHS.contains(&path) {
         return true;
     }
