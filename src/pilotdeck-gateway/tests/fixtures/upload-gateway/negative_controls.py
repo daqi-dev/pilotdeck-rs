@@ -211,6 +211,20 @@ mutations = [
                         "Upload metadata handle leaves the upload directory.",
                     ));
                 }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let opened = match file.metadata() {
+                        Ok(metadata) => metadata,
+                        Err(e) => return Err(UploadError::io(e, "stat", None)),
+                    };
+                    if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
+                        return Err(UploadError::dialog(
+                            "PROJECT_PATH_FORBIDDEN",
+                            "Upload metadata handle names a different file than the one validated.",
+                        ));
+                    }
+                }
 ''', '', READ_AT_SWAP,
      '#1494 the swapped-in outside record must never be read back'),
     ('read-at-check-before-open', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
