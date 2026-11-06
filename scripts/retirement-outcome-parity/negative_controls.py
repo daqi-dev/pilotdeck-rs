@@ -34,13 +34,20 @@ from pathlib import Path
 # __pycache__/check_outcome_parity.*.pyc（PEP 552 unchecked-hash 可直接执行），
 # 而本脚本正是用 spec_from_file_location 再加载 checker——陈旧字节码会让负控的
 # KILLED/INVALID 归因跑的不是当前源码。
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+try:
+    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+except OSError:
+    # 没有可写临时目录也不能让执行器起不来（起不来就到不了「失效旧 summary」，
+    # 旧 PASS 会冒充本轮——评审 P0）：指向必然不存在的目录即「读不到缓存」。
+    sys.pycache_prefix = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), f'.no-pycache-{os.getpid()}')
 sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
 CHECKER = HERE / 'check_outcome_parity.py'
 DEFAULT_DATA = Path('_tmp/20261106-issue-1477/r1/data')
 DEFAULT_ORACLE = HERE / 'ts-oracle.json'
+VALUE_OPTIONS = ('--data', '--oracle')
 INJECTED_MESSAGE = 'injected by negative controls for retirement-outcome-parity'
 ALT_CODE = 'UPLOAD_NOT_FOUND'
 CHECK_TIMEOUT_SECONDS = 600
@@ -610,24 +617,30 @@ def is_own_summary_artifact(name):
 
 
 def invalidate_stale_summary(out_root):
-    """**启动第一件事**：删掉上一轮的 summary.json 与残留 tmp。
+    """删掉该目录里上一轮的 ``summary.json`` 与残留 tmp。
 
     下游以「summary.json 存在」为「负控已跑完」的证据；早退路径（参数错误、
     读数据失败、preflight 非 0、控件构造断言失败）若走不到这里，旧 PASS 会冒充
     本轮结果（两家评审 P0，实测 `rc: 2` 且 `unlink: []`）。
 
-    另一个**仍在跑**的执行器的 ``summary.json.<pid>.tmp`` 不删：删掉它会让对方
-    的原子发布 ``replace`` 抛 ``FileNotFoundError``（并发互斥的残余登记在跟进单）。
+    只动本执行器自己的产物名；另一个**仍在跑**的执行器的
+    ``summary.json.<pid>.tmp`` 不删（删掉它会让对方的原子发布 ``replace`` 抛
+    ``FileNotFoundError``；并发互斥的残余登记在跟进单）。目录不存在时**不创建**
+    （调用方可能只是猜到了某个路径，见 :func:`output_candidates`）。
     """
     out_root = Path(out_root)
     try:
-        out_root.mkdir(parents=True, exist_ok=True)
-        candidates = sorted(out_root.iterdir())
+        if not out_root.exists():
+            return True  # 新目录：没有旧结果可失效，也不必替调用方创建
+        if not out_root.is_dir():
+            print(f'negative_controls: {out_root} is not a directory', file=sys.stderr)
+            return False
+        entries = sorted(out_root.iterdir())
     except OSError as error:
         print(f'negative_controls: cannot use {out_root}: {error}', file=sys.stderr)
         return False
     removed = []
-    for path in candidates:
+    for path in entries:
         if not (path.is_file() and is_own_summary_artifact(path.name)):
             continue
         owner = tmp_owner_pid(path.name)
@@ -646,26 +659,75 @@ def invalidate_stale_summary(out_root):
     return True
 
 
-def peek_output_dir(argv):
-    """argparse **之前**从原始 argv 里认位置参数 ``output``（认得就认）。
+def looks_like_output_dir(path):
+    """该路径是否**已经**是一个跑过的负控输出目录：有 ``summary.json`` **且**有
+    ``N<n>`` 控件目录（两者都是本执行器自己造的形状）。
 
-    参数拼错 / 缺值时 argparse 自己以 rc=2 退出，走不到解析后的失效步骤，旧
-    summary.json 会冒充本轮（评审 P0，复现：``out --bad`` 时旧 summary 仍在）。
-    所以失效必须在解析前做；这里只做保守的形态判断，认不出就放弃（那种情况下
-    也不知道该删哪个目录）。``--data`` / ``--oracle`` 的值不是位置参数。
+    只失效这种目录：解析前的候选集可能把「某个选项的值」误当位置参数
+    （``--dta DATA OUT`` 里未知选项是否带值无法判定），宁可不删也不能删无关目录
+    （评审 P0/P1：误删别人的证据同样是丢数据）。只看 ``summary.json`` 不够——
+    数据目录里同名的文件会被误伤。
     """
+    try:
+        root = Path(path)
+        if not (root.is_dir() and (root / 'summary.json').is_file()):
+            return False
+        return any(child.is_dir() and child.name.startswith('N')
+                   and child.name[1:].isdigit() and int(child.name[1:]) <= 17
+                   for child in root.iterdir())
+    except OSError:
+        return False
+
+
+def output_candidates(argv):
+    """argparse **之前**从原始 argv 里收集所有**可能**是位置参数 output 的 token。
+
+    参数拼错 / 缺值时 argparse 自己 rc=2 退出，走不到解析后的失效步骤，旧
+    summary.json 会冒充本轮（评审 P0）。但解析前无法完全复刻 argparse 的判定：
+    缩写（``--dat`` == ``--data``）可以照 argparse 的规则认，未知选项是否真带一个
+    值则**不可判定**——所以这里保守地多列候选（未知选项后面的非选项 token 也算），
+    由 :func:`looks_like_output_dir` 决定动不动手。
+    """
+    candidates = []
     skip_value = False
+    after_separator = False
     for token in argv:
+        if not after_separator and token == '--':
+            after_separator = True
+            continue
         if skip_value:
             skip_value = False
             continue
-        if token in ('--data', '--oracle'):
-            skip_value = True
+        if not after_separator and token.startswith('-') and token != '-':
+            if _takes_next_value(token):
+                skip_value = True
             continue
-        if token.startswith('-'):
-            continue
-        return token
-    return None
+        candidates.append(token)
+    return candidates
+
+
+def _takes_next_value(token):
+    """token 是否是已知的带值选项（按 argparse 的缩写规则：唯一前缀即匹配）。"""
+    if '=' in token or not token.startswith('--') or len(token) < 3:
+        return False
+    return any(option.startswith(token) for option in VALUE_OPTIONS)
+
+
+def help_requested(argv):
+    """``-h`` / ``--help`` 是否出现在 ``--`` 之前（帮助路径不该删任何东西）。"""
+    for token in argv:
+        if token == '--':
+            return False
+        if token in ('-h', '--help'):
+            return True
+    return False
+
+
+def invalidate_candidates(candidates):
+    for candidate in candidates:
+        if looks_like_output_dir(candidate) and not invalidate_stale_summary(candidate):
+            return False
+    return True
 
 
 def main(argv=None):
@@ -679,13 +741,14 @@ def main(argv=None):
                         help='ts-oracle.json (default: %(default)s)')
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     # 第一件事（解析前）：旧 summary 失效。argparse 的错误退出也是早退路径。
-    early_output = peek_output_dir(raw_argv)
-    if early_output is not None and not invalidate_stale_summary(early_output):
+    # 帮助路径不失效（没有跑）；候选集只对「已经是负控输出目录」的路径动手。
+    if not help_requested(raw_argv) and not invalidate_candidates(
+            output_candidates(raw_argv)):
         return 2
     args = parser.parse_args(raw_argv)
 
+    # 解析成功后再按解析结果失效一次（候选集漏掉时兜底；本身幂等）。
     out_root = Path(args.output)
-    # 解析成功后再按解析结果失效一次（peek 认错时兜底；本身幂等）。
     if not invalidate_stale_summary(out_root):
         return 2
     data = Path(args.data)
