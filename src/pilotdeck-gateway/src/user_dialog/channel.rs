@@ -220,6 +220,11 @@ struct RequestState {
     /// an answer is being taken; the poll compares this number before
     /// consuming so the answer stays with the dialog it was taken for.
     generation: AtomicU64,
+    /// Publication order of this registration in the channel's request table
+    /// (#1599). `bus.register` numbers by bus call order, which a reentrant
+    /// host callback can invert relative to the table; the table is what
+    /// decides who owns a request id, so the poll registry orders by this.
+    registration: AtomicU64,
     abort: Option<AbortSignal>,
     result: mpsc::Sender<std::result::Result<DialogAnswer, String>>,
 }
@@ -227,10 +232,10 @@ struct RequestState {
 struct PollEntry {
     due_ms: i64,
     polling: bool,
-    /// Registration this poll belongs to. A reentrant host callback may replace
-    /// the dialog under the same request id; the old request must then leave
-    /// the replacement's poll alone (#1599).
-    generation: u64,
+    /// Registration in the request table this poll belongs to. A reentrant
+    /// host callback may replace the dialog under the same request id; the old
+    /// request must then leave the replacement's poll alone (#1599).
+    registration: u64,
 }
 #[derive(Default)]
 struct PollRegistry {
@@ -242,6 +247,10 @@ struct Inner {
     options: ChannelOptions,
     requests: Mutex<HashMap<JsString, Arc<RequestState>>>,
     polls: Mutex<PollRegistry>,
+    /// Monotonic registration order (#1599). Assigned while the request table
+    /// is held, so `registration` orders exactly like table ownership: the
+    /// registration that published last is the one that owns the id.
+    next_registration: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -279,6 +288,7 @@ impl GatewayUserDialogChannel {
                 options,
                 requests: Mutex::new(HashMap::new()),
                 polls: Mutex::new(PollRegistry::default()),
+                next_registration: AtomicU64::new(0),
             }),
         }
     }
@@ -462,19 +472,29 @@ impl GatewayUserDialogChannel {
             abort_registration: AtomicU64::new(0),
             accepts,
             generation: AtomicU64::new(0),
+            registration: AtomicU64::new(0),
             abort: abort.clone(),
             result: sender,
         });
-        self.inner
-            .requests
-            .lock()
-            .unwrap()
-            .insert(request_id.clone(), state.clone());
+        {
+            // #1599: number the registration while the request table is held,
+            // so the poll registry's order matches table ownership even when a
+            // host callback reenters between these two steps.
+            let mut requests = self.inner.requests.lock().unwrap();
+            let registration = self.inner.next_registration.fetch_add(1, Ordering::SeqCst) + 1;
+            state.registration.store(registration, Ordering::SeqCst);
+            requests.insert(request_id.clone(), state.clone());
+        }
 
         if let Some(signal) = &abort {
             let channel = self.clone();
-            let id = request_id.clone();
-            if let Some(token) = signal.on_abort(Arc::new(move || channel.cancel(&id, "aborted"))) {
+            // #1599: bind the callback to this registration, not just the id.
+            // A same-id replacement owns the id once it publishes, and the
+            // signal of the superseded request must not cancel it.
+            let owned = state.clone();
+            if let Some(token) =
+                signal.on_abort(Arc::new(move || channel.cancel_owned(&owned, "aborted")))
+            {
                 state.abort_registration.store(token, Ordering::SeqCst);
             }
         }
@@ -492,6 +512,20 @@ impl GatewayUserDialogChannel {
                 Err(error.to_string())
             };
             self.complete(&state, answer);
+            return ChannelRequest {
+                request_id,
+                dialog_kind: dialog_kind.into(),
+                state,
+                receiver,
+            };
+        }
+
+        // #1599: `persist` is host code. If it reentered and registered the
+        // same request id, that registration owns the id and the bus bucket.
+        // Registering here would replace its bus entry by id
+        // (`GatewayUserDialogBus.ts:150-160`), so both waiters would be left
+        // without a usable entry. End the superseded waiter instead.
+        if self.end_if_superseded(&state, "store write") {
             return ChannelRequest {
                 request_id,
                 dialog_kind: dialog_kind.into(),
@@ -557,7 +591,7 @@ impl GatewayUserDialogChannel {
                     stop_polling(
                         &channel.inner,
                         &state.request_id,
-                        state.generation.load(Ordering::SeqCst),
+                        state.registration.load(Ordering::SeqCst),
                     );
                     let _ = settle(&channel.inner, &state);
                     Ok(())
@@ -592,25 +626,42 @@ impl GatewayUserDialogChannel {
         if state.cancelled_before_registration.load(Ordering::SeqCst)
             || abort.as_ref().is_some_and(AbortSignal::is_aborted)
         {
-            self.cancel(&request_id, "aborted");
+            // Bound to this registration: if a host callback already replaced
+            // the id, the replacement must not be cancelled from here (#1599).
+            self.cancel_owned(&state, "aborted");
         }
 
-        if !state.settled.load(Ordering::SeqCst) && self.inner.options.take_stored_answer.is_some()
-        {
-            let due = (self.inner.options.now_ms)()
-                .saturating_add(self.inner.options.poll_interval_ms.max(1));
-            let generation = state.generation.load(Ordering::SeqCst);
+        // `now_ms` and `emit` are host code; either may have registered the
+        // same request id while this registration was still assembling itself.
+        let poll_due = (!state.settled.load(Ordering::SeqCst)
+            && self.inner.options.take_stored_answer.is_some())
+        .then(|| {
+            (self.inner.options.now_ms)().saturating_add(self.inner.options.poll_interval_ms.max(1))
+        });
+        if self.end_if_superseded(&state, "timer read") {
+            return ChannelRequest {
+                request_id,
+                dialog_kind: dialog_kind.into(),
+                state,
+                receiver,
+            };
+        }
+        if let Some(due) = poll_due {
+            let registration = state.registration.load(Ordering::SeqCst);
             let installed = {
                 let mut polls = self.inner.polls.lock().unwrap();
-                // #1599: a reentrant host callback (the change observer or
-                // `emit`) can register a replacement under the same id and
-                // install its poll first. TS keeps one timer per request
+                // #1599: a concurrent registration on another thread can
+                // install its poll between the ownership check above and this
+                // insert. TS keeps one timer per request
                 // (`GatewayUserDialogChannel.ts:130-133`), so only the newest
-                // registration may own the entry; a late install from the
+                // registration may own the entry; a late install from a
                 // superseded one is ignored rather than resetting the
                 // replacement's in-flight poll.
-                let current = polls.entries.get(&request_id).map(|entry| entry.generation);
-                if current.is_none_or(|current| current < generation) {
+                let current = polls
+                    .entries
+                    .get(&request_id)
+                    .map(|entry| entry.registration);
+                if current.is_none_or(|current| current < registration) {
                     if current.is_none() {
                         polls.order.push(request_id.clone());
                     }
@@ -619,7 +670,7 @@ impl GatewayUserDialogChannel {
                         PollEntry {
                             due_ms: due,
                             polling: false,
-                            generation,
+                            registration,
                         },
                     );
                     true
@@ -628,7 +679,7 @@ impl GatewayUserDialogChannel {
                 }
             };
             if installed {
-                self.poll_once(&request_id);
+                self.poll_once(&request_id, None);
             }
         }
 
@@ -681,7 +732,7 @@ impl GatewayUserDialogChannel {
             stop_polling(
                 &self.inner,
                 &state.request_id,
-                state.generation.load(Ordering::SeqCst),
+                state.registration.load(Ordering::SeqCst),
             );
         }
         if let Some(signal) = &state.abort {
@@ -712,6 +763,19 @@ impl GatewayUserDialogChannel {
             .is_some_and(|current| !Arc::ptr_eq(current, state))
     }
 
+    /// Ends a registration that a reentrant host callback replaced under the
+    /// same request id. The replacement owns the bus entry, so this waiter has
+    /// nothing left to answer through; `begin` must not publish or poll for it
+    /// (`bus.register` replaces the bucket by id, #1599).
+    fn end_if_superseded(&self, state: &Arc<RequestState>, stage: &str) -> bool {
+        if !self.superseded(state) {
+            return false;
+        }
+        let _ = settle(&self.inner, state);
+        self.complete(state, Err(replaced_during(stage)));
+        true
+    }
+
     pub fn abort(&self, request_id: &JsString) {
         self.cancel(request_id, "aborted");
     }
@@ -721,6 +785,16 @@ impl GatewayUserDialogChannel {
         let Some(state) = state else {
             return;
         };
+        self.cancel_owned(&state, reason);
+    }
+
+    /// Cancels `state` only while it still owns its request id. The abort
+    /// callback of a superseded registration must not consume the same-id
+    /// replacement that owns the bus entry now (#1599).
+    fn cancel_owned(&self, state: &Arc<RequestState>, reason: &str) {
+        if self.superseded(state) {
+            return;
+        }
         if state.settled.load(Ordering::SeqCst) {
             return;
         }
@@ -749,7 +823,11 @@ impl GatewayUserDialogChannel {
             // own "settled" broadcast, so `outbox` is delivered through
             // `without_settled` (GatewayUserDialogBus.ts:219-226).
             let pre = bus.drain_events();
-            let consumed = bus.consume(&self.inner.options.session_key, request_id, "cancelled");
+            let consumed = bus.consume(
+                &self.inner.options.session_key,
+                &state.request_id,
+                "cancelled",
+            );
             let outbox = bus.drain_events();
             (consumed, pre, outbox)
         };
@@ -763,7 +841,7 @@ impl GatewayUserDialogChannel {
                 if let Err(error) = settled {
                     pre.deliver();
                     outbox
-                        .without_settled(&self.inner.options.session_key, request_id)
+                        .without_settled(&self.inner.options.session_key, &state.request_id)
                         .deliver();
                     let mut bus = self.inner.options.bus.lock().unwrap();
                     let replaced = bus.restore(&self.inner.options.session_key, consumed);
@@ -774,7 +852,7 @@ impl GatewayUserDialogChannel {
                     if let Some(replaced) = replaced {
                         (replaced.reject)(replaced_message());
                     }
-                    self.complete(&state, Err(error.to_string()));
+                    self.complete(state, Err(error.to_string()));
                     return;
                 }
                 pre.deliver();
@@ -788,14 +866,17 @@ impl GatewayUserDialogChannel {
         }
         let mut event = JsObject::new();
         event.insert("type".into(), "user_dialog_cancelled".into());
-        event.insert("requestId".into(), JsValue::String(request_id.clone()));
+        event.insert(
+            "requestId".into(),
+            JsValue::String(state.request_id.clone()),
+        );
         event.insert(
             "dialogKind".into(),
             JsValue::String(state.dialog_kind.clone()),
         );
         event.insert("reason".into(), JsValue::String(reason.into()));
         if let Err(error) = (self.inner.options.emit)(JsValue::Object(event)) {
-            self.complete(&state, Err(error.to_string()));
+            self.complete(state, Err(error.to_string()));
         }
     }
 
@@ -814,17 +895,22 @@ impl GatewayUserDialogChannel {
                 };
                 if entry.due_ms <= now {
                     entry.due_ms = now.saturating_add(interval);
-                    due.push(id.clone());
+                    // Carry the entry's identity: a host callback reached from
+                    // another poll in this batch can replace the registration
+                    // under the same id, and the replacement's own deadline
+                    // must not be pulled forward by this stale due item
+                    // (#1599).
+                    due.push((id.clone(), entry.registration));
                 }
             }
             due
         };
-        for id in due {
-            self.poll_once(&id);
+        for (id, registration) in due {
+            self.poll_once(&id, Some(registration));
         }
     }
 
-    fn poll_once(&self, request_id: &JsString) {
+    fn poll_once(&self, request_id: &JsString, due_registration: Option<u64>) {
         let requests = self.inner.requests.lock().unwrap();
         let Some(state) = requests.get(request_id).cloned() else {
             // No registration owns this id, so any poll entry left for it is an
@@ -841,15 +927,23 @@ impl GatewayUserDialogChannel {
         // #1599: a reentrant host callback may replace the registration while
         // this poll is in flight; every poll mutation below stays bound to the
         // registration captured here.
+        let registration = state.registration.load(Ordering::SeqCst);
+        // The bus numbers registrations in call order; this one is what
+        // `consume` validates when the answer arrives.
         let generation = state.generation.load(Ordering::SeqCst);
         {
             let mut polls = self.inner.polls.lock().unwrap();
-            let Some(entry_generation) =
-                polls.entries.get(request_id).map(|entry| entry.generation)
-            else {
+            let Some(entry) = polls.entries.get(request_id) else {
                 return;
             };
-            if entry_generation < generation {
+            if due_registration.is_some_and(|due| entry.registration != due) {
+                // `tick` collected this due item for an older registration and
+                // a host callback replaced the dialog before the batch reached
+                // it; the replacement keeps its own deadline (#1599).
+                return;
+            }
+            let entry_registration = entry.registration;
+            if entry_registration < registration {
                 // The entry is left over from a superseded registration that
                 // installed after the current waiter already gave up on its own
                 // poll. TS pairs the timer with the request
@@ -860,7 +954,7 @@ impl GatewayUserDialogChannel {
                 polls.order.retain(|id| id != request_id);
                 return;
             }
-            if entry_generation > generation {
+            if entry_registration > registration {
                 // A newer registration owns this entry; this pass is stale and
                 // must not disturb its in-flight poll.
                 return;
@@ -874,7 +968,7 @@ impl GatewayUserDialogChannel {
             entry.polling = true;
         }
         if state.settled.load(Ordering::SeqCst) || !state.registered.load(Ordering::SeqCst) {
-            stop_polling(&self.inner, request_id, generation);
+            stop_polling(&self.inner, request_id, registration);
             return;
         }
         if state.owner_claimed.load(Ordering::SeqCst)
@@ -884,7 +978,7 @@ impl GatewayUserDialogChannel {
                 Ok(true) => {}
                 // A failed renewal stops this poll; the next tick retries.
                 Ok(false) | Err(_) => {
-                    finish_poll(&self.inner, request_id, generation);
+                    finish_poll(&self.inner, request_id, registration);
                     return;
                 }
             }
@@ -893,21 +987,21 @@ impl GatewayUserDialogChannel {
             Some(take) => match take(request_id) {
                 Ok(answer) => answer,
                 Err(_) => {
-                    finish_poll(&self.inner, request_id, generation);
+                    finish_poll(&self.inner, request_id, registration);
                     return;
                 }
             },
             None => {
-                finish_poll(&self.inner, request_id, generation);
+                finish_poll(&self.inner, request_id, registration);
                 return;
             }
         };
         let Some(answer) = answer else {
-            finish_poll(&self.inner, request_id, generation);
+            finish_poll(&self.inner, request_id, registration);
             return;
         };
         if state.settled.load(Ordering::SeqCst) {
-            stop_polling(&self.inner, request_id, generation);
+            stop_polling(&self.inner, request_id, registration);
             return;
         }
         // #1442: the settle hook and the completion callbacks are host code;
@@ -943,7 +1037,7 @@ impl GatewayUserDialogChannel {
                     // taken answer has nowhere to go: fail the original waiter
                     // explicitly instead of leaving it pending forever
                     // (#1599). The replacement keeps its own poll/answer.
-                    stop_polling(&self.inner, request_id, generation);
+                    stop_polling(&self.inner, request_id, registration);
                     let _ = settle(&self.inner, &state);
                     self.complete(
                         &state,
@@ -953,7 +1047,7 @@ impl GatewayUserDialogChannel {
                     );
                     return;
                 }
-                finish_poll(&self.inner, request_id, generation);
+                finish_poll(&self.inner, request_id, registration);
                 return;
             }
         };
@@ -977,7 +1071,7 @@ impl GatewayUserDialogChannel {
             if let Some(replaced) = replaced {
                 (replaced.reject)(replaced_message());
             }
-            finish_poll(&self.inner, request_id, generation);
+            finish_poll(&self.inner, request_id, registration);
             return;
         }
         pre.deliver();
@@ -989,7 +1083,7 @@ impl GatewayUserDialogChannel {
                         "Cross-Gateway {} dialog result does not match the pending dialog contract.",
                         state.dialog_kind.to_utf8().unwrap_or_default()
                     ));
-                    finish_poll(&self.inner, request_id, generation);
+                    finish_poll(&self.inner, request_id, registration);
                     return;
                 }
                 (consumed.entry.resolve)(DialogAnswer::Answered(value.clone()));
@@ -1001,8 +1095,14 @@ impl GatewayUserDialogChannel {
                 (consumed.entry.resolve)(DialogAnswer::Cancelled(reason));
             }
         }
-        finish_poll(&self.inner, request_id, generation);
+        finish_poll(&self.inner, request_id, registration);
     }
+}
+
+/// Rejection handed to a waiter whose request id a reentrant host callback
+/// re-registered while this registration was still assembling itself (#1599).
+fn replaced_during(stage: &str) -> String {
+    format!("Gateway user-dialog was replaced while its {stage} was running.")
 }
 
 /// Rejection handed to a waiter whose request id a reentrant host callback
@@ -1011,7 +1111,7 @@ fn replaced_message() -> String {
     "Gateway user-dialog was replaced while its settle hook failed.".into()
 }
 
-fn stop_polling(inner: &Inner, request_id: &JsString, generation: u64) {
+fn stop_polling(inner: &Inner, request_id: &JsString, registration: u64) {
     let mut polls = inner.polls.lock().unwrap();
     // TS keeps one timer per request (`GatewayUserDialogChannel.ts:130-133`),
     // so a request may only stop the poll its own registration installed. A
@@ -1019,41 +1119,57 @@ fn stop_polling(inner: &Inner, request_id: &JsString, generation: u64) {
     if !polls
         .entries
         .get(request_id)
-        .is_some_and(|entry| entry.generation == generation)
+        .is_some_and(|entry| entry.registration == registration)
     {
         return;
     }
     polls.entries.remove(request_id);
     polls.order.retain(|id| id != request_id);
 }
-fn finish_poll(inner: &Inner, request_id: &JsString, generation: u64) {
+fn finish_poll(inner: &Inner, request_id: &JsString, registration: u64) {
     if let Some(entry) = inner.polls.lock().unwrap().entries.get_mut(request_id)
-        && entry.generation == generation
+        && entry.registration == registration
     {
         entry.polling = false;
     }
 }
-fn settle(inner: &Inner, state: &Arc<RequestState>) -> Result<()> {
-    // A superseded request must not delete the store/journal rows its
-    // replacement wrote under the same id (#1599). An absent entry only means
-    // `complete` already removed it; the cleanup below still belongs to this
-    // request.
-    if inner
+/// Whether a *different* registration owns `state`'s request id. An absent
+/// entry is not supersession: `complete` removes it before the settle hook
+/// runs, and that hook still owns the journal/store/lease cleanup.
+fn superseded_by_registration(inner: &Inner, state: &Arc<RequestState>) -> bool {
+    inner
         .requests
         .lock()
         .unwrap()
         .get(&state.request_id)
         .is_some_and(|current| !Arc::ptr_eq(current, state))
-    {
+}
+
+fn settle(inner: &Inner, state: &Arc<RequestState>) -> Result<()> {
+    // A superseded request must not delete the store/journal rows its
+    // replacement wrote under the same id (#1599). An absent entry only means
+    // `complete` already removed it; the cleanup below still belongs to this
+    // request.
+    if superseded_by_registration(inner, state) {
         return Ok(());
     }
     if state.owner_claimed.swap(false, Ordering::SeqCst)
         && let Some(release) = &inner.options.release_stored_owner
     {
         release(&state.request_id, &state.owner_id)?;
+        // `release` is host code; a reentrant callback may have registered the
+        // same id and written its own journal/store rows. Stop before deleting
+        // the replacement's records (#1599).
+        if superseded_by_registration(inner, state) {
+            return Ok(());
+        }
     }
     if let Some(journal) = &inner.options.journal {
         journal.remove(&state.request_id)?;
+        // Same window as above, one destructive step later.
+        if superseded_by_registration(inner, state) {
+            return Ok(());
+        }
     }
     if let (Some(store), Some(key)) = (&inner.options.store, &inner.options.store_key) {
         store.remove(key, &state.request_id)?;
