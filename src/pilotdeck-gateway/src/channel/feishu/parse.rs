@@ -185,9 +185,13 @@ fn parse_v2_event(raw: &JsValue) -> Option<ParsedEvent> {
     if !is_supported_type(message_type.as_deref()) {
         return Some(ParsedEvent::Ignore);
     }
-    // `if (!chatId || content === undefined) return undefined;`: the empty
-    // string is falsy, so `"chat_id": ""` takes the "not this shape" exit
-    // instead of becoming `feishu:chat=:general`.
+    // `if (!chatId || content === undefined) return undefined;`
+    // (`FeishuChannel.ts:1152`): the empty string is falsy, so `"chat_id": ""`
+    // takes the "not this shape" exit instead of becoming
+    // `feishu:chat=:general`. A *non-string* truthy id (`123`, `{}`) is
+    // narrower here than TS, which passes it through; registered as
+    // `A8.3-CH-FEISHU-011` (no golden sample or unit case carries a
+    // non-string id).
     let chat_id = match string_prop_value(message.get("chat_id")) {
         Some(value) if !value.is_empty() => value,
         _ => return None,
@@ -211,7 +215,8 @@ fn parse_v2_event(raw: &JsValue) -> Option<ParsedEvent> {
 fn parse_v1_event(raw: &JsValue, clock: &dyn Clock) -> Option<ParsedEvent> {
     let event = raw.get("event").and_then(JsValue::as_object)?;
     // `if (!event?.chat_id || event.text === undefined) return undefined;`:
-    // the empty string is falsy here too.
+    // the empty string is falsy here too; a non-string truthy id is narrowed
+    // exactly like the v2 gate (`A8.3-CH-FEISHU-011`).
     let chat_id = match string_prop_value(event.get("chat_id")) {
         Some(value) if !value.is_empty() => value,
         _ => return None,
@@ -362,10 +367,11 @@ mod tests {
 
     #[test]
     fn empty_chat_id_is_not_a_message_in_either_event_shape() {
-        // FeishuChannel.ts:287 `if (!chatId || message.content === undefined)
-        // return undefined;` and :1174 `if (!event?.chat_id || event.text ===
-        // undefined) return undefined;`: the empty string is falsy, so neither
-        // shape dispatches a turn for `feishu:chat=:general`.
+        // FeishuChannel.ts:1152 `if (!chatId || content === undefined)
+        // return undefined;` and :1170 `if (!event?.chat_id || event.text ===
+        // undefined) return undefined;` (the webhook shapes; `:287` is the
+        // stream path's same-shape gate): the empty string is falsy, so
+        // neither shape dispatches a turn for `feishu:chat=:general`.
         let clock = FixedClock(0.0);
         let log = no_log();
         let v2 = r#"{"header":{"event_id":"e1","event_type":"im.message.receive_v1"},"event":{"message":{"chat_id":"","message_type":"text","content":"{\"text\":\"hi\"}"}}}"#;

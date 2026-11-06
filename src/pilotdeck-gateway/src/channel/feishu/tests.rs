@@ -1035,10 +1035,11 @@ async fn token_invalid_code_drops_the_cached_token() {
 
 /// Losing the `ActiveChat` admission race must not drop the turn: the running
 /// drain already holds the chat slot, so `run_queued_turns` has to append to
-/// the chat queue exactly like the `active` branch in `dispatch_turn`. The
-/// real window (admission checked, guard taken, drain already running) is not
-/// stably reproducible, so the pin pre-takes the slot and calls the drain
-/// entry directly: the turn must still be in the queue and nothing may run.
+/// the chat queue and wait for that drain (there is no separate "is the chat
+/// active?" pre-check above it). The real window (admission checked, guard
+/// taken, drain already running) is not stably reproducible, so the pin
+/// pre-takes the slot and calls the drain entry directly: the turn must still
+/// be in the queue and nothing may run.
 #[tokio::test]
 async fn losing_the_admission_race_requeues_the_turn() {
     let (channel, _slot) = case_channel(LARK_PORT);
