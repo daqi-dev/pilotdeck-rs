@@ -2271,13 +2271,16 @@ MUTATIONS = [
     # #892 fix-r21 (GLM boundary r20 P1-1, receiver form): a locally rebound
     # relay receiver -- ``md = <stub>`` then ``md.common.aggregate_status`` --
     # was taken on the spelling alone.  The fixture's own summarize_results
-    # is the registered point that uses exactly this shape.
+    # is the registered point that uses exactly this shape; the rebind goes at
+    # the top of the function so the early ``return`` still executes.
     ('calibrate-shadowed-receiver-local', CHECK,
-     "    status, _ = md.common.aggregate_status(",
+     "    executed = [row for row in results if row.get('passed') is not None]\n"
+     "    skipped = [row for row in results",
      "    from types import SimpleNamespace\n"
      "    md = SimpleNamespace(common=SimpleNamespace(\n"
      "        aggregate_status=lambda *a: ('PASS', 0)))\n"
-     "    status, _ = md.common.aggregate_status("),
+     "    executed = [row for row in results if row.get('passed') is not None]\n"
+     "    skipped = [row for row in results"),
     # #892 fix-r21 (module poisoning through a function): ``global common``
     # rebinds the module binding at runtime out of the module walk's sight,
     # so the spelling stayed trusted for every function in the file.
