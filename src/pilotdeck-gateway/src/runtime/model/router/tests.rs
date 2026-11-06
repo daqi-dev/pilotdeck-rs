@@ -1306,6 +1306,122 @@ async fn terminal_failure_still_flushes_events_when_usage_estimation_throws() {
     assert_eq!(kinds.last().map(String::as_str), Some("error"), "{kinds:?}");
 }
 
+/// #1785: the port forwards the turn's abort flag into the per-stream flag
+/// through a spawned task, so "drop provider events after abort" used to
+/// depend on which task the runtime scheduled first — `host_model_port`'s
+/// `sync-abort-mid-stream` leaked a `usage` event after the cancel. TS reads
+/// `abortSignal.aborted` in the aborting call stack
+/// (`RouterRuntime.ts:1187-1189`), so the router must see the turn flag
+/// directly. Negative control: remove `turn_abort` from `aborted()` and the
+/// delta below is yielded before the abort error.
+#[tokio::test(flavor = "current_thread")]
+async fn turn_abort_drops_events_produced_in_the_aborting_call_stack() {
+    /// Aborts the turn and then hands over one more provider event without an
+    /// `await` in between, like a provider read that resumes after
+    /// `controller.abort()` in the same call stack.
+    struct AbortThenEmit(AbortFlag);
+    impl RouterModelInvocation for AbortThenEmit {
+        fn get_capabilities(
+            &self,
+            _: &JsString,
+            _: &JsString,
+        ) -> Result<JsValue, crate::host::ModuleError> {
+            Ok(object(vec![("maxOutputTokens", JsValue::Number(64.0))]))
+        }
+        fn get_multimodal(
+            &self,
+            _: &JsString,
+            _: &JsString,
+        ) -> Result<JsValue, crate::host::ModuleError> {
+            Ok(object(vec![("input", JsValue::Array(vec![text("text")]))]))
+        }
+        fn get_provider_protocol(&self, _: &JsString) -> JsString {
+            "anthropic".into()
+        }
+        fn stream<'a>(
+            &'a self,
+            _: &'a JsValue,
+            _: &'a StreamOptions,
+            sink: &'a mut (dyn FnMut(StreamOutput) + Send),
+        ) -> RouterStreamFuture<'a> {
+            Box::pin(async move {
+                self.0.abort();
+                sink(StreamOutput::Event(object(vec![
+                    ("type", text("text_delta")),
+                    ("text", text("after abort")),
+                ])));
+                Ok(())
+            })
+        }
+    }
+
+    let turn = AbortFlag::new();
+    let config = RouterConfig {
+        enabled: true,
+        ..RouterConfig::default()
+    };
+    let mut deps = RouterDeps::new(Arc::new(AbortThenEmit(turn.clone())));
+    deps.clock = Arc::new(|| 1_700_000_000_000.0);
+    let router = RouterRuntime::with_deps(config, deps).expect("runtime");
+    let decision = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("scenarioType", text("default")),
+        ("isSubagent", JsValue::Bool(false)),
+        ("orchestrating", JsValue::Bool(false)),
+        ("resolvedFrom", text("scenario")),
+        ("mutations", object(vec![])),
+    ]);
+    let request = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("messages", JsValue::Array(vec![user_message("hi")])),
+        ("maxOutputTokens", JsValue::Number(100.0)),
+    ]);
+    let ctx = RouterExecuteContext {
+        session_id: "s".into(),
+        turn_id: "t".into(),
+        turn_abort: Some(turn.clone()),
+        stream_options: StreamOptions {
+            // Only the turn cancel is in play: the per-stream flag never fires.
+            abort: Some(AbortFlag::new()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut events = Vec::new();
+    let error = router
+        .execute(&decision, &request, &ctx, &mut |output| events.push(output))
+        .await
+        .expect_err("a cancelled turn surfaces the abort error");
+    let kinds = events
+        .iter()
+        .filter_map(|event| {
+            field(event, "type")
+                .as_string()
+                .and_then(|value| value.to_utf8().ok())
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !kinds.iter().any(|kind| kind == "text_delta"),
+        "the event produced after the turn cancel must be dropped: {kinds:?}"
+    );
+    match error {
+        RouterExecuteError::Model(crate::runtime::model::http::ModelStreamError::Thrown {
+            name,
+            message,
+        }) => {
+            assert_eq!(name.to_utf8().unwrap_or_default(), "AbortError");
+            assert_eq!(
+                message.to_utf8().unwrap_or_default(),
+                "This operation was aborted"
+            );
+        }
+        other => panic!("expected the abort error, got {other:?}"),
+    }
+    assert!(turn.is_aborted());
+}
+
 #[tokio::test(start_paused = true)]
 async fn judge_timeout_config_matches_real_ts_parser_and_node_timers() {
     let oracle = crate::test_baseline::oracle(include_str!(
