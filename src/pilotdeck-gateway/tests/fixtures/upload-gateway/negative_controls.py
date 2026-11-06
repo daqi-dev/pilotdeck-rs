@@ -542,6 +542,11 @@ EXPECTED_NAMES = (
     'idempotency-type-before-manifest', 'number-format-expanded',
     'surrogate-lossy-bridge', 'null-attachment-swallowed',
     'part-requires-provider-first', 'get-requires-provider-after-upload-id',
+    # main 的 #1494 read_at / lease 六条，rebase 后并入；名册与运行时必须逐名一致，
+    # 否则整族在 `registered()` 处 rc 2，宿主读成「从未开跑」。
+    'read-at-handle-check-dropped', 'read-at-check-before-open',
+    'read-at-identity-dropped', 'read-at-approved-stat-follows-link',
+    'lease-link-identity-dropped', 'lease-link-follows-symlink-source',
 )
 
 if '--check' in sys.argv[1:]:
