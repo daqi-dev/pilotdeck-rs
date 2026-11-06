@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-# anchor-selfcheck: unsupported issue-1246 executor: ROWS is not one of anchor_selfcheck's TABLES, so `--check` (below) is the anchor preflight; this script is not wired into CI or a host manifest yet
-"""#1246 negative controls: the live-row qualifier of `session_clear_removed_since`.
+"""#1246 / #1656 negative controls: clear-record discrimination in the heartbeat.
 
-Four mutations, each bound to one named test that must fail at its own
+Six mutations, each bound to one named test that must fail at its own
 issue-tagged assertion message:
 
 - ``removed-since-ignores-live-row`` drops the "the row still exists" qualifier
@@ -28,10 +27,24 @@ issue-tagged assertion message:
   discard decision and the batch ``mark_l0_indexed`` is stamped indexed without
   ever being written, and the turn is lost silently.
   Bound test: ``discarded_session_does_not_mark_the_recaptured_id_indexed``.
+- ``mark-ignores-clear-record`` (#1656 gap 1) restores the unconditional batch
+  mark: a session that really persisted this round is cleared (row *and* file
+  deleted) and re-captured with the same id before the mark, and the batch
+  UPDATE retires the never-written incarnation.
+  Bound test: ``persisted_turn_recaptured_after_clear_is_not_marked_indexed``.
+- ``repair-removal-reported-as-clear`` (#1656 gap 3) collapses the row-absent
+  arm back to "cleared": a row ``repair_l0_sessions`` deleted is reported with
+  the clearSession log line, so the two causes are indistinguishable.
+  Bound test: ``row_removed_by_repair_mid_heartbeat_reports_repair_not_clear``.
 
 Every mutation runs to completion — compile gate, bound-test run, byte restore,
 restored-pass check — and only the final summary decides the exit status: a
 harness failure on one mutation is recorded as INVALID, never an early abort.
+
+The ``mutants`` table is the shape ``tests/fixtures/anchor_selfcheck.py``
+understands, so CI's ``--anchors-only`` preflight checks every anchor below
+against the sources (occurrence count 1); #1656 gap 2 found this file exempted
+from that check while its rows were a list of dicts.
 
 Usage:
   python3 -I negative_controls.py --check
@@ -54,19 +67,17 @@ indexer_rs = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_heartbeat_indexer']
 
-ROWS = [
-    {
-        'name': 'removed-since-ignores-live-row',
-        'path': entries_rs,
-        'old': '            Ok(rows) => Ok(rows.is_empty()),',
-        'new': '            Ok(_) => Ok(true),',
-        'test': 'recapture_with_the_same_id_after_clear_is_not_marked_indexed_unpersisted',
-        'assertion': '#1246 the re-captured turn is new data and must be written, not silently marked indexed',
-    },
-    {
-        'name': 'removed-since-always-false',
-        'path': file_memory_rs,
-        'old': '''        self.sessions
+# (name, path, before, after, bound test, exact runtime anchor)
+mutants = [
+    ('removed-since-ignores-live-row',
+     entries_rs,
+     '            Ok(rows) => Ok(rows.is_empty()),',
+     '            Ok(_) => Ok(true),',
+     'recapture_with_the_same_id_after_clear_is_not_marked_indexed_unpersisted',
+     '#1246 the re-captured turn is new data and must be written, not silently marked indexed'),
+    ('removed-since-always-false',
+     file_memory_rs,
+     '''        self.sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(session)
@@ -76,27 +87,53 @@ ROWS = [
                     .get(l0_index_id)
                     .is_some_and(|cleared_at| *cleared_at > baseline)
             })''',
-        'new': '''        let _ = (session, baseline, l0_index_id);
+     '''        let _ = (session, baseline, l0_index_id);
         false''',
-        'test': 'clear_then_close_discards_candidates_and_fails_closed',
-        'assertion': "#917 the clear generation must discard the turn even though SQLite is closed",
-    },
-    {
-        'name': 'removed-since-closed-fails-open',
-        'path': entries_rs,
-        'old': '            Err(super::StorageError::Closed) => Ok(true),',
-        'new': '            Err(super::StorageError::Closed) => Ok(false),',
-        'test': 'clear_then_close_discards_candidates_and_fails_closed',
-        'assertion': "#917 the clear generation must discard the turn even though SQLite is closed",
-    },
-    {
-        'name': 'discard-still-marks-recaptured-id',
-        'path': indexer_rs,
-        'old': '        if !discarded_for_clear {',
-        'new': '        if true {',
-        'test': 'discarded_session_does_not_mark_the_recaptured_id_indexed',
-        'assertion': '#1246 a discarded session must not stamp the re-captured id indexed',
-    },
+     'clear_then_close_discards_candidates_and_fails_closed',
+     "#917 the clear generation must discard the turn even though SQLite is closed"),
+    ('removed-since-closed-fails-open',
+     entries_rs,
+     '            Err(super::StorageError::Closed) => Ok(true),',
+     '            Err(super::StorageError::Closed) => Ok(false),',
+     'clear_then_close_discards_candidates_and_fails_closed',
+     "#917 the clear generation must discard the turn even though SQLite is closed"),
+    ('discard-still-marks-recaptured-id',
+     indexer_rs,
+     '        if !discarded_for_clear {',
+     '        if true {',
+     'discarded_session_does_not_mark_the_recaptured_id_indexed',
+     '#1246 a discarded session must not stamp the re-captured id indexed'),
+    ('mark-ignores-clear-record',
+     indexer_rs,
+     '''                let markable_ids: Vec<String> = processed_ids
+                    .iter()
+                    .filter(|(id, persist_generation)| {
+                        !self.repository.session_clear_deleted_since(
+                            &session_key,
+                            *persist_generation,
+                            id,
+                        )
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect();''',
+     '''                let markable_ids: Vec<String> = processed_ids
+                    .iter()
+                    .map(|(id, _)| id.clone())
+                    .collect();''',
+     'persisted_turn_recaptured_after_clear_is_not_marked_indexed',
+     '#1656 the batch mark must not stamp an incarnation whose file was never written'),
+    ('repair-removal-reported-as-clear',
+     indexer_rs,
+     '''            Ok(rows) if rows.is_empty() => Ok(Some(
+                if self.repository.storage.l0_removed_by_repair(l0_index_id) {
+                    L0Removal::Repaired
+                } else {
+                    L0Removal::Cleared
+                },
+            )),''',
+     '            Ok(rows) if rows.is_empty() => Ok(Some(L0Removal::Cleared)),',
+     'row_removed_by_repair_mid_heartbeat_reports_repair_not_clear',
+     '#1656 the discard reason must name the repair'),
 ]
 
 STATUSES = ('KILLED', 'SURVIVED', 'INVALID')
@@ -144,8 +181,8 @@ def main():
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
     baseline = env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
-    selected = [row for row in ROWS if sys.argv[2:] == []
-                or row['name'] in sys.argv[2:]]
+    selected = [row for row in mutants if sys.argv[2:] == []
+                or row[0] in sys.argv[2:]]
     if not selected or (sys.argv[2:] and len(selected) != len(sys.argv[2:])):
         raise SystemExit('unknown/duplicate mutation')
     out = Path(sys.argv[1]).resolve()
@@ -157,42 +194,42 @@ def main():
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
-        with mutating_sources(root, [row['path'] for row in selected],
+        with mutating_sources(root, [row[1] for row in selected],
                               baseline=baseline) as originals:
             for row in selected:
-                original = originals[row['path']].decode()
-                if original.count(row['old']) != 1:
-                    raise ValueError(f'{row["name"]}: stale anchor')
-                if not passed_bound(run_bound(out / f'{row["name"]}-positive',
-                                              row['test'], env), row['test']):
-                    record(row['name'], 'INVALID',
+                name, path, old, new, test, assertion = row
+                original = originals[path].decode()
+                if original.count(old) != 1:
+                    raise ValueError(f'{name}: stale anchor')
+                if not passed_bound(run_bound(out / f'{name}-positive',
+                                              test, env), test):
+                    record(name, 'INVALID',
                            'positive control did not pass the bound test')
                     continue
-                row['path'].write_text(original.replace(row['old'], row['new'], 1))
-                if run_bound(out / f'{row["name"]}-compile', row['test'], env,
+                path.write_text(original.replace(old, new, 1))
+                if run_bound(out / f'{name}-compile', test, env,
                              compile_only=True).returncode != 0:
-                    row['path'].write_bytes(originals[row['path']])
-                    record(row['name'], 'INVALID', 'mutant did not compile')
+                    path.write_bytes(originals[path])
+                    record(name, 'INVALID', 'mutant did not compile')
                     continue
-                result = run_bound(out / f'{row["name"]}-negative',
-                                   row['test'], env)
-                row['path'].write_bytes(originals[row['path']])
-                if row['path'].read_bytes() != originals[row['path']]:
-                    raise RuntimeError(f'{row["name"]}: byte restoration failed')
-                if killed_bound(result, row['test'], row['assertion']):
+                result = run_bound(out / f'{name}-negative', test, env)
+                path.write_bytes(originals[path])
+                if path.read_bytes() != originals[path]:
+                    raise RuntimeError(f'{name}: byte restoration failed')
+                if killed_bound(result, test, assertion):
                     status, reason = 'KILLED', 'bound test failed at its assertion'
-                elif passed_bound(result, row['test']):
+                elif passed_bound(result, test):
                     status, reason = 'SURVIVED', 'bound test still passed'
                 else:
                     status, reason = 'INVALID', ('missing bound runtime failure '
                                                  '(build error, wrong panic, or missing test)')
-                if not passed_bound(run_bound(out / f'{row["name"]}-restored',
-                                              row['test'], env), row['test']):
+                if not passed_bound(run_bound(out / f'{name}-restored',
+                                              test, env), test):
                     status, reason = 'INVALID', reason + '; restored bound test did not pass'
-                record(row['name'], status, reason)
+                record(name, status, reason)
     except BaseException as error:  # noqa: BLE001 - one summary, then exit code
         for row in selected[len(results):]:
-            record(row['name'], 'INVALID', f'source guard: {type(error).__name__}: {error}')
+            record(row[0], 'INVALID', f'source guard: {type(error).__name__}: {error}')
         for row in results:
             if row['status'] == 'KILLED':
                 row.update(status='INVALID',
@@ -216,20 +253,21 @@ if __name__ == '__main__':
         # hold the tree with a mutant written, and reading the anchors then
         # would report a false "anchor occurs 0 times".
         with tree_lock(root):
-            for row in ROWS:
+            for row in mutants:
+                name, path, old, new = row[0], row[1], row[2], row[3]
                 try:
-                    original = row['path'].read_text(encoding='utf-8')
+                    original = path.read_text(encoding='utf-8')
                 except OSError as error:
-                    problems.append(f'{row["name"]}: {error}')
+                    problems.append(f'{name}: {error}')
                     continue
-                count = original.count(row['old'])
+                count = original.count(old)
                 if count != 1:
-                    problems.append(f'{row["name"]}: anchor occurs {count} times, expected 1')
+                    problems.append(f'{name}: anchor occurs {count} times, expected 1')
                     continue
-                if original.count(row['new']) != 0:
-                    problems.append(f'{row["name"]}: mutant text already present')
+                if original.count(new) != 0:
+                    problems.append(f'{name}: mutant text already present')
         print('\n'.join(problems) if problems
-              else f'{len(ROWS)} unique anchors checked')
+              else f'{len(mutants)} unique anchors checked')
         raise SystemExit(int(bool(problems)))
     if not sys.argv[1:] or sys.argv[1].startswith('-'):
         raise SystemExit('usage: --check | NEW_OUTPUT_DIR [mutation ...]')

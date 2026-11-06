@@ -319,6 +319,16 @@ pub struct EdgeClawStorage {
     /// #1207 fix-r2 (review P2-1): test-only, fires on a contended process
     /// lock. `None` in production and in every test that does not install it.
     wait_observer: Mutex<Option<ProcessWaitObserver>>,
+    /// #1656: the L0 row ids `repair_l0_sessions` deleted in this process.
+    /// A repair deletion removes the row without touching `SessionClears`
+    /// (the clear generation and its removed record belong to `clearSession`),
+    /// so the heartbeat's "the listed row is gone" check could not tell a
+    /// repaired row from a cleared one. This set is what makes the two
+    /// distinguishable ([`Self::l0_removed_by_repair`]); it never changes a
+    /// persist decision — a repaired row must not be re-indexed either.
+    /// In-memory only: a reopen starts empty, and an insert of the same id
+    /// drops the entry, so a re-captured row is never reported as repaired.
+    repair_removed: Mutex<HashSet<String>>,
 }
 
 // Dropping the last service/storage owner closes SQLite too. Serialize that
@@ -418,6 +428,7 @@ impl EdgeClawStorage {
             process,
             clock,
             wait_observer: Mutex::new(None),
+            repair_removed: Mutex::new(HashSet::new()),
         })
     }
 
@@ -709,7 +720,10 @@ impl EdgeClawStorage {
     /// `sqlite.ts:934-968`.
     pub fn insert_l0_session(&self, record: &L0SessionRecord) -> Result<(), StorageError> {
         let conn = self.conn()?;
-        Self::insert_l0_session_on(&conn, record, &self.clock)
+        Self::insert_l0_session_on(&conn, record, &self.clock)?;
+        // #1656: a row captured again is not the row a repair removed.
+        self.forget_repair_removal(&record.l0_index_id);
+        Ok(())
     }
 
     fn insert_l0_session_on(
@@ -783,6 +797,8 @@ impl EdgeClawStorage {
             return Ok(false);
         }
         Self::insert_l0_session_on(&conn, record, &self.clock)?;
+        // #1656: same as `insert_l0_session`.
+        self.forget_repair_removal(&record.l0_index_id);
         Ok(true)
     }
 
@@ -1059,6 +1075,12 @@ impl EdgeClawStorage {
                     "DELETE FROM l0_sessions WHERE l0_index_id = ?1",
                     [&row.l0_index_id],
                 )?;
+                // #1656: remember the id, so a heartbeat that had this row
+                // listed can say why it is gone instead of reporting a clear.
+                self.repair_removed
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(row.l0_index_id.clone());
                 removed += 1;
                 continue;
             }
@@ -1084,6 +1106,25 @@ impl EdgeClawStorage {
             removed,
             rebuilt: updated > 0 || removed > 0,
         })
+    }
+
+    /// #1656: did `repair_l0_sessions` delete this row id in this process?
+    /// Read by the heartbeat's "the listed row is gone" check, which could
+    /// otherwise only report a `clearSession`. `false` after any later insert
+    /// of the same id ([`Self::forget_repair_removal`]) — a re-captured row is
+    /// new data, not the row the repair removed.
+    pub fn l0_removed_by_repair(&self, l0_index_id: &str) -> bool {
+        self.repair_removed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(l0_index_id)
+    }
+
+    fn forget_repair_removal(&self, l0_index_id: &str) {
+        self.repair_removed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(l0_index_id);
     }
 
     // -- traces -----------------------------------------------------------

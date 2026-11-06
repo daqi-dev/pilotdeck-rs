@@ -598,10 +598,6 @@ impl EdgeClawFileStores {
     /// recheck inside the commit scope) shares one semantics. It is
     /// synchronous SQLite only: no await, no file-store lock, the same
     /// snapshot-scope-then-connection order `clearSession` itself takes.
-    /// Residual window (registered as a `P2-跟进`, out of this fix's scope):
-    /// `mark_l0_indexed` still keys rows by id alone and runs after the batch,
-    /// so a re-capture that lands between this inspection and that UPDATE is
-    /// not told apart from the listed incarnation.
     pub fn session_clear_removed_since(
         &self,
         session: &str,
@@ -620,6 +616,42 @@ impl EdgeClawFileStores {
             Err(error) => Err(FileMemoryError::Storage(error)),
         }
     }
+    /// #1656 (incarnation dimension of the batch `mark_l0_indexed`): did a
+    /// `clearSession` that completed after `floor` delete this L0 row id?
+    /// The record-only half of [`Self::session_clear_removed_since`], without
+    /// the "is a row with this id alive now" qualifier.
+    ///
+    /// `floor` is the clear generation the caller's persist ran at, not the
+    /// run's listing baseline: a clear that completed *before* the persist
+    /// only means the listed row was already a re-capture, and that turn's
+    /// file really was written — it must still be marked. Only a clear that
+    /// completed after the persist can have deleted this round's files, and
+    /// the batch mark must then leave the id alone.
+    ///
+    /// The batch mark needs the live-row qualifier dropped, not kept: the id
+    /// derives from `(session_key, timestamp, payload)` (`build_l0_index_id`),
+    /// so a re-capture after the clear reuses it. A live row with this id at
+    /// mark time may therefore be the *new* incarnation rather than the one
+    /// this run wrote — stamping it `indexed` would skip the turn forever,
+    /// while the clear deleted the files written for the old incarnation.
+    /// A row the clear deleted and nobody re-captured answers true as well;
+    /// skipping the mark is a no-op there (the UPDATE would match nothing),
+    /// so one answer covers both.
+    ///
+    /// The caller runs this inside `snapshot_operation_scope()`, the same
+    /// critical section `clearSession` takes, so no clear can slip between
+    /// the answer and the UPDATE it guards (#1656; the residual window the
+    /// #1246 comment recorded).
+    pub fn session_clear_deleted_since(
+        &self,
+        session: &str,
+        floor: u64,
+        l0_index_id: &str,
+    ) -> bool {
+        self.session_clears
+            .removed_since(session, floor, l0_index_id)
+    }
+
     fn clear_result(
         &self,
         scope: &str,

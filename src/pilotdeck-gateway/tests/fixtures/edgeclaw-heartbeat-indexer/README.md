@@ -125,7 +125,13 @@ sits in `l0_sessions` is rescued even without the baseline comparison
 non-bumping-repair-removed row keeps the comparison load-bearing
 (`stale_removed_entry_after_later_clear_keeps_since_semantics` is the bound
 test; `issue-1246/negative_controls.py` guards the live-row qualifier
-itself). The #1207 fix-r1 review adds a fourth: dropping the re-arm from
+itself). #1656 adds the incarnation dimension at the batch mark
+(`persisted_turn_recaptured_after_clear_is_not_marked_indexed`, mutated by
+`mark-ignores-clear-record`) and the repair-versus-clear distinction
+(`row_removed_by_repair_mid_heartbeat_reports_repair_not_clear`, mutated by
+`repair-removal-reported-as-clear`), both in the same `issue-1246` fixture —
+whose `mutants` tuple table is now read by the CI anchor preflight
+(`anchor_selfcheck.py --anchors-only`) instead of being exempted. The #1207 fix-r1 review adds a fourth: dropping the re-arm from
 the clear's abort path (`clear-abort-rearm-dropped`), so an indexed row whose
 file the failed clear already removed is never re-listed and the file is
 lost. The fix-r2 review adds a fifth (`clear-abort-delete-rearm-dropped`):
