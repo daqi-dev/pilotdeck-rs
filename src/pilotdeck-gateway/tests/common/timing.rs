@@ -108,14 +108,22 @@ pub struct ScalingSamples {
 /// "fastest half vs fastest full" line, and the difference is deliberate
 /// (#978 second review). On the CI samples `paired_median_ignores_whole_round_preemption`
 /// pins, the retired shape reddened (4.480 s full against 3x * 1.360 s +
-/// 0.15 s = 4.23 s) although two of the three paired rounds were linear
-/// (3.32x, 2.19x, 1.95x): whole-round preemption, i.e. a false red. The median
-/// drops exactly that minority. What it no longer catches is an implementation
-/// that is super-linear in a minority of rounds and linear in the rest; a
-/// deterministic regression is super-linear in every round, so its median stays
-/// outside the band, and a constant-factor regression is caught by
-/// [`assert_within_per_sample_cap`]. Anything narrower than that reintroduces
-/// the false red this issue exists to remove.
+/// 0.15 s = 4.23 s) although two of the three paired rounds were inside the
+/// 2.83x band (2.19x, 1.95x; the third read 3.32x): whole-round preemption, a
+/// false red. The median drops exactly that minority. What it no longer catches
+/// is an implementation that is super-linear in a minority of rounds and linear
+/// in the rest.
+///
+/// What either shape catches is bounded by the band, not by "any regression".
+/// A doubling-size run of `n^e` reads `2^e`, so the 2.83x band catches an
+/// exponent of about 1.5 and above (2^1.5 = 2.83x); a mild `n^1.1` reads
+/// 2.14x and stays inside, exactly as it did under the retired 3x line
+/// (exponent 1.58). Constant-factor regressions are invisible to any ratio and
+/// are caught only where the caller also applies
+/// [`assert_within_per_sample_cap`] (the two `html_markdown` tests); the
+/// `html_compat` deep-frame unit judges the ratio only, by design (#798).
+/// Anything narrower than the median reintroduces the false red this issue
+/// exists to remove.
 #[allow(dead_code)]
 pub fn fastest_scaling_ratio<S>(
     label: &str,
@@ -171,12 +179,14 @@ where
 ///
 /// The slack costs guarantee width: a quadratic implementation at a 0.6x
 /// "half" reads 2.78x against the 2.15x band, but only while
-/// `0.15 s / small < factor^2 - factor^1.5`, i.e. `small >= 0.24 s`
-/// (`scaling_band_tracks_the_measured_input_factor` asserts that floor). Every
-/// call site clears it by a wide margin: the smallest measured small sample is
-/// 1.45 s (deep-frame 4 MiB) and `large_shallow` runs 5.8 s, so the slack takes
-/// at most 0.10x of the 0.63x gap. A caller with sub-0.24 s samples cannot
-/// claim the same guarantee from the ratio alone.
+/// `0.15 s / small < factor^2 - factor^1.5`, i.e. `small > 0.24 s` strictly
+/// (at exactly 0.24 s the ratio equals the limit and `ratio <= limit` admits
+/// it; `scaling_band_tracks_the_measured_input_factor` asserts that floor).
+/// Every measured call site clears it by a wide margin: the smallest observed
+/// small sample is 1.45 s (deep-frame 4 MiB) and `large_shallow` runs 5.8 s,
+/// so the slack takes at most 0.10x of the 0.63x gap on this hardware. That is
+/// a measurement, not a portable guarantee: a caller with sub-0.24 s samples
+/// cannot claim the same from the ratio alone.
 #[allow(dead_code)]
 pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor: f64) {
     const NOISE: f64 = 0.15;
@@ -432,7 +442,7 @@ fn scaling_band_tracks_the_measured_input_factor() {
     let floor = 0.15 / (quadratic_ratio - factor.powf(1.5));
     assert!(
         (floor - 0.2396).abs() < 0.001,
-        "#978 the 0.6x quadratic is rejected only for small >= {floor:.4}s"
+        "#978 the 0.6x quadratic is rejected only for small > {floor:.4}s"
     );
     let small = Duration::from_secs_f64(1.45); // deep-frame's measured 4 MiB run
     let sampled = ScalingSamples {
