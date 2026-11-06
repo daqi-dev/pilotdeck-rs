@@ -91,7 +91,10 @@ MUTATIONS = [
      '!id.units().is_empty());',
      '                let bot_token = string_field(&status, "bot_token");\n'
      '                let account_id = string_field(&status, "ilink_bot_id");',
-     REPLAY, '#1328 weixin replay oracle'),
+     # With the filters gone the mutant accepts the empty token, so c12 never
+     # reports `failed`: the replay dies on the harness gate (10 s) before it
+     # can reach the oracle comparison — same kill shape as `credentials-fallback`.
+     REPLAY, '#1328 weixin harness gate did not resolve'),
 ]
 
 
