@@ -48,4 +48,4 @@ python3 -B src/pilotdeck-gateway/tests/fixtures/session-factory/append-delta/neg
 
 基准 `non_metadata_append_benchmark` 分事件和 n=256/512/1024 输出，不以耗时判 CI；所有输出另外与完整 replay 核对。原有 `projection_cache_append_benchmark` metadata 基准保留。TS 重生成守卫为 `append_delta_regenerates_identically`；tail 另复用原有 `runtime::turn::runner::tail::tests::regenerates_identically`。
 
-负控在交付提交后运行 `negative_controls.py <独占OUT>`。执行器先逐项验证锚点、应用变异并 no-run 编译，再跑正控/负控/还原正控，最后汇总 KILLED/SURVIVED/INVALID；任何非 KILLED 均非零退出。`mutating_sources` 覆盖产品与判据输入，来源不等于 HEAD 必须拒绝。未提交交付在沙箱只能做静态锚点核验，编译和判杀交协调者宿主，不更换 baseline、不建影子仓库。整组可能超过 20 分钟；用 `negative_controls.py <独占OUT> --only <变异名>` 跑单样本。本轮共 33 项；`.mts` 项的 no-run 只编译 Rust 测试载体，TS 语法/运行错误由测试执行阶段判 INVALID，不能称为 TS 编译通过。
+负控在交付提交后运行 `negative_controls.py <独占OUT>`。执行器先逐项验证锚点、应用变异并 no-run 编译，再跑正控/负控/还原正控，最后汇总 KILLED/SURVIVED/INVALID；任何非 KILLED 均非零退出。`mutating_sources` 覆盖产品与判据输入，来源默认必须是 HEAD；置于 `PDRS_NEGATIVE_BASELINE` 的沙箱候选快照可作为受支持的例外（与本目录其它 runner 一致，见上级 README），不建影子仓库。未提交交付在沙箱只能做静态锚点核验，编译和判杀交协调者宿主。整组可能超过 20 分钟；用 `negative_controls.py <独占OUT> --only <变异名>` 跑单样本。本轮共 33 项；`.mts` 项的 no-run 只编译 Rust 测试载体，TS 语法/运行错误由测试执行阶段判 INVALID，不能称为 TS 编译通过。

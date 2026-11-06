@@ -357,24 +357,31 @@ compile_switches = {
 
 def audit():
     rows = []
-    bodies = {drop_tests, factory_tests, lease_tests}
-    sources = {path.read_text() for path in bodies}
+    # #1406 review: bind each test to the one file that declares its module
+    # (handle.rs / factory_tests.rs / catalog_lease_tests.rs may all carry a
+    # same-named short function). The prefixes were already defined above but
+    # were never used to pick the body.
+    modules = ((drop_prefix, drop_tests), (factory_prefix, factory_tests), (lease_prefix, lease_tests))
+    sources = {path: path.read_text() for _, path in modules}
     for name, path, old, new, scope, test, assertion in cases:
         try:
             original = path.read_text()
             changed = mutate(original, scope, [(old, new)])
             if changed == original:
                 raise ValueError('mutation leaves source unchanged')
-            body = next((text for text in sources
-                         if ('fn ' + test.rsplit('::', 1)[1] + '(') in text
-                         or (test.rsplit('::', 1)[1] + ' =>') in text), None)
-            if body is None:
+            matched = next(((prefix, file) for prefix, file in modules
+                            if test.startswith(prefix)), None)
+            if matched is None:
+                raise ValueError('bound test module not audited: ' + test)
+            prefix, file = matched
+            test_name = test[len(prefix):]
+            if '::' in test_name:
+                raise ValueError('bound test has an extra module level: ' + test)
+            body = sources[file]
+            if ('fn ' + test_name + '(') not in body and (test_name + ' =>') not in body:
                 raise ValueError('bound test not found: ' + test)
-            test_name = test.rsplit('::', 1)[1]
             if not test_name.endswith('regenerates_identically'):
-                literals = [piece.split('"')[0] for piece in
-                            next(t for t in sources if f'fn {test_name}(' in t)
-                            .split('"#')[1:]]
+                literals = [piece.split('"')[0] for piece in body.split('"#')[1:]]
                 anchors = assertion if isinstance(assertion, list) else [assertion]
                 if not any(any(literal in anchor or anchor.startswith(literal)
                                for literal in literals) for anchor in anchors):
