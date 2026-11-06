@@ -35,6 +35,14 @@ fn weixin_key() -> ChannelKey {
     ChannelKey::new("weixin")
 }
 
+/// The `ChannelAdapterBundle` keys this assembly actually constructs (#1694
+/// §7): exactly the managed weixin key today. `crate::channel::loader::
+/// reject_unimplemented_bundle_channels` refuses any *other* enabled bundle
+/// key — `feishu` until #1329 lands — instead of letting the native process
+/// start with a channel that would never be built. An A8.3 bundle unit adds
+/// its key here in the same change that adds its construction.
+pub const IMPLEMENTED_BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin"];
+
 /// A satisfied close host: the native embedding drains its WS server before
 /// the host cleanup closes the channel server, so there is no gateway-WS
 /// close left to order behind the channel stops. The real WS shutdown
