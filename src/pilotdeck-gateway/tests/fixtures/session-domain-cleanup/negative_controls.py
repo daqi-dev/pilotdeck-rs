@@ -52,7 +52,7 @@ sys.pycache_prefix = _PYCACHE_ROOT
 atexit.register(shutil.rmtree, _PYCACHE_ROOT, ignore_errors=True)
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import KILL_TIMEOUT, mutating_sources, run_owned, wait_for_slot
 from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -70,6 +70,10 @@ CONTROLS_SOURCE = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 CT_EXIT = "        return common.aggregate_status(report['status'])[1]\n"
 CT_MAIN = "def main():\n"
 COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
+# #892 fix-r15: a second audited file, so the cross-file registry key and the
+# exit-call enumeration are exercised where the real ``rel`` is not the fixture
+# itself.
+GUARD_SOURCE = ROOT / 'scripts/gateway-parity/_guard.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
 
@@ -983,6 +987,49 @@ def _unregistered_publish(rows):
     return True, 'ok'
 
 
+def _unregistered_point(rows, function, marker, detail):
+    """#892 r15: an unregistered point naming *function* and *marker*."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('unregistered aggregation point' in failure
+               and failure.rstrip().endswith(f'{function} markers=[{marker!r}]')
+               for failure in failures):
+        return False, (f'failures={failures!r}, want the unregistered {function} '
+                       f'point with markers=[{marker!r}]')
+    return True, detail
+
+
+def calibrate_augassign_cross_file_call(rows):
+    """#892 r15: the ``|=`` payload call resolved by bare name, so a local
+    ``run_all`` in another file inherited the registration (GLM boundary r14
+    P1-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'write-status',
+        'aggregation-audit: cross-file |= payload enumeration flagged, passed=False')
+
+
+def calibrate_exit_call_unregistered(rows):
+    """#892 r15: an exit call is a status/exit computation of its own, so a
+    point whose only evidence is ``sys.exit(...)`` must be enumerated (MiniMax
+    sibling r14 P2-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'exit-call-status',
+        'aggregation-audit: exit-call enumeration flagged, passed=False')
+
+
+def calibrate_tuple_status_target(rows):
+    """#892 r15: a tuple target writes the same status slot as the plain
+    subscript form (MiniMax simplify r14 P2-2)."""
+    return _unregistered_point(
+        rows, 'publish', 'assign-status',
+        'aggregation-audit: tuple-target status enumeration flagged, passed=False')
+
+
 def calibrate_delegated_attribute(rows):
     """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
     an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
@@ -1710,6 +1757,35 @@ MUTATIONS = [
      "    report |= payload\n"
      "    return report\n"
      "def run_all(output, source=None):"),
+    # #892 fix-r15 (GLM boundary r14 P1-1): the ``|=`` enumeration dropped
+    # *module*/*rel*, so the payload call fell back to the name-only registry
+    # and a local ``run_all`` in another file was trusted by name.
+    ('calibrate-augassign-cross-file-call', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def run_all(rows):\n"
+     "    return rows[0]\n\n"
+     "def publish(report, rows):\n"
+     "    report |= run_all(rows)\n"
+     "    return report\n\n"
+     "def _failure(error, policy, common):"),
+    # #892 fix-r15 (MiniMax sibling r14 P2-1): the raise family enumerated a
+    # status payload (``raise-exit-status``) while the exit-call family
+    # enumerated nothing, so this point never reached the registration check.
+    ('calibrate-exit-call-unregistered', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def publish(report):\n"
+     "    print(report)\n"
+     "    sys.exit('BLOCKED')\n\n"
+     "def _failure(error, policy, common):"),
+    # #892 fix-r15 (MiniMax simplify r14 P2-2): the enumeration only knew the
+    # plain subscript target, so the tuple spelling wrote the same slot unseen.
+    ('calibrate-tuple-status-target', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def publish(rows):\n"
+     "    report = {'cases': rows}\n"
+     "    report['status'], code = 'PASS', 0\n"
+     "    return report\n\n"
+     "def _failure(error, policy, common):"),
 ]
 
 JUDGES = {
@@ -1973,6 +2049,12 @@ JUDGES = {
         'aggregation-audit', calibrate_partial_raise_point, False, ()),
     'calibrate-param-augassign-opaque': (
         'aggregation-audit', calibrate_param_augassign_opaque, False, ()),
+    'calibrate-augassign-cross-file-call': (
+        'aggregation-audit', calibrate_augassign_cross_file_call, False, ()),
+    'calibrate-exit-call-unregistered': (
+        'aggregation-audit', calibrate_exit_call_unregistered, False, ()),
+    'calibrate-tuple-status-target': (
+        'aggregation-audit', calibrate_tuple_status_target, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
@@ -2048,7 +2130,10 @@ def read_summary(case):
 # Measured full batch: 160 s.
 LEASE_BUDGET_SECONDS = 900
 CHECK_TIMEOUT_SECONDS = 180
-KILL_GRACE_SECONDS = 10  # negative_process.KILL_TIMEOUT
+# Imported rather than restated: the reserve below is only correct while this
+# number equals the upstream kill grace, and a copy drifts silently (MiniMax
+# boundary r14 P2-2 / simplify r14 P2-4).
+KILL_GRACE_SECONDS = KILL_TIMEOUT
 # Per-check overhead the reserve has to absorb besides the timeout: the kill
 # grace is charged twice by ``negative_process._collect`` (``communicate`` then
 # ``wait``), so one check can hold the lease for ``timeout + 2 * grace``; the

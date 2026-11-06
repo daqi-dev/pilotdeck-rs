@@ -990,6 +990,14 @@ def _has_passed_aggregate(node):
 
 
 def _is_status_target(target):
+    if isinstance(target, (ast.Tuple, ast.List)):
+        # ``report['status'], code = 'PASS', 0`` writes the same slot as the
+        # plain subscript form one element at a time, and the slot layer has
+        # expanded tuple targets since fix-r9; the enumeration did not, so the
+        # writing function was never enumerated and never audited (MiniMax
+        # simplify r14 P2-2).  Element order does not matter here: the payload
+        # is judged by presence of status evidence, not by position.
+        return any(_is_status_target(element) for element in target.elts)
     if isinstance(target, ast.Name):
         # Only the ``status`` variable: ``verdict = ...`` is an ordinary local
         # name in several per-case helpers, not a batch status key.
@@ -2475,7 +2483,10 @@ def _augassign_on_summary(node, bound, bindings, parameters=frozenset(),
     if _status_literals(node.value):
         return True
     if known:
-        return not _proven_summary_source(node.value, bindings)
+        # The call payload is resolved like every other delegation judgement:
+        # dropping *module*/*rel* here fell back to the name-only registry and
+        # trusted any local ``run_all`` in any file (GLM boundary r14 P1-1).
+        return not _proven_summary_source(node.value, bindings, module, rel)
     # A plain local receiver that is not a summary (``owned |= children``) is a
     # set union, not a summary write.  A *parameter* receiver has no such
     # excuse: an opaque payload may be a summary exactly like the literal form
@@ -2483,7 +2494,7 @@ def _augassign_on_summary(node, bound, bindings, parameters=frozenset(),
     # P1-3).  A set-union helper taking the accumulator as a parameter would
     # now be reported; that boundary is listed in the README.
     return node.target.id in parameters and not _proven_summary_source(
-        node.value, bindings)
+        node.value, bindings, module, rel)
 
 
 def _has_exit_path(function):
@@ -2518,6 +2529,15 @@ def aggregation_markers(function, module=None, rel=None):
                                       for _lineno, value in items)}
     parameters = _parameter_names(function)
     for node in ast.walk(function):
+        if isinstance(node, ast.Call) and _is_exit_call(node):
+            # ``sys.exit(0)`` / ``sys.exit('BLOCKED')`` / ``quit(...)``: the
+            # raise family already enumerates ``raise SystemExit(...)``
+            # (``raise-exit-status``), the call family did not, so an
+            # unregistered point whose only evidence is an exit call stayed
+            # invisible to the audit (MiniMax sibling r14 P2-1).  Every exit
+            # call is an exit-code computation of its own, so the enumeration
+            # does not require a status word in the argument.
+            markers.add('exit-call-status')
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             value = node.value
@@ -3022,7 +3042,17 @@ def aggregation_audit():
         "    report |= {'status': 'PASS'}\n"
         "    return report\n"
         "def _raising_only(report):\n"
-        "    raise ValueError('bad')\n")
+        "    raise ValueError('bad')\n"
+        "def _exit_call_status(report):\n"
+        "    print(report)\n"
+        "    sys.exit('BLOCKED')\n"
+        "def _os_exit_zero(report):\n"
+        "    print(report)\n"
+        "    os._exit(0)\n"
+        "def _tuple_slot_write(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    report['status'], code = 'PASS', 0\n"
+        "    return report\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -3308,6 +3338,23 @@ def aggregation_audit():
                                               probe_modules)):
         failures.append('#892 aggregation-audit: detector self-test reported a point '
                         'that raises (a propagating error is not an optimistic exit)')
+    # #892 r15: the exit call is the call-family sibling of ``raise
+    # SystemExit(...)`` and must enumerate on its own, and a tuple target
+    # writes the same status slot as the plain subscript form.
+    for probe_name, marker, message in (
+            ('_exit_call_status', 'exit-call-status',
+             'a function whose only exit evidence is sys.exit(<status>)'),
+            ('_os_exit_zero', 'exit-call-status',
+             'a function whose only exit evidence is os._exit(0)')):
+        probe = probe892_found.get(('<self-test-892>', probe_name))
+        if not probe or marker not in probe[0]:
+            failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
+                            f'{message}')
+    tuple_slot = probe892_found.get(('<self-test-892>', '_tuple_slot_write'))
+    if (not tuple_slot or 'assign-status' not in tuple_slot[0]
+            or not unshared_status_slots(tuple_slot[1])):
+        failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
+                        'tuple-target status write')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,
