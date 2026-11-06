@@ -255,8 +255,8 @@ impl Clone for ReplacementCoordinator {
     # moved the A4 line to stdout, so this control now pins the native
     # stderr regex (the A4 twin is a4-readiness-address-port above).
     ('readiness-address-port', PROCESS,
-     r'native listening (\S+:\d+)[^\n]*\n',
-     r'native listening (\d+)[^\n]*\n',
+     r'(?:^|\n)native listening (\S+:\d+)\r?\n',
+     r'(?:^|\n)native listening (\S+):\d+\r?\n',
      'executable_native_and_a4', '#1071 executable readiness address carries a port'),
     ('signal-exit-status', SOURCE,
      'server.run(stop, options.drain_budget).await',
