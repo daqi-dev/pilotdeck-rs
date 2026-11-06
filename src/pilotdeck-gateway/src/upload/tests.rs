@@ -1174,17 +1174,16 @@ fn upload_lease_link_of_a_swapped_attachment_is_rejected() {
 }
 
 /// #1494 (review deepseek boundary#1): the swap window can also put a
-/// *symlink* at the source spelling. `hard_link` does not follow a symlink
-/// source on Linux (`linkat(..., 0)`), so the lease entry there would be the
-/// link itself; `fs::metadata` followed it and compared the target's identity,
-/// which is the swap's alibi. The invariant asserted here is what matters on
-/// every Unix: whatever sits at the lease path is the approved regular file —
-/// a link is refused, and a platform whose `link()` follows (macOS) ends up
-/// with a hard link of the same inode, which passes.
+/// *symlink* at the source spelling. `std::fs::hard_link` does not follow a
+/// symlink source on any shipping Unix (`linkat(..., 0)` on macOS as well as
+/// Linux, measured 2026-11-06: `symlink_metadata(dest)` reports a symlink
+/// after `hard_link(link, dest)`), so the lease entry would be the link
+/// itself; `fs::metadata` followed it and compared the target's identity,
+/// which is the swap's alibi. The entry is therefore refused outright: a link
+/// is never a lease entry.
 #[cfg(unix)]
 #[test]
 fn upload_lease_link_never_pins_a_symlink_source() {
-    use std::os::unix::fs::MetadataExt;
     let scratch = Scratch::new();
     let project = scratch.dir("p");
     let h = golden_store(&project);
@@ -1194,8 +1193,6 @@ fn upload_lease_link_never_pins_a_symlink_source() {
         .verify_attachment("upload-1", "project", None)
         .unwrap();
     let source = PathBuf::from(string(&verified[0], "path").unwrap());
-    let approved = fs::metadata(&source).unwrap();
-    let approved_identity = (approved.dev(), approved.ino());
     let moved = project.join("moved-approved.bin");
     let fired = Arc::new(AtomicBool::new(false));
     let swap = {
@@ -1227,21 +1224,13 @@ fn upload_lease_link_never_pins_a_symlink_source() {
             (
                 "ATTACHMENT_TAMPERED",
                 "Attachment artifact changed between verification and lease acquisition."
-            )
+            ),
+            "#1494 the lease entry must be a regular file, never a link"
         ),
-        Ok(lease) => {
-            let pinned = PathBuf::from(string(&lease.attachments[0], "path").unwrap());
-            let meta = fs::symlink_metadata(&pinned).unwrap();
-            assert!(
-                meta.file_type().is_file(),
-                "#1494 the lease entry must be a regular file, never a link"
-            );
-            assert_eq!(
-                (meta.dev(), meta.ino()),
-                approved_identity,
-                "#1494 the lease entry must be the approved inode"
-            );
-        }
+        Ok(lease) => panic!(
+            "#1494 the lease entry must be a regular file, never a link (leased {})",
+            string(&lease.attachments[0], "path").unwrap()
+        ),
     }
 }
 

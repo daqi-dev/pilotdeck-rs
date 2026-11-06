@@ -25,6 +25,15 @@ pre-fix pre-open path spelling check, must each turn its named TOCTOU test
 red; the pre-open identity row drops the identity term; and the approved-stat
 row restores the follow-the-link sample, which lets a link planted before the
 approved stat become the approved object.
+
+The lease-link rows pin the lease hard link: one drops the identity
+comparison, the other restores the follow-the-link sample of the linked
+entry. Both are killable on every Unix: ``std::fs::hard_link`` does not follow
+a symlink source (``linkat(..., 0)`` on macOS as well as Linux), so the
+lease entry is the link itself and the follow-the-link sample accepts it.
+Measured 2026-11-06: after ``fs::hard_link(link, dest)``,
+``fs::symlink_metadata(dest)`` reports a symlink; Python's ``os.link`` is the
+one that follows, which is why the fixture does not use it.
 """
 import difflib
 import hashlib
@@ -57,6 +66,7 @@ READ_AT_RENAME = ('upload::tests::upload_read_at_record_renamed_after_open_is_re
 READ_AT_PREAPPROVED = (
     'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
 LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
+LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_source'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -299,7 +309,7 @@ mutations = [
     ('lease-link-follows-symlink-source', STORE,
      '    match (fs::symlink_metadata(destination), expected) {',
      '    match (fs::metadata(destination), expected) {',
-     'upload::tests::upload_lease_link_never_pins_a_symlink_source',
+     LEASE_LINK_SYMLINK,
      '#1494 the lease entry must be a regular file, never a link'),
 ]
 

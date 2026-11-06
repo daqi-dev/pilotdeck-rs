@@ -1144,19 +1144,18 @@ fn attachment_identity(_metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
 /// approved, not whatever the source path names after that check.
 ///
 /// The check must look at what actually got linked, so it uses
-/// `symlink_metadata`: `hard_link` does not follow a symlink source on Linux
-/// (`linkat(..., 0)`), and a source swapped for a link would then put the
-/// *link* into the lease. `metadata` would follow it and compare the target's
-/// identity — exactly the alibi the swap needs (review deepseek boundary#1).
-/// macOS `link()` does follow, so the entry there is a hard link of the
-/// approved inode and passes; either way the invariant is "the lease entry is
-/// the approved regular file", which is what this compares.
+/// `symlink_metadata`: `std::fs::hard_link` does not follow a symlink source on
+/// any shipping Unix — it goes through `linkat(..., 0)` on macOS as well as on
+/// Linux — so a source swapped for a link puts the *link* into the lease.
+/// `metadata` would follow it and compare the target's identity — exactly the
+/// alibi the swap needs (review deepseek boundary#1). Measured on macOS
+/// 2026-11-06: after `fs::hard_link(link, dest)`, `fs::symlink_metadata(dest)`
+/// reports a symlink; Python's `os.link` is the one that follows.
 #[cfg(unix)]
 fn lease_link_matches(destination: &Path, expected: Option<AttachmentIdentity>) -> bool {
-    use std::os::unix::fs::MetadataExt;
     match (fs::symlink_metadata(destination), expected) {
-        (Ok(linked), Some((dev, ino))) => {
-            linked.file_type().is_file() && linked.dev() == dev && linked.ino() == ino
+        (Ok(linked), Some(want)) => {
+            linked.file_type().is_file() && attachment_identity(&linked) == Some(want)
         }
         _ => false,
     }

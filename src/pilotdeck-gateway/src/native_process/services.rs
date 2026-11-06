@@ -558,8 +558,9 @@ pub(super) fn handle_bound_to_upload_areas(
 /// lease object — or `None` when there is none to accept. `None` covers both
 /// the ordinary "no uploads yet" case and the adversarial one: a
 /// `.tmp/chat-uploads` that resolves outside the project is not a home at
-/// all. The containment decision lives in this one function so it can be
-/// tested (and mutation-killed) without a live handle path; its unit test is
+/// all. The decision itself lives in `canonical_home` (shared with the lease
+/// root) so it can be tested (and mutation-killed) without a live handle
+/// path; the store-side unit test is
 /// `upload_store_root_outside_the_project_is_not_a_home`.
 pub(super) fn canonical_upload_store(project_canon: &Path) -> Option<PathBuf> {
     canonical_home(
