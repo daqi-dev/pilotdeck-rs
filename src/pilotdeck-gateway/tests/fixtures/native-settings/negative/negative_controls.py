@@ -66,6 +66,10 @@ out.mkdir(parents=True, exist_ok=False)
 METHODS_SETTINGS = 'src/pilotdeck-gateway/src/native_process/methods/settings.rs'
 SERVICES = 'src/pilotdeck-gateway/src/native_process/services.rs'
 REFRESH = 'src/pilotdeck-gateway/src/runtime/refresh.rs'
+# #1320 fix-r2 F10 moved the six-name single source here; `methods/settings.rs`
+# now only re-exports it, so the registry-table mutation must anchor on the
+# component's list or the run aborts on an expired anchor.
+GATEWAY = 'src/pilotdeck-gateway/src/runtime/settings/gateway.rs'
 REGISTRY = 'native_process::methods::tests::registry_matches_current_methods'
 REPLAY = 'native_process::settings_tests::native_settings_replays_the_real_ts_oracle'
 RECONNECT = 'native_process::settings_tests::resolve_settings_generation_across_reconnect'
@@ -76,7 +80,7 @@ ORDER = 'native_process::settings_tests::reload_config_dirty_then_broadcast_orde
 # owns the struct field and its initialization). The kill marker must appear
 # inside that test's own panic payload.
 mutations = [
-    ('miss-wire-reload-extensions', METHODS_SETTINGS,
+    ('miss-wire-reload-extensions', GATEWAY,
      '    "reload_config",\n'
      '    "reload_extensions",\n'
      '];',
