@@ -28,6 +28,11 @@ half of that pin:
     assertion half is covered by the next control), so the name-set
     comparison still passes while the named ID has no independent control and
     the other ID's mutation runs twice;
+  - unordered-close-content-old-retargeted / -new-retargeted: one field per
+    control, the row's anchor or its mutant value alone moves to another
+    registered ID. The combined control above changes both at once, so it
+    cannot show the two halves of the per-ID content comparison are checked
+    independently; a comparison that dropped either half stayed green;
   - unordered-close-path-retargeted: only the row's path moves off the shared
     replay harness, so the anchor, the mutant value, the test and the
     assertion all still match and only the path half of the comparison can
@@ -73,13 +78,17 @@ the source lock — the #1145 full runner holds it for its whole 75-case run —
 gives up after a short probe rather than the 900 s default, and an abort of
 any kind (busy lock, failed restore, Ctrl-C) still writes the summary, with
 every recorded KILLED row revoked and every unrun control marked INVALID
-(#1508). An abort exits 2 and a red run exits 1, matching the sibling
-devices: 1 means the device worked and a control survived, 2 means the
-device never produced a verdict. The summary is published temp-file-then-
-rename, so an interrupt during that write leaves no summary at all rather
-than a half-written one. Because mutating_sources proves the tree equals HEAD,
-this must run after the #1382 patch is committed; a pre-commit working tree is
-refused on purpose.
+(#1508). Exit codes follow `cli-parity-lock-bounded` (#1064 fix-r2 P1-1):
+2 means the device never produced a verdict — an INVALID row (stale anchor,
+unparsable mutant, unproven restore) or an abort of any kind — and 1 is
+reserved for "the device ran and a control survived". The two must not share
+a code, or a coordinator reads "the device never ran" as "a control
+survived". This is this device's contract, not every sibling's: the shared
+`negative_suite` runner keeps 1 for its pre-guard lock rejections. The
+summary is published temp-file-then-rename, so an interrupt during that
+write leaves no summary at all rather than a half-written one. Because
+mutating_sources proves the tree equals HEAD, this must run after the #1382
+patch is committed; a pre-commit working tree is refused on purpose.
 
 Usage:
   CARGO_TARGET_DIR=<dir> python3 -I negative_controls.py <new-output-dir> [name ...]
@@ -119,7 +128,7 @@ d1_ledger = root / d1_ledger_relative
 # row used to shrink coverage with every remaining check green. Raising this
 # number is the deliberate friction: adding or removing a row must re-register
 # the total in the same edit.
-EXPECTED_TOTAL = 14
+EXPECTED_TOTAL = 16
 # (name, path, before, after, expected fragment of the dedicated failure)
 mutations = [
     (
@@ -150,6 +159,27 @@ mutations = [
         catalog_relative,
         "'\\n    \"run--query-resume-hold-sigint\",\\n', '\\n    \"run--query-resume-hold-sigint-unregistered\",\\n'",
         "'\\n    \"run--second-sigint\",\\n', '\\n    \"run--second-sigint-unregistered\",\\n'",
+        "wrong content: run--query-resume-hold-sigint",
+    ),
+    # #1507 fix-r2: `content-retargeted` moves the anchor *and* the mutant
+    # value together, so it cannot tell "old is compared" from "new is
+    # compared" — degrading `old != ...` or `new != ...` in the per-ID
+    # binding comparison left every other control green (the stale-anchor
+    # loop only counts `old`, and a sibling's anchor also occurs exactly
+    # once). One field per control, same shape as the boundary retargeting
+    # rows below.
+    (
+        "unordered-close-content-old-retargeted",
+        catalog_relative,
+        "'\\n    \"run--query-resume-hold-sigint\",\\n', '\\n    \"run--query-resume-hold-sigint-unregistered\",\\n'",
+        "'\\n    \"run--second-sigint\",\\n', '\\n    \"run--query-resume-hold-sigint-unregistered\",\\n'",
+        "wrong content: run--query-resume-hold-sigint",
+    ),
+    (
+        "unordered-close-content-new-retargeted",
+        catalog_relative,
+        "'\\n    \"run--query-resume-hold-sigint\",\\n', '\\n    \"run--query-resume-hold-sigint-unregistered\",\\n'",
+        "'\\n    \"run--query-resume-hold-sigint\",\\n', '\\n    \"run--second-sigint-unregistered\",\\n'",
         "wrong content: run--query-resume-hold-sigint",
     ),
     (
@@ -438,9 +468,24 @@ except BaseException as error:
     # A run that could not restore and verify the tree invalidates every row it
     # already recorded (#979 P0: a green row over an unverified tree is a false
     # pass), and every control that never ran is still accounted for.
-    invalidate_completed(results, f"run aborted: {aborted}")
-    for row in mutations[len(results):]:
-        record(row[0], "INVALID", f"run aborted: {aborted}", False)
+    #
+    # #1508 fix-r2: the accounting itself can be interrupted. `record()` prints
+    # as it goes, so a consumer that closed stdout (`... | head`) turns the
+    # tail into a BrokenPipeError, and a second SIGINT lands here too. Escaping
+    # from an except handler skips the summary and exits on whatever code the
+    # interpreter picked, which is exactly the misrouting this contract exists
+    # to prevent — fail closed instead: no summary, rc 2.
+    try:
+        invalidate_completed(results, f"run aborted: {aborted}")
+        for row in mutations[len(results):]:
+            record(row[0], "INVALID", f"run aborted: {aborted}", False)
+    except BaseException as nested:
+        print(
+            f"#1382 abort accounting failed: {type(nested).__name__}: {nested}",
+            file=sys.stderr,
+            flush=True,
+        )
+        os._exit(2)
 
 # #1506 fix-r3: an empty run is a zero denominator, never a pass, and it must
 # not publish evidence that looks like a finished run. The table guard above
@@ -454,7 +499,7 @@ counts = {
 }
 # #1506: the guard verified the whole registry, but `results` only holds the
 # rows the command line selected. Record both, so a later reader can tell
-# "14 registered, 3 selected" from "the table shrank to 3". `registered` is the
+# "16 registered, 3 selected" from "the table shrank to 3". `registered` is the
 # name list itself, not just its length: a table swapped for the same number of
 # different names keeps the count and the uniqueness check green, and only the
 # names show it.
@@ -473,19 +518,43 @@ summary = {
 # all, and a missing summary is the fail-closed signal.
 summary_path = out / "summary.json"
 summary_tmp = out / "summary.json.tmp"
-summary_tmp.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-summary_tmp.replace(summary_path)
-print(
-    json.dumps(
-        {
-            "total": len(results),
-            "registeredTotal": len(REGISTERED),
-            "selectedTotal": len(results),
-            "counts": counts,
-        }
-    ),
-    flush=True,
-)
+try:
+    summary_tmp.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    summary_tmp.replace(summary_path)
+except BaseException as error:
+    # #1508 fix-r2: a second interrupt between the write and the rename, or any
+    # other publish failure, must not escape with an arbitrary exit code over a
+    # half-written file. Drop the temp file and fail closed: no summary means
+    # the device never produced a verdict, and rc 2 says so.
+    try:
+        summary_tmp.unlink()
+    except OSError:
+        pass
+    print(
+        f"#1382 summary not published: {type(error).__name__}: {error}",
+        file=sys.stderr,
+        flush=True,
+    )
+    os._exit(2)
+try:
+    print(
+        json.dumps(
+            {
+                "total": len(results),
+                "registeredTotal": len(REGISTERED),
+                "selectedTotal": len(results),
+                "counts": counts,
+            }
+        ),
+        flush=True,
+    )
+except BrokenPipeError:
+    # `... | head` closed stdout. The exit code routes the reader, not stdout,
+    # so swallow the pipe error rather than let it decide the status.
+    try:
+        sys.stdout.close()
+    except OSError:
+        pass
 if aborted is not None:
     # #1508 fix-r1: an aborted run is rc 2, not 1 — the sibling devices
     # (`cli-parity-lock-bounded`, `issue-297`) reserve 1 for "a control ran and
@@ -496,6 +565,17 @@ if aborted is not None:
     # survived".
     print(f"#1382 run did not complete: {aborted}", file=sys.stderr, flush=True)
     sys.exit(2)
-not_killed = [row["mutation"] for row in results if row["status"] != "KILLED"]
-if not_killed:
-    sys.exit(f"#1382 non-KILLED controls: {not_killed}")
+# #1508 fix-r2: the contract above only held for the abort path. A normal run
+# that recorded an INVALID row fell through to here and exited 1 — the same
+# code as "the device ran and a control survived" — so a coordinator read a
+# broken apparatus as a live control that escaped (#1064 fix-r2 P1-1 shape).
+# INVALID means the device produced no verdict: rc 2. SURVIVED alone is rc 1.
+invalid = [row["mutation"] for row in results if row["status"] == "INVALID"]
+survived = [row["mutation"] for row in results if row["status"] == "SURVIVED"]
+if invalid:
+    print(f"#1382 INVALID controls: {invalid}", file=sys.stderr, flush=True)
+    if survived:
+        print(f"#1382 SURVIVED controls: {survived}", file=sys.stderr, flush=True)
+    sys.exit(2)
+if survived:
+    sys.exit(f"#1382 SURVIVED controls: {survived}")
