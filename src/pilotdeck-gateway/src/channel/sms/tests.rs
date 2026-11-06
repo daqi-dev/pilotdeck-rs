@@ -385,6 +385,11 @@ fn recorded_checked<'a, T>(
 /// recorder writes as `?? true` and therefore never records as `null`: routing
 /// it through the same helper keeps a hand-edited oracle from making one field
 /// treat `null` differently from its siblings.
+///
+/// #1879: the same helper now carries the `?? {}` / `?? []` / `?? 0` /
+/// `?? "no reason"` / `=== true` / falsy fields listed below in
+/// `OLD_NULL_REJECTING_FIELDS`, so every recorded read that has a TS default
+/// spells absence the same way (16 read sites at the time of writing).
 fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     let present = value.get(field);
     // #1813 negative control: the switch restores the old reads, in which
@@ -406,9 +411,12 @@ fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
 /// The recorder writes `?? {}` / `?? []` / `?? 0` / `?? "no reason"` /
 /// `=== true` / a falsy check for them, so absence spelled as `null` must not
 /// become a type error on one field only. Names match the JSON key the selected
-/// object carries at the read site — every one of them is unique in the sms
-/// fixture today, so the switch still restores exactly one behaviour per field.
-const OLD_NULL_REJECTING_FIELDS: [&str; 10] = [
+/// object carries at the read site — each name has exactly one `recorded_present`
+/// call site today, so the switch still restores exactly one behaviour per
+/// field. (`gate` is also read directly by the `release` replay arm, which does
+/// not go through `recorded_present`; keep it that way, or the shared switch
+/// would flip two behaviours at once.)
+const OLD_NULL_REJECTING_FIELDS: [&str; 11] = [
     "env",
     "sendFailAt",
     "gate",
@@ -419,6 +427,7 @@ const OLD_NULL_REJECTING_FIELDS: [&str; 10] = [
     "halfClose",
     "headers",
     "reason",
+    "extra",
 ];
 
 /// #1813: every sentinel-bearing field must read explicit `null` the same way.
@@ -1497,6 +1506,13 @@ fn recorded_stop_reason(value: &Value) -> Option<&str> {
     recorded_stop_reason_checked(value).unwrap_or_else(|error| panic!("{error}"))
 }
 
+/// #1879: the stop replay arm's reason resolution, shared with the null test so
+/// a change to the default cannot slip past the assertion.
+fn replay_stop_reason(step: &Value) -> &str {
+    // TS `handle.stop(reason)` — an absent reason logs "no reason".
+    recorded_stop_reason(step).unwrap_or("no reason")
+}
+
 #[test]
 fn recorded_stop_reason_rejects_wrong_type() {
     crate::negative_assert!(
@@ -1619,7 +1635,10 @@ fn recorded_send_error_panics_on_wrong_type() {
 
 fn recorded_extra_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
-        value.get("extra"),
+        // #1879: `definition.extra ?? {}` (generate.mts:323 / :337) has the same
+        // signature as `env: definition.env ?? {}`, so an explicit `null` is
+        // absence here too.
+        recorded_present(value, "extra"),
         "extra",
         "an object",
         |value| value.is_object().then_some(value),
@@ -1644,6 +1663,14 @@ fn recorded_extra_rejects_wrong_type() {
 #[should_panic(expected = "#1339 extra must be an object")]
 fn recorded_extra_panics_on_wrong_type() {
     recorded_extra(&json!({"extra": []}));
+}
+
+#[test]
+fn recorded_extra_null_is_absence() {
+    crate::negative_assert!(
+        recorded_extra_checked(&json!({"extra": null})).is_ok_and(|value| value.is_none()),
+        "#1339 #1879 null extra is absence"
+    );
 }
 
 fn recorded_headers_checked(step: &Value) -> Result<Vec<(String, String)>, String> {
@@ -1973,7 +2000,7 @@ fn absent_recording_fields_keep_defaults() {
         "#1339 #1879 null headers sends the same bytes as an absent key"
     );
     assert_eq!(
-        recorded_stop_reason(&json!({"reason": null})).unwrap_or("no reason"),
+        replay_stop_reason(&json!({"reason": null})),
         "no reason",
         "#1339 #1879 null stop.reason replays as the default reason"
     );
@@ -2881,8 +2908,7 @@ async fn replay_named(name: &str) {
             }
             "settle" => settle().await,
             "stop" => {
-                // TS `handle.stop(reason)` — an absent reason logs "no reason".
-                let reason = recorded_stop_reason(step).unwrap_or("no reason");
+                let reason = replay_stop_reason(step);
                 bounded("stop", handle.stop(reason))
                     .await
                     .expect("#1339 stop");
