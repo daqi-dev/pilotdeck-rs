@@ -687,7 +687,7 @@
   },
   "node": "v22.22.0",
   "icu": "78.2",
-  "expectedCaseCount": 55,
+  "expectedCaseCount": 56,
   "cases": [
     {
       "name": "start-missing-config",
@@ -6138,6 +6138,69 @@
         "responses": [
           {
             "status": 400,
+            "contentType": null,
+            "body": ""
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "body-read-timeout",
+      "port": 18855,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18855,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": null,
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "method": "POST",
+          "path": "/sms/incoming",
+          "truncate": 56,
+          "stall": true
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18855/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [],
+        "rpcs": [],
+        "responses": [
+          {
+            "status": 408,
             "contentType": null,
             "body": ""
           }

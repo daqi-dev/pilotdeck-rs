@@ -50,6 +50,16 @@ const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: f64 = 8790.0;
 const DEFAULT_PATH: &str = "/sms/incoming";
 const MAX_BODY_BYTES: usize = 1_048_576;
+/// Node v22.22.0 `http.createServer`'s default `requestTimeout` (300 s): the
+/// bound on receiving a whole request from the client. The TS sms channel
+/// never overrides it (`SmsChannel.ts` has no `requestTimeout`/`setTimeout`),
+/// so a client that declares `Content-Length` and stops sending is answered
+/// with Node's 51-byte `408 Request Timeout` + `Connection: close` once this
+/// deadline expires (#1901). Like the webhook channel's copy, it bounds the
+/// body read only — the request head is already bounded by hyper's own
+/// header timeout, and a whole-handler deadline would turn the TS `null`-body
+/// hang (`A8.3-CH-SMS-007`) into a Rust divergence.
+const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const TWIML_OK: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
 
 /// `process.env` read through an injected lookup (the TS start reads the real
@@ -71,6 +81,11 @@ pub struct SmsChannelOptions {
     /// `require("twilio")`; `None` is the "twilio not installed" branch.
     pub twilio_factory: Option<TwilioFactory>,
     pub record_unhandled: Option<UnhandledRecorder>,
+    /// The body-read deadline, [`DEFAULT_REQUEST_TIMEOUT`] when unset. TS
+    /// exposes no such option (it is Node's server default, not a channel
+    /// option); the field is the Rust tests' injection point, like the
+    /// webhook channel's `request_timeout`.
+    pub request_timeout: Option<std::time::Duration>,
 }
 
 pub struct CronResultDelivery {
@@ -186,6 +201,9 @@ struct SmsShared {
     /// async runtime lock (which a `Drop` cannot take). Every access is a
     /// short synchronous section, never held across an `await`.
     permissions: PermissionState,
+    /// Node's server `requestTimeout`, applied to the webhook body read
+    /// (#1901). Immutable for the channel's lifetime, so no lock.
+    request_timeout: std::time::Duration,
 }
 
 impl SmsShared {
@@ -300,6 +318,7 @@ impl SmsChannel {
             env,
             twilio_factory,
             record_unhandled,
+            request_timeout,
         } = options;
         Self {
             key: ChannelKey::new("sms"),
@@ -322,6 +341,7 @@ impl SmsChannel {
                     public_url: JsString::from(""),
                 }),
                 permissions: Arc::new(StdMutex::new(ImPermissionHelper::default())),
+                request_timeout: request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
             }),
             inputs: StdMutex::new(SmsStartInputs {
                 extra,
@@ -721,6 +741,16 @@ fn plain_response(status: u16, body: &str) -> Response<Full<Bytes>> {
         .expect("#1339 static response parts")
 }
 
+/// [`plain_response`] / [`twiml_response`] carry a known length, so boxing
+/// them keeps Node's `content-length` framing (unlike
+/// `native_http::streamed`, which hyper frames chunked).
+fn sized(response: Response<Full<Bytes>>) -> Response<crate::Body> {
+    response.map(|body| {
+        body.map_err(|never: std::convert::Infallible| match never {})
+            .boxed()
+    })
+}
+
 fn twiml_response() -> Response<Full<Bytes>> {
     let body = if crate::mutants::on("sms-twiml-body") {
         "<Response/>"
@@ -737,7 +767,7 @@ fn twiml_response() -> Response<Full<Bytes>> {
 async fn handle_request(
     request: Request<Incoming>,
     shared: Arc<SmsShared>,
-) -> Result<Response<Full<Bytes>>, DestroyConnection> {
+) -> Result<Response<crate::Body>, DestroyConnection> {
     let (path, port, auth_token, host, public_url) = {
         let runtime = shared.runtime.lock().await;
         (
@@ -750,7 +780,7 @@ async fn handle_request(
     };
     let path_text = String::from_utf16_lossy(path.units());
     if request.uri().path() != path_text || request.method() != hyper::http::Method::POST {
-        return Ok(plain_response(404, "Not Found"));
+        return Ok(sized(plain_response(404, "Not Found")));
     }
 
     // Header reads happen before `into_body` consumes the request.
@@ -764,28 +794,49 @@ async fn handle_request(
         .get("x-twilio-signature")
         .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
         .unwrap_or_default();
-    let mut incoming = request.into_body();
-    let mut body: Vec<u8> = Vec::new();
-    let mut read_error: Option<String> = None;
-    loop {
-        match incoming.frame().await {
-            Some(Ok(frame)) => {
-                if let Ok(bytes) = frame.into_data() {
-                    body.extend_from_slice(&bytes);
-                    if body.len() > MAX_BODY_BYTES {
-                        // `reject(new Error("payload too large")); req.destroy()`
-                        // — the destroy wins, zero response bytes.
-                        return Err(DestroyConnection);
+    // #1901: Node's `requestTimeout` bounds receiving the whole request. The
+    // TS sms channel inherits the 300 s default from `http.createServer`, so a
+    // client that declares `Content-Length` and then stops sending is answered
+    // with `408 Request Timeout` + `Connection: close` instead of holding the
+    // connection task open forever.
+    let body_read = async move {
+        let mut incoming = request.into_body();
+        let mut body: Vec<u8> = Vec::new();
+        let mut read_error: Option<String> = None;
+        loop {
+            match incoming.frame().await {
+                Some(Ok(frame)) => {
+                    if let Ok(bytes) = frame.into_data() {
+                        body.extend_from_slice(&bytes);
+                        if body.len() > MAX_BODY_BYTES {
+                            // `reject(new Error("payload too large")); req.destroy()`
+                            // — the destroy wins, zero response bytes.
+                            return Err(DestroyConnection);
+                        }
                     }
                 }
+                Some(Err(error)) => {
+                    read_error = Some(error.to_string());
+                    break;
+                }
+                None => break,
             }
-            Some(Err(error)) => {
-                read_error = Some(error.to_string());
-                break;
-            }
-            None => break,
         }
-    }
+        Ok((body, read_error))
+    };
+    let (body, read_error) = if crate::mutants::on("sms-body-read-no-timeout") {
+        // The pre-fix behavior the negative control kills: no deadline on the
+        // body read, so a partial body holds the connection task forever.
+        body_read.await?
+    } else {
+        match tokio::time::timeout(shared.request_timeout, body_read).await {
+            Ok(result) => result?,
+            // The wire answer Node's `requestTimeoutResponse` writes: a 408
+            // with `Connection: close` and no body (shared with the webhook
+            // channel so the two lanes cannot drift).
+            Err(_) => return Ok(crate::channel::webhook::node_request_timeout_response()),
+        }
+    };
     if let Some(error) = read_error {
         // #1339 fix-r1: probed on the pinned Node v22.22.0
         // (probes/truncated-body.txt, 3/3 deterministic) — the handler's
@@ -797,7 +848,7 @@ async fn handle_request(
         } else {
             String::new()
         };
-        return Ok(plain_response(400, &body));
+        return Ok(sized(plain_response(400, &body)));
     }
 
     let params = if content_type.contains("application/json") {
@@ -822,7 +873,7 @@ async fn handle_request(
                 }
                 _ => JsObject::new(),
             },
-            Err(_) => return Ok(plain_response(400, "Bad Request")),
+            Err(_) => return Ok(sized(plain_response(400, "Bad Request"))),
         }
     } else {
         parse_form_urlencoded(&body)
@@ -852,7 +903,7 @@ async fn handle_request(
         && !validate_twilio_signature(&full_url, &params, &signature, &auth_token)
     {
         shared.log("warn", "sms: invalid Twilio signature".to_owned());
-        return Ok(plain_response(401, "Unauthorized"));
+        return Ok(sized(plain_response(401, "Unauthorized")));
     }
 
     // `params.Body ?? ""` / `params.From ?? ""` keep raw wire values.
@@ -866,7 +917,7 @@ async fn handle_request(
     let body_value = nullish_or("Body");
     let from_value = nullish_or("From");
 
-    let response = twiml_response();
+    let response = sized(twiml_response());
     if !truthy(&from_value) && !crate::mutants::on("sms-empty-from-dispatch") {
         return Ok(response);
     }
@@ -1574,6 +1625,7 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
                 })),
                 twilio_factory: None,
                 record_unhandled: None,
+                request_timeout: None,
             })) as Arc<dyn ChannelAdapter>)
         }),
     );
