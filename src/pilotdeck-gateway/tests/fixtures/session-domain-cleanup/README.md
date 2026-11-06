@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 252 mutants:
+`JUDGES`, keyed by the same names. The current table has 256 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -436,7 +436,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-match-capture-receiver`,
 `calibrate-match-capture-setattr-receiver`,
 `calibrate-getattribute-attr-spelling`,
-`calibrate-getattribute-name-spelling`, `calibrate-for-wrapped-container`.
+`calibrate-getattribute-name-spelling`, `calibrate-for-wrapped-container`,
+`calibrate-for-target-after-loop`, `calibrate-for-slice`,
+`calibrate-for-copy`, `calibrate-comp-result-receiver`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1151,3 +1153,16 @@ now does).  Separately, an alias chain of ~1,100 hops exhausts the Python
 recursion limit instead of resolving (codex's measurement, not independently
 reproduced here); the README's "bounded by the chain's own length" statement
 holds only below the interpreter's recursion limit.
+
+### Closed by `fix-r1` round 5 (GLM boundary r2)
+
+The fourth head left two iteration-position false PASSes, a container-relay
+false PASS and one false FAIL of the constant folding.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **Loop target used after the loop**: `for h in hs: pass` then `h('common', <stub>)` -- the target outlives the loop, so the use-point scan has to cover the statements that follow it in the same scope. | `calibrate-for-target-after-loop` |
+| **Narrow iteration-position decoding**: `for h in hs[:]` and `for h in hs.copy()` copy the container but hand out the same handles. The call and iteration positions now share one decoder. | `calibrate-for-slice` / `calibrate-for-copy` |
+| **Comprehension result container**: `_g = [h for h in (md,)]; _g[0].common = <stub>` -- the comprehension target is local, the list it builds is not; a relay comprehension's result carries the element roots. | `calibrate-comp-result-receiver` |
+| **Negative constant subscript (false FAIL)**: `keys = ('__doc__',); getattr(md, keys[-1])` -- a negative index is a position from the end, not an unknown name. The literal arrives as `UnaryOp(USub, Constant)`, so the fold decodes it before indexing. | self-test `negative_subscript_probe` |
+| Loop target read after the loop (false FAIL guard): `for h in hs: pass` then `print(h)` reads without writing. | self-test `iterated_after_read_probe` |
