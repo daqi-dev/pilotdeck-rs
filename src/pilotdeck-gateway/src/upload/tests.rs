@@ -1271,6 +1271,41 @@ fn upload_read_at_rejects_a_linked_tmp_ancestor() {
     );
 }
 
+/// #1888: the writer's half of the shared home guard. The lease root used to
+/// be joined straight off `projectKey` and created through whatever was there,
+/// so a linked root took the write while the read side refused it; the lease
+/// would be written and then answer not-found.
+#[cfg(unix)]
+#[test]
+fn upload_lease_root_link_is_refused() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let elsewhere = project.join("elsewhere-leases");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let root = project.join(".tmp/chat-upload-leases");
+    let _ = fs::remove_dir_all(&root);
+    std::os::unix::fs::symlink(&elsewhere, &root).expect("#1888 swap the lease root for a link");
+    let error = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .err()
+        .expect("#1888 the writer must not create through a linked lease root");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Attachment lease root is unavailable."
+        ),
+        "#1888 the writer must not create through a linked lease root"
+    );
+    assert!(
+        !elsewhere.join("upload-1").exists(),
+        "#1888 the writer must not create the lease under the link target"
+    );
+}
+
 #[test]
 fn upload_subscription_receives_updates_until_dropped() {
     let scratch = Scratch::new();

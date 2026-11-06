@@ -583,8 +583,11 @@ impl UploadStore {
     ) -> Result<UploadArtifactLease> {
         let (record, mut attachments, identities) =
             self.verified(upload_id, project_key, attachment_ids)?;
-        let dir = Path::new(&string(&record, "projectKey").unwrap_or_default())
-            .join(".tmp/chat-upload-leases")
+        // #1888: the record's `projectKey` is canonical (`verified` compared it
+        // with the resolved project), so the same spelling is the containment
+        // root. The root goes through the shared home guard, not a bare join.
+        let project = PathBuf::from(string(&record, "projectKey").unwrap_or_default());
+        let dir = prepare_lease_root(&project)?
             .join(upload_id)
             .join(random_id()?);
         // TS:262 reads the clock before mkdir.
@@ -1331,11 +1334,12 @@ fn attachment_integrity_failed(attachment: &UploadedAttachment) -> UploadError {
     )
 }
 
-/// #1468/#1887: the one guard both legitimate homes share — the lease root and
-/// the upload store. A root that is itself a symlink, even one pointing back
-/// into the project, is never a home: the lexical spelling stays accepted
-/// while every path under the link target becomes resolvable, which is the
-/// exact shape `read_at`'s lexical prefix check rejects.
+/// #1468/#1887/#1888: the one guard both legitimate homes share — the lease
+/// root and the upload store — and, since #1888, the writer's lease root too.
+/// A root that is itself a symlink, even one pointing back into the project,
+/// is never a home: the lexical spelling stays accepted while every path under
+/// the link target becomes resolvable, which is the exact shape `read_at`'s
+/// lexical prefix check rejects.
 ///
 /// #1887: the same holds for every *ancestor* between the project root and the
 /// root. A `.tmp` swapped for a link to another subtree of the same project
@@ -1384,6 +1388,43 @@ pub(crate) fn canonical_home(root: &Path, project: &Path, project_canon: &Path) 
         Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),
         _ => None,
     }
+}
+
+/// #1888: the lease root the writer creates under, through the same guard the
+/// read side uses. The writer used to join `record.projectKey` directly and
+/// `mkdir` whatever was there, so a `.tmp/chat-upload-leases` (or an ancestor
+/// `.tmp`) swapped for a link took the write into the link target while the
+/// read side refused the same root — the lease was written under a spelling
+/// the composer then answered not-found for.
+///
+/// Only the lease directory itself can be missing here: `verified` just read
+/// the record from `<project>/.tmp/chat-uploads`. A missing `.tmp` therefore
+/// means the root is not the one the record came from, and the guard refuses
+/// it rather than creating a tree outside it.
+fn prepare_lease_root(project: &Path) -> Result<PathBuf> {
+    let home = project.join(".tmp").join("chat-upload-leases");
+    if let Some(canonical) = canonical_home(&home, project, project) {
+        return Ok(canonical);
+    }
+    // Only now is a directory created, and `create_dir` never follows a link at
+    // the leaf (EEXIST), so a root swapped in after the check above is refused
+    // by the second pass instead of being written through.
+    if canonical_home(&project.join(".tmp"), project, project).is_none() {
+        return Err(lease_root_unavailable());
+    }
+    match fs::create_dir(&home) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(UploadError::io(e, "mkdir", Some(&home))),
+    }
+    canonical_home(&home, project, project).ok_or_else(lease_root_unavailable)
+}
+
+fn lease_root_unavailable() -> UploadError {
+    UploadError::dialog(
+        "PROJECT_PATH_FORBIDDEN",
+        "Attachment lease root is unavailable.",
+    )
 }
 
 /// The `(dev, inode)` pair recorded on the verified handle. Non-Unix has no
