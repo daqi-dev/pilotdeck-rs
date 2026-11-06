@@ -77,11 +77,63 @@ fn cell(id: &str) -> Cell {
                 closed: entry["closed"]
                     .as_bool()
                     .expect("#1350 oracle cell closed flag"),
-                half_close: entry["halfClose"].as_bool().unwrap_or(false),
+                half_close: recorded_half_close(entry),
             };
         }
     }
     panic!("#1350 cell {id} is missing from the committed oracle");
+}
+
+/// #1813: `halfClose` was the only key `cell` read through a default
+/// (`as_bool().unwrap_or(false)`); every sibling key panics on a missing or
+/// mistyped value. The approvals recorder always writes the flag
+/// (`generate.mts`: `halfClose: cell.halfClose === true`), so an absent key is
+/// recording drift, not "this cell did not half-close".
+fn recorded_half_close_checked(entry: &Value) -> Result<bool, String> {
+    // #1813 negative control: the switch restores exactly the old fail-open
+    // read (absent or mistyped becomes `false`).
+    if crate::mutants::on("approvals-oracle-recorded-half-close") {
+        return Ok(entry["halfClose"].as_bool().unwrap_or(false));
+    }
+    match entry.get("halfClose") {
+        None => Err("#1350 halfClose must be a boolean, got <missing>".to_owned()),
+        Some(value) => match value.as_bool() {
+            Some(parsed) => Ok(parsed),
+            None => Err(format!("#1350 halfClose must be a boolean, got {value}")),
+        },
+    }
+}
+
+fn recorded_half_close(entry: &Value) -> bool {
+    recorded_half_close_checked(entry).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_half_close_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_half_close_checked(&serde_json::json!({"halfClose": []})).is_err(),
+        "#1350 #1813 rejects halfClose type drift"
+    );
+}
+
+#[test]
+fn recorded_half_close_rejects_absence() {
+    crate::negative_assert!(
+        recorded_half_close_checked(&serde_json::json!({})).is_err(),
+        "#1350 #1813 halfClose is a required recording field"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1350 halfClose must be a boolean")]
+fn recorded_half_close_panics_on_wrong_type() {
+    recorded_half_close(&serde_json::json!({"halfClose": []}));
+}
+
+#[test]
+#[should_panic(expected = "#1350 halfClose must be a boolean, got <missing>")]
+fn recorded_half_close_panics_when_absent() {
+    recorded_half_close(&serde_json::json!({}));
 }
 
 // ------------------------------------------------------- fixture collaborators

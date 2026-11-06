@@ -73,9 +73,9 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the 65 `#996` compile-time switches the
-channel carries (`crate::mutants::on("sms-…")`; 26 → 65, where the fix-r1
-round added 11, #1589 added 4, #1729 added 39 — the `switches` table is
+`negative_controls.py` runs the 66 `#996` compile-time switches the
+channel carries (`crate::mutants::on("sms-…")`; 26 → 66, where the fix-r1
+round added 11, #1589 added 4, #1729 added 39, #1813 added 1 — the `switches` table is
 the truth source) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
@@ -90,3 +90,5 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
 ```
 
 #1729：`negative_controls.py` 现有 **65** 个开关（以 `switches` 表为准），新增 39 个录制字段/预算保护。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
+
+#1813：现有 **66** 个开关。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。

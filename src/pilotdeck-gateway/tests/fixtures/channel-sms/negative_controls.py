@@ -4,9 +4,9 @@ positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
 cell or dedicated test that pins that behavior's TS bytes (26 → 65: the
-fix-r1 round added 11, #1589 added 4, #1729 added 39; the switches table is
-the truth source). Run one sample in the authoring session; the coordinator
-runs the complete list after the patch is committed.
+fix-r1 round added 11, #1589 added 4, #1729 added 39, #1813 added 1; the
+switches table is the truth source). Run one sample in the authoring
+session; the coordinator runs the complete list after the patch is committed.
 
 `mutating_sources` cannot be used for a pre-commit change (it requires
 src/ == HEAD), so the controls are the #996 compile-time switches the
@@ -188,10 +188,14 @@ switches = [
      '#1339 #1729 rejects wait-log.level type drift'),
     ('sms-oracle-recorded-log-text', SMS / 'tests.rs', 'recorded_log_text_rejects_wrong_type',
      '#1339 #1729 rejects wait-log.text type drift'),
-    ('sms-oracle-recorded-sends-count', SMS / 'tests.rs', 'recorded_sends_count_rejects_wrong_type',
-     '#1339 #1729 rejects wait-sends.count type drift'),
-    ('sms-oracle-recorded-rpcs-count', SMS / 'tests.rs', 'recorded_rpcs_count_rejects_wrong_type',
-     '#1339 #1729 rejects wait-rpcs.count type drift'),
+    ('sms-oracle-recorded-sends-count', SMS / 'tests.rs',
+     ['recorded_sends_count_rejects_wrong_type', 'recorded_sends_count_rejects_absence'],
+     ['#1339 #1729 rejects wait-sends.count type drift',
+      '#1339 #1813 wait-sends.count is a required recording field']),
+    ('sms-oracle-recorded-rpcs-count', SMS / 'tests.rs',
+     ['recorded_rpcs_count_rejects_wrong_type', 'recorded_rpcs_count_rejects_absence'],
+     ['#1339 #1729 rejects wait-rpcs.count type drift',
+      '#1339 #1813 wait-rpcs.count is a required recording field']),
     ('sms-oracle-recorded-stop-reason', SMS / 'tests.rs', 'recorded_stop_reason_rejects_wrong_type',
      '#1339 #1729 rejects stop.reason type drift'),
     ('sms-oracle-recorded-send-block', SMS / 'tests.rs', 'recorded_send_block_rejects_wrong_type',
@@ -202,6 +206,10 @@ switches = [
      '#1339 #1729 rejects sendError type drift'),
     ('sms-oracle-recorded-extra', SMS / 'tests.rs', 'recorded_extra_rejects_wrong_type',
      '#1339 #1729 rejects extra type drift'),
+    # #1813: every null-sentinel field must read explicit null as absence, so a
+    # hand-edited oracle cannot split one field's convention from its siblings.
+    ('sms-oracle-null-sentinel', SMS / 'tests.rs', 'null_sentinels_are_absence_for_every_sentinel_field',
+     '#1339 #1813 null permissionDelivered is absence'),
     ('sms-oracle-header-value', SMS / 'tests.rs', 'recorded_header_value_rejects_drift',
      '#1339 #1729 rejects header_value drift'),
     ('sms-oracle-body-type', SMS / 'tests.rs', 'recorded_body_type_rejects_drift',

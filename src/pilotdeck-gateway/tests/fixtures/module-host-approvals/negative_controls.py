@@ -4,7 +4,8 @@ positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one module-host approvals transport or store gate and is
 killed by the replay cell that pins that gate's TS bytes or the fix-r1
-component test that pins its code (22 switches). Run one sample in the
+component test that pins its code (23 switches; #1813 added the
+recording-field guard). Run one sample in the
 authoring session; the coordinator runs the complete list after the patch
 is committed.
 """
@@ -81,6 +82,13 @@ switches = [
     # becomes an empty object, so the resume succeeds instead of answering
     # the structured failure.
     ('approvals-resume-empty-default-on', PENDING, 'resume_answers_sop_state_invalid_for_a_corrupted_non_object_state', '#1473 the corrupted non-object state must be rejected, not resumed'),
+    # #1813: recording type/absence drift must fail before replay can use the
+    # `false` default (the old `as_bool().unwrap_or(false)` read).
+    ('approvals-oracle-recorded-half-close',
+     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',
+     ['recorded_half_close_rejects_wrong_type', 'recorded_half_close_rejects_absence'],
+     ['#1350 #1813 rejects halfClose type drift',
+      '#1350 #1813 halfClose is a required recording field']),
 ]
 GUARDED = [SOURCE, PENDING,
     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',

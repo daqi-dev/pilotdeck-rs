@@ -125,6 +125,10 @@ switches = [
      '#1334 #1729 rejects header value type drift'),
     ('webhook-oracle-script-entry', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_script_entry_rejects_drift',
      '#1334 #1729 rejects script entry type drift'),
+    # #1813: a zero-step cell replays nothing, so without a whitelist a cell
+    # that lost its whole recorded step list would still replay green.
+    ('webhook-zero-step-whitelist', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'zero_step_cells_are_the_two_named_cells',
+     '#1334 only the named cells may replay zero steps'),
 ]
 GUARDED = [SOURCE_WEBHOOK, SOURCE_HMAC, SOURCE_CRON,
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs',
