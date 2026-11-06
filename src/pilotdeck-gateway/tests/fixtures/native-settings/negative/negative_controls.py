@@ -19,11 +19,12 @@ mutation. Every mutant targets the U7 settings wiring:
   ``SettingsError`` code to ``gateway_request_failed``; the replay compares
   the error codes of eight oracle rows cell by cell against the TS golden.
 * ``stale-generation`` — ``ResolvedSettingsPort`` resolves from a snapshot
-  taken at assembly time (two rows: the struct field and its initialization
-  are applied together); the reconnect test's second read must see the new
+  taken at assembly time; the reconnect test's second read must see the new
   generation, not the assembly-time one. (#1748 item 4 moved that adapter
   from ``services.rs`` into ``runtime/settings/gateway.rs`` so production and
-  the replay harness share one port, hence the split anchors.)
+  the replay harness share one port; the snapshot is cached inside ``resolve``
+  because the port now has two construction sites and a struct field would no
+  longer compile at the other one.)
 * ``broadcast-before-dirty`` — the reload settlement swaps
   ``mark_all_dirty`` and ``broadcast``; the dirty-then-broadcast order test
   pins markAllDirty first.
@@ -162,9 +163,8 @@ SHAPE_MARKER = ('#1869 advertised settings method resolve_settings must answer '
                 'its success shape')
 # Each row: (name, source path, original anchor text, mutant text, killed test).
 # Rows sharing a name are one mutant: every edit is applied together and the
-# group gets one compile gate, one kill run and one verdict ('stale-generation'
-# owns the struct field and its initialization). The kill marker must appear
-# inside that test's own panic payload.
+# group gets one compile gate, one kill run and one verdict. The kill marker
+# must appear inside that test's own panic payload.
 mutations = [
     ('miss-wire-reload-extensions', GATEWAY,
      # #1748 item 2: the member line alone, not the array tail. Anchoring
@@ -182,32 +182,26 @@ mutations = [
      '            .map(|code| String::from_utf16_lossy(code.units()))\n'
      '            .unwrap_or_else(|| "gateway_request_failed".into()),',
      '        code: "gateway_request_failed".into(),', REPLAY),
+    # #1942 review: this used to be two rows (the struct's snapshot field and
+    # its initialization in `services.rs`). #1748 item 4 moved the adapter into
+    # `runtime/settings/gateway.rs` where two assemblies construct it, so
+    # adding a field to the port no longer compiles — a struct-shape mutant is
+    # not available here. Caching the first projection inside `resolve` is the
+    # same defect (every later read answers the assembly-time generation) and
+    # stays inside the one file the row names.
     ('stale-generation', GATEWAY,
-     'pub(crate) struct ResolvedSettingsPort {\n'
-     '    pub(crate) store: ConfigStore,\n'
-     '}\n'
      'impl ResolveSettings for ResolvedSettingsPort {\n'
      '    fn resolve(&self) -> Result<JsValue, SettingsError> {\n'
      '        Ok(self.store.resolved_settings())\n'
      '    }\n'
      '}',
-     'pub(crate) struct ResolvedSettingsPort {\n'
-     '    pub(crate) store: ConfigStore,\n'
-     '    snapshot: std::sync::Mutex<JsValue>,\n'
-     '}\n'
      'impl ResolveSettings for ResolvedSettingsPort {\n'
      '    fn resolve(&self) -> Result<JsValue, SettingsError> {\n'
-     '        Ok(self.snapshot.lock().expect("#1320").clone())\n'
+     '        static ASSEMBLY: std::sync::OnceLock<JsValue> =\n'
+     '            std::sync::OnceLock::new();\n'
+     '        Ok(ASSEMBLY.get_or_init(|| self.store.resolved_settings()).clone())\n'
      '    }\n'
      '}', RECONNECT),
-    ('stale-generation', SERVICES,
-     '        resolve_settings: Some(Arc::new(ResolvedSettingsPort {\n'
-     '            store: store.clone(),\n'
-     '        })),',
-     '        resolve_settings: Some(Arc::new(ResolvedSettingsPort {\n'
-     '            snapshot: std::sync::Mutex::new(store.resolved_settings()),\n'
-     '            store: store.clone(),\n'
-     '        })),', RECONNECT),
     ('unbind-reload-config', SERVICES,
      '        reload_config: Some(bundle.clone()),',
      '        reload_config: None,', CAPABILITIES),
@@ -308,12 +302,11 @@ MARKERS = {
 # the row count *and* the roster (order and repeats included) as literals, and
 # require MARKERS to cover exactly the roster, so a dropped, renamed or
 # duplicated mutation is refused before anything runs.
-EXPECTED_TOTAL = 14
+EXPECTED_TOTAL = 13
 EXPECTED_NAMES = (
     'miss-wire-reload-extensions',
     'no-attach',
     'error-code-rewrite',
-    'stale-generation',
     'stale-generation',
     'unbind-reload-config',
     'unbind-reload-extensions',

@@ -1454,11 +1454,15 @@ fn a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup() {
     .err()
     .expect("#1746 a builder failure must fail the host");
     assert_eq!("#1746 injected builder failure", error.to_string());
-    assert!(
+    // #1942: the two switches that skip this teardown are bound to this test in
+    // the native-ws-entry roster, and that runner only accepts a kill that
+    // carries a nonce receipt — so these two assertions go through
+    // `negative_assert!` (a plain `assert!` panics without recording one).
+    crate::negative_assert!(
         coordinator_disposed.load(Ordering::SeqCst),
         "#1746 a builder error must still dispose the coordinator"
     );
-    assert!(
+    crate::negative_assert!(
         cleanup_ran.load(Ordering::SeqCst),
         "#1746 a builder error must still poll the embedding cleanup"
     );
