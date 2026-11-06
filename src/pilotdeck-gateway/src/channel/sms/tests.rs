@@ -387,10 +387,12 @@ fn recorded_checked<'a, T>(
 /// treat `null` differently from its siblings.
 fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     let present = value.get(field);
-    // #1813 negative control: the switch restores the old per-field split, in
-    // which only `permissionDelivered` had no null filter.
+    // #1813 negative control: the switch restores the old reads, in which
+    // `permissionDelivered` had no null filter and the #1879 fields (`env`,
+    // `sendFailAt`, and the `turn.*` members) still rejected an explicit null
+    // as a type drift.
     if crate::mutants::on("sms-oracle-null-sentinel") {
-        return if field == "permissionDelivered" {
+        return if field == "permissionDelivered" || OLD_NULL_REJECTING_FIELDS.contains(&field) {
             present
         } else {
             present.filter(|value| !value.is_null())
@@ -399,15 +401,22 @@ fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     present.filter(|value| !value.is_null())
 }
 
+/// #1879: fields whose pre-#1879 read did not filter an explicit JSON `null`.
+/// The recorder writes `?? {}` / `?? []` / a falsy check for them, so absence
+/// spelled as `null` must not become a type error on one field only.
+const OLD_NULL_REJECTING_FIELDS: [&str; 6] =
+    ["env", "sendFailAt", "gate", "error", "events", "holdAfter"];
+
 /// #1813: every sentinel-bearing field must read explicit `null` the same way.
 /// The generated oracle writes `null` for the unconfigured optional fields and
 /// `true` for an unconfigured `permissionDelivered`; a hand-edited oracle that
 /// spells absence as `null` must not turn into a type error on one field only.
 ///
-/// Scope: the six scalar fields whose recorder default is `?? null` / `?? true`.
-/// The collection defaults (`sendFailAt ?? []`, `env ?? {}`) stay fail-closed on
-/// an explicit `null` — see the P2 follow-up filed from this issue's review,
-/// which is preposed to `#1339` closeout.
+/// Scope: every sentinel-bearing field. The scalar sentinels are `?? null` /
+/// `?? true` in the recorder; the two collections are `?? {}` / `?? []`
+/// (`generate.mts:1041` / `:1048`), so a hand-edited explicit `null` is
+/// absence there too (#1879, each collection has its own switch that restores
+/// the old fail-closed read).
 #[test]
 fn null_sentinels_are_absence_for_every_sentinel_field() {
     let nulls = json!({
@@ -417,6 +426,8 @@ fn null_sentinels_are_absence_for_every_sentinel_field() {
         "permissionDelivered": null,
         "sendBlockAt": null,
         "sendError": null,
+        "env": null,
+        "sendFailAt": null,
     });
     crate::negative_assert!(
         matches!(recorded_turn_checked(&nulls), Ok(None)),
@@ -441,6 +452,38 @@ fn null_sentinels_are_absence_for_every_sentinel_field() {
     crate::negative_assert!(
         matches!(recorded_send_error_checked(&nulls), Ok(None)),
         "#1339 #1813 null sendError is absence"
+    );
+    crate::negative_assert!(
+        matches!(recorded_env_map_checked(&nulls), Ok(None)),
+        "#1339 #1879 null env is absence"
+    );
+    crate::negative_assert!(
+        matches!(recorded_send_fail_checked(&nulls), Ok(None)),
+        "#1339 #1879 null sendFailAt is absence"
+    );
+}
+
+/// #1879: the TS replay never reads a `turn.*` member through `?? null`; it
+/// falsy-checks `gate` / `error` and falls back with `?? []` / string equality
+/// for `events` / `holdAfter`, so an explicit `null` is absence on all four.
+#[test]
+fn null_turn_members_are_absence() {
+    let turn = json!({"gate": null, "error": null, "events": null, "holdAfter": null});
+    crate::negative_assert!(
+        recorded_turn_gate(&turn).is_none(),
+        "#1339 #1879 null turn.gate is absence"
+    );
+    crate::negative_assert!(
+        recorded_turn_error(&turn).is_none(),
+        "#1339 #1879 null turn.error is absence"
+    );
+    crate::negative_assert!(
+        recorded_turn_events(&turn).is_none(),
+        "#1339 #1879 null turn.events is absence"
+    );
+    crate::negative_assert!(
+        recorded_turn_hold(&turn).is_none(),
+        "#1339 #1879 null turn.holdAfter is absence"
     );
 }
 
@@ -794,7 +837,9 @@ fn recorded_turn_panics_on_wrong_type() {
 
 fn recorded_turn_gate_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        value.get("gate"),
+        // #1879: TS reads `script.turn?.gate` with a falsy check
+        // (`generate.mts:99`), so an explicit JSON null is absence here too.
+        recorded_present(value, "gate"),
         "turn.gate",
         "a string",
         Value::as_str,
@@ -823,7 +868,8 @@ fn recorded_turn_gate_panics_on_wrong_type() {
 
 fn recorded_turn_error_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        value.get("error"),
+        // #1879: `if (script.turn?.error)` is falsy-checked on the TS side.
+        recorded_present(value, "error"),
         "turn.error",
         "a string",
         Value::as_str,
@@ -852,7 +898,8 @@ fn recorded_turn_error_panics_on_wrong_type() {
 
 fn recorded_turn_events_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
     recorded_checked(
-        value.get("events"),
+        // #1879: `script.turn?.events ?? []` (`generate.mts:101`).
+        recorded_present(value, "events"),
         "turn.events",
         "an array",
         Value::as_array,
@@ -881,7 +928,9 @@ fn recorded_turn_events_panics_on_wrong_type() {
 
 fn recorded_turn_hold_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        value.get("holdAfter"),
+        // #1879: `script.turn?.holdAfter === 'elicit'` compares against a
+        // string, so an explicit null is absence rather than a type drift.
+        recorded_present(value, "holdAfter"),
         "turn.holdAfter",
         "a string",
         Value::as_str,
@@ -1064,7 +1113,11 @@ fn recorded_responses_panics_on_wrong_type() {
 
 fn recorded_env_map_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
-        value.get("env"),
+        // #1879: `generate.mts:1041` writes `env: definition.env ?? {}`, so an
+        // explicit JSON null is absence exactly like an omitted key. Going
+        // through `recorded_present` keeps that read identical to the scalar
+        // sentinels; the shared switch restores the old fail-closed read.
+        recorded_present(value, "env"),
         "env",
         "an object",
         |value| value.is_object().then_some(value),
@@ -1089,6 +1142,14 @@ fn recorded_env_map_rejects_wrong_type() {
 #[should_panic(expected = "#1339 env must be an object")]
 fn recorded_env_map_panics_on_wrong_type() {
     recorded_env_map(&json!({"env": []}));
+}
+
+#[test]
+fn recorded_env_map_null_is_absence() {
+    crate::negative_assert!(
+        recorded_env_map_checked(&json!({"env": null})).is_ok_and(|value| value.is_none()),
+        "#1339 #1879 env null is absence, not type drift"
+    );
 }
 
 fn recorded_steps_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
@@ -1165,7 +1226,12 @@ fn recorded_log_level_checked(value: &Value) -> Result<Option<&str>, String> {
         "wait-log.level",
         "a string",
         Value::as_str,
-        false,
+        // #1879: the generator's `waitLog(level, message)` helper
+        // (`generate.mts:258`) always writes both keys and the TS replay
+        // compares `level === step.level` with no `??` fallback, so a missing
+        // level is recording drift. Reading it as `""` used to turn the wait
+        // into a bare empty-string comparison instead of a field-level error.
+        true,
         crate::mutants::on("sms-oracle-recorded-log-level"),
     )
 }
@@ -1183,9 +1249,23 @@ fn recorded_log_level_rejects_wrong_type() {
 }
 
 #[test]
+fn recorded_log_level_rejects_absence() {
+    crate::negative_assert!(
+        recorded_log_level_checked(&json!({})).is_err(),
+        "#1339 #1879 rejects missing wait-log.level"
+    );
+}
+
+#[test]
 #[should_panic(expected = "#1339 wait-log.level must be a string")]
 fn recorded_log_level_panics_on_wrong_type() {
     recorded_log_level(&json!({"level": []}));
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-log.level must be a string, got <missing>")]
+fn recorded_log_level_panics_when_absent() {
+    recorded_log_level(&json!({}));
 }
 
 fn recorded_log_text_checked(value: &Value) -> Result<Option<&str>, String> {
@@ -1194,7 +1274,9 @@ fn recorded_log_text_checked(value: &Value) -> Result<Option<&str>, String> {
         "wait-log.text",
         "a string",
         Value::as_str,
-        false,
+        // #1879: same as `recorded_log_level_checked` — `waitLog` always writes
+        // `text`, and the TS predicate has no fallback for a missing one.
+        true,
         crate::mutants::on("sms-oracle-recorded-log-text"),
     )
 }
@@ -1212,9 +1294,23 @@ fn recorded_log_text_rejects_wrong_type() {
 }
 
 #[test]
+fn recorded_log_text_rejects_absence() {
+    crate::negative_assert!(
+        recorded_log_text_checked(&json!({})).is_err(),
+        "#1339 #1879 rejects missing wait-log.text"
+    );
+}
+
+#[test]
 #[should_panic(expected = "#1339 wait-log.text must be a string")]
 fn recorded_log_text_panics_on_wrong_type() {
     recorded_log_text(&json!({"text": []}));
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-log.text must be a string, got <missing>")]
+fn recorded_log_text_panics_when_absent() {
+    recorded_log_text(&json!({}));
 }
 
 fn recorded_sends_count_checked(value: &Value) -> Result<Option<u64>, String> {
@@ -1371,7 +1467,10 @@ fn recorded_send_block_panics_on_wrong_type() {
 
 fn recorded_send_fail_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
     recorded_checked(
-        value.get("sendFailAt"),
+        // #1879: `generate.mts:1048` writes `sendFailAt: definition.sendFailAt
+        // ?? []`, so an explicit JSON null is absence, same as an omitted key
+        // (same `recorded_present` read as `env`).
+        recorded_present(value, "sendFailAt"),
         "sendFailAt",
         "an array",
         Value::as_array,
@@ -1396,6 +1495,14 @@ fn recorded_send_fail_rejects_wrong_type() {
 #[should_panic(expected = "#1339 sendFailAt must be an array")]
 fn recorded_send_fail_panics_on_wrong_type() {
     recorded_send_fail(&json!({"sendFailAt": false}));
+}
+
+#[test]
+fn recorded_send_fail_null_is_absence() {
+    crate::negative_assert!(
+        recorded_send_fail_checked(&json!({"sendFailAt": null})).is_ok_and(|value| value.is_none()),
+        "#1339 #1879 sendFailAt null is absence, not type drift"
+    );
 }
 
 fn recorded_send_error_checked(value: &Value) -> Result<Option<&str>, String> {
@@ -1729,12 +1836,21 @@ fn absent_recording_fields_keep_defaults() {
     let empty = json!({});
     assert!(recorded_headers(&empty).is_empty(), "#1339 absent headers");
     assert!(recorded_env(&empty).is_empty(), "#1339 absent env");
+    // #1879: an explicit `null` reaches the real environment path as absence,
+    // not just the `recorded_env_map_checked` helper.
+    assert!(
+        recorded_env(&json!({"env": null})).is_empty(),
+        "#1339 #1879 env null is an empty environment"
+    );
     assert!(recorded_body(&empty).is_empty(), "#1339 absent body");
     assert_eq!(build_raw(&empty), b"POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", "#1339 absent request fields");
     validate_mock_recording(&empty);
-    // These five nulls are explicit absence sentinels emitted by generate.mts.
+    // Five of these are explicit absence sentinels the recorder emits
+    // (`turn` / `permissionError` / `permissionGate` / `sendBlockAt` /
+    // `sendError` are `?? null`). `env` / `sendFailAt` are emitted as `{}` /
+    // `[]`; a hand-edited explicit `null` is absence for them too (#1879).
     validate_mock_recording(
-        &json!({"turn":null,"permissionError":null,"permissionGate":null,"sendBlockAt":null,"sendError":null}),
+        &json!({"turn":null,"permissionError":null,"permissionGate":null,"sendBlockAt":null,"sendError":null,"env":null,"sendFailAt":null}),
     );
     // #1729 fix-r6: `expected` is no longer an optional recording field, so the
     // old `assert_responses_so_far(&[], &empty, …)` probe (absent `expected`
@@ -1924,17 +2040,13 @@ fn absent_recording_fields_keep_defaults() {
         recorded_half_close(&json!({"halfClose":true})).is_some(),
         "#1339 valid halfClose"
     );
-    assert!(
-        recorded_log_level(&empty).is_none(),
-        "#1339 absent wait-log.level"
-    );
+    // #1879: `wait-log.level` / `wait-log.text` are now required recording
+    // fields, so absence is a field-level error instead of an empty-string
+    // comparison — covered by `recorded_log_level_panics_when_absent` and
+    // `recorded_log_text_panics_when_absent`.
     assert!(
         recorded_log_level(&json!({"level":"value"})).is_some(),
         "#1339 valid wait-log.level"
-    );
-    assert!(
-        recorded_log_text(&empty).is_none(),
-        "#1339 absent wait-log.text"
     );
     assert!(
         recorded_log_text(&json!({"text":"value"})).is_some(),
