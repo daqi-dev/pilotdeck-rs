@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 187 mutants:
+`JUDGES`, keyed by the same names. The current table has 204 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -399,7 +399,16 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-sm-loop-rebind`, `calibrate-sm-unbound-update`,
 `calibrate-getattr-dict-subscript`, `calibrate-builtins-subscript-setattr`,
 `calibrate-getattr-import-alias`, `calibrate-builtins-module-alias`,
-`calibrate-builtins-getattr-subscript`, `calibrate-builtins-subscript-vars`.
+`calibrate-builtins-getattr-subscript`, `calibrate-builtins-subscript-vars`,
+`calibrate-write-handle-name`, `calibrate-write-handle-getattr`,
+`calibrate-write-handle-attrgetter`, `calibrate-star-setattr`,
+`calibrate-star-forward`, `calibrate-unpack-receiver`,
+`calibrate-for-receiver`, `calibrate-default-receiver`,
+`calibrate-with-receiver`, `calibrate-with-key-rebind`,
+`calibrate-globals-tuple-target`, `calibrate-sm-callable-setitem`,
+`calibrate-sm-mapping-augassign`, `calibrate-builtins-alias-subscript`,
+`calibrate-getattr-dynamic-call`, `calibrate-globals-alias-augassign`,
+`calibrate-status-getattr-alias`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -820,7 +829,7 @@ form `_d = getattr(md, '__dict__'); _d['common'] = <stub>` are the same write as
 `locals()` (a `locals()['common'] = <stub>` binding at module scope,
 `calibrate-locals-write`), the unbound `dict.update(globals(), ...)`
 (`calibrate-namespace-unbound-update`), a namespace alias `|=` replacement
-(`g = globals(); g |= {...}`, folded into `calibrate-alias-augassign`),
+(`g = globals(); g |= {...}`, folded into `calibrate-globals-alias-augassign`),
 `from builtins import dict as _bd` (`calibrate-builtins-type-alias`), a walrus
 receiver (`calibrate-walrus-receiver-write`) and a literal `eval` source, which
 withdraws the whole file (`calibrate-eval-literal-write`).  The `sys.modules`
@@ -833,7 +842,7 @@ rebinds, and accepts the unbound `dict.update(sys.modules, ...)` /
 `_call_written_values` follows the same alias and unbound teachings
 (`sa = setattr; sa(report, 'status', ...)`, `dict.setdefault(report, ...)`,
 `getattr(report, '__setitem__')(...)`, `__builtins__['setattr'](report, ...)`),
-pinned by three probes in the in-file
+pinned by four probes in the in-file
 detector self-test rather than by mutants.  The proven-source import check now
 requires *every* import of a name to come from a proven module (`all`, not
 `any`).
@@ -860,6 +869,28 @@ dict-valued `__builtins__['<builtin>']` callee, and both read-side call sites
 pass the alias map in.  A bare `builtins.getattr(...)` with no `import builtins`
 is not a program and stays unresolved.
 
+`fix-r32` closed the fail-closed gaps the two r31 reviewers measured, each with
+a mutant: a bound managed write kept in a name (`f = md.__setattr__;
+f('common', <stub>)`, `calibrate-write-handle-name` / `-getattr`), a handle built
+by `operator.attrgetter('__setattr__')(md)` (`calibrate-write-handle-attrgetter`),
+a target hidden in a star argument or forwarded from `*args`/`**kwargs`
+(`calibrate-star-setattr`, `calibrate-star-forward`), a receiver handed on
+through an unpacked target, a `for` target, a parameter default or a
+`with ... as` target (`calibrate-unpack-receiver`, `-for-receiver`,
+`-default-receiver`, `-with-receiver`), a loop key rebound by `with ... as`
+(`calibrate-with-key-rebind`), a namespace write through an unpacked subscript
+target (`calibrate-globals-tuple-target`), a `sys.modules` write through an
+aliased `operator.setitem` or an in-place `|=` (`calibrate-sm-callable-setitem`,
+`calibrate-sm-mapping-augassign`), a builtin read through an alias of the
+`__builtins__` table (`calibrate-builtins-alias-subscript`), a call through
+`getattr` with a non-literal attribute name (`calibrate-getattr-dynamic-call`),
+the aliased-namespace `|=` replacement the r30 note named but no mutant pinned
+(`calibrate-globals-alias-augassign`), and the status ruler's `g = getattr`
+alias (`calibrate-status-getattr-alias`).  The alias walk that feeds the
+receiver fixpoint is now the same `_alias_assignments` table the object-kind
+resolver uses, and the three `__builtins__['<name>']` decoders share one
+`_builtins_subscript_literal` helper.
+
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the
 helper's body is walked for exit calls with the module-level aliases plus its
@@ -869,9 +900,8 @@ attribute of an object that is not one of `sys` / `os` / `builtins` / `posix`
 (`helpers.exit(0)`) is not treated as a process exit; the write family resolves
 `setattr` / `setitem` spellings including a *name* bound to one
 (`from operator import setitem as put; put(report, 'status', 'PASS')` is read
-through the alias graph since fix-r30), but not a write handle produced by
-`operator.attrgetter('__setattr__')(md)` (`calibrate`-less, reported as a
-follow-up); an
+through the alias graph since fix-r30), and a write handle produced by
+`operator.attrgetter('__setattr__')(md)` since fix-r32; an
 alias chain longer than the hops `_exit_target` follows is not resolved; a
 `Starred` element inside a returned tuple is judged only through the tuple's
 other arms; an augmented assignment on a *parameter* is only judged by its own
