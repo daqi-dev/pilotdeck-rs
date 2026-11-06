@@ -9,21 +9,29 @@ both directions; raising EXPECTED_TOTAL instead of adding the per-ID
 mutation is exactly the drift it must catch. Each control below breaks one
 half of that pin:
 
-  - unordered-close-row-removed: one per-ID row is deleted (fewer mutation
+  - unordered-close-row-removed: one per-ID row is deleted (fewer mutations
     than the ledger registers);
   - unordered-close-id-renamed: a row is renamed so every legacy #1145
     check (denominator, uniqueness, anchors, bindings) still passes and only
     the #1382 pin can fail — the single-edit equivalent of the historical
     "raise the ledger, the whitelist and EXPECTED_TOTAL together" hole;
   - unordered-close-boundary-dropped: the boundary registration loses one
-    entry and the matching mutation row disappears with it, so the name set
-    and the registered-ID pin no longer agree (the content-table
-    consistency check is exercised by the two retargeting controls above);
+    entry while its mutation row stays, so the name is no longer excluded
+    from the per-ID set and the extra branch of the ID-set pin fires;
+  - unordered-close-boundary-row-removed: the whole mutation row is deleted
+    while its registration stays, which only the stale-boundary branch can
+    report — without that branch the loss would surface as a stale
+    denominator instead, so this is the one control that keeps the branch
+    alive across a refactor of the comparisons below;
   - unordered-close-content-retargeted: a row keeps its per-ID name but its
     anchor and mutant value are pointed at another registered ID (the
     assertion half is covered by the next control), so the name-set
     comparison still passes while the named ID has no independent control and
     the other ID's mutation runs twice;
+  - unordered-close-path-retargeted: only the row's path moves off the shared
+    replay harness, so the anchor, the mutant value, the test and the
+    assertion all still match and only the path half of the comparison can
+    refuse it;
   - unordered-close-assertion-retargeted: only the bound assertion names
     another registered ID, leaving the anchor and mutant value intact, so the
     assertion half of the content pin cannot be left untested;
@@ -33,6 +41,11 @@ half of that pin:
   - unordered-close-boundary-content-retargeted: a whole-scope boundary row
     keeps its name but takes a sibling's assertion, so the boundary content
     pin must fail even though every name check still passes;
+  - unordered-close-boundary-old-retargeted / -new-retargeted /
+    -test-retargeted: one boundary row takes a sibling's anchor, mutant value
+    or test, one field per control, so a boundary comparison that
+    degenerated into "assertion only" (or into any single dropped field) is
+    caught at exactly the position that stopped being checked;
   - unordered-close-boundary-key-renamed: the expected-content table renames
     one key, so the name tuple and the table disagree and the consistency
     check between them must fire before any per-row content comparison.
@@ -47,8 +60,12 @@ does not parse as Python is INVALID, and any non-KILLED control exits
 nonzero. The table itself is registered by EXPECTED_TOTAL (#1506): a
 zero or negative denominator, and an empty, short, or duplicated table, are
 refused before any control runs, and a run that records no result row exits
-nonzero before it publishes any evidence. Because
-mutating_sources proves the tree equals HEAD, this must run
+nonzero before it publishes any evidence. A run that cannot reach or keep
+the source lock — the #1145 full runner holds it for its whole 75-case run —
+gives up after a short probe rather than the 900 s default, and an abort of
+any kind (busy lock, failed restore, Ctrl-C) still writes the summary, with
+every recorded KILLED row revoked and every unrun control marked INVALID
+(#1508). Because mutating_sources proves the tree equals HEAD, this must run
 after the #1382 patch is committed; a pre-commit working tree is refused on
 purpose.
 
@@ -69,6 +86,7 @@ from negative_process import (
     new_output_directory,
     run_owned,
 )
+from negative_suite import invalidate_completed
 
 root = Path(__file__).resolve().parents[5]
 catalog_relative = "src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py"
@@ -89,7 +107,7 @@ d1_ledger = root / d1_ledger_relative
 # row used to shrink coverage with every remaining check green. Raising this
 # number is the deliberate friction: adding or removing a row must re-register
 # the total in the same edit.
-EXPECTED_TOTAL = 8
+EXPECTED_TOTAL = 13
 # (name, path, before, after, expected fragment of the dedicated failure)
 mutations = [
     (
@@ -151,6 +169,47 @@ mutations = [
         '    "unordered-close-overbroad": (\n',
         '    "unordered-close-overbroad-renamed": (\n',
         "boundary name list and expected-content table disagree",
+    ),
+    # #1507: five single-position controls. The rows above prove the boundary
+    # pin and the per-ID content pin each have *an* assertion control; these
+    # prove every position inside them is compared, and that the
+    # stale-registration branch — the only one that sees a wholly missing
+    # boundary row — is still reachable.
+    (
+        "unordered-close-boundary-row-removed",
+        catalog_relative,
+        r"    ('unordered-close-non-array', replay, '    let Some(actual) = actual.as_array() else {\n        return false;\n    };', '    let Some(actual) = actual.as_array() else {\n        return true;\n    };', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics', '#1252 non-array closes must fail:'),"
+        "\n",
+        "",
+        "stale unordered-close boundary controls: unordered-close-non-array",
+    ),
+    (
+        "unordered-close-path-retargeted",
+        catalog_relative,
+        "    ('unordered-close-run--query-resume-hold-sigint', replay,",
+        "    ('unordered-close-run--query-resume-hold-sigint', signals,",
+        "wrong content: run--query-resume-hold-sigint",
+    ),
+    (
+        "unordered-close-boundary-old-retargeted",
+        catalog_relative,
+        r"    ('unordered-close-unregistered-id', replay, 'const UNORDERED_CLOSE_CASES: &[&str] = &[\n', ",
+        r"    ('unordered-close-unregistered-id', replay, '    let Some(actual) = actual.as_array() else {\n        return false;\n    };', ",
+        "wrong content: unordered-close-unregistered-id",
+    ),
+    (
+        "unordered-close-boundary-new-retargeted",
+        catalog_relative,
+        r"    ('unordered-close-overbroad', replay, '    if !UNORDERED_CLOSE_CASES.contains(&id) {', '    if false && !UNORDERED_CLOSE_CASES.contains(&id) {',",
+        r"    ('unordered-close-overbroad', replay, '    if !UNORDERED_CLOSE_CASES.contains(&id) {', '    let Some(actual) = actual.as_array() else {\n        return true;\n    };',",
+        "wrong content: unordered-close-overbroad",
+    ),
+    (
+        "unordered-close-boundary-test-retargeted",
+        catalog_relative,
+        r"    ('unordered-close-overbroad', replay, '    if !UNORDERED_CLOSE_CASES.contains(&id) {', '    if false && !UNORDERED_CLOSE_CASES.contains(&id) {', 'signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics',",
+        r"    ('unordered-close-overbroad', replay, '    if !UNORDERED_CLOSE_CASES.contains(&id) {', '    if false && !UNORDERED_CLOSE_CASES.contains(&id) {', 'signal_replay::comparison_tests::unordered_close_scope_equals_registration',",
+        "wrong content: unordered-close-overbroad",
     ),
 ]
 
@@ -226,94 +285,140 @@ def run_check(label):
     return result
 
 
+# #1508: the sibling #1145 runner wraps its whole 75-case run — each case may
+# start a compile — in one `.negative-source.lock`, so the 900 s default here
+# was spent entirely waiting for it and then raised a bare TimeoutError with
+# no evidence at all. Probe with a short bound and name the holder instead.
+LOCK_TIMEOUT_SECONDS = 60
+
 results = []
-with mutating_sources(root, [catalog, ledger, d1_ledger]) as snapshots:
-    positive = run_check("positive-before")
-    if not preflight_passed(positive):
-        raise SystemExit(
-            "#1382 baseline --check-anchors must pass before mutating: "
-            f"rc={positive.returncode}"
-        )
-    for name, relative, before, after, criterion in mutations:
-        path = root / relative
-        original = snapshots[path].decode("utf-8")
-        status, reason, compiled = "INVALID", "not run", False
-        try:
-            count = original.count(before)
-            if count != 1:
-                # A stale anchor is INVALID, never SURVIVED; keep running the
-                # remaining controls and fail the whole run at the summary.
-                reason = f"expected one anchor, found {count}"
-            else:
-                changed = original.replace(before, after, 1)
-                try:
-                    # The Python-side equivalent of the compile-first rule:
-                    # a mutant that does not parse can never be a kill.
-                    compile(changed, str(path), "exec")
-                except SyntaxError as error:
-                    reason = f"mutant does not parse: {error}"
+recorded = set()
+
+
+def record(name, status, reason, compiled):
+    results.append(
+        {
+            "mutation": name,
+            "status": status,
+            "reason": reason,
+            "compiled": compiled,
+        }
+    )
+    recorded.add(name)
+    print(f"{name}: {status}: {reason}", flush=True)
+
+
+# #1508: an abort anywhere — a busy source lock, a restore that cannot be
+# verified, Ctrl-C — used to escape between the loop and the summary, leaving
+# the evidence as scrolling stdout only; a restore failure escaped *after* the
+# green rows had already been printed. Every exit path now lands in the same
+# accounting: no recorded KILLED row survives a run that could not verify the
+# tree, every control that never ran is recorded INVALID, and the summary is
+# written before the run exits nonzero.
+aborted = None
+try:
+    with mutating_sources(
+        root, [catalog, ledger, d1_ledger], lock_timeout=LOCK_TIMEOUT_SECONDS
+    ) as snapshots:
+        positive = run_check("positive-before")
+        if not preflight_passed(positive):
+            raise SystemExit(
+                "#1382 baseline --check-anchors must pass before mutating: "
+                f"rc={positive.returncode}"
+            )
+        for name, relative, before, after, criterion in mutations:
+            path = root / relative
+            original = snapshots[path].decode("utf-8")
+            status, reason, compiled = "INVALID", "not run", False
+            try:
+                count = original.count(before)
+                if count != 1:
+                    # A stale anchor is INVALID, never SURVIVED; keep running
+                    # the remaining controls and fail the whole run at the
+                    # summary.
+                    reason = f"expected one anchor, found {count}"
                 else:
-                    compiled = True
-                    exclusive_write(
-                        out / f"{name}.patch",
-                        "".join(
-                            difflib.unified_diff(
-                                original.splitlines(True),
-                                changed.splitlines(True),
-                                fromfile=relative,
-                                tofile=relative,
-                            )
-                        ),
-                    )
-                    path.write_text(changed, encoding="utf-8")
-                    result = run_check(name + "-negative")
-                    log = result.stdout + result.stderr
-                    markers = (
-                        "#1382 unordered-close controls must equal the"
-                        " registered close-order IDs",
-                        "#1382 unordered-close rows must bind their own ID",
-                        "#1382 whole-scope boundary rows must keep their own content",
-                        "#1382 boundary name list and expected-content table disagree",
-                    )
-                    if (
-                        result.returncode != 0
-                        and any(marker in log for marker in markers)
-                        and criterion in log
-                    ):
-                        status, reason = "KILLED", "preflight failed at its #1382 pin"
-                    elif result.returncode == 0:
-                        status, reason = "SURVIVED", "preflight still passed"
+                    changed = original.replace(before, after, 1)
+                    try:
+                        # The Python-side equivalent of the compile-first rule:
+                        # a mutant that does not parse can never be a kill.
+                        compile(changed, str(path), "exec")
+                    except SyntaxError as error:
+                        reason = f"mutant does not parse: {error}"
                     else:
-                        status, reason = (
-                            "INVALID",
-                            "preflight failed without the dedicated #1382 message",
+                        compiled = True
+                        exclusive_write(
+                            out / f"{name}.patch",
+                            "".join(
+                                difflib.unified_diff(
+                                    original.splitlines(True),
+                                    changed.splitlines(True),
+                                    fromfile=relative,
+                                    tofile=relative,
+                                )
+                            ),
                         )
-        except Exception as error:
-            # One control's crash must not stop the remaining controls; the
-            # summary below still exits nonzero on this INVALID row.
-            status = "INVALID"
-            reason = f"harness: {type(error).__name__}: {error}"
-        finally:
-            path.write_bytes(snapshots[path])
-            if path.read_bytes() != snapshots[path]:
-                raise RuntimeError(f"#1382 restore failed: {relative}")
-        try:
-            restored = run_check(name + "-restored")
-            if not preflight_passed(restored):
+                        path.write_text(changed, encoding="utf-8")
+                        result = run_check(name + "-negative")
+                        log = result.stdout + result.stderr
+                        markers = (
+                            "#1382 stale unordered-close boundary controls",
+                            "#1382 unordered-close controls must equal the"
+                            " registered close-order IDs",
+                            "#1382 unordered-close rows must bind their own ID",
+                            "#1382 whole-scope boundary rows must keep their own content",
+                            "#1382 boundary name list and expected-content table disagree",
+                        )
+                        if (
+                            result.returncode != 0
+                            and any(marker in log for marker in markers)
+                            and criterion in log
+                        ):
+                            status, reason = (
+                                "KILLED",
+                                "preflight failed at its #1382 pin",
+                            )
+                        elif result.returncode == 0:
+                            status, reason = "SURVIVED", "preflight still passed"
+                        else:
+                            status, reason = (
+                                "INVALID",
+                                "preflight failed without the dedicated #1382"
+                                " message",
+                            )
+            except Exception as error:
+                # One control's crash must not stop the remaining controls; the
+                # summary below still exits nonzero on this INVALID row.
                 status = "INVALID"
-                reason += "; restored preflight did not pass"
-        except Exception as error:
-            status = "INVALID"
-            reason += f"; restored: {type(error).__name__}: {error}"
-        results.append(
-            {
-                "mutation": name,
-                "status": status,
-                "reason": reason,
-                "compiled": compiled,
-            }
+                reason = f"harness: {type(error).__name__}: {error}"
+            finally:
+                path.write_bytes(snapshots[path])
+                if path.read_bytes() != snapshots[path]:
+                    raise RuntimeError(f"#1382 restore failed: {relative}")
+            try:
+                restored = run_check(name + "-restored")
+                if not preflight_passed(restored):
+                    status = "INVALID"
+                    reason += "; restored preflight did not pass"
+            except Exception as error:
+                status = "INVALID"
+                reason += f"; restored: {type(error).__name__}: {error}"
+            record(name, status, reason, compiled)
+except BaseException as error:
+    aborted = f"{type(error).__name__}: {error}"
+    if isinstance(error, TimeoutError) and "source lock busy" in str(error):
+        aborted += (
+            "; the other holder is most likely the #1145 sdk-signals runner"
+            " (it keeps .negative-source.lock for its whole 75-case run) —"
+            " rerun this pin after it finishes"
         )
-        print(f"{name}: {status}: {reason}", flush=True)
+    # A run that could not restore and verify the tree invalidates every row it
+    # already recorded (#979 P0: a green row over an unverified tree is a false
+    # pass), and every control that never ran is still accounted for.
+    invalidate_completed(results, f"run aborted: {aborted}")
+    for row in mutations:
+        if row[0] not in recorded:
+            record(row[0], "INVALID", f"run aborted: {aborted}", False)
 
 # #1506 fix-r3: an empty run is a zero denominator, never a pass, and it must
 # not publish evidence that looks like a finished run. The table guard above
@@ -327,10 +432,10 @@ counts = {
 }
 # #1506: the guard verified the whole registry, but `results` only holds the
 # rows the command line selected. Record both, so a later reader can tell
-# "8 registered, 3 selected" from "the table shrank to 3". `registered` is the
-# name list itself, not just its length: a table swapped for eight different
-# names keeps the count and the uniqueness check green, and only the names
-# show it.
+# "13 registered, 3 selected" from "the table shrank to 3". `registered` is the
+# name list itself, not just its length: a table swapped for the same number of
+# different names keeps the count and the uniqueness check green, and only the
+# names show it.
 summary = {
     "registeredTotal": len(REGISTERED),
     "registered": REGISTERED,
@@ -350,6 +455,8 @@ print(
     ),
     flush=True,
 )
+if aborted is not None:
+    sys.exit(f"#1382 run did not complete: {aborted}")
 not_killed = [row["mutation"] for row in results if row["status"] != "KILLED"]
 if not_killed:
     sys.exit(f"#1382 non-KILLED controls: {not_killed}")
