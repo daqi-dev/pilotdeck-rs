@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 247 mutants:
+`JUDGES`, keyed by the same names. The current table has 251 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -432,7 +432,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-comprehension-write-helper`, `calibrate-mixed-alias-binding`,
 `calibrate-handle-container-alias`, `calibrate-handle-mapping-write`,
 `calibrate-list-const-subscript-write`,
-`calibrate-comprehension-filter-write`.
+`calibrate-comprehension-filter-write`,
+`calibrate-match-capture-receiver`,
+`calibrate-match-capture-setattr-receiver`,
+`calibrate-getattribute-attr-spelling`, `calibrate-for-wrapped-container`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1111,6 +1114,17 @@ bindings (`[h for h in (operator.setitem,)]; h = lambda *a: None;
 h(report, 'status', 'PASS')` is clean -- probe `N13`), and a bare write-handle
 name resolves its target from the first positional argument instead of
 withdrawing every receiver in the file.
+
+### Closed by `fix-r1` round 3 (GLM sibling/concurrency r1b)
+
+The second head still let three receiver-side spellings through; each is now a
+mutant and was measured `rc=0` before the change, `rc=1` after.
+
+| Shape | Mutant |
+|---|---|
+| **`match` capture as receiver**: `match md: case h: h.common = <stub>` (and `setattr(h, ...)`). The capture table existed for the *helper* rules but not for the table the receiver rules read; a comprehension target bound to a literal element (`[h for h in (md,)]`) had the same gap. | `calibrate-match-capture-receiver`, `calibrate-match-capture-setattr-receiver` |
+| **`__getattribute__` attribute spelling**: `md.__getattribute__('__dict__')['common'] = <stub>` reaches the same mapping as `getattr(md, '__getattribute__')('__dict__')`, which `namespace_dict_roots` already decoded. | `calibrate-getattribute-attr-spelling` |
+| **Wrapped iteration**: `for h in list(hs): h(...)` -- the call position decoded `list`/`tuple`/`sorted`/`iter`/`reversed` wrappers, the iteration position only took a bare name. | `calibrate-for-wrapped-container` |
 
 Also measured at the same head, tracked in #1954 rather than accepted here (they
 are P2-level and narrower than the constructs above): `from operator import attrgetter as _ag;
