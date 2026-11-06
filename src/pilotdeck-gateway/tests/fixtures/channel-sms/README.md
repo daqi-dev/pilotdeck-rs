@@ -21,6 +21,14 @@ request — including the destructive branches (payload over 1 MiB
 destroys the socket with zero response bytes; bad signature answers 401)
 and the loopback listener lifecycle (ECONNREFUSED after stop).
 
+Boundary body lengths are pinned **by value, not by case name** (#1984):
+`src/channel/sms/tests.rs` declares `BOUNDARY_BODY_CASES`, and any case whose
+recorded `request` body reaches `MAX_BODY_BYTES` must be declared there with
+its expected length. A renamed or newly added boundary cell that is not
+declared fails the replay instead of passing silently, and
+`boundary_body_cases_match_the_fixture` checks the table and the fixture
+against each other in both directions.
+
 ## oracle.json
 
 Each case is run twice per generation and must produce identical

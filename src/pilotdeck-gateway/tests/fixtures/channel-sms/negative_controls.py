@@ -3,9 +3,10 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 70: the
+cell or dedicated test that pins that behavior's TS bytes (26 → 71: the
 fix-r1 round added 11, #1589 added 4, #1729 added 39, #1813 added 1, #1790
-added 3, #1901 added 1; the switches table is the truth source). #1879 only
+added 3, #1901 added 1, #1984 added 1; the switches table is the truth
+source). #1879 only
 rewrites existing reads (`recorded_present` covers `env` / `sendFailAt` /
 `turn.*` / `truncate` / `halfClose` / `headers` / `reason` / `extra` now), so
 the count is unchanged. Run one sample in the authoring session; the
@@ -251,6 +252,11 @@ switches = [
      '#1339 #1729 rejects body_budget drift'),
     ('sms-oracle-boundary-body-length', SMS / 'tests.rs', 'recorded_boundary_body_length_rejects_drift',
      '#1339 #1729 rejects boundary_body_length drift'),
+    # #1984: the fail-closed branch is disarmed — an undeclared case name whose
+    # request body reaches the 1 MiB cap goes back to being skipped silently.
+    ('sms-oracle-boundary-unregistered', SMS / 'tests.rs',
+     'recorded_boundary_body_length_rejects_unregistered_case',
+     '#1339 #1984 rejects an undeclared boundary case'),
     ('sms-oracle-env-value', SMS / 'tests.rs', 'recorded_env_value_rejects_drift',
      '#1339 #1729 rejects env_value drift'),
     ('sms-oracle-send-fail-entry', SMS / 'tests.rs', 'recorded_send_fail_entry_rejects_drift',
