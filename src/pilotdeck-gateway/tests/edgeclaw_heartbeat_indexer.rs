@@ -3067,8 +3067,8 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     assert_eq!(
         original_permissions.mode() & 0o200,
         0o000,
-        "#1900 premise: the captured original mode must be the write-bit-less one an \
-         0200/0222 umask produces, got {:o}",
+        "#1900 premise: the captured original mode must be the write-bit-less one this \
+         test builds above (the same bits a 0200/0222 umask gives `fs::write`), got {:o}",
         original_permissions.mode()
     );
     // One writer for every restore in this test: the skip arm below and the
@@ -3090,9 +3090,9 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     // reported as broken when it was never exercised — so probe natively
     // first and skip with a recognizable line when the mode does not bite.
     if fs::OpenOptions::new().write(true).open(&manifest).is_ok() {
-        // Restore the writability the next step needs: the original mode came
-        // from `fs::write`, which drops the owner write bit under a 0200/0222
-        // umask, and the re-arm below must be able to rewrite the manifest.
+        // Restore the writability the next step needs: the captured original
+        // is the 0444 built above, and the next heartbeat's manifest rewrite
+        // must be able to open the manifest for writing.
         restore_manifest_writable()
             .expect("#1207 make the workspace manifest writable again before the skip");
         if permission_faults::require_permission_faults() {

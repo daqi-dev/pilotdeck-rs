@@ -54,7 +54,9 @@ class EnvironmentControls(unittest.TestCase):
         'test(=project_files::tests::native_read_errors_match_node_ws_responses) | '
         'test(=dispatch::tests::list_projects_preserves_real_node_scandir_error_suppression) | '
         'test(=runtime::cron::tests::migration_blocked_dir_tasks_eacces_matches_ts) | '
-        'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key)')
+        'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key) | '
+        'test(=storage::tests::temporary_create_failure_reports_the_transcript_not_the_staging_name) | '
+        'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -2141,6 +2143,11 @@ self_check_controls_run | return | return problems
     # filter entries that cover it). Coverage is checked against the filter, so
     # a stale "covered by" cannot rot silently, and an entry whose call site is
     # gone fails as stale.
+    #
+    # Known blind spot: the scan matches the literal `stderr_skip_line(`, so a
+    # hand-rolled writer (e.g. `tests/unsafe_boundary.rs`'s
+    # `stderr_boundary_line`, which carries the same #448 contract) is outside
+    # it. Anything new should call the shared writer, not copy it.
     skip_line_exceptions = {
         'src/module_host/tests.rs::process_audit_is_linux_only': (
             '#1349 `#[cfg(not(target_os = "linux"))]`: the test does not exist in the '
@@ -2165,12 +2172,16 @@ self_check_controls_run | return | return problems
         # filter (or be a documented exception), otherwise the note it writes to
         # the stderr handle is thrown away with the rest of the captured output.
         crate = crate or Path(__file__).resolve().parents[1]
+        # Only the one shared writer is exempt: it *defines* `stderr_skip_line`,
+        # so its signature line matches the scan. Excluding by bare filename
+        # would silently excuse any future same-named copy (#1900 boundary P2).
+        writer = crate/'tests'/'common'/'skip_line.rs'
         named = {entry[1:] for entry in re.findall(r'test\(([^)]*)\)', filter_text)
                  if entry.startswith('=')}
         seen = set()
         unregistered = []
         for source in sorted(crate.rglob('*.rs')):
-            if 'target' in source.parts or source.name == 'skip_line.rs':
+            if 'target' in source.parts or source == writer:
                 continue
             lines = source.read_text(errors='replace').splitlines()
             for index, line in enumerate(lines):
@@ -2187,6 +2198,15 @@ self_check_controls_run | return | return problems
                         self.assertIn(name, named,
                                       f'#1900 the exception for {key} claims {name} covers it, '
                                       f'but the filter does not name that test')
+                        # #1900 boundary P2: a filter entry is necessary but not
+                        # sufficient — the covering test has to still exist, or
+                        # a rename would leave the exception excusing nothing
+                        # while the guard stays green.
+                        leaf = name.rsplit('::', 1)[-1]
+                        self.assertRegex(
+                            '\n'.join(lines), rf'\bfn\s+{re.escape(leaf)}\s*[(<]',
+                            f'#1900 the exception for {key} claims {name} covers it, but no '
+                            f'`fn {leaf}` exists in {source.relative_to(crate)}')
                     continue
                 visible = self.nextest_visible_name(crate, source, owner)
                 if visible not in named:
@@ -2252,7 +2272,34 @@ self_check_controls_run | return | return problems
                                         'no longer match a stderr_skip_line call site'):
                 self.assert_every_skip_line_reaches_nextest(
                     'test(=registered) | test(=unregistered)', crate=crate)
+        # Every exception has to say why; an empty reason is not a reason.
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/sample.rs::unregistered': ('', ())}):
+            with self.assertRaisesRegex(AssertionError, 'states why'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=registered) | test(=unregistered)', crate=crate)
+        # A covered entry that merely exists in the filter text is not enough:
+        # a renamed test would leave the exception excusing nothing.
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/sample.rs::unregistered': ('helper', ('ghost_test',))}):
+            with self.assertRaisesRegex(AssertionError, 'but no .fn ghost_test. exists'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=registered) | test(=unregistered) | test(=ghost_test)', crate=crate)
+        # Only the one shared writer is exempt, not every file called
+        # `skip_line.rs`: a copy that prints a skip line is still a call site.
+        (crate/'tests'/'other').mkdir(parents=True)
+        (crate/'tests'/'other'/'skip_line.rs').write_text(
+            'pub fn stderr_skip_line(_note: &str) {}\n'
+            '\n'
+            'fn hidden_in_a_copy() {\n'
+            '    skip_line::stderr_skip_line("skip: copied\\n");\n'
+            '}\n')
+        with self.assertRaisesRegex(AssertionError,
+                                    'covers these skip-line call sites.*hidden_in_a_copy'):
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=registered) | test(=unregistered)', crate=crate)
         # A call site above no `fn` at all must not be silently skipped.
+        (crate/'tests'/'other'/'skip_line.rs').unlink()
         (crate/'tests'/'sample.rs').write_text(
             'skip_line::stderr_skip_line("skip: orphan\\n");\n')
         with self.assertRaisesRegex(AssertionError, 'cannot map the stderr_skip_line call'):

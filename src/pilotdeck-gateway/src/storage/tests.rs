@@ -1518,11 +1518,18 @@ fn ledger_io_display_uses_the_labelled_syscall_and_never_guesses() {
 fn temporary_create_failure_reports_the_transcript_not_the_staging_name() {
     use std::os::unix::fs::PermissionsExt;
     if rustix::process::geteuid().as_raw() == 0 {
-        // chmod 500 cannot stop root from creating the staging file.
-        let _ = io::Write::write_all(
-            &mut std::io::stderr(),
-            b"temporary_create_failure_reports_the_transcript_not_the_staging_name: skipped, \
-              running as root (chmod 500 is not a write error for root)\n",
+        // chmod 500 cannot stop root from creating the staging file. #1900:
+        // the skip has to reach the log and to fail when the CI switch says
+        // the permission face is mandatory (sibling of #1525 / #1263).
+        assert!(
+            !crate::test_permission_faults::require_permission_faults(),
+            "#1554 PDRS_REQUIRE_PERMISSION_FAULTS is set but chmod 500 did not stop the \
+             staging create (root or CAP_DAC_OVERRIDE); this arm needs an unprivileged \
+             host (需要非特权宿主)"
+        );
+        crate::test_skip_line::stderr_skip_line(
+            "#1554 skip: temporary_create_failure_reports_the_transcript_not_the_staging_name: \
+             running as root (chmod 500 is not a write error for root)\n",
         );
         return;
     }
@@ -1559,10 +1566,17 @@ fn transcript_open_failure_renders_node_eacces_with_the_supplied_path() {
     use std::os::unix::fs::PermissionsExt;
     if rustix::process::geteuid().as_raw() == 0 {
         // chmod 000 is not a read error for root, so the cell cannot run.
-        let _ = io::Write::write_all(
-            &mut std::io::stderr(),
-            b"transcript_open_failure_renders_node_eacces_with_the_supplied_path: skipped, \
-              running as root (chmod 000 is not a read error for root)\n",
+        // #1900: same contract as the sibling above — log the skip and fail
+        // when PDRS_REQUIRE_PERMISSION_FAULTS says it must really run.
+        assert!(
+            !crate::test_permission_faults::require_permission_faults(),
+            "#1554 PDRS_REQUIRE_PERMISSION_FAULTS is set but chmod 000 is still readable \
+             (root or CAP_DAC_OVERRIDE); this arm needs an unprivileged host \
+             (需要非特权宿主)"
+        );
+        crate::test_skip_line::stderr_skip_line(
+            "#1554 skip: transcript_open_failure_renders_node_eacces_with_the_supplied_path: \
+             running as root (chmod 000 is not a read error for root)\n",
         );
         return;
     }

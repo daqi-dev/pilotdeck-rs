@@ -263,3 +263,8 @@ Rust 侧的 `src/pilotdeck-gateway/tests/common/permission_faults.rs` 有
   需要独立 issue、理由、两家评审、真实数据复算（A1 二进制）与重新登记；新增一个
   失败语义还属于改判分语义，需要明确授权。本单按 #1900「怎么算做完」第 5 条走
   「不修 + 写进已知限制」这条路，另开跟进单 #1930 走冻结变更流程。
+- 同族缺口（#1900 sibling 评审发现，一并记在这里）：`check_schema.py` 的
+  `PDRS_REQUIRE_BASELINE` 解析只认 `("1", "true", "yes")`，不认 `on`，也不对
+  未识别值 panic —— 与 Rust 侧 `permission_faults.rs` 刚收紧的口径不一致，属同一种
+  fail-open。该文件同样有冻结登记行，CI 钉死 `=1`（`.github/workflows/ci.yml`）所以
+  现网不踩；口径统一并入 #1930。
