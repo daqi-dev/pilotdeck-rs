@@ -1249,9 +1249,10 @@ async fn peer_exits_when_its_host_is_killed() {
 
 /// #1779: 父死子死 also covers the peer's own descendants. `grandchild-close`
 /// spawns a 60 s sleeper and records its pid; a killed host never reaches the
-/// host-side `killpg`, so only the watchdog's `lifetime.track` registry can take
-/// the sleeper down. Without this test `_kill_tracked` could regress and every
-/// host-side test would stay green while the leak came back.
+/// host-side `killpg`, so the sleeper has to take itself down -- it runs the
+/// same `lifetime.install` parent-death watch as the peer. Without this test
+/// that watch could regress and every host-side test would stay green while the
+/// leak came back.
 #[cfg(unix)]
 #[tokio::test]
 async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
@@ -1283,24 +1284,29 @@ async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
             .unwrap()
     };
     let peer = read_pid("fixture.pid");
-    // The peer writes this before it answers the handshake, so the probe cannot
-    // have died before the descendant existed. That, plus the arithmetic, is
-    // what keeps this test from being vacuous: the descendant sleeps 60 s from
-    // that moment, and the peer must be gone within 5 s of the probe's death,
-    // so a reaped descendant cannot have expired on its own -- it was killed.
-    // The window is *not* asserted with a liveness probe here on purpose: the
-    // watchdog kills the descendant within one 0.1 s poll of the probe's death,
-    // so a `kill(pid, 0)` at this point races the very fix it means to prove
-    // and would fail a correct implementation whenever the test thread stalls
-    // (#1779 review).
     let grandchild = read_pid(&format!("{mode}.pid"));
+    // The peer only answers the handshake once the descendant has armed its own
+    // watch and was still running a moment later (`fixture.py` `grandchild-`),
+    // so the probe cannot have died before the descendant was up. Without that
+    // handshake a descendant that never started would leave nothing to reap and
+    // this test would pass on a broken fixture (#1779 review).
+    assert!(
+        owned.join(format!("{mode}.armed")).exists(),
+        "the descendant never reported that its watchdog was armed"
+    );
     for (role, pid) in [("peer", peer), ("grandchild", grandchild)] {
         timeout(Duration::from_secs(5), assert_reaped(pid))
             .await
             .unwrap_or_else(|_| panic!("{role} {pid} outlived its host (#1779)"));
     }
-    // Two sequential 5 s windows plus startup must stay well under the
-    // descendant's own 60 s lifetime, or a pass could be natural expiry.
+    // The descendant sleeps 60 s from arming and the probe dies after that, so
+    // a reaped descendant cannot have expired on its own. Two sequential 5 s
+    // windows plus startup must stay well under that. The window is *not*
+    // asserted with a liveness probe after the kill: the peer notices the
+    // probe within one 0.1 s poll and the descendant notices the peer within a
+    // second one, so a `kill(pid, 0)` there would race the fix it means to
+    // prove and would fail a correct implementation whenever the test thread
+    // stalls (#1779 review). Being alive beforehand is established instead.
     assert!(
         started.elapsed() < Duration::from_secs(50),
         "the observation window took {:?}; the 60 s descendant may have expired on its own",

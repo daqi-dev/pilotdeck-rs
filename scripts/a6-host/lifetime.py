@@ -29,10 +29,12 @@ Three layers, cheapest first:
 Descendants are covered by the same mechanism, one level down: the
 ``grandchild-*`` sleeper runs ``install`` itself, so it exits on its own within
 one poll interval of *this* process dying, however that happens -- including a
-SIGKILL of this process, where none of our code runs. This module therefore
-keeps no registry of child processes and never signals anything but itself:
-a registry would only work while this process is still scheduled, which is
-exactly the window a killed host takes away.
+SIGKILL of this process, where none of our code runs. It is handed the pid to
+watch instead of sampling one, so a parent that dies before the sleeper is
+scheduled is caught too. This module therefore keeps no registry of child
+processes and never signals anything but itself: a registry would only work
+while this process is still scheduled, which is exactly the window a killed
+host takes away.
 
 ``os.killpg(0, SIGKILL)`` is deliberately not used as a catch-all: the fixture
 is spawned as its own group leader (``connection.rs:65``), so a group kill would
@@ -113,10 +115,18 @@ def _report(receipt, suffix, message):
             pass
 
 
-def install(receipt, mode):
-    """Start the watchdog. Call once, as early as possible, in every mode."""
+def install(receipt, mode, parent=None):
+    """Start the watchdog. Call once, as early as possible, in every mode.
+
+    ``parent`` defaults to the current parent, which is right for a process
+    spawned directly by its host. A descendant must pass the pid it expects
+    instead: if the parent dies before this process is scheduled, sampling
+    ``os.getppid()`` here records init as the baseline and the watch would
+    never fire for the death it exists to catch (#1779 review).
+    """
     max_lifetime = _knob('PDRS_A6_FIXTURE_MAX_LIFETIME', DEFAULT_MAX_LIFETIME)
-    parent = os.getppid()
+    if parent is None:
+        parent = os.getppid()
     started = time.monotonic()
 
     def watch():

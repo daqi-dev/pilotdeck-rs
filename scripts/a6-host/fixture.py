@@ -12,11 +12,23 @@ import lifetime  # #1779: parent-death + lifetime watchdog, same directory
 
 # The `grandchild-*` sleeper runs this: the same watchdog, one level down, so it
 # exits within one poll interval of *its* parent (this process) dying however
-# that happens -- including SIGKILL, where no code of ours runs (#1779).
+# that happens -- including SIGKILL, where no code of ours runs (#1779). argv is
+# [expected parent pid, armed receipt], so it watches for this process even if
+# this process is already gone by the time it gets scheduled.
 _GRANDCHILD_WATCH = (
-    'import sys, time; sys.path.insert(0, {!r}); '
-    'import lifetime; lifetime.install(None, "grandchild"); time.sleep(60)'
+    'import sys, time; from pathlib import Path; sys.path.insert(0, {!r}); '
+    'import lifetime; '
+    'lifetime.install(None, "grandchild", parent=int(sys.argv[1])); '
+    'Path(sys.argv[2]).write_text("armed"); '
+    'time.sleep(60)'
 )
+
+# A descendant that never arms its watchdog (import failure, crash at startup)
+# must break the handshake instead of leaving the kill-path test with nothing to
+# reap, and one that dies right after arming must not pass for the same reason.
+# Both bounds are far below the 60 s sleep they guard.
+GRANDCHILD_ARM_LIMIT = 5.0
+GRANDCHILD_ALIVE_SETTLE = 0.05
 
 mode = sys.argv[1]
 if mode.startswith('reconnect-'):
@@ -159,10 +171,31 @@ if mode.startswith('grandchild-'):
     # process does -- it works even when *this* process is SIGKILLed, where none
     # of our code runs at all. A registry on this side would need the host to die
     # while we are still scheduled, which is the race that cost three rounds.
-    descendant = subprocess.Popen([sys.executable, '-c', _GRANDCHILD_WATCH.format(
-        str(Path(__file__).resolve().parent))])
     assert receipt is not None
+    armed = receipt.with_suffix('.armed')
+    descendant = subprocess.Popen([
+        sys.executable, '-c', _GRANDCHILD_WATCH.format(str(Path(__file__).resolve().parent)),
+        str(os.getpid()), str(armed),
+    ])
     receipt.with_suffix('.pid').write_text(str(descendant.pid))
+    # A recorded pid only says `Popen` returned. Wait for the descendant to arm
+    # its watch and require it to still be running, before answering the
+    # handshake -- the handshake completes before the host can die, so this is
+    # what keeps the kill-path test from reaping a pid that was already gone.
+    deadline = time.monotonic() + GRANDCHILD_ARM_LIMIT
+    while not armed.exists():
+        if descendant.poll() is not None:
+            raise AssertionError(
+                'grandchild {} exited before arming its watch'.format(descendant.pid))
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                'grandchild {} never armed its watch within {:.0f}s'.format(
+                    descendant.pid, GRANDCHILD_ARM_LIMIT))
+        time.sleep(0.01)
+    time.sleep(GRANDCHILD_ALIVE_SETTLE)
+    if descendant.poll() is not None:
+        raise AssertionError(
+            'grandchild {} died right after arming its watch'.format(descendant.pid))
 if mode == 'no-streaming':
     methods[0]['profiles'] = ['unary']
 if mode == 'close-hang':
