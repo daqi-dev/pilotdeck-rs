@@ -498,7 +498,19 @@ with mutating_sources(root, sorted({root / row[1]
         finally:
             restore_failure = None
             for path in paths:
-                path.write_bytes(snapshots[path])
+                # A restore *write* can fail too (EROFS / EACCES / ENOSPC), and
+                # an exception escaping here would skip the evidence files
+                # below — leaving the previous run's all-KILLED summary on
+                # disk as the last word. Record it like a byte mismatch and
+                # keep going.
+                try:
+                    path.write_bytes(snapshots[path])
+                except OSError as error:
+                    if restore_failure is None:
+                        restore_failure = (
+                            f'{path.relative_to(root).as_posix()} could not be '
+                            f'rewritten: {type(error).__name__}: {error}')
+                    continue
                 # #1538 / #1748 item 2: an explicit check, not a bare
                 # `assert` — `python3 -O` strips asserts, and an unverified
                 # restore is exactly how a mutant's bytes survive into the
@@ -529,8 +541,10 @@ with mutating_sources(root, sorted({root / row[1]
                                baselineSource=baseline_source,
                                hostEvidence=baseline_source == 'HEAD')
                     summary.append(row)
+                previous = row.get('reason') or row.get('failure')
                 row.update(status='INVALID',
-                           reason=f'restore failed: {restore_failure}')
+                           reason=(f'{previous}; restore failed: {restore_failure}'
+                                   if previous else f'restore failed: {restore_failure}'))
                 if name not in failures:
                     failures.append(name)
             (out / 'summary.json').write_text(

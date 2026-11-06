@@ -530,10 +530,11 @@ fn require_input<'a>(input: &'a JsValue, field: &str) -> Result<&'a JsValue, Set
 /// `Object.entries(settings)` with JS own-key order: array indices first
 /// in ascending numeric order, then other keys in insertion order.
 ///
-/// #1748 item 3: one implementation of ECMAScript key order, in the protocol
-/// crate. This mirror, the replay support (`test_support`) and the MCP server
-/// listing used to carry their own copies, so a correction to any one of them
-/// left the other two behind.
+/// #1748 item 3: this mirror, the replay support (`test_support`) and the MCP
+/// server listing used to carry three copies of ECMAScript key order; all
+/// three now call the protocol crate's `JsObject::own_entries`. Hand-written
+/// copies elsewhere in the tree are outside this change and stay tracked by
+/// #1748.
 pub(crate) fn own_entries(object: &JsObject) -> Vec<(JsString, JsValue)> {
     object
         .own_entries()

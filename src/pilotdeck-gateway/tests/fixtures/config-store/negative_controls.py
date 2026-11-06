@@ -459,6 +459,53 @@ mutations = [
 ]
 
 
+# specs/negative-controls/README.md: the denominator is a static literal, not
+# the runtime table length — dropping a row must fail loudly instead of making
+# the round quietly shorter (still reporting N/N killed). #1946 review P2.
+EXPECTED_NAMES = (
+    'debounce-ceiling-removed',
+    'two-hour-debounce-ceiling-removed',
+    'poll-ceiling-removed',
+    'deadline-add-unchecked',
+    'overflowing-debounce-double-restore',
+    'metadata-short-circuit-removed',
+    'ctime-dropped-from-metadata',
+    'ctime-dropped-from-metadata-unit',
+    'incomplete-sample-committed',
+    'startup-incomplete-committed',
+    'stat-failure-counted-complete',
+    'read-dir-failure-counted-complete',
+    'startup-probe-failure-dropped',
+    'startup-recovery-not-reported',
+    'recovery-trusts-folded-fingerprint',
+    'probe-not-found-fixes-file-mode',
+    'report-commits-metadata-shortcut',
+    'mode-change-not-detected',
+    'obscured-change-not-reported',
+    'read-dir-not-found-counted-obscured',
+    'not-found-counted-obscured',
+    'is-finished-stop-evidence-restored',
+    'watch-loop-panic-injected',
+    'watch-loop-clean-early-exit',
+    'watch-loop-exits-after-first-tick',
+    'watch-loop-exits-after-first-tick-before-stop',
+    'watch-loop-never-stops',
+    'join-window-hop-removed',
+)
+
+
+def enforce_denominator():
+    names = tuple(row[0] for row in mutations)
+    if names != EXPECTED_NAMES:
+        missing = [name for name in EXPECTED_NAMES if name not in names]
+        extra = [name for name in names if name not in EXPECTED_NAMES]
+        raise SystemExit(
+            f'#1946 fixed mutation denominator: expected {len(EXPECTED_NAMES)} '
+            f'rows in order, found {len(names)} '
+            f'(missing={missing}, extra={extra}, '
+            f'order_ok={sorted(names) == sorted(EXPECTED_NAMES)})')
+
+
 def check_anchor(row, original):
     if original.count(row[2]) != 1 or row[2] == row[3]:
         raise ValueError(f'{row[0]}: stale or unchanged anchor (count={original.count(row[2])})')
@@ -474,6 +521,7 @@ def mutate(content, scope, replacements):
 
 def main():
     args = sys.argv[1:]
+    enforce_denominator()
     if args == ['--check']:
         errors = []
         names = [row[0] for row in mutations]
