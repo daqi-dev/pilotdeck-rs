@@ -518,7 +518,12 @@ try:
             content = original.decode()
             status, reason, code = 'INVALID', 'not run', None
             try:
-                assert content.count(old) == 1, (name, content.count(old))
+                # No bare `assert` here: `python3 -O` strips it, and CI's
+                # `test_negative_optimize_guards` rejects unregistered bare
+                # asserts in fixture scripts (#1666). The guard is the same.
+                count = content.count(old)
+                if count != 1:
+                    raise RuntimeError(f'{name}: anchor appears {count} times')
                 changed = content.replace(old, new, 1)
                 (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
                     content.splitlines(True), changed.splitlines(True),
