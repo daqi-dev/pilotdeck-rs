@@ -2287,6 +2287,82 @@ class ApparatusInputs(unittest.TestCase):
         self.assertEqual(cargo_config_problems(self.root, environ), [])
 
 
+class WsProjection(unittest.TestCase):
+    """#1372: the WS envelope -> in-process projection is a pure function.
+
+    The partition key is the protocol field ``final`` (one final:false envelope
+    per iterator yield, one trailing final:true carrying lastError ??
+    lastCompleted ?? the empty-stream fallback).  Event content never decides
+    placement and equal payloads are never collapsed.  The chain-level
+    rejections live in ``controls/session_domain.py``; these pin the projection
+    itself, which is also what the collector calls.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.native = _load('native_evidence', common.SCRIPT / 'native_evidence.py')
+
+    @staticmethod
+    def envelope(seq, event, final=False, request='req-1'):
+        return {'type': 'event', 'id': request, 'seq': seq, 'final': final, 'event': event}
+
+    def project(self, *envelopes, request='req-1'):
+        return self.native.project_envelopes(request, list(envelopes))
+
+    def test_duplicate_yields_are_kept_and_terminal_is_not_a_frame(self):
+        event = {'type': 'assistant_text_delta', 'text': 'same'}
+        projected = self.project(self.envelope(0, event), self.envelope(1, dict(event)),
+                                 self.envelope(2, self.native.WS_TERMINAL_FALLBACK, final=True))
+        self.assertEqual(projected['frames'], [event, event], '#1372 equal payloads must not collapse')
+        self.assertEqual(projected['terminal'], {'source': 'fallback',
+                                                 'event': self.native.WS_TERMINAL_FALLBACK})
+
+    def test_terminal_must_repeat_the_last_error(self):
+        error = {'type': 'error', 'code': 'turn_timeout'}
+        projected = self.project(self.envelope(0, error), self.envelope(1, dict(error), final=True))
+        self.assertEqual(projected['frames'], [error])
+        self.assertEqual(projected['terminal']['source'], 'error')
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, error),
+                         self.envelope(1, {'type': 'error', 'code': 'fabricated'}, final=True))
+
+    def test_completed_terminal_loses_to_an_earlier_error(self):
+        error = {'type': 'error', 'code': 'turn_timeout'}
+        completed = {'type': 'turn_completed'}
+        projected = self.project(self.envelope(0, error), self.envelope(1, completed),
+                                 self.envelope(2, dict(error), final=True))
+        self.assertEqual(projected['terminal']['source'], 'error')
+        # lastError ?? lastCompleted: a completion after the error is still not
+        # the terminal, so a completed terminal here is fabricated.
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, error), self.envelope(1, completed),
+                         self.envelope(2, dict(completed), final=True))
+
+    def test_fallback_needs_an_empty_terminal_surface(self):
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, {'type': 'error', 'code': 'turn_timeout'}),
+                         self.envelope(1, dict(self.native.WS_TERMINAL_FALLBACK), final=True))
+
+    def test_exactly_one_terminal_and_it_must_be_last(self):
+        event = {'type': 'assistant_text_delta', 'text': 'x'}
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, event, final=True), self.envelope(1, event))
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, dict(event), final=True), self.envelope(1, event, final=True))
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, event))
+
+    def test_envelope_identity_and_sequence_are_checked(self):
+        event = {'type': 'assistant_text_delta', 'text': 'x'}
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, event, request='other'),
+                         self.envelope(1, dict(event), final=True))
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, event), self.envelope(2, dict(event), final=True))
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, event, final='no'))
+
+
 class RetirementScoring(unittest.TestCase):
     """#1355 fix-r2/r3: E1 retirement scoring rules (R1/R3/R6/R7/R9 + timeout
     + ①final-frame/②budget/④every-round inventory).
