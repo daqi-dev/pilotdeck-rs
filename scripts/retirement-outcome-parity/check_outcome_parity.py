@@ -17,7 +17,8 @@ from __future__ import annotations
 import sys
 
 if not sys.flags.isolated:
-    raise SystemExit(f'run with -I: python3 -I {__file__}')
+    print(f'run with -I: python3 -I {__file__}', file=sys.stderr)
+    raise SystemExit(2)
 
 import argparse
 import hashlib
@@ -45,7 +46,11 @@ except OSError:
         if not os.path.lexists(candidate):
             break
     else:
-        raise SystemExit('check_outcome_parity: cannot reserve a fresh pycache prefix')
+        # 入口失败一律 rc2（输入不可用）；`SystemExit('...')` 返回的是 **1**，会被
+        # 下游当成「判据 FAIL」而不是「跑不了」。
+        print('check_outcome_parity: cannot reserve a fresh pycache prefix',
+              file=sys.stderr)
+        raise SystemExit(2)
     sys.pycache_prefix = candidate
 sys.dont_write_bytecode = True
 
