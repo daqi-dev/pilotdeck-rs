@@ -431,11 +431,17 @@ impl Requests {
                     // TS hands the bus `input.leaseId?.trim()`
                     // (InProcessGateway.ts:2683), not the raw validated string.
                     let lease_id = lease_id.as_ref().map(trimmed);
-                    let (consumed, outbox) = {
+                    let (consumed, pre, outbox) = {
                         let mut bus = self
                             .user_dialog_bus
                             .lock()
                             .unwrap_or_else(|e| e.into_inner());
+                        // Events that already happened before this consume
+                        // (a lease that expired inside `consume_for_response`)
+                        // must survive a settle failure; only this consume's
+                        // own "settled" broadcast is rolled back with the
+                        // entry (GatewayUserDialogBus.ts:219-226).
+                        let pre = bus.drain_events();
                         let consumed = bus.consume_for_response(
                             &session_key,
                             &request_id,
@@ -447,10 +453,11 @@ impl Requests {
                             if answered { snapshot.as_ref() } else { None },
                         );
                         let outbox = bus.drain_events();
-                        (consumed, outbox)
+                        (consumed, pre, outbox)
                     };
                     match consumed {
                         ConsumeResult::NotPending => {
+                            pre.deliver();
                             outbox.deliver();
                             Ok(crate::metadata::object([(
                                 "delivered",
@@ -463,6 +470,7 @@ impl Requests {
                             // dialog under the same request id (#1599). The
                             // answer was validated against the old one, so it
                             // must not be delivered to the new one.
+                            pre.deliver();
                             outbox.deliver();
                             Ok(crate::metadata::object([(
                                 "delivered",
@@ -470,6 +478,7 @@ impl Requests {
                             )]))
                         }
                         ConsumeResult::LeaseRequired => {
+                            pre.deliver();
                             outbox.deliver();
                             Err(RequestError {
                                 code: "USER_DIALOG_LEASE_REQUIRED".into(),
@@ -494,6 +503,13 @@ impl Requests {
                                 .as_ref()
                                 .map_or(Ok(()), |hook| hook());
                             if let Err(error) = settled {
+                                // Keep every change this consume already
+                                // caused (a lease that expired inside
+                                // `consume_for_response`); only its own
+                                // "settled" broadcast is rolled back with the
+                                // entry (GatewayUserDialogBus.ts:219-226).
+                                pre.deliver();
+                                outbox.without_settled(&session_key, &request_id).deliver();
                                 let mut bus = self
                                     .user_dialog_bus
                                     .lock()
@@ -504,6 +520,7 @@ impl Requests {
                             }
                             // TS remove() broadcasts before the waiter
                             // resolves (InProcessGateway.ts:2678-2707).
+                            pre.deliver();
                             outbox.deliver();
                             (consumed.entry.resolve)(answer);
                             Ok(crate::metadata::object([(

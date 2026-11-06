@@ -81,6 +81,14 @@ REPLACED_METHOD_TEST = ('native_process::methods::tests::'
                         'the_dialog')
 REPLACED_METHOD_ASSERTION = ('#1599 an answer validated against a replaced '
                              'dialog must not be delivered')
+RESTORE_POSITION_TEST = ('user_dialog::tests::'
+                        'restore_keeps_the_relative_position_after_a_reentrant_removal')
+RESTORE_POSITION_ASSERTION = ('#1599 restore keeps the consumed dialog before '
+                              'the member that followed it')
+SETTLE_EVENTS_TEST = ('native_process::methods::tests::'
+                      'user_dialog_respond_settle_failure_still_delivers_the_expired_lease')
+SETTLE_EVENTS_ASSERTION = ('#1599 a failing settle hook still delivers the lease '
+                           'expiry it did not roll back')
 # Statically declared denominator: a literal tuple, deliberately not derived
 # from `mutations`, so a runtime table that lost rows cannot shrink it.
 DECLARED = (
@@ -96,6 +104,8 @@ DECLARED = (
     'restore-overwrites-a-reentrant-registration',
     'answered-without-snapshot-consumes-the-late-registration',
     'answered-snapshot-identity-dropped',
+    'restore-ignores-the-successor',
+    'settle-failure-drops-pre-consume-events',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -195,7 +205,7 @@ mutations = [
      REPLACED_TEST, REPLACED_ASSERTION),
     # restore: the entry goes back to the bucket tail instead of its position.
     ('restore-appends-to-the-tail', 'user_dialog/bus.rs',
-     '        bucket.insert(index.min(bucket.len()), entry);',
+     '        bucket.insert(position, entry);',
      '        bucket.push(entry);',
      RESTORE_TEST, RESTORE_ASSERTION),
     # channel cross-gateway poll: the identity check is dropped, so an answer
@@ -235,6 +245,24 @@ mutations = [
      '                            if answered { snapshot.as_ref() } else { None },',
      '                            None,',
      REPLACED_METHOD_TEST, REPLACED_METHOD_ASSERTION),
+    # restore: the old successor is ignored, so an entry whose predecessor was
+    # consumed by a reentrant callback goes back to the tail instead of the
+    # slot it occupied (Grok boundary P1-2).
+    ('restore-ignores-the-successor', 'user_dialog/bus.rs',
+     '        let position = successor\n'
+     '            .and_then(|after| bucket.iter().position(|value| value.request_id == after))',
+     '        let position = None::<JsString>\n'
+     '            .and_then(|after| bucket.iter().position(|value| value.request_id == after))',
+     RESTORE_POSITION_TEST, RESTORE_POSITION_ASSERTION),
+    # respond: a failing settle hook drops every queued change, including the
+    # lease expiry that already happened inside consume_for_response
+    # (Grok boundary P1-1).
+    ('settle-failure-drops-pre-consume-events',
+     'native_process/methods/user_dialog.rs',
+     '                                pre.deliver();\n'
+     '                                outbox.without_settled(&session_key, &request_id).deliver();',
+     '',
+     SETTLE_EVENTS_TEST, SETTLE_EVENTS_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]

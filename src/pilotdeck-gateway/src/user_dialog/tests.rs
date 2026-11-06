@@ -1011,6 +1011,35 @@ fn restore_keeps_the_consumed_dialog_at_its_original_position() {
     );
 }
 
+/// #1599: the settle hook may reenter the bus and remove or insert other
+/// members before failing. TS `remove()` leaves the bucket untouched when the
+/// hook throws, so the consumed entry keeps its place *relative to the
+/// survivors*; a saved numeric index would put it on the wrong side of them.
+#[test]
+fn restore_keeps_the_relative_position_after_a_reentrant_removal() {
+    use crate::negative_assert_eq;
+
+    let clock = clock(&fixture());
+    let mut bus = GatewayUserDialogBus::new(runtime(&clock, "bus-restore-shift"), None);
+    let session: JsString = "restore-shift".into();
+    for id in ["alpha", "beta", "gamma"] {
+        bus.register(&session, numbered_pending(id, Arc::new(|_value| true)));
+    }
+    let consumed = bus
+        .consume(&session, &"beta".into(), "abort")
+        .expect("beta is pending");
+    // The settle hook reentered and consumed the member before beta, then
+    // failed.
+    bus.consume(&session, &"alpha".into(), "abort")
+        .expect("alpha is pending");
+    bus.restore(&session, consumed);
+    negative_assert_eq!(
+        listed_request_ids(&mut bus, &session),
+        vec!["beta".to_string(), "gamma".to_string()],
+        "#1599 restore keeps the consumed dialog before the member that followed it"
+    );
+}
+
 /// #1599: the bus guard is released between the snapshot and the consume, so
 /// a host callback can reenter and replace the dialog under the same request
 /// id. The answer was validated against the old dialog and must not be

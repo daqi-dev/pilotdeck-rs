@@ -105,10 +105,15 @@ def check_block(attrs: str, head: str, patch: str = "") -> list[str]:
         errs.append("结果块键 patch 至多出现一次；重跑 run-review-roles.py")
     if one.get("readonly", "tools") != "tools":
         errs.append(f"结果块 readonly={one['readonly']}：只接受 readonly=tools（执行层工具白名单）")
-    prefix = {"zai": "glm-", "anthropic": "claude-", "minimax": "MiniMax-", "deepseek": "deepseek-"}
+    # codex（官方 GPT 谱系，ops 侧 `codex exec` 入口）不在 run-review-roles.py 的
+    # runner 表里，但当 zai/anthropic/deepseek/minimax 全是作者线时它是可用的非作者
+    # 谱系（2026-11-06 GLM 作者单实测）。这里只登记组合，四项 PASS、head/patch 与
+    # 角色齐全的判据一条不减。
+    prefix = {"zai": "glm-", "anthropic": "claude-", "minimax": "MiniMax-",
+              "deepseek": "deepseek-", "codex": "gpt-"}
     rn, md = one.get("runner"), one.get("model", "")
     if rn is not None and (rn not in prefix or not md.startswith(prefix[rn])):
-        errs.append(f"结果块 runner={rn} model={md} 不是已知组合（zai→glm-*，anthropic→claude-*，minimax→MiniMax-*，deepseek→deepseek-*）")
+        errs.append(f"结果块 runner={rn} model={md} 不是已知组合（zai→glm-*，anthropic→claude-*，minimax→MiniMax-*，deepseek→deepseek-*，codex→gpt-*）")
     # P1（boundary 审 #1）：head= 必须与当前 PR head 比对，防「推新提交后旧 PASS 块照样过闸」
     if head:
         bhead = one.get("head", "")  # 完整键、恰一次（nothead= 不算，重复 head 已在上面拒）

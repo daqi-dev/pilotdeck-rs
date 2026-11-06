@@ -689,11 +689,15 @@ impl GatewayUserDialogChannel {
         // the dialog pending and broadcast-free (fail-closed,
         // GatewayUserDialogBus.ts:219-226), so a settle failure restores the
         // consumed entry instead of resolving.
-        let (consumed, outbox) = {
+        let (consumed, pre, outbox) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
+            // Events that predate this consume (an expired lease) are not
+            // rolled back when the settle hook fails; only this consume's
+            // "settled" broadcast is (GatewayUserDialogBus.ts:219-226).
+            let pre = bus.drain_events();
             let consumed = bus.consume(&self.inner.options.session_key, request_id, "cancelled");
             let outbox = bus.drain_events();
-            (consumed, outbox)
+            (consumed, pre, outbox)
         };
         match consumed {
             Some(consumed) => {
@@ -703,16 +707,24 @@ impl GatewayUserDialogChannel {
                     .as_ref()
                     .map_or(Ok(()), |hook| hook());
                 if let Err(error) = settled {
+                    pre.deliver();
+                    outbox
+                        .without_settled(&self.inner.options.session_key, request_id)
+                        .deliver();
                     let mut bus = self.inner.options.bus.lock().unwrap();
                     bus.restore(&self.inner.options.session_key, consumed);
                     drop(bus);
                     self.complete(&state, Err(error.to_string()));
                     return;
                 }
+                pre.deliver();
                 outbox.deliver();
                 (consumed.entry.resolve)(DialogAnswer::Cancelled(Some(reason.into())));
             }
-            None => outbox.deliver(),
+            None => {
+                pre.deliver();
+                outbox.deliver();
+            }
         }
         let mut event = JsObject::new();
         event.insert("type".into(), "user_dialog_cancelled".into());
@@ -808,7 +820,7 @@ impl GatewayUserDialogChannel {
         // #1442: the settle hook and the completion callbacks are host code;
         // they run only after the bus guard drops.
         let generation = state.generation.load(Ordering::SeqCst);
-        let (consumed, outbox, replaced) = {
+        let (consumed, pre, outbox, replaced) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
             // #1599: this answer was taken for the registration `state` owns
             // and is validated by `state.accepts` (dialog kind, schema). A
@@ -816,6 +828,7 @@ impl GatewayUserDialogChannel {
             // and re-register the same request id with a different contract;
             // consuming that entry would hand the old answer to the new
             // waiter, so an unbound entry is left pending instead.
+            let pre = bus.drain_events();
             let replaced =
                 bus.pending_replaced(&self.inner.options.session_key, request_id, generation);
             let consumed = (!replaced).then(|| {
@@ -826,11 +839,12 @@ impl GatewayUserDialogChannel {
                 )
             });
             let outbox = bus.drain_events();
-            (consumed.flatten(), outbox, replaced)
+            (consumed.flatten(), pre, outbox, replaced)
         };
         let consumed = match consumed {
             Some(consumed) => consumed,
             None => {
+                pre.deliver();
                 outbox.deliver();
                 if replaced {
                     // The registration this poll answered is gone, so the
@@ -852,19 +866,26 @@ impl GatewayUserDialogChannel {
             }
         };
         // A failed settle hook restores the entry (TS remove() fail-closed,
-        // GatewayUserDialogBus.ts:219-226) and discards the queued broadcast.
+        // GatewayUserDialogBus.ts:219-226) and discards its own queued
+        // broadcast; changes that already happened inside the same consume
+        // (an expired lease) still reach the renderer.
         let settled = consumed
             .entry
             .on_settled
             .as_ref()
             .map_or(Ok(()), |hook| hook());
         if settled.is_err() {
+            pre.deliver();
+            outbox
+                .without_settled(&self.inner.options.session_key, request_id)
+                .deliver();
             let mut bus = self.inner.options.bus.lock().unwrap();
             bus.restore(&self.inner.options.session_key, consumed);
             drop(bus);
             finish_poll(&self.inner, request_id);
             return;
         }
+        pre.deliver();
         outbox.deliver();
         match &answer.result {
             DialogAnswer::Answered(value) => {
