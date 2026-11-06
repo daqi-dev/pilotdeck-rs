@@ -1709,9 +1709,12 @@ fn recorded_headers(step: &Value) -> Vec<(String, String)> {
 
 const REPLAY_BODY_BUDGET: usize = MAX_BODY_BYTES + 1;
 
-fn recorded_body_checked(step: &Value) -> Result<Vec<u8>, String> {
+/// One recorded body as `(text, count, bytes)`. `bytes` is `text.len() * count`,
+/// validated without materializing the body, so a reader that only needs the
+/// length does not allocate a megabyte to measure it (#1984).
+fn recorded_body_spec_checked<'a>(step: &'a Value) -> Result<(&'a str, usize, usize), String> {
     let (text, count) = match step.get("body") {
-        None => return Ok(Vec::new()),
+        None => return Ok(("", 0, 0)),
         Some(Value::String(text)) => (text.as_str(), 1),
         Some(spec @ Value::Object(_)) => (
             recorded_body_repeat_checked(spec)?.unwrap_or_default(),
@@ -1719,7 +1722,7 @@ fn recorded_body_checked(step: &Value) -> Result<Vec<u8>, String> {
         ),
         Some(value) => {
             if crate::mutants::on("sms-oracle-body-type") {
-                return Ok(Vec::new());
+                return Ok(("", 0, 0));
             }
             return Err(format!(
                 "#1339 body must be a string or repeat object, got {value}"
@@ -1737,16 +1740,26 @@ fn recorded_body_checked(step: &Value) -> Result<Vec<u8>, String> {
             "#1339 body exceeds replay budget {REPLAY_BODY_BUDGET}: repeat={text:?}, count={count}, bytes={length}"
         ));
     }
+    Ok((text, count, length))
+}
+
+fn recorded_body_checked(step: &Value) -> Result<Vec<u8>, String> {
+    let (text, count, _) = recorded_body_spec_checked(step)?;
     Ok(text.repeat(count).into_bytes())
+}
+
+/// Recorded body byte length of one step, without materializing the bytes.
+fn recorded_body_len_checked(step: &Value) -> Result<usize, String> {
+    recorded_body_spec_checked(step).map(|(_, _, length)| length)
 }
 
 fn recorded_body(step: &Value) -> Vec<u8> {
     recorded_body_checked(step).unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// #1984: request bodies at or above `MAX_BODY_BYTES` are *boundary* cells and
+/// #1984: request bodies that reach `MAX_BODY_BYTES` are *boundary* cells and
 /// must be declared here with their expected length. The check classifies by
-/// the recorded byte length, not by the case name, so a renamed cell or a newly
+/// the wire byte length, not by the case name, so a renamed cell or a newly
 /// added boundary cell that is missing from this table fails the replay instead
 /// of passing silently -- the old `_ => Ok(())` name whitelist was exactly that
 /// silent pass.
@@ -1755,13 +1768,20 @@ const BOUNDARY_BODY_CASES: &[(&str, usize)] = &[
     ("payload-too-large", MAX_BODY_BYTES + 1),
 ];
 
-/// Recorded `request` body lengths of one oracle case, in fixture order.
+/// Bytes of one recorded `request` body that actually reach the product, in
+/// fixture order. `build_raw` drops `truncate` body bytes while keeping the
+/// recorded `Content-Length`, so a boundary cell that truncates no longer
+/// probes the cap even though its recorded body is still a megabyte (#1984).
 fn recorded_request_body_lengths(case: &Value) -> Result<Vec<usize>, String> {
     recorded_steps_checked(case)?
         .into_iter()
         .flatten()
         .filter(|step| step.get("op").and_then(Value::as_str) == Some("request"))
-        .map(|step| recorded_body_checked(step).map(|body| body.len()))
+        .map(|step| {
+            let truncate = usize::try_from(recorded_truncate_checked(step)?.unwrap_or_default())
+                .unwrap_or(usize::MAX);
+            Ok(recorded_body_len_checked(step)?.saturating_sub(truncate))
+        })
         .collect()
 }
 
@@ -1776,15 +1796,15 @@ fn assert_boundary_body_len_checked(name: &str, case: &Value) -> Result<(), Stri
             }
         }
         None => {
-            // #1984 fail-closed: a body at or above the cap is a boundary cell
+            // #1984 fail-closed: a body that reaches the cap is a boundary cell
             // even when its name was never declared. Register it with its
             // expected length, or the replay fails here instead of skipping.
             if let Some(length) = lengths.iter().copied().find(|len| *len >= MAX_BODY_BYTES)
                 && !crate::mutants::on("sms-oracle-boundary-unregistered")
             {
                 return Err(format!(
-                    "#1339 {name} records a {length}-byte request body at or above the \
-                     {MAX_BODY_BYTES}-byte cap but is not declared in BOUNDARY_BODY_CASES; \
+                    "#1339 {name} records a {length}-byte request body that reaches the \
+                     {MAX_BODY_BYTES}-byte body cap but is not declared in BOUNDARY_BODY_CASES; \
                      declare it with its expected length"
                 ));
             }
@@ -1994,18 +2014,41 @@ fn recorded_boundary_body_length_rejects_unregistered_case() {
     );
 }
 
+/// #1984: a truncated boundary body no longer puts its recorded length on the
+/// wire, so it must not be accepted as proof that the cap itself was probed.
+#[test]
+fn recorded_boundary_body_length_counts_only_wire_bytes() {
+    crate::negative_assert!(
+        assert_boundary_body_len_checked(
+            "payload-exactly-1mib",
+            &json!({"steps":[{
+                "op":"request",
+                "body":{"repeat":"x","count":1_048_576_u64},
+                "truncate":1_u64,
+            }]}),
+        )
+        .is_err(),
+        "#1339 #1984 truncation shortens the replayed body below the cap"
+    );
+}
+
 /// #1984: the declared boundary table and the fixture must agree in both
 /// directions -- a declared cell that was renamed or resized fails, and every
-/// oracle cell whose recorded `request` body reaches the cap must be declared.
+/// oracle cell whose replayed `request` body reaches the cap must be declared.
 /// The per-case check above catches a *replayed* undeclared cell; this test
 /// also catches a rename that removed the declared cell from the fixture.
 #[test]
 fn boundary_body_cases_match_the_fixture() {
-    // The declared pair must still bracket the cap itself; otherwise the two
+    // The declared entries must still bracket the cap itself; otherwise the two
     // cells stop proving that `MAX_BODY_BYTES` is the accept/reject boundary.
-    assert!(
-        BOUNDARY_BODY_CASES.contains(&("payload-exactly-1mib", MAX_BODY_BYTES))
-            && BOUNDARY_BODY_CASES.contains(&("payload-too-large", MAX_BODY_BYTES + 1)),
+    let mut declared_lengths: Vec<usize> = BOUNDARY_BODY_CASES
+        .iter()
+        .map(|(_, length)| *length)
+        .collect();
+    declared_lengths.sort_unstable();
+    assert_eq!(
+        declared_lengths,
+        [MAX_BODY_BYTES, MAX_BODY_BYTES + 1],
         "#1339 #1984 the declared boundary cells must bracket MAX_BODY_BYTES"
     );
     for (name, expected) in BOUNDARY_BODY_CASES {
@@ -2026,13 +2069,11 @@ fn boundary_body_cases_match_the_fixture() {
         {
             continue;
         }
-        let lengths =
-            recorded_request_body_lengths(&case).expect("#1339 oracle case request steps");
-        assert!(
-            lengths.iter().all(|length| *length < MAX_BODY_BYTES),
-            "#1339 #1984 {name} records a capped request body {lengths:?} but is not declared \
-             in BOUNDARY_BODY_CASES"
-        );
+        // Call the gate itself instead of re-deriving its threshold here: the
+        // "reaches the cap" rule lives in one place, so the two cannot drift.
+        assert_boundary_body_len_checked(name, &case).unwrap_or_else(|error| {
+            panic!("#1339 #1984 undeclared oracle case {name} fails the boundary gate: {error}")
+        });
     }
 }
 
@@ -2434,7 +2475,9 @@ fn body_expansion_pins_bytes_and_fixture_boundaries() {
         recorded_body_checked(&json!({"body":{"repeat":"x"}})).is_err(),
         "#1339 missing repeat count rejected"
     );
-    for name in ["payload-exactly-1mib", "payload-too-large"] {
+    // #1984: iterate the declaration table instead of a second literal list, so
+    // a third boundary cell is replayed here without editing this loop.
+    for (name, _) in BOUNDARY_BODY_CASES.iter().copied() {
         assert_boundary_body_len(name, &case_by_name(name));
     }
     assert_eq!(build_raw(&json!({"body":"abc","truncate":100})), b"POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 3\r\n\r\n", "#1339 truncation preserves headers");

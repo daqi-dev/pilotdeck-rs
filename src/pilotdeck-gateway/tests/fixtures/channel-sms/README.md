@@ -23,11 +23,12 @@ and the loopback listener lifecycle (ECONNREFUSED after stop).
 
 Boundary body lengths are pinned **by value, not by case name** (#1984):
 `src/channel/sms/tests.rs` declares `BOUNDARY_BODY_CASES`, and any case whose
-recorded `request` body reaches `MAX_BODY_BYTES` must be declared there with
-its expected length. A renamed or newly added boundary cell that is not
-declared fails the replay instead of passing silently, and
-`boundary_body_cases_match_the_fixture` checks the table and the fixture
-against each other in both directions.
+replayed `request` body (recorded bytes minus `truncate`) reaches
+`MAX_BODY_BYTES` must be declared there with its expected length. A renamed or
+newly added boundary cell that is not declared fails the replay instead of
+passing silently, a truncated boundary cell no longer counts as probing the
+cap, and `boundary_body_cases_match_the_fixture` checks the table and the
+fixture against each other in both directions.
 
 ## oracle.json
 
@@ -87,11 +88,9 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the 70 `#996` compile-time switches the
-channel carries (`crate::mutants::on("sms-…")`; 26 → 70, where the fix-r1
-round added 11, #1589 added 4, #1729 added 39, #1813 added 1, #1790 added
-3, #1901 added 1 — the `switches` table is
-the truth source) through the shared
+`negative_controls.py` runs the channel's 71 `#996` compile-time switches
+(`crate::mutants::on("sms-…")`; 26 → 71, `#1984` added the last one — the
+`switches` table is the truth source) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
 a restored re-run. `mutating_sources` cannot run pre-commit (new files
@@ -104,7 +103,7 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
                                                  # unless all KILLED
 ```
 
-#1729：`negative_controls.py` 现有 **70** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
+#1729：`negative_controls.py` 现有 **71** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1，`#1984` 加 `sms-oracle-boundary-unregistered`），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
 
 #1813：当时 **66** 个开关（`#1790` 后为 69）。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。
 
