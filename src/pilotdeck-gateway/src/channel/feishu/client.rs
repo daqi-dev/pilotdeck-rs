@@ -4,10 +4,7 @@
 //! the whole client at a loopback mock; production passes
 //! `https://open.feishu.cn` (or `https://open.larksuite.com` for
 //! `domainName: "lark"`).
-use std::{
-    sync::Arc,
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use tokio::sync::Mutex;
@@ -96,7 +93,10 @@ impl ApiClient {
         }
 
         let mut body = JsObject::new();
-        body.insert("app_id".into(), JsValue::String(JsString::from(self.app_id.as_str())));
+        body.insert(
+            "app_id".into(),
+            JsValue::String(JsString::from(self.app_id.as_str())),
+        );
         body.insert(
             "app_secret".into(),
             JsValue::String(JsString::from(self.app_secret.as_str())),
@@ -109,7 +109,10 @@ impl ApiClient {
             .http
             .request(
                 "POST",
-                &format!("{}/open-apis/auth/v3/tenant_access_token/internal", self.base),
+                &format!(
+                    "{}/open-apis/auth/v3/tenant_access_token/internal",
+                    self.base
+                ),
                 Some("application/json; charset=utf-8"),
                 &body,
                 REQUEST_TIMEOUT,
@@ -130,7 +133,9 @@ impl ApiClient {
             ));
         }
         let expire = json.get("expire").and_then(JsValue::as_number);
-        let expire_sec = expire.filter(|value| value.is_finite()).unwrap_or(DEFAULT_TOKEN_TTL_SECONDS);
+        let expire_sec = expire
+            .filter(|value| value.is_finite())
+            .unwrap_or(DEFAULT_TOKEN_TTL_SECONDS);
         let token = token.expect("#1329 token present");
         *cache = Some(CachedToken {
             value: token.clone(),
@@ -169,7 +174,10 @@ impl ApiClient {
         let token = match self.tenant_access_token().await {
             Ok(token) => token,
             Err(error) => {
-                (self.log)("error", &format!("feishu: {label} {msg_type} threw: {error}"));
+                (self.log)(
+                    "error",
+                    &format!("feishu: {label} {msg_type} threw: {error}"),
+                );
                 return Err(());
             }
         };
@@ -178,7 +186,10 @@ impl ApiClient {
             .http
             .request_bearer(
                 "POST",
-                &format!("{}/open-apis/im/v1/messages?receive_id_type=chat_id", self.base),
+                &format!(
+                    "{}/open-apis/im/v1/messages?receive_id_type=chat_id",
+                    self.base
+                ),
                 Some("application/json; charset=utf-8"),
                 &token,
                 &body,
@@ -430,7 +441,10 @@ impl ApiClient {
             .http
             .request_bearer(
                 "POST",
-                &format!("{}/open-apis/im/v1/messages?receive_id_type=chat_id", self.base),
+                &format!(
+                    "{}/open-apis/im/v1/messages?receive_id_type=chat_id",
+                    self.base
+                ),
                 Some("application/json; charset=utf-8"),
                 &token,
                 &body,

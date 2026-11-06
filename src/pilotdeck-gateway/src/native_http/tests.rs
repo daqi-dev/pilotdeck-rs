@@ -147,6 +147,7 @@ fn config_for(server: &str, fixture: &Fixture) -> Config {
         token: "fixture-token".into(),
         loopback: server != "c",
         static_root,
+        webhook: None,
     }
 }
 
@@ -780,6 +781,7 @@ async fn local_token_requires_loopback_binding() {
         token: "fixture-token".into(),
         loopback: true,
         static_root: None,
+        webhook: None,
     };
     let response = route("GET", "/auth/local-token", &local).await;
     assert_eq!(
@@ -1175,6 +1177,7 @@ async fn trailing_separator_root_still_serves() {
         token: "fixture-token".into(),
         loopback: true,
         static_root: Some(PathBuf::from(format!("{}/", fixture.root.display()))),
+        webhook: None,
     };
     let response = route("GET", "/app.js", &config).await;
     assert_eq!(
@@ -2154,6 +2157,7 @@ async fn keep_alive_idle_close_lands_at_six_seconds() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2277,6 +2281,7 @@ async fn idle_close_refreshes_on_read_segments() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2351,6 +2356,7 @@ async fn handler_execution_blocks_idle_close() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2421,6 +2427,7 @@ async fn idle_state_no_request_stays_open() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2594,6 +2601,7 @@ async fn client_close_ends_connection_without_timer() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2642,6 +2650,7 @@ async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2788,6 +2797,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 token: "fixture-token".into(),
                 loopback: true,
                 static_root: None,
+                webhook: None,
             };
             let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
                 server,
@@ -2835,6 +2845,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 token: "fixture-token".into(),
                 loopback: true,
                 static_root: None,
+                webhook: None,
             };
             let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
                 server,
@@ -2886,6 +2897,7 @@ async fn served_follow_up_head_silent_ends_at_idle_close() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2966,6 +2978,7 @@ async fn served_follow_up_head_dribble_408s_like_ts() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3089,6 +3102,7 @@ async fn headers_timeout_lands_on_checker_grid_like_ts() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         // The connection begins 15 s after the listener's bind: its own
         // deadline (+75 s) is off the anchor's phase, so only the bind
@@ -3166,6 +3180,7 @@ async fn first_head_delayed_anchors_at_its_first_byte_like_ts() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3340,6 +3355,7 @@ async fn held_response_mid_stream_head_still_408s_like_ts() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3431,6 +3447,7 @@ async fn pipelined_mid_stream_head_keeps_own_deadline_like_ts() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3534,6 +3551,7 @@ async fn in_flight_request_disarms_rearmed_timeout() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let release_rx = release_rx;
         // Both requests are `/health` (the read helper pins the 200); the
@@ -3621,6 +3639,7 @@ async fn held_response_gets_no_headers_timeout() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let release_rx = release_rx;
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
@@ -3697,6 +3716,7 @@ async fn stop_disarms_headers_timeout() {
             token: "fixture-token".into(),
             loopback: true,
             static_root: None,
+            webhook: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,

@@ -38,7 +38,7 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-use client::{ApiClient, SendResult};
+use client::{ApiClient, Log, SendResult};
 use mapper::{FeishuCommand, FeishuSessionMapper};
 use parse::{
     Clock, InboundMessage, ParsedEvent, Parser, group_inbound, mask_app_id,
@@ -157,12 +157,10 @@ impl Logger {
     fn log(&self, level: &str, message: &str) {
         let sink = self.sink.lock().expect("#1329 logger mutex").clone();
         if let Some(sink) = sink {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                sink(level, message)
-            }));
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(level, message)));
         }
     }
-    fn fn_handle(&self) -> Arc<dyn Fn(&str, &str) + Send + Sync> {
+    fn fn_handle(&self) -> Log {
         let logger = self.clone();
         Arc::new(move |level: &str, message: &str| logger.log(level, message))
     }
@@ -434,7 +432,10 @@ impl Runtime {
         if self.gateway().is_none() {
             return (
                 503,
-                respond_json(vec![("error", JsValue::String("feishu_not_started".into()))]),
+                respond_json(vec![(
+                    "error",
+                    JsValue::String("feishu_not_started".into()),
+                )]),
             );
         }
         let options = self.options();
@@ -499,7 +500,14 @@ impl Runtime {
         });
         let mut state = self.state.lock().expect("#1329 state mutex");
         let batch = state.batches.entry(chat_id).or_default();
-        if let Some(previous) = batch.timer.take() {
+        // `clearTimeout(batch.timer)`: a timer whose drain already started
+        // cannot be stopped — the running drainer picks up the new message
+        // in its re-read loop — so only a not-yet-fired timer is aborted.
+        // Aborting unconditionally would cancel a mid-flight drain (and its
+        // outbound sends), which JS cannot express.
+        if let Some(previous) = batch.timer.take()
+            && !batch.draining
+        {
             previous.abort();
         }
         batch.messages.push(input);
@@ -517,7 +525,10 @@ impl Runtime {
             let text = input.text.clone();
             tokio::spawn(async move {
                 if let Err(error) = runtime.answer_pending_elicitation(&chat_id, &text).await {
-                    runtime.log("error", &format!("feishu: elicitation answer error: {error}"));
+                    runtime.log(
+                        "error",
+                        &format!("feishu: elicitation answer error: {error}"),
+                    );
                 }
             });
             return true;
@@ -546,7 +557,10 @@ impl Runtime {
         let text = input.text.clone();
         tokio::spawn(async move {
             if let Err(error) = runtime.answer_pending_permission(&chat_id, &text).await {
-                runtime.log("error", &format!("feishu: permission answer error: {error}"));
+                runtime.log(
+                    "error",
+                    &format!("feishu: permission answer error: {error}"),
+                );
             }
             let mut state = runtime.state.lock().expect("#1329 state mutex");
             if state.permission_answering.get(&chat_id) == Some(&token) {
@@ -683,13 +697,22 @@ impl Runtime {
                 .answer_pending_elicitation(&chat_id, &message_text)
                 .await
             {
-                self.log("error", &format!("feishu: elicitation answer error: {error}"));
+                self.log(
+                    "error",
+                    &format!("feishu: elicitation answer error: {error}"),
+                );
             }
             return;
         }
         if self.interaction.permission_pending(&chat_id) {
-            if let Err(error) = self.answer_pending_permission(&chat_id, &message_text).await {
-                self.log("error", &format!("feishu: permission answer error: {error}"));
+            if let Err(error) = self
+                .answer_pending_permission(&chat_id, &message_text)
+                .await
+            {
+                self.log(
+                    "error",
+                    &format!("feishu: permission answer error: {error}"),
+                );
             }
             return;
         }
@@ -768,8 +791,14 @@ impl Runtime {
             entry.queue.clear();
             entry.active_run = None;
             state.permission_answering.remove(chat_id);
+            // `clearTimeout(batch?.timer)`: once the timer fired and the
+            // drain is running, clearTimeout is a no-op in JS — the drain
+            // (including this /new's own send) runs to completion. Aborting
+            // unconditionally would cancel the very task executing this
+            // branch, silently dropping the "已创建新会话。" reply.
             if let Some(mut batch) = state.batches.remove(chat_id)
                 && let Some(timer) = batch.timer.take()
+                && !batch.draining
             {
                 timer.abort();
             }
@@ -968,7 +997,10 @@ impl Runtime {
         for chunk in live_chunks(text, live_text_limit(MAX_TEXT_MESSAGE_LENGTH)) {
             let is_final = !chunk.ends_with(render::DEFAULT_LIVE_REPLY_CURSOR);
             let kind = activity_kind_from_text(&chunk);
-            if api.send_post(chat_id, &chunk, is_final, Some(kind)).await.is_failed()
+            if api
+                .send_post(chat_id, &chunk, is_final, Some(kind))
+                .await
+                .is_failed()
                 && api
                     .send_raw(chat_id, "text", text_content(&chunk))
                     .await

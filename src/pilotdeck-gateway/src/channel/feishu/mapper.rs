@@ -202,7 +202,10 @@ fn state_from_js(saved: &JsValue) -> FeishuSessionMapperState {
 fn record_to_js(record: &[(String, String)]) -> JsValue {
     let mut object = JsObject::new();
     for (key, value) in record {
-        object.insert(key.as_str().into(), JsValue::String(JsString::from(value.as_str())));
+        object.insert(
+            key.as_str().into(),
+            JsValue::String(JsString::from(value.as_str())),
+        );
     }
     JsValue::Object(object)
 }

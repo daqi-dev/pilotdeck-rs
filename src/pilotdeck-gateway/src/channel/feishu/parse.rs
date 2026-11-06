@@ -12,9 +12,7 @@ use super::crypto::decrypt_feishu_payload;
 /// The TS `ParsedEvent` union.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParsedEvent {
-    UrlVerification {
-        challenge: String,
-    },
+    UrlVerification { challenge: String },
     Message(InboundMessage),
     Ignore,
 }
@@ -100,7 +98,10 @@ impl Parser<'_> {
             // number, an object) never equals the configured string.
             if let Some(token) = token
                 && js_truthy(token)
-                && token.as_string().map(|value| String::from_utf16_lossy(value.units())).as_deref()
+                && token
+                    .as_string()
+                    .map(|value| String::from_utf16_lossy(value.units()))
+                    .as_deref()
                     != Some(expected)
             {
                 (self.log)("warn", "feishu: verifyToken mismatch — ignoring event");
@@ -358,9 +359,11 @@ mod tests {
             panic!("#1329 v1 message");
         };
         assert_eq!(message.event_id, "v1:c:42");
-        let ParsedEvent::Message(with_uuid) =
-            parse(r#"{"uuid":"u1","event":{"chat_id":"c","text":"x"}}"#, &clock, &log)
-        else {
+        let ParsedEvent::Message(with_uuid) = parse(
+            r#"{"uuid":"u1","event":{"chat_id":"c","text":"x"}}"#,
+            &clock,
+            &log,
+        ) else {
             panic!("#1329 v1 uuid");
         };
         assert_eq!(with_uuid.event_id, "u1");
@@ -431,7 +434,10 @@ mod tests {
             extract_message_text(Some("text"), Some(r#"{"text":"a"}"#)),
             "a"
         );
-        assert_eq!(extract_message_text(Some("text"), Some("not json")), "not json");
+        assert_eq!(
+            extract_message_text(Some("text"), Some("not json")),
+            "not json"
+        );
         assert_eq!(extract_message_text(Some("image"), Some("{}")), "");
         assert_eq!(extract_message_text(Some("text"), None), "");
     }
