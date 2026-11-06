@@ -173,6 +173,16 @@ impl Options {
         // Keep Node path.resolve identity (including symlink spelling). Only
         // the containment check uses the physical path, preserving isolation.
         let project = crate::metadata::resolve_process_path(cwd, Path::new(take("--project")?))?;
+        // #1431 P2-3: Node's argv is a UTF-8 string, so the TS baseline can only
+        // ever address a project by its lossy (`U+FFFD`) spelling. Accepting the
+        // raw bytes here made `Services::workspace_id` hash that lossy spelling
+        // while `serves_project` compares the raw `PathBuf`, so the resulting
+        // workspace id was reachable by no `snapshot_list` request: the turn
+        // captured snapshots nothing could list. Refuse the unreachable path at
+        // parse, like `--storage-root` below.
+        if project.to_str().is_none() {
+            return Err("project is not UTF-8".into());
+        }
         let physical_project = directory(&project, "project")?;
         if home.starts_with(&physical_project) || physical_project.starts_with(&home) {
             return Err("native home and project must be separate directories".into());

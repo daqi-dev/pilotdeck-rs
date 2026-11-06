@@ -189,12 +189,39 @@ mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(
 # calling thread (no spawn_blocking), which blocks the serial host.
 mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'requests.memory_dispatch(&method, &params),', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 
+# #1431 P2-3 + 收尾自查残差: two production steps had assertions but no paired
+# mutation. `non-utf8-project-accepted` reopens the unreachable-workspace path a
+# non-UTF-8 `--project` used to take; `snapshot-list-resolver-bypassed` proves the
+# management route really resolves the workspace id through `SnapshotProjects`
+# (the marker branch), which is what makes the submit-captured snapshot visible.
+mutations.append(('non-utf8-project-accepted', ENTRY,
+                  '        if project.to_str().is_none() {\n            return Err("project is not UTF-8".into());\n        }',
+                  '        if false {\n            return Err("project is not UTF-8".into());\n        }',
+                  'native_process::tests::non_utf8_project_path_is_refused',
+                  '#1431 non-UTF-8 --project must be rejected'))
+mutations.append(('snapshot-list-resolver-bypassed', SNAPSHOT,
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id(&project_key);\n        let limit = snapshot_limit(field(input, "limit"))?;',
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = crate::metadata::project_id(std::path::Path::new(&project_key));\n        let limit = snapshot_limit(field(input, "limit"))?;',
+                  WIRING, '#1431 snapshot_list returns the submit-captured snapshot'))
+# #1431 review (both lineages): `snapshot_get` / `snapshot_restore` resolve the
+# same management-side workspace id (same call, `source_project` name in
+# restore) and had assertions but no paired mutation, so swapping those two for
+# the legacy slug would only be caught by the oracle replay.
+mutations.append(('snapshot-get-resolver-bypassed', SNAPSHOT,
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id(&project_key);\n        let snapshot_id = field(input, "snapshotId");',
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = crate::metadata::project_id(std::path::Path::new(&project_key));\n        let snapshot_id = field(input, "snapshotId");',
+                  SNAPSHOT_TEST, '#1231 snapshot get success and workspace filter'))
+mutations.append(('snapshot-restore-resolver-bypassed', SNAPSHOT,
+                  '        let workspace_id = self.resolver.workspace_id(&source_project);\n        let snapshot_id = field(input, "snapshotId");',
+                  '        let workspace_id = crate::metadata::project_id(std::path::Path::new(&source_project));\n        let snapshot_id = field(input, "snapshotId");',
+                  SNAPSHOT_TEST, '#1231 snapshot restore success'))
+
 # #1538/#1869 review: the table used to be its own denominator
 # the table used to be its own denominator — delete a row and the run still
 # reported "{n}/{n}" and read green. Pin the row count and the roster (order
 # and repeats included) as literals so a dropped, renamed or duplicated
 # mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 82
+EXPECTED_TOTAL = 86
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -278,6 +305,10 @@ EXPECTED_NAMES = (
     'missing-storage-capabilities-outside-ts',
     'memory-io-blocks-host',
     'memory-inline-sync',
+    'non-utf8-project-accepted',
+    'snapshot-list-resolver-bypassed',
+    'snapshot-get-resolver-bypassed',
+    'snapshot-restore-resolver-bypassed',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '

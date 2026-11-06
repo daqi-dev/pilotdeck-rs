@@ -227,6 +227,51 @@ fn explicit_options_and_environment() {
     );
 }
 
+/// #1431 P2-3: a non-UTF-8 `--project` is refused at parse.
+///
+/// Measured (2026-11-07, cb8): the turn side computes its workspace id from
+/// `options.project.to_string_lossy()` (`metadata` is lossy end to end, like
+/// Node's string-only filesystem API), while `serves_project` compares the raw
+/// `PathBuf` bytes. A JS client can only ever send the lossy spelling, so that
+/// spelling is refused by every management request — the id such a turn
+/// captured under could never be listed. Refusing the unrepresentable path at
+/// parse (the `--storage-root` precedent) keeps the two sides identical
+/// instead of silently capturing into an unreachable workspace.
+///
+/// The path is deliberately never created: the rejection runs before any
+/// filesystem access (`resolve_process_path` is lexical), and APFS/HFS+ cannot
+/// hold non-UTF-8 names at all (`create_dir_all` → `EILSEQ`, os error 92), so a
+/// fixture that needed one would fail on macOS before reaching the assertion.
+#[cfg(unix)]
+#[test]
+fn non_utf8_project_path_is_refused() {
+    use std::os::unix::ffi::OsStringExt;
+    let scratch = Scratch::new();
+    let raw = scratch
+        .0
+        .join(std::ffi::OsString::from_vec(b"project-\xff".to_vec()));
+    let mut args = scratch.args();
+    args[3] = raw.clone().into_os_string();
+    let error = Options::parse(args).err().map(|error| error.to_string());
+    negative_assert_eq!(
+        error.as_deref(),
+        Some("project is not UTF-8"),
+        "#1431 non-UTF-8 --project must be rejected"
+    );
+    // Control: the same arguments with the UTF-8 project parse, so the
+    // rejection above is about the bytes and not an unrelated option.
+    Options::parse(scratch.args()).expect("#1431 UTF-8 project control parses");
+    // Measurement behind the refusal: with the raw project configured, the one
+    // spelling a JS client can send (the lossy one) is not served, so no
+    // `snapshot_list` for this workspace is reachable.
+    let mut parsed = Options::parse(scratch.args()).expect("#1431 control options");
+    parsed.project = raw;
+    negative_assert!(
+        !parsed.serves_project(&parsed.project.to_string_lossy()),
+        "#1431 the lossy project spelling a client must send is not served"
+    );
+}
+
 #[tokio::test]
 async fn default_lsp_matches_ts() {
     let service = families::DefaultLsp::default();
