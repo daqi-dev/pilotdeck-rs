@@ -712,8 +712,8 @@ STUB_GATE_ARG = ("'--slot-guard-probe',\n"
                  "/ 'cargo-slots-free.sh'), str(timeout)],")
 STUB_GATE_TEXT = '#!/bin/sh\necho "cargo-slots: 0 / cap 1"\nexit 0\n'
 # Each meta-control copy runs a full `--self-check` (measured 12-13 s per copy,
-# ~90 s for control + 6 cases on this machine). The structural guard derives the
-# job margin from `len(self_check_controls) + 1`, so adding a case widens it
+# ~100 s for control + 7 cases on this machine). The structural guard derives
+# the job margin from `len(self_check_controls) + 1`, so adding a case widens it
 # instead of silently eating the headroom.
 CONTROL_TIMEOUT_SECONDS = 120
 # The emptied-table cases rewrite a 17-line literal table. Locate it by its
