@@ -108,6 +108,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
@@ -343,7 +344,10 @@ def discover(root, commit):
     directory, so treating it as absent let the run print READY while a sibling
     apparatus for the same alias failed (two non-author reviews caught exactly
     that).  A plain file directly under ``specs/`` (``specs/README.md``) cannot
-    hold a ``FROZEN.md``, so it stays a non-apparatus and is not reported.
+    hold a ``FROZEN.md`` and stays a non-apparatus -- unless
+    ``scripts/<alias>/check_frozen.py`` is still in the tree, which means the
+    file replaced an apparatus directory and that apparatus would otherwise be
+    silently dropped from the run.
     """
     # ``specs/`` (not ``specs``): the bare pathspec lists the ``specs`` tree
     # entry itself and hides everything one level down.
@@ -372,12 +376,22 @@ def discover(root, commit):
             # for an apparatus directory the tool cannot enumerate, so the true
             # apparatus set is unknown.  Skipping it silently made the parent
             # report READY while the child apparatus for that alias failed.
-            # A regular file (``100644``/``100755``, e.g. ``specs/README.md``)
-            # cannot contain a ``FROZEN.md`` and is not an apparatus alias.
-            mode = os.fsdecode(parts[0])
-            if mode not in ('120000', '160000'):
-                continue
-            invalid.append((os.fsdecode(name), mode, os.fsdecode(parts[1])))
+            if parts[0] not in (b'120000', b'160000'):
+                # A plain file cannot hold a ``FROZEN.md`` -- but if
+                # ``scripts/<alias>/check_frozen.py`` is still in the tree,
+                # the file is what an apparatus directory was replaced with
+                # (a bad merge), and skipping it drops that apparatus from the
+                # run exactly like the symlink case.  A real index file
+                # (``specs/README.md``) has no runner and stays a non-apparatus.
+                alias = os.fsdecode(name.split(b'/', 1)[1])
+                runner = exists_at(root, commit,
+                                   f'scripts/{alias}/check_frozen.py')
+                if runner is None:
+                    return None
+                if not runner:
+                    continue
+            invalid.append((os.fsdecode(name), os.fsdecode(parts[0]),
+                            os.fsdecode(parts[1])))
             continue
         kind = os.fsdecode(name.split(b'/', 1)[1])
         frozen = exists_at(root, commit, f'specs/{kind}/FROZEN.md')
@@ -3848,18 +3862,52 @@ def _admin_dir(root):
 _UNREADABLE_GITDIR = object()
 
 
+# ``.git/worktrees`` entries whose ``gitdir`` could not be read in this run.
+# ``holder_verdict`` names them so a BLOCK points at the unverifiable
+# bookkeeping instead of asserting that the snapshot's own entry is still
+# there: the entry may well belong to a concurrent sibling.
+_UNVERIFIED_ADMIN_ENTRIES = set()
+
+
 def _recorded_gitdir(entry):
     """The path an admin entry's ``gitdir`` file names, canonicalised.
 
     Returns ``_UNREADABLE_GITDIR`` when the file cannot be read; callers must
-    not read that as an absence (see the constant).
+    not read that as an absence (see the constant).  A readable but empty or
+    relative ``gitdir`` gets the same answer: ``git worktree add`` writes the
+    path non-atomically, so a truncated file is a real possibility, and
+    ``_real_path('')`` resolves to the *cwd* -- compared unequal to every
+    wanted path, it read as "proven not ours" and let the cleanup deregister
+    a holder whose entry was still on disk.  Git never writes a relative
+    gitdir, so requiring an absolute one loses nothing.
     """
     try:
         text = (entry / 'gitdir').read_text(encoding='utf-8',
                                             errors='surrogateescape').strip()
     except OSError:
         return _UNREADABLE_GITDIR
+    if not text or not os.path.isabs(text):
+        return _UNREADABLE_GITDIR
     return _real_path(text)
+
+
+def _scan_admin(admin, wanted):
+    """One pass over ``.git/worktrees``: True / False / None (unreadable entry).
+
+    Every entry whose ``gitdir`` cannot be read is remembered in
+    ``_UNVERIFIED_ADMIN_ENTRIES`` so a blocking message can name it instead of
+    blaming the snapshot it may not belong to.
+    """
+    unreadable = False
+    for entry in admin.iterdir():
+        recorded = _recorded_gitdir(entry)
+        if recorded is _UNREADABLE_GITDIR:
+            unreadable = True
+            _UNVERIFIED_ADMIN_ENTRIES.add(str(entry))
+            continue
+        if recorded == wanted:
+            return True
+    return None if unreadable else False
 
 
 def admin_entry_present(root, target):
@@ -3869,23 +3917,32 @@ def admin_entry_present(root, target):
     "not proven clean" rather than as an absence.  An entry whose ``gitdir``
     cannot be read is likewise unproven: unless a *different* entry is proven
     to name ``target`` (True), the answer is ``None``, never False.
+
+    A lone unreadable entry is rescanned a couple of times first:
+    ``git worktree add``/``remove`` creates the entry directory and writes its
+    ``gitdir`` separately, so a concurrent sibling can be caught mid-write and
+    a single pass would refuse a delivery for a window that is already gone.
+    A *persistent* unreadable entry still answers ``None`` -- it may be ours,
+    and reading unread bookkeeping as clean is the one direction that must
+    stay blocking.
     """
     try:
         admin = _admin_dir(root)
         if admin is None:
             return None
-        if not admin.exists():
-            return False
         wanted = _real_path(target / '.git')
-        unreadable = False
-        for entry in admin.iterdir():
-            recorded = _recorded_gitdir(entry)
-            if recorded is _UNREADABLE_GITDIR:
-                unreadable = True
-                continue
-            if recorded == wanted:
-                return True
-        return None if unreadable else False
+        for attempt in range(3):
+            try:
+                state = _scan_admin(admin, wanted)
+            except FileNotFoundError:
+                return False      # no ``.git/worktrees`` directory at all
+            except OSError:
+                return None       # the directory itself cannot be read
+            if state is not None:
+                return state
+            if attempt < 2:
+                time.sleep(0.05)
+        return None
     except OSError:
         return None
 
@@ -3910,15 +3967,23 @@ def drop_admin_entry(root, target):
         admin = _admin_dir(root)
         if admin is None:
             return False
-        if not admin.exists():
-            return True
         wanted = _real_path(target / '.git')
-        for entry in admin.iterdir():
+        try:
+            entries = list(admin.iterdir())
+        except FileNotFoundError:
+            return True
+        except OSError:
+            # ``Path.exists()`` answers False for EACCES too, and the old
+            # check therefore reported "nothing to remove" for a directory it
+            # could not read at all.  Unreadable bookkeeping is not clean.
+            return False
+        for entry in entries:
             recorded = _recorded_gitdir(entry)
             if recorded is _UNREADABLE_GITDIR:
                 # Cannot prove this entry is (or is not) ours: leave it alone.
                 # ``admin_entry_present`` below then reports None, so the
                 # holder stays registered for the atexit retry.
+                _UNVERIFIED_ADMIN_ENTRIES.add(str(entry))
                 continue
             if recorded == wanted:
                 shutil.rmtree(entry, ignore_errors=True)
@@ -3973,9 +4038,14 @@ def holder_verdict(holders):
     """
     if not holders:
         return None
-    return ('the precheck could not remove its own snapshot bookkeeping; this run '
-            'must not be treated as read-only: '
-            + '; '.join(sorted({str(holder) for _root, holder in holders})[:5]))
+    detail = '; '.join(sorted({str(holder) for _root, holder in holders})[:5])
+    if _UNVERIFIED_ADMIN_ENTRIES:
+        detail += (' -- and .git/worktrees has entries whose gitdir cannot be '
+                   'read (they may belong to a concurrent sibling, not to this '
+                   'snapshot): '
+                   + '; '.join(sorted(_UNVERIFIED_ADMIN_ENTRIES)[:5]))
+    return ('the precheck could not verify its own snapshot bookkeeping is gone; '
+            'this run must not be treated as read-only: ' + detail)
 
 
 def scope_verdict(before, after, snapshot):
