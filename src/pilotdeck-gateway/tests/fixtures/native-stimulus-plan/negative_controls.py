@@ -27,6 +27,31 @@ measurement = Path(__file__).with_name('verify_measurement.py')
 runner = Path(__file__).resolve()
 e2e_runner = fixture.parent.parent / 'native-session-e2e/negative_controls.py'
 r11 = fixture.parent.parent / 'native-witness/test_r11.py'
+PUBLISH_DIR = root / '.negctl-publish'
+
+
+def write_atomic(path, data):
+    """Publish the source in one rename (#1692 §9 r2 review).
+
+    `path.write_text` truncates first: a SIGKILL in the middle leaves a half
+    file that `mutating_sources` then reads as "differs from HEAD" and refuses
+    to run over. The temp lives at the repository root, outside the scanned
+    `src` area and inside the `.gitignore`d `.negctl-*` namespace.
+    """
+    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'
+    mode = path.stat().st_mode & 0o7777
+    try:
+        with tmp.open('wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 cases = [
     ('missing-cell', source, "for cell in CELLS for variant in cell['variants'] for phase in ('model', 'tool')]", "for cell in CELLS for variant in cell['variants'] for phase in ('model',)]", 'test_exact_registration'),
     ('wrong-stimulus', source, "{'name': 'status-slow', 'slowStatus': True}", "{'name': 'status-slow-wrong', 'slowStatus': True}", 'test_exact_registration'),
@@ -208,7 +233,7 @@ def main():
             if not passed(run(name + '-positive', test)):
                 raise ValueError('positive bound test did not pass')
             if not args.memory:
-                path.write_text(changed)
+                write_atomic(path, changed.encode())
             if not args.memory:
                 slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
                 (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
@@ -226,7 +251,7 @@ def main():
             status, reason = 'INVALID', str(error)
         finally:
             if not args.memory:
-                path.write_bytes(originals[path])
+                write_atomic(path, originals[path])
         try:
             if not passed(run(name + '-restored', test)):
                 status, reason = 'INVALID', reason + '; restored control failed'

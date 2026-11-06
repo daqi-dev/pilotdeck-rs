@@ -144,12 +144,33 @@ def mutate(case, original):
     return original.replace(case.old, case.new, 1)
 
 
+PUBLISH_DIR = ROOT / '.negctl-publish'
+
+
 def write_atomic(path, data):
-    """Replace the source in one rename so a concurrent reader never sees a
-    half-written file (only the old or the mutated bytes) -- #1455 r2 review."""
-    tmp = path.with_name(path.name + '.negctl.tmp')
-    tmp.write_bytes(data)
-    os.replace(tmp, path)
+    """Publish the source in one rename so a concurrent reader never sees a
+    half-written file (only the old or the mutated bytes) -- #1455 r2 review.
+
+    The temp lives in `PUBLISH_DIR` at the repository root, not beside the
+    target (#1692 §9 r2 review): a SIGKILL does not run `finally`, and a residue
+    inside `src/` is read back as an "untracked build input" by
+    `negative_process._assert_input_areas`, which then refuses every later run
+    until someone deletes it by hand. `.negctl-*` at the root is both outside
+    the scanned areas and inside the `.gitignore`d namespace. The mode comes
+    from the source because `os.replace` publishes the temp's own mode.
+    """
+    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'
+    mode = path.stat().st_mode & 0o7777
+    try:
+        with tmp.open('wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def main():
